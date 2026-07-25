@@ -2,10 +2,10 @@
 
 ## 0. Repository contract
 
-YVEX is a native C/CUDA inference system for verified open-weight model
-artifacts. Every patch must make the repository more executable, more tested,
-or more internally coherent. Documentation records implemented truth; it does
-not create capability.
+YVEX is a native C/CUDA model-compilation and runtime system for identity-bound
+verified open-weight inference. Every patch must make the repository more
+executable, more tested, or more internally coherent. Documentation records
+implemented truth; it does not create capability.
 
 Work in this order unless the delivery explicitly owns a doctrine boundary:
 
@@ -13,12 +13,14 @@ Work in this order unless the delivery explicitly owns a doctrine boundary:
 2. tests;
 3. project control and documentation.
 
-Never commit model weights, generated complete artifacts, local registries,
-provider credentials, build output, raw benchmark records, reports, or
-downloaded dependencies. Curated deterministic SVG documentation assets may be
-tracked under `docs/assets/` when a canonical production command regenerates
-them from identity-bound evidence, the owning documentation links them, and
-repository guards validate their provenance and bounded content.
+Model weights, complete generated artifacts, runtime-state dumps, raw
+benchmark/profile records, generated charts, logs, build products, local
+registries, credentials, and downloaded dependencies are not tracked. A
+separately authorized documentation delivery may add a manually curated static
+diagram; it is not runtime evidence or release authority. A curated deterministic SVG derived from that evidence may be
+reviewed externally, but is not tracked under `docs/assets/` as documentation
+or runtime evidence. Runtime benchmark baselines and CSV/JSON evidence are
+untracked identity-bound external operator assets.
 
 ## 1. Directory is the namespace
 
@@ -82,6 +84,11 @@ Explicit user authorization is required before:
 - adding a layout or ownership exception;
 - introducing a public header;
 - introducing a subsystem.
+
+An accepted delivery contract may supply explicit authorization. Codex does
+not request duplicate interactive confirmation when the delivery already
+authorizes the boundary, but authorization never waives ownership, testing,
+guard, or acceptance requirements.
 
 ## 3. Machine-readable ownership
 
@@ -273,9 +280,16 @@ The following boundaries remain distinct:
   model, versioned runtime binding, mutable execution sessions, reusable
   workspace, phase-aware dispatch, and process-lifetime reuse;
 - backend owners execute admitted operations but do not infer model policy;
-- generation composes the separately owned prefill, persistent KV, decode,
-  logits, sampling, and loop contracts only after those dependencies are
-  executable.
+- `TRACK.KV` owns persistent sequence-state geometry, allocation, capacity,
+  indexing, append/read, reuse, invalidation, and cleanup;
+- `TRACK.PREFILL` owns prompt/chunk execution that populates committed model
+  state; `TRACK.DECODE` owns repeated model-backed execution consuming it;
+- `TRACK.LOGITS` owns final norm and output-head projection to real vocabulary
+  logits; `TRACK.SAMPLING` owns token selection over those logits;
+- `TRACK.TOKENIZER` owns exact text/token conversion, templates, special
+  tokens, EOS, stop, and detokenization;
+- `TRACK.GENERATION` owns autoregressive composition of these admitted lower
+  owners, not their independent semantics or resources.
 
 Source intake is not payload trust. Mapping is not transformation execution.
 Quantization is not a GGUF artifact. A complete artifact is not
@@ -285,11 +299,35 @@ transformer. Transformer execution is not generation.
 Runtime execution consumes an admitted content-addressed runtime binding. It
 does not reopen source inventories, reconstruct Transformation IR, rebuild
 quantization or writer plans, or branch on family names. Family semantics enter
-through a typed adapter. Runtime benchmark baselines and CSV/JSON evidence are
-identity-bound external operator assets and are never tracked in the source
-repository. A curated deterministic SVG derived from that evidence may be
-tracked under `docs/assets/` as documentation, but it never becomes release
-benchmark authority.
+through a typed adapter.
+
+### Persistent sequence state
+
+The immutable runtime model owns descriptors, plans, weights, and reusable
+model resources. Each `yvex_runtime_execution_session` owns mutable persistent
+sequence state, committed position, capacity, generation, backend resources,
+invalidation, and lifecycle. Sessions sharing a model never share mutable
+state.
+
+`yvex_attention_state_provider` owns checked generic storage, committed and
+candidate views, begin/stage/commit/abort, rollback, reset, invalidation, and
+cleanup. The DeepSeek graph family projects exact SWA/CSA/HCA geometry,
+representation, recurrence, compression, indexing, and continuity policy into
+that protocol; it does not clone storage or lifecycle. The runtime session
+coordinates the provider transaction with `yvex_runtime_state_residency`,
+whose CPU/CUDA resources stage and publish the same candidate generation before
+the logical provider commit becomes visible. Failure aborts both; reset and
+invalidation preserve that relationship.
+
+Persistent KV is session-owned and creates no family-specific runtime
+hierarchy. Common owners never select family policy from target strings.
+Backend capability requires real backend-owned allocation, transfer,
+synchronization, execution, and cleanup; host-only reporting cannot establish
+CUDA state. A flat synthetic F32 cache cannot establish family-correct KV.
+Prefill and decode must consume the same committed provider boundary.
+Persistent state alone does not establish full-model prefill, transformer
+execution, model-backed decode, logits, sampling, tokenization, generation,
+evaluation, or release.
 
 ## 8. CLI, reports, and output
 
@@ -303,9 +341,10 @@ Domain code does not parse argv, own usage strings, render output, or classify
 failure from text. CLI and render code do not own trust, model selection,
 quantization policy, graph admission, runtime state, or capability decisions.
 
-Supported operator modes are `normal`, `table`, and `audit` unless a typed
-surface explicitly owns and tests JSON. Normal output stays compact; audit
-output carries evidence. No mode may imply a higher capability stage.
+`normal`, `table`, and `audit` are human-facing output modes. JSON and CSV are
+permitted only when the typed surface owns, documents, and tests its
+machine-readable schema. Normal output stays compact; audit carries evidence.
+No renderer or output format owns capability or may imply a higher stage.
 
 ### Executable reachability
 
@@ -359,37 +398,25 @@ Canonical artifact terms:
 
 Quality evidence has distinct owners and cannot promote a higher stage:
 
-- **Software tests** prove typed implementation behavior through unit,
-  integration, live, fault, sanitizer, concurrency, cleanup, CLI, and
-  architecture checks.
+- **Software tests** prove typed implementation contracts.
 - **Numerical conformance** compares production math with an independent
-  contract, including backend/mode parity, state deltas, discrete selections,
-  mutation sensitivity, and explicit tolerance or exactness.
-- **Runtime qualification** proves lifecycle, identity, residency, resource
-  reuse, cancellation, invalidation, transactional publication, and cleanup
-  invariants for repeated live execution.
-- **Component benchmarks** measure one already-correct component under exact
-  workload, artifact, runtime, machine, and execution identities.
-- **Model behavior evaluation** requires the complete tokenizer-to-text path
-  and proves deterministic generation and structural behavior.
-- **Model quality evaluation** scores generated model behavior against an
-  identity-bound task and scorer contract.
+  exactness or tolerance contract.
+- **Runtime qualification** proves repeated lifecycle, identity, resource,
+  transaction, cancellation, invalidation, and cleanup invariants.
+- **Component benchmarks** measure one already-correct identity-bound component.
+- **Model behavior evaluation** requires the complete tokenizer-to-text path.
+- **Model quality evaluation** scores generated behavior against a task/scorer.
 - **Agent runtime evaluation** requires a separately admitted action loop,
-  tool registry, authorization policy, observation state, budgets, and
-  termination contract.
-- **Release qualification** combines the required implementation, evaluation,
-  benchmark, operator, packaging, and claim evidence for one release target.
+  tools, authorization, observation state, budgets, and termination.
+- **Release qualification** combines every gate required by one release target.
 
-Semantic owners own their tests; graph/backend own numerical conformance;
-runtime owns structural qualification; residency owns placement and transfer
-evidence; operator owns CLI acceptance; evaluation owns complete-model
-behavior/quality; benchmark owns measurements; release owns final admission.
-Do not create a generic `qa` owner. No generic `qa_passed` or `qa_ready` fact
-may collapse these classes. Attention
-prefill/decode are component phases, not model prefill/decode. Numerical parity
-is not model evaluation, an attention benchmark is not a model/generation
-benchmark, and JSON, `yvexd`, external harnesses, or development agents do not
-establish an agent runtime.
+Semantic owners own tests; graph/backend own conformance; runtime and residency
+own qualification; operator owns CLI acceptance; evaluation, benchmark, and
+release own their respective higher gates.
+No generic `qa_passed` or `qa_ready` fact may collapse these classes.
+Attention phases are not model phases;
+parity is not evaluation; component timing is not a model benchmark; and JSON,
+`yvexd`, external harnesses, or development agents do not establish an agent.
 
 ## 10. Tests and validation
 
@@ -401,30 +428,31 @@ Every behavior needs a positive test. Every refusal needs a failure test.
 Numeric execution needs an independent reference, tolerance or exactness
 contract, edge cases, cleanup, and backend comparison where applicable.
 
-Minimum validation for repository work:
+Validation is proportional to the changed boundary.
+
+Always run:
 
 ```sh
 git diff --check
-make
-make smoke
-make test-core
-make check
-make check
-make check-docs
-make check-guardrails
-make test-cuda-no-nvcc
-make check-cuda
-tests/test_source_ownership.sh
-tests/test_repository_layout.sh
-tests/test_architecture_boundaries.sh
+focused tests for changed owners
+affected documentation/ownership/layout/architecture guards
 git ls-files '*.safetensors' '*.bin' '*.dat'
 git ls-files '*.gguf'
 ```
 
-Use ASan/LeakSanitizer and UBSan for changed ownership and lifecycle paths.
-Run focused live evidence when the delivery touches a live owner. Two
-consecutive builds/checks without cleaning are required after build topology
-changes.
+Executable capability changes also run the relevant build, smoke,
+core/integration, CLI acceptance, refusal, failure, and cleanup checks. Runtime,
+backend, CUDA, residency, and persistent-state changes additionally run the
+applicable no-`nvcc` fail-closed tests, CUDA checks, focused live CPU/CUDA
+evidence, ASan/LeakSanitizer and UBSan, cancellation, rollback, cleanup, and
+concurrency tests.
+
+Two consecutive builds/checks without cleaning are required when build
+topology or object membership changes, generated dependencies change, or
+repeat-run cleanliness belongs to the milestone acceptance. A delivery may
+require stricter validation for its boundary. Documentation-only work does not
+run live-model, CUDA, sanitizer, benchmark, or artifact-regeneration suites
+unless a changed executable contract or guard requires them.
 
 ## 11. Project control and closure
 
@@ -432,20 +460,10 @@ changes.
 not disappear or silently change owner. Rank and state remain distinct. There
 is exactly one active milestone and exactly one Active Next.
 
-A closure that changes ownership reports:
-
-- owned production files before/after;
-- source/header/test counts before/after;
-- semantic owners and files per owner;
-- basename and project-prefix violations;
-- one-consumer private headers;
-- exported symbols;
-- family files and budget;
-- include cycles and forbidden dependency edges;
-- manifest, Makefile, and object-path parity;
-- renamed, merged, and deleted files;
-- net lines removed;
-- preserved semantic identities and capability refusals.
+A closure that changes ownership reports before/after files and counts, semantic
+owners, private/public/global symbols, family budget, naming violations,
+dependency edges, manifest/build/object parity, moves/deletions, net lines, and
+preserved identities and refusals.
 
 No implementation may be declared complete because a report says so. Project
 control changes only after executable evidence passes.
@@ -457,23 +475,16 @@ can use it without bypassing semantics, ownership, identity, lifecycle,
 failure, resource, or operator contracts. Passing a build, one execution path,
 focused tests, or a self-authored closure report is not sufficient.
 
-Before activating a dependent milestone, classify every unresolved item exactly
-once:
+Before activating a dependent milestone, classify each unresolved item once:
 
-- `gate_blocker`: a defect inside the current gate that makes the downstream
-  consumer unsafe or incorrect;
-- `boundary_incomplete`: required after-state is missing, scaffolded,
-  simulated, test-only, happy-path-only, or unused by production;
+- `gate_blocker`: an in-gate defect makes the consumer unsafe or incorrect;
+- `boundary_incomplete`: required production after-state is absent or partial;
 - `evidence_gap`: required independent, live, failure, cleanup, operator, or
   scale evidence is absent;
-- `deferred_depth`: additional behavior outside the current gate, unnecessary
-  to the next consumer, with an explicit later owner and pass;
-- `optimization_debt`: admitted behavior is slower, larger, or less efficient
-  without violating a current correctness or resource contract;
-- `generalization_debt`: the common mechanism has one proven vertical but no
-  concrete second-family pressure test;
-- `external_blocker`: complete local work awaits an unavailable external
-  resource, platform, authority, or decision.
+- `deferred_depth`: out-of-gate behavior has an explicit later owner and pass;
+- `optimization_debt`: admitted correctness remains measurably inefficient;
+- `generalization_debt`: one vertical lacks a concrete second-family test;
+- `external_blocker`: complete local work awaits an external dependency.
 
 The only progression decisions are:
 
@@ -491,22 +502,14 @@ only when the current boundary is complete, the next consumer is independent,
 the non-claim and later owner/pass are explicit, and no duplicate owner or
 compatibility shell is introduced.
 
-Every implementation closure includes a `Progression Admissibility` block
-containing:
+Every implementation closure includes:
 
 ```text
 progression_decision: proceed | repair_same_boundary | complete_evidence | blocked_external
-downstream_consumer: exact milestone or none
 downstream_safe: true | false
-unresolved_gate_blockers: count and exact list
-boundary_incompleteness: count and exact list
-evidence_gaps: count and exact list
-deferred_depth: count, owner, and later pass
-optimization_debt: count, measured effect, and later pass
-generalization_debt: count, current vertical, and concrete pressure test
-external_blockers: count and exact dependency
-required_before_next: exact repairs or none
-non_claims: higher capabilities not established
+downstream_consumer; gate blockers; boundary incompleteness; evidence gaps
+deferred depth, optimization debt, and generalization debt with owners/passes/evidence
+external blockers; required repairs; higher-capability non-claims
 ```
 
 Each remaining item names its class, owner, consumer impact, progression effect,
@@ -518,12 +521,13 @@ later pass or immediate repair, and evidence. Vague classifications such as
 YVEX advances one accepted system through six focused passes:
 
 1. `PASS 1 — Vertical closure`: complete one real source-to-output production
-   path with truthful limitations.
+   path with truthful limitations, including the minimal correct persistent
+   state required by its prefill and decode consumers.
 2. `PASS 2 — Correctness and ownership hardening`: repair semantic, lifecycle,
    identity, ownership, and composition defects exposed end to end.
-3. `PASS 3 — Memory and residency optimization`: improve placement, movement,
-   persistent state, scratch, expert storage, and streaming from measured
-   resource evidence.
+3. `PASS 3 — Memory and residency optimization`: optimize already-correct
+   state through paging, alternative placement, spill, quantization,
+   compression, memory reduction, and measured reuse improvements.
 4. `PASS 4 — Kernel and execution optimization`: improve fusion, scheduling,
    graph capture, launch count, parallelism, and hardware tuning without
    changing semantics.
@@ -536,7 +540,8 @@ YVEX advances one accepted system through six focused passes:
 These passes consume earlier accepted boundaries; they are not wholesale
 rewrites. Concrete evidence may reopen an earlier boundary. Hypothetical family
 needs do not justify speculative mechanisms, and the first DeepSeek vertical
-pressures the common engine without defining it.
+pressures the common engine without defining it. Persistent state required by a
+consumer is correctness in PASS 1, never optimization debt.
 
 Future families reuse common source, compilation, artifact, runtime, residency,
 backend, operator, evaluation, and benchmark mechanisms. They add only their
