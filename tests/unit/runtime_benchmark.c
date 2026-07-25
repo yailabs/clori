@@ -827,16 +827,22 @@ static int test_chart(const benchmark_fixture *fixture,
     data = fixture_read(fixture->chart, &count);
     YVEX_TEST_ASSERT(data && strstr(data, "NVIDIA GB10 &lt;&amp; verified&gt;") &&
                          strstr(data, "data-chart-schema=\"5\"") &&
-                         strstr(data, "<rect width=\"960\" height=\"760\"") &&
-                         strstr(data, "STRUCTURAL EVIDENCE") &&
-                         strstr(data, "encoded weight pack") &&
-                         strstr(data, "attention state") && strstr(data, "source clean") &&
-                         strstr(data, "WARM HOST / DEVICE") &&
-                         strstr(data, "device event") &&
-                         strstr(data, "warm reads 0 - uploads 0 B") &&
+                         strstr(data, "data-chart-design=\"2\"") &&
+                         strstr(data, "<rect width=\"1440\" height=\"1024\"") &&
+                         strstr(data, "Attention execution profile") &&
+                         strstr(data, "Steady-state latency") &&
+                         strstr(data, "Cold-start composition") &&
+                         strstr(data, "Memory &amp; movement") &&
+                         strstr(data, "Steady-state contract") &&
+                         strstr(data, "Encoded weights") &&
+                         strstr(data, "Attention state") && strstr(data, "SOURCE clean") &&
+                         strstr(data, ">P95</text>") &&
+                         strstr(data, "CUDA event timing") &&
+                         strstr(data, "No warm weight I/O or allocation.") &&
+                         strstr(data, ">QUALIFIED</text>") &&
                          strstr(data, current->identity) &&
                          fixture_digest(data, count, digest) && strcmp(digest, chart.identity) == 0,
-                     "chart escapes labels and identity hashes exact SVG bytes");
+                     "premium chart hierarchy escapes labels and hashes exact SVG bytes");
     request.path = fixture->deterministic_chart;
     YVEX_TEST_ASSERT(yvex_runtime_benchmark_chart_write(
                          &request, &repeated, &failure, &err) == YVEX_OK &&

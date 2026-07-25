@@ -823,12 +823,37 @@ static void graph_attention_benchmark_comparison_apply(
 static yvex_runtime_benchmark_regression_policy graph_attention_regression_policy(
     const yvex_graph_args *args)
 {
-    yvex_runtime_benchmark_regression_policy policy = {
+    return (yvex_runtime_benchmark_regression_policy){
         .enabled = args->attention.regression_basis_points != ULLONG_MAX,
         .basis_points = args->attention.regression_basis_points == ULLONG_MAX
                             ? 0ull : args->attention.regression_basis_points,
     };
-    return policy;
+}
+/* Purpose: publish one deterministic SVG through the runtime chart owner.
+ * Inputs: validated path, sealed records, and typed summary.
+ * Effects: publishes exact path, byte count, and chart identity.
+ * Failure: preserves every pre-existing destination.
+ * Boundary: the CLI adapts paths and owns no chart layout or benchmark semantics. */
+static int graph_attention_benchmark_chart_publish(
+    const char *path, const yvex_runtime_benchmark_baseline *current,
+    const yvex_runtime_benchmark_baseline *baseline,
+    yvex_runtime_benchmark_operator_summary *summary, yvex_error *err)
+{
+    yvex_runtime_benchmark_chart_request request = {
+        .current = current, .baseline = baseline,
+    };
+    yvex_runtime_benchmark_chart_result chart;
+    yvex_runtime_benchmark_failure failure;
+    int rc = expand_operator_path(path, summary->chart_path, sizeof(summary->chart_path), err,
+                                  "graph_attention_benchmark");
+    if (rc != YVEX_OK) return rc;
+    request.path = summary->chart_path;
+    rc = yvex_runtime_benchmark_chart_write(&request, &chart, &failure, err);
+    if (rc != YVEX_OK) return rc;
+    summary->chart_generated = 1;
+    summary->chart_file_bytes = chart.file_bytes;
+    yvex_runtime_identity_copy(summary->chart_identity, chart.identity);
+    return YVEX_OK;
 }
 /* Purpose: publish/compare baseline evidence and optionally create one exact-byte SVG asset.
  * Inputs: completed benchmark/profile result and validated external paths.
@@ -842,8 +867,6 @@ static int graph_attention_benchmark_output(
     yvex_runtime_benchmark_baseline current, baseline;
     yvex_runtime_benchmark_publication publication;
     yvex_runtime_benchmark_comparison comparison;
-    yvex_runtime_benchmark_chart_request chart_request;
-    yvex_runtime_benchmark_chart_result chart;
     yvex_runtime_benchmark_failure failure;
     const yvex_runtime_benchmark_baseline *chart_baseline = NULL;
     int rc;
@@ -860,12 +883,6 @@ static int graph_attention_benchmark_output(
     yvex_core_text_copy(result->benchmark.current_source_state,
                         sizeof(result->benchmark.current_source_state),
                         current.key.build_source_state);
-    if (args->attention.chart_path) {
-        rc = expand_operator_path(args->attention.chart_path, result->benchmark.chart_path,
-                                  sizeof(result->benchmark.chart_path), err,
-                                  "graph_attention_benchmark");
-        if (rc != YVEX_OK) return rc;
-    }
     if (args->attention.baseline_path) {
         rc = expand_operator_path(args->attention.baseline_path, result->benchmark.path,
                                   sizeof(result->benchmark.path), err,
@@ -889,17 +906,8 @@ static int graph_attention_benchmark_output(
         }
     }
     if (!args->attention.chart_path) return YVEX_OK;
-    chart_request = (yvex_runtime_benchmark_chart_request){
-        .path = result->benchmark.chart_path,
-        .current = &current,
-        .baseline = chart_baseline,
-    };
-    rc = yvex_runtime_benchmark_chart_write(&chart_request, &chart, &failure, err);
-    if (rc != YVEX_OK) return rc;
-    result->benchmark.chart_generated = 1;
-    result->benchmark.chart_file_bytes = chart.file_bytes;
-    yvex_runtime_identity_copy(result->benchmark.chart_identity, chart.identity);
-    return YVEX_OK;
+    return graph_attention_benchmark_chart_publish(
+        args->attention.chart_path, &current, chart_baseline, &result->benchmark, err);
 }
 /* Purpose: preflight one benchmark asset path before runtime model or artifact admission.
  * Inputs: operator path, whether a new destination is required, and typed error output.
@@ -962,7 +970,9 @@ static int graph_attention_benchmark_paths_preflight(
     if (args->attention.action == YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK_COMPARE) {
         rc = graph_attention_external_path_preflight(args->attention.baseline_path, 0, err);
         if (rc != YVEX_OK) return rc;
-        return graph_attention_external_path_preflight(args->attention.current_path, 0, err);
+        rc = graph_attention_external_path_preflight(args->attention.current_path, 0, err);
+        if (rc != YVEX_OK || !args->attention.chart_path) return rc;
+        return graph_attention_external_path_preflight(args->attention.chart_path, 1, err);
     }
     if (args->attention.action != YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK &&
         args->attention.action != YVEX_GRAPH_ATTENTION_ACTION_PROFILE)
@@ -1015,6 +1025,9 @@ static int graph_cli_attention_benchmark_compare(const yvex_graph_args *args,
     if (rc == YVEX_OK)
         rc = yvex_runtime_benchmark_compare(
             &current, &baseline, &policy, &comparison, &failure, err);
+    if (rc == YVEX_OK && args->attention.chart_path)
+        rc = graph_attention_benchmark_chart_publish(
+            args->attention.chart_path, &current, &baseline, &result.benchmark, err);
     if (rc != YVEX_OK) {
         graph_attention_result_refuse(&result, err);
         memcpy(result.quality_status, benchmark_comparison_refusal_quality, sizeof(result.quality_status));

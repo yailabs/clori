@@ -379,14 +379,16 @@ policy, performance status is `measured`; with a policy, a breached ceiling
 returns a nonzero process status. Warm allocations, uploads, and other runtime
 qualification violations refuse before performance policy is evaluated.
 
-`--chart PATH.svg` produces a deterministic external SVG of cold preparation,
-warm latency, resident/workspace bytes, resident H2D bytes, and kernel/graph
-launch, capture, replay, and node counters, optionally paired with a compatible
-baseline. Schema five seals complete reproducibility identity, timing boundaries,
-resource counters, and build provenance; schemas one through four refuse and
-require regeneration instead of being silently reinterpreted. The chart identity covers its exact
-bytes. Baseline and chart are independent no-replace publications: a valid
-baseline remains authoritative if optional chart publication later refuses.
+`--chart PATH.svg` is accepted by `profile`, `benchmark`, and `benchmark
+compare`; execution and inspection actions do not manufacture charts. It
+produces a deterministic external SVG of cold preparation, warm latency,
+resident/workspace bytes, resident H2D bytes, and kernel/graph launch, capture,
+replay, and node counters, optionally paired with a compatible baseline. Schema
+five seals complete reproducibility identity, timing boundaries, resource
+counters, and build provenance; schemas one through four refuse and require
+regeneration instead of being silently reinterpreted. The chart identity covers
+its exact bytes. Baseline and chart are independent no-replace publications: a
+valid baseline remains authoritative if optional chart publication later refuses.
 JSON, CSV, baseline and SVG files are local operator evidence; they are not
 full-model benchmark results and are not tracked.
 

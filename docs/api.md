@@ -247,12 +247,13 @@ bind the selected ceiling and result. A compatible comparison exits nonzero
 when any measured dimension exceeds the ceiling; structural runtime failures
 remain separate and cannot be converted into performance allowances.
 
-`--chart PATH.svg` writes a deterministic SVG containing cold preparation,
-warm latency distributions, resident/workspace bytes, resident H2D bytes, and
-kernel/graph launch, capture, replay, and node counters, optionally against a
-compatible baseline. The schema-five baseline seals those structural counters,
-timings and complete reproducibility identity. Schemas one through four require
-regeneration.
+`--chart PATH.svg` is available on `profile`, `benchmark`, and `benchmark
+compare`; it is not a global attention option. It writes a deterministic SVG
+containing cold preparation, warm latency distributions, resident/workspace
+bytes, resident H2D bytes, and kernel/graph launch, capture, replay, and node
+counters, optionally against a compatible baseline. The schema-five baseline
+seals those structural counters, timings and complete reproducibility identity.
+Schemas one through four require regeneration.
 Baseline and SVG publication are independently atomic and
 no-replace; an SVG failure never withdraws an already admitted baseline. JSON,
 CSV, baseline and SVG outputs are external operator assets. They are never

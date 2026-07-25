@@ -66,7 +66,8 @@ MODE=full
 ./yvex graph attention benchmark compare \
   --baseline "$EVIDENCE/$MODE.yvex-benchmark" \
   --current "$EVIDENCE/$MODE-current.yvex-benchmark" \
-  --max-regression-bps 500 --output json
+  --max-regression-bps 500 --chart "$EVIDENCE/$MODE-file-comparison.svg" \
+  --output json
 ```
 
 Repeat with `MODE=eager` and `MODE=piecewise` for all three CUDA modes. The

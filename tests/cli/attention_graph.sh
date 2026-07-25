@@ -1368,6 +1368,7 @@ PY
         --baseline "$OUT_DIR/attention.yvex-benchmark" \
         --current "$OUT_DIR/attention.yvex-benchmark" \
         --max-regression-bps 0 \
+        --chart "$OUT_DIR/file-comparison.svg" \
         --output json \
         >"$OUT_DIR/benchmark-file-compare.json" \
         2>"$OUT_DIR/benchmark-file-compare.err"
@@ -1379,7 +1380,7 @@ PY
     python3 - "$OUT_DIR/benchmark-write.json" "$OUT_DIR/benchmark-compare.json" \
         "$OUT_DIR/benchmark-chart.json" "$OUT_DIR/attention.yvex-benchmark" \
         "$OUT_DIR/attention.svg" "$OUT_DIR/benchmark-file-compare.json" \
-        "$OUT_DIR/benchmark-file-incompatible.json" <<'PY'
+        "$OUT_DIR/file-comparison.svg" "$OUT_DIR/benchmark-file-incompatible.json" <<'PY'
 import json
 import hashlib
 import pathlib
@@ -1394,7 +1395,8 @@ baseline, chart = map(pathlib.Path, sys.argv[4:6])
 short_baseline = chart.with_name("attention-short.yvex-benchmark")
 with open(sys.argv[6], encoding="utf-8") as stream:
     file_compared = json.load(stream)
-with open(sys.argv[7], encoding="utf-8") as stream:
+file_comparison_chart = pathlib.Path(sys.argv[7])
+with open(sys.argv[8], encoding="utf-8") as stream:
     file_incompatible = json.load(stream)
 for result in documents:
     assert result["status"] == "complete"
@@ -1495,6 +1497,13 @@ assert len(file_compared["benchmark_regression_policy_identity"]) == 64
 assert len(file_compared["benchmark_comparison_identity"]) == 64
 assert file_compared["benchmark_regression_basis_points"] == 0
 assert file_compared["benchmark_performance_passed"] is True
+assert file_compared["benchmark_chart_generated"] is True
+assert file_compared["benchmark_chart_path"] == str(file_comparison_chart)
+assert len(file_compared["benchmark_chart_identity"]) == 64
+assert file_comparison_chart.is_file()
+assert hashlib.sha256(file_comparison_chart.read_bytes()).hexdigest() == (
+    file_compared["benchmark_chart_identity"]
+)
 assert file_incompatible["command"] == "graph attention benchmark compare"
 assert file_incompatible["status"] == "refused"
 assert file_incompatible["component_benchmark_status"] == "unavailable"

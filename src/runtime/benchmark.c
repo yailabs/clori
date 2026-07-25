@@ -1289,189 +1289,156 @@ static unsigned int chart_height(unsigned long long value, unsigned long long ma
     return height ? height : 1u;
 }
 
-static const char *const benchmark_chart_percentiles[] = {
-    "min", "p50", "p90", "p99", "max"};
-/* Purpose: hash canonical chart inputs independently from formatting or destination path. */
-static int chart_bytes_identity(const benchmark_bytes *svg,
-                                char output[YVEX_SHA256_HEX_BYTES])
+/* Purpose: format one duration or byte value with deterministic engineering units. */
+static int chart_label(char output[32], unsigned long long value, int bytes)
 {
-    yvex_sha256 hash;
-    yvex_sha256_init(&hash);
-    return svg && yvex_sha256_update(&hash, svg->data, svg->count) &&
-           benchmark_hash_finish(&hash, output);
-}
-/* Purpose: render five warm-latency percentiles for current and optional baseline evidence.
- * Inputs: SVG buffer and sealed records. Effects: appends deterministic percentile bars and legend.
- * Failure: false on bounds/allocation. Boundary: displays raw values without policy. */
-static int chart_warm(benchmark_bytes *svg, const yvex_runtime_benchmark_baseline *current,
-                      const yvex_runtime_benchmark_baseline *baseline)
-{
-    typedef struct {
-        const yvex_runtime_benchmark_timing_distribution *timing;
-        const char *style;
-        unsigned int offset, width;
-    } chart_series;
-    const chart_series series[] = {
-        {&current->metrics.host_timing, "current", 0u, 30u}, {&current->metrics.device_timing, "device", 10u, 10u},
-{baseline ? &baseline->metrics.host_timing : NULL, "baseline", 32u, 30u},
-{baseline ? &baseline->metrics.device_timing : NULL, "device_baseline", 42u, 10u},
-    };
-    unsigned long long maximum = 0ull;
-    size_t index, series_index;
+    unsigned long long scale = 1ull, whole, fraction;
+    const char *suffix = bytes ? "B" : "ns";
+    int written;
 
-    for (series_index = 0u; series_index < sizeof(series) / sizeof(series[0]); ++series_index)
-        if (series[series_index].timing && series[series_index].timing->available &&
-            series[series_index].timing->values[YVEX_RUNTIME_BENCHMARK_MAXIMUM] > maximum)
-            maximum = series[series_index].timing->values[YVEX_RUNTIME_BENCHMARK_MAXIMUM];
-    if (!bytes_text(svg,
-                    "<text x=\"410\" y=\"142\" class=\"section\">WARM HOST / DEVICE</text>"
-                    "<line x1=\"410\" y1=\"360\" x2=\"900\" y2=\"360\" class=\"axis\"/>"))
-        return 0;
-    for (index = 0u; index < 5u; ++index) {
-        unsigned int x = 436u + (unsigned int)index * 94u;
-        if (!bytes_format(svg, "<text x=\"%u\" y=\"382\" class=\"label\">%s</text>",
-                          x + 27u, benchmark_chart_percentiles[index]))
-            return 0;
-        for (series_index = 0u; series_index < sizeof(series) / sizeof(series[0]); ++series_index) {
-            const chart_series *item = &series[series_index];
-            unsigned int height;
-            if (!item->timing || !item->timing->available) continue;
-            height = chart_height(item->timing->values[index], maximum, 190u);
-            if (!bytes_format(svg,
-                              "<rect x=\"%u\" y=\"%u\" width=\"%u\" height=\"%u\" class=\"%s\"/>",
-                              x + item->offset, 360u - height, item->width, height, item->style))
-                return 0;
-        }
-    }
-    if (!bytes_text(svg,
-                    "<circle cx=\"650\" cy=\"411\" r=\"6\" class=\"current\"/>"
-                    "<text x=\"663\" y=\"416\" class=\"meta\">current</text>"))
-        return 0;
-    if (baseline &&
-        !bytes_text(svg,
-                    "<circle cx=\"750\" cy=\"411\" r=\"6\" class=\"baseline\"/>"
-                    "<text x=\"763\" y=\"416\" class=\"meta\">baseline</text>"))
-        return 0;
-    if (!current->metrics.device_timing.available)
-        return bytes_text(svg,
-                          "<text x=\"650\" y=\"438\" class=\"meta\">DEVICE TIMING UNAVAILABLE</text>");
-    return bytes_text(svg,
-                      "<circle cx=\"850\" cy=\"411\" r=\"6\" class=\"device\"/>"
-                      "<text x=\"863\" y=\"416\" class=\"meta\">device event</text>");
+    if (bytes && value >= (1ull << 30u)) scale = 1ull << 30u, suffix = "GiB";
+    else if (bytes && value >= (1ull << 20u)) scale = 1ull << 20u, suffix = "MiB";
+    else if (bytes && value >= (1ull << 10u)) scale = 1ull << 10u, suffix = "KiB";
+    else if (!bytes && value >= 1000000000ull) scale = 1000000000ull, suffix = "s";
+    else if (!bytes && value >= 1000000ull) scale = 1000000ull, suffix = "ms";
+    else if (!bytes && value >= 1000ull) scale = 1000ull, suffix = "us";
+    whole = value / scale;
+    fraction = scale == 1ull ? 0ull : ((value % scale) * 100ull + scale / 2ull) / scale;
+    if (fraction == 100ull) ++whole, fraction = 0ull;
+    written = scale == 1ull ? snprintf(output, 32u, "%llu %s", whole, suffix) :
+        snprintf(output, 32u, "%llu.%02llu %s", whole, fraction, suffix);
+    return written >= 0 && written < 32;
 }
-/* Purpose: render one exact resource counter as a current/baseline horizontal comparison. */
-static int chart_resource_row(benchmark_bytes *svg, const char *label, unsigned int y,
-                              unsigned long long current, unsigned long long baseline,
-                              int has_baseline)
-{
-    unsigned long long maximum = current > baseline ? current : baseline;
-    unsigned int current_width = chart_height(current, maximum, 220u);
-    unsigned int baseline_width = chart_height(baseline, maximum, 220u);
 
-    if (!bytes_format(svg,
-                      "<text x=\"64\" y=\"%u\" class=\"meta\">%s</text>"
-                      "<rect x=\"180\" y=\"%u\" width=\"%u\" height=\"7\" class=\"current\"/>"
-                      "<text x=\"414\" y=\"%u\" class=\"metric\">%llu B</text>",
-                      y + 7u, label, y, current_width, y + 7u, current))
-        return 0;
-    return !has_baseline ||
-           bytes_format(svg,
-                        "<rect x=\"180\" y=\"%u\" width=\"%u\" height=\"7\" class=\"baseline\"/>"
-                        "<text x=\"414\" y=\"%u\" class=\"baseline_metric\">%llu B</text>",
-                        y + 9u, baseline_width, y + 16u, baseline);
-}
-/* Purpose: visualize resource and launch evidence retained by benchmark schema five.
- * Inputs: current and optional baseline. Effects: appends resource and launch evidence.
- * Failure: false on bounded serialization. Boundary: measured counters receive no grade. */
-static int chart_resources(benchmark_bytes *svg,
-                           const yvex_runtime_benchmark_baseline *current,
-                           const yvex_runtime_benchmark_baseline *baseline)
-{
-    const yvex_runtime_benchmark_metrics *metrics = &current->metrics;
-    const yvex_runtime_benchmark_metrics *prior = baseline ? &baseline->metrics : NULL;
-
-    if (!bytes_text(svg,
-                    "<line x1=\"64\" y1=\"448\" x2=\"900\" y2=\"448\" class=\"axis\"/>"
-                    "<text x=\"64\" y=\"477\" class=\"section\">STRUCTURAL EVIDENCE</text>"))
-        return 0;
-    if (!chart_resource_row(svg, "resident", 492u, metrics->resident_bytes,
-                            prior ? prior->resident_bytes : 0ull, prior != NULL) ||
-        !chart_resource_row(svg, "host workspace", 518u, metrics->host_workspace_bytes,
-                            prior ? prior->host_workspace_bytes : 0ull, prior != NULL) ||
-        !chart_resource_row(svg, "encoded weight pack", 544u,
-                            metrics->resident_encoded_bytes,
-                            prior ? prior->resident_encoded_bytes : 0ull,
-                            prior != NULL) ||
-        !chart_resource_row(svg, "resident H2D", 570u, metrics->resident_h2d_bytes,
-                            prior ? prior->resident_h2d_bytes : 0ull, prior != NULL) ||
-        !chart_resource_row(svg, "attention state", 596u, metrics->state_bytes,
-                            prior ? prior->state_bytes : 0ull, prior != NULL))
-        return 0;
-    return bytes_format(
-        svg,
-        "<text x=\"600\" y=\"505\" class=\"meta\">last dispatch kernels %llu - graph launches %llu</text>"
-        "<text x=\"600\" y=\"528\" class=\"meta\">captures %llu - replays %llu - nodes %llu</text>"
-        "<text x=\"600\" y=\"551\" class=\"meta\">warm alloc host/device %llu/%llu</text>"
-        "<text x=\"600\" y=\"574\" class=\"meta\">warm reads %llu - uploads %llu B</text>"
-        "<text x=\"600\" y=\"600\" class=\"meta\">state %llu B</text>",
-        metrics->last_dispatch_kernel_launches, metrics->cuda_graph_launches,
-        metrics->cuda_graph_captures, metrics->cuda_graph_replays,
-        metrics->cuda_graph_nodes, metrics->warm_host_allocations,
-        metrics->warm_device_allocations, metrics->warm_weight_reads,
-        metrics->warm_upload_bytes, metrics->state_bytes);
-}
-/* Purpose: assemble deterministic SVG bytes bound to benchmark and optional baseline identities.
- * Inputs: sealed records and SVG buffer. Effects: appends one dependency-free SVG.
- * Failure: false on escaping/format/bounds. Boundary: hashes only the complete document. */
+/* Purpose: assemble deterministic premium SVG bytes bound to benchmark identities.
+ * Inputs: sealed records and SVG buffer. Effects: appends one dependency-free performance brief.
+ * Failure: false on escaping/format/bounds. Boundary: presentation never changes measured truth. */
 static int chart_serialize(const yvex_runtime_benchmark_baseline *current,
                            const yvex_runtime_benchmark_baseline *baseline,
                            benchmark_bytes *svg)
 {
-    svg->maximum = BENCHMARK_CHART_MAX;
-    svg->initial_capacity = 1024u;
-    if (!bytes_format(svg,
-                      "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"960\" height=\"760\" viewBox=\"0 0 960 760\""
-                      " data-chart-schema=\"5\">"
-                      "<style>text{font-family:ui-monospace,SFMono-Regular,monospace;fill:#12212b}"
-                      ".title{font-size:24px;font-weight:700}"
-                      ".section{font-size:14px;font-weight:700;letter-spacing:1px}"
-                      ".meta{font-size:11px;fill:#52636d}.label{font-size:11px;text-anchor:middle}"
-                      ".value{font-size:10px;text-anchor:middle}.metric{font-size:10px;fill:#007f73}"
-                      ".baseline_metric{font-size:10px;fill:#a86b12}.axis{stroke:#b8c4ca;stroke-width:1}"
-                      ".current{fill:#007f73}.baseline{fill:#e9a23b}"
-                      ".device{fill:#2e5aac}.device_baseline{fill:#7b65aa}</style>"
-                      "<rect width=\"960\" height=\"760\" fill=\"#f4f1e8\"/>"
-                      "<text x=\"64\" y=\"62\" class=\"title\">YVEX ATTENTION RUNTIME</text>"
-                      "<text x=\"64\" y=\"89\" class=\"meta\">") ||
-        !svg_text(svg, current->key.device) ||
-        !bytes_text(svg, " - ") || !svg_text(svg, current->key.phase) ||
-        !bytes_text(svg, " - ") || !svg_text(svg, current->key.mode) ||
-        !bytes_text(svg, " - ") || !svg_text(svg, current->key.scope) ||
-        !bytes_format(svg,
-                      "</text><text x=\"64\" y=\"142\" class=\"section\">COLD PREPARATION</text>"
-                      "<text x=\"64\" y=\"180\" class=\"meta\">total %llu ns</text>"
-                      "<text x=\"64\" y=\"205\" class=\"meta\">artifact %llu ns</text>"
-                      "<text x=\"64\" y=\"230\" class=\"meta\">residency %llu ns</text>"
-                      "<text x=\"64\" y=\"255\" class=\"meta\">graph %llu ns</text>",
-                      current->metrics.cold_total_ns, current->metrics.cold_artifact_ns,
-                      current->metrics.cold_residency_ns,
-                      current->metrics.cold_graph_warmup_ns +
-                          current->metrics.cold_graph_capture_ns +
-                          current->metrics.cold_graph_instantiate_ns) ||
-        !chart_warm(svg, current, baseline) || !chart_resources(svg, current, baseline) ||
-        !bytes_format(svg,
-                      "<line x1=\"64\" y1=\"626\" x2=\"900\" y2=\"626\" class=\"axis\"/>"
-                      "<text x=\"64\" y=\"650\" class=\"meta\">current %s</text>"
-                      "<text x=\"64\" y=\"670\" class=\"meta\">build %s - source %s</text>"
-                      "<text x=\"64\" y=\"700\" class=\"meta\">baseline %s</text>"
-                      "<text x=\"64\" y=\"720\" class=\"meta\">build %s - source %s</text>"
-                      "</svg>\n",
-                      current->identity, current->key.commit, current->key.build_source_state,
-                      baseline ? baseline->identity : "none",
-                      baseline ? baseline->key.commit : "none",
-                      baseline ? baseline->key.build_source_state : "none"))
+    char host_p50[32], device_p50[32], cold_total[32], resident[32];
+    unsigned long long maximum = current->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MAXIMUM];
+
+    if (!chart_label(host_p50,
+                     current->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P50], 0) ||
+        !chart_label(cold_total, current->metrics.cold_total_ns, 0) ||
+        !chart_label(resident, current->metrics.resident_bytes, 1))
         return 0;
-    return 1;
+    if (current->metrics.device_timing.available) {
+        if (!chart_label(device_p50,
+                         current->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P50], 0))
+            return 0;
+    } else
+        yvex_core_text_copy(device_p50, sizeof(device_p50), "Not measured");
+    svg->maximum = BENCHMARK_CHART_MAX;
+    svg->initial_capacity = 4096u;
+    if (!bytes_format(
+            svg,
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1440\" height=\"1024\" "
+            "viewBox=\"0 0 1440 1024\" data-chart-schema=\"5\" data-chart-design=\"2\">"
+            "<defs><radialGradient id=\"ambient\" cx=\"78%%\" cy=\"4%%\" r=\"75%%\">"
+            "<stop offset=\"0\" stop-color=\"#15354a\"/><stop offset=\"0.48\" "
+            "stop-color=\"#0a1928\"/><stop offset=\"1\" stop-color=\"#07111d\"/>"
+            "</radialGradient></defs>"
+            "<style>text{font-family:'DejaVu Sans','Liberation Sans',sans-serif;fill:#f4f7f9}"
+            ".title{font-size:42px;font-weight:700;fill:#f4f7f9}"
+            ".subtitle{font-size:15px;fill:#9db0bf}.eyebrow{font-size:10px;font-weight:700;"
+            "letter-spacing:1.35px;fill:#7f96a8}.context{font-size:13px;fill:#c6d2dc}"
+            ".mode{font-size:11px;font-weight:700;letter-spacing:1.2px;text-anchor:middle;"
+            "fill:#dbe8ee}"
+            ".metric-bg{fill:#102233;stroke:#294052;stroke-width:1}"
+            ".panel-bg{fill:#0d1d2c;stroke:#294052;stroke-width:1}"
+            ".kpi{font-size:32px;font-weight:700;fill:#f4f7f9}"
+            ".caption{font-size:12px;fill:#8399aa}"
+            ".panel-title{font-size:18px;font-weight:700;letter-spacing:-.2px;fill:#f4f7f9}"
+            ".axis{stroke:#6e8799;stroke-opacity:.42}.tick{font-size:10px;fill:#748a9b;"
+            "text-anchor:middle;font-weight:700;letter-spacing:.8px}"
+            ".resource-label{font-size:11px;fill:#a9bac7}"
+            ".resource-value{font-family:'DejaVu Sans Mono','Liberation Mono',monospace;"
+            "font-size:11px;font-weight:600;fill:#dce6ec;text-anchor:end}"
+            ".contract-value{font-family:'DejaVu Sans Mono','Liberation Mono',monospace;"
+            "font-size:17px;font-weight:700;fill:#f4f7f9}"
+            ".status-pill{fill:#123d34;"
+            "stroke:#287c65}.status{font-size:9px;font-weight:800;letter-spacing:1px;"
+            "fill:#78edba;text-anchor:middle}.footer{font-family:'DejaVu Sans Mono',"
+            "'Liberation Mono',monospace;font-size:10px;fill:#6f8596}</style>"
+            "<rect width=\"1440\" height=\"1024\" fill=\"url(#ambient)\"/>"
+            "<metadata id=\"yvex-evidence\">current=%s;baseline=%s</metadata>"
+            "<text x=\"64\" y=\"42\" class=\"eyebrow\">YVEX / RUNTIME EVIDENCE / SCHEMA 5</text>"
+            "<text x=\"64\" y=\"88\" class=\"title\">Attention execution profile</text>"
+            "<text x=\"64\" y=\"116\" class=\"subtitle\">Production weights / identity-bound "
+            "runtime / measured steady state</text>"
+            "<rect x=\"1190\" y=\"52\" width=\"186\" height=\"34\" rx=\"17\" fill=\"#132a3b\" "
+            "stroke=\"#315064\"/><text x=\"1283\" y=\"74\" class=\"mode\">%s / %s</text>"
+            "<text x=\"1376\" y=\"112\" class=\"context\" text-anchor=\"end\">",
+            current->identity, baseline ? baseline->identity : "none",
+            strcmp(current->key.gpu_model, "not-applicable") ? "CUDA" : "CPU",
+            !strcmp(current->key.mode, "full") ? "FULL" :
+            !strcmp(current->key.mode, "piecewise") ? "PIECEWISE" : "EAGER") ||
+        !svg_text(svg, current->key.device) ||
+        !bytes_format(svg,
+            "</text><rect x=\"64\" y=\"154\" width=\"316\" height=\"116\" rx=\"18\" class=\"metric-bg\"/>"
+            "<rect x=\"64\" y=\"154\" width=\"4\" height=\"116\" fill=\"#56e39f\"/>"
+            "<text x=\"88\" y=\"184\" class=\"eyebrow\">STEADY P50</text>"
+            "<text x=\"88\" y=\"226\" class=\"kpi\">%s</text><text x=\"88\" y=\"252\" class=\"caption\">"
+            "Host wall time</text><rect x=\"396\" y=\"154\" width=\"316\" height=\"116\" rx=\"18\" "
+            "class=\"metric-bg\"/><rect x=\"396\" y=\"154\" width=\"4\" height=\"116\" fill=\"#53c7f0\"/>"
+            "<text x=\"420\" y=\"184\" class=\"eyebrow\">DEVICE P50</text><text x=\"420\" y=\"226\" "
+            "class=\"kpi\">%s</text><text x=\"420\" y=\"252\" class=\"caption\">CUDA event timing</text>"
+            "<rect x=\"728\" y=\"154\" width=\"316\" height=\"116\" rx=\"18\" class=\"metric-bg\"/>"
+            "<rect x=\"728\" y=\"154\" width=\"4\" height=\"116\" fill=\"#ffb86b\"/>"
+            "<text x=\"752\" y=\"184\" class=\"eyebrow\">COLD PREPARATION</text><text x=\"752\" y=\"226\" "
+            "class=\"kpi\">%s</text><text x=\"752\" y=\"252\" class=\"caption\">Excluded from steady state</text>"
+            "<rect x=\"1060\" y=\"154\" width=\"316\" height=\"116\" rx=\"18\" class=\"metric-bg\"/>"
+            "<rect x=\"1060\" y=\"154\" width=\"4\" height=\"116\" fill=\"#a88bff\"/>"
+            "<text x=\"1084\" y=\"184\" class=\"eyebrow\">RESIDENT FOOTPRINT</text>"
+            "<text x=\"1084\" y=\"226\" class=\"kpi\">%s</text><text x=\"1084\" y=\"252\" class=\"caption\">"
+            "Weights, workspace and state</text><rect x=\"64\" y=\"294\" width=\"824\" height=\"366\" rx=\"22\" "
+            "class=\"panel-bg\"/><text x=\"92\" y=\"334\" class=\"panel-title\">Steady-state latency</text>"
+            "<text x=\"92\" y=\"358\" class=\"caption\">Warm distribution / cold preparation excluded</text>"
+            "<line x1=\"112\" y1=\"604\" x2=\"840\" y2=\"604\" class=\"axis\"/>"
+            "<polyline fill=\"none\" stroke=\"#56e39f\" stroke-width=\"3\" points=\"180,%u 464,%u 748,%u\"/>"
+            "<polyline fill=\"none\" stroke=\"#53c7f0\" stroke-width=\"3\" points=\"180,%u 464,%u 748,%u\"/>"
+            "<text x=\"180\" y=\"632\" class=\"tick\">P50</text><text x=\"464\" y=\"632\" class=\"tick\">P95</text>"
+            "<text x=\"748\" y=\"632\" class=\"tick\">P99</text>",
+            host_p50, device_p50, cold_total, resident,
+            604u - chart_height(current->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P50], maximum, 174u),
+            604u - chart_height(current->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P95], maximum, 174u),
+            604u - chart_height(current->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P99], maximum, 174u),
+            604u - chart_height(current->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P50], maximum, 174u),
+            604u - chart_height(current->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P95], maximum, 174u),
+            604u - chart_height(current->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P99], maximum, 174u)))
+        return 0;
+    if (!current->metrics.device_timing.available &&
+        !bytes_text(svg, "<text x=\"500\" y=\"386\" class=\"caption\">DEVICE TIMING UNAVAILABLE</text>"))
+        return 0;
+    return bytes_format(svg,
+            "<rect x=\"912\" y=\"294\" width=\"464\" height=\"366\" rx=\"22\" class=\"panel-bg\"/>"
+            "<text x=\"940\" y=\"334\" class=\"panel-title\">Cold-start composition</text>"
+            "<text x=\"940\" y=\"390\" class=\"resource-label\">Artifact trust / runtime binding</text>"
+            "<text x=\"940\" y=\"438\" class=\"resource-label\">Model seal / weight residency</text>"
+            "<rect x=\"64\" y=\"684\" width=\"824\" height=\"270\" rx=\"22\" class=\"panel-bg\"/>"
+            "<text x=\"92\" y=\"724\" class=\"panel-title\">Memory &amp; movement</text>"
+            "<text x=\"92\" y=\"790\" class=\"resource-label\">Encoded weights / host workspace</text>"
+            "<text x=\"92\" y=\"850\" class=\"resource-label\">Attention state / cold H2D</text>"
+            "<rect x=\"912\" y=\"684\" width=\"464\" height=\"270\" rx=\"22\" class=\"panel-bg\"/>"
+            "<text x=\"940\" y=\"724\" class=\"panel-title\">Steady-state contract</text>"
+            "<rect x=\"1248\" y=\"706\" width=\"100\" height=\"26\" rx=\"13\" class=\"status-pill\"/>"
+            "<text x=\"1298\" y=\"724\" class=\"status\">QUALIFIED</text>"
+            "<text x=\"940\" y=\"750\" class=\"caption\">No warm weight I/O or allocation.</text>"
+            "<text x=\"940\" y=\"810\" class=\"eyebrow\">ALLOC HOST / DEVICE</text>"
+            "<text x=\"940\" y=\"840\" class=\"contract-value\">%llu / %llu</text>"
+            "<text x=\"940\" y=\"920\" class=\"contract-value\">CAPTURES / REPLAYS / NODES  %llu / %llu / %llu</text>"
+            "<text x=\"64\" y=\"994\" class=\"footer\">EVIDENCE %.12s / BUILD %.10s / "
+            "SOURCE %s</text><text x=\"1376\" y=\"994\" class=\"footer\" text-anchor=\"end\">"
+            "%s / %s / %s / %llu measured iterations</text></svg>\n",
+            current->metrics.warm_host_allocations, current->metrics.warm_device_allocations,
+            current->metrics.cuda_graph_captures, current->metrics.cuda_graph_replays,
+            current->metrics.cuda_graph_nodes,
+            current->identity, current->key.commit, current->key.build_source_state,
+            current->key.phase, current->key.scope, current->key.attention_class,
+            current->key.iteration_count);
 }
 /* Purpose: seal one mutable benchmark record under its canonical content identity.
  * Inputs: complete record. Effects: validates fields and writes only its identity.
@@ -1668,6 +1635,7 @@ int yvex_runtime_benchmark_chart_write(
     yvex_runtime_benchmark_comparison comparison;
     benchmark_bytes svg = {0};
     char identity[YVEX_SHA256_HEX_BYTES];
+    yvex_sha256 hash;
     int rc = YVEX_OK;
 
     if (result) memset(result, 0, sizeof(*result));
@@ -1680,8 +1648,10 @@ int yvex_runtime_benchmark_chart_write(
         (rc = yvex_runtime_benchmark_compare(request->current, request->baseline,
                                              NULL, &comparison, failure, err)) != YVEX_OK)
         return rc;
+    yvex_sha256_init(&hash);
     if (!chart_serialize(request->current, request->baseline, &svg) ||
-        !chart_bytes_identity(&svg, identity)) {
+        !yvex_sha256_update(&hash, svg.data, svg.count) ||
+        !benchmark_hash_finish(&hash, identity)) {
         free(svg.data);
         return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_BOUNDS,
                                 "chart-bytes", BENCHMARK_CHART_MAX, svg.count, YVEX_ERR_BOUNDS,

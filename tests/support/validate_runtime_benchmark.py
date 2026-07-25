@@ -61,9 +61,12 @@ def exact_svg(path: pathlib.Path, identity: str, current: str, baseline: str,
     require(hashlib.sha256(data).hexdigest() == identity, f"{path}: digest mismatch")
     text = data.decode("utf-8")
     for fact in (
-        'data-chart-schema="5"', "WARM HOST / DEVICE", "device event",
-        f"current {current}", f"baseline {baseline}",
-        f"build {commit} - source {source_state}", device, "decode", mode,
+        'data-chart-schema="5"', 'data-chart-design="2"',
+        "Attention execution profile", "Steady-state latency",
+        "Cold-start composition", "Memory &amp; movement", "Steady-state contract",
+        "CUDA event timing", f"current={current}", f"baseline={baseline}",
+        f"BUILD {commit[:10]}", f"SOURCE {source_state}", device, "decode",
+        mode.upper(),
         "release-attention-set",
     ):
         require(fact in text, f"{path}: missing SVG provenance {fact!r}")
