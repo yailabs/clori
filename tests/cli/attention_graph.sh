@@ -111,6 +111,9 @@ contains "$OUT_DIR/help.out" "--max-device-bytes N"
 contains "$OUT_DIR/help.out" "--require-mode"
 contains "$OUT_DIR/help.out" "reserved controls refuse until their typed runtime owners exist"
 contains "$OUT_DIR/help.out" "--input tensor-file"
+contains "$OUT_DIR/help.out" "--input-file FILE"
+contains "$OUT_DIR/help.out" "--chunk-tokens N"
+contains "$OUT_DIR/help.out" "--context-capacity N"
 contains "$OUT_DIR/help.out" "--capture-bucket ID"
 contains "$OUT_DIR/help.out" "--baseline FILE"
 contains "$OUT_DIR/help.out" "--current FILE"
@@ -209,7 +212,7 @@ expect_status 3 "$YVEX_BIN" graph attention trace \
     >"$OUT_DIR/stage-trace.out" 2>"$OUT_DIR/stage-trace.err"
 contains "$OUT_DIR/stage-trace.err" "runtime binding"
 
-for control in "--input tensor-file" "--layer-start 0 --layer-count 2" \
+for control in "--layer-start 0 --layer-count 2" \
                "--local-capacity 0" \
                "--compressed-capacity 0" "--indexer-capacity 0"; do
     # shellcheck disable=SC2086
@@ -218,6 +221,23 @@ for control in "--input tensor-file" "--layer-start 0 --layer-count 2" \
         >"$OUT_DIR/control-refusal.out" 2>"$OUT_DIR/control-refusal.err"
     contains "$OUT_DIR/control-refusal.err" "unavailable until"
 done
+expect_status 2 "$YVEX_BIN" graph attention execute \
+    --target deepseek4-v4-flash --backend cpu --input tensor-file \
+    >"$OUT_DIR/input-file-required.out" 2>"$OUT_DIR/input-file-required.err"
+contains "$OUT_DIR/input-file-required.err" \
+    "--input tensor-file and --input-file are required together"
+expect_status 2 "$YVEX_BIN" graph attention execute \
+    --target deepseek4-v4-flash --backend cpu --input-file "$OUT_DIR/missing.activations" \
+    >"$OUT_DIR/input-class-required.out" 2>"$OUT_DIR/input-class-required.err"
+contains "$OUT_DIR/input-class-required.err" \
+    "--input tensor-file and --input-file are required together"
+expect_status 3 "$YVEX_BIN" graph attention execute \
+    --target deepseek4-v4-flash --backend cpu --phase prefill --mode eager \
+    --scope full --operation-scope core --input tensor-file \
+    --input-file "$OUT_DIR/missing.activations" --chunk-tokens 1 \
+    --context-capacity 1 \
+    >"$OUT_DIR/input-runtime-refusal.out" 2>"$OUT_DIR/input-runtime-refusal.err"
+contains "$OUT_DIR/input-runtime-refusal.err" "runtime binding"
 expect_status 3 "$YVEX_BIN" graph attention execute \
     --target deepseek4-v4-flash --backend cpu --layer 0 \
     --runtime-binding "$OUT_DIR/missing-layer.yvex-runtime-binding" \

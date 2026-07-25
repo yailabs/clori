@@ -16,6 +16,8 @@
 #   make test-runtime
 #   make test-runtime-deepseek-kv-live \
 #       YVEX_RUNTIME_BINDING=/absolute/file.yvex-runtime-binding
+#   make test-runtime-deepseek-prefill-live \
+#       YVEX_RUNTIME_BINDING=/absolute/file.yvex-runtime-binding
 #   make test-runtime-benchmark-chart
 #   make test-runtime-benchmark-chart-live YVEX_RUNTIME_BENCHMARK_DIR=/absolute/path \
 #       YVEX_RUNTIME_BINDING=/absolute/file.yvex-runtime-binding
@@ -39,9 +41,10 @@
 	test-runtime-descriptor test-runtime-binding test-runtime-model-session \
 	test-runtime-residency test-runtime-phases test-runtime-envelope \
 	test-runtime-operator test-runtime-digests test-runtime-family-neutrality \
-	test-runtime-state test-runtime-benchmark test-runtime-benchmark-chart \
+	test-runtime-state test-runtime-prefill test-runtime-benchmark test-runtime-benchmark-chart \
 	test-runtime-benchmark-chart-live update-runtime-benchmark-charts \
 	test-runtime-attention-live test-runtime-deepseek-kv-live \
+	test-runtime-deepseek-prefill-live \
 	test-runtime test-runtime-asan test-runtime-asan-live \
 	test-runtime-ubsan test-runtime-ubsan-live test-runtime-sanitizers \
 	test-runtime-sanitizers-live test-materialize-live-plan \
@@ -174,6 +177,7 @@ CORE_SRCS := \
 	src/runtime/graph.c \
 	src/runtime/benchmark.c \
 	src/runtime/binding.c \
+	src/runtime/prefill.c \
 	src/runtime/residency.c \
 	src/graph/state.c \
 	src/gguf/core.c \
@@ -299,6 +303,7 @@ QUANT_LIVE_RUNNER := $(TEST_DIR)/quant_deepseek
 ARTIFACT_LIVE_RUNNER := $(TEST_DIR)/artifact_deepseek
 MATERIALIZE_LIVE_RUNNER := $(TEST_DIR)/materialize_deepseek
 ATTENTION_LIVE_RUNNER := $(TEST_DIR)/attention_deepseek
+PREFILL_LIVE_RUNNER := $(TEST_DIR)/prefill_deepseek
 OFFICIAL_GGUF_CHECKER := $(TEST_DIR)/ggml_gguf_check
 CUDA_TEST_RUNNER := $(TEST_DIR)/test_cuda
 
@@ -330,11 +335,12 @@ QUANT_LIVE_OBJ := $(OBJ_DIR)/tests/live/quant_deepseek.o
 ARTIFACT_LIVE_OBJ := $(OBJ_DIR)/tests/live/artifact_deepseek.o
 MATERIALIZE_LIVE_OBJ := $(OBJ_DIR)/tests/live/materialize_deepseek.o
 ATTENTION_LIVE_OBJ := $(OBJ_DIR)/tests/live/attention_deepseek.o
+PREFILL_LIVE_OBJ := $(OBJ_DIR)/tests/live/prefill_deepseek.o
 
 RUNNER_OBJS := $(TEST_MAIN_OBJ) $(QUANT_TEST_RUNNER_OBJ) \
 	$(ARTIFACT_TEST_RUNNER_OBJ) $(CUDA_TEST_MAIN_OBJ) \
 	$(SOURCE_PAYLOAD_LIVE_OBJ) $(QUANT_LIVE_OBJ) $(ARTIFACT_LIVE_OBJ) \
-	$(MATERIALIZE_LIVE_OBJ) $(ATTENTION_LIVE_OBJ)
+	$(MATERIALIZE_LIVE_OBJ) $(ATTENTION_LIVE_OBJ) $(PREFILL_LIVE_OBJ)
 DEPENDENCY_FILES := $(CORE_OBJS:.o=.d) $(CLI_OBJS:.o=.d) \
 	$(DAEMON_OBJ:.o=.d) $(TEST_UNIT_OBJS:.o=.d) \
 	$(TEST_REFERENCE_OBJS:.o=.d) $(QUANT_TEST_UNIT_OBJS:.o=.d) \
@@ -443,6 +449,9 @@ test-runtime-family-neutrality: $(TEST_RUNNER) test-architecture-boundaries
 test-runtime-state: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state $(TEST_RUNNER)
 
+test-runtime-prefill: $(TEST_RUNNER)
+	YVEX_TEST_FILTER=runtime_prefill $(TEST_RUNNER)
+
 test-runtime-benchmark: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_benchmark $(TEST_RUNNER)
 
@@ -544,6 +553,7 @@ update-runtime-benchmark-charts: test-runtime-benchmark-chart-live
 # Keep focused harness invocations serial even when the outer make uses -j.
 test-runtime: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=runtime_prefill $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_benchmark $(TEST_RUNNER)
 	@! YVEX_TEST_FILTER=__unknown_runtime_test__ $(TEST_RUNNER) >/dev/null 2>&1
@@ -734,6 +744,44 @@ test-runtime-deepseek-kv-live: cuda
 		"$$tmp_dir/cpu.json" "$$tmp_dir/cuda.json"; \
 	echo "persistent DeepSeek KV live: CPU/CUDA 43 layers and 634 bindings"
 
+# This serial target proves tensor-file prefill, causality, rollback, and real CPU/CUDA state.
+test-runtime-deepseek-prefill-live: cuda $(PREFILL_LIVE_RUNNER) $(YVEX_BIN)
+	@set -eu; \
+	tmp_tag=runtime-deepseek-prefill-live; \
+	$(ATTENTION_OWNED_TMP_BEGIN) \
+	binding='$(YVEX_RUNTIME_BINDING)'; \
+	case "$$binding" in /*) ;; *) \
+		echo "YVEX_RUNTIME_BINDING must be an absolute file" >&2; exit 2;; \
+	esac; \
+	test -f "$$binding" && test ! -L "$$binding" || { \
+		echo "runtime binding must be a regular non-symlink file" >&2; exit 2; }; \
+	activations="$$tmp_dir/deepseek-prefill.yvex-activations"; \
+	$(PREFILL_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
+		"$$activations" >"$$tmp_dir/api.out"; \
+	for backend in cpu cuda; do \
+		$(YVEX_BIN) graph attention execute --target deepseek4-v4-flash \
+			--models-root "$(DEEPSEEK_OPERATOR_MODELS_ROOT)" \
+			--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
+			--backend "$$backend" --phase prefill --mode eager --scope full \
+			--operation-scope core --input tensor-file --input-file "$$activations" \
+			--chunk-tokens 1 --context-capacity 2 --progress off --output json \
+			>"$$tmp_dir/$$backend.json"; \
+	done; \
+	python3 -c 'import json,sys; rows=[json.load(open(p,encoding="utf-8")) for p in sys.argv[1:]]; \
+		assert all(r["status"]=="complete" and r["input_class"]=="typed_activation_tensor_file" \
+		and r["layers_executed"]==43 and r["bindings_executed"]==634 \
+		and r["swa_layers_executed"]==2 and r["csa_layers_executed"]==21 \
+		and r["hca_layers_executed"]==20 and r["prefill_chunk_count"]==2 \
+		and r["committed_prefix"]==2 and r["activation_prefill_ready"] \
+		and r["prefill_persistent_state_ready"] and not r["full_model_prefill_ready"] \
+		and r["persistent_kv_ready"] and not r["transformer_ready"] \
+		and not r["runtime_generation_ready"] for r in rows); \
+		assert rows[0]["tensor_output_digest"]==rows[1]["tensor_output_digest"]; \
+		assert rows[0]["state_delta_digest"]==rows[1]["state_delta_digest"]' \
+		"$$tmp_dir/cpu.json" "$$tmp_dir/cuda.json"; \
+	cat "$$tmp_dir/api.out"; \
+	echo "production DeepSeek activation prefill live: CPU/CUDA 43 layers and 634 bindings"
+
 test-attention-cli-live: $(YVEX_BIN) tests/cli/attention_graph.sh
 	@set -eu; \
 	tmp_tag=attention-cli-live; \
@@ -917,6 +965,10 @@ $(MATERIALIZE_LIVE_RUNNER): $(MATERIALIZE_LIVE_OBJ) $(LIBYVEX)
 $(ATTENTION_LIVE_RUNNER): $(ATTENTION_LIVE_OBJ) $(TEST_REFERENCE_OBJS) $(LIBYVEX)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(ATTENTION_LIVE_OBJ) $(TEST_REFERENCE_OBJS) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(PREFILL_LIVE_RUNNER): $(PREFILL_LIVE_OBJ) $(LIBYVEX)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(PREFILL_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(OFFICIAL_GGUF_CHECKER): tests/external/ggml_gguf_check.cpp
 	@test "$$(git -C "$(PINNED_GGML_ROOT)" rev-parse HEAD)" = af97976c7810cdabb1863172f31c432dab767de7

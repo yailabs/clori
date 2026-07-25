@@ -457,6 +457,10 @@ typedef struct {
 typedef int (*yvex_attention_probe_evidence_fn)(
     void *context, yvex_backend_kind backend,
     const yvex_attention_publication *publication, yvex_error *err);
+typedef int (*yvex_attention_activation_view_fn)(
+    void *context, unsigned long long layer_ordinal,
+    unsigned long long token_count, const float **input,
+    unsigned long long *input_stride, yvex_error *err);
 typedef struct {
     yvex_backend_kind backend;
     yvex_backend *backend_context;
@@ -469,12 +473,16 @@ typedef struct {
     int compare_backends;
     int (*cancel_requested)(void *context);
     void *cancel_context;
+    const char *input_identity;
+    yvex_attention_activation_view_fn activation_view;
+    void *activation_context;
     const yvex_attention_probe_state_provider *state_provider;
     yvex_attention_workspace *workspace;
     yvex_attention_evidence_level evidence_level;
     yvex_attention_probe_evidence_fn evidence;
     void *evidence_context;
 } yvex_attention_probe_request;
+typedef yvex_attention_probe_request yvex_attention_execution_request;
 typedef struct {
     unsigned long long value_count;
     unsigned long long finite_value_count;
@@ -544,6 +552,12 @@ typedef struct {
     int comparison_available, comparison_passed, output_digest_equal, state_delta_digest_equal;
     int bitwise_equality_observed, bitwise_equality_required;
 } yvex_attention_probe_result;
+int yvex_attention_publication_compare(
+    const yvex_attention_publication *left,
+    const yvex_attention_publication *right,
+    double absolute_tolerance, double relative_tolerance,
+    yvex_attention_probe_result *result, double *squared_error,
+    yvex_error *err);
 
 typedef struct yvex_attention_probe_history yvex_attention_probe_history;
 int yvex_attention_probe_position_resolve(const yvex_attention_layer_plan *layer, int class_selected,
@@ -565,6 +579,13 @@ int yvex_attention_probe_execute(const yvex_graph_family_api *family,
                                  const yvex_attention_probe_request *request,
                                  yvex_attention_probe_result *result,
                                  yvex_attention_failure *failure, yvex_error *err);
+int yvex_attention_execute(
+    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const void *family_ir, yvex_materialization_session *session,
+    const yvex_runtime_descriptor *descriptor,
+    const yvex_attention_execution_request *request,
+    yvex_attention_probe_result *result,
+    yvex_attention_failure *failure, yvex_error *err);
 
 /* Execute one operator-reachable probe through admitted artifact and graph owners.
  * Inputs: explicit canonical paths, backend, probe, and scope.

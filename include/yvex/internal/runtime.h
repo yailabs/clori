@@ -477,7 +477,7 @@ typedef enum {
 } yvex_runtime_operator_action;
 typedef struct {
     const char *target, *artifact_path;
-    const char *runtime_binding_path, *capture_bucket, *attention_class;
+    const char *runtime_binding_path, *activation_input_path, *capture_bucket, *attention_class;
     yvex_backend_kind backend;
     yvex_attention_probe_kind probe;
     yvex_attention_probe_scope scope;
@@ -486,7 +486,8 @@ typedef struct {
     yvex_runtime_execution_scope operation_scope;
     yvex_runtime_trace_policy trace_policy;
     yvex_runtime_operator_action operator_action;
-    unsigned long long token_count, warmup, repeat, layer_start, layer_count, history_tokens;
+    unsigned long long token_count, chunk_tokens, context_capacity, warmup, repeat;
+    unsigned long long layer_start, layer_count, history_tokens;
     unsigned long long maximum_host_bytes, maximum_device_bytes, selection_key;
     int compare_backends, require_mode, select_layer, select_selection_key;
     yvex_runtime_progress_callback progress;
@@ -521,8 +522,7 @@ typedef struct yvex_graph_attention_operator_result {
     char artifact_transform_identity[YVEX_SHA256_HEX_CAP], logical_transform_identity[YVEX_SHA256_HEX_CAP];
     char materialization_identity[YVEX_SHA256_HEX_CAP], logical_model_identity[YVEX_SHA256_HEX_CAP];
     char runtime_binding_identity[YVEX_SHA256_HEX_CAP], runtime_model_identity[YVEX_SHA256_HEX_CAP];
-    char runtime_numeric_identity[YVEX_SHA256_HEX_CAP];
-    char runtime_descriptor_identity[YVEX_SHA256_HEX_CAP];
+    char runtime_numeric_identity[YVEX_SHA256_HEX_CAP], runtime_descriptor_identity[YVEX_SHA256_HEX_CAP];
     char attention_plan_identity[YVEX_SHA256_HEX_CAP];
     char semantic_graph_identity[YVEX_SHA256_HEX_CAP], executable_graph_identity[YVEX_SHA256_HEX_CAP];
     char execution_descriptor_identity[YVEX_SHA256_HEX_CAP];
@@ -533,7 +533,7 @@ typedef struct yvex_graph_attention_operator_result {
          state_residency_identity[YVEX_SHA256_HEX_CAP];
     char execution_evidence_digest[YVEX_SHA256_HEX_CAP], execution_identity[YVEX_SHA256_HEX_CAP];
     char qualification_identity[YVEX_SHA256_HEX_CAP], quality_matrix_identity[YVEX_SHA256_HEX_CAP];
-    char quality_status[YVEX_RUNTIME_QUALITY_STATUS_COUNT][24];
+    char activation_input_identity[YVEX_SHA256_HEX_CAP], quality_status[YVEX_RUNTIME_QUALITY_STATUS_COUNT][24];
     char benchmark_scope[32], attention_class[16];
     char current_writer_plan_identity[YVEX_SHA256_HEX_CAP];
     char payload_plan_identity[YVEX_SHA256_HEX_CAP], payload_byte_identity[YVEX_SHA256_HEX_CAP];
@@ -566,6 +566,7 @@ typedef struct yvex_graph_attention_operator_result {
     unsigned long long state_generation, state_residency_generation, state_device_bytes;
     unsigned long long state_upload_bytes, state_upload_count;
     unsigned long long state_commit_count, state_abort_count, state_cancellation_count, state_reset_count;
+    unsigned long long prefill_chunk_count, committed_prefix;
     int cuda_graph_entry_state, cuda_graph_entry_reason, cuda_graph_entry_capture_mode;
     int cuda_graph_entry_uploaded, cuda_graph_entry_update_requested, pinned_host_residency;
     int physical_payload_compatible, artifact_rebuild_required, materialization_rebuild_required;
@@ -577,18 +578,17 @@ typedef struct yvex_graph_attention_operator_result {
     int state_transaction_active, state_validation_passed, state_read_after_write_verified,
         state_clear_reuse_verified;
     int production_api_available, internal_live_runner_available, operator_command_available;
-    int end_user_generation_available;
-    int model_behavior_evaluation_available, model_quality_evaluation_available;
+    int end_user_generation_available, model_behavior_evaluation_available;
+    int model_quality_evaluation_available;
     int agent_runtime_available, agent_evaluation_available, release_qualification_available;
     int benchmark_correctness_precondition_passed, benchmark_runtime_precondition_passed;
+    int activation_prefill_ready, prefill_persistent_state_ready, full_model_prefill_ready;
     unsigned long long artifact_bytes_hashed;
-    double lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_COUNT], total_seconds;
+    double lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_COUNT], total_seconds, benchmark_first_execution_seconds;
     double benchmark_host_seconds[YVEX_RUNTIME_BENCHMARK_STATISTIC_COUNT];
-    double benchmark_first_execution_seconds;
-    int benchmark_device_timing_available;
+    int benchmark_device_timing_available, artifact_identity_verified;
     double benchmark_device_seconds[YVEX_RUNTIME_BENCHMARK_STATISTIC_COUNT];
     yvex_runtime_benchmark_operator_summary benchmark;
-    int artifact_identity_verified;
     char failure_code[32], failure_where[YVEX_ERROR_WHERE_CAP];
 } yvex_graph_attention_operator_result;
 int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_request *request,

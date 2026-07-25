@@ -165,6 +165,7 @@ static int run_runtime_console(void)
 {
     if (run_test("runtime_benchmark", yvex_test_runtime_benchmark) != 0) return 1;
     if (run_test("runtime_binding", yvex_test_runtime_binding) != 0) return 1;
+    if (run_test("runtime_prefill", yvex_test_runtime_prefill) != 0) return 1;
     if (run_test("runtime_state", yvex_test_runtime_state) != 0) return 1;
     return 0;
 }

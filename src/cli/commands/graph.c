@@ -383,7 +383,10 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
     memset(out, 0, sizeof(*out));
     out->request.target = args->attention.target;
     out->request.artifact_path = out->artifact_path;
-    out->request.probe = YVEX_ATTENTION_PROBE_CANONICAL_V2;
+    out->request.activation_input_path = args->attention.input_file;
+    out->request.probe = args->attention.input_file
+                             ? YVEX_ATTENTION_PROBE_UNSPECIFIED
+                             : YVEX_ATTENTION_PROBE_CANONICAL_V2;
     out->request.scope = strcmp(args->attention.coverage, "full") == 0
                              ? YVEX_ATTENTION_PROBE_SCOPE_FULL
                              : YVEX_ATTENTION_PROBE_SCOPE_QUICK;
@@ -409,8 +412,11 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
         graph_attention_action_find(args->attention.action)->runtime_action;
     out->request.capture_bucket = args->attention.capture_bucket;
     out->request.attention_class = args->attention.attention_class;
-    memcpy(&out->request.token_count, &args->attention.token_count,
-           3u * sizeof(unsigned long long));
+    out->request.token_count = args->attention.token_count;
+    out->request.chunk_tokens = args->attention.chunk_tokens;
+    out->request.context_capacity = args->attention.context_capacity;
+    out->request.warmup = args->attention.warmup;
+    out->request.repeat = args->attention.repeat;
     if (args->attention.layer_seen || args->attention.layer_start_seen) {
         out->request.select_layer = 1;
         out->request.layer_start = args->attention.layer_seen

@@ -100,6 +100,7 @@ runtime_generation_ready
 runtime_binding_path
 runtime_binding_identity
 runtime_model_identity
+activation_input_identity
 semantic_graph_identity
 executable_graph_identity
 phase
@@ -223,6 +224,11 @@ state_transaction_active
 state_validation_passed
 state_read_after_write_verified
 state_clear_reuse_verified
+prefill_chunk_count
+committed_prefix
+activation_prefill_ready
+prefill_persistent_state_ready
+full_model_prefill_ready
 persistent_kv_ready
 transformer_ready
 benchmark_sample_count

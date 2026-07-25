@@ -1322,67 +1322,6 @@ static int attention_probe_comparison_identity(char output[YVEX_SHA256_HEX_CAP])
             sizeof(attention_comparison_identity_fields[0]),
         output);
 }
-
-/* Purpose: compare one CPU/CUDA publication pair and aggregate probe evidence.
- * Inputs: two complete publications, canonical tolerances, aggregate result, and error sum.
- * Effects: advances comparison metrics only after output and state comparisons complete.
- * Failure: malformed geometry or state preserves all caller-owned aggregate fields.
- * Boundary: probe aggregation only; canonical numeric comparison remains graph-owned. */
-static int attention_probe_pair_compare(const yvex_attention_publication *cpu,
-                                        const yvex_attention_publication *cuda,
-                                        double absolute_tolerance, double relative_tolerance,
-                                        yvex_attention_probe_result *result,
-                                        double *squared_error, yvex_error *err) {
-    yvex_graph_f32_comparison output;
-    yvex_attention_state_comparison state;
-    unsigned long long cpu_width, cuda_width, count;
-    const float *cpu_values, *cuda_values;
-    int rc;
-
-    if (!cpu || !cuda || !result || !squared_error) return YVEX_ERR_INVALID_ARG;
-    cpu_width = cpu->envelope_output_width ? cpu->envelope_output_width : cpu->hidden_width;
-    cuda_width = cuda->envelope_output_width ? cuda->envelope_output_width : cuda->hidden_width;
-    cpu_values = cpu->envelope_output_width ? cpu->envelope_output : cpu->output;
-    cuda_values = cuda->envelope_output_width ? cuda->envelope_output : cuda->output;
-    if (!cpu_values || !cuda_values || !cpu->complete || !cuda->complete ||
-        cpu->layer_index != cuda->layer_index || cpu->token_count != cuda->token_count ||
-        cpu_width != cuda_width || !yvex_core_u64_mul(cpu->token_count, cpu_width, &count))
-        return YVEX_ERR_FORMAT;
-    rc = yvex_graph_f32_compare(cpu_values, cuda_values, count, absolute_tolerance,
-                                relative_tolerance, &output, err);
-    if (rc == YVEX_OK)
-        rc = yvex_attention_state_compare(cpu, cuda, absolute_tolerance, relative_tolerance,
-                                          &state, err);
-    if (rc != YVEX_OK) return rc;
-    result->bitwise_equality_observed &=
-        output.bitwise_equal && state.geometry_equal && state.numeric.bitwise_equal;
-    result->comparison_maximum_absolute_error =
-        fmax(result->comparison_maximum_absolute_error,
-             fmax(output.maximum_absolute_error, state.numeric.maximum_absolute_error));
-    result->comparison_maximum_relative_error =
-        fmax(result->comparison_maximum_relative_error,
-             fmax(output.maximum_relative_error, state.numeric.maximum_relative_error));
-    *squared_error += output.squared_error_sum + state.numeric.squared_error_sum;
-    result->comparison_output_values += count;
-    result->comparison_state_values += state.numeric.value_count;
-    result->comparison_values += count + state.numeric.value_count;
-    result->comparison_finite_values +=
-        output.finite_value_count + state.numeric.finite_value_count;
-    result->comparison_nonfinite_values +=
-        output.nonfinite_value_count + state.numeric.nonfinite_value_count;
-    if (result->first_failing_layer == YVEX_ATTENTION_NO_LAYER && !output.within_tolerance) {
-        result->first_failing_layer = cpu->layer_index;
-        result->first_failing_coordinate = output.first_failing_coordinate;
-        result->first_failing_stage = YVEX_ATTENTION_COMPARISON_STAGE_OUTPUT;
-    } else if (result->first_failing_layer == YVEX_ATTENTION_NO_LAYER &&
-               (!state.geometry_equal || !state.numeric.within_tolerance)) {
-        result->first_failing_layer = cpu->layer_index;
-        result->first_failing_coordinate = state.numeric.first_failing_coordinate;
-        result->first_failing_stage = state.first_failing_stage;
-    }
-    return result->first_failing_layer == cpu->layer_index ? YVEX_ERR_FORMAT : YVEX_OK;
-}
-
 /* Purpose: compare one CPU/CUDA output pair.
  * Inputs: complete publications and probe context.
  * Effects: accumulates numeric metrics.
@@ -1391,7 +1330,7 @@ static int attention_probe_pair_compare(const yvex_attention_publication *cpu,
 static int attention_probe_compare(attention_probe_context *context,
                                    const yvex_attention_publication *cpu,
                                    const yvex_attention_publication *cuda) {
-    int rc = attention_probe_pair_compare(
+    int rc = yvex_attention_publication_compare(
         cpu, cuda, attention_comparison_absolute_tolerance,
         attention_comparison_relative_tolerance, &context->candidate,
         &context->metrics.squared_error, context->error);
@@ -1447,6 +1386,50 @@ static int attention_probe_state_abort(attention_probe_context *context, int pri
     return YVEX_OK;
 }
 
+/* Purpose: obtain canonical or admitted activation values for one layer.
+ * Inputs: execution context, layer coordinates, token count, and exact input width.
+ * Effects: borrows an admitted view or allocates and fills one canonical input.
+ * Failure: publishes no usable view. Boundary: this helper performs no attention math. */
+static int attention_probe_input_open(
+    attention_probe_context *context, unsigned long long layer_ordinal,
+    const yvex_attention_layer_plan *layer, unsigned long long position,
+    unsigned long long token_count, unsigned long long input_width,
+    const float **input, float **owned_input, unsigned long long *input_stride)
+{
+    unsigned long long input_count, token;
+    int rc;
+    if (!yvex_core_u64_mul(token_count, input_width, &input_count))
+        return attention_probe_fail(context->error, YVEX_ERR_BOUNDS,
+                                    "attention input extent overflowed");
+    if (context->request->activation_view) {
+        rc = context->request->activation_view(
+            context->request->activation_context, layer_ordinal, token_count,
+            input, input_stride, context->error);
+        if (rc != YVEX_OK) return rc;
+        if (!*input || *input_stride != input_width)
+            return attention_probe_fail(
+                context->error, YVEX_ERR_FORMAT,
+                "activation input geometry disagrees with the admitted layer");
+        return YVEX_OK;
+    }
+    *owned_input = attention_probe_calloc(
+        context->request->workspace, input_count, sizeof(**owned_input));
+    *input = *owned_input;
+    if (!*input)
+        return attention_probe_fail(
+            context->error,
+            context->request->workspace ? YVEX_ERR_BOUNDS : YVEX_ERR_NOMEM,
+            context->request->workspace
+                ? "canonical attention workspace capacity is insufficient"
+                : "canonical attention input allocation failed");
+    for (token = 0ull; token < token_count; ++token)
+        attention_probe_fill(
+            *owned_input + token * input_width, NULL, input_width,
+            layer->layer_index + position + token + 1009ull +
+                (unsigned long long)context->request->perturb_input);
+    return YVEX_OK;
+}
+
 /* Purpose: execute one real-geometry layer through each requested production backend.
  * Inputs: admitted operator context, layer, and deterministic position.
  * Effects: advances aggregate evidence only after complete publications.
@@ -1465,29 +1448,21 @@ static int attention_probe_layer_execute(
     unsigned long long input_width =
         context->request->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE
             ? layer->residual_expanded_width : layer->hidden_dimension;
-    unsigned long long input_count, workspace_mark = 0ull, token;
-    float *input;
+    unsigned long long input_stride = input_width;
+    unsigned long long workspace_mark = 0ull;
+    const float *input = NULL;
+    float *owned_input = NULL;
     unsigned int index;
     int state_started = 0, rc = YVEX_OK;
-    if (!yvex_core_u64_mul(token_count, input_width, &input_count))
-        return attention_probe_fail(context->error, YVEX_ERR_BOUNDS,
-                                    "canonical attention input extent overflowed");
     if (context->request->workspace)
         workspace_mark = yvex_attention_workspace_mark(context->request->workspace);
-    input = attention_probe_calloc(context->request->workspace, input_count, sizeof(*input));
-    if (!input)
-        return attention_probe_fail(
-            context->error,
-            context->request->workspace ? YVEX_ERR_BOUNDS : YVEX_ERR_NOMEM,
-            context->request->workspace
-                ? "canonical attention workspace capacity is insufficient"
-                : "canonical attention input allocation failed");
-    for (token = 0ull; token < token_count; ++token)
-        attention_probe_fill(input + token * input_width, NULL, input_width,
-                             layer->layer_index + position + token + 1009ull +
-                                 (unsigned long long)context->request->perturb_input);
+    rc = attention_probe_input_open(
+        context, layer_ordinal, layer, position, token_count, input_width,
+        &input, &owned_input, &input_stride);
+    if (rc != YVEX_OK) goto cleanup;
     history.workspace = context->request->workspace;
-    if (position && !attention_probe_history_init(&history, layer, context->summary, position)) {
+    if (position && !context->request->state_provider &&
+        !attention_probe_history_init(&history, layer, context->summary, position)) {
         rc = attention_probe_fail(
             context->error,
             context->request->workspace ? YVEX_ERR_BOUNDS : YVEX_ERR_NOMEM,
@@ -1519,7 +1494,7 @@ static int attention_probe_layer_execute(
     options.token_position = position;
     options.token_count = token_count;
     options.input = input;
-    options.input_stride = input_width;
+    options.input_stride = input_stride;
     options.history = execution_history;
     options.evidence_level = context->request->evidence_level;
     options.workspace = context->request->workspace;
@@ -1648,7 +1623,7 @@ cleanup:
                                       "attention workspace rewind failed after publication");
         }
     } else {
-        free(input);
+        free(owned_input);
     }
     return rc;
 }
@@ -1760,7 +1735,10 @@ static int attention_probe_finalize(attention_probe_context *context) {
     }
     fields[0] = (attention_probe_identity_field){context->summary->attention_plan_identity, 0ull};
     fields[1] = (attention_probe_identity_field){request->logical_model_identity, 0ull};
-    fields[2] = (attention_probe_identity_field){NULL, YVEX_ATTENTION_PROBE_CANONICAL_V2};
+    fields[2] = (attention_probe_identity_field){
+        request->input_identity, request->input_identity
+                                     ? 0ull
+                                     : YVEX_ATTENTION_PROBE_CANONICAL_V2};
     fields[3] = (attention_probe_identity_field){NULL, request->scope};
     fields[4] = (attention_probe_identity_field){NULL, request->operation_scope};
     fields[5] = (attention_probe_identity_field){NULL, request->token_count};
@@ -1841,19 +1819,17 @@ static void attention_probe_comparison_publish(yvex_attention_probe_result *resu
            &candidate->comparison_maximum_absolute_error, metrics);
     result->comparison_passed = 0;
 }
-
-/* Purpose: execute the canonical operator probe through admitted production owners.
- * Inputs: sealed plan, materialization, descriptor, scope, and backend.
- * Effects: publishes complete evidence or comparison-only refusal diagnostics.
- * Failure: reverse-order cleanup preserves graph state and caller-owned inputs.
- * Boundary: no oracle, prompt, persistent KV, transformer, or generation work. */
-int yvex_attention_probe_execute(const yvex_graph_family_api *family,
-                                 const yvex_attention_plan *plan, const void *family_ir,
-                                 yvex_materialization_session *session,
-                                 const yvex_runtime_descriptor *descriptor,
-                                 const yvex_attention_probe_request *request,
-                                 yvex_attention_probe_result *result,
-                                 yvex_attention_failure *failure, yvex_error *err) {
+/* Purpose: execute canonical or admitted activations through the production owners.
+ * Inputs: sealed plan, materialization, descriptor, scope, backend, and input.
+ * Effects: publishes complete evidence. Failure: releases candidate state.
+ * Boundary: no oracle, prompt, transformer, or generation work. */
+int yvex_attention_execute(
+    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const void *family_ir, yvex_materialization_session *session,
+    const yvex_runtime_descriptor *descriptor,
+    const yvex_attention_execution_request *request,
+    yvex_attention_probe_result *result,
+    yvex_attention_failure *failure, yvex_error *err) {
     attention_probe_context context = {.family = family,
                                        .plan = plan,
                                        .family_ir = family_ir,
@@ -1864,9 +1840,13 @@ int yvex_attention_probe_execute(const yvex_graph_family_api *family,
                                        .error = err};
     unsigned long long index;
     int selected[ATTENTION_PROBE_CLASS_COUNT] = {0};
-    int workspace_started = 0;
-    int rc = YVEX_OK;
-    if (!request || request->probe != YVEX_ATTENTION_PROBE_CANONICAL_V2 ||
+    int workspace_started = 0, rc = YVEX_OK;
+    if (!request ||
+        ((!request->activation_view &&
+          request->probe != YVEX_ATTENTION_PROBE_CANONICAL_V2) ||
+         (request->activation_view &&
+          (request->probe != YVEX_ATTENTION_PROBE_UNSPECIFIED ||
+           !yvex_sha256_hex_valid(request->input_identity)))) ||
         (request->backend != YVEX_BACKEND_KIND_CPU &&
          request->backend != YVEX_BACKEND_KIND_CUDA) ||
         (request->scope != YVEX_ATTENTION_PROBE_SCOPE_QUICK &&
@@ -1996,4 +1976,22 @@ cleanup:
         yvex_error_clear(err);
     }
     return rc;
+}
+/* Purpose: execute canonical diagnostic input through the shared executor.
+ * Inputs: canonical request and admitted owners. Effects: traverses each layer.
+ * Failure: activation callbacks refuse. Boundary: probe generation remains diagnostic-only. */
+int yvex_attention_probe_execute(
+    const yvex_graph_family_api *family, const yvex_attention_plan *plan,
+    const void *family_ir, yvex_materialization_session *session,
+    const yvex_runtime_descriptor *descriptor,
+    const yvex_attention_probe_request *request,
+    yvex_attention_probe_result *result,
+    yvex_attention_failure *failure, yvex_error *err)
+{
+    if (!request || request->activation_view || request->input_identity)
+        return attention_probe_fail(
+            err, YVEX_ERR_INVALID_ARG,
+            "canonical probe cannot borrow an activation input");
+    return yvex_attention_execute(family, plan, family_ir, session, descriptor,
+                                  request, result, failure, err);
 }

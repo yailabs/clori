@@ -146,12 +146,45 @@ read, upload, workspace resize or graph capture. The runtime refuses requests
 outside the prepared capacities instead of resizing a captured execution
 implicitly.
 
+### Internal Activation-Prefill Boundary
+
+`include/yvex/internal/runtime_prefill.h` owns the non-installed production
+contract for activation-driven attention prefill. Schema v1 binds the logical
+model, runtime numeric, runtime descriptor, attention plan, operation scope,
+token range, all 43 ordered layer identities, exact widths and strides,
+canonical little-endian F32 payload ranges, payload digest, and input identity.
+It serializes fields explicitly and never hashes native structures, pointers,
+paths, padding, or timestamps.
+
+`yvex_runtime_activation_input_open_memory` and
+`yvex_runtime_activation_input_open_file` project the same immutable facts.
+The file adapter retains a read-only regular-file handle and bounded mapping,
+rejects symlinks, duplicate/missing/reordered layers, invalid dimensions,
+overlap, truncation, trailing bytes, digest mismatch, non-finite payload,
+resource overflow, and file drift. Close is idempotent.
+
+`yvex_runtime_activation_prefill_execute` admits position and capacity before
+mutation, divides the activation range into deterministic chunks, and invokes
+the shared production attention executor for every layer. Each successful
+chunk commits one complete persistent-state generation and advances position
+once. Failure or cancellation aborts the failing chunk while preserving the
+exact earlier committed prefix. CPU and CUDA eager consume the same activation
+contract and session-owned provider; CUDA never falls back to CPU.
+
+The result publishes activation-input identity, chunk/layer/class counts,
+attention-output digest, persistent-state digest, committed prefix, position
+and generation transitions, and execution identity. It is not a complete
+transformer hidden state. Prompt text, tokenization, embedding, FFN/MoE,
+cross-layer transformer composition, model decode, and generation remain
+outside this API.
+
 ### Internal DeepSeek Attention Operator Boundary
 
 `yvex_graph_attention_operator_execute` is the non-installed typed adapter used
 by `yvex graph attention ...`. It consumes a runtime binding, common runtime
-model/session, admitted external artifact and canonical probe activation. It
-never calls Make, a test executable, another process or the test-only oracle.
+model/session, admitted external artifact, and either a canonical diagnostic
+probe or admitted tensor-file activation input. It never calls Make, a test
+executable, another process or the test-only oracle.
 
 The operator distinguishes:
 
@@ -219,8 +252,11 @@ instantiation, update and replay timings. It is not a persistent cross-process
 graph cache.
 
 The canonical probe preserves real model width, heads, bindings, qtypes,
-position policy and attention history geometry. It is deterministic activation
-input, not prompt text.
+position policy and attention history geometry. It is deterministic diagnostic
+input, not prompt text. Production activation prefill instead selects
+`--input tensor-file --input-file FILE`, validates the schema-v1 bundle, and
+reports `activation_prefill_ready` separately from
+`full_model_prefill_ready`.
 
 ## Qualification, Benchmark, And Chart Contract
 
@@ -281,7 +317,9 @@ they are not independent capability authorities.
 
 The current runtime supports production DeepSeek attention over admitted
 weights and session-owned persistent attention state on CPU and the admitted
-GB10 CUDA path. It does not provide tokenizer-backed prompt prefill, MoE, a
+GB10 CUDA path. It also supports identity-bound activation prefill across all
+43 attention layers with per-chunk atomic state publication. It does not
+provide prompt/token embedding, tokenizer-backed full-model prefill, MoE, a
 complete transformer, model decode, logits, sampling, text generation,
 evaluation, a full-model benchmark or release readiness.
 

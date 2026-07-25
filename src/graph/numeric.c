@@ -409,6 +409,83 @@ int yvex_attention_state_compare(const yvex_attention_publication *left,
     return rc;
 }
 
+/* Purpose: compare complete output and state publications and aggregate numeric evidence.
+ * Inputs: two complete publications, explicit tolerances, aggregate result, and error sum.
+ * Effects: advances comparison counters only after output and state comparisons complete.
+ * Failure: malformed geometry or state preserves caller-owned publication bytes.
+ * Boundary: numerical conformance only; it owns no oracle, backend, or persistent state. */
+int yvex_attention_publication_compare(
+    const yvex_attention_publication *left,
+    const yvex_attention_publication *right,
+    double absolute_tolerance, double relative_tolerance,
+    yvex_attention_probe_result *result, double *squared_error,
+    yvex_error *err)
+{
+    yvex_graph_f32_comparison output;
+    yvex_attention_state_comparison state;
+    unsigned long long left_width, right_width, count;
+    const float *left_values, *right_values;
+    int rc;
+    if (!left || !right || !result || !squared_error)
+        return YVEX_ERR_INVALID_ARG;
+    left_width = left->envelope_output_width
+                     ? left->envelope_output_width : left->hidden_width;
+    right_width = right->envelope_output_width
+                      ? right->envelope_output_width : right->hidden_width;
+    left_values = left->envelope_output_width
+                      ? left->envelope_output : left->output;
+    right_values = right->envelope_output_width
+                       ? right->envelope_output : right->output;
+    if (!left_values || !right_values || !left->complete ||
+        !right->complete || left->layer_index != right->layer_index ||
+        left->token_count != right->token_count ||
+        left_width != right_width ||
+        !yvex_core_u64_mul(left->token_count, left_width, &count))
+        return YVEX_ERR_FORMAT;
+    rc = yvex_graph_f32_compare(
+        left_values, right_values, count, absolute_tolerance,
+        relative_tolerance, &output, err);
+    if (rc == YVEX_OK)
+        rc = yvex_attention_state_compare(
+            left, right, absolute_tolerance, relative_tolerance, &state, err);
+    if (rc != YVEX_OK) return rc;
+    result->bitwise_equality_observed &=
+        output.bitwise_equal && state.geometry_equal &&
+        state.numeric.bitwise_equal;
+    result->comparison_maximum_absolute_error =
+        fmax(result->comparison_maximum_absolute_error,
+             fmax(output.maximum_absolute_error,
+                  state.numeric.maximum_absolute_error));
+    result->comparison_maximum_relative_error =
+        fmax(result->comparison_maximum_relative_error,
+             fmax(output.maximum_relative_error,
+                  state.numeric.maximum_relative_error));
+    *squared_error +=
+        output.squared_error_sum + state.numeric.squared_error_sum;
+    result->comparison_output_values += count;
+    result->comparison_state_values += state.numeric.value_count;
+    result->comparison_values += count + state.numeric.value_count;
+    result->comparison_finite_values +=
+        output.finite_value_count + state.numeric.finite_value_count;
+    result->comparison_nonfinite_values +=
+        output.nonfinite_value_count + state.numeric.nonfinite_value_count;
+    if (result->first_failing_layer == YVEX_ATTENTION_NO_LAYER &&
+        !output.within_tolerance) {
+        result->first_failing_layer = left->layer_index;
+        result->first_failing_coordinate = output.first_failing_coordinate;
+        result->first_failing_stage = YVEX_ATTENTION_COMPARISON_STAGE_OUTPUT;
+    } else if (result->first_failing_layer == YVEX_ATTENTION_NO_LAYER &&
+               (!state.geometry_equal ||
+                !state.numeric.within_tolerance)) {
+        result->first_failing_layer = left->layer_index;
+        result->first_failing_coordinate =
+            state.numeric.first_failing_coordinate;
+        result->first_failing_stage = state.first_failing_stage;
+    }
+    return result->first_failing_layer == left->layer_index
+               ? YVEX_ERR_FORMAT : YVEX_OK;
+}
+
 /* Purpose: select the publication's exact committed output span.
  * Inputs: immutable publication and caller-owned width slot.
  * Effects: writes the selected core or envelope width and returns borrowed values.

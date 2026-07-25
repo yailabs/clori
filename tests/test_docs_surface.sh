@@ -302,6 +302,7 @@ done
 
 for snapshot in \
   '| Persistent attention state | Admitted for all 43 DeepSeek attention layers' \
+  '| Activation-driven attention prefill | Versioned 43-layer activation bundles' \
   '| Tokenizer-backed model prefill and model decode | Unsupported |' \
   '| FFN/MoE and complete transformer composition | Unsupported |' \
   '| Logits, sampling, and text generation | Unsupported |' \
@@ -326,7 +327,9 @@ for command in \
 do
   require_text README.md "$command"
 done
-require_text README.md 'canonical attention activation probe'
+require_text README.md 'canonical diagnostic activation'
+require_text README.md 'versioned tensor-file activation bundle'
+require_text README.md '--input tensor-file'
 require_text README.md 'Prompt-backed prefill, model decode, and generation'
 
 readme_commands=$(grep -E '^[[:space:]]*\./yvex([[:space:]]|$)' README.md |
@@ -353,7 +356,9 @@ if grep -nE '^[[:space:]]*\./yvex (generate|prefill|decode|logits|sample|serve|f
 fi
 
 require_text docs/contract.md '### DeepSeek Attention Operator Contract'
+require_text docs/contract.md '## Production Activation-Prefill Contract'
 require_text docs/api.md '### Internal DeepSeek Attention Operator Boundary'
+require_text docs/api.md '### Internal Activation-Prefill Boundary'
 require_text docs/contract.md '## Quality, Qualification, Benchmark, And Evaluation Contract'
 require_text docs/api.md '## Qualification, Benchmark, And Chart Contract'
 require_text docs/contract.md '### Attention Component Benchmark'
@@ -555,7 +560,7 @@ require_text "$project" '`attention_execution_supported=1`, `attention_cuda_exec
 require_text "$project" 'complete DeepSeek SWA/CSA/HCA attention core and its immediate envelope are admitted'
 require_text "$project" 'a supported DeepSeek-V4-Flash model artifact; the admitted artifacts are consumed by attention but have not passed the complete runtime and release gates;'
 require_text "$project" 'complete-model, MoE, or output-head residency; only the admitted attention weight pack and session-owned persistent attention state are resident;'
-require_text "$project" 'an execution-complete DeepSeek transformer runtime; the common attention runtime and persistent state are admitted but full-model prefill, FFN/MoE, complete layer composition, and final model output are not;'
+require_text "$project" 'an execution-complete DeepSeek transformer runtime; the common attention runtime, persistent state, and activation-driven attention prefill are admitted but embedding, cross-layer hidden-state propagation, full-model prefill, FFN/MoE, complete layer composition, and final model output are not;'
 require_text "$project" 'persistent_kv_ready=1'
 reject_text "$project" 'complete GGUF writer, complete-model emission, writer-reader roundtrip, or artifact support admission;'
 require_text "$project" '| Recovered IDs | 631 |'

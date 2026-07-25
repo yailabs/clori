@@ -236,6 +236,44 @@ For equal initial state and input activation sequence, one N-token attention
 chunk and N ordered one-token attention decode operations must agree on every
 output, compressed/indexer transition, local tail and final state delta.
 
+## Production Activation-Prefill Contract
+
+The runtime admits activation prefill through one versioned pointer-free input.
+Schema v1 binds the logical model, runtime numeric policy, runtime descriptor,
+attention plan, operation scope, token start/count, all 43 ordered layer
+identities, exact widths/strides and payload ranges, payload digest, and input
+identity. The canonical tensor-file encoding is little-endian, has an explicit
+header and record directory, carries only finite F32 payload values, and
+permits neither native structure bytes nor path-derived identity.
+
+The memory and file adapters use the same admission logic. A tensor file must
+be a regular non-symlink file and must match its stable open-handle snapshot
+before and after execution. Missing, duplicate, reordered, or unknown layers;
+identity, width, stride, range, digest, token, or scope mismatches; overlap,
+truncation, trailing bytes, non-finite values, drift, and budget overflow
+refuse before state mutation.
+
+One production prefill request starts at the session's exact committed
+position. The coordinator checks model context, persistent-state, activation,
+workspace, host/device, and chunk capacities before execution. It runs the
+existing production attention executor for every ordered layer and commits the
+provider and backend state once per complete chunk. A failing or cancelled
+chunk publishes no partial layer state and advances neither position nor
+generation; earlier committed chunks remain authoritative and are reported as
+the committed prefix.
+
+CPU eager and admitted GB10 CUDA eager consume the same activation bundle and
+persistent-state contract. They do not copy attention equations into a prefill
+executor and CUDA does not fall back to CPU. Canonical probes remain available
+for attention diagnostics but do not establish activation-prefill capability.
+
+This boundary publishes attention/envelope output facts, output and state
+digests, chunk/layer/class counts, committed prefix, position/generation
+transitions, and identities. It does not publish a complete transformer hidden
+state. Prompt text, tokenization, embedding, cross-layer hidden-state
+propagation, FFN/MoE, complete transformer prefill, model decode, logits,
+sampling, and generation remain unsupported.
+
 ## Graph Execution Contract
 
 The runtime identifies three levels independently:
@@ -304,11 +342,19 @@ Representative execution is:
   --runtime-binding /path/to/binding.yvex-runtime-binding \
   --backend cuda --phase decode --mode full \
   --operation-scope release-attention-set --probe canonical --output json
+
+./yvex graph attention execute --target deepseek4-v4-flash \
+  --runtime-binding /path/to/binding.yvex-runtime-binding \
+  --backend cuda --phase prefill --mode eager --scope full \
+  --operation-scope core --input tensor-file \
+  --input-file /path/to/input.yvex-activations \
+  --chunk-tokens 2 --context-capacity 4096 --output json
 ```
 
 Quick scope executes representative SWA/CSA/HCA layers. Full scope executes all
 43 layers and 634 core bindings. Both retain exact geometry and admitted
-weights. Neither accepts prompt text.
+weights. Tensor-file prefill requires full scope and executes every ordered
+layer record. Neither input class accepts prompt text.
 
 Planning seals an execution descriptor without numerical dispatch. State,
 residency, capture/replay, registry, trace, profile and benchmark actions call

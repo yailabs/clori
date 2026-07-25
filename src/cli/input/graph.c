@@ -100,6 +100,8 @@ GRAPH_PARSE_ATTENTION, 0, "yvex: graph attention option requires a value"},
 GRAPH_PARSE_ATTENTION, 0, "yvex: graph attention option requires a value"},
     {"--input", GRAPH_OPTION_TEXT, GRAPH_ATTN(input_class), NO_FIELD, 0,
 GRAPH_PARSE_ATTENTION, 0, "yvex: --input requires tensor-file"},
+    {"--input-file", GRAPH_OPTION_TEXT, GRAPH_ATTN(input_file), NO_FIELD, 0,
+GRAPH_PARSE_ATTENTION, 0, "yvex: --input-file requires a file path"},
     {"--layer", GRAPH_OPTION_NONNEGATIVE, GRAPH_ATTN(layer), GRAPH_ATTN(layer_seen), 0,
 GRAPH_PARSE_ATTENTION, 0, "yvex: --layer requires a non-negative integer"},
     {"--layer-start", GRAPH_OPTION_NONNEGATIVE, GRAPH_ATTN(layer_start),
@@ -144,6 +146,10 @@ GRAPH_ATTN(regression_basis_points), NO_FIELD, 0, GRAPH_PARSE_ATTENTION, 0,
 GRAPH_PARSE_ATTENTION, 0, "yvex: --chart requires an external SVG path"},
     {"--tokens", GRAPH_OPTION_POSITIVE, GRAPH_ATTN(token_count), GRAPH_ATTN(token_count_seen), 0,
 GRAPH_PARSE_ATTENTION, 0, "yvex: --tokens requires a positive integer"},
+    {"--chunk-tokens", GRAPH_OPTION_POSITIVE, GRAPH_ATTN(chunk_tokens), NO_FIELD, 0,
+GRAPH_PARSE_ATTENTION, 0, "yvex: --chunk-tokens requires a positive integer"},
+    {"--context-capacity", GRAPH_OPTION_POSITIVE, GRAPH_ATTN(context_capacity), NO_FIELD, 0,
+GRAPH_PARSE_ATTENTION, 0, "yvex: --context-capacity requires a positive integer"},
     {"--warmup", GRAPH_OPTION_NONNEGATIVE, GRAPH_ATTN(warmup), NO_FIELD, 0,
 GRAPH_PARSE_ATTENTION, 0, "yvex: --warmup requires a non-negative integer"},
     {"--repeat", GRAPH_OPTION_POSITIVE, GRAPH_ATTN(repeat), NO_FIELD, 0,
@@ -306,9 +312,20 @@ static int graph_attention_controls_validate(const yvex_graph_args *out, yvex_er
     if (out->attention.input_class && strcmp(out->attention.input_class, "tensor-file") != 0)
         return graph_arg_errorf(err, "yvex: unsupported attention input class: %s",
                                 out->attention.input_class);
-    if (out->attention.input_class)
-        return graph_attention_control_refuse(err, "--input tensor-file",
-                                              "the typed activation-input adapter");
+    if (!!out->attention.input_class != !!out->attention.input_file)
+        return graph_arg_error(
+            err, "yvex: --input tensor-file and --input-file are required together");
+    if (out->attention.input_class &&
+        (out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_EXECUTE ||
+         strcmp(out->attention.phase, "prefill") != 0 ||
+         strcmp(out->attention.mode, "eager") != 0 ||
+         strcmp(out->attention.coverage, "full") != 0))
+        return graph_arg_error(
+            err, "yvex: tensor-file input requires graph attention execute --phase prefill --mode eager --scope full");
+    if ((out->attention.chunk_tokens || out->attention.context_capacity) &&
+        !out->attention.input_class)
+        return graph_arg_error(
+            err, "yvex: prefill chunk controls require --input tensor-file");
     if (out->attention.layer_seen && (out->attention.layer_start_seen ||
                                      out->attention.layer_count_seen))
         return graph_arg_error(err, "yvex: --layer conflicts with --layer-start/--layer-count");

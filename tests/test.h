@@ -72,6 +72,7 @@ int yvex_test_quant_numeric(void);
 int yvex_test_quant_policy(void);
 int yvex_test_qwen_adapter(void);
 int yvex_test_runtime_binding(void);
+int yvex_test_runtime_prefill(void);
 int yvex_test_runtime_state(void);
 int yvex_test_runtime_benchmark(void);
 int yvex_test_safetensors_header(void);

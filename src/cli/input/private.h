@@ -146,9 +146,10 @@ typedef struct {
         yvex_graph_attention_action action;
         const char *target, *artifact_path, *runtime_binding_path, *runtime_binding_dir;
         const char *models_root, *backend, *probe, *coverage, *phase, *mode;
-        const char *operation_scope, *trace_level, *progress, *input_class, *attention_class;
+        const char *operation_scope, *trace_level, *progress, *input_class, *input_file;
+        const char *attention_class;
         const char *capture_bucket, *baseline_path, *current_path, *chart_path;
-        unsigned long long token_count, warmup, repeat;
+        unsigned long long token_count, chunk_tokens, context_capacity, warmup, repeat;
         unsigned long long layer, layer_start, layer_count, position, history_tokens;
         unsigned long long local_capacity, compressed_capacity, indexer_capacity;
         unsigned long long maximum_host_bytes, maximum_device_bytes;

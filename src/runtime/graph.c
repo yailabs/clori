@@ -1,17 +1,15 @@
-/* Owner: runtime attention operator orchestration.
- * Owns: request admission, model/session execution, phase equivalence, trace, timing, and warm evidence.
- * Does not own: graph equations, family policy, backend kernels, state storage, rendering, or generation.
- * Invariants: one sealed model/session owns each run; failure publishes no output or candidate state.
- * Boundary: typed activation execution is neither transformer composition nor model generation.
- * Purpose: drive admitted attention through reusable runtime resources and one production graph API.
- * Inputs: binding, artifact, request, and adapter. Effects: dispatches bounded state/workspace execution.
- * Failure: typed refusal closes only operator-owned resources and preserves committed state. */
+/* Owner: runtime attention orchestration. Owns: request admission, session execution, trace, timing, evidence.
+ * Does not own: graph math, family policy, kernels, state storage, render, or generation.
+ * Invariants: one sealed session owns each run; failure publishes no candidate. Boundary: typed activation.
+ * Purpose: drive admitted attention through reusable resources and one graph API.
+ * Inputs: binding, artifact, request, adapter. Effects: bounded dispatch. Failure: preserves committed state. */
 #include <yvex/internal/core.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/benchmark.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/runtime_prefill.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <math.h>
@@ -1294,7 +1292,7 @@ static int runtime_attention_batch_validate(yvex_runtime_execution_session *sess
                               "runtime attention state batch is incomplete");
     return YVEX_OK;
 }
-/* Purpose: execute probe. Inputs: owners. Effects: state commit. Failure: rollback. Boundary: no prompt execution. */
+/* Purpose: execute semantic input. Inputs: owners. Effects: state commit. Failure: rollback. Boundary: no prompt. */
 int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session,
     yvex_runtime_model *model, const yvex_attention_probe_request *request,
     yvex_attention_probe_result *result, yvex_runtime_model_failure *model_failure,
@@ -1302,7 +1300,6 @@ int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
     const yvex_runtime_session_view *session_view = yvex_runtime_session_view_get(session);
     yvex_attention_probe_request execution;
-    runtime_attention_state_bridge bridge;
     yvex_attention_probe_state_provider state_provider;
     yvex_attention_probe_result probe = {0};
     yvex_attention_failure failure = {0};
@@ -1315,29 +1312,30 @@ int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session
          !session_view->attention_workspace) ||
         !session_view->attention_state_provider || request->backend_context ||
         request->workspace || request->state_provider || request->logical_model_identity ||
+        (request->activation_view ? request->probe != YVEX_ATTENTION_PROBE_UNSPECIFIED ||
+                                        !yvex_sha256_hex_valid(request->input_identity)
+                                  : request->probe != YVEX_ATTENTION_PROBE_CANONICAL_V2) ||
         (request->compare_backends
              ? yvex_backend_kind_of(session_view->backend) != YVEX_BACKEND_KIND_CUDA
              : yvex_backend_kind_of(session_view->backend) != request->backend))
         return runtime_refuse(err, YVEX_ERR_INVALID_ARG, "runtime.attention.execute",
                               "matching runtime owners and a semantic-only probe are required");
     execution = *request;
-    memset(&bridge, 0, sizeof(bridge));
-    bridge.provider = session_view->attention_state_provider;
-    bridge.residency = session_view->state_residency;
-    bridge.operation_scope = execution.operation_scope;
+    runtime_attention_state_bridge bridge = {
+        .provider = session_view->attention_state_provider, .residency = session_view->state_residency,
+        .operation_scope = execution.operation_scope};
     state_provider = runtime_attention_state_provider(&bridge);
     execution.backend_context = session_view->backend;
     execution.workspace = session_view->attention_workspace;
     execution.state_provider = &state_provider;
     execution.logical_model_identity = view->binding->logical_model_identity;
-    probe.first_failing_layer = YVEX_ATTENTION_NO_LAYER;
-    probe.first_failing_coordinate = YVEX_ATTENTION_NO_LAYER;
+    probe.first_failing_layer = probe.first_failing_coordinate = YVEX_ATTENTION_NO_LAYER;
     rc = yvex_runtime_session_begin(session, model_failure, err);
     acquired = rc == YVEX_OK;
     if (rc == YVEX_OK)
-        rc = yvex_attention_probe_execute(view->adapter->graph(), view->attention, NULL,
-                                          view->materialization, view->descriptor, &execution,
-                                          &probe, &failure, err);
+        rc = yvex_attention_execute(
+            view->adapter->graph(), view->attention, NULL, view->materialization,
+            view->descriptor, &execution, &probe, &failure, err);
     if (rc != YVEX_OK && err && !yvex_error_is_set(err))
         yvex_error_set(err, (yvex_status)rc, "runtime.attention.execute",
                        failure.reason ? failure.reason
@@ -1818,9 +1816,10 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     unsigned long long selected_layer = YVEX_ATTENTION_NO_LAYER, total_started = yvex_core_monotonic_ns();
     yvex_runtime_execution_mode selected_mode = YVEX_RUNTIME_MODE_EAGER;
     int rc;
+    if (request && request->activation_input_path)
+        return yvex_runtime_activation_prefill_operator_execute(request, result, retained_cleanup, err);
     if (!result || !retained_cleanup || *retained_cleanup)
-        return runtime_refuse(err, YVEX_ERR_INVALID_ARG, "runtime.attention",
-                              "result and one empty retained-cleanup output are required");
+        return runtime_refuse(err, YVEX_ERR_INVALID_ARG, "runtime.attention", "result and cleanup are required");
     runtime_attention_result_initialize(request, result);
     rc = runtime_attention_request_validate(request, err);
     if (rc != YVEX_OK) {
@@ -1886,8 +1885,7 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     probe_request.probe = request->probe;
     probe_request.scope = request->scope;
     probe_request.operation_scope = request->operation_scope == YVEX_RUNTIME_SCOPE_ATTENTION_CORE
-                                        ? YVEX_ATTENTION_OPERATION_CORE
-                                        : YVEX_ATTENTION_OPERATION_ENVELOPE;
+                                        ? YVEX_ATTENTION_OPERATION_CORE : YVEX_ATTENTION_OPERATION_ENVELOPE;
     probe_request.token_count = request->token_count;
     probe_request.evidence_level = runtime_attention_evidence_levels[request->trace_policy];
     if (rc == YVEX_OK && request->select_layer)

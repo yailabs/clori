@@ -226,10 +226,11 @@ The admitted vertical includes:
 
 These results establish the current complete-artifact and attention execution
 boundary. Session-owned persistent DeepSeek attention state is also admitted
-on CPU and the GB10 CUDA path. Tokenizer-backed prefill, FFN/MoE execution,
-complete transformer composition, model decode, logits, sampling, text
-generation, evaluation, full-model benchmark, and release admission retain
-separate gates.
+on CPU and the GB10 CUDA path. Identity-bound activation chunks can execute all
+43 attention layers and atomically populate that state. Prompt/token embedding,
+tokenizer-backed full-model prefill, FFN/MoE execution, complete transformer
+composition, model decode, logits, sampling, text generation, evaluation,
+full-model benchmark, and release admission retain separate gates.
 
 Detailed family semantics live in
 [`docs/model-families.md`](docs/model-families.md). Artifact terminology and
@@ -253,6 +254,7 @@ dependencies, capability gates, and release admission.
 | Attention residency | Core and envelope weights prepared for reusable CPU and CUDA execution |
 | Attention core and envelope | All 43 layers and 634 core bindings execute on CPU eager and admitted GB10 CUDA eager, piecewise, and full graph modes |
 | Persistent attention state | Admitted for all 43 DeepSeek attention layers through isolated CPU/GB10 CUDA sessions, atomic append/read, capacity, clear/reuse, and causal production consumption |
+| Activation-driven attention prefill | Versioned 43-layer activation bundles execute on CPU/GB10 CUDA eager and commit persistent state atomically per chunk |
 | Tokenizer-backed model prefill and model decode | Unsupported |
 | FFN/MoE and complete transformer composition | Unsupported |
 | Logits, sampling, and text generation | Unsupported |
@@ -267,9 +269,10 @@ evaluation, benchmark, and release gates described in
 
 ## Current executable surfaces
 
-The admitted graph commands consume a canonical attention activation probe at
-the exact model geometry. Prompt-backed prefill, model decode, and generation
-remain outside this operator surface.
+The admitted graph commands consume either a canonical diagnostic activation
+probe or a versioned tensor-file activation bundle at exact model geometry.
+Prompt-backed prefill, model decode, and generation remain outside this
+operator surface.
 
 Discover the command hierarchy:
 
@@ -378,6 +381,33 @@ This command allocates the exact session layout, commits real publications,
 proves that later attention consumes committed history, clears the session, and
 proves compatible reuse. It does not execute tokenizer-backed prompt prefill or
 model decode.
+
+Execute an externally prepared activation bundle across all 43 attention
+layers:
+
+```sh
+./yvex graph attention execute \
+  --target deepseek4-v4-flash \
+  --models-root "$MODELS_ROOT" \
+  --artifact "$ARTIFACT" \
+  --runtime-binding "$BINDING" \
+  --backend cuda \
+  --phase prefill \
+  --mode eager \
+  --operation-scope core \
+  --input tensor-file \
+  --input-file "$ACTIVATIONS" \
+  --chunk-tokens 2 \
+  --context-capacity 4096 \
+  --scope full \
+  --progress off \
+  --output json
+```
+
+The bundle is activation input, not prompt text or tokenized input. Exact
+schema and production API details live in
+[`docs/api.md`](docs/api.md); operator preparation and refusal guidance lives
+in [`docs/runbooks/deepseek.md`](docs/runbooks/deepseek.md).
 
 Measure the attention-local CUDA boundary:
 
