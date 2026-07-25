@@ -74,7 +74,7 @@ for action in "state inspect" "state validate" "state exercise" \
               "residency inspect" capture replay "cuda-graph list" \
               "cuda-graph inspect" "cuda-graph warmup" "cuda-graph update" \
               "cuda-graph invalidate" "cuda-graph release" \
-              trace profile benchmark; do
+              trace profile benchmark "benchmark compare" qualify; do
     # shellcheck disable=SC2086
     "$YVEX_BIN" graph attention $action --help \
         >"$OUT_DIR/action-help.out" 2>"$OUT_DIR/action-help.err"
@@ -94,7 +94,8 @@ contains "$OUT_DIR/help.out" "graph attention compare"
 contains "$OUT_DIR/help.out" "graph attention state inspect|validate|exercise"
 contains "$OUT_DIR/help.out" \
     "graph attention cuda-graph list|inspect|warmup|update|invalidate|release"
-contains "$OUT_DIR/help.out" "graph attention trace|profile|benchmark"
+contains "$OUT_DIR/help.out" "graph attention trace|profile|benchmark|qualify"
+contains "$OUT_DIR/help.out" "graph attention benchmark compare"
 contains "$OUT_DIR/help.out" "--runtime-binding FILE"
 contains "$OUT_DIR/help.out" "--runtime-binding-dir DIR"
 contains "$OUT_DIR/help.out" "--models-root DIR"
@@ -112,12 +113,31 @@ contains "$OUT_DIR/help.out" "reserved controls refuse until their typed runtime
 contains "$OUT_DIR/help.out" "--input tensor-file"
 contains "$OUT_DIR/help.out" "--capture-bucket ID"
 contains "$OUT_DIR/help.out" "--baseline FILE"
+contains "$OUT_DIR/help.out" "--current FILE"
+contains "$OUT_DIR/help.out" "--max-regression-bps N"
 contains "$OUT_DIR/help.out" "--write-baseline"
 contains "$OUT_DIR/help.out" "--chart PATH.svg"
 contains "$OUT_DIR/help.out" "--output normal|table|audit|json|csv"
 contains "$OUT_DIR/help.out" "not prompt execution"
 contains "$OUT_DIR/attention-help.out" "yvex graph attention execute"
 contains "$OUT_DIR/execute-help.out" "yvex graph attention execute"
+
+expect_status 2 "$YVEX_BIN" graph attention qualify \
+    --target deepseek4-v4-flash \
+    >"$OUT_DIR/qualify-backend.out" 2>"$OUT_DIR/qualify-backend.err"
+contains "$OUT_DIR/qualify-backend.err" "requires --backend cpu|cuda"
+
+expect_status 2 "$YVEX_BIN" graph attention benchmark compare \
+    --baseline "$OUT_DIR/missing-baseline.yvex-benchmark" \
+    >"$OUT_DIR/benchmark-compare-paths.out" 2>"$OUT_DIR/benchmark-compare-paths.err"
+contains "$OUT_DIR/benchmark-compare-paths.err" "requires --baseline FILE and --current FILE"
+
+expect_status 2 "$YVEX_BIN" graph attention benchmark \
+    --target deepseek4-v4-flash --backend cpu \
+    --max-regression-bps 0 \
+    >"$OUT_DIR/benchmark-threshold-owner.out" 2>"$OUT_DIR/benchmark-threshold-owner.err"
+contains "$OUT_DIR/benchmark-threshold-owner.err" \
+    "regression thresholds require graph attention benchmark compare"
 
 expect_status 2 "$YVEX_BIN" graph attention \
     >"$OUT_DIR/missing-action.out" 2>"$OUT_DIR/missing-action.err"
@@ -289,7 +309,7 @@ assert result["runtime_generation_ready"] is False
 assert result["command"].startswith("graph attention ")
 PY
 done
-for action in trace profile benchmark; do
+for action in trace profile benchmark qualify; do
     expect_status 3 "$YVEX_BIN" graph attention "$action" \
         --target deepseek4-v4-flash --backend cpu \
         --runtime-binding "$OUT_DIR/missing-$action.yvex-runtime-binding" --output json \
@@ -1061,14 +1081,15 @@ assert inspected["status"] == "complete"
 assert inspected["execution_dispatch_count"] == 1
 assert inspected["cuda_graph_registry_count"] == 3
 assert inspected["cuda_graph_entry_compatibility_identity"]
-assert updated["execution_dispatch_count"] == 2
+assert updated["warmup_count"] == 2
+assert updated["execution_dispatch_count"] == 3
 assert updated["cuda_graph_update_count"] == 3
 assert updated["cuda_graph_update_pending_count"] == 0
 assert updated["cuda_graph_registry_affected_count"] == 3
 assert updated["cuda_graph_last_update_elapsed_ns"] > 0
 assert invalidated["execution_dispatch_count"] == 1
 assert invalidated["cuda_graph_count"] == 0
-assert invalidated["cuda_graph_registry_count"] == 0
+assert invalidated["cuda_graph_registry_count"] == 3
 assert invalidated["cuda_graph_registry_affected_count"] == 3
 assert invalidated["cuda_graph_invalidation_count"] == 3
 assert released["execution_dispatch_count"] == 1
@@ -1107,7 +1128,7 @@ with open(sys.argv[1], encoding="utf-8") as stream:
 with open(sys.argv[2], encoding="utf-8") as stream:
     full = json.load(stream)
 for result, mode, graph_count in (
-    (piecewise, "piecewise", 213),
+    (piecewise, "piecewise", 127),
     (full, "full", 43),
 ):
     assert result["status"] == "complete"
@@ -1125,7 +1146,7 @@ for result, mode, graph_count in (
     assert len(result["tensor_output_digest"]) == 64
     assert len(result["state_delta_digest"]) == 64
     assert result["runtime_generation_ready"] is False
-assert piecewise["cuda_graph_piece_count"] == 213
+assert piecewise["cuda_graph_piece_count"] == 127
 assert piecewise["requested_mode"] == "auto"
 assert piecewise["selection_reason"] == (
     "auto-selected admitted CUDA piecewise graph mode after full refusal"
@@ -1159,7 +1180,7 @@ for result, mode in zip(results, ("eager", "piecewise", "full")):
     assert result["csa_layers_executed"] == 21
     assert result["hca_layers_executed"] == 20
     assert result["comparison_passed"] is True
-    assert result["comparison_output_values"] == 176128
+    assert result["comparison_output_values"] == 43 * 16384
     assert result["comparison_state_values"] > 0
     assert result["comparison_values"] == (
         result["comparison_output_values"] + result["comparison_state_values"]
@@ -1188,6 +1209,18 @@ for result, mode in zip(results, ("eager", "piecewise", "full")):
     assert result["runtime_transform_plans_built"] == 0
     assert result["runtime_quant_plans_built"] == 0
     assert result["runtime_writer_plans_built"] == 0
+    assert result["warm_host_allocations"] == 0
+    assert result["warm_device_allocations"] == 0
+    assert result["warm_device_frees"] == 0
+    assert result["warm_weight_artifact_reads"] == 0
+    assert result["warm_weight_upload_bytes"] == 0
+    if mode == "piecewise":
+        assert result["cuda_graph_capture_count"] == 127
+        assert result["cuda_graph_piece_count"] == 127
+        assert result["cuda_graph_replay_count"] == 127
+    elif mode == "full":
+        assert result["cuda_graph_capture_count"] == 43
+        assert result["cuda_graph_replay_count"] == 43
 PY
 
     "$YVEX_BIN" graph attention profile --target deepseek4-v4-flash \
@@ -1225,6 +1258,7 @@ assert result["cuda_graph_kernel_node_count"] > 0
 assert result["benchmark_minimum_seconds"] > 0
 assert result["benchmark_p50_seconds"] > 0
 assert result["benchmark_p90_seconds"] > 0
+assert result["benchmark_p95_seconds"] > 0
 assert result["benchmark_p99_seconds"] > 0
 assert result["benchmark_maximum_seconds"] > 0
 assert result["benchmark_mean_seconds"] > 0
@@ -1245,6 +1279,46 @@ assert result["warm_device_allocations"] == 0
 assert result["warm_device_frees"] == 0
 assert result["persistent_kv_ready"] is False
 assert result["transformer_ready"] is False
+assert result["runtime_generation_ready"] is False
+PY
+
+    "$YVEX_BIN" graph attention qualify --target deepseek4-v4-flash \
+        --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
+        --runtime-binding "$BINDING" --backend cuda --probe canonical --scope full \
+        --phase decode --mode full --operation-scope release-attention-set \
+        --require-mode --progress off --output json \
+        >"$OUT_DIR/qualify.json" 2>"$OUT_DIR/qualify.err"
+    python3 - "$OUT_DIR/qualify.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    result = json.load(stream)
+assert result["command"] == "graph attention qualify"
+assert result["status"] == "complete"
+assert result["software_contract_status"] == "pass"
+assert result["numerical_conformance_status"] == "pass"
+assert result["runtime_qualification_status"] == "pass"
+assert result["component_benchmark_status"] == "available"
+assert result["warmup_count"] == 1
+assert result["execution_dispatch_count"] == 2
+assert result["layers_executed"] == 43
+assert result["bindings_executed"] == 634
+assert result["cuda_graph_count"] == 43
+assert result["cuda_graph_capture_count"] == 43
+assert result["cuda_graph_replay_count"] == 86
+assert result["warm_host_allocations"] == 0
+assert result["warm_device_allocations"] == 0
+assert result["warm_device_frees"] == 0
+assert result["warm_weight_artifact_reads"] == 0
+assert result["warm_weight_upload_bytes"] == 0
+assert len(result["qualification_identity"]) == 64
+assert len(result["quality_matrix_identity"]) == 64
+assert result["model_behavior_evaluation_available"] is False
+assert result["model_quality_evaluation_available"] is False
+assert result["agent_runtime_available"] is False
+assert result["agent_evaluation_available"] is False
+assert result["release_qualification_available"] is False
 assert result["runtime_generation_ready"] is False
 PY
 
@@ -1270,25 +1344,42 @@ PY
     "$YVEX_BIN" graph attention benchmark --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope quick \
-        --phase decode --mode piecewise --operation-scope envelope --warmup 0 --repeat 5 \
+        --phase decode --mode piecewise --operation-scope envelope \
+        --position 384 --history-tokens 384 --warmup 0 --repeat 5 \
         --baseline "$OUT_DIR/attention.yvex-benchmark" --write-baseline \
         --progress off --output json \
         >"$OUT_DIR/benchmark-write.json" 2>"$OUT_DIR/benchmark-write.err"
     "$YVEX_BIN" graph attention benchmark --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope quick \
-        --phase decode --mode piecewise --operation-scope envelope --warmup 0 --repeat 5 \
+        --phase decode --mode piecewise --operation-scope envelope \
+        --position 384 --history-tokens 384 --warmup 0 --repeat 5 \
         --baseline "$OUT_DIR/attention.yvex-benchmark" --progress off --output json \
         >"$OUT_DIR/benchmark-compare.json" 2>"$OUT_DIR/benchmark-compare.err"
     "$YVEX_BIN" graph attention benchmark --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope quick \
-        --phase decode --mode piecewise --operation-scope envelope --warmup 0 --repeat 1 \
+        --phase decode --mode piecewise --operation-scope envelope \
+        --position 384 --history-tokens 384 --warmup 0 --repeat 1 \
+        --baseline "$OUT_DIR/attention-short.yvex-benchmark" --write-baseline \
         --chart "$OUT_DIR/attention.svg" --progress off --output json \
         >"$OUT_DIR/benchmark-chart.json" 2>"$OUT_DIR/benchmark-chart.err"
+    "$YVEX_BIN" graph attention benchmark compare \
+        --baseline "$OUT_DIR/attention.yvex-benchmark" \
+        --current "$OUT_DIR/attention.yvex-benchmark" \
+        --max-regression-bps 0 \
+        --output json \
+        >"$OUT_DIR/benchmark-file-compare.json" \
+        2>"$OUT_DIR/benchmark-file-compare.err"
+    expect_status 1 "$YVEX_BIN" graph attention benchmark compare \
+        --baseline "$OUT_DIR/attention.yvex-benchmark" \
+        --current "$OUT_DIR/attention-short.yvex-benchmark" --output json \
+        >"$OUT_DIR/benchmark-file-incompatible.json" \
+        2>"$OUT_DIR/benchmark-file-incompatible.err"
     python3 - "$OUT_DIR/benchmark-write.json" "$OUT_DIR/benchmark-compare.json" \
         "$OUT_DIR/benchmark-chart.json" "$OUT_DIR/attention.yvex-benchmark" \
-        "$OUT_DIR/attention.svg" <<'PY'
+        "$OUT_DIR/attention.svg" "$OUT_DIR/benchmark-file-compare.json" \
+        "$OUT_DIR/benchmark-file-incompatible.json" <<'PY'
 import json
 import hashlib
 import pathlib
@@ -1299,7 +1390,12 @@ for path in sys.argv[1:4]:
     with open(path, encoding="utf-8") as stream:
         documents.append(json.load(stream))
 written, compared, charted = documents
-baseline, chart = map(pathlib.Path, sys.argv[4:])
+baseline, chart = map(pathlib.Path, sys.argv[4:6])
+short_baseline = chart.with_name("attention-short.yvex-benchmark")
+with open(sys.argv[6], encoding="utf-8") as stream:
+    file_compared = json.load(stream)
+with open(sys.argv[7], encoding="utf-8") as stream:
+    file_incompatible = json.load(stream)
 for result in documents:
     assert result["status"] == "complete"
     assert result["selected_mode"] == "piecewise"
@@ -1318,6 +1414,13 @@ for result in documents:
     assert result["workspace_bytes"] > 0
     assert result["benchmark_current_source_state"] in ("clean", "dirty")
     assert len(result["benchmark_identity"]) == 64
+    assert result["benchmark_scope"] == "attention_component"
+    assert result["correctness_status"] == "pass"
+    assert result["structural_runtime_status"] == "pass"
+    assert result["performance_status"] == "measured"
+    assert result["benchmark_correctness_precondition_passed"] is True
+    assert result["benchmark_runtime_precondition_passed"] is True
+    assert result["benchmark_p95_seconds"] > 0
 assert written["benchmark_sample_count"] == 5
 assert written["repeat_count"] == 5
 assert written["execution_dispatch_count"] == 6
@@ -1338,7 +1441,8 @@ assert compared["benchmark_path"] == str(baseline)
 for key in (
     "benchmark_cold_delta_seconds", "benchmark_minimum_delta_seconds",
     "benchmark_p50_delta_seconds", "benchmark_p90_delta_seconds",
-    "benchmark_p99_delta_seconds", "benchmark_maximum_delta_seconds",
+    "benchmark_p95_delta_seconds", "benchmark_p99_delta_seconds",
+    "benchmark_maximum_delta_seconds",
     "benchmark_mean_delta_seconds",
 ):
     assert key in compared and isinstance(compared[key], (int, float))
@@ -1354,8 +1458,11 @@ assert len(charted["benchmark_chart_identity"]) == 64
 assert chart.is_file() and chart.stat().st_size == charted["benchmark_chart_file_bytes"]
 assert chart.read_text(encoding="utf-8").startswith("<svg")
 assert hashlib.sha256(chart.read_bytes()).hexdigest() == charted["benchmark_chart_identity"]
+assert charted["benchmark_path"] == str(short_baseline)
+assert charted["benchmark_baseline_written"] is True
+assert short_baseline.is_file()
+assert short_baseline.stat().st_size == charted["benchmark_file_bytes"]
 for key in (
-    "benchmark_path", "benchmark_baseline_written", "benchmark_file_bytes",
     "benchmark_baseline_identity", "benchmark_baseline_compatible",
     "benchmark_cold_delta_seconds",
 ):
@@ -1376,6 +1483,26 @@ assert len(fields["source_delta_identity"]) == 64
 assert len(fields["build_identity"]) == 64
 assert fields["device"] != "cpu"
 assert fields["cuda_build"] != "not-applicable"
+assert fields["benchmark_scope"] == "attention_component"
+assert file_compared["command"] == "graph attention benchmark compare"
+assert file_compared["status"] == "complete"
+assert file_compared["benchmark_scope"] == "attention_component"
+assert file_compared["component_benchmark_status"] == "compared"
+assert file_compared["benchmark_baseline_compatible"] is True
+assert file_compared["performance_status"] == "pass"
+assert file_compared["benchmark_regression_policy_enabled"] is True
+assert len(file_compared["benchmark_regression_policy_identity"]) == 64
+assert len(file_compared["benchmark_comparison_identity"]) == 64
+assert file_compared["benchmark_regression_basis_points"] == 0
+assert file_compared["benchmark_performance_passed"] is True
+assert file_incompatible["command"] == "graph attention benchmark compare"
+assert file_incompatible["status"] == "refused"
+assert file_incompatible["component_benchmark_status"] == "unavailable"
+assert file_incompatible["correctness_status"] == "not_evaluated"
+assert file_incompatible["structural_runtime_status"] == "not_evaluated"
+assert file_incompatible["performance_status"] == "not_measured"
+assert file_incompatible["failure_code"] == "YVEX_ERR_STATE"
+assert file_incompatible["failure_where"] == "runtime_benchmark"
 cold_keys = (
     "artifact_open_seconds", "artifact_hash_seconds", "artifact_admission_seconds",
     "binding_open_seconds", "materialization_open_seconds", "runtime_model_seal_seconds",

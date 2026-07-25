@@ -66,6 +66,8 @@ do
   require_file "$file"
 done
 
+require_file config/attention_quality.tsv
+
 test -d docs/runbooks || fail "missing directory: docs/runbooks"
 test ! -e docs/spine.md || fail "obsolete project-control path exists"
 test -z "$(find docs -maxdepth 1 -type d -name repair -print -quit)" ||
@@ -145,6 +147,21 @@ require_text AGENTS.md 'Runtime benchmark baselines, CSV/JSON evidence, and'
 require_text AGENTS.md 'generated charts are identity-bound external operator assets'
 require_text AGENTS.md '### Progression admissibility'
 require_text AGENTS.md '### Six-pass vertical iteration'
+require_text AGENTS.md '### Quality and evaluation taxonomy'
+for quality_class in \
+  'Software tests' \
+  'Numerical conformance' \
+  'Runtime qualification' \
+  'Component benchmarks' \
+  'Model behavior evaluation' \
+  'Model quality evaluation' \
+  'Agent runtime evaluation' \
+  'Release qualification'
+do
+  require_text AGENTS.md "$quality_class"
+done
+require_text AGENTS.md 'No generic `qa_passed` or `qa_ready` fact'
+require_text AGENTS.md 'may collapse these classes.'
 
 for classification in \
   gate_blocker \
@@ -334,12 +351,50 @@ fi
 
 require_text docs/contract.md '### DeepSeek Attention Operator Contract'
 require_text docs/api.md '### Internal DeepSeek Attention Operator Boundary'
-require_text docs/contract.md '## Benchmark And Profile Contract'
-require_text docs/api.md '## Benchmark And Chart Contract'
+require_text docs/contract.md '## Quality, Qualification, Benchmark, And Evaluation Contract'
+require_text docs/api.md '## Qualification, Benchmark, And Chart Contract'
+require_text docs/contract.md '### Attention Component Benchmark'
+require_text docs/contract.md 'Model behavior,'
+require_text docs/contract.md 'agent runtime/evaluation,'
+require_text docs/api.md 'benchmark compare --baseline OLD'
+require_text docs/api.md 'benchmark compare --max-regression-bps N'
 require_text docs/runbooks/deepseek.md '--chart "$EVIDENCE/$MODE.svg"'
-require_text docs/runbooks/deepseek.md 'not full-model benchmark results.'
+require_text docs/runbooks/deepseek.md './yvex graph attention qualify'
+require_text docs/runbooks/deepseek.md './yvex graph attention benchmark compare'
+require_text docs/runbooks/deepseek.md '--max-regression-bps 500'
+require_text docs/runbooks/deepseek.md 'not model evaluation, agent evaluation or full-model benchmark'
 require_text docs/runbooks/README.md \
   'production attention commands, benchmark charts, unsupported'
+require_text docs/operator-runbook.md 'software acceptance, numerical'
+require_text docs/operator-runbook.md 'agent-runtime evaluation'
+
+for project_fact in \
+  'model_behavior_evaluation_ready=0' \
+  'model_quality_evaluation_ready=0' \
+  'agent_runtime_ready=0' \
+  'agent_tool_execution_ready=0' \
+  'agent_evaluation_ready=0' \
+  'release_qualification_ready=0' \
+  'schema-v5 `attention_component`' \
+  'V010.EVAL.DEEPSEEK.0` | DeepSeek | `blocked`' \
+  'V010.BENCH.DEEPSEEK.0` | DeepSeek / DGX Spark | `not-measured`' \
+  'V010.RELEASE.0` | DeepSeek v0.1.0 | `blocked`'
+do
+  require_text PROJECT.md "$project_fact"
+done
+
+if grep -nE '\b(qa_ready|qa_passed)[[:space:]]*=[[:space:]]*1\b' \
+  src/*.c src/*/*.c include/yvex/*.h include/yvex/internal/*.h PROJECT.md README.md \
+  2>/dev/null; then
+  fail 'generic QA fact attempts to promote capability'
+fi
+if grep -nE 'agent_(runtime|tool_execution|evaluation)_ready=1|benchmark_scope[[:space:]]*=[[:space:]]*(model|generation|agent)' \
+  PROJECT.md README.md config/attention_quality.tsv; then
+  fail 'unsupported agent or higher benchmark capability is promoted'
+fi
+if grep -nE 'TRACK\.AGENT|V010\.AGENT\.' PROJECT.md; then
+  fail 'agent track or milestone was introduced without scope authority'
+fi
 
 # Exact release evidence remains guarded at its live project-control owner.
 for evidence in \

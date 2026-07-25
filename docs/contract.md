@@ -324,30 +324,77 @@ Trace levels are `none`, `summary`, `stages` and `full`. Evidence mode observes
 the same production execution; it does not substitute a second algorithm.
 Machine-readable stdout contains no progress lines.
 
-## Benchmark And Profile Contract
+## Quality, Qualification, Benchmark, And Evaluation Contract
+
+YVEX keeps software testing, numerical conformance, runtime qualification,
+component benchmarking, model behavior evaluation, model quality evaluation,
+agent runtime evaluation, and release qualification as separate evidence
+classes. `graph attention qualify` exercises the installed production runtime;
+it does not rebuild the repository or run source-tree sanitizers. Its typed
+result reports software-contract admission, numerical-conformance admission,
+runtime structural qualification, component-benchmark availability, and the
+unavailable higher stages independently.
+
+Runtime qualification is pass/fail and requires the sealed runtime model,
+admitted binding, valid artifact, complete attention residency/workspace,
+reusable execution session, valid graph registry, cancellation safety,
+transactional output/state publication, deterministic identities, and cleanup.
+It also enforces one cold artifact hash, zero warm hashes, zero runtime
+source/compiler planning, zero warm weight reads/uploads, zero warm host/device
+allocations or frees, no stale graph replay, no backend fallback, and no
+explicit-mode downgrade. Performance never changes this structural verdict.
+
+`config/attention_quality.tsv` is the machine-readable admission matrix for
+core, envelope, and release-attention-set scopes across SWA/CSA/HCA,
+attention-prefill/chunk and attention-decode-step phases, CPU/CUDA modes, and
+trace levels. Each rule states support or a typed reason and binds an evidence
+identity. Blank cells do not imply support.
+
+### Attention Component Benchmark
 
 Attention `profile` and `benchmark` measure the common runtime only. They
 separate artifact authentication, model seal, residency, workspace and graph
-preparation from warm execution. Warm samples report minimum, p50, p90, p99,
-maximum, mean and dispersion plus allocations, transfers, launches and memory
-peaks.
+preparation from first and steady-state execution. Warm samples report minimum,
+p50, p90, p95, p99, maximum, mean and dispersion plus allocations, transfers,
+launches and memory peaks. The result declares
+`benchmark_scope=attention_component`, correctness/runtime preconditions, and
+separate correctness, structural-runtime, and performance statuses.
 
 A benchmark record is versioned and identity-bound to its build commit, artifact,
-runtime binding, runtime/execution descriptors, device, driver, CUDA build,
-phase, mode, scope, bucket and iteration count. Incompatible evidence refuses
-comparison. Workload compatibility deliberately excludes the commit so a
-regression lane can compare two builds while reporting both commit identities.
+runtime binding, logical model, runtime numeric policy, runtime and semantic/
+executable/execution descriptors, residency, workspace, state layout, kernel
+bundle, machine, CPU/GPU, memory, device, driver, CUDA build, class, layer,
+phase, mode, scope, tokens, history, trace, bucket and iteration count.
+`graph attention benchmark compare` reopens two records independently and
+refuses at the first incompatible identity field. Workload compatibility
+deliberately excludes the commit so a regression lane can compare two builds
+while reporting both commit identities.
+
+Comparison has no implicit performance threshold. The optional
+`--max-regression-bps N` policy applies one caller-owned basis-point ceiling to
+host/device latency and inverse throughput, peak host/device memory, H2D/D2H
+traffic, steady-state allocation counters, and kernel/graph launch counts. The
+policy and comparison outcome have distinct canonical identities. Without a
+policy, performance status is `measured`; with a policy, a breached ceiling
+returns a nonzero process status. Warm allocations, uploads, and other runtime
+qualification violations refuse before performance policy is evaluated.
 
 `--chart PATH.svg` produces a deterministic external SVG of cold preparation,
 warm latency, resident/workspace bytes, resident H2D bytes, and kernel/graph
 launch, capture, replay, and node counters, optionally paired with a compatible
-baseline. Schema four seals those counters and complete build provenance in
-the baseline; schemas one through three refuse and require regeneration instead of
-being silently reinterpreted. The chart identity covers its exact
+baseline. Schema five seals complete reproducibility identity, timing boundaries,
+resource counters, and build provenance; schemas one through four refuse and
+require regeneration instead of being silently reinterpreted. The chart identity covers its exact
 bytes. Baseline and chart are independent no-replace publications: a valid
 baseline remains authoritative if optional chart publication later refuses.
 JSON, CSV, baseline and SVG files are local operator evidence; they are not
 full-model benchmark results and are not tracked.
+
+The attention oracle and canonical tensor probe are numerical-conformance
+inputs, not question-answering or model-quality evaluation. Model behavior,
+model quality, full DeepSeek generation benchmark, agent runtime/evaluation,
+and release qualification remain unavailable. No generic `qa_passed` or
+`qa_ready` fact is authoritative.
 
 ## Backend Contract
 

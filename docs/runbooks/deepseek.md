@@ -1,8 +1,5 @@
 # DeepSeek Operator Runbook
 
-Date: 2026-07-22
-Status: admitted artifact and attention-runtime boundary
-
 ## Current Target
 
 Canonical source: `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`.
@@ -40,6 +37,12 @@ BINDING="$(python3 -c \
   --runtime-binding "$BINDING" --backend cuda --phase decode --mode full \
   --operation-scope release-attention-set --probe canonical --scope full \
   --output json
+
+./yvex graph attention qualify \
+  --target deepseek4-v4-flash --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
+  --runtime-binding "$BINDING" --backend cuda --phase decode --mode full \
+  --operation-scope release-attention-set --probe canonical --scope full \
+  --output json
 ```
 
 The input is a canonical activation probe, not prompt text. This exact lane
@@ -57,13 +60,22 @@ MODE=full
   --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" --runtime-binding "$BINDING" \
   --backend cuda --phase decode --mode "$MODE" --scope full \
   --operation-scope release-attention-set --probe canonical --warmup 3 --repeat 20 \
-  --progress off --baseline "$EVIDENCE/$MODE.yvex-benchmark" \
+  --progress off --baseline "$EVIDENCE/$MODE-current.yvex-benchmark" --write-baseline \
   --chart "$EVIDENCE/$MODE-comparison.svg" --output csv \
   >"$EVIDENCE/$MODE-comparison.csv"
+./yvex graph attention benchmark compare \
+  --baseline "$EVIDENCE/$MODE.yvex-benchmark" \
+  --current "$EVIDENCE/$MODE-current.yvex-benchmark" \
+  --max-regression-bps 500 --output json
 ```
 
 Repeat with `MODE=eager` and `MODE=piecewise` for all three CUDA modes. The
-files are runtime-local evidence, not full-model benchmark results.
+qualification separates software acceptance, numerical conformance and runtime
+reliability. The files measure an attention component; they are runtime-local
+evidence, not model evaluation, agent evaluation or full-model benchmark
+results. The example permits a caller-selected five-percent ceiling; omitting
+`--max-regression-bps` reports measured deltas without manufacturing a pass
+threshold.
 
 ## Source Verification
 
@@ -71,9 +83,6 @@ files are runtime-local evidence, not full-model benchmark results.
 ./yvex source-manifest report \
   --release v0.1.0 --family deepseek --target deepseek4-v4-flash \
   --models-root "$HOME/lab/models" --audit --strict
-```
-
-```sh
 make test-source-payload-live-plan
 make test-source-payload-live
 ```

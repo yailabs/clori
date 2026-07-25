@@ -443,12 +443,13 @@ typedef enum {
     YVEX_RUNTIME_OPERATOR_GRAPH_INSPECT, YVEX_RUNTIME_OPERATOR_GRAPH_WARMUP,
     YVEX_RUNTIME_OPERATOR_GRAPH_UPDATE, YVEX_RUNTIME_OPERATOR_GRAPH_INVALIDATE,
     YVEX_RUNTIME_OPERATOR_GRAPH_RELEASE, YVEX_RUNTIME_OPERATOR_TRACE, YVEX_RUNTIME_OPERATOR_PROFILE,
-    YVEX_RUNTIME_OPERATOR_BENCHMARK, YVEX_RUNTIME_OPERATOR_CAPABILITIES,
+    YVEX_RUNTIME_OPERATOR_BENCHMARK, YVEX_RUNTIME_OPERATOR_QUALIFY,
+    YVEX_RUNTIME_OPERATOR_CAPABILITIES,
     YVEX_RUNTIME_OPERATOR_RESIDENCY_INSPECT
 } yvex_runtime_operator_action;
 typedef struct {
     const char *target, *artifact_path;
-    const char *runtime_binding_path, *capture_bucket;
+    const char *runtime_binding_path, *capture_bucket, *attention_class;
     yvex_backend_kind backend;
     yvex_attention_probe_kind probe;
     yvex_attention_probe_scope scope;
@@ -465,6 +466,16 @@ typedef struct {
     int (*cancel_requested)(void *context);
     void *cancel_context;
 } yvex_graph_attention_operator_request;
+typedef enum {
+    YVEX_RUNTIME_QUALITY_SOFTWARE = 0,
+    YVEX_RUNTIME_QUALITY_NUMERICAL,
+    YVEX_RUNTIME_QUALITY_QUALIFICATION,
+    YVEX_RUNTIME_QUALITY_COMPONENT_BENCHMARK,
+    YVEX_RUNTIME_QUALITY_CORRECTNESS,
+    YVEX_RUNTIME_QUALITY_STRUCTURAL,
+    YVEX_RUNTIME_QUALITY_PERFORMANCE,
+    YVEX_RUNTIME_QUALITY_STATUS_COUNT
+} yvex_runtime_quality_status;
 int yvex_graph_attention_operator_selection_validate(
     const yvex_graph_attention_operator_request *request, yvex_error *err);
 typedef struct yvex_graph_attention_operator_result {
@@ -492,11 +503,15 @@ typedef struct yvex_graph_attention_operator_result {
     char residency_identity[YVEX_SHA256_HEX_CAP], workspace_identity[YVEX_SHA256_HEX_CAP];
     char state_layout_identity[YVEX_SHA256_HEX_CAP];
     char execution_evidence_digest[YVEX_SHA256_HEX_CAP], execution_identity[YVEX_SHA256_HEX_CAP];
+    char qualification_identity[YVEX_SHA256_HEX_CAP], quality_matrix_identity[YVEX_SHA256_HEX_CAP];
+    char quality_status[YVEX_RUNTIME_QUALITY_STATUS_COUNT][24];
+    char benchmark_scope[32], attention_class[16];
     char current_writer_plan_identity[YVEX_SHA256_HEX_CAP];
     char payload_plan_identity[YVEX_SHA256_HEX_CAP], payload_byte_identity[YVEX_SHA256_HEX_CAP];
     char reason[YVEX_GRAPH_ATTENTION_REASON_CAP], first_failing_stage[32];
     unsigned long long main_layers_total, bindings_total;
     unsigned long long repeat_count, warmup_count, benchmark_sample_count;
+    unsigned long long requested_token_count, requested_history_tokens, requested_layer_start, requested_layer_count;
     unsigned long long artifact_hash_passes, warm_artifact_hash_passes;
     unsigned long long runtime_source_headers_read, runtime_source_payload_bytes_read;
     unsigned long long runtime_transform_plans_built, runtime_quant_plans_built;
@@ -529,16 +544,15 @@ typedef struct yvex_graph_attention_operator_result {
     int state_sealed, state_transaction_active, state_validation_passed;
     int production_api_available, internal_live_runner_available, operator_command_available;
     int end_user_generation_available;
+    int model_behavior_evaluation_available, model_quality_evaluation_available;
+    int agent_runtime_available, agent_evaluation_available, release_qualification_available;
+    int benchmark_correctness_precondition_passed, benchmark_runtime_precondition_passed;
     unsigned long long artifact_bytes_hashed;
     double lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_COUNT], total_seconds;
-    double benchmark_minimum_seconds, benchmark_p50_seconds, benchmark_p90_seconds;
-    double benchmark_p99_seconds, benchmark_maximum_seconds, benchmark_mean_seconds,
-           benchmark_standard_deviation_seconds;
+    double benchmark_host_seconds[YVEX_RUNTIME_BENCHMARK_STATISTIC_COUNT];
+    double benchmark_first_execution_seconds;
     int benchmark_device_timing_available;
-    double benchmark_device_minimum_seconds, benchmark_device_p50_seconds;
-    double benchmark_device_p90_seconds, benchmark_device_p99_seconds;
-    double benchmark_device_maximum_seconds, benchmark_device_mean_seconds;
-    double benchmark_device_standard_deviation_seconds;
+    double benchmark_device_seconds[YVEX_RUNTIME_BENCHMARK_STATISTIC_COUNT];
     yvex_runtime_benchmark_operator_summary benchmark;
     int artifact_identity_verified;
     char failure_code[32], failure_where[YVEX_ERROR_WHERE_CAP];

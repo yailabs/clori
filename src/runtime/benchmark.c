@@ -4,9 +4,8 @@
  * Invariants: canonical records are bounded, content-addressed, independently reopenable, and never overwritten.
  * Boundary: this file-serialization lifecycle consumes typed execution facts after production execution completes.
  * Purpose: persist trustworthy external benchmark evidence and compare equivalent measurements
- *   without policy thresholds.
- * Inputs: canonical identity keys, nanosecond statistics, and explicit external destination paths.
- * Effects: publication creates and syncs only unique owner-created files in a no-symlink directory walk.
+ *   under an optional caller-owned regression policy.
+ * Inputs: typed identities, counters, timings, and external paths. Effects: publishes only unique owned files.
  * Failure: typed refusal preserves existing files and removes only the exact temporary owned by the failed call. */
 
 #define _GNU_SOURCE
@@ -33,165 +32,239 @@
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 typedef yvex_core_bytes benchmark_bytes;
-
+typedef yvex_graph_attention_operator_result bench_result;
+typedef yvex_runtime_benchmark_baseline bench_record;
+typedef yvex_runtime_benchmark_key bench_key;
+typedef yvex_runtime_benchmark_metrics bench_metrics;
 typedef enum {
     BENCHMARK_FIELD_COMMIT = 0,
     BENCHMARK_FIELD_SOURCE_STATE,
     BENCHMARK_FIELD_SHA256,
-    BENCHMARK_FIELD_TEXT,
+    BENCHMARK_FIELD_TEXT_16,
+    BENCHMARK_FIELD_TEXT_32,
+    BENCHMARK_FIELD_TEXT_64,
+    BENCHMARK_FIELD_TEXT_128,
     BENCHMARK_FIELD_BOOL,
     BENCHMARK_FIELD_U64
 } benchmark_field_kind;
-
 typedef struct {
     const char *name;
-    size_t offset, width;
+    size_t offset;
     benchmark_field_kind kind;
 } benchmark_field;
+static const size_t benchmark_field_widths[] = {
+    YVEX_RUNTIME_BENCHMARK_COMMIT_CAP, YVEX_RUNTIME_BENCHMARK_SOURCE_STATE_CAP,
+    YVEX_SHA256_HEX_BYTES, YVEX_RUNTIME_BENCHMARK_MODE_CAP,
+    YVEX_RUNTIME_BENCHMARK_SCOPE_CAP, YVEX_RUNTIME_BENCHMARK_BUCKET_CAP,
+    YVEX_RUNTIME_BENCHMARK_TEXT_CAP, sizeof(int), sizeof(unsigned long long)};
+typedef struct {
+    size_t destination, capacity, source;
+} benchmark_text_projection;
+typedef struct {
+    size_t destination, source;
+} benchmark_u64_projection;
+typedef struct {
+    unsigned int index, percentile;
+} benchmark_percentile;
+typedef struct {
+    unsigned int index;
+    const char *value;
+} benchmark_status;
 
-static const benchmark_field benchmark_key_fields[] = {
-    {"commit", offsetof(yvex_runtime_benchmark_baseline, key.commit),
-     sizeof(((yvex_runtime_benchmark_key *)0)->commit), BENCHMARK_FIELD_COMMIT},
-    {"build_source_state", offsetof(yvex_runtime_benchmark_baseline, key.build_source_state),
-     sizeof(((yvex_runtime_benchmark_key *)0)->build_source_state),
-     BENCHMARK_FIELD_SOURCE_STATE},
-    {"source_delta_identity",
-     offsetof(yvex_runtime_benchmark_baseline, key.source_delta_identity),
-     sizeof(((yvex_runtime_benchmark_key *)0)->source_delta_identity), BENCHMARK_FIELD_SHA256},
-    {"build_identity", offsetof(yvex_runtime_benchmark_baseline, key.build_identity),
-     sizeof(((yvex_runtime_benchmark_key *)0)->build_identity), BENCHMARK_FIELD_SHA256},
-    {"artifact_identity", offsetof(yvex_runtime_benchmark_baseline, key.artifact_identity),
-     sizeof(((yvex_runtime_benchmark_key *)0)->artifact_identity), BENCHMARK_FIELD_SHA256},
-    {"runtime_binding_identity", offsetof(yvex_runtime_benchmark_baseline, key.runtime_binding_identity),
-     sizeof(((yvex_runtime_benchmark_key *)0)->runtime_binding_identity),
+static const benchmark_field bench_key_fields[] = {
+    {"commit", offsetof(bench_record, key.commit), BENCHMARK_FIELD_COMMIT},
+    {"build_source_state", offsetof(bench_record, key.build_source_state), BENCHMARK_FIELD_SOURCE_STATE},
+    {"source_delta_identity", offsetof(bench_record, key.source_delta_identity), BENCHMARK_FIELD_SHA256},
+{"build_identity", offsetof(bench_record, key.build_identity), BENCHMARK_FIELD_SHA256},
+{"benchmark_scope", offsetof(bench_record, key.benchmark_scope), BENCHMARK_FIELD_TEXT_32},
+    {"artifact_identity", offsetof(bench_record, key.artifact_identity), BENCHMARK_FIELD_SHA256},
+    {"materialization_identity", offsetof(bench_record, key.materialization_identity), BENCHMARK_FIELD_SHA256},
+    {"runtime_binding_identity", offsetof(bench_record, key.runtime_binding_identity), BENCHMARK_FIELD_SHA256},
+{"logical_model_identity", offsetof(bench_record, key.logical_model_identity), BENCHMARK_FIELD_SHA256},
+    {"runtime_numeric_identity", offsetof(bench_record, key.runtime_numeric_identity), BENCHMARK_FIELD_SHA256},
+    {"runtime_descriptor_identity", offsetof(bench_record, key.runtime_descriptor_identity), BENCHMARK_FIELD_SHA256},
+    {"semantic_graph_identity", offsetof(bench_record, key.semantic_graph_identity), BENCHMARK_FIELD_SHA256},
+{"executable_graph_identity", offsetof(bench_record, key.executable_graph_identity), BENCHMARK_FIELD_SHA256},
+    {"execution_descriptor_identity", offsetof(bench_record, key.execution_descriptor_identity),
      BENCHMARK_FIELD_SHA256},
-    {"runtime_descriptor_identity", offsetof(yvex_runtime_benchmark_baseline, key.runtime_descriptor_identity),
-     sizeof(((yvex_runtime_benchmark_key *)0)->runtime_descriptor_identity),
-     BENCHMARK_FIELD_SHA256},
-    {"execution_descriptor_identity", offsetof(yvex_runtime_benchmark_baseline,
-                                                 key.execution_descriptor_identity),
-     sizeof(((yvex_runtime_benchmark_key *)0)->execution_descriptor_identity),
-     BENCHMARK_FIELD_SHA256},
-    {"device", offsetof(yvex_runtime_benchmark_baseline, key.device),
-     sizeof(((yvex_runtime_benchmark_key *)0)->device), BENCHMARK_FIELD_TEXT},
-    {"driver", offsetof(yvex_runtime_benchmark_baseline, key.driver),
-     sizeof(((yvex_runtime_benchmark_key *)0)->driver), BENCHMARK_FIELD_TEXT},
-    {"cuda_build", offsetof(yvex_runtime_benchmark_baseline, key.cuda_build),
-     sizeof(((yvex_runtime_benchmark_key *)0)->cuda_build), BENCHMARK_FIELD_TEXT},
-    {"mode", offsetof(yvex_runtime_benchmark_baseline, key.mode),
-     sizeof(((yvex_runtime_benchmark_key *)0)->mode), BENCHMARK_FIELD_TEXT},
-    {"phase", offsetof(yvex_runtime_benchmark_baseline, key.phase),
-     sizeof(((yvex_runtime_benchmark_key *)0)->phase), BENCHMARK_FIELD_TEXT},
-    {"scope", offsetof(yvex_runtime_benchmark_baseline, key.scope),
-     sizeof(((yvex_runtime_benchmark_key *)0)->scope), BENCHMARK_FIELD_TEXT},
-    {"capture_bucket", offsetof(yvex_runtime_benchmark_baseline, key.capture_bucket),
-     sizeof(((yvex_runtime_benchmark_key *)0)->capture_bucket), BENCHMARK_FIELD_TEXT},
-    {"warmup_count", offsetof(yvex_runtime_benchmark_baseline, key.warmup_count),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"iteration_count", offsetof(yvex_runtime_benchmark_baseline, key.iteration_count),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
+    {"residency_identity", offsetof(bench_record, key.residency_identity), BENCHMARK_FIELD_SHA256},
+{"workspace_identity", offsetof(bench_record, key.workspace_identity), BENCHMARK_FIELD_SHA256},
+    {"state_layout_identity", offsetof(bench_record, key.state_layout_identity), BENCHMARK_FIELD_SHA256},
+{"kernel_bundle_identity", offsetof(bench_record, key.kernel_bundle_identity), BENCHMARK_FIELD_SHA256},
+    {"machine_identity", offsetof(bench_record, key.machine_identity), BENCHMARK_FIELD_TEXT_128},
+{"cpu_model", offsetof(bench_record, key.cpu_model), BENCHMARK_FIELD_TEXT_128},
+{"gpu_model", offsetof(bench_record, key.gpu_model), BENCHMARK_FIELD_TEXT_128},
+    {"device", offsetof(bench_record, key.device), BENCHMARK_FIELD_TEXT_128},
+{"driver", offsetof(bench_record, key.driver), BENCHMARK_FIELD_TEXT_128},
+    {"cuda_build", offsetof(bench_record, key.cuda_build), BENCHMARK_FIELD_TEXT_128},
+{"mode", offsetof(bench_record, key.mode), BENCHMARK_FIELD_TEXT_16},
+    {"phase", offsetof(bench_record, key.phase), BENCHMARK_FIELD_TEXT_16},
+{"scope", offsetof(bench_record, key.scope), BENCHMARK_FIELD_TEXT_32},
+    {"coverage", offsetof(bench_record, key.coverage), BENCHMARK_FIELD_TEXT_16},
+    {"attention_class", offsetof(bench_record, key.attention_class), BENCHMARK_FIELD_TEXT_16},
+    {"trace_policy", offsetof(bench_record, key.trace_policy), BENCHMARK_FIELD_TEXT_16},
+{"capture_bucket", offsetof(bench_record, key.capture_bucket), BENCHMARK_FIELD_TEXT_64},
+    {"memory_bytes", offsetof(bench_record, key.memory_bytes), BENCHMARK_FIELD_U64},
+    {"compute_capability_major", offsetof(bench_record, key.compute_capability_major), BENCHMARK_FIELD_U64},
+    {"compute_capability_minor", offsetof(bench_record, key.compute_capability_minor), BENCHMARK_FIELD_U64},
+{"layer_start", offsetof(bench_record, key.layer_start), BENCHMARK_FIELD_U64},
+{"layer_count", offsetof(bench_record, key.layer_count), BENCHMARK_FIELD_U64},
+    {"token_count", offsetof(bench_record, key.token_count), BENCHMARK_FIELD_U64},
+    {"history_tokens", offsetof(bench_record, key.history_tokens), BENCHMARK_FIELD_U64},
+    {"warmup_count", offsetof(bench_record, key.warmup_count), BENCHMARK_FIELD_U64},
+{"iteration_count", offsetof(bench_record, key.iteration_count), BENCHMARK_FIELD_U64},
 };
-
 static const benchmark_field benchmark_metric_fields[] = {
-    {"cold_total_ns", offsetof(yvex_runtime_benchmark_baseline, metrics.cold_total_ns),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"cold_artifact_ns", offsetof(yvex_runtime_benchmark_baseline, metrics.cold_artifact_ns),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"cold_residency_ns", offsetof(yvex_runtime_benchmark_baseline, metrics.cold_residency_ns),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"cold_graph_ns", offsetof(yvex_runtime_benchmark_baseline, metrics.cold_graph_ns),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"minimum_ns", offsetof(yvex_runtime_benchmark_baseline,
-                              metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MINIMUM]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"p50_ns", offsetof(yvex_runtime_benchmark_baseline,
-                          metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P50]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"p90_ns", offsetof(yvex_runtime_benchmark_baseline,
-                          metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P90]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"p99_ns", offsetof(yvex_runtime_benchmark_baseline,
-                          metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P99]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"maximum_ns", offsetof(yvex_runtime_benchmark_baseline,
-                              metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MAXIMUM]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"mean_ns", offsetof(yvex_runtime_benchmark_baseline,
-                           metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MEAN]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"standard_deviation_ns", offsetof(yvex_runtime_benchmark_baseline,
-        metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"device_timing_available", offsetof(yvex_runtime_benchmark_baseline,
-                                           metrics.device_timing.available),
-     sizeof(int), BENCHMARK_FIELD_BOOL},
-    {"device_minimum_ns", offsetof(yvex_runtime_benchmark_baseline,
-        metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_MINIMUM]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"device_p50_ns", offsetof(yvex_runtime_benchmark_baseline,
-        metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P50]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"device_p90_ns", offsetof(yvex_runtime_benchmark_baseline,
-        metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P90]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"device_p99_ns", offsetof(yvex_runtime_benchmark_baseline,
-        metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P99]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"device_maximum_ns", offsetof(yvex_runtime_benchmark_baseline,
-        metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_MAXIMUM]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"device_mean_ns", offsetof(yvex_runtime_benchmark_baseline,
-        metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_MEAN]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"device_standard_deviation_ns", offsetof(yvex_runtime_benchmark_baseline,
-        metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION]),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"artifact_bytes_hashed", offsetof(yvex_runtime_benchmark_baseline,
-                                        metrics.artifact_bytes_hashed),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"resident_encoded_bytes", offsetof(yvex_runtime_benchmark_baseline,
-                                         metrics.resident_encoded_bytes),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"resident_h2d_bytes", offsetof(yvex_runtime_benchmark_baseline, metrics.resident_h2d_bytes),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"warm_weight_reads", offsetof(yvex_runtime_benchmark_baseline, metrics.warm_weight_reads),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"warm_upload_bytes", offsetof(yvex_runtime_benchmark_baseline, metrics.warm_upload_bytes),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"warm_host_allocations", offsetof(yvex_runtime_benchmark_baseline,
-                                        metrics.warm_host_allocations),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"warm_device_allocations", offsetof(yvex_runtime_benchmark_baseline,
-                                          metrics.warm_device_allocations),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"warm_device_frees", offsetof(yvex_runtime_benchmark_baseline, metrics.warm_device_frees),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"last_dispatch_kernel_launches", offsetof(yvex_runtime_benchmark_baseline,
-                                                metrics.last_dispatch_kernel_launches),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"cuda_graph_launches", offsetof(yvex_runtime_benchmark_baseline,
-                                     metrics.cuda_graph_launches),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"cuda_graph_captures", offsetof(yvex_runtime_benchmark_baseline,
-                                     metrics.cuda_graph_captures),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"cuda_graph_replays", offsetof(yvex_runtime_benchmark_baseline, metrics.cuda_graph_replays),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"cuda_graph_nodes", offsetof(yvex_runtime_benchmark_baseline, metrics.cuda_graph_nodes),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"peak_host_bytes", offsetof(yvex_runtime_benchmark_baseline, metrics.peak_host_bytes),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"last_dispatch_peak_device_bytes", offsetof(yvex_runtime_benchmark_baseline,
-                                                  metrics.last_dispatch_peak_device_bytes),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"resident_bytes", offsetof(yvex_runtime_benchmark_baseline, metrics.resident_bytes),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"host_workspace_bytes", offsetof(yvex_runtime_benchmark_baseline, metrics.host_workspace_bytes),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
-    {"state_bytes", offsetof(yvex_runtime_benchmark_baseline, metrics.state_bytes),
-     sizeof(unsigned long long), BENCHMARK_FIELD_U64},
+    {"cold_total_ns", offsetof(bench_record, metrics.cold_total_ns), BENCHMARK_FIELD_U64},
+{"cold_artifact_ns", offsetof(bench_record, metrics.cold_artifact_ns), BENCHMARK_FIELD_U64},
+    {"cold_binding_ns", offsetof(bench_record, metrics.cold_binding_ns), BENCHMARK_FIELD_U64},
+{"cold_model_ns", offsetof(bench_record, metrics.cold_model_ns), BENCHMARK_FIELD_U64},
+    {"cold_residency_ns", offsetof(bench_record, metrics.cold_residency_ns), BENCHMARK_FIELD_U64},
+{"cold_workspace_ns", offsetof(bench_record, metrics.cold_workspace_ns), BENCHMARK_FIELD_U64},
+    {"cold_graph_warmup_ns", offsetof(bench_record, metrics.cold_graph_warmup_ns), BENCHMARK_FIELD_U64},
+{"cold_graph_capture_ns", offsetof(bench_record, metrics.cold_graph_capture_ns), BENCHMARK_FIELD_U64},
+    {"cold_graph_instantiate_ns", offsetof(bench_record, metrics.cold_graph_instantiate_ns), BENCHMARK_FIELD_U64},
+{"first_execution_ns", offsetof(bench_record, metrics.first_execution_ns), BENCHMARK_FIELD_U64},
+    {"publication_ns", offsetof(bench_record, metrics.publication_ns), BENCHMARK_FIELD_U64},
+{"cleanup_ns", offsetof(bench_record, metrics.cleanup_ns), BENCHMARK_FIELD_U64},
+    {"minimum_ns", offsetof(bench_record, metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MINIMUM]),
+     BENCHMARK_FIELD_U64},
+    {"p50_ns", offsetof(bench_record, metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P50]), BENCHMARK_FIELD_U64},
+{"p90_ns", offsetof(bench_record, metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P90]), BENCHMARK_FIELD_U64},
+    {"p95_ns", offsetof(bench_record, metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P95]), BENCHMARK_FIELD_U64},
+{"p99_ns", offsetof(bench_record, metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P99]), BENCHMARK_FIELD_U64},
+    {"maximum_ns", offsetof(bench_record, metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MAXIMUM]),
+     BENCHMARK_FIELD_U64},
+    {"mean_ns", offsetof(bench_record, metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MEAN]), BENCHMARK_FIELD_U64},
+    {"standard_deviation_ns", offsetof(bench_record,
+                                      metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION]),
+     BENCHMARK_FIELD_U64},
+    {"device_timing_available", offsetof(bench_record, metrics.device_timing.available), BENCHMARK_FIELD_BOOL},
+    {"device_minimum_ns", offsetof(bench_record, metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_MINIMUM]),
+     BENCHMARK_FIELD_U64},
+    {"device_p50_ns", offsetof(bench_record, metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P50]),
+     BENCHMARK_FIELD_U64},
+    {"device_p90_ns", offsetof(bench_record, metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P90]),
+     BENCHMARK_FIELD_U64},
+    {"device_p95_ns", offsetof(bench_record, metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P95]),
+     BENCHMARK_FIELD_U64},
+    {"device_p99_ns", offsetof(bench_record, metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P99]),
+     BENCHMARK_FIELD_U64},
+    {"device_maximum_ns", offsetof(bench_record, metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_MAXIMUM]),
+     BENCHMARK_FIELD_U64},
+    {"device_mean_ns", offsetof(bench_record, metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_MEAN]),
+     BENCHMARK_FIELD_U64},
+    {"device_standard_deviation_ns",
+     offsetof(bench_record, metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION]),
+     BENCHMARK_FIELD_U64},
+    {"artifact_bytes_hashed", offsetof(bench_record, metrics.artifact_bytes_hashed), BENCHMARK_FIELD_U64},
+{"artifact_bytes_read", offsetof(bench_record, metrics.artifact_bytes_read), BENCHMARK_FIELD_U64},
+    {"weight_bytes_read", offsetof(bench_record, metrics.weight_bytes_read), BENCHMARK_FIELD_U64},
+{"resident_encoded_bytes", offsetof(bench_record, metrics.resident_encoded_bytes), BENCHMARK_FIELD_U64},
+    {"resident_h2d_bytes", offsetof(bench_record, metrics.resident_h2d_bytes), BENCHMARK_FIELD_U64},
+{"h2d_bytes", offsetof(bench_record, metrics.h2d_bytes), BENCHMARK_FIELD_U64},
+{"d2h_bytes", offsetof(bench_record, metrics.d2h_bytes), BENCHMARK_FIELD_U64},
+    {"warm_weight_reads", offsetof(bench_record, metrics.warm_weight_reads), BENCHMARK_FIELD_U64},
+{"warm_upload_bytes", offsetof(bench_record, metrics.warm_upload_bytes), BENCHMARK_FIELD_U64},
+    {"warm_host_allocations", offsetof(bench_record, metrics.warm_host_allocations), BENCHMARK_FIELD_U64},
+{"warm_device_allocations", offsetof(bench_record, metrics.warm_device_allocations), BENCHMARK_FIELD_U64},
+    {"warm_device_frees", offsetof(bench_record, metrics.warm_device_frees), BENCHMARK_FIELD_U64},
+    {"last_dispatch_kernel_launches", offsetof(bench_record, metrics.last_dispatch_kernel_launches),
+     BENCHMARK_FIELD_U64},
+    {"cuda_graph_launches", offsetof(bench_record, metrics.cuda_graph_launches), BENCHMARK_FIELD_U64},
+{"cuda_graph_captures", offsetof(bench_record, metrics.cuda_graph_captures), BENCHMARK_FIELD_U64},
+    {"cuda_graph_replays", offsetof(bench_record, metrics.cuda_graph_replays), BENCHMARK_FIELD_U64},
+{"cuda_graph_nodes", offsetof(bench_record, metrics.cuda_graph_nodes), BENCHMARK_FIELD_U64},
+    {"peak_host_bytes", offsetof(bench_record, metrics.peak_host_bytes), BENCHMARK_FIELD_U64},
+    {"last_dispatch_peak_device_bytes", offsetof(bench_record, metrics.last_dispatch_peak_device_bytes),
+     BENCHMARK_FIELD_U64},
+    {"resident_bytes", offsetof(bench_record, metrics.resident_bytes), BENCHMARK_FIELD_U64},
+    {"host_workspace_bytes", offsetof(bench_record, metrics.host_workspace_bytes), BENCHMARK_FIELD_U64},
+    {"state_bytes", offsetof(bench_record, metrics.state_bytes), BENCHMARK_FIELD_U64},
 };
-
+static const yvex_runtime_benchmark_key bench_key_defaults = {
+    .commit = YVEX_BUILD_COMMIT,
+    .build_source_state = YVEX_BUILD_SOURCE_STATE,
+    .source_delta_identity = YVEX_BUILD_SOURCE_DELTA_IDENTITY,
+    .build_identity = YVEX_BUILD_IDENTITY,
+    .benchmark_scope = "attention_component",
+};
+static const benchmark_text_projection bench_key_result_fields[] = {
+    {offsetof(bench_key, artifact_identity), YVEX_SHA256_HEX_BYTES, offsetof(bench_result, artifact_identity)},
+    {offsetof(bench_key, materialization_identity), YVEX_SHA256_HEX_BYTES,
+     offsetof(bench_result, materialization_identity)},
+    {offsetof(bench_key, runtime_binding_identity), YVEX_SHA256_HEX_BYTES,
+     offsetof(bench_result, runtime_binding_identity)},
+    {offsetof(bench_key, logical_model_identity), YVEX_SHA256_HEX_BYTES,
+     offsetof(bench_result, logical_model_identity)},
+    {offsetof(bench_key, runtime_numeric_identity), YVEX_SHA256_HEX_BYTES,
+     offsetof(bench_result, runtime_numeric_identity)},
+    {offsetof(bench_key, runtime_descriptor_identity), YVEX_SHA256_HEX_BYTES,
+     offsetof(bench_result, runtime_descriptor_identity)},
+    {offsetof(bench_key, semantic_graph_identity), YVEX_SHA256_HEX_BYTES,
+     offsetof(bench_result, semantic_graph_identity)},
+    {offsetof(bench_key, executable_graph_identity), YVEX_SHA256_HEX_BYTES,
+     offsetof(bench_result, executable_graph_identity)},
+    {offsetof(bench_key, execution_descriptor_identity), YVEX_SHA256_HEX_BYTES,
+     offsetof(bench_result, execution_descriptor_identity)},
+    {offsetof(bench_key, residency_identity), YVEX_SHA256_HEX_BYTES, offsetof(bench_result, residency_identity)},
+    {offsetof(bench_key, workspace_identity), YVEX_SHA256_HEX_BYTES, offsetof(bench_result, workspace_identity)},
+    {offsetof(bench_key, state_layout_identity), YVEX_SHA256_HEX_BYTES, offsetof(bench_result, state_layout_identity)},
+    {offsetof(bench_key, mode), YVEX_RUNTIME_BENCHMARK_MODE_CAP, offsetof(bench_result, selected_mode)},
+{offsetof(bench_key, phase), YVEX_RUNTIME_BENCHMARK_MODE_CAP, offsetof(bench_result, phase)},
+    {offsetof(bench_key, scope), YVEX_RUNTIME_BENCHMARK_SCOPE_CAP, offsetof(bench_result, operation_scope)},
+{offsetof(bench_key, coverage), YVEX_RUNTIME_BENCHMARK_MODE_CAP, offsetof(bench_result, scope)},
+    {offsetof(bench_key, attention_class), YVEX_RUNTIME_BENCHMARK_MODE_CAP, offsetof(bench_result, attention_class)},
+    {offsetof(bench_key, trace_policy), YVEX_RUNTIME_BENCHMARK_MODE_CAP, offsetof(bench_result, trace_policy)},
+    {offsetof(bench_key, capture_bucket), YVEX_RUNTIME_BENCHMARK_BUCKET_CAP, offsetof(bench_result, capture_bucket)},
+};
+static const benchmark_u64_projection benchmark_metric_result_fields[] = {
+    {offsetof(bench_metrics, artifact_bytes_hashed), offsetof(bench_result, artifact_bytes_hashed)},
+{offsetof(bench_metrics, artifact_bytes_read), offsetof(bench_result, artifact_bytes_hashed)},
+    {offsetof(bench_metrics, weight_bytes_read), offsetof(bench_result, resident_encoded_bytes)},
+{offsetof(bench_metrics, resident_encoded_bytes), offsetof(bench_result, resident_encoded_bytes)},
+    {offsetof(bench_metrics, resident_h2d_bytes), offsetof(bench_result, upload_bytes)},
+{offsetof(bench_metrics, warm_weight_reads), offsetof(bench_result, warm_weight_artifact_reads)},
+    {offsetof(bench_metrics, warm_upload_bytes), offsetof(bench_result, warm_weight_upload_bytes)},
+{offsetof(bench_metrics, warm_host_allocations), offsetof(bench_result, warm_host_allocations)},
+    {offsetof(bench_metrics, warm_device_allocations), offsetof(bench_result, warm_device_allocations)},
+{offsetof(bench_metrics, warm_device_frees), offsetof(bench_result, warm_device_frees)},
+    {offsetof(bench_metrics, cuda_graph_launches), offsetof(bench_result, cuda_graph_launch_count)},
+{offsetof(bench_metrics, cuda_graph_captures), offsetof(bench_result, cuda_graph_capture_count)},
+    {offsetof(bench_metrics, cuda_graph_replays), offsetof(bench_result, cuda_graph_replay_count)},
+{offsetof(bench_metrics, cuda_graph_nodes), offsetof(bench_result, cuda_graph_node_count)},
+    {offsetof(bench_metrics, host_workspace_bytes), offsetof(bench_result, workspace_bytes)},
+{offsetof(bench_metrics, state_bytes), offsetof(bench_result, state_allocated_bytes)},
+};
+static const benchmark_u64_projection bench_key_result_u64_fields[] = {
+    {offsetof(bench_key, layer_start), offsetof(bench_result, requested_layer_start)},
+    {offsetof(bench_key, layer_count), offsetof(bench_result, requested_layer_count)},
+    {offsetof(bench_key, token_count), offsetof(bench_result, requested_token_count)},
+    {offsetof(bench_key, history_tokens), offsetof(bench_result, requested_history_tokens)},
+    {offsetof(bench_key, warmup_count), offsetof(bench_result, warmup_count)},
+    {offsetof(bench_key, iteration_count), offsetof(bench_result, benchmark_sample_count)},
+};
+static const benchmark_percentile benchmark_percentiles[] = {
+    {YVEX_RUNTIME_BENCHMARK_P50, 50u}, {YVEX_RUNTIME_BENCHMARK_P90, 90u},
+    {YVEX_RUNTIME_BENCHMARK_P95, 95u}, {YVEX_RUNTIME_BENCHMARK_P99, 99u},
+};
+static const benchmark_status benchmark_measured_statuses[] = {
+    {YVEX_RUNTIME_QUALITY_COMPONENT_BENCHMARK, "measured"},
+    {YVEX_RUNTIME_QUALITY_CORRECTNESS, "pass"},
+    {YVEX_RUNTIME_QUALITY_STRUCTURAL, "pass"},
+    {YVEX_RUNTIME_QUALITY_PERFORMANCE, "measured"},
+};
+enum {
+    BENCHMARK_KEY_FIELD_COUNT = sizeof(bench_key_fields) / sizeof(bench_key_fields[0]),
+    BENCHMARK_METRIC_FIELD_COUNT = sizeof(benchmark_metric_fields) / sizeof(benchmark_metric_fields[0]),
+    BENCHMARK_KEY_TEXT_COUNT = sizeof(bench_key_result_fields) / sizeof(bench_key_result_fields[0]),
+    BENCHMARK_KEY_U64_COUNT = sizeof(bench_key_result_u64_fields) / sizeof(bench_key_result_u64_fields[0]),
+    BENCHMARK_METRIC_PROJECTION_COUNT =
+        sizeof(benchmark_metric_result_fields) / sizeof(benchmark_metric_result_fields[0]),
+    BENCHMARK_PERCENTILE_COUNT = sizeof(benchmark_percentiles) / sizeof(benchmark_percentiles[0]),
+    BENCHMARK_MEASURED_STATUS_COUNT =
+        sizeof(benchmark_measured_statuses) / sizeof(benchmark_measured_statuses[0]),
+};
 static const yvex_runtime_benchmark_failure_code benchmark_file_codes[] = {
     YVEX_RUNTIME_BENCHMARK_FAILURE_PUBLISH,
     YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT,
@@ -210,7 +283,7 @@ static const yvex_runtime_benchmark_failure_code benchmark_file_codes[] = {
     YVEX_RUNTIME_BENCHMARK_FAILURE_READ,
     YVEX_RUNTIME_BENCHMARK_FAILURE_CLEANUP,
 };
-
+enum { BENCHMARK_FILE_CODE_COUNT = sizeof(benchmark_file_codes) / sizeof(benchmark_file_codes[0]) };
 /* Purpose: publish one stable typed benchmark refusal and clear no caller-owned evidence. */
 static int benchmark_reject(yvex_runtime_benchmark_failure *failure,
                             yvex_runtime_benchmark_failure_code code,
@@ -229,34 +302,52 @@ static int benchmark_reject(yvex_runtime_benchmark_failure *failure,
     yvex_error_set(err, status, "runtime_benchmark", reason);
     return status;
 }
-
 /* Purpose: reject one malformed benchmark field through the canonical typed failure owner. */
 static int benchmark_field_reject(yvex_runtime_benchmark_failure *failure,
                                   const char *field, unsigned long long expected,
                                   unsigned long long actual, yvex_status status,
                                   const char *reason, yvex_error *err)
 {
-    return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD,
-                            field, expected, actual, status, reason, err);
+    return benchmark_reject(
+        failure, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD, field, expected, actual, status, reason, err);
 }
-
+/* Purpose: reject one failed boolean invariant without repeating its expected/actual encoding. */
+static int benchmark_fail(
+    yvex_runtime_benchmark_failure *failure, yvex_runtime_benchmark_failure_code code,
+    const char *field, yvex_status status, const char *reason, yvex_error *err)
+{
+    return benchmark_reject(failure, code, field, 1ull, 0ull, status, reason, err);
+}
+/* Purpose: reject one malformed boolean field through the canonical field vocabulary. */
+static int benchmark_field_fail(
+    yvex_runtime_benchmark_failure *failure, const char *field, yvex_status status,
+    const char *reason, yvex_error *err)
+{
+    return benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD, field, status, reason, err);
+}
 /* Purpose: append one complete immutable ASCII string without hand-maintained byte counts. */
 static int bytes_text(benchmark_bytes *bytes, const char *text)
 {
     return text && yvex_core_bytes_append(bytes, text, strlen(text));
 }
-
+/* Purpose: finalize one canonical SHA-256 construction into its fixed hexadecimal identity.
+ * Inputs: active hash and fixed-capacity output. Effects: writes one lowercase identity.
+ * Failure: returns false when finalization fails. Boundary: hashes no native object storage. */
+static int benchmark_hash_finish(yvex_sha256 *hash, char output[YVEX_SHA256_HEX_BYTES])
+{
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    if (!yvex_sha256_final(hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
 /* Purpose: append formatted ASCII while rejecting truncation and allocation failure.
- * Inputs: initialized buffer, trusted format, and matching scalar arguments.
- * Effects: appends exactly one complete formatted span.
- * Failure: returns false without advancing count on formatting or allocation failure.
- * Boundary: callers retain field validation and canonical ordering. */
+ * Inputs: buffer, format, and scalar arguments. Effects: appends one complete formatted span.
+ * Failure: false without count advance. Boundary: callers own validation and ordering. */
 static int bytes_format(benchmark_bytes *bytes, const char *format, ...)
 {
     char stack[512];
     va_list args, copy;
     int needed;
-
     va_start(args, format);
     va_copy(copy, args);
     needed = vsnprintf(stack, sizeof(stack), format, copy);
@@ -273,19 +364,16 @@ static int bytes_format(benchmark_bytes *bytes, const char *format, ...)
         va_end(args);
         return 0;
     }
-    needed = vsnprintf((char *)bytes->data + bytes->count,
-                       bytes->capacity - bytes->count, format, args);
+    needed = vsnprintf((char *)bytes->data + bytes->count, bytes->capacity - bytes->count, format, args);
     va_end(args);
     if (needed < 0 || (size_t)needed >= bytes->capacity - bytes->count) return 0;
     bytes->count += (size_t)needed;
     return 1;
 }
-
 /* Purpose: validate one bounded printable field that enters identity and text serialization. */
 static int text_valid(const char *text, size_t capacity)
 {
     size_t index, length;
-
     if (!text || !memchr(text, '\0', capacity)) return 0;
     length = strlen(text);
     if (!length) return 0;
@@ -295,26 +383,21 @@ static int text_valid(const char *text, size_t capacity)
     }
     return 1;
 }
-
 /* Purpose: copy one benchmark text field without accepting truncation. */
 static int benchmark_text_copy(char *output, size_t capacity, const char *text)
 {
-    return output && text && capacity &&
-           snprintf(output, capacity, "%s", text) < (int)capacity;
+    return output && text && capacity && snprintf(output, capacity, "%s", text) < (int)capacity;
 }
-
 /* Purpose: convert one finite nonnegative duration to canonical nanoseconds. */
 static int benchmark_seconds_ns(double seconds, unsigned long long *output)
 {
     double integral_seconds, fractional_seconds;
     unsigned long long integral_ns, fractional_ns;
-
     if (!output || !isfinite(seconds) || seconds < 0.0) return 0;
     fractional_seconds = modf(seconds, &integral_seconds);
     if (integral_seconds > (double)(ULLONG_MAX / 1000000000ull)) return 0;
     fractional_ns = (unsigned long long)(fractional_seconds * 1000000000.0 + 0.5);
-    return yvex_core_u64_mul((unsigned long long)integral_seconds, 1000000000ull,
-                             &integral_ns) &&
+    return yvex_core_u64_mul((unsigned long long)integral_seconds, 1000000000ull, &integral_ns) &&
            yvex_core_u64_add(integral_ns, fractional_ns, output);
 }
 
@@ -322,24 +405,32 @@ typedef struct {
     double values[YVEX_RUNTIME_BENCHMARK_STATISTIC_COUNT];
 } benchmark_seconds_distribution;
 
+typedef struct {
+    unsigned int first, count;
+} benchmark_lifecycle_group;
+
+static const benchmark_lifecycle_group benchmark_cold_groups[] = {
+    {YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN, 3u}, {YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN, 2u},
+{YVEX_RUNTIME_LIFECYCLE_MODEL_SEAL, 1u}, {YVEX_RUNTIME_LIFECYCLE_RESIDENCY, 1u},
+    {YVEX_RUNTIME_LIFECYCLE_BACKEND_OPEN, 2u}, {YVEX_RUNTIME_LIFECYCLE_GRAPH_WARMUP, 1u},
+{YVEX_RUNTIME_LIFECYCLE_GRAPH_CAPTURE, 1u}, {YVEX_RUNTIME_LIFECYCLE_GRAPH_INSTANTIATE, 1u},
+};
+enum { BENCHMARK_COLD_GROUP_COUNT = sizeof(benchmark_cold_groups) / sizeof(benchmark_cold_groups[0]) };
 /* Purpose: impose one total numeric ordering over finite benchmark samples. */
 static int benchmark_sample_compare(const void *left, const void *right)
 {
     const double a = *(const double *)left, b = *(const double *)right;
     return a < b ? -1 : a > b ? 1 : 0;
 }
-
 /* Purpose: validate, sort, and summarize one positive finite timing sample set.
- * Inputs: mutable sample storage, positive representable count, and summary output.
- * Effects: sorts caller-owned samples and fills the summary only after scalar validation.
- * Failure: returns false for null, empty, oversized, non-finite, or non-positive samples.
- * Boundary: the helper computes distribution facts but neither publishes nor interprets them. */
+ * Inputs: mutable samples, count, and summary. Effects: validates, sorts, and summarizes the samples.
+ * Failure: false for invalid samples. Boundary: computes distributions without policy or publication. */
 static int benchmark_samples_summarize(double *samples, unsigned long long count,
                                        benchmark_seconds_distribution *summary)
 {
     double sum = 0.0, squared = 0.0;
     unsigned long long index;
-
+    size_t percentile;
     if (!samples || !summary || !count || count > (unsigned long long)(SIZE_MAX / sizeof(*samples)))
         return 0;
     for (index = 0ull; index < count; ++index)
@@ -347,87 +438,78 @@ static int benchmark_samples_summarize(double *samples, unsigned long long count
     qsort(samples, (size_t)count, sizeof(*samples), benchmark_sample_compare);
     for (index = 0ull; index < count; ++index) sum += samples[index];
     summary->values[YVEX_RUNTIME_BENCHMARK_MINIMUM] = samples[0];
-    summary->values[YVEX_RUNTIME_BENCHMARK_P50] =
-        samples[(count * 50ull + 99ull) / 100ull - 1ull];
-    summary->values[YVEX_RUNTIME_BENCHMARK_P90] =
-        samples[(count * 90ull + 99ull) / 100ull - 1ull];
-    summary->values[YVEX_RUNTIME_BENCHMARK_P99] =
-        samples[(count * 99ull + 99ull) / 100ull - 1ull];
+    for (percentile = 0u; percentile < BENCHMARK_PERCENTILE_COUNT; ++percentile)
+        summary->values[benchmark_percentiles[percentile].index] =
+            samples[(count * benchmark_percentiles[percentile].percentile + 99ull) / 100ull - 1ull];
     summary->values[YVEX_RUNTIME_BENCHMARK_MAXIMUM] = samples[count - 1ull];
     summary->values[YVEX_RUNTIME_BENCHMARK_MEAN] = sum / (double)count;
     for (index = 0ull; index < count; ++index) {
         const double delta = samples[index] - summary->values[YVEX_RUNTIME_BENCHMARK_MEAN];
         squared += delta * delta;
     }
-    summary->values[YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION] =
-        sqrt(squared / (double)count);
+    summary->values[YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION] = sqrt(squared / (double)count);
     return isfinite(sum) && isfinite(squared) &&
            isfinite(summary->values[YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION]);
 }
-
 /* Purpose: publish host and optional device benchmark distributions through one owner.
- * Inputs: mutable sample arrays, positive count, device requirement, and result.
- * Effects: sorts samples and replaces only benchmark distribution fields.
- * Failure: invalid host or requested-device samples publish no partial distribution.
- * Boundary: sample statistics record evidence and promote no execution capability. */
+ * Inputs: host/device samples, count, and result. Effects: publishes complete timing distributions.
+ * Failure: invalid samples publish nothing. Boundary: statistics promote no execution capability. */
 int yvex_runtime_benchmark_samples_finish(
     double *host_seconds, double *device_seconds, unsigned long long count,
     int device_requested, yvex_graph_attention_operator_result *result, yvex_error *err)
 {
     benchmark_seconds_distribution host, device = {0};
-
-    if (!result || (device_requested != 0 && device_requested != 1) ||
-        !benchmark_samples_summarize(host_seconds, count, &host))
-        return benchmark_reject(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD,
-                                "host-samples", count, 0ull, YVEX_ERR_BOUNDS,
+    double first_execution;
+    size_t status;
+    if (!result || (device_requested != 0 && device_requested != 1) || !host_seconds || !count)
+        return benchmark_reject(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD, "host-samples",
+                                count, 0ull, YVEX_ERR_BOUNDS,
+                                "benchmark samples must be positive, finite, and complete", err);
+    first_execution = host_seconds[0];
+    if (!benchmark_samples_summarize(host_seconds, count, &host))
+        return benchmark_reject(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD, "host-samples",
+                                count, 0ull, YVEX_ERR_BOUNDS,
                                 "benchmark samples must be positive, finite, and complete", err);
     if (device_requested && !benchmark_samples_summarize(device_seconds, count, &device))
-        return benchmark_reject(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD,
-                                "device-samples", count, 0ull, YVEX_ERR_BOUNDS,
+        return benchmark_reject(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD, "device-samples",
+                                count, 0ull, YVEX_ERR_BOUNDS,
                                 "device benchmark samples must be positive and finite", err);
     result->benchmark_sample_count = count;
-    result->benchmark_minimum_seconds = host.values[YVEX_RUNTIME_BENCHMARK_MINIMUM];
-    result->benchmark_p50_seconds = host.values[YVEX_RUNTIME_BENCHMARK_P50];
-    result->benchmark_p90_seconds = host.values[YVEX_RUNTIME_BENCHMARK_P90];
-    result->benchmark_p99_seconds = host.values[YVEX_RUNTIME_BENCHMARK_P99];
-    result->benchmark_maximum_seconds = host.values[YVEX_RUNTIME_BENCHMARK_MAXIMUM];
-    result->benchmark_mean_seconds = host.values[YVEX_RUNTIME_BENCHMARK_MEAN];
-    result->benchmark_standard_deviation_seconds =
-        host.values[YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION];
+    memcpy(result->benchmark_host_seconds, host.values, sizeof(result->benchmark_host_seconds));
+    result->benchmark_first_execution_seconds = first_execution;
     result->benchmark_device_timing_available = device_requested;
-    result->benchmark_device_minimum_seconds = device.values[YVEX_RUNTIME_BENCHMARK_MINIMUM];
-    result->benchmark_device_p50_seconds = device.values[YVEX_RUNTIME_BENCHMARK_P50];
-    result->benchmark_device_p90_seconds = device.values[YVEX_RUNTIME_BENCHMARK_P90];
-    result->benchmark_device_p99_seconds = device.values[YVEX_RUNTIME_BENCHMARK_P99];
-    result->benchmark_device_maximum_seconds = device.values[YVEX_RUNTIME_BENCHMARK_MAXIMUM];
-    result->benchmark_device_mean_seconds = device.values[YVEX_RUNTIME_BENCHMARK_MEAN];
-    result->benchmark_device_standard_deviation_seconds =
-        device.values[YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION];
+    memcpy(result->benchmark_device_seconds, device.values, sizeof(result->benchmark_device_seconds));
+    yvex_core_text_copy(result->benchmark_scope, sizeof(result->benchmark_scope), "attention_component");
+    for (status = 0u; status < BENCHMARK_MEASURED_STATUS_COUNT; ++status)
+        yvex_core_text_copy(result->quality_status[benchmark_measured_statuses[status].index],
+                            24u, benchmark_measured_statuses[status].value);
+    result->benchmark_correctness_precondition_passed = 1;
+    result->benchmark_runtime_precondition_passed = 1;
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: identify the CPU execution host for an identity-bound baseline.
- * Inputs: caller-owned bounded labels and typed error output.
- * Effects: reads immutable kernel host facts and fills both labels.
- * Failure: unavailable or oversized host identity returns a typed refusal.
- * Boundary: host identification does not probe runtime/backend capability. */
+ * Inputs: bounded labels and error output. Effects: reads kernel host facts into both labels.
+ * Failure: typed refusal if unavailable/oversized. Boundary: does not probe runtime capability. */
 static int benchmark_cpu_identity(char device[YVEX_RUNTIME_BENCHMARK_TEXT_CAP],
                                   char driver[YVEX_RUNTIME_BENCHMARK_TEXT_CAP],
+                                  unsigned long long *memory_bytes,
                                   yvex_error *err)
 {
     struct utsname host;
-    long processors;
+    long processors, pages, page_size;
     int device_length, driver_length;
 
-    if (uname(&host) != 0 || (processors = sysconf(_SC_NPROCESSORS_ONLN)) <= 0)
-        return benchmark_reject(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD,
-                                "device", 1ull, 0ull, YVEX_ERR_IO,
-                                "CPU benchmark host identity is unavailable", err);
+    if (uname(&host) != 0 || (processors = sysconf(_SC_NPROCESSORS_ONLN)) <= 0 ||
+        (pages = sysconf(_SC_PHYS_PAGES)) <= 0 || (page_size = sysconf(_SC_PAGESIZE)) <= 0 ||
+        !memory_bytes || !yvex_core_u64_mul((unsigned long long)pages,
+                                            (unsigned long long)page_size, memory_bytes))
+        return benchmark_fail(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD, "device", YVEX_ERR_IO,
+            "CPU benchmark host identity is unavailable", err);
     device_length = snprintf(device, YVEX_RUNTIME_BENCHMARK_TEXT_CAP,
                              "cpu:%s:%s:%ld", host.nodename, host.machine, processors);
-    driver_length = snprintf(driver, YVEX_RUNTIME_BENCHMARK_TEXT_CAP,
-                             "kernel:%s:%s", host.sysname, host.release);
+    driver_length = snprintf(
+        driver, YVEX_RUNTIME_BENCHMARK_TEXT_CAP, "kernel:%s:%s", host.sysname, host.release);
     if (device_length < 0 || device_length >= (int)YVEX_RUNTIME_BENCHMARK_TEXT_CAP ||
         driver_length < 0 || driver_length >= (int)YVEX_RUNTIME_BENCHMARK_TEXT_CAP)
         return benchmark_reject(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD,
@@ -435,59 +517,52 @@ static int benchmark_cpu_identity(char device[YVEX_RUNTIME_BENCHMARK_TEXT_CAP],
                                 YVEX_ERR_BOUNDS, "CPU benchmark identity is too long", err);
     return YVEX_OK;
 }
-
 /* Purpose: project immutable execution and build facts into one benchmark key.
- * Inputs: completed production result and caller-owned key.
- * Effects: copies bounded identity, build, backend, phase, mode, and scope facts.
- * Failure: unavailable CPU identity or field overflow refuses the projection.
- * Boundary: key projection neither seals evidence nor decides performance policy. */
+ * Inputs: production result and key. Effects: copies bounded execution and machine facts.
+ * Failure: unavailable/oversized facts refuse. Boundary: neither seals evidence nor applies policy. */
 static int benchmark_attention_key(const yvex_graph_attention_operator_result *result,
                                    yvex_runtime_benchmark_key *key, yvex_error *err)
 {
     char cpu_device[YVEX_RUNTIME_BENCHMARK_TEXT_CAP] = {0};
     char cpu_driver[YVEX_RUNTIME_BENCHMARK_TEXT_CAP] = {0};
+    unsigned long long memory_bytes = 0ull;
     const int cuda = strcmp(result->backend, "cuda") == 0;
     const char *device = result->probe.cuda_device, *driver = result->cuda_driver;
-    const char *text[] = {
-        YVEX_BUILD_COMMIT,
-        YVEX_BUILD_SOURCE_STATE,
-        YVEX_BUILD_SOURCE_DELTA_IDENTITY,
-        YVEX_BUILD_IDENTITY,
-        result->artifact_identity,
-        result->runtime_binding_identity,
-        result->runtime_descriptor_identity,
-        result->execution_descriptor_identity,
-        device,
-        driver,
-        cuda ? result->cuda_build_identity : "not-applicable",
-        result->selected_mode,
-        result->phase,
-        result->operation_scope,
-        result->capture_bucket,
-    };
+    unsigned char *destination = (unsigned char *)key;
+    const unsigned char *source = (const unsigned char *)result;
     size_t index;
 
-    if (!cuda && benchmark_cpu_identity(cpu_device, cpu_driver, err) != YVEX_OK)
+    if (benchmark_cpu_identity(cpu_device, cpu_driver, &memory_bytes, err) != YVEX_OK)
         return yvex_error_code(err);
-    if (!cuda) {
-        text[8] = cpu_device;
-        text[9] = cpu_driver;
+    *key = bench_key_defaults;
+    for (index = 0u; index < BENCHMARK_KEY_TEXT_COUNT; ++index) {
+        const benchmark_text_projection *field = &bench_key_result_fields[index];
+        if (!benchmark_text_copy((char *)destination + field->destination, field->capacity,
+                                 (const char *)source + field->source))
+            return benchmark_fail(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD, "key", YVEX_ERR_BOUNDS,
+                "attention benchmark key exceeds its fixed capacity", err);
     }
-    for (index = 0u; index < sizeof(text) / sizeof(text[0]); ++index) {
-        const benchmark_field *field = &benchmark_key_fields[index];
-        char *destination = (char *)key + field->offset - offsetof(
-            yvex_runtime_benchmark_baseline, key);
-        if (field->kind == BENCHMARK_FIELD_U64 ||
-            !benchmark_text_copy(destination, field->width, text[index]))
-            return benchmark_reject(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD,
-                                    "key", 1ull, 0ull, YVEX_ERR_BOUNDS,
-                                    "attention benchmark key exceeds its fixed capacity", err);
-    }
-    key->warmup_count = result->warmup_count;
-    key->iteration_count = result->benchmark_sample_count;
+    if (!benchmark_text_copy(key->kernel_bundle_identity, sizeof(key->kernel_bundle_identity),
+                             cuda ? result->cuda_build_identity : YVEX_BUILD_IDENTITY) ||
+        !benchmark_text_copy(key->machine_identity, sizeof(key->machine_identity),
+                             cuda ? device : cpu_device) ||
+        !benchmark_text_copy(key->cpu_model, sizeof(key->cpu_model), cpu_device) ||
+        !benchmark_text_copy(key->gpu_model, sizeof(key->gpu_model),
+                             cuda ? device : "not-applicable") ||
+        !benchmark_text_copy(key->device, sizeof(key->device), cuda ? device : cpu_device) ||
+        !benchmark_text_copy(key->driver, sizeof(key->driver), cuda ? driver : cpu_driver) ||
+        !benchmark_text_copy(key->cuda_build, sizeof(key->cuda_build),
+                             cuda ? result->cuda_build_identity : "not-applicable"))
+        return benchmark_fail(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD, "machine", YVEX_ERR_BOUNDS,
+            "attention benchmark host facts exceed their capacity", err);
+    key->memory_bytes = memory_bytes;
+    key->compute_capability_major = (unsigned long long)result->probe.cuda_compute_capability_major;
+    key->compute_capability_minor = (unsigned long long)result->probe.cuda_compute_capability_minor;
+    for (index = 0u; index < BENCHMARK_KEY_U64_COUNT; ++index)
+        memcpy(destination + bench_key_result_u64_fields[index].destination,
+               source + bench_key_result_u64_fields[index].source, sizeof(unsigned long long));
     return YVEX_OK;
 }
-
 /* Purpose: convert one complete seconds distribution into canonical nanoseconds. */
 static int benchmark_timing_project(
     const benchmark_seconds_distribution *source, int available,
@@ -504,51 +579,37 @@ static int benchmark_timing_project(
     }
     return !available || target->values[YVEX_RUNTIME_BENCHMARK_MINIMUM] != 0ull;
 }
-
 /* Purpose: project measured lifecycle and latency values into canonical nanoseconds.
- * Inputs: completed production timings and caller-owned metrics.
- * Effects: converts each finite duration using one checked rounding contract.
- * Failure: negative, non-finite, or unrepresentable timing refuses the projection.
- * Boundary: conversion does not measure, publish, or interpret performance. */
+ * Inputs: production timings and metrics. Effects: converts finite durations under one rounding contract.
+ * Failure: invalid/unrepresentable timing refuses. Boundary: does not measure, publish, or interpret. */
 static int benchmark_attention_times(const yvex_graph_attention_operator_result *result,
                                      yvex_runtime_benchmark_metrics *metrics,
                                      yvex_error *err)
 {
-    const benchmark_seconds_distribution host = {{
-        result->benchmark_minimum_seconds, result->benchmark_p50_seconds,
-        result->benchmark_p90_seconds, result->benchmark_p99_seconds,
-        result->benchmark_maximum_seconds, result->benchmark_mean_seconds,
-        result->benchmark_standard_deviation_seconds,
-    }};
-    const benchmark_seconds_distribution device = {{
-        result->benchmark_device_minimum_seconds, result->benchmark_device_p50_seconds,
-        result->benchmark_device_p90_seconds, result->benchmark_device_p99_seconds,
-        result->benchmark_device_maximum_seconds, result->benchmark_device_mean_seconds,
-        result->benchmark_device_standard_deviation_seconds,
-    }};
-    double artifact, graph, total;
+    benchmark_seconds_distribution host, device;
+    unsigned long long *cold_ns = &metrics->cold_artifact_ns;
+    double cold_seconds[BENCHMARK_COLD_GROUP_COUNT] = {0};
+    double total = 0.0;
+    size_t group, phase;
 
-    artifact = result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] +
-               result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_HASH] +
-               result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_ADMISSION];
-    graph = result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_BINDING_OPEN] +
-            result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_MATERIALIZATION_OPEN] +
-            result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_MODEL_SEAL] +
-            result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_BACKEND_OPEN] +
-            result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_WORKSPACE_PREPARE] +
-            result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_GRAPH_WARMUP] +
-            result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_GRAPH_CAPTURE] +
-            result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_GRAPH_INSTANTIATE];
-    total = artifact + graph + result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_RESIDENCY];
+    memcpy(host.values, result->benchmark_host_seconds, sizeof(host.values));
+    memcpy(device.values, result->benchmark_device_seconds, sizeof(device.values));
+    for (group = 0u; group < BENCHMARK_COLD_GROUP_COUNT; ++group) {
+        for (phase = 0u; phase < benchmark_cold_groups[group].count; ++phase)
+            cold_seconds[group] += result->lifecycle_seconds[
+                benchmark_cold_groups[group].first + phase];
+        total += cold_seconds[group];
+        if (!benchmark_seconds_ns(cold_seconds[group], &cold_ns[group]))
+            goto timing_failure;
+    }
     if (!benchmark_seconds_ns(total, &metrics->cold_total_ns) ||
-        !benchmark_seconds_ns(artifact, &metrics->cold_artifact_ns) ||
-        !benchmark_seconds_ns(result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_RESIDENCY],
-                              &metrics->cold_residency_ns) ||
-        !benchmark_seconds_ns(graph, &metrics->cold_graph_ns) ||
+        !benchmark_seconds_ns(result->benchmark_first_execution_seconds, &metrics->first_execution_ns) ||
+        !benchmark_seconds_ns(result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_PUBLICATION],
+                              &metrics->publication_ns) ||
+        !benchmark_seconds_ns(result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_CLEANUP],
+                              &metrics->cleanup_ns) ||
         !benchmark_timing_project(&host, 1, &metrics->host_timing))
-        return benchmark_reject(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_BOUNDS, "timing",
-                                1ull, 0ull, YVEX_ERR_BOUNDS,
-                                "attention benchmark timing is not representable", err);
+        goto timing_failure;
     if (result->benchmark_device_timing_available != 0 &&
         result->benchmark_device_timing_available != 1)
         return benchmark_reject(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD,
@@ -562,82 +623,101 @@ static int benchmark_attention_times(const yvex_graph_attention_operator_result 
                                 YVEX_ERR_BOUNDS,
                                 "device timing values disagree with availability", err);
     return YVEX_OK;
-}
 
+timing_failure:
+    return benchmark_fail(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_BOUNDS, "timing", YVEX_ERR_BOUNDS,
+        "attention benchmark timing is not representable", err);
+}
 /* Purpose: project resource and dispatch counters without reconstructing runtime truth.
- * Inputs: completed production counters and caller-owned metrics.
- * Effects: copies counters and derives checked aggregate memory extents.
- * Failure: memory-accounting overflow refuses the projection.
- * Boundary: projection cannot infer capability from the copied evidence. */
+ * Inputs: production counters and metrics. Effects: copies counters and derives checked memory extents.
+ * Failure: accounting overflow refuses. Boundary: copied evidence cannot infer capability. */
 static int benchmark_attention_metrics(const yvex_graph_attention_operator_result *result,
                                        yvex_runtime_benchmark_metrics *metrics,
                                        yvex_error *err)
 {
+    const unsigned char *source = (const unsigned char *)result;
+    unsigned char *destination = (unsigned char *)metrics;
     unsigned long long peak;
+    size_t index;
 
-    metrics->artifact_bytes_hashed = result->artifact_bytes_hashed;
-    metrics->resident_encoded_bytes = result->resident_encoded_bytes;
-    metrics->resident_h2d_bytes = result->upload_bytes;
-    metrics->warm_weight_reads = result->warm_weight_artifact_reads;
-    metrics->warm_upload_bytes = result->warm_weight_upload_bytes;
-    metrics->warm_host_allocations = result->warm_host_allocations;
-    metrics->warm_device_allocations = result->warm_device_allocations;
-    metrics->warm_device_frees = result->warm_device_frees;
+    for (index = 0u; index < BENCHMARK_METRIC_PROJECTION_COUNT; ++index)
+        memcpy(destination + benchmark_metric_result_fields[index].destination,
+               source + benchmark_metric_result_fields[index].source,
+               sizeof(unsigned long long));
+    metrics->h2d_bytes = result->probe.h2d_bytes;
+    metrics->d2h_bytes = result->probe.d2h_bytes;
     metrics->last_dispatch_kernel_launches = result->probe.kernel_launches;
-    metrics->cuda_graph_launches = result->cuda_graph_launch_count;
-    metrics->cuda_graph_captures = result->cuda_graph_capture_count;
-    metrics->cuda_graph_replays = result->cuda_graph_replay_count;
-    metrics->cuda_graph_nodes = result->cuda_graph_node_count;
     metrics->last_dispatch_peak_device_bytes = result->probe.peak_device_bytes;
-    metrics->host_workspace_bytes = result->workspace_bytes;
-    metrics->state_bytes = result->state_allocated_bytes;
     if (!yvex_core_u64_add(result->host_resident_bytes, result->device_resident_bytes,
                            &metrics->resident_bytes) ||
         !yvex_core_u64_add(result->host_resident_bytes, result->workspace_bytes, &peak) ||
         !yvex_core_u64_add(peak, result->pinned_host_peak_bytes, &peak) ||
         !yvex_core_u64_add(peak, result->state_allocated_bytes, &metrics->peak_host_bytes))
-        return benchmark_reject(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_BOUNDS,
-                                "memory", 1ull, 0ull, YVEX_ERR_BOUNDS,
-                                "attention benchmark memory accounting overflowed", err);
+        return benchmark_fail(NULL, YVEX_RUNTIME_BENCHMARK_FAILURE_BOUNDS, "memory", YVEX_ERR_BOUNDS,
+            "attention benchmark memory accounting overflowed", err);
     return YVEX_OK;
 }
-
 /* Purpose: validate a full lowercase hexadecimal commit identity.
- * Inputs: fixed-capacity NUL-terminated commit field.
- * Effects: none.
- * Failure: returns false for short, long, uppercase, or nonhex content.
- * Boundary: validation does not discover repository state. */
+ * Inputs: fixed-capacity NUL-terminated commit field. Effects: none.
+ * Failure: false for noncanonical hex. Boundary: validation does not discover repository state. */
 static int commit_valid(const char commit[YVEX_RUNTIME_BENCHMARK_COMMIT_CAP])
 {
     return commit && strnlen(commit, YVEX_RUNTIME_BENCHMARK_COMMIT_CAP) == 40u &&
            strspn(commit, "0123456789abcdef") == 40u;
 }
-
 /* Purpose: admit only the two source-tree states captured by the generated build provenance. */
 static int source_state_valid(const char state[YVEX_RUNTIME_BENCHMARK_SOURCE_STATE_CAP])
 {
     return state && (strcmp(state, "clean") == 0 || strcmp(state, "dirty") == 0);
 }
 
-/* Purpose: name the first execution vocabulary field outside the canonical benchmark domain. */
+typedef struct {
+    const char *name;
+    size_t offset;
+    const char *const *values;
+    size_t count;
+} benchmark_vocabulary;
+
+static const char *const benchmark_modes[] = {"eager", "piecewise", "full"};
+static const char *const benchmark_phases[] = {"prefill", "decode"};
+static const char *const benchmark_scopes[] = {"core", "envelope", "release-attention-set"};
+static const char *const benchmark_coverages[] = {"quick", "full"};
+static const char *const benchmark_classes[] = {"swa", "csa", "hca", "mixed"};
+static const char *const benchmark_traces[] = {"none", "summary", "stages", "full"};
+static const benchmark_vocabulary benchmark_vocabularies[] = {
+    {"mode", offsetof(bench_key, mode), benchmark_modes, 3u},
+{"phase", offsetof(bench_key, phase), benchmark_phases, 2u},
+    {"scope", offsetof(bench_key, scope), benchmark_scopes, 3u},
+{"coverage", offsetof(bench_key, coverage), benchmark_coverages, 2u},
+    {"attention_class", offsetof(bench_key, attention_class), benchmark_classes, 4u},
+{"trace_policy", offsetof(bench_key, trace_policy), benchmark_traces, 4u},
+};
+enum {
+    BENCHMARK_VOCABULARY_COUNT =
+        sizeof(benchmark_vocabularies) / sizeof(benchmark_vocabularies[0])
+};
+/* Purpose: name the first execution vocabulary field outside the canonical benchmark domain.
+ * Inputs: one fully populated benchmark key. Effects: none.
+ * Failure: names the first invalid field. Boundary: neither repairs values nor infers support. */
 static const char *key_vocabulary_mismatch(const yvex_runtime_benchmark_baseline *record)
 {
-    if (strcmp(record->key.mode, "eager") != 0 &&
-        strcmp(record->key.mode, "piecewise") != 0 && strcmp(record->key.mode, "full") != 0)
-        return "mode";
-    if (strcmp(record->key.phase, "prefill") != 0 && strcmp(record->key.phase, "decode") != 0)
-        return "phase";
-    if (strcmp(record->key.scope, "core") != 0 && strcmp(record->key.scope, "envelope") != 0 &&
-        strcmp(record->key.scope, "release-attention-set") != 0)
-        return "scope";
+    const unsigned char *key = (const unsigned char *)&record->key;
+    size_t rule, value;
+
+    if (strcmp(record->key.benchmark_scope, "attention_component") != 0)
+        return "benchmark_scope";
+    for (rule = 0u; rule < BENCHMARK_VOCABULARY_COUNT; ++rule) {
+        const benchmark_vocabulary *vocabulary = &benchmark_vocabularies[rule];
+        const char *text = (const char *)key + vocabulary->offset;
+        for (value = 0u; value < vocabulary->count; ++value)
+            if (strcmp(text, vocabulary->values[value]) == 0) break;
+        if (value == vocabulary->count) return vocabulary->name;
+    }
     return NULL;
 }
-
 /* Purpose: validate the single canonical key-field schema used by hash, I/O, and equality.
- * Inputs: complete record plus typed refusal outputs.
- * Effects: writes refusal state only.
- * Failure: rejects the first malformed commit, identity, or printable text field.
- * Boundary: scalar geometry and measured values remain separately validated. */
+ * Inputs: complete record plus typed refusal outputs. Effects: writes refusal state only.
+ * Failure: rejects the first malformed text field. Boundary: geometry and metrics validate separately. */
 static int key_validate(const yvex_runtime_benchmark_baseline *record,
                         yvex_runtime_benchmark_failure *failure, yvex_error *err)
 {
@@ -646,22 +726,22 @@ static int key_validate(const yvex_runtime_benchmark_baseline *record,
     size_t index;
 
     if (!record)
-        return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT,
-                                "key", 1ull, 0ull, YVEX_ERR_INVALID_ARG, "benchmark key is required", err);
-    for (index = 0u; index < sizeof(benchmark_key_fields) /
-                                  sizeof(benchmark_key_fields[0]); ++index) {
-        const benchmark_field *field = &benchmark_key_fields[index];
+        return benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT, "key",
+            YVEX_ERR_INVALID_ARG, "benchmark key is required", err);
+    for (index = 0u; index < BENCHMARK_KEY_FIELD_COUNT; ++index) {
+        const benchmark_field *field = &bench_key_fields[index];
         const char *text = (const char *)(base + field->offset);
         int valid = field->kind == BENCHMARK_FIELD_U64 ||
                     (field->kind == BENCHMARK_FIELD_COMMIT && commit_valid(text)) ||
                     (field->kind == BENCHMARK_FIELD_SOURCE_STATE && source_state_valid(text)) ||
                     (field->kind == BENCHMARK_FIELD_SHA256 && yvex_sha256_hex_valid(text)) ||
-                    (field->kind == BENCHMARK_FIELD_TEXT && text_valid(text, field->width));
+                    (field->kind >= BENCHMARK_FIELD_TEXT_16 && field->kind <= BENCHMARK_FIELD_TEXT_128 &&
+                     text_valid(text, benchmark_field_widths[field->kind]));
         if (!valid) {
             unsigned long long expected = field->kind == BENCHMARK_FIELD_COMMIT ? 40ull :
                                           field->kind == BENCHMARK_FIELD_SHA256 ? 64ull : 1ull;
             return benchmark_field_reject(
-                failure, field->name, expected, strnlen(text, field->width),
+                failure, field->name, expected, strnlen(text, benchmark_field_widths[field->kind]),
                 YVEX_ERR_FORMAT,
                 field->kind == BENCHMARK_FIELD_COMMIT
                     ? "benchmark commit must be a full lowercase SHA"
@@ -675,25 +755,20 @@ static int key_validate(const yvex_runtime_benchmark_baseline *record,
     }
     if ((strcmp(record->key.build_source_state, "clean") == 0) !=
         (strcmp(record->key.source_delta_identity, BENCHMARK_EMPTY_SOURCE_DELTA) == 0))
-        return benchmark_field_reject(
-            failure, "source_delta_identity", 1ull, 0ull, YVEX_ERR_FORMAT,
+        return benchmark_field_fail(failure, "source_delta_identity", YVEX_ERR_FORMAT,
             "benchmark source state and exact delta identity disagree", err);
     vocabulary = key_vocabulary_mismatch(record);
     if (vocabulary)
-        return benchmark_field_reject(failure, vocabulary, 1ull, 0ull, YVEX_ERR_FORMAT,
-                                      "benchmark execution vocabulary is not canonical", err);
+        return benchmark_field_fail(failure, vocabulary, YVEX_ERR_FORMAT,
+            "benchmark execution vocabulary is not canonical", err);
     if (!record->key.iteration_count)
-        return benchmark_field_reject(failure, "iteration_count", 1ull, 0ull,
-                                      YVEX_ERR_BOUNDS,
-                                      "benchmark iteration count must be positive", err);
+        return benchmark_field_fail(failure, "iteration_count", YVEX_ERR_BOUNDS,
+            "benchmark iteration count must be positive", err);
     return YVEX_OK;
 }
-
 /* Purpose: append canonical schema fields to a hash without hashing native structure bytes.
- * Inputs: active hash, immutable record, and its ordered field table.
- * Effects: appends every declared scalar exactly once in canonical order.
- * Failure: returns false on any canonical hash update failure.
- * Boundary: pointers, padding, native layout, and destination paths remain excluded. */
+ * Inputs: hash, record, and field table. Effects: appends each scalar once in canonical order.
+ * Failure: false on hash failure. Boundary: excludes pointers, padding, native layout, and paths. */
 static int fields_hash(yvex_sha256 *hash, const yvex_runtime_benchmark_baseline *record,
                        const benchmark_field *fields, size_t count)
 {
@@ -718,12 +793,9 @@ static int fields_hash(yvex_sha256 *hash, const yvex_runtime_benchmark_baseline 
     }
     return 1;
 }
-
 /* Purpose: serialize canonical schema fields in their single declared order.
- * Inputs: bounded byte sink, sealed record, and one immutable schema field table.
- * Effects: appends one canonical text line for each declared field.
- * Failure: returns false on formatting, allocation, or configured byte-bound failure.
- * Boundary: field validation and final identity-line ownership remain with the baseline lifecycle. */
+ * Inputs: byte sink, record, and field table. Effects: appends one canonical line per field.
+ * Failure: false on format/allocation/bounds. Boundary: validation and identity remain lifecycle-owned. */
 static int fields_serialize(benchmark_bytes *bytes,
                             const yvex_runtime_benchmark_baseline *record,
                             const benchmark_field *fields, size_t count)
@@ -750,12 +822,9 @@ static int fields_serialize(benchmark_bytes *bytes,
     }
     return 1;
 }
-
 /* Purpose: validate one host or device distribution under an exact availability contract.
- * Inputs: immutable canonical timing values and the backend-required availability bit.
- * Effects: none.
- * Failure: returns false for unavailable residue, unordered values, zero minima, or signed overflow.
- * Boundary: validates measured facts without assigning performance policy. */
+ * Inputs: immutable canonical timing values and the backend-required availability bit. Effects: none.
+ * Failure: false for residue, disorder, zero minimum, or overflow. Boundary: assigns no policy. */
 static int timing_valid(const yvex_runtime_benchmark_timing_distribution *timing,
                         int expected_available)
 {
@@ -771,7 +840,8 @@ static int timing_valid(const yvex_runtime_benchmark_timing_distribution *timing
     return value[YVEX_RUNTIME_BENCHMARK_MINIMUM] != 0ull &&
            value[YVEX_RUNTIME_BENCHMARK_MINIMUM] <= value[YVEX_RUNTIME_BENCHMARK_P50] &&
            value[YVEX_RUNTIME_BENCHMARK_P50] <= value[YVEX_RUNTIME_BENCHMARK_P90] &&
-           value[YVEX_RUNTIME_BENCHMARK_P90] <= value[YVEX_RUNTIME_BENCHMARK_P99] &&
+           value[YVEX_RUNTIME_BENCHMARK_P90] <= value[YVEX_RUNTIME_BENCHMARK_P95] &&
+           value[YVEX_RUNTIME_BENCHMARK_P95] <= value[YVEX_RUNTIME_BENCHMARK_P99] &&
            value[YVEX_RUNTIME_BENCHMARK_P99] <= value[YVEX_RUNTIME_BENCHMARK_MAXIMUM] &&
            value[YVEX_RUNTIME_BENCHMARK_MEAN] >= value[YVEX_RUNTIME_BENCHMARK_MINIMUM] &&
            value[YVEX_RUNTIME_BENCHMARK_MEAN] <= value[YVEX_RUNTIME_BENCHMARK_MAXIMUM] &&
@@ -779,31 +849,27 @@ static int timing_valid(const yvex_runtime_benchmark_timing_distribution *timing
            value[YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION] <=
                (unsigned long long)LLONG_MAX;
 }
-
 /* Purpose: validate ordered timing, resource, and execution-mode benchmark evidence.
- * Inputs: one complete benchmark record plus optional typed refusal outputs.
- * Effects: writes only refusal state on failure.
- * Failure: rejects zero evidence, unordered percentiles, or contradictory graph counters.
- * Boundary: validation establishes execution consistency, not performance policy. */
+ * Inputs: benchmark record and refusal outputs. Effects: writes refusal state only on failure.
+ * Failure: rejects inconsistent evidence. Boundary: establishes consistency, not performance policy. */
 static int metrics_validate(const yvex_runtime_benchmark_baseline *record,
                             yvex_runtime_benchmark_failure *failure, yvex_error *err)
 {
     const yvex_runtime_benchmark_metrics *metrics;
     const yvex_runtime_benchmark_timing_distribution *device;
+    const unsigned long long *cold_phase;
     unsigned long long cold = 0ull;
-    unsigned int graph_fields;
+    unsigned int graph_fields, phase;
     int eager, cuda;
 
     if (!record)
-        return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT,
-                                "metrics", 1ull, 0ull, YVEX_ERR_INVALID_ARG,
-                                "benchmark metrics are required", err);
+        return benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT, "metrics",
+            YVEX_ERR_INVALID_ARG, "benchmark metrics are required", err);
     metrics = &record->metrics;
     device = &metrics->device_timing;
     if (!metrics->cold_total_ns || !timing_valid(&metrics->host_timing, 1) ||
         metrics->cold_total_ns > (unsigned long long)LLONG_MAX)
-        return benchmark_field_reject(
-            failure, "metrics", 1ull, 0ull, YVEX_ERR_BOUNDS,
+        return benchmark_field_fail(failure, "metrics", YVEX_ERR_BOUNDS,
             "benchmark nanosecond statistics are invalid or unordered", err);
     cuda = strcmp(record->key.cuda_build, "not-applicable") != 0;
     if (!timing_valid(device, cuda))
@@ -813,12 +879,15 @@ static int metrics_validate(const yvex_runtime_benchmark_baseline *record,
             "device timing availability or distribution is invalid", err);
     if (!metrics->artifact_bytes_hashed || !metrics->resident_encoded_bytes ||
         !metrics->resident_bytes || !metrics->state_bytes)
-        return benchmark_field_reject(failure, "structural-evidence", 1ull, 0ull,
-                                      YVEX_ERR_BOUNDS,
-                                      "benchmark structural byte evidence is incomplete", err);
-    if (!yvex_core_u64_add(metrics->cold_artifact_ns, metrics->cold_residency_ns, &cold) ||
-        !yvex_core_u64_add(cold, metrics->cold_graph_ns, &cold) ||
-        cold != metrics->cold_total_ns ||
+        return benchmark_field_fail(failure, "structural-evidence", YVEX_ERR_BOUNDS,
+            "benchmark structural byte evidence is incomplete", err);
+    cold_phase = &metrics->cold_artifact_ns;
+    for (phase = 0u; phase < 8u; ++phase)
+        if (!yvex_core_u64_add(cold, cold_phase[phase], &cold))
+            return benchmark_field_reject(
+                failure, "resource-accounting", metrics->cold_total_ns, cold,
+                YVEX_ERR_BOUNDS, "benchmark cold-phase accounting overflowed", err);
+    if (cold != metrics->cold_total_ns ||
         metrics->resident_encoded_bytes > metrics->resident_bytes ||
         metrics->peak_host_bytes < metrics->host_workspace_bytes ||
         metrics->peak_host_bytes < metrics->state_bytes)
@@ -846,36 +915,26 @@ static int metrics_validate(const yvex_runtime_benchmark_baseline *record,
             "benchmark steady-state allocation or weight-transfer invariant failed", err);
     return YVEX_OK;
 }
-
 /* Purpose: hash one record using canonical scalar values rather than C object representation.
- * Inputs: validated record and fixed-capacity identity output.
- * Effects: writes one lowercase SHA-256 identity.
- * Failure: returns false when canonical hash updates or finalization fail.
- * Boundary: excludes pointers, padding, native layout, and destination path. */
+ * Inputs: validated record and fixed-capacity identity output. Effects: writes one lowercase SHA-256 identity.
+ * Failure: false on hash failure. Boundary: excludes pointers, padding, native layout, and paths. */
 static int baseline_identity(const yvex_runtime_benchmark_baseline *record,
                              char output[YVEX_SHA256_HEX_BYTES])
 {
     yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.benchmark.baseline.v4") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.benchmark.baseline.v5") ||
         !yvex_sha256_update_u64(&hash, record->schema_version) ||
-        !fields_hash(&hash, record, benchmark_key_fields,
-                     sizeof(benchmark_key_fields) / sizeof(benchmark_key_fields[0])) ||
-        !fields_hash(&hash, record, benchmark_metric_fields,
-                     sizeof(benchmark_metric_fields) / sizeof(benchmark_metric_fields[0])) ||
-        !yvex_sha256_final(&hash, digest))
+        !fields_hash(&hash, record, bench_key_fields, BENCHMARK_KEY_FIELD_COUNT) ||
+        !fields_hash(&hash, record, benchmark_metric_fields, BENCHMARK_METRIC_FIELD_COUNT) ||
+        !benchmark_hash_finish(&hash, output))
         return 0;
-    yvex_sha256_hex(digest, output);
     return 1;
 }
-
 /* Purpose: prove a borrowed record is sealed under its exact canonical identity.
- * Inputs: immutable record plus optional typed refusal outputs.
- * Effects: writes only refusal state on failure.
- * Failure: rejects schema, field, metric, or identity mismatch.
- * Boundary: validation never changes or reseals borrowed evidence. */
+ * Inputs: immutable record plus optional typed refusal outputs. Effects: writes only refusal state on failure.
+ * Failure: rejects schema/content/identity mismatch. Boundary: never changes borrowed evidence. */
 static int baseline_validate(const yvex_runtime_benchmark_baseline *record,
                              yvex_runtime_benchmark_failure *failure, yvex_error *err)
 {
@@ -883,54 +942,41 @@ static int baseline_validate(const yvex_runtime_benchmark_baseline *record,
     int rc;
 
     if (!record)
-        return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT,
-                                "record", 1ull, 0ull, YVEX_ERR_INVALID_ARG,
-                                "benchmark record is required", err);
-    if (record->schema_version != YVEX_RUNTIME_BENCHMARK_SCHEMA_V4)
+        return benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT, "record",
+            YVEX_ERR_INVALID_ARG, "benchmark record is required", err);
+    if (record->schema_version != YVEX_RUNTIME_BENCHMARK_SCHEMA_V5)
         return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_SCHEMA, "schema",
-                                YVEX_RUNTIME_BENCHMARK_SCHEMA_V4, record->schema_version,
+                                YVEX_RUNTIME_BENCHMARK_SCHEMA_V5, record->schema_version,
                                 YVEX_ERR_UNSUPPORTED, "benchmark schema is unsupported", err);
     if ((rc = key_validate(record, failure, err)) != YVEX_OK ||
         (rc = metrics_validate(record, failure, err)) != YVEX_OK)
         return rc;
     if (!baseline_identity(record, identity) || strcmp(identity, record->identity) != 0)
-        return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_IDENTITY,
-                                "baseline_identity", 1ull, 0ull, YVEX_ERR_STATE,
-                                "benchmark baseline identity does not match canonical content", err);
+        return benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_IDENTITY, "baseline_identity",
+            YVEX_ERR_STATE, "benchmark baseline identity does not match canonical content", err);
     return YVEX_OK;
 }
-
-/* Purpose: serialize one validated record into the exact version-four line format.
- * Inputs: sealed record and empty owner-controlled byte buffer.
- * Effects: appends every field in one fixed order and encoding.
- * Failure: returns false on bound or allocation failure.
- * Boundary: serialization does not publish or reopen files. */
+/* Purpose: serialize one validated record into the exact version-five line format.
+ * Inputs: sealed record and byte buffer. Effects: appends each field in fixed order and encoding.
+ * Failure: returns false on bound or allocation failure. Boundary: serialization does not publish or reopen files. */
 static int baseline_serialize(const yvex_runtime_benchmark_baseline *record,
                               benchmark_bytes *bytes)
 {
     bytes->maximum = BENCHMARK_FILE_MAX;
     bytes->initial_capacity = 1024u;
-    return bytes_format(bytes, "YVEX_RUNTIME_BENCHMARK_BASELINE\t4\n") &&
+    return bytes_format(bytes, "YVEX_RUNTIME_BENCHMARK_BASELINE\t5\n") &&
            bytes_format(bytes, "identity\t%s\n", record->identity) &&
-           fields_serialize(bytes, record, benchmark_key_fields,
-                            sizeof(benchmark_key_fields) / sizeof(benchmark_key_fields[0])) &&
-           fields_serialize(bytes, record, benchmark_metric_fields,
-                            sizeof(benchmark_metric_fields) /
-                                sizeof(benchmark_metric_fields[0]));
+           fields_serialize(bytes, record, bench_key_fields, BENCHMARK_KEY_FIELD_COUNT) &&
+           fields_serialize(bytes, record, benchmark_metric_fields, BENCHMARK_METRIC_FIELD_COUNT);
 }
-
 /* Purpose: translate core file mechanics into the benchmark evidence failure vocabulary.
- * Inputs: one typed core lifecycle stage.
- * Effects: returns a domain code without changing either failure object.
- * Failure: unknown stages map to a fail-closed publication failure.
- * Boundary: mapping does not alter the original filesystem status or evidence bytes. */
+ * Inputs: one typed core lifecycle stage. Effects: returns a domain code without changing either failure object.
+ * Failure: unknown stages fail closed. Boundary: preserves filesystem status and evidence bytes. */
 static yvex_runtime_benchmark_failure_code benchmark_file_code(yvex_core_file_stage stage)
 {
-    return (unsigned int)stage < sizeof(benchmark_file_codes) /
-                                    sizeof(benchmark_file_codes[0])
+    return (unsigned int)stage < BENCHMARK_FILE_CODE_COUNT
                ? benchmark_file_codes[stage] : YVEX_RUNTIME_BENCHMARK_FAILURE_PUBLISH;
 }
-
 /* Purpose: name the exact owned cleanup operation retained by the core file lifecycle. */
 static const char *benchmark_cleanup_field(yvex_core_file_cleanup_stage stage)
 {
@@ -943,13 +989,11 @@ static const char *benchmark_cleanup_field(yvex_core_file_cleanup_stage stage)
     }
     return "file-cleanup";
 }
-
 /* Purpose: transactionally publish exact bytes through one no-symlink, no-replace file lifecycle.
  * Inputs: safe path, exact immutable bytes, optional lifecycle fault controls, and typed
  * publication/refusal outputs.
  * Effects: creates, writes, syncs, atomically links, and directory-syncs one file.
- * Failure: removes only its exact temporary or newly published candidate.
- * Boundary: bytes are canonical; fault controls remain explicit lifecycle-test inputs. */
+ * Failure: removes only its owned candidate. Boundary: bytes are canonical and faults remain explicit. */
 static int publish_bytes(const char *path, const void *data, size_t count,
                          const yvex_core_file_faults *faults,
                          yvex_runtime_benchmark_publication *result,
@@ -960,9 +1004,8 @@ static int publish_bytes(const char *path, const void *data, size_t count,
 
     if (result) memset(result, 0, sizeof(*result));
     if (!result || !data || !count || !path || path[0] != '/')
-        return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_PATH,
-                                "path", 1ull, 0ull, YVEX_ERR_INVALID_ARG,
-                                "benchmark publication requires an absolute external path", err);
+        return benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_PATH, "path", YVEX_ERR_INVALID_ARG,
+            "benchmark publication requires an absolute external path", err);
     memset(&file_result, 0, sizeof(file_result));
     rc = yvex_core_file_publish_noreplace(
         path, data, count, faults, NULL, NULL, &file_result, err);
@@ -982,12 +1025,9 @@ static int publish_bytes(const char *path, const void *data, size_t count,
     if (failure) memset(failure, 0, sizeof(*failure));
     return YVEX_OK;
 }
-
 /* Purpose: extract one exact key/value line in canonical order without accepting duplicates.
- * Inputs: mutable cursor/end bounds, expected key, and borrowed value output.
- * Effects: terminates one line in place and advances the cursor exactly once.
- * Failure: returns false for missing newline/tab, wrong key, or empty value.
- * Boundary: field-specific capacity and type parsing remain caller-owned. */
+ * Inputs: bounded cursor, key, and value output. Effects: terminates one line and advances once.
+ * Failure: false for malformed lines. Boundary: callers own field capacity and type parsing. */
 static int parse_line(char **cursor, char *end, const char *key, char **value)
 {
     char *line_end, *separator;
@@ -1006,12 +1046,9 @@ static int parse_line(char **cursor, char *end, const char *key, char **value)
     *cursor = line_end + 1;
     return 1;
 }
-
 /* Purpose: decode every field in one schema table from canonical ordered text lines.
- * Inputs: bounded mutable parse cursor, record, and the same field table used for writing.
- * Effects: advances exactly one line per field and initializes only declared destinations.
- * Failure: rejects reordering, text overflow, or noncanonical sixteen-digit integers.
- * Boundary: semantic field validation follows complete parsing. */
+ * Inputs: cursor, record, and field table. Effects: parses one ordered line into each declared field.
+ * Failure: rejects order/size/encoding. Boundary: semantic validation follows complete parsing. */
 static int fields_parse(char **cursor, char *end,
                         yvex_runtime_benchmark_baseline *record,
                         const benchmark_field *fields, size_t count)
@@ -1032,8 +1069,8 @@ static int fields_parse(char **cursor, char *end,
             continue;
         }
         if (field->kind != BENCHMARK_FIELD_U64) {
-            if (strlen(value) >= field->width) return 0;
-            yvex_core_text_copy((char *)(base + field->offset), field->width, value);
+            if (strlen(value) >= benchmark_field_widths[field->kind]) return 0;
+            yvex_core_text_copy((char *)(base + field->offset), benchmark_field_widths[field->kind], value);
             continue;
         }
         if (strlen(value) != 16u) return 0;
@@ -1044,12 +1081,9 @@ static int fields_parse(char **cursor, char *end,
     }
     return 1;
 }
-
 /* Purpose: parse every canonical baseline field from one mutable bounded file buffer.
- * Inputs: mutable exact file bytes and caller-owned record output.
- * Effects: tokenizes bytes in place and fills every version-four field once.
- * Failure: returns false on missing, reordered, duplicate, or trailing data.
- * Boundary: identity and canonical byte equality are validated by the reopen owner. */
+ * Inputs: exact mutable bytes and record. Effects: tokenizes and fills each v5 field once.
+ * Failure: false for missing/reordered/trailing data. Boundary: reopen owns identity and byte equality. */
 static int baseline_parse(char *data, size_t count, yvex_runtime_benchmark_baseline *record)
 {
     char *cursor = data, *end = data + count, *header, *identity;
@@ -1057,27 +1091,22 @@ static int baseline_parse(char *data, size_t count, yvex_runtime_benchmark_basel
     memset(record, 0, sizeof(*record));
     if (!parse_line(&cursor, end, "YVEX_RUNTIME_BENCHMARK_BASELINE", &header))
         return 0;
-    if (header[0] < '1' || header[0] > '4' || header[1]) return 0;
+    if (header[0] < '1' || header[0] > '5' || header[1]) return 0;
     record->schema_version = (unsigned int)(header[0] - '0');
-    if (record->schema_version != YVEX_RUNTIME_BENCHMARK_SCHEMA_V4) return 0;
+    if (record->schema_version != YVEX_RUNTIME_BENCHMARK_SCHEMA_V5) return 0;
     if (!parse_line(&cursor, end, "identity", &identity) ||
         strlen(identity) >= sizeof(record->identity) ||
-        !fields_parse(&cursor, end, record, benchmark_key_fields,
-                      sizeof(benchmark_key_fields) / sizeof(benchmark_key_fields[0])) ||
-        !fields_parse(&cursor, end, record, benchmark_metric_fields,
-                      sizeof(benchmark_metric_fields) / sizeof(benchmark_metric_fields[0])) ||
+        !fields_parse(&cursor, end, record, bench_key_fields, BENCHMARK_KEY_FIELD_COUNT) ||
+        !fields_parse(&cursor, end, record, benchmark_metric_fields, BENCHMARK_METRIC_FIELD_COUNT) ||
         cursor != end)
         return 0;
     record->metrics.host_timing.available = 1;
     yvex_core_text_copy(record->identity, sizeof(record->identity), identity);
     return 1;
 }
-
 /* Purpose: read one stable regular file through a no-symlink path and exact bounded snapshot.
- * Inputs: safe path, owned buffer outputs, and typed refusal outputs.
- * Effects: allocates and fills one exact caller-owned byte buffer.
- * Failure: rejects nonregular, oversized, short, changed, or unreadable files.
- * Boundary: parsing and identity validation remain caller-owned. */
+ * Inputs: safe path and owned outputs. Effects: allocates and fills one exact byte buffer.
+ * Failure: rejects unsafe, changed, or unreadable files. Boundary: callers own parsing and identity. */
 static int read_file(const char *path, char **data, size_t *count,
                      yvex_runtime_benchmark_failure *failure, yvex_error *err)
 {
@@ -1086,9 +1115,8 @@ static int read_file(const char *path, char **data, size_t *count,
     int rc;
 
     if (!path || path[0] != '/')
-        return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_PATH,
-                                "path", 1ull, 0ull, YVEX_ERR_INVALID_ARG,
-                                "benchmark evidence requires an absolute external path", err);
+        return benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_PATH, "path", YVEX_ERR_INVALID_ARG,
+            "benchmark evidence requires an absolute external path", err);
     memset(&file_result, 0, sizeof(file_result));
     rc = yvex_core_file_read_snapshot(path, BENCHMARK_FILE_MAX, &bytes, count,
                                       &file_result, err);
@@ -1099,40 +1127,127 @@ static int read_file(const char *path, char **data, size_t *count,
     *data = (char *)bytes;
     return YVEX_OK;
 }
-
 /* Purpose: compare workload compatibility while retaining commit and source state provenance.
- * Inputs: two independently validated benchmark records.
- * Effects: reads canonical key fields without mutating either record.
- * Failure: returns false at the first workload, device, or toolchain mismatch.
- * Boundary: commits may differ across revisions; exact source delta and build identity must match. */
-static int keys_equal(const yvex_runtime_benchmark_baseline *left,
-                      const yvex_runtime_benchmark_baseline *right)
+ * Inputs: two validated records. Effects: compares canonical keys without mutation.
+ * Failure: names the first incompatibility. Boundary: commits may differ; build/source identities may not. */
+static const char *keys_mismatch(const yvex_runtime_benchmark_baseline *left,
+                                 const yvex_runtime_benchmark_baseline *right)
 {
     const unsigned char *left_base = (const unsigned char *)left;
     const unsigned char *right_base = (const unsigned char *)right;
     size_t index;
 
-    for (index = 0u; index < sizeof(benchmark_key_fields) /
-                                  sizeof(benchmark_key_fields[0]); ++index) {
-        const benchmark_field *field = &benchmark_key_fields[index];
+    for (index = 0u; index < BENCHMARK_KEY_FIELD_COUNT; ++index) {
+        const benchmark_field *field = &bench_key_fields[index];
         const void *left_value = left_base + field->offset;
         const void *right_value = right_base + field->offset;
         if (field->kind == BENCHMARK_FIELD_COMMIT) continue;
-        if (field->kind == BENCHMARK_FIELD_U64) {
-            if (memcmp(left_value, right_value, sizeof(unsigned long long)) != 0) return 0;
-        } else if (strcmp((const char *)left_value, (const char *)right_value) != 0) {
-            return 0;
-        }
+        if (memcmp(left_value, right_value, benchmark_field_widths[field->kind]) != 0)
+            return field->name;
     }
-    return 1;
+    return NULL;
 }
-
 /* Purpose: produce one signed measured delta after metrics validation bounded both operands. */
 static long long metric_delta(unsigned long long current, unsigned long long baseline)
 {
     return (long long)current - (long long)baseline;
 }
+typedef struct {
+    size_t offset;
+    int inverse, device;
+} benchmark_regression_field;
 
+static const benchmark_regression_field benchmark_regression_fields[] = {
+    {offsetof(bench_metrics, host_timing.values[YVEX_RUNTIME_BENCHMARK_P50]), 0, 0},
+    {offsetof(bench_metrics, device_timing.values[YVEX_RUNTIME_BENCHMARK_P50]), 0, 1},
+    {offsetof(bench_metrics, host_timing.values[YVEX_RUNTIME_BENCHMARK_MEAN]), 1, 0},
+    {offsetof(bench_metrics, device_timing.values[YVEX_RUNTIME_BENCHMARK_MEAN]), 1, 1},
+    {offsetof(bench_metrics, peak_host_bytes), 0, 0},
+    {offsetof(bench_metrics, last_dispatch_peak_device_bytes), 0, 1},
+    {offsetof(bench_metrics, h2d_bytes), 0, 0}, {offsetof(bench_metrics, d2h_bytes), 0, 0},
+    {offsetof(bench_metrics, warm_host_allocations), 0, 0},
+    {offsetof(bench_metrics, warm_device_allocations), 0, 1},
+    {offsetof(bench_metrics, warm_device_frees), 0, 1},
+    {offsetof(bench_metrics, last_dispatch_kernel_launches), 0, 0},
+    {offsetof(bench_metrics, cuda_graph_launches), 0, 0},
+};
+enum {
+    BENCHMARK_REGRESSION_FIELD_COUNT =
+        sizeof(benchmark_regression_fields) / sizeof(benchmark_regression_fields[0])
+};
+
+/* Purpose: classify one measured ratio against a shared caller-selected basis-point ceiling. */
+static int regression_exceeded(unsigned long long current, unsigned long long baseline,
+                               unsigned long long basis_points, int inverse)
+{
+    if (!inverse)
+        return (long double)current * 10000.0L > (long double)baseline * (10000.0L + (long double)basis_points);
+    return basis_points < 10000ull && (long double)baseline * 10000.0L <
+               (long double)current * (long double)(10000ull - basis_points);
+}
+/* Purpose: derive one canonical threshold policy identity without hashing native storage. */
+static int regression_policy_identity(
+    const yvex_runtime_benchmark_regression_policy *policy,
+    char output[YVEX_SHA256_HEX_BYTES])
+{
+    yvex_sha256 hash;
+
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.benchmark.regression-policy.v1") ||
+        !yvex_sha256_update_u64(&hash, (unsigned long long)policy->enabled) ||
+        !yvex_sha256_update_u64(&hash, policy->basis_points))
+        return 0;
+    return benchmark_hash_finish(&hash, output);
+}
+/* Purpose: evaluate configured performance dimensions without affecting correctness status.
+ * Inputs: compatible metrics and threshold policy. Effects: publishes identity-bound performance status.
+ * Failure: invalid policy/counters refuse. Boundary: no threshold means measured, not release-passed. */
+static int regression_policy_apply(
+    const yvex_runtime_benchmark_baseline *current,
+    const yvex_runtime_benchmark_baseline *baseline,
+    const yvex_runtime_benchmark_regression_policy *requested,
+    yvex_runtime_benchmark_comparison *result,
+    yvex_runtime_benchmark_failure *failure, yvex_error *err)
+{
+    yvex_runtime_benchmark_regression_policy policy = {0};
+    const unsigned char *current_metrics = (const unsigned char *)&current->metrics;
+    const unsigned char *baseline_metrics = (const unsigned char *)&baseline->metrics;
+    yvex_sha256 hash;
+    size_t index;
+
+    if (requested) policy = *requested;
+    if ((policy.enabled != 0 && policy.enabled != 1) ||
+        (!policy.enabled && policy.basis_points))
+        return benchmark_field_reject(failure, "regression_policy", 1ull,
+                                      (unsigned long long)policy.enabled,
+                                      YVEX_ERR_INVALID_ARG,
+                                      "benchmark regression policy is not canonical", err);
+    result->regression_policy = policy;
+    if (!regression_policy_identity(&policy, result->regression_policy_identity))
+        return benchmark_field_fail(failure, "regression_policy_identity", YVEX_ERR_STATE,
+            "benchmark regression policy identity failed", err);
+    result->performance_passed = 1;
+    for (index = 0u; policy.enabled && index < BENCHMARK_REGRESSION_FIELD_COUNT; ++index) {
+        const benchmark_regression_field *field = &benchmark_regression_fields[index];
+        unsigned long long current_value, baseline_value;
+        if (field->device && !current->metrics.device_timing.available) continue;
+        memcpy(&current_value, current_metrics + field->offset, sizeof(current_value));
+        memcpy(&baseline_value, baseline_metrics + field->offset, sizeof(baseline_value));
+        if (regression_exceeded(current_value, baseline_value,
+                                policy.basis_points, field->inverse))
+            result->performance_passed = 0;
+    }
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.benchmark.comparison.v1") ||
+        !yvex_sha256_update_text(&hash, current->identity) ||
+        !yvex_sha256_update_text(&hash, baseline->identity) ||
+        !yvex_sha256_update_text(&hash, result->regression_policy_identity) ||
+        !yvex_sha256_update_u64(&hash, (unsigned long long)result->performance_passed) ||
+        !benchmark_hash_finish(&hash, result->comparison_identity))
+        return benchmark_field_fail(failure, "comparison_identity", YVEX_ERR_STATE,
+            "benchmark comparison identity failed", err);
+    return YVEX_OK;
+}
 /* Purpose: escape one bounded identity/device label for deterministic SVG text. */
 static int svg_text(benchmark_bytes *bytes, const char *text)
 {
@@ -1153,7 +1268,6 @@ static int svg_text(benchmark_bytes *bytes, const char *text)
     }
     return yvex_core_bytes_append(bytes, start, (size_t)(cursor - start));
 }
-
 /* Purpose: scale one bar with integer half-up rounding that is identical across ABIs. */
 static unsigned int chart_height(unsigned long long value, unsigned long long maximum,
                                  unsigned int extent)
@@ -1175,25 +1289,20 @@ static unsigned int chart_height(unsigned long long value, unsigned long long ma
     return height ? height : 1u;
 }
 
+static const char *const benchmark_chart_percentiles[] = {
+    "min", "p50", "p90", "p99", "max"};
 /* Purpose: hash canonical chart inputs independently from formatting or destination path. */
 static int chart_bytes_identity(const benchmark_bytes *svg,
                                 char output[YVEX_SHA256_HEX_BYTES])
 {
     yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!svg || !yvex_sha256_update(&hash, svg->data, svg->count) ||
-        !yvex_sha256_final(&hash, digest))
-        return 0;
-    yvex_sha256_hex(digest, output);
-    return 1;
+    return svg && yvex_sha256_update(&hash, svg->data, svg->count) &&
+           benchmark_hash_finish(&hash, output);
 }
-
 /* Purpose: render five warm-latency percentiles for current and optional baseline evidence.
- * Inputs: bounded SVG buffer plus sealed current and optional baseline records.
- * Effects: appends deterministic percentile bars and legend.
- * Failure: returns false on serialization bound or allocation failure.
- * Boundary: the panel visualizes raw values without a regression threshold. */
+ * Inputs: SVG buffer and sealed records. Effects: appends deterministic percentile bars and legend.
+ * Failure: false on bounds/allocation. Boundary: displays raw values without policy. */
 static int chart_warm(benchmark_bytes *svg, const yvex_runtime_benchmark_baseline *current,
                       const yvex_runtime_benchmark_baseline *baseline)
 {
@@ -1203,12 +1312,10 @@ static int chart_warm(benchmark_bytes *svg, const yvex_runtime_benchmark_baselin
         unsigned int offset, width;
     } chart_series;
     const chart_series series[] = {
-        {&current->metrics.host_timing, "current", 0u, 30u},
-        {&current->metrics.device_timing, "device", 10u, 10u},
-        {baseline ? &baseline->metrics.host_timing : NULL, "baseline", 32u, 30u},
-        {baseline ? &baseline->metrics.device_timing : NULL, "device_baseline", 42u, 10u},
+        {&current->metrics.host_timing, "current", 0u, 30u}, {&current->metrics.device_timing, "device", 10u, 10u},
+{baseline ? &baseline->metrics.host_timing : NULL, "baseline", 32u, 30u},
+{baseline ? &baseline->metrics.device_timing : NULL, "device_baseline", 42u, 10u},
     };
-    const char *const labels[] = {"min", "p50", "p90", "p99", "max"};
     unsigned long long maximum = 0ull;
     size_t index, series_index;
 
@@ -1223,7 +1330,7 @@ static int chart_warm(benchmark_bytes *svg, const yvex_runtime_benchmark_baselin
     for (index = 0u; index < 5u; ++index) {
         unsigned int x = 436u + (unsigned int)index * 94u;
         if (!bytes_format(svg, "<text x=\"%u\" y=\"382\" class=\"label\">%s</text>",
-                          x + 27u, labels[index]))
+                          x + 27u, benchmark_chart_percentiles[index]))
             return 0;
         for (series_index = 0u; series_index < sizeof(series) / sizeof(series[0]); ++series_index) {
             const chart_series *item = &series[series_index];
@@ -1252,7 +1359,6 @@ static int chart_warm(benchmark_bytes *svg, const yvex_runtime_benchmark_baselin
                       "<circle cx=\"850\" cy=\"411\" r=\"6\" class=\"device\"/>"
                       "<text x=\"863\" y=\"416\" class=\"meta\">device event</text>");
 }
-
 /* Purpose: render one exact resource counter as a current/baseline horizontal comparison. */
 static int chart_resource_row(benchmark_bytes *svg, const char *label, unsigned int y,
                               unsigned long long current, unsigned long long baseline,
@@ -1274,12 +1380,9 @@ static int chart_resource_row(benchmark_bytes *svg, const char *label, unsigned 
                         "<text x=\"414\" y=\"%u\" class=\"baseline_metric\">%llu B</text>",
                         y + 9u, baseline_width, y + 16u, baseline);
 }
-
-/* Purpose: visualize resource and launch evidence retained by benchmark schema four.
- * Inputs: sealed current record and optional compatible baseline.
- * Effects: appends exact byte counters, launch topology, and warm-allocation invariants.
- * Failure: returns false on bounded SVG serialization failure.
- * Boundary: counters are measured runtime facts; the chart assigns no performance grade. */
+/* Purpose: visualize resource and launch evidence retained by benchmark schema five.
+ * Inputs: current and optional baseline. Effects: appends resource and launch evidence.
+ * Failure: false on bounded serialization. Boundary: measured counters receive no grade. */
 static int chart_resources(benchmark_bytes *svg,
                            const yvex_runtime_benchmark_baseline *current,
                            const yvex_runtime_benchmark_baseline *baseline)
@@ -1317,12 +1420,9 @@ static int chart_resources(benchmark_bytes *svg,
         metrics->warm_device_allocations, metrics->warm_weight_reads,
         metrics->warm_upload_bytes, metrics->state_bytes);
 }
-
 /* Purpose: assemble deterministic SVG bytes bound to benchmark and optional baseline identities.
- * Inputs: sealed current record, optional compatible baseline, and empty SVG buffer.
- * Effects: appends one complete dependency-free SVG document.
- * Failure: returns false on escaping, formatting, bound, or allocation failure.
- * Boundary: exact-byte identity is computed only after the document is complete. */
+ * Inputs: sealed records and SVG buffer. Effects: appends one dependency-free SVG.
+ * Failure: false on escaping/format/bounds. Boundary: hashes only the complete document. */
 static int chart_serialize(const yvex_runtime_benchmark_baseline *current,
                            const yvex_runtime_benchmark_baseline *baseline,
                            benchmark_bytes *svg)
@@ -1331,7 +1431,7 @@ static int chart_serialize(const yvex_runtime_benchmark_baseline *current,
     svg->initial_capacity = 1024u;
     if (!bytes_format(svg,
                       "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"960\" height=\"760\" viewBox=\"0 0 960 760\""
-                      " data-chart-schema=\"4\">"
+                      " data-chart-schema=\"5\">"
                       "<style>text{font-family:ui-monospace,SFMono-Regular,monospace;fill:#12212b}"
                       ".title{font-size:24px;font-weight:700}"
                       ".section{font-size:14px;font-weight:700;letter-spacing:1px}"
@@ -1354,7 +1454,10 @@ static int chart_serialize(const yvex_runtime_benchmark_baseline *current,
                       "<text x=\"64\" y=\"230\" class=\"meta\">residency %llu ns</text>"
                       "<text x=\"64\" y=\"255\" class=\"meta\">graph %llu ns</text>",
                       current->metrics.cold_total_ns, current->metrics.cold_artifact_ns,
-                      current->metrics.cold_residency_ns, current->metrics.cold_graph_ns) ||
+                      current->metrics.cold_residency_ns,
+                      current->metrics.cold_graph_warmup_ns +
+                          current->metrics.cold_graph_capture_ns +
+                          current->metrics.cold_graph_instantiate_ns) ||
         !chart_warm(svg, current, baseline) || !chart_resources(svg, current, baseline) ||
         !bytes_format(svg,
                       "<line x1=\"64\" y1=\"626\" x2=\"900\" y2=\"626\" class=\"axis\"/>"
@@ -1370,43 +1473,35 @@ static int chart_serialize(const yvex_runtime_benchmark_baseline *current,
         return 0;
     return 1;
 }
-
 /* Purpose: seal one mutable benchmark record under its canonical content identity.
- * Inputs: complete key, measured nanosecond statistics, and schema version.
- * Effects: writes only the record identity after every field validates.
- * Failure: leaves the prior identity empty and reports the exact invalid field.
- * Boundary: sealing records evidence; it does not admit benchmark capability. */
+ * Inputs: complete record. Effects: validates fields and writes only its identity.
+ * Failure: leaves identity empty and names the field. Boundary: sealing does not admit capability. */
 int yvex_runtime_benchmark_baseline_seal(yvex_runtime_benchmark_baseline *record,
                                          yvex_runtime_benchmark_failure *failure,
                                          yvex_error *err)
 {
     int rc;
     if (!record)
-        return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT,
-                                "record", 1ull, 0ull, YVEX_ERR_INVALID_ARG,
-                                "benchmark record is required", err);
+        return benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT, "record",
+            YVEX_ERR_INVALID_ARG, "benchmark record is required", err);
     record->identity[0] = '\0';
-    if (record->schema_version != YVEX_RUNTIME_BENCHMARK_SCHEMA_V4)
+    if (record->schema_version != YVEX_RUNTIME_BENCHMARK_SCHEMA_V5)
         return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_SCHEMA, "schema",
-                                YVEX_RUNTIME_BENCHMARK_SCHEMA_V4, record->schema_version,
+                                YVEX_RUNTIME_BENCHMARK_SCHEMA_V5, record->schema_version,
                                 YVEX_ERR_UNSUPPORTED, "benchmark schema is unsupported", err);
     if ((rc = key_validate(record, failure, err)) != YVEX_OK ||
         (rc = metrics_validate(record, failure, err)) != YVEX_OK)
         return rc;
     if (!baseline_identity(record, record->identity))
-        return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_IDENTITY,
-                                "identity", 1ull, 0ull, YVEX_ERR_STATE,
-                                "benchmark identity construction failed", err);
+        return benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_IDENTITY, "identity",
+            YVEX_ERR_STATE, "benchmark identity construction failed", err);
     if (failure) memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: construct one sealed benchmark record from completed runtime attention evidence.
- * Inputs: immutable production result with measured samples and exact identities.
- * Effects: fills and seals only caller-owned benchmark evidence.
- * Failure: missing, oversized, non-finite, or inconsistent facts refuse publication.
- * Boundary: runtime owns evidence projection; CLI owns only operator paths and rendering. */
+ * Inputs: production result with samples/identities. Effects: fills and seals caller-owned evidence.
+ * Failure: invalid facts refuse. Boundary: runtime projects evidence; CLI owns paths and rendering. */
 int yvex_runtime_benchmark_baseline_from_attention(
     const yvex_graph_attention_operator_result *result,
     yvex_runtime_benchmark_baseline *record,
@@ -1416,22 +1511,19 @@ int yvex_runtime_benchmark_baseline_from_attention(
 
     if (!record || !result || !result->completed || !result->benchmark_sample_count ||
         !yvex_sha256_hex_valid(result->execution_descriptor_identity))
-        return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT,
-                                "attention-result", 1ull, 0ull, YVEX_ERR_INVALID_ARG,
-                                "completed identity-bound benchmark samples are required", err);
+        return benchmark_fail(
+            failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT, "attention-result",
+            YVEX_ERR_INVALID_ARG, "completed identity-bound benchmark samples are required", err);
     memset(record, 0, sizeof(*record));
-    record->schema_version = YVEX_RUNTIME_BENCHMARK_SCHEMA_V4;
+    record->schema_version = YVEX_RUNTIME_BENCHMARK_SCHEMA_V5;
     rc = benchmark_attention_key(result, &record->key, err);
     if (rc == YVEX_OK) rc = benchmark_attention_times(result, &record->metrics, err);
     if (rc == YVEX_OK) rc = benchmark_attention_metrics(result, &record->metrics, err);
     return rc == YVEX_OK ? yvex_runtime_benchmark_baseline_seal(record, failure, err) : rc;
 }
-
 /* Purpose: transactionally publish one sealed benchmark baseline without replacement.
- * Inputs: safe external path and immutable sealed record.
- * Effects: creates, fsyncs, and atomically publishes one exact canonical file.
- * Failure: preserves a pre-existing destination and removes only the owned temporary.
- * Boundary: publication stores evidence but does not decide regression or readiness. */
+ * Inputs: safe path and sealed record. Effects: atomically publishes one canonical file.
+ * Failure: preserves destinations and removes owned temp. Boundary: stores evidence without grading it. */
 int yvex_runtime_benchmark_baseline_write(
     const char *path, const yvex_runtime_benchmark_baseline *record,
     yvex_runtime_benchmark_publication *result,
@@ -1452,12 +1544,9 @@ int yvex_runtime_benchmark_baseline_write(
     free(bytes.data);
     return rc;
 }
-
 /* Purpose: independently reopen and authenticate one canonical benchmark baseline.
- * Inputs: safe exact external file path and caller-owned result storage.
- * Effects: fills the result only after stable read, strict parse, identity, and byte-canonical checks.
- * Failure: returns typed format, drift, or identity refusal without changing external state.
- * Boundary: reopening validates evidence; it does not execute or compare runtime work. */
+ * Inputs: safe path and record output. Effects: publishes only after stable canonical authentication.
+ * Failure: typed format/drift/identity refusal. Boundary: validates evidence without executing it. */
 int yvex_runtime_benchmark_baseline_open(const char *path,
                                          yvex_runtime_benchmark_baseline *record,
                                          yvex_runtime_benchmark_failure *failure,
@@ -1471,9 +1560,8 @@ int yvex_runtime_benchmark_baseline_open(const char *path,
 
     if (record) memset(record, 0, sizeof(*record));
     if (!record)
-        return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT,
-                                "record", 1ull, 0ull, YVEX_ERR_INVALID_ARG,
-                                "benchmark reopen result is required", err);
+        return benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT, "record",
+            YVEX_ERR_INVALID_ARG, "benchmark reopen result is required", err);
     rc = read_file(path, &data, &count, failure, err);
     if (rc != YVEX_OK) return rc;
     parse_copy = (char *)malloc(count + 1u);
@@ -1487,15 +1575,15 @@ int yvex_runtime_benchmark_baseline_open(const char *path,
     if (!baseline_parse(parse_copy, count, &parsed)) {
         if (parsed.schema_version == YVEX_RUNTIME_BENCHMARK_SCHEMA_V1 ||
             parsed.schema_version == YVEX_RUNTIME_BENCHMARK_SCHEMA_V2 ||
-            parsed.schema_version == YVEX_RUNTIME_BENCHMARK_SCHEMA_V3)
+            parsed.schema_version == YVEX_RUNTIME_BENCHMARK_SCHEMA_V3 ||
+            parsed.schema_version == YVEX_RUNTIME_BENCHMARK_SCHEMA_V4)
             rc = benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_SCHEMA, "schema",
-                                  YVEX_RUNTIME_BENCHMARK_SCHEMA_V4,
+                                  YVEX_RUNTIME_BENCHMARK_SCHEMA_V5,
                                   parsed.schema_version, YVEX_ERR_UNSUPPORTED,
                                   "legacy benchmark schema requires provenance-bound regeneration", err);
         else
-            rc = benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_FORMAT,
-                                  "format", 1ull, 0ull, YVEX_ERR_FORMAT,
-                                  "benchmark file is malformed", err);
+            rc = benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_FORMAT, "format", YVEX_ERR_FORMAT,
+                "benchmark file is malformed", err);
         goto done;
     }
     if ((rc = baseline_validate(&parsed, failure, err)) != YVEX_OK) goto done;
@@ -1517,29 +1605,29 @@ done:
     free(data);
     return rc;
 }
-
-/* Purpose: compare two identity-compatible measurements without inventing a regression threshold.
- * Inputs: independently sealed current and baseline records.
- * Effects: fills signed measured nanosecond deltas only after exact key compatibility.
- * Failure: refuses an identity mismatch rather than comparing unrelated runs.
- * Boundary: comparison reports deltas; benchmark policy remains unowned and no pass claim is produced. */
+/* Purpose: compare two identity-compatible measurements under one explicit optional policy.
+ * Inputs: sealed records and optional threshold. Effects: fills deltas and identity-bound performance status.
+ * Failure: incompatibility/policy errors refuse. Boundary: cannot change correctness or qualification. */
 int yvex_runtime_benchmark_compare(
     const yvex_runtime_benchmark_baseline *current,
     const yvex_runtime_benchmark_baseline *baseline,
+    const yvex_runtime_benchmark_regression_policy *policy,
     yvex_runtime_benchmark_comparison *result,
     yvex_runtime_benchmark_failure *failure, yvex_error *err)
 {
+    const char *mismatch;
+    size_t index;
     int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!result || (rc = baseline_validate(current, failure, err)) != YVEX_OK ||
         (rc = baseline_validate(baseline, failure, err)) != YVEX_OK)
-        return result ? rc : benchmark_reject(
-            failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT, "result", 1ull, 0ull,
+        return result ? rc : benchmark_fail(
+            failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT, "result",
             YVEX_ERR_INVALID_ARG, "benchmark comparison result is required", err);
-    if (!keys_equal(current, baseline))
-        return benchmark_reject(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INCOMPATIBLE,
-                                "compatibility-key", 1ull, 0ull, YVEX_ERR_STATE,
-                                "benchmark baseline identity key does not match this execution", err);
+    mismatch = keys_mismatch(current, baseline);
+    if (mismatch)
+        return benchmark_fail(failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INCOMPATIBLE, mismatch,
+            YVEX_ERR_STATE, "benchmark baseline identity field is incompatible", err);
     result->compatible = 1;
     yvex_core_text_copy(result->current_commit, sizeof(result->current_commit), current->key.commit);
     yvex_core_text_copy(result->baseline_commit, sizeof(result->baseline_commit), baseline->key.commit);
@@ -1551,38 +1639,26 @@ int yvex_runtime_benchmark_compare(
                         baseline->key.build_source_state);
     yvex_core_text_copy(result->current_identity, sizeof(result->current_identity), current->identity);
     yvex_core_text_copy(result->baseline_identity, sizeof(result->baseline_identity), baseline->identity);
-#define TIMING_DELTA(DIST, STAT)                                                                \
-    metric_delta(current->metrics.DIST.values[STAT], baseline->metrics.DIST.values[STAT])
     result->cold_total_delta_ns =
         metric_delta(current->metrics.cold_total_ns, baseline->metrics.cold_total_ns);
-    result->minimum_delta_ns = TIMING_DELTA(host_timing, YVEX_RUNTIME_BENCHMARK_MINIMUM);
-    result->p50_delta_ns = TIMING_DELTA(host_timing, YVEX_RUNTIME_BENCHMARK_P50);
-    result->p90_delta_ns = TIMING_DELTA(host_timing, YVEX_RUNTIME_BENCHMARK_P90);
-    result->p99_delta_ns = TIMING_DELTA(host_timing, YVEX_RUNTIME_BENCHMARK_P99);
-    result->maximum_delta_ns = TIMING_DELTA(host_timing, YVEX_RUNTIME_BENCHMARK_MAXIMUM);
-    result->mean_delta_ns = TIMING_DELTA(host_timing, YVEX_RUNTIME_BENCHMARK_MEAN);
     result->device_timing_available = current->metrics.device_timing.available;
-    result->device_minimum_delta_ns =
-        TIMING_DELTA(device_timing, YVEX_RUNTIME_BENCHMARK_MINIMUM);
-    result->device_p50_delta_ns = TIMING_DELTA(device_timing, YVEX_RUNTIME_BENCHMARK_P50);
-    result->device_p90_delta_ns = TIMING_DELTA(device_timing, YVEX_RUNTIME_BENCHMARK_P90);
-    result->device_p99_delta_ns = TIMING_DELTA(device_timing, YVEX_RUNTIME_BENCHMARK_P99);
-    result->device_maximum_delta_ns =
-        TIMING_DELTA(device_timing, YVEX_RUNTIME_BENCHMARK_MAXIMUM);
-    result->device_mean_delta_ns = TIMING_DELTA(device_timing, YVEX_RUNTIME_BENCHMARK_MEAN);
-    result->device_standard_deviation_delta_ns =
-        TIMING_DELTA(device_timing, YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION);
-#undef TIMING_DELTA
+    for (index = 0u; index < YVEX_RUNTIME_BENCHMARK_STATISTIC_COUNT; ++index) {
+        result->host_delta_ns[index] = metric_delta(
+            current->metrics.host_timing.values[index],
+            baseline->metrics.host_timing.values[index]);
+        result->device_delta_ns[index] = metric_delta(
+            current->metrics.device_timing.values[index],
+            baseline->metrics.device_timing.values[index]);
+    }
+    rc = regression_policy_apply(current, baseline, policy, result, failure, err);
+    if (rc != YVEX_OK) return rc;
     if (failure) memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: publish one deterministic dependency-free SVG benchmark chart.
- * Inputs: sealed current evidence, optional compatible baseline, and safe external SVG path.
- * Effects: creates one identity-bound SVG through the canonical no-replace file lifecycle.
- * Failure: preserves every previously published baseline and chart destination.
- * Boundary: baseline publication is a separate authoritative operation owned by its writer. */
+ * Inputs: sealed records and safe SVG path. Effects: creates one identity-bound chart without replacement.
+ * Failure: preserves prior files. Boundary: baseline publication remains separately owned. */
 int yvex_runtime_benchmark_chart_write(
     const yvex_runtime_benchmark_chart_request *request,
     yvex_runtime_benchmark_chart_result *result,
@@ -1597,12 +1673,12 @@ int yvex_runtime_benchmark_chart_write(
     if (result) memset(result, 0, sizeof(*result));
     if (!request || !result || !request->path ||
         (rc = baseline_validate(request->current, failure, err)) != YVEX_OK)
-        return request && result ? rc : benchmark_reject(
-            failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT, "chart", 1ull, 0ull,
+        return request && result ? rc : benchmark_fail(
+            failure, YVEX_RUNTIME_BENCHMARK_FAILURE_INVALID_ARGUMENT, "chart",
             YVEX_ERR_INVALID_ARG, "benchmark chart request is incomplete", err);
     if (request->baseline &&
         (rc = yvex_runtime_benchmark_compare(request->current, request->baseline,
-                                             &comparison, failure, err)) != YVEX_OK)
+                                             NULL, &comparison, failure, err)) != YVEX_OK)
         return rc;
     if (!chart_serialize(request->current, request->baseline, &svg) ||
         !chart_bytes_identity(&svg, identity)) {

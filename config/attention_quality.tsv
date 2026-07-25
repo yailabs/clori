@@ -1,0 +1,7 @@
+scope	attention_class	phase	backend	mode	evidence	capability_supported	production_present	independent_reference	real_weights	runtime_binding	resident_resources	positive_test	refusal_test	failure_test	cleanup_test	sanitizer_test	concurrency	numerical_comparison	benchmark	operator_command	evidence_identity	higher_stage_non_claims	reason
+*	*	*	cpu	eager	*	1	1	1	1	1	1	1	1	1	1	1	applicable	1	1	1	8086aa264efb56a516020567157723cbbdc2cf27d7a412d2df31dde69cb59b28	model-evaluation,agent-evaluation,release-qualification	none
+*	*	*	cpu	piecewise	*	0	0	1	1	1	1	1	1	1	1	1	applicable	0	0	1	3cdcf43c4f6728e66290b955768688f4c41077a5f50900f330be4bc8e4566c12	model-evaluation,agent-evaluation,release-qualification	cpu-cuda-graph-mode-unsupported
+*	*	*	cpu	full	*	0	0	1	1	1	1	1	1	1	1	1	applicable	0	0	1	77a043725a19c8e741c18d4b2d4bf725fae9f6453f82a83c826fc8891102313c	model-evaluation,agent-evaluation,release-qualification	cpu-cuda-graph-mode-unsupported
+*	*	*	cuda	eager	*	1	1	1	1	1	1	1	1	1	1	1	applicable	1	1	1	bdb1da57059946de42d2ea07f62e5ea0c578e21115586149684f918d8c9f6af9	model-evaluation,agent-evaluation,release-qualification	none
+*	*	*	cuda	piecewise	*	1	1	1	1	1	1	1	1	1	1	1	applicable	1	1	1	f25cb1eed1271be28b24e1d97ceff61249a21735094bf9f0564e9a7c4b4eabc6	model-evaluation,agent-evaluation,release-qualification	none
+*	*	*	cuda	full	*	1	1	1	1	1	1	1	1	1	1	1	applicable	1	1	1	7b27bd209966e0f07185080337457293249545568b801298939ec6adebf59990	model-evaluation,agent-evaluation,release-qualification	none

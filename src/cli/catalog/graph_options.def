@@ -5,6 +5,8 @@
 --backend
 --probe
 --scope
+--current
+--max-regression-bps
 --compare-backends
 --seq
 --ctx

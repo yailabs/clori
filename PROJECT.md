@@ -359,14 +359,15 @@ in a conversation or closure report is not part of the architecture.
 | Integrity | Canonical layout admission, full-file SHA-256 identity, exact payload-range verification, native writer-reader equivalence, pinned official ggml reader acceptance, deterministic second serialization, and complete-artifact support admission are closed for both DeepSeek artifacts. Tensor proofs and external or structurally incomplete GGUF files remain outside the complete-artifact path. |
 | Materialization | The admitted selected DeepSeek artifact has a canonical family-neutral materialization plan and committed session over all 1,360 tensors. The live proof walked all 102,396,843,592 encoded payload bytes through bounded file-backed/staged access with 16 MiB peak executor-owned staging and 33,792 expert subviews. Attention consumes those bindings; complete-model backend residency and higher transformer execution remain unsupported. |
 | Runtime descriptor | The common runtime descriptor and DeepSeek specialization project the admitted artifact, materialization plan, canonical qtype facts, all 1,360 tensor bindings, topology, MoE/expert geometry, output/vocabulary geometry, tokenizer availability, and runtime numeric authority into one immutable graph-input descriptor. Logical-model identity `ec22b4bf78811265d1881071919593991f33ab883303f3df16d64c0689a63950`, runtime-numeric identity `33182fd6b75e9263861d5a873550e6d0c5d5010267fb315ec687c693c9572dcd`, and runtime-descriptor identity `61e25532554505b1536e8ec11198b680ca812e0cdc8f2966a6f6652103a95574` are distinct from unchanged artifact and materialization identities. |
-| Runtime | One content-addressed runtime binding opens the admitted artifact into a sealed family-neutral runtime model and process-lifetime execution sessions. DeepSeek enters through a typed adapter. The model authenticates and parses once and owns immutable resident attention weights; each session owns mutable state, stable workspace, and its CUDA Graph registry. Semantic, executable, CUDA launch, and graph-exec identities remain distinct. Attention prefill/decode probes execute through CPU eager and GB10 CUDA eager, piecewise-graph, full-graph, and deterministic auto dispatch. Warm execution rebuilds no source, Transformation IR, quantization, or writer plan. Persistent KV, full-model prefill/decode, transformer composition, and generation remain unsupported. |
+| Runtime | One content-addressed runtime binding opens the admitted artifact into a sealed family-neutral runtime model and process-lifetime execution sessions. DeepSeek enters through a typed adapter. The model authenticates and parses once and owns immutable resident attention weights; each session owns mutable state, stable workspace, and its CUDA Graph registry. Semantic, executable, CUDA launch, graph-exec, qualification, and machine-readable quality-matrix identities remain distinct. Attention prefill/decode probes execute through CPU eager and GB10 CUDA eager, piecewise-graph, full-graph, and deterministic auto dispatch. Runtime qualification checks warm reuse, allocation, transfer, fallback, publication, cancellation, and cleanup invariants separately from performance. Warm execution rebuilds no source, Transformation IR, quantization, or writer plan. Persistent KV, full-model prefill/decode, transformer composition, and generation remain unsupported. |
 | CUDA | Production C contains no fallback PTX. Context, Driver API memory operations, generated-bundle admission, resolved functions, exact variants, and runtime-session CUDA Graph lifecycles are distinct typed facts. A no-`nvcc` build refuses every kernel before dispatch. Complete resident DeepSeek attention is admitted on the generated-bundle GB10 path through eager, piecewise, and full graph modes with direct independent-reference parity and no CPU numerical fallback. |
 | Transformer | The immutable DeepSeek attention plan drives complete SWA/CSA/HCA core and immediate attention-envelope execution through independent full-equation reference, production CPU, and device-complete GB10 CUDA paths over all 43 layers and 634 core bindings. Persistent runtime KV, FFN/MoE, complete transformer composition, and final model output remain unsupported. |
-| Operator | The `yvex graph attention` namespace invokes the production runtime directly over the admitted external artifact and runtime binding. It exposes preparation, description, capabilities, planning, phase-aware execution, comparison, state, residency, CUDA Graph, trace, profile, benchmark, and deterministic chart evidence without accepting prompt text or claiming generation. |
+| Operator | The `yvex graph attention` namespace invokes the production runtime directly over the admitted external artifact and runtime binding. It exposes preparation, description, capabilities, planning, phase-aware execution, comparison, qualification, state, residency, CUDA Graph, trace, profile, schema-v5 component benchmark, identity-compatible benchmark comparison, and deterministic chart evidence without accepting prompt text or claiming generation. |
 | Text path | Exact tokenizer-backed autoregressive DeepSeek text generation is unsupported. |
-| Evaluation | No release-path generation evaluation exists. |
-| Benchmark | The runtime owns bounded attention cold/warm, eager/piecewise/full measurements, identity-bound baseline comparison, JSON/CSV facts, and deterministic external SVG charts. Release-path generation and full-model benchmark evidence remain not measured. |
-| Release | Blocked. |
+| Evaluation | Model behavior and model quality evaluation require the complete tokenizer-to-text path. They remain unavailable; attention numerical conformance is not model evaluation. |
+| Benchmark | The runtime owns schema-v5 `attention_component` cold/warm, eager/piecewise/full measurements, identity-bound baseline comparison, JSON/CSV facts, and deterministic external SVG charts. Correctness, structural-runtime, and performance status remain independent. Release-path generation and full-model benchmark evidence remain not measured. |
+| Agent | No agent runtime, tool execution loop, agent evaluation owner, milestone, or operator command exists. Development agents, JSON output, external harnesses, and `yvexd` do not establish agent capability. |
+| Release | Release qualification remains blocked and is not promoted by component qualification or benchmark evidence. |
 
 The admitted runtime capability lattice is explicit. Compatibility umbrella
 flags are derived from these facts and are not independent authorities:
@@ -390,6 +391,12 @@ attention_operator_ready=1
 attention_trace_ready=1
 attention_profile_ready=1
 attention_benchmark_ready=1
+model_behavior_evaluation_ready=0
+model_quality_evaluation_ready=0
+agent_runtime_ready=0
+agent_tool_execution_ready=0
+agent_evaluation_ready=0
+release_qualification_ready=0
 mixed_attention_ready=0
 speculative_attention_ready=0
 persistent_kv_ready=0
@@ -857,9 +864,9 @@ calculated from rows rather than protected by a summary hash.
 | `TRACK.GENERATION` | Tokenizer/prefill/KV/decode/logits/sampling composition, append, stop, cancellation, partial output, trace, cleanup, and autoregression. | no admitted generation implementation; retained ledger evidence does not establish runtime composition | Multiple real autoregressive tokens become detokenized text. |
 | `TRACK.OPERATOR` | CLI grammar, command adaptation, typed input, dispatch, rendering, refusal, control-plane integration, topology guards, and operator acceptance. | complete DeepSeek attention is reachable through one truthful production command; prompt and release generation commands remain unsupported | Every executable milestone reaches its accepted production API through a real command or records an owned non-applicability reason. |
 | `TRACK.SERVE` | Runtime-backed daemon generation, streaming, cancellation, observability, and protocol compatibility. | deferred outside v0.1.0 | Defined only after real local generation is stable and separately scoped. |
-| `TRACK.EVAL` | Release-path correctness, regression, failure, tokenizer, context, and capability evaluation. | blocked by real generation | Repeatable evaluation passes over the release path. |
-| `TRACK.BENCH` | Reproducible machine, artifact, qtype, context, prefill, decode, generation, timing, throughput, memory measurements, and evidence visualization. | bounded attention/runtime measurements and deterministic SVG evidence are implemented; full-model generation benchmark evidence is not measured | Accepted DGX Spark benchmark evidence over the release path. |
-| `TRACK.RELEASE` | Validation, artifact guardrail, claim audit, operator transcript, packaging, versioning, release record, and tag. | blocked | Every release gate passes in one traceable transcript. |
+| `TRACK.EVAL` | Complete-model behavior, quality, regression, tokenizer, context, and refusal evaluation after real generation exists. | blocked by real generation; attention numerical conformance is not model evaluation | Repeatable evaluation passes over the release path. |
+| `TRACK.BENCH` | Reproducible component and complete-model performance measurements with machine, identity, workload, timing, throughput, memory, regression, and visualization metadata. | schema-v5 attention-component measurements and deterministic SVG evidence are implemented; full-model generation benchmark evidence is not measured | Accepted DGX Spark benchmark evidence over the release path. |
+| `TRACK.RELEASE` | Final software, conformance, runtime, evaluation, benchmark, operator, packaging, claim, version, release-record, and tag qualification. | blocked; component qualification does not close the release gate | Every release gate passes in one traceable transcript. |
 | `TRACK.POST010` | Explicitly deferred portability, serving hardening, speculative execution, extra-family runtime promotion, and later product scope. | deferred | No work enters the active path without a new version-scope decision. |
 
 ### 7.2 Per-Track Counts
@@ -1999,9 +2006,9 @@ No first-class milestone is committed in the active v0.1.0 path. Retained rows r
 
 ### 9.23 TRACK.EVAL
 
-**Owner:** Release-path correctness, regression, failure, tokenizer, context, and capability evaluation.
+**Owner:** Complete-model behavior, quality, regression, tokenizer, context, refusal, and capability evaluation after real generation exists.
 
-**Current truth:** blocked by real generation
+**Current truth:** blocked by real generation; software testing, attention numerical conformance, runtime qualification, and component benchmarking do not satisfy this track
 
 **Ledger summary:** 15 recovered IDs; 1 first-class milestones; 0 complete support rows; 15 open support rows; 0 superseded/deferred rows.
 
@@ -2034,9 +2041,9 @@ No first-class milestone is committed in the active v0.1.0 path. Retained rows r
 
 ### 9.24 TRACK.BENCH
 
-**Owner:** Reproducible machine, artifact, qtype, context, prefill, decode, generation, timing, throughput, memory measurements, baseline comparison, and evidence visualization.
+**Owner:** Reproducible component and complete-model performance measurements with machine, artifact, qtype, workload, timing, throughput, memory, regression, baseline, and visualization metadata.
 
-**Current truth:** the common runtime implements bounded cold/warm attention measurement, identity-bound baseline comparison, JSON/CSV projection, and deterministic rendering of external SVG charts; no repository-tracked timing result or release-path/full-model generation benchmark evidence is claimed
+**Current truth:** the common runtime implements schema-v5 `attention_component` cold/warm measurement, p50/p90/p95/p99 distributions, complete reproducibility identity, correctness/runtime preconditions, identity-bound file comparison, caller-owned regression thresholds, JSON/CSV projection, and deterministic external SVG charts; no repository-tracked result or release-path/full-model generation benchmark evidence is claimed
 
 **Ledger summary:** 16 recovered IDs; 1 first-class milestone; 7 complete support rows; 9 open support rows; 0 superseded/deferred rows.
 
@@ -2050,11 +2057,11 @@ No first-class milestone is committed in the active v0.1.0 path. Retained rows r
 
 | Wave | Rank | Scope | State | Exact retained outcome or requirement | Consumer or enclosing milestone |
 | --- | --- | --- | --- | --- | --- |
-| `V010.BENCH.0` | `capability` | common | `complete` | Schema-v4 runtime benchmark records identity-bound cold/warm phases, latency distributions, counters, baselines, and external SVG evidence. | V010.RUNTIME.1 |
+| `V010.BENCH.0` | `capability` | common | `complete` | Schema-v5 attention-component benchmark records identity-bound cold/warm phases, first execution, latency distributions, counters, baselines, file comparison, and external SVG evidence. | V010.RUNTIME.1 |
 | `V010.BENCH.1` | `subtask` | common | `planned` | machine profile record. | V010.BENCH.DEEPSEEK.0 |
-| `V010.BENCH.2` | `evidence` | common | `complete` | Every bounded runtime benchmark binds the exact artifact, runtime binding, runtime model, descriptor, graph, device, mode, and scope identities. | V010.RUNTIME.1 |
+| `V010.BENCH.2` | `evidence` | common | `complete` | Every bounded runtime benchmark binds artifact, materialization, model, runtime, graph, execution, residency, workspace, state-layout, kernel-bundle, machine, device, mode, class, geometry, trace, and scope identities. | V010.RUNTIME.1 |
 | `V010.BENCH.3` | `subtask` | common | `planned` | qtype/context/backend record. | V010.BENCH.DEEPSEEK.0 |
-| `V010.BENCH.4` | `evidence` | common | `complete` | Warmup/run counts, deterministic non-timing fields, p50/p90/p99, dispersion, baseline comparison, and chart reproduction are explicit. | V010.RUNTIME.1 |
+| `V010.BENCH.4` | `evidence` | common | `complete` | Warmup/run counts, deterministic non-timing fields, p50/p90/p95/p99, dispersion, correctness/runtime/performance separation, compatible-baseline comparison, explicit identity-bound regression thresholds, and chart reproduction are explicit. | V010.RUNTIME.1 |
 | `V010.BENCH.5` | `subtask` | common | `planned` | prefill benchmark. | V010.BENCH.DEEPSEEK.0 |
 | `V010.BENCH.6` | `subtask` | common | `planned` | decode benchmark. | V010.BENCH.DEEPSEEK.0 |
 | `V010.BENCH.7` | `subtask` | common | `planned` | generation benchmark. | V010.BENCH.DEEPSEEK.0 |
@@ -2276,7 +2283,9 @@ YVEX does not currently claim:
 - output-head vocabulary logits or model-backed sampling;
 - exact tokenizer-backed autoregressive DeepSeek text generation;
 - CUDA model generation;
-- evaluation readiness, full-model/generation benchmark evidence, or release readiness; bounded attention runtime measurements and charts do not close those gates;
+- model behavior, model quality, question-answering, judge-model, or release-path evaluation readiness;
+- full-model/generation benchmark evidence or release qualification; bounded attention-component qualification, measurements, and charts do not close those gates;
+- an agent runtime, tool registry, tool execution, action/observation loop, agent evaluation, agent CLI, agent track, or agent milestone; Codex-assisted development, `yvexd`, JSON output, and external harnesses do not establish those capabilities;
 - Qwen, Gemma, GLM, or another model as a supported generation target;
 - Metal, ROCm, server, distributed, or speculative support.
 

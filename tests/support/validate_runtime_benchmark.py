@@ -34,8 +34,8 @@ def csv_map(path: pathlib.Path) -> dict[str, str]:
 def baseline_fields(path: pathlib.Path) -> dict[str, str]:
     with path.open(encoding="utf-8") as stream:
         lines = [line.rstrip("\n") for line in stream]
-    require(lines and lines[0] == "YVEX_RUNTIME_BENCHMARK_BASELINE\t4",
-            f"{path}: not schema four")
+    require(lines and lines[0] == "YVEX_RUNTIME_BENCHMARK_BASELINE\t5",
+            f"{path}: not schema five")
     fields = dict(line.split("\t", 1) for line in lines[1:] if "\t" in line)
     require(len(fields) == len(lines) - 1, f"{path}: duplicate or malformed field")
     identity = fields.get("identity", "")
@@ -43,13 +43,15 @@ def baseline_fields(path: pathlib.Path) -> dict[str, str]:
     require(fields.get("device_timing_available") == "1",
             f"{path}: CUDA device timing unavailable")
     device = [int(fields[name], 16) for name in (
-        "device_minimum_ns", "device_p50_ns", "device_p90_ns", "device_p99_ns",
-        "device_maximum_ns",
+        "device_minimum_ns", "device_p50_ns", "device_p90_ns", "device_p95_ns",
+        "device_p99_ns", "device_maximum_ns",
     )]
-    require(0 < device[0] <= device[1] <= device[2] <= device[3] <= device[4],
+    require(0 < device[0] <= device[1] <= device[2] <= device[3] <= device[4] <= device[5],
             f"{path}: device distribution is invalid")
     mean = int(fields["device_mean_ns"], 16)
-    require(device[0] <= mean <= device[4], f"{path}: device mean is invalid")
+    require(device[0] <= mean <= device[5], f"{path}: device mean is invalid")
+    require(fields.get("benchmark_scope") == "attention_component",
+            f"{path}: benchmark scope drift")
     return fields
 
 
@@ -59,7 +61,7 @@ def exact_svg(path: pathlib.Path, identity: str, current: str, baseline: str,
     require(hashlib.sha256(data).hexdigest() == identity, f"{path}: digest mismatch")
     text = data.decode("utf-8")
     for fact in (
-        'data-chart-schema="4"', "WARM HOST / DEVICE", "device event",
+        'data-chart-schema="5"', "WARM HOST / DEVICE", "device event",
         f"current {current}", f"baseline {baseline}",
         f"build {commit} - source {source_state}", device, "decode", mode,
         "release-attention-set",
@@ -72,6 +74,10 @@ def common(result: dict[str, object] | dict[str, str], mode: str, binding: pathl
         "status": "complete", "backend": "cuda", "scope": "full",
         "operation_scope": "release-attention-set", "phase": "decode",
         "requested_mode": mode, "selected_mode": mode,
+        "benchmark_scope": "attention_component",
+        "component_benchmark_status": "measured",
+        "correctness_status": "pass", "structural_runtime_status": "pass",
+        "performance_status": "measured",
     }
     for key, value in expected.items():
         require(str(result.get(key)).lower() == value, f"{mode}: {key} mismatch")
@@ -113,16 +119,21 @@ def common(result: dict[str, object] | dict[str, str], mode: str, binding: pathl
             f"{mode}: runtime binding path drift")
     require(str(result.get("runtime_generation_ready")).lower() == "false",
             f"{mode}: generation claim promoted")
+    require(str(result.get("benchmark_correctness_precondition_passed")).lower() == "true",
+            f"{mode}: correctness precondition missing")
+    require(str(result.get("benchmark_runtime_precondition_passed")).lower() == "true",
+            f"{mode}: runtime precondition missing")
     require(str(result.get("benchmark_device_timing_available")).lower() == "true",
             f"{mode}: CUDA event timing unavailable")
     device = [float(result.get(name, -1.0)) for name in (
         "benchmark_device_minimum_seconds", "benchmark_device_p50_seconds",
-        "benchmark_device_p90_seconds", "benchmark_device_p99_seconds",
-        "benchmark_device_maximum_seconds",
+        "benchmark_device_p90_seconds", "benchmark_device_p95_seconds",
+        "benchmark_device_p99_seconds", "benchmark_device_maximum_seconds",
     )]
-    require(0.0 < device[0] <= device[1] <= device[2] <= device[3] <= device[4],
+    require(0.0 < device[0] <= device[1] <= device[2] <= device[3] <=
+            device[4] <= device[5],
             f"{mode}: invalid CUDA event timing distribution")
-    require(device[0] <= float(result.get("benchmark_device_mean_seconds", -1.0)) <= device[4],
+    require(device[0] <= float(result.get("benchmark_device_mean_seconds", -1.0)) <= device[5],
             f"{mode}: invalid CUDA event timing mean")
     graph_count = int(result.get("cuda_graph_count", -1))
     piece_count = int(result.get("cuda_graph_piece_count", -1))
@@ -207,7 +218,7 @@ def main() -> int:
     identities = [validate_mode(root, binding, mode) for mode in MODES]
     require(len({value[0] for value in identities}) == 1, "artifact identity differs by mode")
     require(len({value[1] for value in identities}) == 1, "binding identity differs by mode")
-    print(f"runtime benchmark evidence: schema=4 modes={len(MODES)} charts=6 validated")
+    print(f"runtime benchmark evidence: schema=5 modes={len(MODES)} charts=6 validated")
     return 0
 
 

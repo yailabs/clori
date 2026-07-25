@@ -41,7 +41,6 @@ typedef struct {
     yvex_runtime_lifecycle_phase phase;
     double started, last_update;
 } graph_attention_progress;
-
 /* Purpose: return a stable operator label for one measured runtime lifecycle phase. */
 static const char *graph_attention_progress_phase(yvex_runtime_lifecycle_phase phase)
 {
@@ -54,7 +53,6 @@ static const char *graph_attention_progress_phase(yvex_runtime_lifecycle_phase p
 
     return (unsigned int)phase < YVEX_RUNTIME_LIFECYCLE_COUNT ? names[phase] : "unknown";
 }
-
 /* Purpose: obtain monotonic seconds for progress throttling without affecting evidence identity. */
 static double graph_attention_monotonic_seconds(void)
 {
@@ -63,7 +61,6 @@ static double graph_attention_monotonic_seconds(void)
     return clock_gettime(CLOCK_MONOTONIC, &value) == 0
                ? (double)value.tv_sec + (double)value.tv_nsec / 1000000000.0 : 0.0;
 }
-
 /* Purpose: publish bounded cold-runtime progress to stderr and propagate cancellation.
  * Inputs: CLI-owned progress state plus exact runtime phase and byte counters.
  * Effects: emits at phase boundaries and at most once per second during long phases.
@@ -99,7 +96,6 @@ static int graph_attention_progress_update(void *opaque,
                                   now - state->started);
     return 1;
 }
-
 /* Purpose: enable progress only when explicitly requested or stderr is interactive.
  * Inputs: caller-owned progress state and validated mode text.
  * Effects: initializes local throttling timestamps and TTY policy.
@@ -114,24 +110,19 @@ static void graph_attention_progress_init(graph_attention_progress *state,
     state->phase = YVEX_RUNTIME_LIFECYCLE_COUNT;
     state->started = graph_attention_monotonic_seconds();
 }
-
 /* Purpose: Record SIGINT/SIGTERM in one signal-safe scalar. */
 static void graph_attention_signal_handler(int signal_number) {
     if (signal_number == SIGINT || signal_number == SIGTERM)
         graph_attention_signal_seen = signal_number;
 }
-
 /* Purpose: Report whether the signal-safe cancellation scalar is set. */
 static int graph_attention_cancel_requested(void *context) {
     (void)context;
     return graph_attention_signal_seen != 0;
 }
-
 /* Purpose: Install cancellation handlers.
- * Inputs: prior-action storage.
- * Effects: changes signal actions.
- * Failure: rolls back partial install.
- * Boundary: cancellation request only; no runtime cleanup. */
+ * Inputs: prior-action storage. Effects: changes signal actions.
+ * Failure: rolls back partial install. Boundary: cancellation request only; no runtime cleanup. */
 static int graph_attention_signals_install(struct sigaction *old_interrupt,
                                            struct sigaction *old_terminate, yvex_error *err) {
     struct sigaction action;
@@ -154,7 +145,6 @@ static int graph_attention_signals_install(struct sigaction *old_interrupt,
     }
     return YVEX_OK;
 }
-
 /* Purpose: Restore signal actions. Inputs: saved actions. Effects: changes handlers. Failure: I/O refusal.
  * Boundary: signal lifecycle only; graph resources remain runtime-owned. */
 static int graph_attention_signals_restore(const struct sigaction *old_interrupt,
@@ -168,17 +158,13 @@ static int graph_attention_signals_restore(const struct sigaction *old_interrupt
                    "cannot restore attention cancellation handlers");
     return YVEX_ERR_IO;
 }
-
 /* Purpose: Print one parser refusal.
- * Inputs: typed error.
- * Effects: writes CLI stderr.
- * Failure: stream state.
- * Boundary: CLI diagnostics only. */
+ * Inputs: typed error. Effects: writes CLI stderr.
+ * Failure: stream state. Boundary: CLI diagnostics only. */
 static int graph_cli_print_parse_error(const yvex_error *err) {
     yvex_cli_out_writef(yvex_cli_out_stderr(), "%s\n", yvex_error_message(err));
     return 2;
 }
-
 /* Purpose: Render graph print runtime error from typed facts (`graph_cli_print_runtime_error`). */
 static int graph_cli_print_runtime_error(const yvex_error *err, int exit_code) {
     yvex_cli_out_writef(yvex_cli_out_stderr(), "yvex: %s: %s\n", yvex_error_where(err),
@@ -196,6 +182,50 @@ typedef struct {
     char runtime_binding_dir[YVEX_PATH_CAP];
 } graph_attention_request;
 
+static const yvex_graph_attention_operator_result benchmark_comparison_result_default = {
+    .completed = 1, .status = "complete",
+    .command = "graph attention benchmark compare",
+    .target = "not_applicable", .backend = "not_applicable",
+    .scope = "attention_component", .operation_scope = "not_applicable",
+    .phase = "not_applicable", .trace_policy = "none",
+    .requested_mode = "not_applicable", .selected_mode = "not_applicable",
+    .selection_reason = "identity_validation_required",
+    .quality_status = {
+        [YVEX_RUNTIME_QUALITY_COMPONENT_BENCHMARK] = "compared",
+        [YVEX_RUNTIME_QUALITY_CORRECTNESS] = "not_evaluated",
+        [YVEX_RUNTIME_QUALITY_STRUCTURAL] = "not_evaluated",
+        [YVEX_RUNTIME_QUALITY_PERFORMANCE] = "measured",
+    },
+    .benchmark_scope = "attention_component",
+};
+static const char benchmark_comparison_refusal_quality[YVEX_RUNTIME_QUALITY_STATUS_COUNT][24] = {
+    [YVEX_RUNTIME_QUALITY_COMPONENT_BENCHMARK] = "unavailable",
+    [YVEX_RUNTIME_QUALITY_CORRECTNESS] = "not_evaluated",
+    [YVEX_RUNTIME_QUALITY_STRUCTURAL] = "not_evaluated",
+    [YVEX_RUNTIME_QUALITY_PERFORMANCE] = "not_measured",
+};
+
+typedef struct {
+    size_t destination, source, capacity;
+} graph_benchmark_text_projection;
+
+static const graph_benchmark_text_projection graph_benchmark_comparison_text[] = {
+    {offsetof(yvex_runtime_benchmark_operator_summary, current_commit),
+     offsetof(yvex_runtime_benchmark_comparison, current_commit), YVEX_RUNTIME_BENCHMARK_COMMIT_CAP},
+    {offsetof(yvex_runtime_benchmark_operator_summary, baseline_commit),
+     offsetof(yvex_runtime_benchmark_comparison, baseline_commit), YVEX_RUNTIME_BENCHMARK_COMMIT_CAP},
+    {offsetof(yvex_runtime_benchmark_operator_summary, current_source_state),
+     offsetof(yvex_runtime_benchmark_comparison, current_source_state), YVEX_RUNTIME_BENCHMARK_SOURCE_STATE_CAP},
+    {offsetof(yvex_runtime_benchmark_operator_summary, baseline_source_state),
+     offsetof(yvex_runtime_benchmark_comparison, baseline_source_state), YVEX_RUNTIME_BENCHMARK_SOURCE_STATE_CAP},
+    {offsetof(yvex_runtime_benchmark_operator_summary, baseline_identity),
+     offsetof(yvex_runtime_benchmark_comparison, baseline_identity), YVEX_SHA256_HEX_BYTES},
+    {offsetof(yvex_runtime_benchmark_operator_summary, regression_policy_identity),
+     offsetof(yvex_runtime_benchmark_comparison, regression_policy_identity), YVEX_SHA256_HEX_BYTES},
+    {offsetof(yvex_runtime_benchmark_operator_summary, comparison_identity),
+     offsetof(yvex_runtime_benchmark_comparison, comparison_identity), YVEX_SHA256_HEX_BYTES},
+};
+
 typedef struct {
     const char *text;
     unsigned int value;
@@ -207,49 +237,36 @@ typedef struct {
 } graph_attention_action;
 
 static const graph_attention_value graph_attention_phases[] = {
-    {"prefill", YVEX_RUNTIME_PHASE_ATTENTION_PREFILL},
-    {"mixed", YVEX_RUNTIME_PHASE_ATTENTION_MIXED},
-    {"verify", YVEX_RUNTIME_PHASE_ATTENTION_SPECULATIVE_VERIFY},
+    {"prefill", YVEX_RUNTIME_PHASE_ATTENTION_PREFILL}, {"mixed", YVEX_RUNTIME_PHASE_ATTENTION_MIXED},
+{"verify", YVEX_RUNTIME_PHASE_ATTENTION_SPECULATIVE_VERIFY},
 };
 static const graph_attention_value graph_attention_modes[] = {
-    {"piecewise", YVEX_RUNTIME_MODE_PIECEWISE},
-    {"full", YVEX_RUNTIME_MODE_FULL},
-    {"auto", YVEX_RUNTIME_MODE_AUTO},
+    {"piecewise", YVEX_RUNTIME_MODE_PIECEWISE}, {"full", YVEX_RUNTIME_MODE_FULL}, {"auto", YVEX_RUNTIME_MODE_AUTO},
 };
 static const graph_attention_value graph_attention_scopes[] = {
     {"envelope", YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE},
-    {"release-attention-set", YVEX_RUNTIME_SCOPE_RELEASE_ATTENTION_SET},
+{"release-attention-set", YVEX_RUNTIME_SCOPE_RELEASE_ATTENTION_SET},
 };
 static const graph_attention_value graph_attention_traces[] = {
-    {"summary", YVEX_RUNTIME_TRACE_SUMMARY},
-    {"stages", YVEX_RUNTIME_TRACE_STAGES},
-    {"full", YVEX_RUNTIME_TRACE_FULL},
-};
-static const graph_attention_action graph_attention_actions[] = {
-    {"none", YVEX_RUNTIME_OPERATOR_EXECUTE},
-    {"prepare", YVEX_RUNTIME_OPERATOR_EXECUTE},
-    {"describe", YVEX_RUNTIME_OPERATOR_EXECUTE},
-    {"capabilities", YVEX_RUNTIME_OPERATOR_CAPABILITIES},
-    {"plan", YVEX_RUNTIME_OPERATOR_PLAN},
-    {"execute", YVEX_RUNTIME_OPERATOR_EXECUTE},
-    {"compare", YVEX_RUNTIME_OPERATOR_EXECUTE},
-    {"state inspect", YVEX_RUNTIME_OPERATOR_STATE_INSPECT},
-    {"state validate", YVEX_RUNTIME_OPERATOR_STATE_VALIDATE},
-    {"state exercise", YVEX_RUNTIME_OPERATOR_STATE_EXERCISE},
-    {"residency inspect", YVEX_RUNTIME_OPERATOR_RESIDENCY_INSPECT},
-    {"capture", YVEX_RUNTIME_OPERATOR_CAPTURE},
-    {"replay", YVEX_RUNTIME_OPERATOR_REPLAY},
-    {"cuda-graph list", YVEX_RUNTIME_OPERATOR_GRAPH_LIST},
-    {"cuda-graph inspect", YVEX_RUNTIME_OPERATOR_GRAPH_INSPECT},
-    {"cuda-graph warmup", YVEX_RUNTIME_OPERATOR_GRAPH_WARMUP},
-    {"cuda-graph update", YVEX_RUNTIME_OPERATOR_GRAPH_UPDATE},
-    {"cuda-graph invalidate", YVEX_RUNTIME_OPERATOR_GRAPH_INVALIDATE},
-    {"cuda-graph release", YVEX_RUNTIME_OPERATOR_GRAPH_RELEASE},
-    {"trace", YVEX_RUNTIME_OPERATOR_TRACE},
-    {"profile", YVEX_RUNTIME_OPERATOR_PROFILE},
-    {"benchmark", YVEX_RUNTIME_OPERATOR_BENCHMARK},
+    {"summary", YVEX_RUNTIME_TRACE_SUMMARY}, {"stages", YVEX_RUNTIME_TRACE_STAGES}, {"full", YVEX_RUNTIME_TRACE_FULL},
 };
 
+static const graph_attention_action graph_attention_actions[] = {
+    {"none", YVEX_RUNTIME_OPERATOR_EXECUTE}, {"prepare", YVEX_RUNTIME_OPERATOR_EXECUTE},
+{"describe", YVEX_RUNTIME_OPERATOR_EXECUTE}, {"capabilities", YVEX_RUNTIME_OPERATOR_CAPABILITIES},
+    {"plan", YVEX_RUNTIME_OPERATOR_PLAN}, {"execute", YVEX_RUNTIME_OPERATOR_EXECUTE},
+{"compare", YVEX_RUNTIME_OPERATOR_EXECUTE}, {"state inspect", YVEX_RUNTIME_OPERATOR_STATE_INSPECT},
+    {"state validate", YVEX_RUNTIME_OPERATOR_STATE_VALIDATE}, {"state exercise", YVEX_RUNTIME_OPERATOR_STATE_EXERCISE},
+{"residency inspect", YVEX_RUNTIME_OPERATOR_RESIDENCY_INSPECT}, {"capture", YVEX_RUNTIME_OPERATOR_CAPTURE},
+    {"replay", YVEX_RUNTIME_OPERATOR_REPLAY}, {"cuda-graph list", YVEX_RUNTIME_OPERATOR_GRAPH_LIST},
+{"cuda-graph inspect", YVEX_RUNTIME_OPERATOR_GRAPH_INSPECT},
+{"cuda-graph warmup", YVEX_RUNTIME_OPERATOR_GRAPH_WARMUP},
+    {"cuda-graph update", YVEX_RUNTIME_OPERATOR_GRAPH_UPDATE},
+{"cuda-graph invalidate", YVEX_RUNTIME_OPERATOR_GRAPH_INVALIDATE},
+    {"cuda-graph release", YVEX_RUNTIME_OPERATOR_GRAPH_RELEASE}, {"trace", YVEX_RUNTIME_OPERATOR_TRACE},
+{"profile", YVEX_RUNTIME_OPERATOR_PROFILE}, {"benchmark", YVEX_RUNTIME_OPERATOR_BENCHMARK},
+    {"benchmark compare", YVEX_RUNTIME_OPERATOR_EXECUTE}, {"qualify", YVEX_RUNTIME_OPERATOR_QUALIFY},
+};
 /* Purpose: Map one validated grammar value through its typed runtime catalog. */
 static unsigned int graph_attention_value_find(
     const char *text, const graph_attention_value *values, size_t count,
@@ -262,7 +279,6 @@ static unsigned int graph_attention_value_find(
             return values[index].value;
     return fallback;
 }
-
 /* Purpose: Return the bounded action projection or the stable invalid sentinel. */
 static const graph_attention_action *graph_attention_action_find(
     yvex_graph_attention_action action)
@@ -274,7 +290,6 @@ static const graph_attention_action *graph_attention_action_find(
                ? &graph_attention_actions[action]
                : &invalid;
 }
-
 /* Purpose: Resolve exactly one immutable binding from an external registry directory.
  * Inputs: safely opened directory and caller-owned output.
  * Effects: reads directory entries only; never opens source/compiler assets.
@@ -335,7 +350,6 @@ static int graph_attention_binding_discover(const char *directory, char *output,
     }
     return path_join2(output, capacity, directory, selected, err, "graph_attention_cli");
 }
-
 /* Purpose: resolve preparation-only family facts without extending the runtime adapter ABI. */
 static const yvex_graph_family_preparation *graph_family_preparation_find(const char *target)
 {
@@ -347,12 +361,9 @@ static const yvex_graph_family_preparation *graph_family_preparation_find(const 
         if (entry->target_id && target && strcmp(entry->target_id, target) == 0) return entry;
     }
 }
-
 /* Purpose: Resolve attention paths.
- * Inputs: CLI args and output.
- * Effects: builds a request.
- * Failure: typed path refusal.
- * Boundary: no source, artifact, or runtime open. */
+ * Inputs: CLI args and output. Effects: builds a request.
+ * Failure: typed path refusal. Boundary: no source, artifact, or runtime open. */
 static int graph_cli_attention_request_build(const yvex_graph_args *args,
                                              graph_attention_request *out, yvex_error *err) {
     yvex_paths paths = {0};
@@ -397,9 +408,9 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
     out->request.operator_action =
         graph_attention_action_find(args->attention.action)->runtime_action;
     out->request.capture_bucket = args->attention.capture_bucket;
-    out->request.token_count = args->attention.token_count;
-    out->request.warmup = args->attention.warmup;
-    out->request.repeat = args->attention.repeat;
+    out->request.attention_class = args->attention.attention_class;
+    memcpy(&out->request.token_count, &args->attention.token_count,
+           3u * sizeof(unsigned long long));
     if (args->attention.layer_seen || args->attention.layer_start_seen) {
         out->request.select_layer = 1;
         out->request.layer_start = args->attention.layer_seen
@@ -408,8 +419,8 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
     }
     out->request.history_tokens = args->attention.history_tokens_seen
                                       ? args->attention.history_tokens : args->attention.position;
-    out->request.maximum_host_bytes = args->attention.maximum_host_bytes;
-    out->request.maximum_device_bytes = args->attention.maximum_device_bytes;
+    memcpy(&out->request.maximum_host_bytes, &args->attention.maximum_host_bytes,
+           2u * sizeof(unsigned long long));
     out->request.require_mode = args->attention.require_mode;
     out->request.backend = YVEX_BACKEND_KIND_CPU;
     adapter = yvex_runtime_family_adapter_find(args->attention.target);
@@ -515,7 +526,6 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
     }
     return YVEX_OK;
 }
-
 /* Purpose: invoke one family-owned compiler preparation adapter.
  * Inputs: resolved preparation paths, typed family adapter facts, and output storage.
  * Effects: may transactionally publish one content-addressed binding outside the repository.
@@ -557,48 +567,34 @@ static int graph_attention_binding_prepare(
 typedef yvex_graph_attention_operator_result graph_attention_result;
 typedef yvex_runtime_binding_summary graph_attention_binding;
 typedef struct {
-    size_t result_offset, result_capacity, binding_offset;
+    size_t result_offset, binding_offset;
 } graph_binding_projection;
 
 static const graph_binding_projection graph_binding_common_fields[] = {
-    {offsetof(graph_attention_result, runtime_binding_identity),
-     sizeof(((graph_attention_result *)0)->runtime_binding_identity),
-     offsetof(graph_attention_binding, identity)},
-    {offsetof(graph_attention_result, artifact_identity),
-     sizeof(((graph_attention_result *)0)->artifact_identity),
-     offsetof(graph_attention_binding, artifact_identity)},
+    {offsetof(graph_attention_result, runtime_binding_identity), offsetof(graph_attention_binding, identity)},
+{offsetof(graph_attention_result, artifact_identity), offsetof(graph_attention_binding, artifact_identity)},
     {offsetof(graph_attention_result, materialization_identity),
-     sizeof(((graph_attention_result *)0)->materialization_identity),
-     offsetof(graph_attention_binding, materialization_identity)},
+    offsetof(graph_attention_binding, materialization_identity)},
     {offsetof(graph_attention_result, logical_model_identity),
-     sizeof(((graph_attention_result *)0)->logical_model_identity),
-     offsetof(graph_attention_binding, logical_model_identity)},
+    offsetof(graph_attention_binding, logical_model_identity)},
     {offsetof(graph_attention_result, runtime_numeric_identity),
-     sizeof(((graph_attention_result *)0)->runtime_numeric_identity),
-     offsetof(graph_attention_binding, runtime_numeric_identity)},
+    offsetof(graph_attention_binding, runtime_numeric_identity)},
     {offsetof(graph_attention_result, runtime_descriptor_identity),
-     sizeof(((graph_attention_result *)0)->runtime_descriptor_identity),
-     offsetof(graph_attention_binding, runtime_descriptor_identity)},
+    offsetof(graph_attention_binding, runtime_descriptor_identity)},
     {offsetof(graph_attention_result, attention_plan_identity),
-     sizeof(((graph_attention_result *)0)->attention_plan_identity),
-     offsetof(graph_attention_binding, attention_plan_identity)},
+    offsetof(graph_attention_binding, attention_plan_identity)},
     {offsetof(graph_attention_result, semantic_graph_identity),
-     sizeof(((graph_attention_result *)0)->semantic_graph_identity),
-     offsetof(graph_attention_binding, semantic_graph_identity)},
+    offsetof(graph_attention_binding, semantic_graph_identity)},
     {offsetof(graph_attention_result, executable_graph_identity),
-     sizeof(((graph_attention_result *)0)->executable_graph_identity),
-     offsetof(graph_attention_binding, executable_graph_identity)},
+    offsetof(graph_attention_binding, executable_graph_identity)},
 };
 
 static const graph_binding_projection graph_binding_transform_fields[] = {
     {offsetof(graph_attention_result, artifact_transform_identity),
-     sizeof(((graph_attention_result *)0)->artifact_transform_identity),
-     offsetof(graph_attention_binding, artifact_transform_identity)},
+    offsetof(graph_attention_binding, artifact_transform_identity)},
     {offsetof(graph_attention_result, logical_transform_identity),
-     sizeof(((graph_attention_result *)0)->logical_transform_identity),
-     offsetof(graph_attention_binding, logical_transform_identity)},
+    offsetof(graph_attention_binding, logical_transform_identity)},
 };
-
 /* Purpose: project an ordered binding-field catalog into one operator result.
  * Inputs: immutable binding, caller-owned result, and typed field catalog.
  * Effects: copies only the catalogued bounded text fields in catalog order.
@@ -614,10 +610,9 @@ static void graph_attention_binding_project(
         char *output = (char *)result + fields[index].result_offset;
         const char *value = (const char *)binding + fields[index].binding_offset;
 
-        yvex_core_text_copy(output, fields[index].result_capacity, value);
+        yvex_core_text_copy(output, YVEX_SHA256_HEX_BYTES, value);
     }
 }
-
 /* Purpose: initialize facts common to prepared and independently reopened runtime bindings.
  * Inputs: validated CLI paths, one immutable binding summary, and its external path.
  * Effects: initializes caller-owned presentation storage.
@@ -647,12 +642,10 @@ static void graph_attention_result_init(
     result->operator_command_available = 1;
     result->production_api_available = 1;
 }
-
 /* Purpose: project an independently reopened preparation result into stable operator facts.
  * Inputs: validated CLI paths, sealed binding summary, and content-addressed path.
  * Effects: initializes presentation data.
- * Failure: bounded fields remain terminated.
- * Boundary: projection owns no compiler or runtime lifecycle. */
+ * Failure: bounded fields remain terminated. Boundary: projection owns no compiler or runtime lifecycle. */
 static void graph_attention_prepare_result(
     const yvex_graph_args *args, const graph_attention_request *request,
     const yvex_runtime_binding_summary *summary, const char *binding_path,
@@ -665,6 +658,9 @@ static void graph_attention_prepare_result(
     yvex_core_text_copy(result->scope, sizeof(result->scope), "preparation");
 }
 
+static int graph_attention_result_render(
+    const yvex_graph_args *args, const yvex_graph_attention_operator_result *result,
+    yvex_error *err);
 /* Purpose: publish one content-addressed binding through the preparation-plane API only.
  * Inputs: parsed CLI request and error output.
  * Effects: invokes the compiler-side producer once and renders its typed result.
@@ -707,19 +703,15 @@ static int graph_cli_attention_prepare(const yvex_graph_args *args, yvex_error *
             &binding, prepared.path, &summary, NULL, &binding_failure, err);
     if (rc == YVEX_OK)
         graph_attention_prepare_result(args, &request, &summary, prepared.path, &result);
-    if (rc == YVEX_OK)
-        rc = yvex_graph_attention_render(yvex_cli_out_stdout(), args->render_mode, &result);
-    if (rc == YVEX_OK)
-        rc = yvex_cli_out_flush(yvex_cli_out_stdout());
+    if (rc == YVEX_OK) rc = graph_attention_result_render(args, &result, err);
     yvex_runtime_binding_close(binding);
     if (rc != YVEX_OK) {
         if (!yvex_error_is_set(err))
-            yvex_error_set(err, rc, "graph_attention_cli", "runtime binding rendering failed");
+            yvex_error_set(err, rc, "graph_attention_cli", "runtime binding command failed");
         return graph_cli_print_runtime_error(err, exit_for_status(rc));
     }
     return 0;
 }
-
 /* Purpose: project one independently reopened binding into operator presentation facts.
  * Inputs: parsed CLI facts, resolved paths, sealed binding summary, and output storage.
  * Effects: initializes only caller-owned presentation fields.
@@ -749,7 +741,24 @@ static void graph_attention_binding_result(
         sizeof(graph_binding_transform_fields) / sizeof(graph_binding_transform_fields[0]));
     result->internal_live_runner_available = 1;
 }
+/* Purpose: render and flush one typed attention result through the canonical CLI output owner.
+ * Inputs: parsed render mode, immutable result, and caller-owned error.
+ * Effects: writes one complete operator record to stdout.
+ * Failure: preserves the renderer refusal with one stable CLI boundary.
+ * Boundary: rendering never changes runtime status, evidence, or capability facts. */
+static int graph_attention_result_render(
+    const yvex_graph_args *args, const yvex_graph_attention_operator_result *result,
+    yvex_error *err)
+{
+    int rc = yvex_graph_attention_render(
+        yvex_cli_out_stdout(), args->render_mode, result);
 
+    if (rc == YVEX_OK) rc = yvex_cli_out_flush(yvex_cli_out_stdout());
+    if (rc != YVEX_OK)
+        yvex_error_set(err, rc, "graph_attention_cli",
+                       "attention result rendering failed");
+    return rc;
+}
 /* Purpose: describe one independently reopened immutable runtime binding.
  * Inputs: typed paths and one content-addressed binding.
  * Effects: renders preparation facts without opening a runtime model or session.
@@ -771,60 +780,56 @@ static int graph_cli_attention_describe(const yvex_graph_args *args, yvex_error 
             &binding, request.runtime_binding_path, &summary, NULL, &binding_failure, err);
     if (rc == YVEX_OK)
         graph_attention_binding_result(args, &request, &summary, &result);
-    if (rc == YVEX_OK) {
-        rc = yvex_graph_attention_render(yvex_cli_out_stdout(), args->render_mode, &result);
-        if (rc == YVEX_OK)
-            rc = yvex_cli_out_flush(yvex_cli_out_stdout());
-        if (rc != YVEX_OK)
-            yvex_error_set(err, rc, "graph_attention_cli", "attention inspection rendering failed");
-    }
+    if (rc == YVEX_OK) rc = graph_attention_result_render(args, &result, err);
     yvex_runtime_binding_close(binding);
     return rc == YVEX_OK ? 0 : graph_cli_print_runtime_error(err, exit_for_status(rc));
 }
-
-/* Purpose: project validated benchmark deltas into presentation-only seconds.
+/* Purpose: project validated benchmark deltas and policy evidence into presentation units.
  * Inputs: caller-owned operator summary and a compatible runtime comparison.
- * Effects: copies bounded provenance and signed timing deltas.
- * Failure: none after runtime comparison validation.
- * Boundary: CLI projection owns no regression threshold or benchmark identity. */
+ * Effects: copies bounded provenance, thresholds, status, and signed timing deltas.
+ * Failure: none after runtime comparison validation. Boundary: CLI owns no benchmark policy. */
 static void graph_attention_benchmark_comparison_apply(
     yvex_runtime_benchmark_operator_summary *summary,
     const yvex_runtime_benchmark_comparison *comparison)
 {
     const double scale = 1.0 / 1000000000.0;
+    unsigned char *destination = (unsigned char *)summary;
+    const unsigned char *source = (const unsigned char *)comparison;
+    size_t index;
 
     summary->baseline_compatible = comparison->compatible;
-    yvex_core_text_copy(summary->current_commit, sizeof(summary->current_commit),
-                        comparison->current_commit);
-    yvex_core_text_copy(summary->baseline_commit, sizeof(summary->baseline_commit),
-                        comparison->baseline_commit);
-    yvex_core_text_copy(summary->current_source_state,
-                        sizeof(summary->current_source_state),
-                        comparison->current_source_state);
-    yvex_core_text_copy(summary->baseline_source_state,
-                        sizeof(summary->baseline_source_state),
-                        comparison->baseline_source_state);
-    yvex_runtime_identity_copy(summary->baseline_identity, comparison->baseline_identity);
+    for (index = 0u; index < sizeof(graph_benchmark_comparison_text) /
+                                  sizeof(graph_benchmark_comparison_text[0]); ++index)
+        yvex_core_text_copy(
+            (char *)destination + graph_benchmark_comparison_text[index].destination,
+            graph_benchmark_comparison_text[index].capacity,
+            (const char *)source + graph_benchmark_comparison_text[index].source);
+    summary->regression_basis_points =
+        comparison->regression_policy.basis_points;
+    summary->regression_policy_enabled = comparison->regression_policy.enabled;
+    summary->performance_passed = comparison->performance_passed;
     summary->cold_delta_seconds = (double)comparison->cold_total_delta_ns * scale;
-    summary->minimum_delta_seconds = (double)comparison->minimum_delta_ns * scale;
-    summary->p50_delta_seconds = (double)comparison->p50_delta_ns * scale;
-    summary->p90_delta_seconds = (double)comparison->p90_delta_ns * scale;
-    summary->p99_delta_seconds = (double)comparison->p99_delta_ns * scale;
-    summary->maximum_delta_seconds = (double)comparison->maximum_delta_ns * scale;
-    summary->mean_delta_seconds = (double)comparison->mean_delta_ns * scale;
     summary->device_timing_available = comparison->device_timing_available;
-    summary->device_minimum_delta_seconds =
-        (double)comparison->device_minimum_delta_ns * scale;
-    summary->device_p50_delta_seconds = (double)comparison->device_p50_delta_ns * scale;
-    summary->device_p90_delta_seconds = (double)comparison->device_p90_delta_ns * scale;
-    summary->device_p99_delta_seconds = (double)comparison->device_p99_delta_ns * scale;
-    summary->device_maximum_delta_seconds =
-        (double)comparison->device_maximum_delta_ns * scale;
-    summary->device_mean_delta_seconds = (double)comparison->device_mean_delta_ns * scale;
-    summary->device_standard_deviation_delta_seconds =
-        (double)comparison->device_standard_deviation_delta_ns * scale;
+    for (index = 0u; index < YVEX_RUNTIME_BENCHMARK_STATISTIC_COUNT; ++index) {
+        summary->host_delta_seconds[index] =
+            (double)comparison->host_delta_ns[index] * scale;
+        summary->device_delta_seconds[index] =
+            (double)comparison->device_delta_ns[index] * scale;
+    }
 }
-
+/* Purpose: project explicitly supplied CLI thresholds into one domain policy.
+ * Inputs: parsed sentinel-bearing basis points. Effects: fills one canonical enable/value pair.
+ * Failure: none; the domain validates the resulting policy. Boundary: no threshold default is invented. */
+static yvex_runtime_benchmark_regression_policy graph_attention_regression_policy(
+    const yvex_graph_args *args)
+{
+    yvex_runtime_benchmark_regression_policy policy = {
+        .enabled = args->attention.regression_basis_points != ULLONG_MAX,
+        .basis_points = args->attention.regression_basis_points == ULLONG_MAX
+                            ? 0ull : args->attention.regression_basis_points,
+    };
+    return policy;
+}
 /* Purpose: publish/compare baseline evidence and optionally create one exact-byte SVG asset.
  * Inputs: completed benchmark/profile result and validated external paths.
  * Effects: invokes the runtime benchmark file owner and fills typed operator evidence.
@@ -877,7 +882,7 @@ static int graph_attention_benchmark_output(
                 result->benchmark.path, &baseline, &failure, err);
             if (rc != YVEX_OK) return rc;
             rc = yvex_runtime_benchmark_compare(
-                &current, &baseline, &comparison, &failure, err);
+                &current, &baseline, NULL, &comparison, &failure, err);
             if (rc != YVEX_OK) return rc;
             graph_attention_benchmark_comparison_apply(&result->benchmark, &comparison);
             chart_baseline = &baseline;
@@ -896,7 +901,6 @@ static int graph_attention_benchmark_output(
     yvex_runtime_identity_copy(result->benchmark.chart_identity, chart.identity);
     return YVEX_OK;
 }
-
 /* Purpose: preflight one benchmark asset path before runtime model or artifact admission.
  * Inputs: operator path, whether a new destination is required, and typed error output.
  * Effects: reads only parent/file metadata; creates, removes, and opens no model asset.
@@ -946,10 +950,8 @@ unsafe:
                    "benchmark assets require canonical absolute paths outside the source repository");
     return YVEX_ERR_INVALID_ARG;
 }
-
 /* Purpose: reject every unsafe benchmark output before expensive runtime preparation begins.
- * Inputs: fully parsed graph attention arguments.
- * Effects: performs bounded path metadata checks only.
+ * Inputs: fully parsed graph attention arguments. Effects: performs bounded path metadata checks only.
  * Failure: returns the first baseline or chart path refusal.
  * Boundary: no runtime binding, artifact, model, residency, or backend is opened. */
 static int graph_attention_benchmark_paths_preflight(
@@ -957,6 +959,11 @@ static int graph_attention_benchmark_paths_preflight(
 {
     int rc;
 
+    if (args->attention.action == YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK_COMPARE) {
+        rc = graph_attention_external_path_preflight(args->attention.baseline_path, 0, err);
+        if (rc != YVEX_OK) return rc;
+        return graph_attention_external_path_preflight(args->attention.current_path, 0, err);
+    }
     if (args->attention.action != YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK &&
         args->attention.action != YVEX_GRAPH_ATTENTION_ACTION_PROFILE)
         return YVEX_OK;
@@ -970,12 +977,67 @@ static int graph_attention_benchmark_paths_preflight(
             args->attention.chart_path, 1, err);
     return YVEX_OK;
 }
+/* Purpose: project one typed CLI refusal without changing its domain error.
+ * Inputs: caller-owned operator result and populated error. Effects: marks publication incomplete.
+ * Failure: bounded copies retain stable fallback text. Boundary: this helper owns no refusal policy. */
+static void graph_attention_result_refuse(graph_attention_result *result, const yvex_error *err)
+{
+    result->completed = 0;
+    yvex_core_text_copy(result->status, sizeof(result->status), "refused");
+    yvex_core_text_copy(result->failure_code, sizeof(result->failure_code), yvex_status_name(yvex_error_code(err)));
+    yvex_core_text_copy(result->failure_where, sizeof(result->failure_where), yvex_error_where(err));
+    yvex_core_text_copy(result->reason, sizeof(result->reason), yvex_error_message(err));
+}
+/* Purpose: compare two independently authenticated component-benchmark records.
+ * Inputs: validated external baseline and current paths.
+ * Effects: reads the two records and renders typed performance deltas.
+ * Failure: incompatible identities or malformed records return a nonzero operator status.
+ * Boundary: comparison executes no model work and cannot promote correctness or release claims. */
+static int graph_cli_attention_benchmark_compare(const yvex_graph_args *args,
+                                                  yvex_error *err)
+{
+    yvex_runtime_benchmark_baseline current, baseline;
+    yvex_runtime_benchmark_comparison comparison;
+    yvex_runtime_benchmark_regression_policy policy;
+    yvex_runtime_benchmark_failure failure;
+    yvex_graph_attention_operator_result result;
+    int render_rc;
+    int rc;
 
+    result = benchmark_comparison_result_default;
+    policy = graph_attention_regression_policy(args);
+    rc = graph_attention_benchmark_paths_preflight(args, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_benchmark_baseline_open(args->attention.current_path, &current, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_benchmark_baseline_open(
+            args->attention.baseline_path, &baseline, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_benchmark_compare(
+            &current, &baseline, &policy, &comparison, &failure, err);
+    if (rc != YVEX_OK) {
+        graph_attention_result_refuse(&result, err);
+        memcpy(result.quality_status, benchmark_comparison_refusal_quality, sizeof(result.quality_status));
+        render_rc = graph_attention_result_render(args, &result, err);
+        return graph_cli_print_runtime_error(err, exit_for_status(render_rc == YVEX_OK ? rc : render_rc));
+    }
+    yvex_runtime_identity_copy(result.benchmark.identity, current.identity);
+    graph_attention_benchmark_comparison_apply(&result.benchmark, &comparison);
+    yvex_core_text_copy(
+        result.quality_status[YVEX_RUNTIME_QUALITY_PERFORMANCE], 24u,
+        policy.enabled
+            ? (comparison.performance_passed ? "pass" : "regressed")
+            : "measured");
+    yvex_core_text_copy(result.benchmark.path, sizeof(result.benchmark.path),
+                        args->attention.baseline_path);
+    rc = graph_attention_result_render(args, &result, err);
+    if (rc != YVEX_OK)
+        return graph_cli_print_runtime_error(err, exit_for_status(rc));
+    return policy.enabled && !comparison.performance_passed ? 1 : 0;
+}
 /* Purpose: Execute attention.
- * Inputs: CLI args and runtime API.
- * Effects: renders a typed result.
- * Failure: nonzero CLI status.
- * Boundary: no attention math, oracle, or test indirection. */
+ * Inputs: CLI args and runtime API. Effects: renders a typed result.
+ * Failure: nonzero CLI status. Boundary: no attention math, oracle, or test indirection. */
 static int graph_cli_attention_execute(const yvex_graph_args *args,
                                        yvex_runtime_cleanup_lease **retained_cleanup,
                                        yvex_error *err) {
@@ -1028,27 +1090,12 @@ static int graph_cli_attention_execute(const yvex_graph_args *args,
     if (rc == YVEX_OK) {
         rc = graph_attention_benchmark_output(args, &result, err);
         if (rc != YVEX_OK) {
-            result.completed = 0;
-            (void)snprintf(result.status, sizeof(result.status), "refused");
-            yvex_core_text_copy(result.failure_code,
-                                sizeof(result.failure_code),
-                                yvex_status_name(yvex_error_code(err)));
-            yvex_core_text_copy(result.failure_where, sizeof(result.failure_where), yvex_error_where(err));
-            yvex_core_text_copy(result.reason, sizeof(result.reason), yvex_error_message(err));
+            graph_attention_result_refuse(&result, err);
         }
     }
-    if (result.status[0]) {
-        FILE *output = yvex_cli_out_stdout();
-
-        render_rc = yvex_graph_attention_render(output, args->render_mode, &result);
-        if (render_rc == YVEX_OK)
-            render_rc = yvex_cli_out_flush(output);
-        if (render_rc != YVEX_OK) {
-            yvex_error_set(err, render_rc, "graph_attention_cli",
-                           "attention result rendering failed");
-            return graph_cli_print_runtime_error(err, exit_for_status(render_rc));
-        }
-    }
+    if (result.status[0] &&
+        (render_rc = graph_attention_result_render(args, &result, err)) != YVEX_OK)
+        return graph_cli_print_runtime_error(err, exit_for_status(render_rc));
     if (rc != YVEX_OK)
         return graph_cli_print_runtime_error(err, exit_for_status(rc));
     if (!result.completed) {
@@ -1058,12 +1105,9 @@ static int graph_cli_attention_execute(const yvex_graph_args *args,
     }
     return 0;
 }
-
 /* Purpose: Dispatch graph.
- * Inputs: argv.
- * Effects: executes and renders a typed request.
- * Failure: nonzero CLI status.
- * Boundary: domain owners retain capability truth. */
+ * Inputs: argv. Effects: executes and renders a typed request.
+ * Failure: nonzero CLI status. Boundary: domain owners retain capability truth. */
 int yvex_graph_command(int argc, char **argv,
                        yvex_runtime_cleanup_lease **retained_cleanup) {
     yvex_graph_args args;
@@ -1092,6 +1136,8 @@ int yvex_graph_command(int argc, char **argv,
         return graph_cli_attention_prepare(&args, &err);
     if (args.attention.action == YVEX_GRAPH_ATTENTION_ACTION_DESCRIBE)
         return graph_cli_attention_describe(&args, &err);
+    if (args.attention.action == YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK_COMPARE)
+        return graph_cli_attention_benchmark_compare(&args, &err);
     if (args.attention.action >= YVEX_GRAPH_ATTENTION_ACTION_CAPABILITIES) {
         return graph_cli_attention_execute(&args, retained_cleanup, &err);
     }
@@ -1099,12 +1145,9 @@ int yvex_graph_command(int argc, char **argv,
                    "validated graph request has no attention action");
     return graph_cli_print_runtime_error(&err, exit_for_status(YVEX_ERR_STATE));
 }
-
 /* Purpose: Render graph help.
- * Inputs: output stream.
- * Effects: writes CLI text.
- * Failure: stream state.
- * Boundary: CLI presentation. */
+ * Inputs: output stream. Effects: writes CLI text.
+ * Failure: stream state. Boundary: CLI presentation. */
 void yvex_graph_help(FILE *fp) {
     (void)yvex_graph_render_help(fp);
 }

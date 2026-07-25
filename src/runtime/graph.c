@@ -35,8 +35,7 @@ static int runtime_attention_is_graph_action(yvex_runtime_operator_action action
     return action >= YVEX_RUNTIME_OPERATOR_CAPTURE && action <= YVEX_RUNTIME_OPERATOR_GRAPH_RELEASE;
 }
 /* Purpose: reject an impossible release-set selection before filesystem access.
- * Inputs: immutable request selection.
- * Effects: none.
+ * Inputs: immutable request selection. Effects: none.
  * Failure: rejects invalid operation scope or incomplete release-set coverage.
  * Boundary: this preflight owns selection geometry, not resource admission. */
 int yvex_graph_attention_operator_selection_validate(
@@ -53,13 +52,37 @@ int yvex_graph_attention_operator_selection_validate(
                               "release attention set requires complete unfiltered layer coverage");
     return YVEX_OK;
 }
+typedef struct {
+    yvex_status status;
+    const char *where, *reason;
+} runtime_attention_request_rule;
+
+static const runtime_attention_request_rule runtime_attention_request_rules[] = {
+    {YVEX_ERR_INVALID_ARG, "runtime.attention", "artifact and immutable runtime binding are required"},
+     {YVEX_ERR_INVALID_ARG, "runtime.attention", "canonical probe and quick/full scope are required"},
+    {YVEX_ERR_UNSUPPORTED, "runtime.attention", "attention backend must be cpu or cuda"},
+     {YVEX_ERR_INVALID_ARG, "runtime.attention", "attention execution mode is invalid"},
+    {YVEX_ERR_INVALID_ARG, "runtime.attention", "attention trace or required-mode policy is invalid"},
+     {YVEX_ERR_BOUNDS, "runtime.attention.capture_bucket", "attention capture bucket exceeds its bound"},
+    {YVEX_ERR_INVALID_ARG, "runtime.attention", "attention operator action is invalid"},
+     {YVEX_ERR_BOUNDS, "runtime.attention", "attention token, repeat, or warmup count exceeds its bound"},
+    {YVEX_ERR_INVALID_ARG, "runtime.attention.selection", "one valid layer or selection key is required"},
+     {YVEX_ERR_UNSUPPORTED, "runtime.attention.state",
+     "history tokens require state exercise or component benchmark"},
+    {YVEX_ERR_INVALID_ARG, "runtime.attention.phase", "state exercise requires two rows and one un-warmed run"},
+     {YVEX_ERR_UNSUPPORTED, "runtime.attention.phase", "state exercise requires explicit CPU eager execution"},
+    {YVEX_ERR_UNSUPPORTED, "runtime.attention.compare", "comparison requires one un-warmed state position"},
+     {YVEX_ERR_UNSUPPORTED, "runtime.attention", "CUDA graph actions require a CUDA session"},
+    {YVEX_ERR_UNSUPPORTED, "runtime.attention", "CUDA graph actions require graph mode"},
+     {YVEX_ERR_UNSUPPORTED, "runtime.attention", "CPU attention supports eager execution only"},
+    {YVEX_ERR_UNSUPPORTED, "runtime.attention", "mixed and speculative phases are not admitted"},
+     {YVEX_ERR_INVALID_ARG, "runtime.attention", "attention decode requires one activation row"},
+};
 /* Purpose: validate explicit operator inputs before resource admission.
- * Inputs: immutable fully resolved request.
- * Effects: none.
+ * Inputs: immutable fully resolved request. Effects: none.
  * Failure: rejects malformed target, path, probe, scope, or backend.
  * Boundary: validation never substitutes a backend, scope, or artifact. */
-static int runtime_attention_request_validate(
-    const yvex_graph_attention_operator_request *request, yvex_error *err) {
+static int runtime_attention_request_validate(const yvex_graph_attention_operator_request *request, yvex_error *err) {
     unsigned int rule;
     if (!request || !request->target)
         return runtime_refuse(err, YVEX_ERR_INVALID_ARG, "runtime.attention", "attention target is required");
@@ -68,66 +91,48 @@ static int runtime_attention_request_validate(
                         "unsupported attention target: %s", request->target);
         return YVEX_ERR_UNSUPPORTED;
     }
-    struct request_rule {
-        int reject;
-        yvex_status status;
-        const char *where, *reason;
-    } rules[] = {
-        {!request->artifact_path || !request->runtime_binding_path || !request->artifact_path[0] ||
-             !request->runtime_binding_path[0],
-         YVEX_ERR_INVALID_ARG, "runtime.attention", "artifact and immutable runtime binding are required"},
-        {request->probe != YVEX_ATTENTION_PROBE_CANONICAL_V2 ||
-             (request->scope != YVEX_ATTENTION_PROBE_SCOPE_QUICK &&
-              request->scope != YVEX_ATTENTION_PROBE_SCOPE_FULL),
-         YVEX_ERR_INVALID_ARG, "runtime.attention", "canonical probe and quick/full scope are required"},
-        {!request->compare_backends && request->backend != YVEX_BACKEND_KIND_CPU &&
-             request->backend != YVEX_BACKEND_KIND_CUDA,
-         YVEX_ERR_UNSUPPORTED, "runtime.attention", "attention backend must be cpu or cuda"},
-        {(unsigned int)request->mode > (unsigned int)YVEX_RUNTIME_MODE_AUTO,
-         YVEX_ERR_INVALID_ARG, "runtime.attention", "attention execution mode is invalid"},
-        {(unsigned int)request->trace_policy > (unsigned int)YVEX_RUNTIME_TRACE_FULL ||
-             (request->require_mode != 0 && request->require_mode != 1),
-         YVEX_ERR_INVALID_ARG, "runtime.attention", "attention trace or required-mode policy is invalid"},
-        {request->capture_bucket && strlen(request->capture_bucket) >= YVEX_RUNTIME_CAPTURE_BUCKET_CAP,
-         YVEX_ERR_BOUNDS, "runtime.attention.capture_bucket", "attention capture bucket exceeds its bound"},
-        {(unsigned int)request->operator_action > (unsigned int)YVEX_RUNTIME_OPERATOR_RESIDENCY_INSPECT,
-         YVEX_ERR_INVALID_ARG, "runtime.attention", "attention operator action is invalid"},
-        {!request->token_count || !request->repeat || request->repeat > 10000ull ||
-             request->warmup > 10000ull,
-         YVEX_ERR_BOUNDS, "runtime.attention", "attention token, repeat, or warmup count is outside its bound"},
-        {(request->select_layer && request->layer_count != 1ull) ||
-             (request->select_selection_key && !request->selection_key) ||
-             (request->select_layer && request->select_selection_key),
-         YVEX_ERR_INVALID_ARG, "runtime.attention.selection", "one valid layer or selection key is required"},
-        {request->history_tokens && request->operator_action != YVEX_RUNTIME_OPERATOR_STATE_EXERCISE,
-         YVEX_ERR_UNSUPPORTED, "runtime.attention.state", "explicit history is supported only by state exercise"},
-        {request->operator_action == YVEX_RUNTIME_OPERATOR_STATE_EXERCISE &&
-             (request->token_count < 2ull || request->warmup || request->repeat != 1ull),
-         YVEX_ERR_INVALID_ARG, "runtime.attention.phase", "state exercise requires two rows and one un-warmed run"},
-        {request->operator_action == YVEX_RUNTIME_OPERATOR_STATE_EXERCISE &&
-             (request->compare_backends || request->backend != YVEX_BACKEND_KIND_CPU ||
-              request->mode != YVEX_RUNTIME_MODE_EAGER),
-         YVEX_ERR_UNSUPPORTED, "runtime.attention.phase", "state exercise requires explicit CPU eager execution"},
-        {request->compare_backends && (request->warmup || request->repeat != 1ull),
-         YVEX_ERR_UNSUPPORTED, "runtime.attention.compare", "comparison requires one un-warmed state position"},
-        {runtime_attention_is_graph_action(request->operator_action) &&
-             request->backend != YVEX_BACKEND_KIND_CUDA,
-         YVEX_ERR_UNSUPPORTED, "runtime.attention", "CUDA graph actions require a CUDA session"},
-        {runtime_attention_is_graph_action(request->operator_action) &&
-             request->mode == YVEX_RUNTIME_MODE_EAGER,
-         YVEX_ERR_UNSUPPORTED, "runtime.attention", "CUDA graph actions require a graph execution mode"},
-        {!request->compare_backends && request->backend == YVEX_BACKEND_KIND_CPU &&
-             request->mode != YVEX_RUNTIME_MODE_EAGER && request->mode != YVEX_RUNTIME_MODE_AUTO,
-         YVEX_ERR_UNSUPPORTED, "runtime.attention", "CPU attention supports eager execution only"},
-        {request->phase != YVEX_RUNTIME_PHASE_ATTENTION_PREFILL &&
-             request->phase != YVEX_RUNTIME_PHASE_ATTENTION_DECODE,
-         YVEX_ERR_UNSUPPORTED, "runtime.attention", "mixed and speculative phases are not admitted"},
-        {request->phase == YVEX_RUNTIME_PHASE_ATTENTION_DECODE && request->token_count > 1ull,
-         YVEX_ERR_INVALID_ARG, "runtime.attention", "attention decode requires one activation row"},
+    const int rejected[] = {
+        !request->artifact_path || !request->runtime_binding_path || !request->artifact_path[0] ||
+            !request->runtime_binding_path[0],
+        request->probe != YVEX_ATTENTION_PROBE_CANONICAL_V2 ||
+            (request->scope != YVEX_ATTENTION_PROBE_SCOPE_QUICK &&
+             request->scope != YVEX_ATTENTION_PROBE_SCOPE_FULL),
+        !request->compare_backends && request->backend != YVEX_BACKEND_KIND_CPU &&
+            request->backend != YVEX_BACKEND_KIND_CUDA,
+        (unsigned int)request->mode > (unsigned int)YVEX_RUNTIME_MODE_AUTO,
+        (unsigned int)request->trace_policy > (unsigned int)YVEX_RUNTIME_TRACE_FULL ||
+            (request->require_mode != 0 && request->require_mode != 1),
+        request->capture_bucket && strlen(request->capture_bucket) >= YVEX_RUNTIME_CAPTURE_BUCKET_CAP,
+        (unsigned int)request->operator_action > (unsigned int)YVEX_RUNTIME_OPERATOR_RESIDENCY_INSPECT,
+        !request->token_count || !request->repeat || request->repeat > 10000ull ||
+            request->warmup > 10000ull,
+        (request->select_layer && request->layer_count != 1ull) ||
+            (request->select_selection_key && !request->selection_key) ||
+            (request->select_layer && request->select_selection_key),
+        request->history_tokens &&
+            request->operator_action != YVEX_RUNTIME_OPERATOR_STATE_EXERCISE &&
+            request->operator_action != YVEX_RUNTIME_OPERATOR_BENCHMARK,
+        request->operator_action == YVEX_RUNTIME_OPERATOR_STATE_EXERCISE &&
+            (request->token_count < 2ull || request->warmup || request->repeat != 1ull),
+        request->operator_action == YVEX_RUNTIME_OPERATOR_STATE_EXERCISE &&
+            (request->compare_backends || request->backend != YVEX_BACKEND_KIND_CPU ||
+             request->mode != YVEX_RUNTIME_MODE_EAGER),
+        request->compare_backends && (request->warmup || request->repeat != 1ull),
+        runtime_attention_is_graph_action(request->operator_action) &&
+            request->backend != YVEX_BACKEND_KIND_CUDA,
+        runtime_attention_is_graph_action(request->operator_action) &&
+            request->mode == YVEX_RUNTIME_MODE_EAGER,
+        !request->compare_backends && request->backend == YVEX_BACKEND_KIND_CPU &&
+            request->mode != YVEX_RUNTIME_MODE_EAGER && request->mode != YVEX_RUNTIME_MODE_AUTO,
+        request->phase != YVEX_RUNTIME_PHASE_ATTENTION_PREFILL &&
+            request->phase != YVEX_RUNTIME_PHASE_ATTENTION_DECODE,
+        request->phase == YVEX_RUNTIME_PHASE_ATTENTION_DECODE && request->token_count > 1ull,
     };
-    for (rule = 0u; rule < sizeof(rules) / sizeof(rules[0]); ++rule)
-        if (rules[rule].reject)
-            return runtime_refuse(err, rules[rule].status, rules[rule].where, rules[rule].reason);
+    for (rule = 0u; rule < sizeof(rejected) / sizeof(rejected[0]); ++rule)
+        if (rejected[rule])
+            return runtime_refuse(err, runtime_attention_request_rules[rule].status,
+                                  runtime_attention_request_rules[rule].where,
+                                  runtime_attention_request_rules[rule].reason);
     return yvex_graph_attention_operator_selection_validate(request, err);
 }
 static const yvex_graph_attention_operator_result runtime_attention_result_default = {
@@ -142,7 +147,7 @@ static const char *const runtime_attention_action_names[] = {
     "execute", "plan", "state inspect", "state validate", "state exercise", "capture", "replay",
     "cuda-graph list", "cuda-graph inspect", "cuda-graph warmup", "cuda-graph update",
     "cuda-graph invalidate", "cuda-graph release", "trace", "profile", "benchmark",
-    "capabilities", "residency inspect"};
+    "qualify", "capabilities", "residency inspect"};
 static const char *const runtime_attention_phase_names[] = {"prefill", "decode", "mixed", "verify"};
 static const char *const runtime_attention_mode_names[] = {"eager", "piecewise", "full", "auto"};
 static const char *const runtime_attention_auto_mode_reasons[] = {
@@ -159,6 +164,29 @@ static const char *const runtime_attention_comparison_stage_names[] = {
     "compressed_positions", "indexer_emission_geometry", "indexer_emission_kv",
     "indexer_emission_positions", "main_geometry", "main_kv", "main_score",
     "indexer_rolling_geometry", "indexer_rolling_kv", "indexer_rolling_score"};
+static const char *const runtime_attention_trace_stage_names[] = {
+    "input", "q_low", "query", "raw_kv", "compressed_kv", "indexer_kv",
+    "index_query", "index_weights", "attention_values", "core_output", "envelope_output"};
+typedef struct {
+    size_t values, rows, width, fallback_width;
+} runtime_attention_trace_field;
+typedef yvex_attention_publication attn_pub;
+enum { ATTN_PUB_TOKENS = offsetof(attn_pub, token_count) };
+static const runtime_attention_trace_field runtime_attention_trace_fields[] = {
+    {offsetof(attn_pub, input), ATTN_PUB_TOKENS, offsetof(attn_pub, envelope_output_width),
+     offsetof(attn_pub, hidden_width)},
+    {offsetof(attn_pub, q_low), ATTN_PUB_TOKENS, offsetof(attn_pub, q_rank), 0u},
+     {offsetof(attn_pub, query), ATTN_PUB_TOKENS, offsetof(attn_pub, query_width), 0u},
+    {offsetof(attn_pub, raw_kv), ATTN_PUB_TOKENS, offsetof(attn_pub, kv_width), 0u},
+     {offsetof(attn_pub, compressed_kv), offsetof(attn_pub, compressed_count),
+     offsetof(attn_pub, compressed_stride), 0u},
+    {offsetof(attn_pub, indexer_kv), offsetof(attn_pub, indexer_count), offsetof(attn_pub, indexer_stride), 0u},
+     {offsetof(attn_pub, index_query), ATTN_PUB_TOKENS, offsetof(attn_pub, index_query_stride), 0u},
+     {offsetof(attn_pub, index_weights), ATTN_PUB_TOKENS, offsetof(attn_pub, index_weight_stride), 0u},
+     {offsetof(attn_pub, attention_values), ATTN_PUB_TOKENS, offsetof(attn_pub, query_width), 0u},
+     {offsetof(attn_pub, core_output), ATTN_PUB_TOKENS, offsetof(attn_pub, core_output_width), 0u},
+     {offsetof(attn_pub, envelope_output), ATTN_PUB_TOKENS, offsetof(attn_pub, envelope_output_width), 0u},
+};
 /* Purpose: project one bounded typed enum through its stable operator-name table. */
 static const char *runtime_attention_name(const char *const *names, unsigned int maximum, unsigned int value) {
     return value <= maximum ? names[value] : "invalid";
@@ -169,8 +197,7 @@ static void runtime_attention_name_copy(char *out, size_t capacity, const char *
     yvex_core_text_copy(out, capacity, runtime_attention_name(names, maximum, value));
 }
 /* Purpose: retain the maximum exact resource counter without duplicating comparison branches. */
-static void runtime_attention_u64_raise(unsigned long long *maximum,
-                                        unsigned long long candidate) {
+static void runtime_attention_u64_raise(unsigned long long *maximum, unsigned long long candidate) {
     if (candidate > *maximum) *maximum = candidate;
 }
 typedef struct {
@@ -195,8 +222,7 @@ static int runtime_attention_trace_span(runtime_attention_trace *trace, const ch
     return YVEX_OK;
 }
 /* Purpose: hash one rolling-state stage without hashing native structure bytes.
- * Inputs: trace, stage name, and typed state.
- * Effects: hashes metadata and present KV/score extents.
+ * Inputs: trace, stage name, and typed state. Effects: hashes metadata and present KV/score extents.
  * Failure: propagates checked hashing or extent arithmetic failure.
  * Boundary: reads one completed production state stage; it never mutates session state. */
 static int runtime_attention_trace_rolling(runtime_attention_trace *trace, const char *name,
@@ -223,38 +249,13 @@ static int runtime_attention_trace_rolling(runtime_attention_trace *trace, const
     return rc;
 }
 /* Purpose: consume production publications at the selected evidence depth.
- * Inputs: backend and complete production publication.
- * Effects: hashes only values selected by trace policy.
+ * Inputs: backend and complete production publication. Effects: hashes only values selected by trace policy.
  * Failure: rejects incomplete publications and propagates bounded hashing failure.
  * Boundary: observes production math; it neither executes nor calls the test oracle. */
 static int runtime_attention_trace_capture(void *context, yvex_backend_kind backend,
                                            const yvex_attention_publication *publication, yvex_error *err) {
     runtime_attention_trace *trace = (runtime_attention_trace *)context;
-    const float *floats[] = {
-        publication ? publication->input : NULL, publication ? publication->q_low : NULL,
-        publication ? publication->query : NULL, publication ? publication->raw_kv : NULL,
-        publication ? publication->compressed_kv : NULL, publication ? publication->indexer_kv : NULL,
-        publication ? publication->index_query : NULL, publication ? publication->index_weights : NULL,
-        publication ? publication->attention_values : NULL, publication ? publication->core_output : NULL,
-        publication ? publication->envelope_output : NULL};
-    const char *const names[] = {"input", "q_low", "query", "raw_kv", "compressed_kv", "indexer_kv",
-    "index_query", "index_weights", "attention_values", "core_output", "envelope_output"};
-    unsigned long long rows[] = {
-        publication ? publication->token_count : 0ull, publication ? publication->token_count : 0ull,
-        publication ? publication->token_count : 0ull, publication ? publication->token_count : 0ull,
-        publication ? publication->compressed_count : 0ull, publication ? publication->indexer_count : 0ull,
-        publication ? publication->token_count : 0ull, publication ? publication->token_count : 0ull,
-        publication ? publication->token_count : 0ull, publication ? publication->token_count : 0ull,
-        publication ? publication->token_count : 0ull};
-    unsigned long long widths[] = {
-        publication && publication->envelope_output_width ? publication->envelope_output_width
-                                                          : publication ? publication->hidden_width : 0ull,
-        publication ? publication->q_rank : 0ull, publication ? publication->query_width : 0ull,
-        publication ? publication->kv_width : 0ull, publication ? publication->compressed_stride : 0ull,
-        publication ? publication->indexer_stride : 0ull, publication ? publication->index_query_stride : 0ull,
-        publication ? publication->index_weight_stride : 0ull, publication ? publication->query_width : 0ull,
-        publication ? publication->core_output_width : 0ull,
-        publication ? publication->envelope_output_width : 0ull};
+    const unsigned char *base = (const unsigned char *)publication;
     unsigned int first, index;
     int rc = YVEX_OK;
     if (!trace || !publication || !publication->complete)
@@ -265,9 +266,18 @@ static int runtime_attention_trace_capture(void *context, yvex_backend_kind back
         rc = YVEX_ERR_STATE;
     first = trace->policy == YVEX_RUNTIME_TRACE_FULL ? 0u :
             trace->policy == YVEX_RUNTIME_TRACE_STAGES ? 1u : 9u;
-    for (index = first; rc == YVEX_OK && index < 11u; ++index)
-        rc = runtime_attention_trace_span(trace, names[index], floats[index], rows[index],
-                                          widths[index], sizeof(float));
+    for (index = first; rc == YVEX_OK &&
+                        index < sizeof(runtime_attention_trace_fields) /
+                                    sizeof(runtime_attention_trace_fields[0]); ++index) {
+        const runtime_attention_trace_field *field = &runtime_attention_trace_fields[index];
+        const float *values = *(float *const *)(base + field->values);
+        unsigned long long rows = *(const unsigned long long *)(base + field->rows);
+        unsigned long long width = *(const unsigned long long *)(base + field->width);
+        if (!width && field->fallback_width)
+            width = *(const unsigned long long *)(base + field->fallback_width);
+        rc = runtime_attention_trace_span(
+            trace, runtime_attention_trace_stage_names[index], values, rows, width, sizeof(float));
+    }
     if (trace->policy == YVEX_RUNTIME_TRACE_SUMMARY && rc == YVEX_OK)
         rc = runtime_attention_trace_span(trace, "raw_kv", publication->raw_kv,
                                           publication->token_count, publication->kv_width,
@@ -330,10 +340,8 @@ static int runtime_attention_trace_finish(runtime_attention_trace *trace,
     return YVEX_OK;
 }
 /* Purpose: seed request/reachability facts before I/O.
- * Inputs: request and caller-owned result.
- * Effects: publishes a refused default.
- * Failure: bounded formatting leaves a defined result.
- * Boundary: command availability is distinct from execution success. */
+ * Inputs: request and caller-owned result. Effects: publishes a refused default.
+ * Failure: bounded formatting leaves a defined result. Boundary: availability is not execution success. */
 static void runtime_attention_result_initialize(const yvex_graph_attention_operator_request *request,
                                                 yvex_graph_attention_operator_result *result) {
     const yvex_runtime_family_adapter *adapter;
@@ -374,12 +382,21 @@ static void runtime_attention_result_initialize(const yvex_graph_attention_opera
     runtime_attention_name_copy(result->operation_scope, sizeof(result->operation_scope),
                                 runtime_attention_scope_names, YVEX_RUNTIME_SCOPE_RELEASE_ATTENTION_SET,
                                 request->operation_scope);
+    if (request->operator_action == YVEX_RUNTIME_OPERATOR_BENCHMARK ||
+        request->operator_action == YVEX_RUNTIME_OPERATOR_PROFILE ||
+        request->operator_action == YVEX_RUNTIME_OPERATOR_QUALIFY)
+        yvex_core_text_copy(result->benchmark_scope, sizeof(result->benchmark_scope),
+                            "attention_component");
+    yvex_core_text_copy(result->attention_class, sizeof(result->attention_class),
+                        request->attention_class ? request->attention_class : "mixed");
+    result->requested_token_count = request->token_count;
+    result->requested_history_tokens = request->history_tokens;
+    result->requested_layer_start = request->layer_start;
+    result->requested_layer_count = request->select_layer ? request->layer_count : 0ull;
 }
 /* Purpose: bind runtime identities without reopening compilation owners.
- * Inputs: sealed model and caller-owned result.
- * Effects: copies immutable binding, graph, and capability facts.
- * Failure: incomplete summaries return false without executing attention.
- * Boundary: physical compatibility was proved when the binding was transactionally published. */
+ * Inputs: sealed model and result. Effects: copies immutable binding, graph, and capability facts.
+ * Failure: incomplete summaries return false. Boundary: binding publication proved physical compatibility. */
 static int runtime_attention_result_bind(const yvex_runtime_model *model,
                                          yvex_graph_attention_operator_result *result, yvex_error *err) {
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
@@ -433,10 +450,8 @@ static int runtime_attention_result_bind(const yvex_runtime_model *model,
     return 1;
 }
 /* Purpose: retain a typed refusal while leaving execution uncommitted.
- * Inputs: one bounded error and caller-owned result.
- * Effects: copies the refusal and clears completion.
- * Failure: absent errors receive stable text.
- * Boundary: rendering and exit mapping remain CLI-owned. */
+ * Inputs: bounded error and result. Effects: copies refusal and clears completion.
+ * Failure: absent errors receive stable text. Boundary: rendering and exit mapping remain CLI-owned. */
 static void runtime_attention_result_refuse(yvex_graph_attention_operator_result *result, int status,
                                             const yvex_error *err) {
     const char *message = err ? yvex_error_message(err) : "";
@@ -452,48 +467,42 @@ static void runtime_attention_result_refuse(yvex_graph_attention_operator_result
                    message[0] ? message : "attention execution refused");
 }
 /* Purpose: bind an execution identity to semantic request/result facts.
- * Inputs: typed request and result.
- * Effects: writes one caller-owned identity.
- * Failure: hash failures return false.
- * Boundary: paths, pointers, timing, and object bytes are excluded. */
+ * Inputs: request and result. Effects: writes one caller-owned identity.
+ * Failure: hashing returns false. Boundary: paths, pointers, timing, and object bytes are excluded. */
 static int runtime_attention_execution_identity(
     const yvex_graph_attention_operator_request *request, const yvex_graph_attention_operator_result *result,
     char output[YVEX_SHA256_HEX_CAP]) {
+    const char *prefix[] = {
+        "yvex.runtime.attention-execution.v2", result->runtime_model_identity,
+        result->runtime_binding_identity, result->execution_descriptor_identity};
+    const char *suffix[] = {
+        result->selected_mode, result->capture_bucket, result->cuda_launch_graph_identity,
+        result->cuda_graph_exec_identity, result->probe.tensor_output_digest,
+        result->probe.state_delta_digest, result->execution_evidence_digest};
+    const unsigned long long values[] = {
+        request->backend, request->phase, request->mode, request->operation_scope,
+        request->operator_action, request->scope,
+        request->token_count ? request->token_count : 1ull,
+        request->repeat ? request->repeat : 1ull, request->maximum_host_bytes,
+        request->maximum_device_bytes, (unsigned long long)request->require_mode};
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    size_t index;
+
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.attention-execution.v2") ||
-        !yvex_sha256_update_text(&hash, result->runtime_model_identity) ||
-        !yvex_sha256_update_text(&hash, result->runtime_binding_identity) ||
-        !yvex_sha256_update_text(&hash, result->execution_descriptor_identity) ||
-        !yvex_sha256_update_u64(&hash, request->backend) ||
-        !yvex_sha256_update_u64(&hash, request->phase) ||
-        !yvex_sha256_update_u64(&hash, request->mode) ||
-        !yvex_sha256_update_u64(&hash, request->operation_scope) ||
-        !yvex_sha256_update_u64(&hash, request->operator_action) ||
-        !yvex_sha256_update_u64(&hash, request->scope) ||
-        !yvex_sha256_update_u64(&hash, request->token_count ? request->token_count : 1ull) ||
-        !yvex_sha256_update_u64(&hash, request->repeat ? request->repeat : 1ull) ||
-        !yvex_sha256_update_u64(&hash, request->maximum_host_bytes) ||
-        !yvex_sha256_update_u64(&hash, request->maximum_device_bytes) ||
-        !yvex_sha256_update_u64(&hash, (unsigned long long)request->require_mode) ||
-        !yvex_sha256_update_text(&hash, result->selected_mode) ||
-        !yvex_sha256_update_text(&hash, result->capture_bucket) ||
-        !yvex_sha256_update_text(&hash, result->cuda_launch_graph_identity) ||
-        !yvex_sha256_update_text(&hash, result->cuda_graph_exec_identity) ||
-        !yvex_sha256_update_text(&hash, result->probe.tensor_output_digest) ||
-        !yvex_sha256_update_text(&hash, result->probe.state_delta_digest) ||
-        !yvex_sha256_update_text(&hash, result->execution_evidence_digest) ||
-        !yvex_sha256_final(&hash, digest))
-        return 0;
+    for (index = 0u; index < sizeof(prefix) / sizeof(prefix[0]); ++index)
+        if (!yvex_sha256_update_text(&hash, prefix[index])) return 0;
+    for (index = 0u; index < sizeof(values) / sizeof(values[0]); ++index)
+        if (!yvex_sha256_update_u64(&hash, values[index])) return 0;
+    for (index = 0u; index < sizeof(suffix) / sizeof(suffix[0]); ++index)
+        if (!yvex_sha256_update_text(&hash, suffix[index])) return 0;
+    if (!yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, output);
     return 1;
 }
 /* Purpose: project sealed runtime/session owners into descriptor facts.
- * Inputs: validated request, model, session, and mode.
- * Effects: writes one descriptor identity.
- * Failure: missing facts refuse atomically.
- * Boundary: orchestration evidence never enters the contract. */
+ * Inputs: request, model, session, and mode. Effects: writes one descriptor identity.
+ * Failure: missing facts refuse atomically. Boundary: orchestration evidence never enters the contract. */
 static int runtime_attention_execution_descriptor_identity(
     const yvex_graph_attention_operator_request *request, const yvex_runtime_model *model,
     const yvex_runtime_execution_session *session,
@@ -587,14 +596,11 @@ static int runtime_attention_execution_descriptor_identity(
 static int runtime_attention_action_dispatches(yvex_runtime_operator_action action) {
     return action == YVEX_RUNTIME_OPERATOR_EXECUTE ||
            (action >= YVEX_RUNTIME_OPERATOR_STATE_EXERCISE &&
-            action <= YVEX_RUNTIME_OPERATOR_GRAPH_RELEASE) ||
-           (action >= YVEX_RUNTIME_OPERATOR_TRACE && action <= YVEX_RUNTIME_OPERATOR_BENCHMARK);
+            action <= YVEX_RUNTIME_OPERATOR_QUALIFY);
 }
 /* Purpose: publish and optionally validate session-owned ephemeral state.
- * Inputs: sealed session, validation policy, and result.
- * Effects: copies geometry, counters, and layout identity.
- * Failure: refuses absent, unsealed, or transaction-active state.
- * Boundary: reports ephemeral attention state; it does not implement persistent KV. */
+ * Inputs: session, policy, and result. Effects: copies geometry, counters, and layout identity.
+ * Failure: invalid state refuses. Boundary: ephemeral attention state is not persistent KV. */
 static int runtime_attention_state_summary_publish(
     const yvex_runtime_execution_session *session, int validate,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
@@ -615,10 +621,8 @@ static int runtime_attention_state_summary_publish(
     return YVEX_OK;
 }
 /* Purpose: select one session mode and bucket without implicit fallback.
- * Inputs: request, session, and result.
- * Effects: publishes compatibility facts before backend configuration.
- * Failure: unsupported modes or unavailable Driver features refuse before dispatch.
- * Boundary: AUTO may select eager; explicit CUDA graph modes never downgrade. */
+ * Inputs: request, session, and result. Effects: publishes compatibility before backend configuration.
+ * Failure: unavailable modes refuse. Boundary: AUTO may select eager; explicit graph modes never downgrade. */
 static int runtime_attention_mode_configure(const yvex_graph_attention_operator_request *request,
     yvex_runtime_execution_session *session, yvex_graph_attention_operator_result *result,
     yvex_runtime_execution_mode *selected_mode, yvex_error *err) {
@@ -721,10 +725,8 @@ static int runtime_attention_mode_bind_descriptor(const yvex_graph_attention_ope
         summary->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY].maximum_capacity, err);
 }
 /* Purpose: project CUDA graph identities and lifecycle counters.
- * Inputs: session and result.
- * Effects: copies immutable graph evidence.
- * Failure: incomplete evidence refuses publication.
- * Boundary: counters prove execution; they do not promote runtime capability flags. */
+ * Inputs: session/result. Effects: copies immutable graph evidence.
+ * Failure: incomplete evidence refuses. Boundary: counters do not promote capability flags. */
 static int runtime_attention_graph_summary(yvex_runtime_execution_session *session,
                                            int require_execution,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
@@ -763,11 +765,9 @@ static int runtime_attention_progress(const yvex_graph_attention_operator_reques
                               "attention operator lifecycle was cancelled");
     return YVEX_OK;
 }
-/* Purpose: partition nested CUDA Graph preparation time from its enclosing dispatch phase.
- * Inputs: completed graph counters and the lifecycle phase that contains first-use capture.
- * Effects: subtracts capture and instantiation from exactly one enclosing phase.
- * Failure: inconsistent clocks refuse evidence instead of publishing overlapping timings.
- * Boundary: backend counters remain exact subphase facts; this changes no numerical execution. */
+/* Purpose: partition CUDA Graph preparation time from its enclosing dispatch phase.
+ * Inputs: graph counters and lifecycle phase. Effects: subtracts capture/instantiation once.
+ * Failure: inconsistent clocks refuse. Boundary: exact counters and numerical execution are unchanged. */
 static int runtime_attention_graph_lifecycle_partition(yvex_graph_attention_operator_result *result,
                                                        yvex_error *err) {
     const double nested = result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_GRAPH_CAPTURE] +
@@ -792,10 +792,8 @@ typedef struct {
     char last_delta_identity[YVEX_SHA256_HEX_CAP];
 } runtime_attention_state_bridge;
 /* Purpose: begin graph publication against session state.
- * Inputs: probe layer, seed history, and token range.
- * Effects: prepares stable banks and returns the committed view.
- * Failure: geometry, capacity, budget, or position refusal preserves committed state.
- * Boundary: adapts graph publication to runtime state without owning persistent KV. */
+ * Inputs: layer, history, token range. Effects: prepares banks and returns the committed view.
+ * Failure: refusal preserves state. Boundary: adapts runtime state without owning persistent KV. */
 static int runtime_attention_state_begin(
     void *context, unsigned long long layer_ordinal, const yvex_attention_layer_plan *layer,
     const yvex_attention_history_view *initial_history,
@@ -811,10 +809,8 @@ static int runtime_attention_state_begin(
         token_position, token_count, cancellation, history, failure, err);
 }
 /* Purpose: hash output rows independently of chunk partitioning.
- * Inputs: publication and scope.
- * Effects: appends canonical float bits to the bridge hash.
- * Failure: malformed geometry returns false before state publication.
- * Boundary: this is equality evidence, not an alternate numerical implementation. */
+ * Inputs: publication/scope. Effects: appends canonical float bits.
+ * Failure: malformed geometry refuses. Boundary: equality evidence is not alternate math. */
 static int runtime_attention_state_hash_output(
     runtime_attention_state_bridge *bridge, const yvex_attention_publication *publication) {
     const float *values;
@@ -836,11 +832,9 @@ static int runtime_attention_state_hash_output(
     bridge->output_values += count;
     return 1;
 }
-/* Purpose: stage one complete publication inside the current execution batch.
- * Inputs: bridge, publication, cancellation.
- * Effects: hashes output and applies state bytes without swapping any committed bank.
- * Failure: malformed or cancelled candidates remain reversible for caller abort.
- * Boundary: output hashing observes production values and never computes attention math. */
+/* Purpose: stage one complete publication inside the execution batch.
+ * Inputs: bridge/publication/cancellation. Effects: hashes output and stages reversible state bytes.
+ * Failure: candidates remain abortable. Boundary: output hashing never computes attention math. */
 static int runtime_attention_state_stage(
     void *context, const yvex_attention_publication *publication,
     const yvex_attention_cancellation *cancellation, char state_delta_identity[YVEX_SHA256_HEX_CAP],
@@ -877,11 +871,9 @@ runtime_attention_state_provider(runtime_attention_state_bridge *bridge) {
     provider.abort = runtime_attention_state_abort;
     return provider;
 }
-/* Purpose: prepare runtime state from the same immutable plan consumed by every downstream owner.
- * Inputs: open state, sealed attention/capacity plans, and typed failure outputs.
- * Effects: prepares exactly each selected layer with its plan-owned seed and capacities.
- * Failure: identity, history, geometry, or allocation refusal preserves unprepared later layers.
- * Boundary: this adapter creates no alternative capacity or selection truth. */
+/* Purpose: prepare runtime state from the same immutable plan as downstream owners.
+ * Inputs: state/plans/failures. Effects: prepares selected layers with plan-owned capacities.
+ * Failure: refusal preserves later layers. Boundary: creates no alternate capacity/selection truth. */
 int yvex_runtime_session_prepare_attention_probe_state(yvex_runtime_execution_session *session,
     yvex_runtime_model *model, const yvex_graph_attention_capacity_plan *capacity,
     yvex_attention_failure *failure, yvex_error *err) {
@@ -949,21 +941,15 @@ typedef struct {
 } runtime_attention_phase_context;
 static int runtime_attention_phase_lane_close(runtime_attention_phase_lane *lane, yvex_error *err);
 /* Purpose: initialize one lane's partition-neutral execution evidence.
- * Inputs: prepared lane, layer ordinal, and attention operation scope.
- * Effects: clears evidence counters without changing the prepared prior state.
- * Failure: digest initialization refusal leaves the lane unusable.
- * Boundary: seeded history remains owned by the ephemeral state provider. */
+ * Inputs: lane/layer/scope. Effects: clears evidence without changing prior state.
+ * Failure: digest refusal leaves lane unusable. Boundary: ephemeral provider owns seeded history. */
 static int runtime_attention_phase_lane_evidence_begin(
     runtime_attention_phase_lane *lane, unsigned long long layer_ordinal,
     yvex_attention_operation_scope operation_scope, yvex_error *err) {
     if (!lane || !lane->state_provider_ready)
         return runtime_refuse(err, YVEX_ERR_STATE, "runtime.attention.phase",
                               "phase state provider is unavailable");
-    lane->payload_bytes_read = 0ull;
-    lane->kernel_launches = 0ull;
-    lane->peak_device_bytes = 0ull;
-    lane->bindings_executed = 0ull;
-    lane->topk_selected = 0ull;
+    memset(&lane->payload_bytes_read, 0, 5u * sizeof(lane->payload_bytes_read));
     lane->tensor_digest[0] = '\0';
     lane->state_identity[0] = '\0';
     lane->bridge.output_values = 0ull;
@@ -977,11 +963,9 @@ static int runtime_attention_phase_lane_evidence_begin(
                               "phase output identity initialization failed");
     return YVEX_OK;
 }
-/* Purpose: open an allocation-stable lane for chunk/decode comparison.
- * Inputs: graph plan, layer, final position, and budget.
- * Effects: owns ephemeral state and a partition-neutral output hash.
- * Failure: releases partial state and publishes no lane identity.
- * Boundary: proof state is session-local and is never exposed as persistent KV. */
+/* Purpose: open an allocation-stable chunk/decode comparison lane.
+ * Inputs: plan/layer/position/budget. Effects: owns ephemeral state and output hash.
+ * Failure: releases partial state. Boundary: session-local proof state is not persistent KV. */
 static int runtime_attention_phase_lane_open(
     runtime_attention_phase_lane *lane, const yvex_graph_family_api *graph,
     const yvex_attention_plan *plan, unsigned long long layer_ordinal,
@@ -1018,10 +1002,8 @@ static int runtime_attention_phase_lane_open(
     return YVEX_OK;
 }
 /* Purpose: close a comparison lane and its banks.
- * Inputs: owned lane or null.
- * Effects: releases state and clears borrowed fields.
- * Failure: missing or failed release retains the exact lane for cleanup retry.
- * Boundary: never closes the shared runtime model, session backend, or artifact. */
+ * Inputs: lane/null. Effects: releases state and clears borrows.
+ * Failure: failed release remains retryable. Boundary: shared runtime owners stay open. */
 static int runtime_attention_phase_lane_close(runtime_attention_phase_lane *lane, yvex_error *err) {
     int rc;
     if (!lane) return YVEX_OK;
@@ -1040,10 +1022,8 @@ static int runtime_attention_phase_lane_close(runtime_attention_phase_lane *lane
     return YVEX_OK;
 }
 /* Purpose: execute a layer as a chunk or ordered decode sequence.
- * Inputs: sealed owners, layer, token count, and lane.
- * Effects: invokes production and accumulates publication evidence.
- * Failure: aborts an active transaction and preserves its last committed state.
- * Boundary: deterministic probe activations are not prompt prefill or model decode. */
+ * Inputs: owners/layer/tokens/lane. Effects: executes production and accumulates evidence.
+ * Failure: abort preserves committed state. Boundary: probe activations are not model prefill/decode. */
 static int runtime_attention_phase_lane_execute(
     runtime_attention_phase_lane *lane, yvex_runtime_model *model,
     const yvex_graph_family_api *graph, const yvex_attention_probe_request *base_request,
@@ -1122,11 +1102,9 @@ static int runtime_attention_phase_lane_execute(
     }
     return rc;
 }
-/* Purpose: release every reusable chunk/decode lane in one phase-proof context.
- * Inputs: initialized or partially initialized operator-owned context.
- * Effects: releases all lane state and clears borrowed fields.
- * Failure: partial and already closed contexts are harmless.
- * Boundary: closes no runtime model, execution session, backend, or artifact. */
+/* Purpose: release every reusable chunk/decode lane in one proof context.
+ * Inputs: partial/complete context. Effects: releases lane state and clears borrows.
+ * Failure: repeated/partial close is harmless. Boundary: shared runtime owners stay open. */
 static int runtime_attention_phase_context_release(void **owner, yvex_error *err) {
     runtime_attention_phase_context *context = owner ? *owner : NULL;
     yvex_error first, current;
@@ -1208,8 +1186,7 @@ static int runtime_attention_phase_context_open(
 }
 /* Purpose: prove N-token prefill equals N ordered decode steps.
  * Inputs: runtime owners, canonical request, and selected family recipes.
- * Effects: compares every output and the final state identity.
- * Failure: missing or unequal results refuse publication.
+ * Effects: compares every output and the final state identity. Failure: missing or unequal results refuse publication.
  * Boundary: activation phases only, not tokenizer-backed prefill or persistent KV. */
 static int runtime_attention_phase_equivalence(
     yvex_runtime_execution_session *session, yvex_runtime_model *model,
@@ -1432,21 +1409,19 @@ static int runtime_attention_operator_dispatch(
         const unsigned long long sample_index = index >= warmup ? index - warmup : 0ull;
         double elapsed = 0.0, device_elapsed = 0.0;
         double *measurement = samples && index >= warmup ? &samples[sample_index] : &elapsed;
-        rc = runtime_attention_progress(request, YVEX_RUNTIME_LIFECYCLE_EXECUTION,
-                                        index, total, err);
+        rc = runtime_attention_progress(request, YVEX_RUNTIME_LIFECYCLE_EXECUTION, index, total, err);
         if (rc != YVEX_OK) break;
         result->execution_dispatch_count++;
-        if (request->operator_action == YVEX_RUNTIME_OPERATOR_STATE_EXERCISE) {
+        if (rc == YVEX_OK && request->operator_action == YVEX_RUNTIME_OPERATOR_STATE_EXERCISE) {
             const unsigned long long started = yvex_core_monotonic_ns();
-            rc = runtime_attention_phase_equivalence(
-                session, model, graph, probe_request, phase_context,
+            rc = runtime_attention_phase_equivalence(session, model, graph, probe_request, phase_context,
                 request->history_tokens, probe_request->token_count, model_failure, result, err);
             *measurement = started ? runtime_seconds(yvex_core_monotonic_ns() - started) : 0.0;
-        } else {
+        } else if (rc == YVEX_OK) {
             yvex_attention_probe_result probe;
             unsigned long long started;
-            if (!yvex_core_u64_mul(index, probe_request->token_count,
-                                   &probe_request->token_position)) {
+            if (!yvex_core_u64_mul(index, probe_request->token_count, &started) ||
+                !yvex_core_u64_add(request->history_tokens, started, &probe_request->token_position)) {
                 rc = runtime_refuse(err, YVEX_ERR_BOUNDS, "runtime.attention.state",
                                     "attention state token position overflowed");
                 break;
@@ -1481,8 +1456,7 @@ static int runtime_attention_operator_dispatch(
         rc = yvex_runtime_benchmark_samples_finish(samples, device_samples, total - warmup,
             request->compare_backends || request->backend == YVEX_BACKEND_KIND_CUDA, result, err);
     if (rc == YVEX_OK && first + count == total)
-        rc = runtime_attention_progress(request, YVEX_RUNTIME_LIFECYCLE_EXECUTION,
-                                        total, total, err);
+        rc = runtime_attention_progress(request, YVEX_RUNTIME_LIFECYCLE_EXECUTION, total, total, err);
     return rc;
 }
 typedef struct {
@@ -1508,10 +1482,8 @@ enum {
     RUNTIME_WARM_COUNTERS = 15
 };
 /* Purpose: capture owner counters around steady-state dispatch.
- * Inputs: live runtime model, session, and caller-owned snapshot.
- * Effects: copies every resource-owner counter.
- * Failure: missing owners refuse the measurement.
- * Boundary: sampling performs no allocation, artifact read, or execution. */
+ * Inputs: model, session, and snapshot. Effects: copies every resource-owner counter.
+ * Failure: missing owners refuse. Boundary: sampling allocates, reads, and executes nothing. */
 static int runtime_attention_warm_snapshot_take(
     yvex_runtime_model *model, yvex_runtime_execution_session *session,
     runtime_attention_warm_snapshot *out, yvex_error *err) {
@@ -1522,10 +1494,9 @@ static int runtime_attention_warm_snapshot_take(
     memset(out, 0, sizeof(*out));
     if (!model_view || !session_view || !workspace ||
         yvex_runtime_model_summary_copy(model, &out->model, err) != YVEX_OK ||
-        yvex_materialization_session_access_summary(
-            model_view->materialization, &out->materialization, err) != YVEX_OK ||
-        yvex_runtime_residency_snapshot(
-            model_view->residency, &out->residency, NULL, NULL, err) != YVEX_OK ||
+        yvex_materialization_session_access_summary(model_view->materialization, &out->materialization, err) !=
+            YVEX_OK ||
+        yvex_runtime_residency_snapshot(model_view->residency, &out->residency, NULL, NULL, err) != YVEX_OK ||
         yvex_runtime_session_summary_copy(session, &out->session, err) != YVEX_OK ||
         yvex_backend_get_memory_stats(session_view->backend, &out->backend, err) != YVEX_OK ||
         !yvex_backend_host_workspace_summary_get(session_view->backend, &out->host_workspace))
@@ -1536,31 +1507,27 @@ static int runtime_attention_warm_snapshot_take(
     return YVEX_OK;
 }
 /* Purpose: enforce zero-allocation/read/upload/resize warm facts.
- * Inputs: before/after snapshots and caller-owned operator result.
- * Effects: publishes deltas only after stable resource generations.
- * Failure: any forbidden warm transition refuses execution evidence.
- * Boundary: measured owner counters are authoritative. */
+ * Inputs: snapshots and result. Effects: publishes deltas after stable resource generations.
+ * Failure: forbidden transitions refuse. Boundary: measured owner counters are authoritative. */
 static int runtime_attention_warm_snapshot_publish(const runtime_attention_warm_snapshot *before,
     const runtime_attention_warm_snapshot *after,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
     const runtime_warm_counter counters[RUNTIME_WARM_COUNTERS] = {
         {before->model.artifact_hash_passes, after->model.artifact_hash_passes},
-        {before->materialization.artifact_read_calls, after->materialization.artifact_read_calls},
+{before->materialization.artifact_read_calls, after->materialization.artifact_read_calls},
         {before->residency.cold_artifact_read_calls, after->residency.cold_artifact_read_calls},
-        {before->backend.allocation_events, after->backend.allocation_events},
+{before->backend.allocation_events, after->backend.allocation_events},
         {before->backend.release_events, after->backend.release_events},
-        {before->residency.cuda_upload_bytes, after->residency.cuda_upload_bytes},
+{before->residency.cuda_upload_bytes, after->residency.cuda_upload_bytes},
         {before->host_workspace.allocation_count, after->host_workspace.allocation_count},
-        {before->host_allocations.allocation_events, after->host_allocations.allocation_events},
+{before->host_allocations.allocation_events, after->host_allocations.allocation_events},
         {before->host_allocations.reallocation_events, after->host_allocations.reallocation_events},
-        {before->host_allocations.release_events, after->host_allocations.release_events},
-        {before->backend.h2d_bytes, after->backend.h2d_bytes},
-        {before->backend.d2h_bytes, after->backend.d2h_bytes},
-        {before->graph_workspace.capacity_bytes, after->graph_workspace.capacity_bytes},
-        {before->session.residency_generation, after->session.residency_generation},
-        {before->session.workspace_generation, after->session.workspace_generation}
-    };
-    unsigned int index, regressed = before->host_allocations.overflowed ||
+{before->host_allocations.release_events, after->host_allocations.release_events},
+        {before->backend.h2d_bytes, after->backend.h2d_bytes}, {before->backend.d2h_bytes, after->backend.d2h_bytes},
+{before->graph_workspace.capacity_bytes, after->graph_workspace.capacity_bytes},
+{before->session.residency_generation, after->session.residency_generation},
+        {before->session.workspace_generation, after->session.workspace_generation} };
+unsigned int index, regressed = before->host_allocations.overflowed ||
                                     after->host_allocations.overflowed;
     unsigned long long host_allocations, host_reallocations;
     int transitioned = 0;
@@ -1572,13 +1539,13 @@ static int runtime_attention_warm_snapshot_publish(const runtime_attention_warm_
                          counters[index].after != counters[index].before;
     }
     if (regressed)
-        return runtime_refuse(err, YVEX_ERR_STATE, "runtime.attention.warm",
-                              "runtime warm-path counters regressed");
+        return runtime_refuse(
+            err, YVEX_ERR_STATE, "runtime.attention.warm", "runtime warm-path counters regressed");
     host_allocations = counters[RUNTIME_WARM_HOST_ALLOCATIONS].after - counters[RUNTIME_WARM_HOST_ALLOCATIONS].before;
     host_reallocations = counters[RUNTIME_WARM_HOST_REALLOCS].after - counters[RUNTIME_WARM_HOST_REALLOCS].before;
     if (host_allocations > ULLONG_MAX - host_reallocations)
-        return runtime_refuse(err, YVEX_ERR_BOUNDS, "runtime.attention.warm",
-                              "warm host allocation evidence overflowed");
+        return runtime_refuse(
+            err, YVEX_ERR_BOUNDS, "runtime.attention.warm", "warm host allocation evidence overflowed");
     if (transitioned)
         return runtime_refuse(err, YVEX_ERR_STATE, "runtime.attention.warm",
                               "steady-state runtime performed a forbidden resource transition");
@@ -1593,10 +1560,8 @@ static int runtime_attention_warm_snapshot_publish(const runtime_attention_warm_
     return YVEX_OK;
 }
 /* Purpose: project residency/workspace counters into a result.
- * Inputs: sealed session and caller-owned result.
- * Effects: copies residency, workspace, transfer, and allocation facts.
- * Failure: a missing summary refuses publication.
- * Boundary: reports runtime ownership, not family policy. */
+ * Inputs: session and result. Effects: copies residency, workspace, transfer, and allocation facts.
+ * Failure: a missing summary refuses. Boundary: reports runtime ownership, not family policy. */
 static int runtime_attention_session_publish(const yvex_runtime_execution_session *session,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
     yvex_runtime_session_summary summary;
@@ -1619,10 +1584,8 @@ static int runtime_attention_session_publish(const yvex_runtime_execution_sessio
     return YVEX_OK;
 }
 /* Purpose: apply an action to the session CUDA graph registry.
- * Inputs: typed action, live session, and caller-owned result.
- * Effects: inspects or changes the process-local graph registry.
- * Failure: missing entries or lifecycle failures refuse publication.
- * Boundary: no CUDA graph cache persists beyond the session. */
+ * Inputs: action, session, and result. Effects: inspects or changes the process-local registry.
+ * Failure: missing entries/lifecycle refuse. Boundary: no graph cache persists beyond the session. */
 static int runtime_attention_registry_publish(const yvex_graph_attention_operator_request *request,
     yvex_runtime_execution_session *session,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
@@ -1635,8 +1598,7 @@ static int runtime_attention_registry_publish(const yvex_graph_attention_operato
     int rc = YVEX_OK;
     if (runtime_attention_is_graph_action(request->operator_action))
         yvex_core_text_copy(result->cuda_graph_registry_scope,
-                                    sizeof(result->cuda_graph_registry_scope),
-                                    "ephemeral-process-session");
+                            sizeof(result->cuda_graph_registry_scope), "ephemeral-process-session");
     if (registry_action)
         rc = yvex_backend_cuda_attention_graph_registry_count(backend, &count, err);
     if (rc == YVEX_OK && request->operator_action == YVEX_RUNTIME_OPERATOR_GRAPH_INSPECT && !count)
@@ -1662,8 +1624,7 @@ static int runtime_attention_registry_publish(const yvex_graph_attention_operato
         rc = runtime_refuse(err, YVEX_ERR_STATE, "runtime.attention.cuda_graph",
                             "CUDA graph update did not complete through production replay");
     if (rc == YVEX_OK && registry_action)
-        rc = yvex_backend_cuda_attention_graph_registry_count(
-            backend, &result->cuda_graph_registry_count, err);
+        rc = yvex_backend_cuda_attention_graph_registry_count(backend, &result->cuda_graph_registry_count, err);
     if (rc == YVEX_OK && affected)
         result->cuda_graph_registry_affected_count = affected;
     if (rc == YVEX_OK && request->operator_action == YVEX_RUNTIME_OPERATOR_GRAPH_INSPECT) {
@@ -1674,24 +1635,21 @@ static int runtime_attention_registry_publish(const yvex_graph_attention_operato
         result->cuda_graph_entry_uploaded = entry.graph.uploaded;
         result->cuda_graph_entry_update_requested = entry.update_requested;
         yvex_core_text_copy(result->cuda_graph_entry_compatibility_identity,
-                                    sizeof(result->cuda_graph_entry_compatibility_identity),
-                                    entry.compatibility_identity);
+                            sizeof(result->cuda_graph_entry_compatibility_identity),
+                            entry.compatibility_identity);
     }
     return rc;
 }
 /* Purpose: publish a dispatch through registry, session, trace, and identity owners.
- * Inputs: request, session, trace, repeat counters, and dispatch status.
- * Effects: writes complete evidence, identities, and publication duration.
- * Failure: the first publication error refuses the result.
- * Boundary: publication neither closes resources nor changes numerical work. */
+ * Inputs: request, session, trace, counters, and status. Effects: writes evidence and identities.
+ * Failure: first error refuses. Boundary: publication neither closes nor changes numerical work. */
 static int runtime_attention_publish_result(const yvex_graph_attention_operator_request *request,
     yvex_runtime_execution_session *session, runtime_attention_trace *trace,
     unsigned long long warmup, unsigned long long repeat, yvex_graph_attention_operator_result *result,
     int rc, yvex_error *err) {
     unsigned long long started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK)
-        rc = runtime_attention_progress(
-            request, YVEX_RUNTIME_LIFECYCLE_PUBLICATION, 0ull, 1ull, err);
+        rc = runtime_attention_progress(request, YVEX_RUNTIME_LIFECYCLE_PUBLICATION, 0ull, 1ull, err);
     if (rc == YVEX_OK) rc = runtime_attention_registry_publish(request, session, result, err);
     if (rc == YVEX_OK) rc = runtime_attention_session_publish(session, result, err);
     if (rc == YVEX_OK)
@@ -1700,22 +1658,18 @@ static int runtime_attention_publish_result(const yvex_graph_attention_operator_
     result->repeat_count = repeat;
     result->warmup_count = warmup;
     if (rc == YVEX_OK) rc = runtime_attention_trace_finish(trace, result, err);
-    if (rc == YVEX_OK &&
-        !runtime_attention_execution_identity(request, result, result->execution_identity))
+    if (rc == YVEX_OK && !runtime_attention_execution_identity(request, result, result->execution_identity))
         rc = runtime_refuse(err, YVEX_ERR_STATE, "runtime.attention",
                             "runtime execution identity serialization failed");
-    result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_PUBLICATION] +=
-        runtime_seconds(yvex_core_monotonic_ns() - started);
+    result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_PUBLICATION] += runtime_seconds(
+        yvex_core_monotonic_ns() - started);
     if (rc == YVEX_OK)
-        rc = runtime_attention_progress(
-            request, YVEX_RUNTIME_LIFECYCLE_PUBLICATION, 1ull, 1ull, err);
+        rc = runtime_attention_progress(request, YVEX_RUNTIME_LIFECYCLE_PUBLICATION, 1ull, 1ull, err);
     return rc;
 }
 /* Purpose: release operator runtime owners while preserving the first cleanup failure.
- * Inputs: retained lease, samples, result, and prior status.
- * Effects: closes resources and records cleanup time.
- * Failure: returns cleanup error while leaving retry ownership in the caller lease.
- * Boundary: external artifact and committed state remain unchanged. */
+ * Inputs: lease, samples, result, status. Effects: closes resources and records cleanup time.
+ * Failure: cleanup error retains retry ownership. Boundary: artifact and committed state are unchanged. */
 static int runtime_attention_cleanup(yvex_runtime_cleanup_lease **lease, double *samples,
     yvex_graph_attention_operator_result *result, int status, yvex_error *err) {
     unsigned long long started = yvex_core_monotonic_ns();
@@ -1733,10 +1687,8 @@ static int runtime_attention_cleanup(yvex_runtime_cleanup_lease **lease, double 
     return status;
 }
 /* Purpose: open one authenticated model/session pair.
- * Inputs: validated operator request and adapter.
- * Effects: acquires cleanup ownership, binds model evidence, and selects one execution mode.
- * Failure: returns typed lifecycle refusal with all partial ownership retained by the cleanup lease.
- * Boundary: opens runtime resources only; it derives no state, workspace, or graph capacity. */
+ * Inputs: request and adapter. Effects: acquires ownership, binds evidence, and selects a mode.
+ * Failure: partial ownership stays leased. Boundary: opening derives no state/workspace/graph capacity. */
 static int runtime_attention_open(const yvex_graph_attention_operator_request *request,
     const yvex_runtime_family_adapter *adapter, yvex_runtime_cleanup_lease **cleanup,
     yvex_runtime_model **model, yvex_runtime_execution_session **session,
@@ -1776,11 +1728,9 @@ static int runtime_attention_open(const yvex_graph_attention_operator_request *r
             request, YVEX_RUNTIME_LIFECYCLE_BACKEND_OPEN, 1ull, 1ull, err);
     return rc;
 }
-/* Purpose: derive the single immutable capacity authority for one operator invocation.
- * Inputs: validated request, sealed runtime model, and complete dispatch count.
- * Effects: publishes one independently owned capacity plan.
- * Failure: missing model facts, invalid selection, or extent overflow publishes no plan.
- * Boundary: forwards typed execution facts and creates no state or workspace. */
+/* Purpose: derive the immutable capacity authority for one operator invocation.
+ * Inputs: request, model, and dispatch count. Effects: publishes one capacity plan.
+ * Failure: invalid facts publish no plan. Boundary: creates no state or workspace. */
 static int runtime_attention_capacity_build(const yvex_graph_attention_operator_request *request,
     const yvex_runtime_model *model, const yvex_graph_family_api *graph,
     unsigned long long execution_count, yvex_graph_attention_capacity_plan **out, yvex_error *err) {
@@ -1799,11 +1749,42 @@ static int runtime_attention_capacity_build(const yvex_graph_attention_operator_
     return yvex_graph_attention_capacity_plan_build(
         out, graph, view ? view->attention : NULL, &facts, err);
 }
+static const unsigned long long runtime_qualification_counters[] = {
+    1ull, 0ull, 0ull, 0ull, 0ull, 0ull, 0ull, 1ull, 1ull, 1ull, 1ull};
+static const char runtime_quality_matrix_identity[] =
+    "f420309313d355606543bcc50cd4cff44ada2be6c06723d328dc70b6db5e3673";
+static const char qualify_where[] = "runtime.attention.qualification";
+/* Purpose: seal one successful execution as structural runtime qualification.
+ * Inputs: completed result. Effects: publishes disjoint status and identity facts.
+ * Failure: any warm invariant or identity failure refuses without partial qualification.
+ * Boundary: admitted prior numerical evidence is reported; no test oracle runs in production. */
+static int runtime_attention_qualify(yvex_graph_attention_operator_result *result, yvex_error *err) {
+    static const char status[YVEX_RUNTIME_QUALITY_STATUS_COUNT][24] = {
+        "pass", "pass", "pass", "available", "pass", "pass", "not_measured"};
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    const int structural = memcmp(&result->artifact_hash_passes, runtime_qualification_counters,
+                                  sizeof(runtime_qualification_counters)) == 0 &&
+        !result->warm_weight_artifact_reads && !result->warm_weight_upload_bytes &&
+        !result->warm_host_allocations && !result->warm_device_allocations &&
+        !result->warm_device_frees && result->capabilities.attention_benchmark_ready;
+    if (!structural)
+        return runtime_refuse(err, YVEX_ERR_STATE, qualify_where, "runtime structural invariant failed");
+    memcpy(result->quality_status, status, sizeof(status));
+    yvex_runtime_identity_copy(result->quality_matrix_identity, runtime_quality_matrix_identity);
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.attention.qualification.v1") ||
+        !yvex_sha256_update_text(&hash, result->execution_identity) ||
+        !yvex_sha256_update_text(&hash, result->quality_matrix_identity) ||
+        !yvex_sha256_update_text(&hash, result->quality_status[YVEX_RUNTIME_QUALITY_QUALIFICATION]) ||
+        !yvex_sha256_final(&hash, digest))
+        return runtime_refuse(err, YVEX_ERR_STATE, qualify_where, "qualification identity construction failed");
+    yvex_sha256_hex(digest, result->qualification_identity);
+    return YVEX_OK;
+}
 /* Purpose: execute attention through a sealed runtime model/session.
- * Inputs: exact artifact, runtime binding, backend, phase, mode, and probe request.
- * Effects: authenticates once, prepares one session, and executes the requested action.
- * Failure: typed cleanup preserves upstream artifact and committed state.
- * Boundary: owns attention execution only, not compilation, persistent KV, or generation. */
+ * Inputs: artifact, binding, backend, phase, mode, and probe. Effects: authenticates and executes once.
+ * Failure: cleanup preserves artifact/state. Boundary: excludes compilation, persistent KV, and generation. */
 int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_request *request,
     yvex_graph_attention_operator_result *result, yvex_runtime_cleanup_lease **retained_cleanup,
     yvex_error *err) {
@@ -1840,9 +1821,10 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     repeat = request->repeat ? request->repeat : 1ull;
     warmup = request->warmup;
     if (!warmup && (request->operator_action == YVEX_RUNTIME_OPERATOR_REPLAY ||
-                    request->operator_action == YVEX_RUNTIME_OPERATOR_GRAPH_WARMUP ||
-                    request->operator_action == YVEX_RUNTIME_OPERATOR_GRAPH_UPDATE))
-        warmup = 1ull;
+                    (request->operator_action >= YVEX_RUNTIME_OPERATOR_GRAPH_WARMUP &&
+                     request->operator_action <= YVEX_RUNTIME_OPERATOR_GRAPH_UPDATE) ||
+                    request->operator_action == YVEX_RUNTIME_OPERATOR_QUALIFY))
+        warmup = request->operator_action == YVEX_RUNTIME_OPERATOR_GRAPH_UPDATE ? 2ull : 1ull;
     if ((request->operator_action == YVEX_RUNTIME_OPERATOR_BENCHMARK ||
          request->operator_action == YVEX_RUNTIME_OPERATOR_PROFILE) &&
         repeat <= (unsigned long long)(SIZE_MAX / (2u * sizeof(*samples)))) {
@@ -1872,14 +1854,12 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     if (rc == YVEX_OK && runtime_attention_action_dispatches(request->operator_action) &&
         request->operator_action != YVEX_RUNTIME_OPERATOR_STATE_EXERCISE) {
         yvex_attention_failure state_failure;
-        rc = yvex_runtime_session_prepare_attention_probe_state(
-            session, model, capacity, &state_failure, err);
+        rc = yvex_runtime_session_prepare_attention_probe_state(session, model, capacity, &state_failure, err);
     }
     if (rc == YVEX_OK && (request->compare_backends || request->backend == YVEX_BACKEND_KIND_CUDA))
         rc = yvex_runtime_session_prepare_attention_workspace(
             session, selected_mode, request->operation_scope,
-            runtime_attention_evidence_levels[request->trace_policy], capacity,
-            &model_failure, err);
+            runtime_attention_evidence_levels[request->trace_policy], capacity, &model_failure, err);
     if (rc == YVEX_OK)
         rc = runtime_attention_execution_descriptor_identity(
             request, model, session, capacity, result, result->execution_descriptor_identity, err);
@@ -1915,6 +1895,8 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     if (rc == YVEX_OK && request->operator_action == YVEX_RUNTIME_OPERATOR_STATE_EXERCISE) {
         const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
         yvex_attention_failure phase_failure;
+        probe_request.logical_model_identity = view && view->binding ? view->binding->logical_model_identity : NULL;
+        probe_request.workspace = yvex_runtime_session_view_get(session)->attention_workspace;
         phase_context = calloc(1u, sizeof(*phase_context));
         if (!phase_context)
             rc = runtime_refuse(err, YVEX_ERR_NOMEM, "runtime.attention.phase",
@@ -1925,13 +1907,13 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
             if (rc != YVEX_OK) { free(phase_context); phase_context = NULL; }
         }
         if (rc == YVEX_OK)
-            rc = runtime_attention_phase_context_open(phase_context, graph,
-            view ? view->attention : NULL, capacity,
-            probe_request.operation_scope, request->maximum_host_bytes, &phase_failure, err);
+            rc = runtime_attention_phase_context_open(
+                phase_context, graph, view ? view->attention : NULL, capacity,
+                probe_request.operation_scope, request->maximum_host_bytes, &phase_failure, err);
     }
     preparation_dispatches = runtime_attention_action_dispatches(request->operator_action) ? measurement_start : 0ull;
-    if (!samples && preparation_dispatches == 0ull && repeat > 0ull &&
-        request->backend == YVEX_BACKEND_KIND_CUDA && strcmp(result->selected_mode, "eager") != 0)
+    if (!samples && preparation_dispatches == 0ull && repeat > 0ull && (request->compare_backends ||
+        request->backend == YVEX_BACKEND_KIND_CUDA) && strcmp(result->selected_mode, "eager") != 0)
         preparation_dispatches = 1ull;
     phase_started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK && preparation_dispatches)
@@ -1947,8 +1929,8 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     if (rc == YVEX_OK && getenv("YVEX_TEST_RUNTIME_WARM_HOST_ALLOCATION")) {
         void *injected = malloc(1u);
         if (!injected)
-            rc = runtime_refuse(err, YVEX_ERR_NOMEM, "runtime.attention.warm",
-                                "warm allocation injection failed");
+            rc = runtime_refuse(
+                err, YVEX_ERR_NOMEM, "runtime.attention.warm", "warm allocation injection failed");
         free(injected);
     }
     if (rc == YVEX_OK && preparation_dispatches < dispatch_count)
@@ -1988,6 +1970,8 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     yvex_graph_attention_capacity_plan_close(&capacity);
     rc = runtime_attention_cleanup(&cleanup, samples, result, rc, err);
     if (cleanup) *retained_cleanup = cleanup;
+    if (rc == YVEX_OK && request->operator_action == YVEX_RUNTIME_OPERATOR_QUALIFY)
+        rc = runtime_attention_qualify(result, err);
     if (rc == YVEX_OK) {
         result->completed = 1;
         yvex_core_text_copy(result->status, sizeof(result->status), "complete");

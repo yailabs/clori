@@ -960,6 +960,14 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     rc = yvex_backend_cuda_attention_graph_registry_apply(
         backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_INVALIDATE, &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "invalidate launch-failed graph before recapture");
+    rc = yvex_backend_cuda_attention_graph_registry_count(backend, &count, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && count == 1ull,
+                     "invalidation retains one non-executable registry owner for safe recapture");
+    rc = yvex_backend_cuda_attention_graph_registry_get(backend, 0ull, &entry, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK &&
+                         entry.graph.state == YVEX_BACKEND_CUDA_GRAPH_INVALIDATED &&
+                         entry.graph.graph_exec_identity[0] == '\0',
+                     "invalidated registry owner exposes no executable graph identity");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
         enqueue_attention_fixture, &fixture, &graph_info, &err);

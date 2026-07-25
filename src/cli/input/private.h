@@ -135,35 +135,24 @@ typedef enum {
     YVEX_GRAPH_ATTENTION_ACTION_CUDA_GRAPH_RELEASE,
     YVEX_GRAPH_ATTENTION_ACTION_TRACE,
     YVEX_GRAPH_ATTENTION_ACTION_PROFILE,
-    YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK
+    YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK,
+    YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK_COMPARE,
+    YVEX_GRAPH_ATTENTION_ACTION_QUALIFY
 } yvex_graph_attention_action;
 
 typedef struct {
     yvex_graph_report_mode render_mode;
     struct {
         yvex_graph_attention_action action;
-        const char *target;
-        const char *artifact_path;
-        const char *runtime_binding_path;
-        const char *runtime_binding_dir;
-        const char *models_root;
-        const char *backend;
-        const char *probe;
-        const char *coverage;
-        const char *phase;
-        const char *mode;
-        const char *operation_scope;
-        const char *trace_level;
-        const char *progress;
-        const char *input_class;
-        const char *attention_class;
-        const char *capture_bucket;
-        const char *baseline_path;
-        const char *chart_path;
+        const char *target, *artifact_path, *runtime_binding_path, *runtime_binding_dir;
+        const char *models_root, *backend, *probe, *coverage, *phase, *mode;
+        const char *operation_scope, *trace_level, *progress, *input_class, *attention_class;
+        const char *capture_bucket, *baseline_path, *current_path, *chart_path;
         unsigned long long token_count, warmup, repeat;
         unsigned long long layer, layer_start, layer_count, position, history_tokens;
         unsigned long long local_capacity, compressed_capacity, indexer_capacity;
         unsigned long long maximum_host_bytes, maximum_device_bytes;
+        unsigned long long regression_basis_points;
         int layer_seen, layer_start_seen, layer_count_seen, position_seen, history_tokens_seen;
         int phase_seen, mode_seen, token_count_seen;
         int local_capacity_seen, compressed_capacity_seen, indexer_capacity_seen;

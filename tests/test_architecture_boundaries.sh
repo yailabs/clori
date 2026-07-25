@@ -422,4 +422,43 @@ for object in $reference_objects; do
     fi
 done
 
+# The attention quality matrix is one complete rule table: every CPU/CUDA
+# execution-mode family is either admitted or has an exact typed refusal.
+quality_matrix=config/attention_quality.tsv
+[ -f "$quality_matrix" ] || fail "attention quality matrix is missing"
+quality_matrix_error=$(
+    awk -F '\t' '
+        NR == 1 {
+            if (NF != 24 || $1 != "scope" || $4 != "backend" ||
+                $7 != "capability_supported" || $22 != "evidence_identity" ||
+                $24 != "reason") print "invalid header"
+            next
+        }
+        {
+            if (NF != 24) print "invalid field count on row " NR
+            if ($1 != "*" || $2 != "*" || $3 != "*" || $6 != "*")
+                print "matrix rule is not exhaustive on row " NR
+            if ($4 != "cpu" && $4 != "cuda") print "invalid backend on row " NR
+            if ($5 != "eager" && $5 != "piecewise" && $5 != "full")
+                print "invalid mode on row " NR
+            if ($7 != "0" && $7 != "1") print "invalid support bit on row " NR
+            if (length($22) != 64) print "invalid evidence identity on row " NR
+            key[$4 ":" $5]++
+        }
+        END {
+            expected["cpu:eager"]; expected["cpu:piecewise"]; expected["cpu:full"]
+            expected["cuda:eager"]; expected["cuda:piecewise"]; expected["cuda:full"]
+            for (item in expected)
+                if (key[item] != 1) print "missing or duplicate rule " item
+        }
+    ' "$quality_matrix"
+)
+[ -z "$quality_matrix_error" ] || {
+    printf '%s\n' "$quality_matrix_error" >&2
+    fail "attention quality matrix is incomplete"
+}
+quality_matrix_identity=$(sha256sum "$quality_matrix" | awk '{ print $1 }')
+rg -F "\"$quality_matrix_identity\"" src/runtime/graph.c >/dev/null ||
+    fail "runtime qualification does not bind the exact quality matrix identity"
+
 python3 tests/c_structure.py check architecture

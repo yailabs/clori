@@ -47,7 +47,7 @@ static void fixture_text(char *output, size_t capacity, const char *text)
 static void fixture_record(yvex_runtime_benchmark_baseline *record)
 {
     memset(record, 0, sizeof(*record));
-    record->schema_version = YVEX_RUNTIME_BENCHMARK_SCHEMA_V4;
+    record->schema_version = YVEX_RUNTIME_BENCHMARK_SCHEMA_V5;
     fixture_text(record->key.commit, sizeof(record->key.commit),
                  "0123456789abcdef0123456789abcdef01234567");
     fixture_text(record->key.build_source_state, sizeof(record->key.build_source_state),
@@ -57,34 +57,82 @@ static void fixture_record(yvex_runtime_benchmark_baseline *record)
                  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     fixture_text(record->key.build_identity, sizeof(record->key.build_identity),
                  "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    fixture_text(record->key.benchmark_scope, sizeof(record->key.benchmark_scope),
+                 "attention_component");
     fixture_text(record->key.artifact_identity, sizeof(record->key.artifact_identity),
                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    fixture_text(record->key.materialization_identity,
+                 sizeof(record->key.materialization_identity),
+                 "1111111111111111111111111111111111111111111111111111111111111111");
     fixture_text(record->key.runtime_binding_identity,
                  sizeof(record->key.runtime_binding_identity),
                  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    fixture_text(record->key.logical_model_identity,
+                 sizeof(record->key.logical_model_identity),
+                 "2222222222222222222222222222222222222222222222222222222222222222");
+    fixture_text(record->key.runtime_numeric_identity,
+                 sizeof(record->key.runtime_numeric_identity),
+                 "3333333333333333333333333333333333333333333333333333333333333333");
     fixture_text(record->key.runtime_descriptor_identity,
                  sizeof(record->key.runtime_descriptor_identity),
                  "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+    fixture_text(record->key.semantic_graph_identity,
+                 sizeof(record->key.semantic_graph_identity),
+                 "4444444444444444444444444444444444444444444444444444444444444444");
+    fixture_text(record->key.executable_graph_identity,
+                 sizeof(record->key.executable_graph_identity),
+                 "5555555555555555555555555555555555555555555555555555555555555555");
     fixture_text(record->key.execution_descriptor_identity,
                  sizeof(record->key.execution_descriptor_identity),
                  "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
+    fixture_text(record->key.residency_identity, sizeof(record->key.residency_identity),
+                 "6666666666666666666666666666666666666666666666666666666666666666");
+    fixture_text(record->key.workspace_identity, sizeof(record->key.workspace_identity),
+                 "7777777777777777777777777777777777777777777777777777777777777777");
+    fixture_text(record->key.state_layout_identity,
+                 sizeof(record->key.state_layout_identity),
+                 "8888888888888888888888888888888888888888888888888888888888888888");
+    fixture_text(record->key.kernel_bundle_identity,
+                 sizeof(record->key.kernel_bundle_identity),
+                 "9999999999999999999999999999999999999999999999999999999999999999");
+    fixture_text(record->key.machine_identity, sizeof(record->key.machine_identity),
+                 "fixture-machine");
+    fixture_text(record->key.cpu_model, sizeof(record->key.cpu_model), "fixture-cpu");
+    fixture_text(record->key.gpu_model, sizeof(record->key.gpu_model), "NVIDIA GB10");
     fixture_text(record->key.device, sizeof(record->key.device), "NVIDIA GB10 <& verified>");
     fixture_text(record->key.driver, sizeof(record->key.driver), "CUDA Driver 13.0");
     fixture_text(record->key.cuda_build, sizeof(record->key.cuda_build), "nvcc 13.0 sm_121");
     fixture_text(record->key.mode, sizeof(record->key.mode), "full");
     fixture_text(record->key.phase, sizeof(record->key.phase), "decode");
     fixture_text(record->key.scope, sizeof(record->key.scope), "release-attention-set");
+    fixture_text(record->key.coverage, sizeof(record->key.coverage), "full");
+    fixture_text(record->key.attention_class, sizeof(record->key.attention_class), "mixed");
+    fixture_text(record->key.trace_policy, sizeof(record->key.trace_policy), "none");
     fixture_text(record->key.capture_bucket, sizeof(record->key.capture_bucket), "decode-1");
+    record->key.memory_bytes = 137438953472ull;
+    record->key.compute_capability_major = 12ull;
+    record->key.compute_capability_minor = 1ull;
+    record->key.layer_count = 43ull;
+    record->key.token_count = 1ull;
     record->key.warmup_count = 3ull;
     record->key.iteration_count = 20ull;
     record->metrics.cold_total_ns = 95000000000ull;
     record->metrics.cold_artifact_ns = 60000000000ull;
-    record->metrics.cold_residency_ns = 30000000000ull;
-    record->metrics.cold_graph_ns = 5000000000ull;
+    record->metrics.cold_binding_ns = 1000000000ull;
+    record->metrics.cold_model_ns = 2000000000ull;
+    record->metrics.cold_residency_ns = 25000000000ull;
+    record->metrics.cold_workspace_ns = 2000000000ull;
+    record->metrics.cold_graph_warmup_ns = 1000000000ull;
+    record->metrics.cold_graph_capture_ns = 3000000000ull;
+    record->metrics.cold_graph_instantiate_ns = 1000000000ull;
+    record->metrics.first_execution_ns = 8000000ull;
+    record->metrics.publication_ns = 100000ull;
+    record->metrics.cleanup_ns = 50000ull;
     record->metrics.host_timing.available = 1;
     record->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MINIMUM] = 4000000ull;
     record->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P50] = 5000000ull;
     record->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P90] = 6000000ull;
+    record->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P95] = 6500000ull;
     record->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P99] = 7000000ull;
     record->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MAXIMUM] = 8000000ull;
     record->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MEAN] = 5500000ull;
@@ -93,13 +141,18 @@ static void fixture_record(yvex_runtime_benchmark_baseline *record)
     record->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_MINIMUM] = 2000000ull;
     record->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P50] = 3000000ull;
     record->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P90] = 4000000ull;
+    record->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P95] = 4500000ull;
     record->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P99] = 5000000ull;
     record->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_MAXIMUM] = 6000000ull;
     record->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_MEAN] = 3500000ull;
     record->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION] = 500000ull;
     record->metrics.artifact_bytes_hashed = 102408545440ull;
+    record->metrics.artifact_bytes_read = 102408545440ull;
+    record->metrics.weight_bytes_read = 5698713600ull;
     record->metrics.resident_encoded_bytes = 5698713600ull;
     record->metrics.resident_h2d_bytes = 5698713600ull;
+    record->metrics.h2d_bytes = 5698713600ull;
+    record->metrics.d2h_bytes = 32768ull;
     record->metrics.last_dispatch_kernel_launches = 1259ull;
     record->metrics.cuda_graph_launches = 20ull;
     record->metrics.cuda_graph_captures = 1ull;
@@ -217,17 +270,28 @@ static int test_sample_distributions(void)
     YVEX_TEST_ASSERT(yvex_runtime_benchmark_samples_finish(
                          host, device, 4ull, 1, &result, &err) == YVEX_OK &&
                          result.benchmark_sample_count == 4ull &&
-                         result.benchmark_minimum_seconds == 0.001 &&
-                         result.benchmark_p50_seconds == 0.002 &&
-                         result.benchmark_p99_seconds == 0.004 &&
+                         result.benchmark_host_seconds[
+                             YVEX_RUNTIME_BENCHMARK_MINIMUM] == 0.001 &&
+                         result.benchmark_host_seconds[
+                             YVEX_RUNTIME_BENCHMARK_P50] == 0.002 &&
+                         result.benchmark_host_seconds[
+                             YVEX_RUNTIME_BENCHMARK_P95] == 0.004 &&
+                         result.benchmark_host_seconds[
+                             YVEX_RUNTIME_BENCHMARK_P99] == 0.004 &&
+                         result.benchmark_first_execution_seconds == 0.004 &&
                          result.benchmark_device_timing_available == 1 &&
-                         result.benchmark_device_p50_seconds == 0.0002,
+                         result.benchmark_device_seconds[
+                             YVEX_RUNTIME_BENCHMARK_P50] == 0.0002 &&
+                         result.benchmark_scope[0] &&
+                         result.benchmark_correctness_precondition_passed &&
+                         result.benchmark_runtime_precondition_passed,
                      "host and device samples produce independent ordered distributions");
     memset(&result, 0, sizeof(result));
     YVEX_TEST_ASSERT(yvex_runtime_benchmark_samples_finish(
                          cpu, NULL, 2ull, 0, &result, &err) == YVEX_OK &&
                          !result.benchmark_device_timing_available &&
-                         result.benchmark_device_maximum_seconds == 0.0,
+                         result.benchmark_device_seconds[
+                             YVEX_RUNTIME_BENCHMARK_MAXIMUM] == 0.0,
                      "CPU samples publish device timing as unavailable rather than measured zero");
     memset(&result, 0, sizeof(result));
     YVEX_TEST_ASSERT(yvex_runtime_benchmark_samples_finish(
@@ -422,7 +486,7 @@ static int test_publication(const benchmark_fixture *fixture,
                          strcmp(reopened.identity, record->identity) == 0 &&
                          memcmp(&reopened.metrics, &record->metrics,
                                 sizeof(record->metrics)) == 0,
-                     "published baseline independently reopens every schema-four metric");
+                     "published baseline independently reopens every schema-five metric");
     serialized = fixture_read(fixture->baseline, &serialized_count);
     YVEX_TEST_ASSERT(serialized && serialized_count > 0u &&
                          strstr(serialized, "build_source_state\tclean\n") &&
@@ -468,33 +532,52 @@ static int test_comparison(const yvex_runtime_benchmark_baseline *baseline,
 {
     yvex_runtime_benchmark_comparison comparison;
     yvex_runtime_benchmark_failure failure;
+    yvex_runtime_benchmark_regression_policy policy = {0};
     yvex_error err;
 
     *current = *baseline;
     current->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P50] += 250000ull;
     current->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P90] += 250000ull;
+    current->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P95] += 250000ull;
     current->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_P99] += 250000ull;
     current->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MAXIMUM] += 250000ull;
     current->metrics.host_timing.values[YVEX_RUNTIME_BENCHMARK_MEAN] += 250000ull;
     current->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P50] += 125000ull;
     current->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P90] += 125000ull;
+    current->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P95] += 125000ull;
     current->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_P99] += 125000ull;
     current->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_MAXIMUM] += 125000ull;
     current->metrics.device_timing.values[YVEX_RUNTIME_BENCHMARK_MEAN] += 125000ull;
     YVEX_TEST_ASSERT(yvex_runtime_benchmark_baseline_seal(current, &failure, &err) == YVEX_OK,
                      "compatible current measurement seals");
     YVEX_TEST_ASSERT(yvex_runtime_benchmark_compare(
-                         current, baseline, &comparison, &failure, &err) == YVEX_OK &&
-                         comparison.compatible && comparison.p50_delta_ns == 250000ll &&
+                         current, baseline, NULL, &comparison, &failure, &err) == YVEX_OK &&
+                         comparison.compatible &&
+                         comparison.host_delta_ns[YVEX_RUNTIME_BENCHMARK_P50] == 250000ll &&
+                         comparison.host_delta_ns[YVEX_RUNTIME_BENCHMARK_P95] == 250000ll &&
                          comparison.cold_total_delta_ns == 0ll &&
                          comparison.device_timing_available &&
-                         comparison.device_p50_delta_ns == 125000ll,
+                         comparison.device_delta_ns[YVEX_RUNTIME_BENCHMARK_P50] == 125000ll &&
+                         comparison.device_delta_ns[YVEX_RUNTIME_BENCHMARK_P95] == 125000ll &&
+                         comparison.performance_passed &&
+                         strlen(comparison.regression_policy_identity) == 64u &&
+                         strlen(comparison.comparison_identity) == 64u,
                      "comparison reports host and device deltas without a threshold");
+    policy.enabled = 1;
+    YVEX_TEST_ASSERT(yvex_runtime_benchmark_compare(
+                         current, baseline, &policy, &comparison, &failure, &err) == YVEX_OK &&
+                         !comparison.performance_passed,
+                     "zero basis points detects measured latency and throughput regressions");
+    policy.basis_points = 600ull;
+    YVEX_TEST_ASSERT(yvex_runtime_benchmark_compare(
+                         current, baseline, &policy, &comparison, &failure, &err) == YVEX_OK &&
+                         comparison.performance_passed,
+                     "explicit latency allowance passes without creating a universal default");
     fixture_text(current->key.commit, sizeof(current->key.commit),
                  "fedcba9876543210fedcba9876543210fedcba98");
     YVEX_TEST_ASSERT(yvex_runtime_benchmark_baseline_seal(current, &failure, &err) == YVEX_OK &&
                          yvex_runtime_benchmark_compare(
-                             current, baseline, &comparison, &failure, &err) == YVEX_OK &&
+                             current, baseline, NULL, &comparison, &failure, &err) == YVEX_OK &&
                          strcmp(comparison.current_commit, comparison.baseline_commit) != 0 &&
                          strcmp(comparison.current_source_state, "clean") == 0 &&
                          strcmp(comparison.baseline_source_state, "clean") == 0,
@@ -506,8 +589,9 @@ static int test_comparison(const yvex_runtime_benchmark_baseline *baseline,
                  "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
     YVEX_TEST_ASSERT(yvex_runtime_benchmark_baseline_seal(current, &failure, &err) == YVEX_OK &&
                          yvex_runtime_benchmark_compare(
-                             current, baseline, &comparison, &failure, &err) == YVEX_ERR_STATE &&
-                         failure.code == YVEX_RUNTIME_BENCHMARK_FAILURE_INCOMPATIBLE,
+                             current, baseline, NULL, &comparison, &failure, &err) == YVEX_ERR_STATE &&
+                         failure.code == YVEX_RUNTIME_BENCHMARK_FAILURE_INCOMPATIBLE &&
+                         strcmp(failure.field, "build_source_state") == 0,
                      "clean and dirty benchmark evidence cannot be compared");
     fixture_text(current->key.build_source_state,
                  sizeof(current->key.build_source_state), baseline->key.build_source_state);
@@ -518,19 +602,53 @@ static int test_comparison(const yvex_runtime_benchmark_baseline *baseline,
                  "9999999999999999999999999999999999999999999999999999999999999999");
     YVEX_TEST_ASSERT(yvex_runtime_benchmark_baseline_seal(current, &failure, &err) == YVEX_OK &&
                          yvex_runtime_benchmark_compare(
-                             current, baseline, &comparison, &failure, &err) == YVEX_ERR_STATE &&
-                         failure.code == YVEX_RUNTIME_BENCHMARK_FAILURE_INCOMPATIBLE,
+                             current, baseline, NULL, &comparison, &failure, &err) == YVEX_ERR_STATE &&
+                         failure.code == YVEX_RUNTIME_BENCHMARK_FAILURE_INCOMPATIBLE &&
+                         strcmp(failure.field, "build_identity") == 0,
                      "different compiler or linker builds cannot compare as one build");
     fixture_text(current->key.build_identity, sizeof(current->key.build_identity),
                  baseline->key.build_identity);
     fixture_text(current->key.driver, sizeof(current->key.driver), "other-driver");
     YVEX_TEST_ASSERT(yvex_runtime_benchmark_baseline_seal(current, &failure, &err) == YVEX_OK &&
                          yvex_runtime_benchmark_compare(
-                             current, baseline, &comparison, &failure, &err) == YVEX_ERR_STATE &&
-                         failure.code == YVEX_RUNTIME_BENCHMARK_FAILURE_INCOMPATIBLE,
+                             current, baseline, NULL, &comparison, &failure, &err) == YVEX_ERR_STATE &&
+                         failure.code == YVEX_RUNTIME_BENCHMARK_FAILURE_INCOMPATIBLE &&
+                         strcmp(failure.field, "driver") == 0,
                      "driver mismatch refuses unrelated baseline comparison");
     fixture_text(current->key.driver, sizeof(current->key.driver), baseline->key.driver);
     return yvex_runtime_benchmark_baseline_seal(current, &failure, &err) == YVEX_OK ? 0 : 1;
+}
+
+/* Purpose: prove explicit policy covers resource regressions while warm allocations remain correctness failures. */
+static int test_regression_dimensions(const yvex_runtime_benchmark_baseline *baseline)
+{
+    yvex_runtime_benchmark_regression_policy policy = {.enabled = 1};
+    yvex_runtime_benchmark_comparison comparison;
+    yvex_runtime_benchmark_baseline current;
+    yvex_runtime_benchmark_failure failure;
+    yvex_error err;
+    unsigned int dimension;
+
+    for (dimension = 0u; dimension < 3u; ++dimension) {
+        current = *baseline;
+        if (dimension == 0u) current.metrics.peak_host_bytes += 4096ull;
+        if (dimension == 1u) current.metrics.h2d_bytes += 4096ull;
+        if (dimension == 2u) current.metrics.last_dispatch_kernel_launches += 1ull;
+        YVEX_TEST_ASSERT(
+            yvex_runtime_benchmark_baseline_seal(&current, &failure, &err) == YVEX_OK &&
+                yvex_runtime_benchmark_compare(
+                    &current, baseline, &policy, &comparison, &failure, &err) == YVEX_OK &&
+                !comparison.performance_passed,
+            "zero-threshold policy detects memory, transfer, and launch regressions");
+    }
+    current = *baseline;
+    current.metrics.warm_host_allocations = 1ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_benchmark_baseline_seal(&current, &failure, &err) == YVEX_ERR_STATE &&
+            failure.code == YVEX_RUNTIME_BENCHMARK_FAILURE_FIELD &&
+            strcmp(failure.field, "steady-state") == 0,
+        "warm allocation violates runtime qualification before performance policy");
+    return 0;
 }
 
 /* Purpose: prove baseline and chart publication are independent authoritative operations. */
@@ -627,6 +745,12 @@ static int test_refusals(const benchmark_fixture *fixture,
                          &legacy, &failure, &err) == YVEX_ERR_UNSUPPORTED &&
                          failure.code == YVEX_RUNTIME_BENCHMARK_FAILURE_SCHEMA,
                      "schema three without typed device timing requires regeneration");
+    legacy = *record;
+    legacy.schema_version = YVEX_RUNTIME_BENCHMARK_SCHEMA_V4;
+    YVEX_TEST_ASSERT(yvex_runtime_benchmark_baseline_seal(
+                         &legacy, &failure, &err) == YVEX_ERR_UNSUPPORTED &&
+                         failure.code == YVEX_RUNTIME_BENCHMARK_FAILURE_SCHEMA,
+                     "schema four without complete reproducibility identity requires regeneration");
     YVEX_TEST_ASSERT(yvex_runtime_benchmark_baseline_write(
                          "relative.yvex-benchmark", record, &publication,
                          &failure, &err) == YVEX_ERR_INVALID_ARG &&
@@ -702,7 +826,7 @@ static int test_chart(const benchmark_fixture *fixture,
                      "current-only chart publishes");
     data = fixture_read(fixture->chart, &count);
     YVEX_TEST_ASSERT(data && strstr(data, "NVIDIA GB10 &lt;&amp; verified&gt;") &&
-                         strstr(data, "data-chart-schema=\"4\"") &&
+                         strstr(data, "data-chart-schema=\"5\"") &&
                          strstr(data, "<rect width=\"960\" height=\"760\"") &&
                          strstr(data, "STRUCTURAL EVIDENCE") &&
                          strstr(data, "encoded weight pack") &&
@@ -812,6 +936,7 @@ int yvex_test_runtime_benchmark(void)
     if (yvex_runtime_benchmark_baseline_seal(&baseline, &failure, &err) != YVEX_OK) goto done;
     if (test_publication(&fixture, &baseline) != 0 ||
         test_comparison(&baseline, &current) != 0 ||
+        test_regression_dimensions(&baseline) != 0 ||
         test_refusals(&fixture, &baseline) != 0 ||
         test_chart(&fixture, &current, &baseline) != 0 ||
         test_chart_cleanup_fault(&fixture, &current) != 0 ||

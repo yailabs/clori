@@ -349,6 +349,42 @@ Canonical artifact terms:
 - supported model artifact: a complete artifact that passes materialization,
   runtime, generation, evaluation, benchmark, and release gates.
 
+### Quality and evaluation taxonomy
+
+Quality evidence has distinct owners and cannot promote a higher stage:
+
+- **Software tests** prove typed implementation behavior through unit,
+  integration, live, fault, sanitizer, concurrency, cleanup, CLI, and
+  architecture checks.
+- **Numerical conformance** compares production math with an independent
+  contract, including backend/mode parity, state deltas, discrete selections,
+  mutation sensitivity, and explicit tolerance or exactness.
+- **Runtime qualification** proves lifecycle, identity, residency, resource
+  reuse, cancellation, invalidation, transactional publication, and cleanup
+  invariants for repeated live execution.
+- **Component benchmarks** measure one already-correct component under exact
+  workload, artifact, runtime, machine, and execution identities.
+- **Model behavior evaluation** requires the complete tokenizer-to-text path
+  and proves deterministic generation and structural behavior.
+- **Model quality evaluation** scores generated model behavior against an
+  identity-bound task and scorer contract.
+- **Agent runtime evaluation** requires a separately admitted action loop,
+  tool registry, authorization policy, observation state, budgets, and
+  termination contract.
+- **Release qualification** combines the required implementation, evaluation,
+  benchmark, operator, packaging, and claim evidence for one release target.
+
+Semantic owners own their tests; graph/backend own numerical conformance;
+runtime owns structural qualification; residency owns placement and transfer
+evidence; operator owns CLI acceptance; evaluation owns complete-model
+behavior/quality; benchmark owns measurements; release owns final admission.
+Do not create a generic `qa` owner. No generic `qa_passed` or `qa_ready` fact
+may collapse these classes. Attention
+prefill/decode are component phases, not model prefill/decode. Numerical parity
+is not model evaluation, an attention benchmark is not a model/generation
+benchmark, and JSON, `yvexd`, external harnesses, or development agents do not
+establish an agent runtime.
+
 ## 10. Tests and validation
 
 Tests mirror semantic owners, not file fragments. Separate unit, integration,

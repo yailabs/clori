@@ -28,15 +28,18 @@ static const char *const literal_lines_0[] = {
     "       yvex graph attention residency inspect --target TARGET --backend cpu|cuda",
     "       yvex graph attention capture|replay --target TARGET",
     "       yvex graph attention cuda-graph list|inspect|warmup|update|invalidate|release --target TARGET",
-    "       yvex graph attention trace|profile|benchmark --target TARGET --backend cpu|cuda",
+    "       yvex graph attention trace|profile|benchmark|qualify --target TARGET --backend cpu|cuda",
+    "       yvex graph attention benchmark compare --baseline FILE --current FILE",
     "           [--models-root DIR] [--artifact FILE] [--runtime-binding FILE] [--runtime-binding-dir DIR]",
     "           [--backend cpu|cuda] [--phase prefill|decode|mixed|verify]",
     "           [--mode eager|piecewise|full|auto] [--scope quick|full]",
     "           [--operation-scope core|envelope|release-attention-set]",
     "           [--tokens N] [--warmup N] [--repeat N] [--trace-level none|summary|stages|full]",
     "           [--progress auto|plain|off] [--max-host-bytes N] [--max-device-bytes N]",
-    "           [--require-mode] [--capture-bucket ID] [--baseline FILE] [--write-baseline]",
+    "           [--require-mode] [--capture-bucket ID] [--baseline FILE] [--current FILE]",
+    "           [--write-baseline]",
     "           [--chart PATH.svg]",
+    "           benchmark compare: [--max-regression-bps N]",
     "           [--probe canonical] [--compare-backends] [--output normal|table|audit|json|csv]",
     "       bounded selectors: [--layer N] [--layer-start N --layer-count 1]",
     "           [--class swa|csa|hca] [--position N] [--history-tokens N]",
@@ -53,8 +56,7 @@ static const char *const literal_lines_0[] = {
     {KEY, KIND, offsetof(yvex_graph_attention_operator_result, MEMBER), ""}
 #define ATTENTION_TIMING(KEY, PHASE) \
     {KEY, YVEX_CLI_FIELD_DOUBLE, \
-     offsetof(yvex_graph_attention_operator_result, lifecycle_seconds) + \
-         sizeof(double) * (PHASE), ""}
+     offsetof(yvex_graph_attention_operator_result, lifecycle_seconds) + sizeof(double) * (PHASE), ""}
 #define ATTENTION_BENCHMARK_FIELD(KEY, KIND, MEMBER) \
     {KEY, KIND, offsetof(yvex_graph_attention_operator_result, benchmark) + \
                     offsetof(yvex_runtime_benchmark_operator_summary, MEMBER), ""}
@@ -90,22 +92,17 @@ static const yvex_cli_field_spec attention_admission_fields[] = {
     ATTENTION_FIELD("execution_class", YVEX_CLI_FIELD_TEXT_ARRAY, execution_class),
     ATTENTION_FIELD("weights_class", YVEX_CLI_FIELD_TEXT_ARRAY, weights_class),
     ATTENTION_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY, artifact_identity),
-    ATTENTION_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                    runtime_binding_identity),
-    ATTENTION_FIELD("runtime_model_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                    runtime_model_identity),
+    ATTENTION_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY, runtime_binding_identity),
+    ATTENTION_FIELD("runtime_model_identity", YVEX_CLI_FIELD_TEXT_ARRAY, runtime_model_identity),
     ATTENTION_FIELD("artifact_bytes_hashed", YVEX_CLI_FIELD_U64, artifact_bytes_hashed),
-    ATTENTION_FIELD("artifact_identity_verified", YVEX_CLI_FIELD_BOOL,
-                    artifact_identity_verified),
+    ATTENTION_FIELD("artifact_identity_verified", YVEX_CLI_FIELD_BOOL, artifact_identity_verified),
     ATTENTION_FIELD("materialization_identity", YVEX_CLI_FIELD_TEXT_ARRAY, materialization_identity),
     ATTENTION_FIELD("logical_model_identity", YVEX_CLI_FIELD_TEXT_ARRAY, logical_model_identity),
     ATTENTION_FIELD("runtime_numeric_identity", YVEX_CLI_FIELD_TEXT_ARRAY, runtime_numeric_identity),
     ATTENTION_FIELD("runtime_descriptor_identity", YVEX_CLI_FIELD_TEXT_ARRAY, runtime_descriptor_identity),
     ATTENTION_FIELD("attention_plan_identity", YVEX_CLI_FIELD_TEXT_ARRAY, attention_plan_identity),
-    ATTENTION_FIELD("semantic_graph_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                    semantic_graph_identity),
-    ATTENTION_FIELD("executable_graph_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                    executable_graph_identity),
+    ATTENTION_FIELD("semantic_graph_identity", YVEX_CLI_FIELD_TEXT_ARRAY, semantic_graph_identity),
+    ATTENTION_FIELD("executable_graph_identity", YVEX_CLI_FIELD_TEXT_ARRAY, executable_graph_identity),
     ATTENTION_FIELD("main_layers_total", YVEX_CLI_FIELD_U64, main_layers_total),
     ATTENTION_FIELD("bindings_total", YVEX_CLI_FIELD_U64, bindings_total),
     ATTENTION_CAPABILITY("attention_execution_supported", attention_core_ready),
@@ -134,10 +131,8 @@ static const yvex_cli_field_spec attention_capability_fields[] = {
     ATTENTION_CAPABILITY("speculative_attention_ready", speculative_attention_ready),
 };
 static const yvex_cli_field_spec attention_execution_fields[] = {
-    ATTENTION_FIELD("execution_descriptor_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                    execution_descriptor_identity),
-    ATTENTION_PROBE_FIELD("attention_execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                          attention_execution_identity),
+    ATTENTION_FIELD("execution_descriptor_identity", YVEX_CLI_FIELD_TEXT_ARRAY, execution_descriptor_identity),
+    ATTENTION_PROBE_FIELD("attention_execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY, attention_execution_identity),
     ATTENTION_PROBE_FIELD("layers_executed", YVEX_CLI_FIELD_U64, layers_executed),
     ATTENTION_PROBE_FIELD("bindings_executed", YVEX_CLI_FIELD_U64, bindings_executed),
     ATTENTION_PROBE_FIELD("swa_layers_executed", YVEX_CLI_FIELD_U64, swa_layers_executed),
@@ -149,48 +144,35 @@ static const yvex_cli_field_spec attention_execution_fields[] = {
     ATTENTION_FIELD("repeat_count", YVEX_CLI_FIELD_U64, repeat_count),
     ATTENTION_PROBE_FIELD("tensor_output_digest", YVEX_CLI_FIELD_TEXT_ARRAY, tensor_output_digest),
     ATTENTION_PROBE_FIELD("state_delta_digest", YVEX_CLI_FIELD_TEXT_ARRAY, state_delta_digest),
-    ATTENTION_FIELD("execution_evidence_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
-                    execution_evidence_digest),
+    ATTENTION_FIELD("execution_evidence_digest", YVEX_CLI_FIELD_TEXT_ARRAY, execution_evidence_digest),
     ATTENTION_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY, execution_identity),
-    ATTENTION_FIELD("execution_dispatch_count", YVEX_CLI_FIELD_U64,
-                    execution_dispatch_count),
+    ATTENTION_FIELD("execution_dispatch_count", YVEX_CLI_FIELD_U64, execution_dispatch_count),
     ATTENTION_FIELD("trace_stage_count", YVEX_CLI_FIELD_U64, trace_stage_count),
     ATTENTION_FIELD("trace_value_count", YVEX_CLI_FIELD_U64, trace_value_count),
 };
 static const yvex_cli_field_spec attention_state_fields[] = {
     ATTENTION_FIELD("state_layout_identity", YVEX_CLI_FIELD_TEXT_ARRAY, state_layout_identity),
     ATTENTION_FIELD("state_layer_count", YVEX_CLI_FIELD_U64, state_layer_count),
-    ATTENTION_FIELD("state_prepared_layer_count", YVEX_CLI_FIELD_U64,
-                    state_prepared_layer_count),
+    ATTENTION_FIELD("state_prepared_layer_count", YVEX_CLI_FIELD_U64, state_prepared_layer_count),
     ATTENTION_FIELD("state_allocated_bytes", YVEX_CLI_FIELD_U64, state_allocated_bytes),
     ATTENTION_FIELD("state_commit_count", YVEX_CLI_FIELD_U64, state_commit_count),
     ATTENTION_FIELD("state_abort_count", YVEX_CLI_FIELD_U64, state_abort_count),
-    ATTENTION_FIELD("state_cancellation_count", YVEX_CLI_FIELD_U64,
-                    state_cancellation_count),
+    ATTENTION_FIELD("state_cancellation_count", YVEX_CLI_FIELD_U64, state_cancellation_count),
     ATTENTION_FIELD("state_reset_count", YVEX_CLI_FIELD_U64, state_reset_count),
     ATTENTION_FIELD("state_sealed", YVEX_CLI_FIELD_BOOL, state_sealed),
-    ATTENTION_FIELD("state_transaction_active", YVEX_CLI_FIELD_BOOL,
-                    state_transaction_active),
-    ATTENTION_FIELD("state_validation_passed", YVEX_CLI_FIELD_BOOL,
-                    state_validation_passed),
+    ATTENTION_FIELD("state_transaction_active", YVEX_CLI_FIELD_BOOL, state_transaction_active),
+    ATTENTION_FIELD("state_validation_passed", YVEX_CLI_FIELD_BOOL, state_validation_passed),
 };
 static const yvex_cli_field_spec attention_runtime_fields[] = {
     ATTENTION_FIELD("artifact_hash_passes", YVEX_CLI_FIELD_U64, artifact_hash_passes),
-    ATTENTION_FIELD("warm_artifact_hash_passes", YVEX_CLI_FIELD_U64,
-                    warm_artifact_hash_passes),
-    ATTENTION_FIELD("runtime_source_headers_read", YVEX_CLI_FIELD_U64,
-                    runtime_source_headers_read),
-    ATTENTION_FIELD("runtime_source_payload_bytes_read", YVEX_CLI_FIELD_U64,
-                    runtime_source_payload_bytes_read),
-    ATTENTION_FIELD("runtime_transform_plans_built", YVEX_CLI_FIELD_U64,
-                    runtime_transform_plans_built),
-    ATTENTION_FIELD("runtime_quant_plans_built", YVEX_CLI_FIELD_U64,
-                    runtime_quant_plans_built),
-    ATTENTION_FIELD("runtime_writer_plans_built", YVEX_CLI_FIELD_U64,
-                    runtime_writer_plans_built),
+    ATTENTION_FIELD("warm_artifact_hash_passes", YVEX_CLI_FIELD_U64, warm_artifact_hash_passes),
+    ATTENTION_FIELD("runtime_source_headers_read", YVEX_CLI_FIELD_U64, runtime_source_headers_read),
+    ATTENTION_FIELD("runtime_source_payload_bytes_read", YVEX_CLI_FIELD_U64, runtime_source_payload_bytes_read),
+    ATTENTION_FIELD("runtime_transform_plans_built", YVEX_CLI_FIELD_U64, runtime_transform_plans_built),
+    ATTENTION_FIELD("runtime_quant_plans_built", YVEX_CLI_FIELD_U64, runtime_quant_plans_built),
+    ATTENTION_FIELD("runtime_writer_plans_built", YVEX_CLI_FIELD_U64, runtime_writer_plans_built),
     ATTENTION_FIELD("runtime_model_builds", YVEX_CLI_FIELD_U64, runtime_model_builds),
-    ATTENTION_FIELD("runtime_descriptor_builds", YVEX_CLI_FIELD_U64,
-                    runtime_descriptor_builds),
+    ATTENTION_FIELD("runtime_descriptor_builds", YVEX_CLI_FIELD_U64, runtime_descriptor_builds),
     ATTENTION_FIELD("semantic_graph_builds", YVEX_CLI_FIELD_U64, semantic_graph_builds),
     ATTENTION_FIELD("executable_graph_builds", YVEX_CLI_FIELD_U64, executable_graph_builds),
 };
@@ -225,10 +207,8 @@ static const yvex_cli_field_spec attention_residency_fields[] = {
     ATTENTION_FIELD("pinned_host_residency", YVEX_CLI_FIELD_BOOL, pinned_host_residency),
     ATTENTION_FIELD("upload_bytes", YVEX_CLI_FIELD_U64, upload_bytes),
     ATTENTION_FIELD("upload_count", YVEX_CLI_FIELD_U64, upload_count),
-    ATTENTION_FIELD("warm_weight_artifact_reads", YVEX_CLI_FIELD_U64,
-                    warm_weight_artifact_reads),
-    ATTENTION_FIELD("warm_weight_upload_bytes", YVEX_CLI_FIELD_U64,
-                    warm_weight_upload_bytes),
+    ATTENTION_FIELD("warm_weight_artifact_reads", YVEX_CLI_FIELD_U64, warm_weight_artifact_reads),
+    ATTENTION_FIELD("warm_weight_upload_bytes", YVEX_CLI_FIELD_U64, warm_weight_upload_bytes),
     ATTENTION_FIELD("warm_h2d_bytes", YVEX_CLI_FIELD_U64, warm_h2d_bytes),
     ATTENTION_FIELD("warm_d2h_bytes", YVEX_CLI_FIELD_U64, warm_d2h_bytes),
     ATTENTION_FIELD("warm_host_allocations", YVEX_CLI_FIELD_U64, warm_host_allocations),
@@ -237,203 +217,213 @@ static const yvex_cli_field_spec attention_residency_fields[] = {
 };
 static const yvex_cli_field_spec attention_benchmark_fields[] = {
     ATTENTION_FIELD("benchmark_sample_count", YVEX_CLI_FIELD_U64, benchmark_sample_count),
-    ATTENTION_FIELD("benchmark_minimum_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_minimum_seconds),
-    ATTENTION_FIELD("benchmark_p50_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_p50_seconds),
-    ATTENTION_FIELD("benchmark_p90_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_p90_seconds),
-    ATTENTION_FIELD("benchmark_p99_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_p99_seconds),
-    ATTENTION_FIELD("benchmark_maximum_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_maximum_seconds),
-    ATTENTION_FIELD("benchmark_mean_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_mean_seconds),
-    ATTENTION_FIELD("benchmark_standard_deviation_seconds", YVEX_CLI_FIELD_DOUBLE,
-                    benchmark_standard_deviation_seconds),
-    ATTENTION_FIELD("benchmark_device_timing_available", YVEX_CLI_FIELD_BOOL,
-                    benchmark_device_timing_available),
+    ATTENTION_FIELD("benchmark_first_execution_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_first_execution_seconds),
+    ATTENTION_FIELD("benchmark_minimum_seconds", YVEX_CLI_FIELD_DOUBLE,
+                    benchmark_host_seconds[YVEX_RUNTIME_BENCHMARK_MINIMUM]),
+    ATTENTION_FIELD("benchmark_p50_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_host_seconds[YVEX_RUNTIME_BENCHMARK_P50]),
+    ATTENTION_FIELD("benchmark_p90_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_host_seconds[YVEX_RUNTIME_BENCHMARK_P90]),
+    ATTENTION_FIELD("benchmark_p95_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_host_seconds[YVEX_RUNTIME_BENCHMARK_P95]),
+    ATTENTION_FIELD("benchmark_p99_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_host_seconds[YVEX_RUNTIME_BENCHMARK_P99]),
+    ATTENTION_FIELD("benchmark_maximum_seconds", YVEX_CLI_FIELD_DOUBLE,
+                    benchmark_host_seconds[YVEX_RUNTIME_BENCHMARK_MAXIMUM]),
+    ATTENTION_FIELD("benchmark_mean_seconds", YVEX_CLI_FIELD_DOUBLE,
+                    benchmark_host_seconds[YVEX_RUNTIME_BENCHMARK_MEAN]),
+    ATTENTION_FIELD("benchmark_standard_deviation_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_host_seconds[
+                    YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION]),
+    ATTENTION_FIELD("benchmark_device_timing_available", YVEX_CLI_FIELD_BOOL, benchmark_device_timing_available),
     ATTENTION_BENCHMARK_FIELD("benchmark_identity", YVEX_CLI_FIELD_TEXT_ARRAY, identity),
-    ATTENTION_BENCHMARK_FIELD("benchmark_current_commit", YVEX_CLI_FIELD_TEXT_ARRAY,
-                              current_commit),
-    ATTENTION_BENCHMARK_FIELD("benchmark_current_source_state", YVEX_CLI_FIELD_TEXT_ARRAY,
-                              current_source_state),
+    ATTENTION_BENCHMARK_FIELD("benchmark_current_commit", YVEX_CLI_FIELD_TEXT_ARRAY, current_commit),
+    ATTENTION_BENCHMARK_FIELD("benchmark_current_source_state", YVEX_CLI_FIELD_TEXT_ARRAY, current_source_state),
 };
 static const yvex_cli_field_spec attention_benchmark_device_fields[] = {
     ATTENTION_FIELD("benchmark_device_minimum_seconds", YVEX_CLI_FIELD_DOUBLE,
-                    benchmark_device_minimum_seconds),
+                    benchmark_device_seconds[YVEX_RUNTIME_BENCHMARK_MINIMUM]),
     ATTENTION_FIELD("benchmark_device_p50_seconds", YVEX_CLI_FIELD_DOUBLE,
-                    benchmark_device_p50_seconds),
+                    benchmark_device_seconds[YVEX_RUNTIME_BENCHMARK_P50]),
     ATTENTION_FIELD("benchmark_device_p90_seconds", YVEX_CLI_FIELD_DOUBLE,
-                    benchmark_device_p90_seconds),
+                    benchmark_device_seconds[YVEX_RUNTIME_BENCHMARK_P90]),
+    ATTENTION_FIELD("benchmark_device_p95_seconds", YVEX_CLI_FIELD_DOUBLE,
+                    benchmark_device_seconds[YVEX_RUNTIME_BENCHMARK_P95]),
     ATTENTION_FIELD("benchmark_device_p99_seconds", YVEX_CLI_FIELD_DOUBLE,
-                    benchmark_device_p99_seconds),
+                    benchmark_device_seconds[YVEX_RUNTIME_BENCHMARK_P99]),
     ATTENTION_FIELD("benchmark_device_maximum_seconds", YVEX_CLI_FIELD_DOUBLE,
-                    benchmark_device_maximum_seconds),
+                    benchmark_device_seconds[YVEX_RUNTIME_BENCHMARK_MAXIMUM]),
     ATTENTION_FIELD("benchmark_device_mean_seconds", YVEX_CLI_FIELD_DOUBLE,
-                    benchmark_device_mean_seconds),
-    ATTENTION_FIELD("benchmark_device_standard_deviation_seconds", YVEX_CLI_FIELD_DOUBLE,
-                    benchmark_device_standard_deviation_seconds),
+                    benchmark_device_seconds[YVEX_RUNTIME_BENCHMARK_MEAN]),
+    ATTENTION_FIELD("benchmark_device_standard_deviation_seconds", YVEX_CLI_FIELD_DOUBLE, benchmark_device_seconds[
+                    YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION]),
 };
 static const yvex_cli_field_spec attention_benchmark_publication_fields[] = {
     ATTENTION_BENCHMARK_FIELD("benchmark_path", YVEX_CLI_FIELD_TEXT_ARRAY, path),
-    ATTENTION_BENCHMARK_FIELD("benchmark_baseline_written", YVEX_CLI_FIELD_BOOL,
-                              baseline_written),
+    ATTENTION_BENCHMARK_FIELD("benchmark_baseline_written", YVEX_CLI_FIELD_BOOL, baseline_written),
     ATTENTION_BENCHMARK_FIELD("benchmark_file_bytes", YVEX_CLI_FIELD_U64, file_bytes),
 };
 static const yvex_cli_field_spec attention_benchmark_baseline_fields[] = {
-    ATTENTION_BENCHMARK_FIELD("benchmark_baseline_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                              baseline_identity),
-    ATTENTION_BENCHMARK_FIELD("benchmark_baseline_commit", YVEX_CLI_FIELD_TEXT_ARRAY,
-                              baseline_commit),
-    ATTENTION_BENCHMARK_FIELD("benchmark_baseline_source_state", YVEX_CLI_FIELD_TEXT_ARRAY,
-                              baseline_source_state),
+    ATTENTION_BENCHMARK_FIELD("benchmark_baseline_identity", YVEX_CLI_FIELD_TEXT_ARRAY, baseline_identity),
+    ATTENTION_BENCHMARK_FIELD("benchmark_baseline_commit", YVEX_CLI_FIELD_TEXT_ARRAY, baseline_commit),
+    ATTENTION_BENCHMARK_FIELD("benchmark_baseline_source_state", YVEX_CLI_FIELD_TEXT_ARRAY, baseline_source_state),
     ATTENTION_BENCHMARK_FIELD("benchmark_path", YVEX_CLI_FIELD_TEXT_ARRAY, path),
-    ATTENTION_BENCHMARK_FIELD("benchmark_baseline_compatible", YVEX_CLI_FIELD_BOOL,
-                              baseline_compatible),
-    ATTENTION_BENCHMARK_FIELD("benchmark_cold_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              cold_delta_seconds),
+    ATTENTION_BENCHMARK_FIELD("benchmark_baseline_compatible", YVEX_CLI_FIELD_BOOL, baseline_compatible),
+    ATTENTION_BENCHMARK_FIELD("benchmark_cold_delta_seconds", YVEX_CLI_FIELD_DOUBLE, cold_delta_seconds),
     ATTENTION_BENCHMARK_FIELD("benchmark_minimum_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              minimum_delta_seconds),
+                    host_delta_seconds[YVEX_RUNTIME_BENCHMARK_MINIMUM]),
     ATTENTION_BENCHMARK_FIELD("benchmark_p50_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              p50_delta_seconds),
+                    host_delta_seconds[YVEX_RUNTIME_BENCHMARK_P50]),
     ATTENTION_BENCHMARK_FIELD("benchmark_p90_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              p90_delta_seconds),
+                    host_delta_seconds[YVEX_RUNTIME_BENCHMARK_P90]),
+    ATTENTION_BENCHMARK_FIELD("benchmark_p95_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
+                    host_delta_seconds[YVEX_RUNTIME_BENCHMARK_P95]),
     ATTENTION_BENCHMARK_FIELD("benchmark_p99_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              p99_delta_seconds),
+                    host_delta_seconds[YVEX_RUNTIME_BENCHMARK_P99]),
     ATTENTION_BENCHMARK_FIELD("benchmark_maximum_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              maximum_delta_seconds),
+                    host_delta_seconds[YVEX_RUNTIME_BENCHMARK_MAXIMUM]),
     ATTENTION_BENCHMARK_FIELD("benchmark_mean_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              mean_delta_seconds),
+                    host_delta_seconds[YVEX_RUNTIME_BENCHMARK_MEAN]),
 };
 static const yvex_cli_field_spec attention_benchmark_device_baseline_fields[] = {
     ATTENTION_BENCHMARK_FIELD("benchmark_device_minimum_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              device_minimum_delta_seconds),
+                    device_delta_seconds[YVEX_RUNTIME_BENCHMARK_MINIMUM]),
     ATTENTION_BENCHMARK_FIELD("benchmark_device_p50_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              device_p50_delta_seconds),
+                    device_delta_seconds[YVEX_RUNTIME_BENCHMARK_P50]),
     ATTENTION_BENCHMARK_FIELD("benchmark_device_p90_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              device_p90_delta_seconds),
+                    device_delta_seconds[YVEX_RUNTIME_BENCHMARK_P90]),
+    ATTENTION_BENCHMARK_FIELD("benchmark_device_p95_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
+                    device_delta_seconds[YVEX_RUNTIME_BENCHMARK_P95]),
     ATTENTION_BENCHMARK_FIELD("benchmark_device_p99_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              device_p99_delta_seconds),
+                    device_delta_seconds[YVEX_RUNTIME_BENCHMARK_P99]),
     ATTENTION_BENCHMARK_FIELD("benchmark_device_maximum_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              device_maximum_delta_seconds),
+                    device_delta_seconds[YVEX_RUNTIME_BENCHMARK_MAXIMUM]),
     ATTENTION_BENCHMARK_FIELD("benchmark_device_mean_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
-                              device_mean_delta_seconds),
-    ATTENTION_BENCHMARK_FIELD("benchmark_device_standard_deviation_delta_seconds",
-                              YVEX_CLI_FIELD_DOUBLE,
-                              device_standard_deviation_delta_seconds),
+                    device_delta_seconds[YVEX_RUNTIME_BENCHMARK_MEAN]),
+    ATTENTION_BENCHMARK_FIELD("benchmark_device_standard_deviation_delta_seconds", YVEX_CLI_FIELD_DOUBLE,
+                    device_delta_seconds[
+                                  YVEX_RUNTIME_BENCHMARK_STANDARD_DEVIATION]),
 };
 static const yvex_cli_field_spec attention_benchmark_chart_fields[] = {
-    ATTENTION_BENCHMARK_FIELD("benchmark_chart_generated", YVEX_CLI_FIELD_BOOL,
-                              chart_generated),
+    ATTENTION_BENCHMARK_FIELD("benchmark_chart_generated", YVEX_CLI_FIELD_BOOL, chart_generated),
     ATTENTION_BENCHMARK_FIELD("benchmark_chart_path", YVEX_CLI_FIELD_TEXT_ARRAY, chart_path),
-    ATTENTION_BENCHMARK_FIELD("benchmark_chart_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                              chart_identity),
-    ATTENTION_BENCHMARK_FIELD("benchmark_chart_file_bytes", YVEX_CLI_FIELD_U64,
-                              chart_file_bytes),
+    ATTENTION_BENCHMARK_FIELD("benchmark_chart_identity", YVEX_CLI_FIELD_TEXT_ARRAY, chart_identity),
+    ATTENTION_BENCHMARK_FIELD("benchmark_chart_file_bytes", YVEX_CLI_FIELD_U64, chart_file_bytes),
+};
+static const yvex_cli_field_spec attention_benchmark_context_fields[] = {
+    ATTENTION_FIELD("benchmark_scope", YVEX_CLI_FIELD_TEXT_ARRAY, benchmark_scope),
+    ATTENTION_FIELD("attention_class", YVEX_CLI_FIELD_TEXT_ARRAY, attention_class),
+    ATTENTION_FIELD("requested_token_count", YVEX_CLI_FIELD_U64, requested_token_count),
+    ATTENTION_FIELD("requested_history_tokens", YVEX_CLI_FIELD_U64, requested_history_tokens),
+    ATTENTION_FIELD("requested_layer_start", YVEX_CLI_FIELD_U64, requested_layer_start),
+    ATTENTION_FIELD("requested_layer_count", YVEX_CLI_FIELD_U64, requested_layer_count),
+    ATTENTION_FIELD("component_benchmark_status", YVEX_CLI_FIELD_TEXT_ARRAY,
+                    quality_status[YVEX_RUNTIME_QUALITY_COMPONENT_BENCHMARK]),
+    ATTENTION_FIELD("correctness_status", YVEX_CLI_FIELD_TEXT_ARRAY, quality_status[YVEX_RUNTIME_QUALITY_CORRECTNESS]),
+    ATTENTION_FIELD("structural_runtime_status", YVEX_CLI_FIELD_TEXT_ARRAY,
+                    quality_status[YVEX_RUNTIME_QUALITY_STRUCTURAL]),
+    ATTENTION_FIELD("performance_status", YVEX_CLI_FIELD_TEXT_ARRAY, quality_status[YVEX_RUNTIME_QUALITY_PERFORMANCE]),
+    ATTENTION_FIELD("benchmark_correctness_precondition_passed", YVEX_CLI_FIELD_BOOL,
+                    benchmark_correctness_precondition_passed),
+    ATTENTION_FIELD("benchmark_runtime_precondition_passed", YVEX_CLI_FIELD_BOOL,
+                    benchmark_runtime_precondition_passed),
+};
+static const yvex_cli_field_spec attention_benchmark_regression_fields[] = {
+    ATTENTION_BENCHMARK_FIELD("benchmark_regression_policy_enabled", YVEX_CLI_FIELD_BOOL,
+                              regression_policy_enabled),
+    ATTENTION_BENCHMARK_FIELD("benchmark_regression_policy_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                              regression_policy_identity),
+    ATTENTION_BENCHMARK_FIELD("benchmark_comparison_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                              comparison_identity),
+    ATTENTION_BENCHMARK_FIELD("benchmark_regression_basis_points", YVEX_CLI_FIELD_U64,
+                              regression_basis_points),
+    ATTENTION_BENCHMARK_FIELD("benchmark_performance_passed", YVEX_CLI_FIELD_BOOL,
+                              performance_passed),
+};
+static const yvex_cli_field_spec attention_qualification_fields[] = {
+    ATTENTION_FIELD("qualification_identity", YVEX_CLI_FIELD_TEXT_ARRAY, qualification_identity),
+    ATTENTION_FIELD("quality_matrix_identity", YVEX_CLI_FIELD_TEXT_ARRAY, quality_matrix_identity),
+    ATTENTION_FIELD("software_contract_status", YVEX_CLI_FIELD_TEXT_ARRAY,
+                    quality_status[YVEX_RUNTIME_QUALITY_SOFTWARE]),
+    ATTENTION_FIELD("numerical_conformance_status", YVEX_CLI_FIELD_TEXT_ARRAY,
+                    quality_status[YVEX_RUNTIME_QUALITY_NUMERICAL]),
+    ATTENTION_FIELD("runtime_qualification_status", YVEX_CLI_FIELD_TEXT_ARRAY,
+                    quality_status[YVEX_RUNTIME_QUALITY_QUALIFICATION]),
+    ATTENTION_FIELD("model_behavior_evaluation_available", YVEX_CLI_FIELD_BOOL, model_behavior_evaluation_available),
+    ATTENTION_FIELD("model_quality_evaluation_available", YVEX_CLI_FIELD_BOOL, model_quality_evaluation_available),
+    ATTENTION_FIELD("agent_runtime_available", YVEX_CLI_FIELD_BOOL, agent_runtime_available),
+    ATTENTION_FIELD("agent_evaluation_available", YVEX_CLI_FIELD_BOOL, agent_evaluation_available),
+    ATTENTION_FIELD("release_qualification_available", YVEX_CLI_FIELD_BOOL, release_qualification_available),
 };
 static const yvex_cli_field_spec attention_cuda_fields[] = {
     ATTENTION_PROBE_FIELD("cuda_device", YVEX_CLI_FIELD_TEXT_ARRAY, cuda_device),
     ATTENTION_FIELD("cuda_driver", YVEX_CLI_FIELD_TEXT_ARRAY, cuda_driver),
-    ATTENTION_FIELD("cuda_build_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                    cuda_build_identity),
+    ATTENTION_FIELD("cuda_build_identity", YVEX_CLI_FIELD_TEXT_ARRAY, cuda_build_identity),
     ATTENTION_FIELD("capture_bucket", YVEX_CLI_FIELD_TEXT_ARRAY, capture_bucket),
-    ATTENTION_PROBE_FIELD("compute_capability_major", YVEX_CLI_FIELD_I32,
-                          cuda_compute_capability_major),
-    ATTENTION_PROBE_FIELD("compute_capability_minor", YVEX_CLI_FIELD_I32,
-                          cuda_compute_capability_minor),
+    ATTENTION_PROBE_FIELD("compute_capability_major", YVEX_CLI_FIELD_I32, cuda_compute_capability_major),
+    ATTENTION_PROBE_FIELD("compute_capability_minor", YVEX_CLI_FIELD_I32, cuda_compute_capability_minor),
     ATTENTION_PROBE_FIELD("kernel_launches", YVEX_CLI_FIELD_U64, kernel_launches),
     ATTENTION_PROBE_FIELD("peak_device_bytes", YVEX_CLI_FIELD_U64, peak_device_bytes),
     ATTENTION_PROBE_FIELD("h2d_bytes", YVEX_CLI_FIELD_U64, h2d_bytes),
     ATTENTION_PROBE_FIELD("d2h_bytes", YVEX_CLI_FIELD_U64, d2h_bytes),
-    ATTENTION_FIELD("cuda_launch_graph_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                    cuda_launch_graph_identity),
-    ATTENTION_FIELD("cuda_graph_exec_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                    cuda_graph_exec_identity),
+    ATTENTION_FIELD("cuda_launch_graph_identity", YVEX_CLI_FIELD_TEXT_ARRAY, cuda_launch_graph_identity),
+    ATTENTION_FIELD("cuda_graph_exec_identity", YVEX_CLI_FIELD_TEXT_ARRAY, cuda_graph_exec_identity),
     ATTENTION_FIELD("cuda_graph_count", YVEX_CLI_FIELD_U64, cuda_graph_count),
     ATTENTION_FIELD("cuda_graph_piece_count", YVEX_CLI_FIELD_U64, cuda_graph_piece_count),
-    ATTENTION_FIELD("cuda_graph_capture_count", YVEX_CLI_FIELD_U64,
-                    cuda_graph_capture_count),
-    ATTENTION_FIELD("cuda_graph_instantiate_count", YVEX_CLI_FIELD_U64,
-                    cuda_graph_instantiate_count),
+    ATTENTION_FIELD("cuda_graph_capture_count", YVEX_CLI_FIELD_U64, cuda_graph_capture_count),
+    ATTENTION_FIELD("cuda_graph_instantiate_count", YVEX_CLI_FIELD_U64, cuda_graph_instantiate_count),
     ATTENTION_FIELD("cuda_graph_replay_count", YVEX_CLI_FIELD_U64, cuda_graph_replay_count),
     ATTENTION_FIELD("cuda_graph_launch_count", YVEX_CLI_FIELD_U64, cuda_graph_launch_count),
     ATTENTION_FIELD("cuda_graph_node_count", YVEX_CLI_FIELD_U64, cuda_graph_node_count),
-    ATTENTION_FIELD("cuda_graph_kernel_node_count", YVEX_CLI_FIELD_U64,
-                    cuda_graph_kernel_node_count),
-    ATTENTION_FIELD("cuda_graph_memcpy_node_count", YVEX_CLI_FIELD_U64,
-                    cuda_graph_memcpy_node_count),
-    ATTENTION_FIELD("cuda_graph_memset_node_count", YVEX_CLI_FIELD_U64,
-                    cuda_graph_memset_node_count),
+    ATTENTION_FIELD("cuda_graph_kernel_node_count", YVEX_CLI_FIELD_U64, cuda_graph_kernel_node_count),
+    ATTENTION_FIELD("cuda_graph_memcpy_node_count", YVEX_CLI_FIELD_U64, cuda_graph_memcpy_node_count),
+    ATTENTION_FIELD("cuda_graph_memset_node_count", YVEX_CLI_FIELD_U64, cuda_graph_memset_node_count),
     ATTENTION_FIELD("cuda_graph_update_count", YVEX_CLI_FIELD_U64, cuda_graph_update_count),
-    ATTENTION_FIELD("cuda_graph_update_pending_count", YVEX_CLI_FIELD_U64,
-                    cuda_graph_update_pending_count),
-    ATTENTION_FIELD("cuda_graph_registry_scope", YVEX_CLI_FIELD_TEXT_ARRAY,
-                    cuda_graph_registry_scope),
-    ATTENTION_FIELD("cuda_graph_registry_count", YVEX_CLI_FIELD_U64,
-                    cuda_graph_registry_count),
-    ATTENTION_FIELD("cuda_graph_registry_index", YVEX_CLI_FIELD_U64,
-                    cuda_graph_registry_index),
-    ATTENTION_FIELD("cuda_graph_registry_affected_count", YVEX_CLI_FIELD_U64,
-                    cuda_graph_registry_affected_count),
+    ATTENTION_FIELD("cuda_graph_update_pending_count", YVEX_CLI_FIELD_U64, cuda_graph_update_pending_count),
+    ATTENTION_FIELD("cuda_graph_registry_scope", YVEX_CLI_FIELD_TEXT_ARRAY, cuda_graph_registry_scope),
+    ATTENTION_FIELD("cuda_graph_registry_count", YVEX_CLI_FIELD_U64, cuda_graph_registry_count),
+    ATTENTION_FIELD("cuda_graph_registry_index", YVEX_CLI_FIELD_U64, cuda_graph_registry_index),
+    ATTENTION_FIELD("cuda_graph_registry_affected_count", YVEX_CLI_FIELD_U64, cuda_graph_registry_affected_count),
     ATTENTION_FIELD("cuda_graph_entry_compatibility_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
                     cuda_graph_entry_compatibility_identity),
     ATTENTION_FIELD("cuda_graph_entry_state", YVEX_CLI_FIELD_I32, cuda_graph_entry_state),
     ATTENTION_FIELD("cuda_graph_entry_reason", YVEX_CLI_FIELD_I32, cuda_graph_entry_reason),
-    ATTENTION_FIELD("cuda_graph_entry_capture_mode", YVEX_CLI_FIELD_I32,
-                    cuda_graph_entry_capture_mode),
-    ATTENTION_FIELD("cuda_graph_entry_uploaded", YVEX_CLI_FIELD_BOOL,
-                    cuda_graph_entry_uploaded),
-    ATTENTION_FIELD("cuda_graph_entry_update_requested", YVEX_CLI_FIELD_BOOL,
-                    cuda_graph_entry_update_requested),
-    ATTENTION_FIELD("cuda_graph_capture_elapsed_ns", YVEX_CLI_FIELD_U64,
-                    cuda_graph_capture_elapsed_ns),
-    ATTENTION_FIELD("cuda_graph_instantiate_elapsed_ns", YVEX_CLI_FIELD_U64,
-                    cuda_graph_instantiate_elapsed_ns),
-    ATTENTION_FIELD("cuda_graph_last_update_elapsed_ns", YVEX_CLI_FIELD_U64,
-                    cuda_graph_last_update_elapsed_ns),
-    ATTENTION_FIELD("cuda_graph_last_replay_elapsed_ns", YVEX_CLI_FIELD_U64,
-                    cuda_graph_last_replay_elapsed_ns),
-    ATTENTION_FIELD("cuda_graph_invalidation_count", YVEX_CLI_FIELD_U64,
-                    cuda_graph_invalidation_count),
+    ATTENTION_FIELD("cuda_graph_entry_capture_mode", YVEX_CLI_FIELD_I32, cuda_graph_entry_capture_mode),
+    ATTENTION_FIELD("cuda_graph_entry_uploaded", YVEX_CLI_FIELD_BOOL, cuda_graph_entry_uploaded),
+    ATTENTION_FIELD("cuda_graph_entry_update_requested", YVEX_CLI_FIELD_BOOL, cuda_graph_entry_update_requested),
+    ATTENTION_FIELD("cuda_graph_capture_elapsed_ns", YVEX_CLI_FIELD_U64, cuda_graph_capture_elapsed_ns),
+    ATTENTION_FIELD("cuda_graph_instantiate_elapsed_ns", YVEX_CLI_FIELD_U64, cuda_graph_instantiate_elapsed_ns),
+    ATTENTION_FIELD("cuda_graph_last_update_elapsed_ns", YVEX_CLI_FIELD_U64, cuda_graph_last_update_elapsed_ns),
+    ATTENTION_FIELD("cuda_graph_last_replay_elapsed_ns", YVEX_CLI_FIELD_U64, cuda_graph_last_replay_elapsed_ns),
+    ATTENTION_FIELD("cuda_graph_invalidation_count", YVEX_CLI_FIELD_U64, cuda_graph_invalidation_count),
 };
 static const yvex_cli_field_spec attention_comparison_fields[] = {
     ATTENTION_PROBE_FIELD("cpu_output_digest", YVEX_CLI_FIELD_TEXT_ARRAY, cpu_output_digest),
     ATTENTION_PROBE_FIELD("cuda_output_digest", YVEX_CLI_FIELD_TEXT_ARRAY, cuda_output_digest),
-    ATTENTION_PROBE_FIELD("cpu_state_delta_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
-                          cpu_state_delta_digest),
-    ATTENTION_PROBE_FIELD("cuda_state_delta_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
-                          cuda_state_delta_digest),
-    ATTENTION_PROBE_FIELD("comparison_contract_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                          comparison_contract_identity),
+    ATTENTION_PROBE_FIELD("cpu_state_delta_digest", YVEX_CLI_FIELD_TEXT_ARRAY, cpu_state_delta_digest),
+    ATTENTION_PROBE_FIELD("cuda_state_delta_digest", YVEX_CLI_FIELD_TEXT_ARRAY, cuda_state_delta_digest),
+    ATTENTION_PROBE_FIELD("comparison_contract_identity", YVEX_CLI_FIELD_TEXT_ARRAY, comparison_contract_identity),
     ATTENTION_PROBE_FIELD("comparison_values", YVEX_CLI_FIELD_U64, comparison_values),
-    ATTENTION_PROBE_FIELD("comparison_output_values", YVEX_CLI_FIELD_U64,
-                          comparison_output_values),
+    ATTENTION_PROBE_FIELD("comparison_output_values", YVEX_CLI_FIELD_U64, comparison_output_values),
     ATTENTION_PROBE_FIELD("comparison_state_values", YVEX_CLI_FIELD_U64, comparison_state_values),
-    ATTENTION_PROBE_FIELD("comparison_finite_values", YVEX_CLI_FIELD_U64,
-                          comparison_finite_values),
-    ATTENTION_PROBE_FIELD("comparison_nonfinite_values", YVEX_CLI_FIELD_U64,
-                          comparison_nonfinite_values),
+    ATTENTION_PROBE_FIELD("comparison_finite_values", YVEX_CLI_FIELD_U64, comparison_finite_values),
+    ATTENTION_PROBE_FIELD("comparison_nonfinite_values", YVEX_CLI_FIELD_U64, comparison_nonfinite_values),
     ATTENTION_PROBE_FIELD("comparison_maximum_absolute_error", YVEX_CLI_FIELD_DOUBLE,
-                          comparison_maximum_absolute_error),
+                    comparison_maximum_absolute_error),
     ATTENTION_PROBE_FIELD("comparison_maximum_relative_error", YVEX_CLI_FIELD_DOUBLE,
-                          comparison_maximum_relative_error),
+                    comparison_maximum_relative_error),
     ATTENTION_PROBE_FIELD("comparison_rmse", YVEX_CLI_FIELD_DOUBLE, comparison_rmse),
     ATTENTION_PROBE_FIELD("comparison_passed", YVEX_CLI_FIELD_BOOL, comparison_passed),
     ATTENTION_PROBE_FIELD("output_digest_equal", YVEX_CLI_FIELD_BOOL, output_digest_equal),
-    ATTENTION_PROBE_FIELD("state_delta_digest_equal", YVEX_CLI_FIELD_BOOL,
-                          state_delta_digest_equal),
-    ATTENTION_PROBE_FIELD("bitwise_equality_observed", YVEX_CLI_FIELD_BOOL,
-                          bitwise_equality_observed),
-    ATTENTION_PROBE_FIELD("bitwise_equality_required", YVEX_CLI_FIELD_BOOL,
-                          bitwise_equality_required),
+    ATTENTION_PROBE_FIELD("state_delta_digest_equal", YVEX_CLI_FIELD_BOOL, state_delta_digest_equal),
+    ATTENTION_PROBE_FIELD("bitwise_equality_observed", YVEX_CLI_FIELD_BOOL, bitwise_equality_observed),
+    ATTENTION_PROBE_FIELD("bitwise_equality_required", YVEX_CLI_FIELD_BOOL, bitwise_equality_required),
 };
 static const yvex_cli_field_spec attention_failure_fields[] = {
     ATTENTION_FIELD("first_failing_stage", YVEX_CLI_FIELD_TEXT_ARRAY, first_failing_stage),
     ATTENTION_PROBE_FIELD("first_failing_layer", YVEX_CLI_FIELD_U64, first_failing_layer),
-    ATTENTION_PROBE_FIELD("first_failing_coordinate", YVEX_CLI_FIELD_U64,
-                          first_failing_coordinate),
+    ATTENTION_PROBE_FIELD("first_failing_coordinate", YVEX_CLI_FIELD_U64, first_failing_coordinate),
 };
 static const yvex_cli_field_spec attention_provenance_fields[] = {
     ATTENTION_FIELD("source_snapshot_identity", YVEX_CLI_FIELD_TEXT_ARRAY, source_snapshot_identity),
     ATTENTION_FIELD("payload_identity", YVEX_CLI_FIELD_TEXT_ARRAY, payload_identity),
     ATTENTION_FIELD("artifact_transform_identity", YVEX_CLI_FIELD_TEXT_ARRAY, artifact_transform_identity),
-    ATTENTION_FIELD("logical_transform_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                    logical_transform_identity),
+    ATTENTION_FIELD("logical_transform_identity", YVEX_CLI_FIELD_TEXT_ARRAY, logical_transform_identity),
     ATTENTION_PROBE_FIELD("payload_bytes_read", YVEX_CLI_FIELD_U64, payload_bytes_read),
 };
 static const yvex_cli_field_spec attention_compatibility_fields[] = {
@@ -442,8 +432,7 @@ static const yvex_cli_field_spec attention_compatibility_fields[] = {
     ATTENTION_FIELD("payload_byte_identity", YVEX_CLI_FIELD_TEXT_ARRAY, payload_byte_identity),
     ATTENTION_FIELD("physical_payload_compatible", YVEX_CLI_FIELD_BOOL, physical_payload_compatible),
     ATTENTION_FIELD("artifact_rebuild_required", YVEX_CLI_FIELD_BOOL, artifact_rebuild_required),
-    ATTENTION_FIELD("materialization_rebuild_required", YVEX_CLI_FIELD_BOOL,
-                    materialization_rebuild_required),
+    ATTENTION_FIELD("materialization_rebuild_required", YVEX_CLI_FIELD_BOOL, materialization_rebuild_required),
     ATTENTION_FIELD("tensor_inventory_equal", YVEX_CLI_FIELD_BOOL, tensor_inventory_equal),
     ATTENTION_FIELD("qtype_equal", YVEX_CLI_FIELD_BOOL, qtype_equal),
     ATTENTION_FIELD("layout_equal", YVEX_CLI_FIELD_BOOL, layout_equal),
@@ -486,7 +475,10 @@ typedef enum {
     ATTENTION_FIELDS_BENCHMARK_CHART = 1u << 15,
     ATTENTION_FIELDS_REASON = 1u << 16,
     ATTENTION_FIELDS_BENCHMARK_DEVICE = 1u << 17,
-    ATTENTION_FIELDS_BENCHMARK_BASELINE_DEVICE = 1u << 18
+    ATTENTION_FIELDS_BENCHMARK_BASELINE_DEVICE = 1u << 18,
+    ATTENTION_FIELDS_BENCHMARK_CONTEXT = 1u << 19,
+    ATTENTION_FIELDS_QUALIFICATION = 1u << 20,
+    ATTENTION_FIELDS_BENCHMARK_REGRESSION = 1u << 21
 } attention_field_condition;
 
 typedef struct {
@@ -514,7 +506,6 @@ typedef struct {
 
 #define ATTENTION_GROUP(FIELDS, CONDITION) \
     {FIELDS, FIELD_COUNT(FIELDS), CONDITION, 0}
-
 static const attention_field_group attention_field_groups[] = {
     ATTENTION_GROUP(attention_base_fields, ATTENTION_FIELDS_ALWAYS),
     ATTENTION_GROUP(attention_target_fields, ATTENTION_FIELDS_TARGET),
@@ -535,6 +526,11 @@ static const attention_field_group attention_field_groups[] = {
     ATTENTION_GROUP(attention_benchmark_device_baseline_fields,
                     ATTENTION_FIELDS_BENCHMARK_BASELINE_DEVICE),
     ATTENTION_GROUP(attention_benchmark_chart_fields, ATTENTION_FIELDS_BENCHMARK_CHART),
+    ATTENTION_GROUP(attention_benchmark_context_fields,
+                    ATTENTION_FIELDS_BENCHMARK_CONTEXT),
+    ATTENTION_GROUP(attention_benchmark_regression_fields,
+                    ATTENTION_FIELDS_BENCHMARK_REGRESSION),
+    ATTENTION_GROUP(attention_qualification_fields, ATTENTION_FIELDS_QUALIFICATION),
     ATTENTION_GROUP(attention_cuda_fields, ATTENTION_FIELDS_CUDA),
     ATTENTION_GROUP(attention_comparison_fields, ATTENTION_FIELDS_COMPARISON),
     ATTENTION_GROUP(attention_failure_fields, ATTENTION_FIELDS_COMPARISON_FAILURE),
@@ -546,56 +542,47 @@ static const attention_field_group attention_field_groups[] = {
 };
 
 static const attention_presence_rule attention_presence_rules[] = {
-    {ATTENTION_FIELDS_TARGET, offsetof(yvex_graph_attention_operator_result, family),
-     ATTENTION_PRESENCE_TARGET, 0},
-    {ATTENTION_FIELDS_ADMITTED,
-     offsetof(yvex_graph_attention_operator_result, attention_plan_identity),
+    {ATTENTION_FIELDS_TARGET, offsetof(yvex_graph_attention_operator_result, family), ATTENTION_PRESENCE_TARGET, 0},
+{ATTENTION_FIELDS_ADMITTED, offsetof(yvex_graph_attention_operator_result, attention_plan_identity),
      ATTENTION_PRESENCE_TEXT, 0},
-    {ATTENTION_FIELDS_COMPLETED, offsetof(yvex_graph_attention_operator_result, completed),
-     ATTENTION_PRESENCE_BOOL, 0},
-    {ATTENTION_FIELDS_CUDA,
-     offsetof(yvex_graph_attention_operator_result, probe.cuda_device),
+    {ATTENTION_FIELDS_COMPLETED, offsetof(yvex_graph_attention_operator_result, completed), ATTENTION_PRESENCE_BOOL, 0},
+{ATTENTION_FIELDS_CUDA, offsetof(yvex_graph_attention_operator_result, probe.cuda_device),
      ATTENTION_PRESENCE_TEXT, 0},
-    {ATTENTION_FIELDS_COMPARISON,
-     offsetof(yvex_graph_attention_operator_result, probe.comparison_available),
+    {ATTENTION_FIELDS_COMPARISON, offsetof(yvex_graph_attention_operator_result, probe.comparison_available),
      ATTENTION_PRESENCE_BOOL, 0},
-    {ATTENTION_FIELDS_COMPARISON_FAILURE, 0u,
-     ATTENTION_PRESENCE_COMPARISON_FAILURE, 0},
-    {ATTENTION_FIELDS_DETAILED_ADMISSION,
-     offsetof(yvex_graph_attention_operator_result, attention_plan_identity),
+    {ATTENTION_FIELDS_COMPARISON_FAILURE, 0u, ATTENTION_PRESENCE_COMPARISON_FAILURE, 0},
+{ATTENTION_FIELDS_DETAILED_ADMISSION, offsetof(yvex_graph_attention_operator_result, attention_plan_identity),
      ATTENTION_PRESENCE_TEXT, 1},
-    {ATTENTION_FIELDS_COMPATIBILITY,
-     offsetof(yvex_graph_attention_operator_result, current_writer_plan_identity),
+    {ATTENTION_FIELDS_COMPATIBILITY, offsetof(yvex_graph_attention_operator_result, current_writer_plan_identity),
      ATTENTION_PRESENCE_TEXT, 1},
-    {ATTENTION_FIELDS_TIMING,
-     offsetof(yvex_graph_attention_operator_result, benchmark_sample_count),
+    {ATTENTION_FIELDS_TIMING, offsetof(yvex_graph_attention_operator_result, benchmark_sample_count),
      ATTENTION_PRESENCE_U64, 0},
-    {ATTENTION_FIELDS_RESIDENCY,
-     offsetof(yvex_graph_attention_operator_result, residency_identity),
+    {ATTENTION_FIELDS_RESIDENCY, offsetof(yvex_graph_attention_operator_result, residency_identity),
      ATTENTION_PRESENCE_TEXT, 0},
-    {ATTENTION_FIELDS_STATE,
-     offsetof(yvex_graph_attention_operator_result, state_layout_identity),
+    {ATTENTION_FIELDS_STATE, offsetof(yvex_graph_attention_operator_result, state_layout_identity),
      ATTENTION_PRESENCE_TEXT, 0},
-    {ATTENTION_FIELDS_BENCHMARK,
-     offsetof(yvex_graph_attention_operator_result, benchmark_sample_count),
+    {ATTENTION_FIELDS_BENCHMARK, offsetof(yvex_graph_attention_operator_result, benchmark_sample_count),
      ATTENTION_PRESENCE_U64, 0},
     {ATTENTION_FIELDS_BENCHMARK_DEVICE,
      offsetof(yvex_graph_attention_operator_result, benchmark_device_timing_available),
      ATTENTION_PRESENCE_BOOL, 0},
-    {ATTENTION_FIELDS_BENCHMARK_PUBLICATION,
-     offsetof(yvex_graph_attention_operator_result, benchmark.baseline_written),
+    {ATTENTION_FIELDS_BENCHMARK_PUBLICATION, offsetof(yvex_graph_attention_operator_result, benchmark.baseline_written),
      ATTENTION_PRESENCE_BOOL, 0},
-    {ATTENTION_FIELDS_BENCHMARK_BASELINE,
-     offsetof(yvex_graph_attention_operator_result, benchmark.baseline_identity),
+    {ATTENTION_FIELDS_BENCHMARK_BASELINE, offsetof(yvex_graph_attention_operator_result, benchmark.baseline_identity),
      ATTENTION_PRESENCE_TEXT, 0},
     {ATTENTION_FIELDS_BENCHMARK_BASELINE_DEVICE,
      offsetof(yvex_graph_attention_operator_result, benchmark.device_timing_available),
      ATTENTION_PRESENCE_BOOL, 0},
-    {ATTENTION_FIELDS_BENCHMARK_CHART,
-     offsetof(yvex_graph_attention_operator_result, benchmark.chart_generated),
+    {ATTENTION_FIELDS_BENCHMARK_CHART, offsetof(yvex_graph_attention_operator_result, benchmark.chart_generated),
      ATTENTION_PRESENCE_BOOL, 0},
-    {ATTENTION_FIELDS_REASON, offsetof(yvex_graph_attention_operator_result, reason),
+    {ATTENTION_FIELDS_BENCHMARK_CONTEXT, offsetof(yvex_graph_attention_operator_result, benchmark_scope),
      ATTENTION_PRESENCE_TEXT, 0},
+    {ATTENTION_FIELDS_BENCHMARK_REGRESSION,
+     offsetof(yvex_graph_attention_operator_result, benchmark.comparison_identity),
+     ATTENTION_PRESENCE_TEXT, 0},
+    {ATTENTION_FIELDS_QUALIFICATION, offsetof(yvex_graph_attention_operator_result, qualification_identity),
+     ATTENTION_PRESENCE_TEXT, 0},
+    {ATTENTION_FIELDS_REASON, offsetof(yvex_graph_attention_operator_result, reason), ATTENTION_PRESENCE_TEXT, 0},
 };
 
 #undef ATTENTION_GROUP
@@ -603,7 +590,6 @@ static const attention_presence_rule attention_presence_rules[] = {
 #undef ATTENTION_PROBE_FIELD
 #undef ATTENTION_BENCHMARK_FIELD
 #undef ATTENTION_TIMING
-
 /* Purpose: evaluate one typed evidence-presence rule without inspecting metric values. */
 static int graph_attention_rule_present(
     const attention_presence_rule *rule,
@@ -622,10 +608,8 @@ static int graph_attention_rule_present(
     }
     return 0;
 }
-
 /* Purpose: derive the complete presentation-availability mask from typed result evidence.
- * Inputs: immutable result and requested detail class.
- * Effects: none.
+ * Inputs: immutable result and requested detail class. Effects: none.
  * Failure: absent evidence leaves its group bit clear.
  * Boundary: zero metric values never determine optional-field presence. */
 static unsigned int graph_attention_visible_groups(
@@ -640,7 +624,6 @@ static unsigned int graph_attention_visible_groups(
             visible |= (unsigned int)attention_presence_rules[index].condition;
     return visible;
 }
-
 /* Purpose: Emit a field group. Inputs: stream/schema/result. Effects: writes. Failure: typed I/O.
  * Boundary: projection only; capability and availability stay runtime-owned. */
 static int graph_attention_emit(FILE *fp,
@@ -654,7 +637,6 @@ static int graph_attention_emit(FILE *fp,
                   : yvex_cli_out_fields(fp, result, fields, count);
     return rc < 0 ? YVEX_ERR_IO : rc;
 }
-
 /* Purpose: write one RFC 4180 cell through the canonical CLI stream owner. */
 static int graph_attention_csv_cell(FILE *fp, const char *text)
 {
@@ -667,12 +649,9 @@ static int graph_attention_csv_cell(FILE *fp, const char *text)
     }
     return yvex_cli_out_char(fp, '"') < 0 ? YVEX_ERR_IO : YVEX_OK;
 }
-
 /* Purpose: serialize one typed field as a stable two-column CSV record.
- * Inputs: output stream, result, and field schema.
- * Effects: writes one escaped record.
- * Failure: returns typed I/O or unsupported-kind refusal.
- * Boundary: derives no domain facts. */
+ * Inputs: output stream, result, and field schema. Effects: writes one escaped record.
+ * Failure: returns typed I/O or unsupported-kind refusal. Boundary: derives no domain facts. */
 static int graph_attention_csv_field(FILE *fp,
                                      const yvex_graph_attention_operator_result *result,
                                      const yvex_cli_field_spec *field)
@@ -721,12 +700,9 @@ static int graph_attention_csv_field(FILE *fp,
         return YVEX_ERR_IO;
     return YVEX_OK;
 }
-
 /* Purpose: render availability-filtered attention fields.
- * Inputs: stream, mode, and typed result.
- * Effects: writes one complete projection.
- * Failure: returns typed I/O refusal.
- * Boundary: omits unavailable facts without deriving capability. */
+ * Inputs: stream, mode, and typed result. Effects: writes one complete projection.
+ * Failure: returns typed I/O refusal. Boundary: omits unavailable facts without deriving capability. */
 static int graph_attention_render_fields(FILE *fp,
                                          yvex_graph_report_mode mode,
                                          const yvex_graph_attention_operator_result *result)
@@ -755,12 +731,9 @@ static int graph_attention_render_fields(FILE *fp,
     if (json) yvex_cli_json_end(fp);
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-
 /* Purpose: Render attention result.
- * Inputs: stream, mode, result.
- * Effects: writes fields.
- * Failure: typed I/O refusal.
- * Boundary: presentation only; no graph math. */
+ * Inputs: stream, mode, result. Effects: writes fields.
+ * Failure: typed I/O refusal. Boundary: presentation only; no graph math. */
 int yvex_graph_attention_render(FILE *fp,
                                 yvex_graph_report_mode mode,
                                 const yvex_graph_attention_operator_result *result)
@@ -768,12 +741,9 @@ int yvex_graph_attention_render(FILE *fp,
     if (!fp || !result) return YVEX_ERR_INVALID_ARG;
     return graph_attention_render_fields(fp, mode, result);
 }
-
 /* Purpose: Render graph help.
- * Inputs: stream.
- * Effects: writes CLI text.
- * Failure: stream state.
- * Boundary: CLI presentation. */
+ * Inputs: stream. Effects: writes CLI text.
+ * Failure: stream state. Boundary: CLI presentation. */
 int yvex_graph_render_help(FILE *fp)
 {
     yvex_cli_out_lines(fp, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
@@ -831,30 +801,17 @@ typedef struct {
 } descriptor_role_collection;
 
 static const descriptor_role_collection descriptor_role_collections[] = {
-    {"token_embedding", "embedding"},
-    {"attention_norm", "normalization"},
-    {"post_attention_norm", "normalization"},
-    {"final_norm", "normalization"},
-    {"q_projection", "attention"},
-    {"k_projection", "attention"},
-    {"v_projection", "attention"},
-    {"o_projection", "attention"},
-    {"mlp_gate", "mlp"},
-    {"mlp_up", "mlp"},
-    {"mlp_down", "mlp"},
-    {"moe_router", "moe"},
-    {"moe_expert_gate", "moe"},
-    {"moe_expert_up", "moe"},
-    {"moe_expert_down", "moe"},
-    {"output_head", "output"},
+    {"token_embedding", "embedding"}, {"attention_norm", "normalization"},
+{"post_attention_norm", "normalization"}, {"final_norm", "normalization"},
+    {"q_projection", "attention"}, {"k_projection", "attention"},
+{"v_projection", "attention"}, {"o_projection", "attention"},
+    {"mlp_gate", "mlp"}, {"mlp_up", "mlp"}, {"mlp_down", "mlp"}, {"moe_router", "moe"},
+{"moe_expert_gate", "moe"}, {"moe_expert_up", "moe"}, {"moe_expert_down", "moe"}, {"output_head", "output"},
     {"tokenizer_metadata", "tokenizer-runtime-input"},
 };
-
 /* Purpose: Map a role to its display collection.
- * Inputs: role text.
- * Effects: none.
- * Failure: returns unknown.
- * Boundary: presentation classification. */
+ * Inputs: role text. Effects: none.
+ * Failure: returns unknown. Boundary: presentation classification. */
 static const char *fullmodel_descriptor_role_collection(const char *role)
 {
     size_t index;
@@ -867,7 +824,6 @@ static const char *fullmodel_descriptor_role_collection(const char *role)
     }
     return "unknown";
 }
-
 /* Purpose: Compute fullmodel descriptor role residency for its CLI invariant
  *   (`fullmodel_descriptor_role_residency`). */
 static const char *fullmodel_descriptor_role_residency(const char *role,
@@ -878,12 +834,9 @@ static const char *fullmodel_descriptor_role_residency(const char *role,
     if (role && strcmp(role, "tokenizer_metadata") == 0) return "host-runtime-metadata";
     return backend && strcmp(backend, "cuda") == 0 ? "cuda-resident-planned" : "cpu-resident-planned";
 }
-
 /* Purpose: Render a descriptor role.
- * Inputs: model, collection, role, backend.
- * Effects: writes CLI fields.
- * Failure: stream state.
- * Boundary: descriptor presentation only. */
+ * Inputs: model, collection, role, backend. Effects: writes CLI fields.
+ * Failure: stream state. Boundary: descriptor presentation only. */
 static void fullmodel_print_descriptor_role(yvex_model_context *ctx,
                                             const yvex_fullmodel_collections *collections,
                                             const char *role,
@@ -919,7 +872,6 @@ static void fullmodel_print_descriptor_role(yvex_model_context *ctx,
     yvex_cli_out_writef(stdout, "role.%s.runtime_consumer: %s\n", role ? role : "unknown",
            present ? "planned" : "blocked-missing-role");
 }
-
 /* Purpose: Render one descriptor collection and its exact runtime requirements.
  * Inputs: Borrowed collection identity, accounting, requirements, and blocker facts.
  * Effects: Writes ordered descriptor fields through CLI I/O.
@@ -967,23 +919,18 @@ typedef struct {
 
 static const descriptor_phase_spec descriptor_phases[] = {
     {"preflight", DESCRIPTOR_PHASE_PASS}, {"resolve-model", DESCRIPTOR_PHASE_PASS},
-    {"artifact-identity", DESCRIPTOR_PHASE_PASS}, {"tensor-inventory", DESCRIPTOR_PHASE_PASS},
+{"artifact-identity", DESCRIPTOR_PHASE_PASS}, {"tensor-inventory", DESCRIPTOR_PHASE_PASS},
     {"role-map", DESCRIPTOR_PHASE_ROLE}, {"collection-map", DESCRIPTOR_PHASE_COLLECTION},
-    {"shape-requirements", DESCRIPTOR_PHASE_PASS},
-    {"residency-requirements", DESCRIPTOR_PHASE_PLANNED},
-    {"graph-requirements", DESCRIPTOR_PHASE_PLANNED},
-    {"prefill-requirements", DESCRIPTOR_PHASE_BLOCKED},
-    {"kv-requirements", DESCRIPTOR_PHASE_BLOCKED},
-    {"decode-requirements", DESCRIPTOR_PHASE_BLOCKED},
-    {"logits-requirements", DESCRIPTOR_PHASE_BLOCKED},
-    {"sampling-requirements", DESCRIPTOR_PHASE_BLOCKED},
-    {"tokenizer-requirements", DESCRIPTOR_PHASE_PASS},
+{"shape-requirements", DESCRIPTOR_PHASE_PASS},
+    {"residency-requirements", DESCRIPTOR_PHASE_PLANNED}, {"graph-requirements", DESCRIPTOR_PHASE_PLANNED},
+{"prefill-requirements", DESCRIPTOR_PHASE_BLOCKED}, {"kv-requirements", DESCRIPTOR_PHASE_BLOCKED},
+    {"decode-requirements", DESCRIPTOR_PHASE_BLOCKED}, {"logits-requirements", DESCRIPTOR_PHASE_BLOCKED},
+{"sampling-requirements", DESCRIPTOR_PHASE_BLOCKED}, {"tokenizer-requirements", DESCRIPTOR_PHASE_PASS},
     {"backend-requirements", DESCRIPTOR_PHASE_PLANNED},
-    {"blocker-report", DESCRIPTOR_PHASE_PASS}, {"descriptor-build", DESCRIPTOR_PHASE_PASS},
+{"blocker-report", DESCRIPTOR_PHASE_PASS}, {"descriptor-build", DESCRIPTOR_PHASE_PASS},
     {"complete", DESCRIPTOR_PHASE_PASS}, {"failed", DESCRIPTOR_PHASE_FAILURE_MARKER},
-    {"cleanup", DESCRIPTOR_PHASE_PASS},
+{"cleanup", DESCRIPTOR_PHASE_PASS},
 };
-
 /* Purpose: select one phase status from immutable phase kind and caller-owned outcomes. */
 static const char *descriptor_phase_status(descriptor_phase_kind kind,
                                            const char *role_status,
@@ -1002,7 +949,6 @@ static const char *descriptor_phase_status(descriptor_phase_kind kind,
     if (kind == DESCRIPTOR_PHASE_FAILURE_MARKER && !has_failure) return "skipped";
     return "pass";
 }
-
 /* Purpose: render the declared descriptor lifecycle with exact failure cutover.
  * Inputs: role and collection status plus optional failing phase name.
  * Effects: writes ordered phase facts through CLI I/O.
@@ -1039,8 +985,7 @@ typedef struct {
 #define GRAPH_FLAG(member_) offsetof(yvex_fullmodel_collections, member_)
 
 static const graph_requirement_spec graph_requirements[] = {
-    {"graph_requirements_status", GRAPH_FIXED, "blocked", NULL},
-    {"required_graph_ops", GRAPH_FIXED,
+    {"graph_requirements_status", GRAPH_FIXED, "blocked", NULL}, {"required_graph_ops", GRAPH_FIXED,
      "embedding-lookup,rmsnorm,q-projection,k-projection,v-projection,rope-position,attention-score,"
      "causal-mask,softmax,attention-value-accumulation,o-projection,residual-add,mlp-gate-up-down,"
      "activation,moe-router,expert-dispatch,expert-accumulation,final-norm,output-head-projection", NULL},
@@ -1052,19 +997,19 @@ static const graph_requirement_spec graph_requirements[] = {
     {"unsupported_backend_ops", GRAPH_FIXED,
      "full-transformer-runtime-integration,real-attention-backed-kv,real-output-head-logits", NULL},
     {"graph.embedding_lookup", GRAPH_FLAG(has_token_embedding), "planned-real-tensor", "missing-tensor"},
-    {"graph.rmsnorm", GRAPH_NORMALIZATION, "implemented-selected-segment", "missing-tensor"},
+{"graph.rmsnorm", GRAPH_NORMALIZATION, "implemented-selected-segment", "missing-tensor"},
     {"graph.q_projection", GRAPH_FLAG(has_attention_q), "planned", "missing-tensor"},
-    {"graph.k_projection", GRAPH_FLAG(has_attention_k), "planned", "missing-tensor"},
+{"graph.k_projection", GRAPH_FLAG(has_attention_k), "planned", "missing-tensor"},
     {"graph.v_projection", GRAPH_FLAG(has_attention_v), "planned", "missing-tensor"},
-    {"graph.rope_position_op", GRAPH_FIXED, "implemented-primitive", NULL},
+{"graph.rope_position_op", GRAPH_FIXED, "implemented-primitive", NULL},
     {"graph.attention_primitive", GRAPH_FIXED, "implemented-fixture", NULL},
-    {"graph.full_transformer_attention", GRAPH_ATTENTION, "unsupported", "missing-tensor"},
+{"graph.full_transformer_attention", GRAPH_ATTENTION, "unsupported", "missing-tensor"},
     {"graph.o_projection", GRAPH_FLAG(has_attention_out), "planned", "missing-tensor"},
-    {"graph.residual_add", GRAPH_FIXED, "planned", NULL},
+{"graph.residual_add", GRAPH_FIXED, "planned", NULL},
     {"graph.mlp_primitive", GRAPH_FIXED, "implemented-fixture", NULL},
-    {"graph.full_transformer_mlp", GRAPH_MLP, "unsupported", "missing-tensor"},
+{"graph.full_transformer_mlp", GRAPH_MLP, "unsupported", "missing-tensor"},
     {"graph.moe_router", GRAPH_FLAG(has_moe_router), "planned", "missing-tensor"},
-    {"graph.expert_dispatch", GRAPH_FLAG(has_moe_expert), "planned", "missing-tensor"},
+{"graph.expert_dispatch", GRAPH_FLAG(has_moe_expert), "planned", "missing-tensor"},
     {"graph.output_head_projection", GRAPH_FLAG(has_output_head), "planned", "missing-tensor"},
 };
 
@@ -1073,12 +1018,9 @@ static const graph_requirement_spec graph_requirements[] = {
 #undef GRAPH_MLP
 #undef GRAPH_ATTENTION
 #undef GRAPH_FIXED
-
 /* Purpose: Render graph requirements.
- * Inputs: collections.
- * Effects: writes CLI fields.
- * Failure: stream state.
- * Boundary: descriptor presentation only. */
+ * Inputs: collections. Effects: writes CLI fields.
+ * Failure: stream state. Boundary: descriptor presentation only. */
 static void fullmodel_print_descriptor_graph_requirements(const yvex_fullmodel_collections *collections)
 {
     size_t index;
@@ -1131,31 +1073,29 @@ static const char *const descriptor_roles[] = {
 
 static const descriptor_collection_spec descriptor_collections[] = {
     {"embedding", "embedding", "missing", COLLECTION_OFF(embedding), COLLECTION_OFF(embedding_bytes),
-     REQUIRED_MASK(1, 1, 0, 1), DESCRIPTOR_BLOCKER_COUNT,
+REQUIRED_MASK(1, 1, 0, 1), DESCRIPTOR_BLOCKER_COUNT,
      "embedding collection missing", "planned"},
-    {"normalization", "normalization", "missing", COLLECTION_OFF(normalization),
-     COLLECTION_OFF(normalization_bytes),
-     REQUIRED_MASK(1, 1, 1, 1), DESCRIPTOR_BLOCKER_COUNT,
+    {"normalization", "normalization", "missing", COLLECTION_OFF(normalization), COLLECTION_OFF(normalization_bytes),
+REQUIRED_MASK(1, 1, 1, 1), DESCRIPTOR_BLOCKER_COUNT,
      "normalization collection missing", "planned"},
     {"attention", "attention", "missing", COLLECTION_OFF(attention), COLLECTION_OFF(attention_bytes),
-     REQUIRED_MASK(1, 1, 0, 1), DESCRIPTOR_BLOCKER_ATTENTION,
+REQUIRED_MASK(1, 1, 0, 1), DESCRIPTOR_BLOCKER_ATTENTION,
      "attention Q/K/V/O tensors missing", "planned"},
     {"mlp", "mlp", "missing", COLLECTION_OFF(mlp), COLLECTION_OFF(mlp_bytes),
-     REQUIRED_MASK(1, 1, 0, 1), DESCRIPTOR_BLOCKER_MLP, "MLP tensors missing", "planned"},
+REQUIRED_MASK(1, 1, 0, 1), DESCRIPTOR_BLOCKER_MLP, "MLP tensors missing", "planned"},
     {"moe", "moe", "planned-or-missing", COLLECTION_OFF(moe), COLLECTION_OFF(moe_bytes),
-     REQUIRED_MASK(1, 1, 0, 1), DESCRIPTOR_BLOCKER_COUNT,
+REQUIRED_MASK(1, 1, 0, 1), DESCRIPTOR_BLOCKER_COUNT,
      "MoE tensors missing or not identified", "planned"},
     {"output", "output", "missing", COLLECTION_OFF(output), COLLECTION_OFF(output_bytes),
-     REQUIRED_MASK(0, 1, 1, 1), DESCRIPTOR_BLOCKER_COUNT, "output head missing", "planned"},
-    {"tokenizer-runtime-input", "tokenizer", "missing", COLLECTION_OFF(tokenizer),
-     COLLECTION_OFF(tokenizer_bytes),
-     REQUIRED_MASK(1, 1, 1, 1), DESCRIPTOR_BLOCKER_TOKENIZER,
+REQUIRED_MASK(0, 1, 1, 1), DESCRIPTOR_BLOCKER_COUNT, "output head missing", "planned"},
+    {"tokenizer-runtime-input", "tokenizer", "missing", COLLECTION_OFF(tokenizer), COLLECTION_OFF(tokenizer_bytes),
+REQUIRED_MASK(1, 1, 1, 1), DESCRIPTOR_BLOCKER_TOKENIZER,
      "tokenizer metadata missing", "planned"},
     {"kv-cache-runtime", "kv", "unsupported-real-attention-backed-kv", (size_t)-1, (size_t)-1,
-     REQUIRED_MASK(1, 1, 0, 1),
+REQUIRED_MASK(1, 1, 0, 1),
      DESCRIPTOR_BLOCKER_FIXED, "real attention-backed KV writes unsupported", "unsupported"},
     {"unknown", NULL, NULL, COLLECTION_OFF(unknown), COLLECTION_OFF(unknown_bytes),
-     REQUIRED_MASK(0, 0, 0, 0), DESCRIPTOR_BLOCKER_UNKNOWN, "unknown tensor role", "unsupported"},
+REQUIRED_MASK(0, 0, 0, 0), DESCRIPTOR_BLOCKER_UNKNOWN, "unknown tensor role", "unsupported"},
 };
 
 #undef REQUIRED_MASK
@@ -1163,10 +1103,8 @@ static const descriptor_collection_spec descriptor_collections[] = {
 
 /* Resolve whether a descriptor collection satisfies its exact role contract. */
 /* Purpose: Resolve collection readiness.
- * Inputs: schema, collections, count.
- * Effects: none.
- * Failure: returns false.
- * Boundary: descriptor presentation only. */
+ * Inputs: schema, collections, count. Effects: none.
+ * Failure: returns false. Boundary: descriptor presentation only. */
 static int descriptor_collection_ready(const descriptor_collection_spec *spec,
                                        const yvex_fullmodel_collections *collections,
                                        unsigned long long count)
@@ -1182,12 +1120,9 @@ static int descriptor_collection_ready(const descriptor_collection_spec *spec,
     }
     return 0;
 }
-
 /* Purpose: Render inventory.
- * Inputs: model, collections, backend.
- * Effects: writes CLI fields.
- * Failure: stream state.
- * Boundary: descriptor presentation only. */
+ * Inputs: model, collections, backend. Effects: writes CLI fields.
+ * Failure: stream state. Boundary: descriptor presentation only. */
 static void fullmodel_print_descriptor_inventory(
     yvex_model_context *ctx,
     const yvex_fullmodel_collections *collections,
@@ -1221,12 +1156,9 @@ static void fullmodel_print_descriptor_inventory(
             ready ? "none" : spec->missing_blocker);
     }
 }
-
 /* Purpose: Render fullmodel descriptor.
- * Inputs: admitted report facts.
- * Effects: writes CLI report.
- * Failure: stream state.
- * Boundary: presentation does not promote runtime capability. */
+ * Inputs: admitted report facts. Effects: writes CLI report.
+ * Failure: stream state. Boundary: presentation does not promote runtime capability. */
 void fullmodel_print_descriptor_report(const yvex_cli_fullmodel_options *options,
                                               yvex_model_ref *ref,
                                               yvex_model_context *ctx,

@@ -37,6 +37,12 @@ attention execution. Use the common runbook for repository validation. Do not
 misclassify the attention activation probe as prompt prefill, model decode, or
 generation.
 
+The attention `qualify` surface separates software acceptance, numerical
+conformance and runtime reliability. The attention `benchmark` surface measures
+one admitted component configuration. Neither surface is model behavior or
+quality evaluation, an agent-runtime evaluation, a full-model benchmark, or
+release qualification.
+
 Consult `../PROJECT.md` before selecting work. This runbook does not mirror the
 current milestone. The current operator path executes admitted attention;
 generation requests must still refuse explicitly.
@@ -53,3 +59,10 @@ The following remain outside git:
 
 Repository guardrails are listed in `runbooks/common.md` and
 `MODEL_ARTIFACTS.md` at the repository root.
+
+Attention component benchmark comparisons accept an optional
+`--max-regression-bps N` caller policy. Without it, compatible records report
+measured deltas. With it, latency, inverse throughput, memory, transfer,
+allocation, and launch regressions share the explicit basis-point ceiling and
+produce a nonzero status when breached. Runtime qualification failures remain
+independent and cannot be waived by performance policy.

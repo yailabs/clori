@@ -172,9 +172,12 @@ Execution evidence identifies the model, physical variant, artifact, runtime
 binding, state transition, backend, device, mode, input, output, and completion
 or refusal that occurred.
 
-Numerical conformance, model evaluation, component performance, full-model
-performance, and release admission are separate gates. Evidence reports facts;
-it does not grant capability by itself.
+Software verification, numerical conformance, runtime qualification, component
+performance, model behavior and quality evaluation, agent-runtime evaluation,
+full-model performance, and release admission are separate evidence classes.
+The attention benchmark measures an admitted component; it is not model,
+generation, agent, or release evidence. Evidence reports facts; it does not
+grant capability by itself.
 
 ## Design invariants
 
