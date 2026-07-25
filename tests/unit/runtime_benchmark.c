@@ -834,8 +834,12 @@ static int test_chart(const benchmark_fixture *fixture,
                          strstr(data, "Cold-start composition") &&
                          strstr(data, "Memory &amp; movement") &&
                          strstr(data, "Steady-state contract") &&
-                         strstr(data, "Encoded weights") &&
-                         strstr(data, "Attention state") && strstr(data, "SOURCE clean") &&
+                         strstr(data, "Artifact authentication") &&
+                         strstr(data, "Runtime binding") && strstr(data, "Runtime model seal") &&
+                         strstr(data, "Weight residency") &&
+                         strstr(data, "Encoded attention weights") &&
+                         strstr(data, "Host workspace") && strstr(data, "Attention state") &&
+                         strstr(data, "Cold resident H2D") && strstr(data, "SOURCE clean") &&
                          strstr(data, ">P95</text>") &&
                          strstr(data, "CUDA event timing") &&
                          strstr(data, "No warm weight I/O or allocation.") &&
@@ -888,6 +892,7 @@ static int test_chart(const benchmark_fixture *fixture,
                      "compatible comparison chart publishes");
     data = fixture_read(fixture->compared_chart, &count);
     YVEX_TEST_ASSERT(data && strstr(data, current->identity) && strstr(data, baseline->identity) &&
+                         strstr(data, "COMPARISON / BASELINE") &&
                          fixture_digest(data, count, digest) && strcmp(digest, chart.identity) == 0,
                      "comparison chart binds both exact benchmark identities");
     free(data);
