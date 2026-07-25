@@ -1,6 +1,6 @@
 /* Owner: runtime attention-state tests.
  * Owns: bounded lifecycle, phase-equivalence, boundary, and rollback evidence.
- * Does not own: production equations, persistent KV, CUDA, artifacts, or CLI rendering.
+ * Does not own: production equations, backend residency, artifacts, or CLI rendering.
  * Invariants: expected state is independently compared across chunk and decode transactions.
  * Boundary: focused internal-ABI coverage; no fixture enters production objects.
  * Purpose: prove the session-local provider is allocation-stable and transactionally exact.
@@ -660,13 +660,13 @@ fail:
 
 typedef yvex_attention_state_provider test_state;
 
-/* Purpose: open one ephemeral provider fixture through its only production ABI. */
+/* Purpose: open one persistent provider fixture through its only production ABI. */
 static int state_open(test_state *state, const yvex_graph_family_api *family,
                       const yvex_attention_plan *plan,
                       unsigned long long maximum_host_bytes,
                       yvex_attention_failure *failure, yvex_error *err)
 {
-    return yvex_attention_state_provider_open_ephemeral(
+    return yvex_attention_state_provider_open_persistent(
         family, plan, maximum_host_bytes, state, failure, err);
 }
 
@@ -949,7 +949,7 @@ static int test_state_lifecycle(const state_plan_fixture *fixture)
                    &failure, &err) == YVEX_OK &&
             state_prepare(&state, &fixture->layers[0],
                           fixture->plan.summary.attention_plan_identity),
-        "ephemeral attention state opens and prepares one layer");
+        "persistent attention state opens and prepares one layer");
     YVEX_TEST_ASSERT(
         state_begin(&state, &fixture->layers[0], 0ull, 1ull, &cancellation,
                     &failure, &err) == YVEX_OK &&
@@ -1027,7 +1027,10 @@ static int test_state_reset(const state_plan_fixture *fixture)
             state_prepare(&state, &fixture->layers[1],
                           fixture->plan.summary.attention_plan_identity) &&
             state_identity(&state, 1ull, empty_identity, &err) == YVEX_OK &&
-            state_summary(&state, &before, &err) == YVEX_OK,
+            state_summary(&state, &before, &err) == YVEX_OK &&
+            before.persistent && before.position_consistent &&
+            before.capacity == 2052ull && !before.committed_sequence_length &&
+            !before.next_position && yvex_sha256_hex_valid(before.state_content_identity),
         "reset fixture owns one allocation-stable empty CSA bank pair");
     YVEX_TEST_ASSERT(
         state_begin(&state, &fixture->layers[1], 0ull, 1ull, NULL,
@@ -1041,6 +1044,8 @@ static int test_state_reset(const state_plan_fixture *fixture)
             state_apply_token(&state, &fixture->layers[1], 0ull, 1, delta) &&
             state.commit(state.context, &failure, &err) == YVEX_OK &&
             state_identity(&state, 1ull, populated_identity, &err) == YVEX_OK &&
+            state_summary(&state, &before, &err) == YVEX_OK &&
+            before.committed_sequence_length == 1ull && before.next_position == 1ull &&
             strcmp(empty_identity, populated_identity) != 0,
         "reset fixture first commits non-empty history");
     YVEX_TEST_ASSERT(
@@ -1051,7 +1056,9 @@ static int test_state_reset(const state_plan_fixture *fixture)
             after.allocated_bytes == before.allocated_bytes &&
             after.prepared_layer_count == before.prepared_layer_count &&
             after.reset_count == before.reset_count + 1ull &&
-            after.generation == before.generation + 1ull,
+            after.generation == before.generation + 1ull &&
+            !after.committed_sequence_length && !after.next_position &&
+            after.position_consistent && yvex_sha256_hex_valid(after.state_content_identity),
         "reset advances lifecycle evidence while preserving prepared allocation");
     YVEX_TEST_ASSERT(
         state_view(&state, 1ull,
@@ -1198,11 +1205,22 @@ static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
             state_summary(&state, &summary, &err) == YVEX_OK &&
             !summary.transaction_active && summary.staged_layer_count == 0ull &&
             summary.commit_count == 2ull &&
+            summary.persistent && summary.position_consistent &&
+            summary.committed_sequence_length == 1ull && summary.next_position == 1ull &&
+            yvex_sha256_hex_valid(summary.state_content_identity) &&
             state_view(&state, 0ull,
                        YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 1ull &&
             state_view(&state, 1ull,
                        YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 1ull,
         "successful publication flips the complete staged set together");
+    YVEX_TEST_ASSERT(
+        state_begin(&state, &fixture->layers[0], 2ull, 1ull, NULL,
+                    &failure, &err) == YVEX_ERR_STATE &&
+            state_begin(&state, &fixture->layers[0], 1ull, 6ull, NULL,
+                        &failure, &err) == YVEX_ERR_BOUNDS &&
+            state_summary(&state, &summary, &err) == YVEX_OK &&
+            !summary.transaction_active && summary.next_position == 1ull,
+        "non-contiguous and over-capacity appends refuse before persistent-state mutation");
     (void)state_close(&state);
     return 0;
 }

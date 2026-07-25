@@ -1167,7 +1167,7 @@ This table records architectural scope, not delivery progress.
 
 | Family | v0.1.0 relation | Runtime class | Current support truth |
 | --- | --- | --- | --- |
-| DeepSeek-V4-Flash | exact release target at `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; canonical target id `deepseek4-v4-flash` | hybrid SWA/CSA/HCA decoder with mHC and MoE | typed architecture, exact 69,187-entry source coverage, sealed Transformation IR, complete quantization, two admitted complete artifacts, bounded materialization, a content-addressed runtime binding, one common runtime model/session, resident attention weights, and complete CPU/GB10 attention exist; persistent KV, prefill, MoE, transformer execution, and generation remain unsupported |
+| DeepSeek-V4-Flash | exact release target at `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; canonical target id `deepseek4-v4-flash` | hybrid SWA/CSA/HCA decoder with mHC and MoE | typed architecture, exact 69,187-entry source coverage, sealed Transformation IR, complete quantization, two admitted complete artifacts, bounded materialization, a content-addressed runtime binding, one common runtime model/session, resident attention weights, complete CPU/GB10 attention, and session-owned persistent attention state exist; tokenizer-backed prefill, MoE, transformer execution, and generation remain unsupported |
 | Qwen | outside v0.1.0 | target-dependent dense or sparse/MoE | unsupported; existing source/report facts do not enter the release path |
 | Gemma | outside v0.1.0 | dense | unsupported; existing source/report facts do not enter the release path |
 | GLM | outside v0.1.0 source-pressure work | sparse/MoE | unsupported; source evidence is not runtime support |
@@ -1329,8 +1329,12 @@ For the admitted DeepSeek attention plane, `prefill` and `decode` are runtime
 attention phases over activation tensors and explicit prior attention state.
 They are not tokenizer-backed prompt prefill or autoregressive model decode.
 CPU eager and CUDA eager/piecewise/full execution share the same immutable
-runtime model, resident weights and typed state-delta boundary. Persistent KV
-must implement that boundary before the promotion paths above advance.
+runtime model, resident weights and typed persistent-state boundary. The
+DeepSeek provider derives distinct SWA/CSA/HCA local, compressed, indexer, and
+rolling recipes from the admitted plan, commits all affected layers and
+sequence position atomically, and supplies the committed state to later
+production executions. Full-model prefill is the next consumer; it must not
+introduce another state owner.
 
 ## Family Classification Table
 

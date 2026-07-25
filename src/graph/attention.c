@@ -168,7 +168,6 @@ int yvex_attention_envelope_scratch_elements(const yvex_attention_layer_plan *la
     *elements = total;
     return 1;
 }
-
 /* Purpose: reject one attention-envelope binding or geometry mismatch consistently. */
 static int attention_envelope_reject(const yvex_attention_layer_plan *layer,
                                      yvex_attention_failure_code code,
@@ -1452,21 +1451,20 @@ static int attention_probe_state_abort(attention_probe_context *context, int pri
  * Inputs: admitted operator context, layer, and deterministic position.
  * Effects: advances aggregate evidence only after complete publications.
  * Failure: releases every publication and history allocation without partial state.
- * Boundary: production attention only; no oracle or persistent KV. */
-static int attention_probe_layer_execute(attention_probe_context *context,
-                                         unsigned long long layer_ordinal,
-                                         const yvex_attention_layer_plan *layer,
-                                         unsigned long long position) {
+ * Boundary: production attention only; persistent history is borrowed through the state-provider ABI. */
+static int attention_probe_layer_execute(
+    attention_probe_context *context, unsigned long long layer_ordinal,
+    const yvex_attention_layer_plan *layer, unsigned long long position) {
     yvex_attention_cpu_options options;
-    yvex_attention_cancellation cancellation = {context->request->cancel_requested,
-                                                context->request->cancel_context};
+    yvex_attention_cancellation cancellation = {
+        context->request->cancel_requested, context->request->cancel_context};
     attention_probe_backend backend[ATTENTION_PROBE_BACKEND_COUNT] = {0};
     yvex_attention_probe_history history = {0};
     const yvex_attention_history_view *execution_history = NULL;
     unsigned long long token_count = context->request->token_count ? context->request->token_count : 1ull;
-    unsigned long long input_width = context->request->operation_scope ==
-                                             YVEX_ATTENTION_OPERATION_ENVELOPE
-                                         ? layer->residual_expanded_width : layer->hidden_dimension;
+    unsigned long long input_width =
+        context->request->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE
+            ? layer->residual_expanded_width : layer->hidden_dimension;
     unsigned long long input_count, workspace_mark = 0ull, token;
     float *input;
     unsigned int index;
@@ -1486,7 +1484,8 @@ static int attention_probe_layer_execute(attention_probe_context *context,
                 : "canonical attention input allocation failed");
     for (token = 0ull; token < token_count; ++token)
         attention_probe_fill(input + token * input_width, NULL, input_width,
-                             layer->layer_index + position + token + 1009ull);
+                             layer->layer_index + position + token + 1009ull +
+                                 (unsigned long long)context->request->perturb_input);
     history.workspace = context->request->workspace;
     if (position && !attention_probe_history_init(&history, layer, context->summary, position)) {
         rc = attention_probe_fail(

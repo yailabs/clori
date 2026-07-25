@@ -1,9 +1,9 @@
 /* Owner: graph attention state.
- * Owns: family-projected state layout, attention-local history, candidate deltas, and commit lifecycle.
- * Does not own: persistent KV, family geometry policy, attention equations, backend work, or generation.
+ * Owns: family-projected persistent state layout, history, candidate deltas, and commit lifecycle.
+ * Does not own: family geometry policy, attention equations, backend work, or generation.
  * Invariants: storage follows sealed component recipes and committed history is immutable in a transaction.
- * Boundary: runtime retains an opaque provider handle; persistent KV must implement the same graph contract.
- * Purpose: retain bounded typed state components across phase-neutral attention executions.
+ * Boundary: runtime retains an opaque provider handle and supplies optional backend residency.
+ * Purpose: retain bounded typed persistent state across phase-neutral attention executions.
  * Inputs: sealed attention plan, family recipe ABI, immutable component recipes, and publications.
  * Effects: preallocates two recipe-defined banks per prepared layer and atomically swaps on commit.
  * Failure: refusal, cancellation, or abort preserves the previously committed state exactly. */
@@ -46,6 +46,7 @@ typedef struct {
 typedef struct {
     attention_layer_state *layer;
     unsigned long long layer_ordinal, token_position, token_count, applied_tokens, staged_count;
+    unsigned long long batch_position, batch_token_count;
     int active, candidate_active, failed;
     yvex_attention_cancellation cancellation;
     int cancellation_bound;
@@ -57,34 +58,6 @@ typedef struct {
     const unsigned long long *positions;
     unsigned long long count, width;
 } state_history_span;
-struct yvex_graph_attention_capacity_plan {
-    yvex_graph_attention_capacity_summary summary;
-    yvex_graph_attention_capacity_request request;
-    yvex_graph_attention_capacity_layer *layers;
-};
-/* Purpose: reject one malformed immutable capacity-plan request without publishing ownership. */
-static int capacity_reject(yvex_error *err, yvex_status status, const char *reason) {
-    yvex_error_set(err, status, "graph.attention.capacity", reason);
-    return status;
-}
-/* Purpose: add one selected layer's capacities into checked aggregate and maximum facts. */
-static int capacity_add(unsigned long long value, unsigned long long *total,
-                        unsigned long long *maximum) {
-    if (!yvex_core_u64_add(*total, value, total)) return 0;
-    if (value > *maximum) *maximum = value;
-    return 1;
-}
-/* Purpose: report whether a family-projected selection key already has a quick representative. */
-static int capacity_key_seen(const yvex_graph_attention_capacity_plan *plan,
-                             unsigned long long count,
-                             unsigned long long key) {
-    unsigned long long index;
-    for (index = 0ull; index < count; ++index)
-        if (plan->layers[index].selected &&
-            plan->layers[index].recipe.selection_key == key)
-            return 1;
-    return 0;
-}
 /* Purpose: append an ordered scalar field set to one canonical identity.
  * Inputs: initialized digest state and a non-null fixed-width field range.
  * Effects: advances only the caller-owned digest state in array order.
@@ -238,222 +211,6 @@ mismatch:
                    "state recipe identity does not match its fields");
     return YVEX_ERR_STATE;
 }
-/* Purpose: hash all immutable selection, extent, and per-layer capacity facts in canonical order.
- * Inputs: complete unpublished capacity plan and fixed identity output.
- * Effects: writes a SHA-256 identity over canonical scalar fields only.
- * Failure: SHA serialization failure returns false without publishing a partial identity.
- * Boundary: never hashes pointers, allocation layout, state bytes, or backend resources. */
-static int capacity_identity(
-    const yvex_graph_attention_capacity_plan *plan,
-    char output[YVEX_SHA256_HEX_CAP]) {
-    const yvex_graph_attention_capacity_request *request = &plan->request;
-    const yvex_graph_attention_capacity_summary *summary = &plan->summary;
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long index;
-    const unsigned long long request_fields[] = {
-        summary->schema_version, request->scope,
-        request->history_tokens, request->start_position, request->token_count,
-        request->execution_count, request->layer_start, request->selection_key,
-        (unsigned long long)request->select_layer,
-        (unsigned long long)request->select_selection_key,
-        summary->maximum_token_count, summary->selected_binding_count};
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.graph.attention.capacity-plan.v2") ||
-        !yvex_sha256_update_text(&hash, summary->attention_plan_identity) ||
-        !state_hash_u64s(&hash, request_fields,
-                         sizeof(request_fields) / sizeof(request_fields[0])))
-        return 0;
-    for (index = 0ull; index < summary->layer_count; ++index) {
-        const yvex_graph_attention_capacity_layer *layer = &plan->layers[index];
-        const unsigned long long fields[] = {
-            layer->layer_ordinal, (unsigned long long)layer->selected};
-        if (!state_hash_u64s(&hash, fields, sizeof(fields) / sizeof(fields[0])) ||
-            (layer->selected &&
-             !yvex_sha256_update_text(&hash, layer->recipe.identity)))
-            return 0;
-    }
-    if (!yvex_sha256_final(&hash, digest)) return 0;
-    yvex_sha256_hex(digest, output);
-    return 1;
-}
-/* Purpose: derive one immutable capacity plan before state, workspace, descriptor, or backend mutation.
- * Inputs: sealed attention plan and explicit selection, scope, history, position, token, and execution facts.
- * Effects: owns one independently queryable per-layer plan with a deterministic identity.
- * Failure: malformed selection, geometry, overflow, or allocation publishes no plan.
- * Boundary: derives capacities only; it allocates no state and executes no family mathematics. */
-int yvex_graph_attention_capacity_plan_build(
-    yvex_graph_attention_capacity_plan **out, const yvex_graph_family_api *family,
-    const yvex_attention_plan *attention,
-    const yvex_graph_attention_capacity_request *request, yvex_error *err) {
-    const yvex_attention_summary *attention_summary = yvex_attention_plan_summary(attention);
-    yvex_graph_attention_capacity_plan *plan;
-    unsigned long long bytes, extent, index;
-    if (!out || *out || !family || !family->state_recipe || !attention ||
-        !attention_summary || !request ||
-        attention_summary->status != YVEX_ATTENTION_STATUS_EXECUTION_READY ||
-        !yvex_sha256_hex_valid(attention_summary->attention_plan_identity) ||
-        !request->token_count || !request->execution_count ||
-        request->history_tokens != request->start_position ||
-        (unsigned int)request->scope > (unsigned int)YVEX_ATTENTION_PROBE_SCOPE_FULL ||
-        (request->select_layer && request->select_selection_key))
-        return capacity_reject(err, YVEX_ERR_INVALID_ARG, "complete sealed capacity-plan facts are required");
-    if (!yvex_core_u64_mul(request->token_count, request->execution_count, &extent) ||
-        !yvex_core_u64_mul(yvex_attention_plan_layer_count(attention),
-                           (unsigned long long)sizeof(*plan->layers), &bytes) ||
-        bytes > (unsigned long long)SIZE_MAX)
-        return capacity_reject(err, YVEX_ERR_BOUNDS, "attention capacity-plan extent overflowed");
-    plan = calloc(1u, sizeof(*plan));
-    if (!plan) return capacity_reject(err, YVEX_ERR_NOMEM, "attention capacity plan allocation failed");
-    plan->summary.layer_count = yvex_attention_plan_layer_count(attention);
-    plan->layers = calloc((size_t)plan->summary.layer_count, sizeof(*plan->layers));
-    if (!plan->layers) {
-        free(plan->layers);
-        free(plan);
-        return capacity_reject(err, YVEX_ERR_NOMEM, "attention capacity layer allocation failed");
-    }
-    plan->request = *request;
-    plan->summary.schema_version = YVEX_GRAPH_ATTENTION_CAPACITY_SCHEMA_V1;
-    plan->summary.first_layer = ULLONG_MAX;
-    plan->summary.maximum_token_count = request->token_count;
-    yvex_core_text_copy(plan->summary.attention_plan_identity,
-                        sizeof(plan->summary.attention_plan_identity),
-                        attention_summary->attention_plan_identity);
-    for (index = 0ull; index < plan->summary.layer_count; ++index) {
-        const yvex_attention_layer_plan *layer = yvex_attention_plan_layer_at(attention, index);
-        yvex_graph_attention_capacity_layer *capacity = &plan->layers[index];
-        yvex_attention_state_recipe_request recipe_request;
-        yvex_attention_state_recipe recipe;
-        yvex_attention_failure failure;
-        unsigned long long initial = request->start_position, final;
-        unsigned int component;
-        int rc, selected;
-        capacity->layer_ordinal = index;
-        if (!layer) {
-            yvex_graph_attention_capacity_plan_close(&plan);
-            return capacity_reject(err, YVEX_ERR_FORMAT, "attention capacity layer is malformed");
-        }
-        if (request->scope == YVEX_ATTENTION_PROBE_SCOPE_QUICK) {
-            rc = yvex_attention_probe_position_resolve(layer, 0,
-                                                       request->start_position,
-                                                       &initial, err);
-            if (rc != YVEX_OK) {
-                yvex_graph_attention_capacity_plan_close(&plan);
-                return rc;
-            }
-        }
-        if (!yvex_core_u64_add(initial, extent, &final)) {
-            yvex_graph_attention_capacity_plan_close(&plan);
-            return capacity_reject(err, YVEX_ERR_BOUNDS,
-                                   "attention capacity final position overflowed");
-        }
-        memset(&recipe_request, 0, sizeof(recipe_request));
-        recipe_request.layer_ordinal = index;
-        recipe_request.initial_position = initial;
-        recipe_request.final_position = final;
-        recipe_request.attention_plan_identity = attention_summary->attention_plan_identity;
-        memset(&recipe, 0, sizeof(recipe));
-        memset(&failure, 0, sizeof(failure));
-        rc = family->state_recipe(layer, &recipe_request, &recipe, &failure, err);
-        if (rc != YVEX_OK ||
-            yvex_attention_state_recipe_seal(&recipe, err) != YVEX_OK) {
-            yvex_graph_attention_capacity_plan_close(&plan);
-            return rc != YVEX_OK ? rc : yvex_error_code(err);
-        }
-        selected = request->select_layer
-                       ? index == request->layer_start
-                       : request->select_selection_key
-                             ? recipe.selection_key == request->selection_key &&
-                                   !plan->summary.selected_layer_count
-                             : request->scope == YVEX_ATTENTION_PROBE_SCOPE_FULL ||
-                                   !capacity_key_seen(plan, index,
-                                                      recipe.selection_key);
-        capacity->selected = selected;
-        if (!selected) continue;
-        capacity->recipe = recipe;
-        for (component = 0u; component < recipe.component_count; ++component) {
-            const yvex_attention_state_component_recipe *item = &recipe.components[component];
-            yvex_graph_attention_component_capacity *aggregate =
-                &plan->summary.components[item->binding];
-            unsigned long long extent_count;
-            int extent_ok = item->kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY
-                                ? yvex_core_u64_mul(item->capacity,
-                                                    item->value_width,
-                                                    &extent_count)
-                                : yvex_core_u64_add(item->rolling.kv_state_extent,
-                                                    item->rolling.score_state_extent,
-                                                    &extent_count);
-            if (!extent_ok ||
-                !capacity_add(item->capacity, &aggregate->capacity,
-                              &aggregate->maximum_capacity) ||
-                !capacity_add(extent_count, &aggregate->value_extent,
-                              &aggregate->maximum_value_extent)) {
-                yvex_graph_attention_capacity_plan_close(&plan);
-                return capacity_reject(err, YVEX_ERR_BOUNDS,
-                                       "attention component capacity aggregate overflowed");
-            }
-        }
-        if (!plan->summary.selected_layer_count)
-            plan->summary.first_layer = index;
-        plan->summary.selected_layer_count++;
-        if (!yvex_core_u64_add(plan->summary.selected_binding_count,
-                               layer->required_binding_count,
-                               &plan->summary.selected_binding_count)) {
-            yvex_graph_attention_capacity_plan_close(&plan);
-            return capacity_reject(err, YVEX_ERR_BOUNDS,
-                                   "selected attention binding count overflowed");
-        }
-        if (layer->compression_ratio > plan->summary.maximum_compression_ratio)
-            plan->summary.maximum_compression_ratio = layer->compression_ratio;
-        if (layer->sparse_topk.k > plan->summary.maximum_topk_capacity)
-            plan->summary.maximum_topk_capacity = layer->sparse_topk.k;
-    }
-    if (!plan->summary.selected_layer_count ||
-        !capacity_identity(plan, plan->summary.identity)) {
-        yvex_graph_attention_capacity_plan_close(&plan);
-        return capacity_reject(err, YVEX_ERR_STATE,
-                               "attention capacity selection or identity is incomplete");
-    }
-    *out = plan;
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-/* Purpose: borrow one sealed capacity summary without transferring plan ownership.
- * Inputs: immutable capacity plan or null.
- * Effects: none.
- * Failure: null returns null.
- * Boundary: the borrowed summary cannot outlive its plan. */
-const yvex_graph_attention_capacity_summary *
-yvex_graph_attention_capacity_plan_summary(
-    const yvex_graph_attention_capacity_plan *plan) {
-    return plan ? &plan->summary : NULL;
-}
-/* Purpose: borrow one immutable per-layer capacity decision by canonical ordinal.
- * Inputs: immutable capacity plan and layer ordinal.
- * Effects: none.
- * Failure: null or out-of-range lookup returns null.
- * Boundary: the borrowed decision cannot outlive its plan. */
-const yvex_graph_attention_capacity_layer *
-yvex_graph_attention_capacity_plan_layer(
-    const yvex_graph_attention_capacity_plan *plan, unsigned long long layer_ordinal) {
-    return plan && layer_ordinal < plan->summary.layer_count
-               ? &plan->layers[layer_ordinal] : NULL;
-}
-/* Purpose: release one capacity plan through idempotent pointer ownership.
- * Inputs: address of exclusively owned plan pointer.
- * Effects: clears caller ownership and releases the per-layer decisions and plan.
- * Failure: null and already closed ownership are harmless.
- * Boundary: releases no attention plan, state, workspace, or backend resource. */
-void yvex_graph_attention_capacity_plan_close(
-    yvex_graph_attention_capacity_plan **plan_ptr) {
-    yvex_graph_attention_capacity_plan *plan;
-    if (!plan_ptr || !*plan_ptr) return;
-    plan = *plan_ptr;
-    *plan_ptr = NULL;
-    free(plan->layers);
-    memset(plan, 0, sizeof(*plan));
-    free(plan);
-}
 typedef struct {
     const yvex_graph_family_api *family;
     const yvex_attention_plan *plan;
@@ -466,7 +223,7 @@ typedef struct {
 } attention_state;
 static const yvex_graph_attention_state_summary initial_state_summary = {
     .schema_version = YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V1,
-    .sealed = 1,
+    .sealed = 1, .persistent = 1, .position_consistent = 1,
     .generation = 1ull};
 static void state_close(attention_state **state_ptr);
 /* Purpose: project one typed history binding from the public attention-history envelope. */
@@ -513,7 +270,9 @@ static int state_reject(yvex_attention_failure *failure, unsigned long long laye
         failure->actual = actual;
         failure->reason = reason;
     }
-    yvex_error_set(err, status, "graph.attention.state", reason);
+    yvex_error_setf(err, status, "graph.attention.state",
+                    "%s (layer=%llu expected=%llu actual=%llu)",
+                    reason, layer, expected, actual);
     return status;
 }
 /* Purpose: acquire one provider lifecycle lock before state mutation. */
@@ -651,7 +410,7 @@ static int state_bank_reset(attention_state_bank *bank,
                    (size_t)view->kv_state_extent * sizeof(float));
             for (element = 0ull; element < view->score_state_extent; ++element)
                 storage->auxiliary[element] = -INFINITY;
-            view->next_token_position = layer->recipe.initial_position;
+            view->next_token_position = 0ull;
             view->previous_fill = view->current_fill = view->cursor = 0ull;
         }
     }
@@ -696,7 +455,7 @@ static void state_bank_bind(attention_state_bank *bank,
  * Inputs: empty bank, prepared component recipe, and checked byte accounting.
  * Effects: owns every declared history or rolling range without interpreting family policy.
  * Failure: checked allocation or malformed component storage releases the entire partial bank.
- * Boundary: creates one candidate/committed bank, not a persistent KV allocation. */
+ * Boundary: creates one allocation-stable candidate/committed persistent-state bank. */
 static int state_bank_open(attention_state_bank *bank,
                            attention_layer_state *layer,
                            unsigned long long *bytes,
@@ -940,6 +699,41 @@ static int state_layout_identity(const attention_state *state,
     yvex_sha256_hex(digest, output);
     return 1;
 }
+/* Purpose: identify the complete committed or staged provider content without hashing pointers.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+static int state_content_identity(const attention_state *state,
+                                  unsigned long long candidate_index,
+                                  const attention_layer_state *candidate,
+                                  int staged,
+                                  const char *layout_identity,
+                                  char output[YVEX_SHA256_HEX_CAP]) {
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index, count = 0ull;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.graph.attention.persistent-state.v1") ||
+        !yvex_sha256_update_text(&hash, layout_identity))
+        return 0;
+    for (index = 0ull; index < state->layer_count; ++index) {
+        const attention_layer_state *layer =
+            candidate && index == candidate_index ? candidate : &state->layers[index];
+        const attention_state_bank *bank;
+        if (!layer->prepared) continue;
+        bank = &layer->bank[staged && layer->staged
+                                ? 1u - layer->committed_bank
+                                : layer->committed_bank];
+        if (!yvex_sha256_update_u64(&hash, index) ||
+            !yvex_sha256_update_text(&hash, bank->state_identity))
+            return 0;
+        ++count;
+    }
+    if (!yvex_sha256_update_u64(&hash, count) ||
+        !yvex_sha256_final(&hash, digest))
+        return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
 /* Purpose: validate and copy one rolling publication into candidate-owned storage. */
 static int state_rolling_apply(yvex_attention_rolling_state_view *view,
                                float *kv, float *score,
@@ -1136,7 +930,7 @@ static int state_delta_identity(attention_state_transaction *transaction) {
  * Inputs: admitted family graph ABI, sealed plan, memory budget, and output ownership slot.
  * Effects: owns synchronization and immutable per-layer plan copies; allocates no history bank.
  * Failure: invalid owners, allocation, plan lookup, or identity failure releases all partial state.
- * Boundary: creates ephemeral session state only and never allocates persistent KV. */
+ * Boundary: allocates session-owned persistent state and no backend placement. */
 static int state_open(
     attention_state **out, const yvex_graph_family_api *family,
     const yvex_attention_plan *plan, unsigned long long maximum_host_bytes,
@@ -1271,6 +1065,16 @@ static int state_prepare(
     if (rc == YVEX_OK) {
         unsigned long long prepared_next, generation_next;
         char layout_identity[YVEX_SHA256_HEX_CAP];
+        char content_identity[YVEX_SHA256_HEX_CAP];
+        unsigned long long capacity_next =
+            state->summary.prepared_layer_count
+                ? (recipe->final_position < state->summary.capacity
+                       ? recipe->final_position : state->summary.capacity)
+                : recipe->final_position;
+        int position_consistent =
+            state->summary.position_consistent &&
+            (!state->summary.prepared_layer_count ||
+             state->summary.next_position == recipe->initial_position);
         if (!yvex_core_u64_add(state->summary.prepared_layer_count, 1ull,
                                &prepared_next) ||
             !yvex_core_u64_add(state->summary.generation, 1ull,
@@ -1285,13 +1089,29 @@ static int state_prepare(
                               "prepared state layout identity failed", YVEX_ERR_STATE, err);
             goto done;
         }
+        if (!state_content_identity(state, layer_index, &candidate, 0,
+                                    layout_identity, content_identity)) {
+            rc = state_reject(failure, layer_index, 1ull, 0ull,
+                              "prepared state content identity failed",
+                              YVEX_ERR_STATE, err);
+            goto done;
+        }
         state->layers[layer_index] = candidate;
         state->summary.prepared_layer_count = prepared_next;
         state->summary.generation = generation_next;
         state->summary.allocated_bytes = total;
+        state->summary.capacity = capacity_next;
+        state->summary.position_consistent = position_consistent;
+        if (prepared_next == 1ull) {
+            state->summary.committed_sequence_length = recipe->initial_position;
+            state->summary.next_position = recipe->initial_position;
+        }
         yvex_core_text_copy(state->summary.state_layout_identity,
                             sizeof(state->summary.state_layout_identity),
                             layout_identity);
+        yvex_core_text_copy(state->summary.state_content_identity,
+                            sizeof(state->summary.state_content_identity),
+                            content_identity);
         memset(&candidate, 0, sizeof(candidate));
     }
     if (rc != YVEX_OK) {
@@ -1321,9 +1141,11 @@ static const yvex_attention_history_view *state_view(
         view = &layer->bank[layer->committed_bank].view;
     else if (!state->summary.invalidated && !state->summary.cancelled &&
              layer->prepared && kind == YVEX_ATTENTION_STATE_VIEW_CANDIDATE &&
-             state->transaction.active && state->transaction.candidate_active &&
-             !state->transaction.failed &&
-             state->transaction.layer == layer)
+             (!state->transaction.active ||
+              (!state->transaction.failed &&
+               (layer->staged ||
+                (state->transaction.candidate_active &&
+                 state->transaction.layer == layer)))))
         view = &layer->bank[1u - layer->committed_bank].view;
     (void)pthread_mutex_unlock(&mutable_state->mutex);
     return view;
@@ -1345,7 +1167,7 @@ static int state_summary_add(unsigned long long entries,
  * Inputs: synchronized provider, prepared layer ordinal, and fixed identity output.
  * Effects: copies identity bytes while holding the provider lifecycle lock.
  * Failure: rejects unprepared or out-of-range layers without exposing candidate state.
- * Boundary: identity covers ephemeral attention history, never persistent KV ownership. */
+ * Boundary: identity covers persistent attention history without pointers or backend placement. */
 static int state_identity_copy(
     attention_state *state, unsigned long long layer_index,
     char output[YVEX_SHA256_HEX_CAP], yvex_error *err) {
@@ -1375,7 +1197,7 @@ static int state_identity_copy(
  * Inputs: open provider and caller-owned output.
  * Effects: reads all prepared layers under the provider mutex without exposing mutable pointers.
  * Failure: malformed ownership or aggregate overflow publishes no partial snapshot.
- * Boundary: snapshot evidence never authorizes persistent KV. */
+ * Boundary: snapshot evidence reports state and cannot authorize higher runtime capabilities. */
 static int state_summary_copy(
     const attention_state *state,
     yvex_graph_attention_state_summary *out, yvex_error *err) {
@@ -1458,19 +1280,43 @@ static int state_begin(
     layer = &state->layers[layer_index];
     if (!layer->prepared || state->transaction.candidate_active ||
         state->transaction.failed || layer->staged || state->summary.cancelled ||
-        state->summary.invalidated) {
+        state->summary.invalidated || !state->summary.position_consistent) {
         rc = state_reject(failure, layer_index, 0ull, 1ull,
                           state->summary.invalidated
                               ? "attention state provider is invalidated"
                               : state->summary.cancelled
                                     ? "attention state provider is cancelled"
+                              : !layer->prepared
+                                    ? "attention state layer is not prepared"
+                              : state->transaction.candidate_active
+                                    ? "another attention state candidate is active"
+                              : state->transaction.failed
+                                    ? "attention state batch is already failed"
                               : layer->staged
                                     ? "attention state layer is already staged"
+                              : !state->summary.position_consistent
+                                    ? "attention state layer positions disagree"
                                     : "attention state layer is not transaction-ready",
                           state->summary.invalidated
                               ? YVEX_ERR_STATE
                               : state->summary.cancelled ? YVEX_ERR_CANCELLED : YVEX_ERR_STATE,
                           err);
+        goto done;
+    }
+    if (token_position > ULLONG_MAX - token_count ||
+        token_position + token_count > layer->recipe.final_position ||
+        (state->transaction.active &&
+         (state->transaction.batch_position != token_position ||
+          state->transaction.batch_token_count != token_count))) {
+        if (state->transaction.active) state->transaction.failed = 1;
+        rc = state_reject(
+            failure, layer_index, layer->recipe.final_position,
+            token_position > ULLONG_MAX - token_count
+                ? ULLONG_MAX : token_position + token_count,
+            state->transaction.active
+                ? "attention state layer range differs inside one model transaction"
+                : "attention state append exceeds its sealed capacity",
+            state->transaction.active ? YVEX_ERR_STATE : YVEX_ERR_BOUNDS, err);
         goto done;
     }
     rc = state_cancel_check(state, cancellation, layer_index,
@@ -1497,6 +1343,8 @@ static int state_begin(
     if (!state->transaction.active) {
         memset(&state->transaction, 0, sizeof(state->transaction));
         state->transaction.active = 1;
+        state->transaction.batch_position = token_position;
+        state->transaction.batch_token_count = token_count;
         if (cancellation) {
             state->transaction.cancellation = *cancellation;
             state->transaction.cancellation_bound = 1;
@@ -1620,12 +1468,14 @@ done:
  * Inputs: valid batch with no current candidate and one or more staged layers.
  * Effects: preflights all facts, then swaps every selector without a later fallible step.
  * Failure: malformed, invalidated, injected, or overflowed batches leave every prior committed.
- * Boundary: this is the only multi-layer publication point; it never owns persistent KV. */
+ * Boundary: this is the only atomic multi-layer persistent-state publication point. */
 static int state_publish(
     attention_state *state,
     yvex_attention_failure *failure, yvex_error *err) {
     attention_state_transaction *transaction;
-    unsigned long long index, staged = 0ull, commit_next;
+    unsigned long long index, staged = 0ull, commit_next, generation_next;
+    unsigned long long next_position = ULLONG_MAX;
+    char content_identity[YVEX_SHA256_HEX_CAP];
     int injected;
     int rc = YVEX_OK;
     rc = state_enter(state, YVEX_ATTENTION_NO_LAYER, 0ull,
@@ -1637,6 +1487,8 @@ static int state_publish(
     injected = getenv("YVEX_TEST_RUNTIME_STATE_PUBLISH_FAILURE") != NULL;
     if (!transaction->active || transaction->candidate_active || transaction->failed ||
         !transaction->staged_count || staged != transaction->staged_count ||
+        staged != state->summary.prepared_layer_count ||
+        transaction->batch_position != state->summary.next_position ||
         state->summary.cancelled || state->summary.invalidated || injected) {
         rc = state_reject(
             failure, YVEX_ATTENTION_NO_LAYER, transaction->staged_count, staged,
@@ -1651,6 +1503,19 @@ static int state_publish(
                           "attention state commit count overflowed", YVEX_ERR_BOUNDS, err);
         goto done;
     }
+    if (!yvex_core_u64_add(state->summary.generation, 1ull, &generation_next) ||
+        !yvex_core_u64_add(transaction->batch_position,
+                           transaction->batch_token_count, &next_position) ||
+        next_position > state->summary.capacity ||
+        !state_content_identity(state, ULLONG_MAX, NULL, 1,
+                                state->summary.state_layout_identity,
+                                content_identity)) {
+        rc = state_reject(failure, YVEX_ATTENTION_NO_LAYER,
+                          state->summary.capacity, next_position,
+                          "attention state publication identity or position failed",
+                          YVEX_ERR_BOUNDS, err);
+        goto done;
+    }
     rc = state_cancel_check(state,
                             transaction->cancellation_bound ? &transaction->cancellation : NULL,
                             YVEX_ATTENTION_NO_LAYER, "attention state cancelled before publication",
@@ -1663,6 +1528,12 @@ static int state_publish(
         layer->staged = 0;
     }
     state->summary.commit_count = commit_next;
+    state->summary.generation = generation_next;
+    state->summary.committed_sequence_length = next_position;
+    state->summary.next_position = next_position;
+    yvex_core_text_copy(state->summary.state_content_identity,
+                        sizeof(state->summary.state_content_identity),
+                        content_identity);
     memset(transaction, 0, sizeof(*transaction));
 done:
     return state_transaction_result(state, rc, failure, err);
@@ -1704,12 +1575,13 @@ static int state_abort(
  * Inputs: valid idle provider with allocation-stable prepared layers.
  * Effects: clears committed and candidate contents, advances generation/reset evidence, and allocates nothing.
  * Failure: active, cancelled, invalidated, overflowed, or malformed state fails closed.
- * Boundary: reset preserves capacities and layout; it does not create or emulate persistent KV. */
+ * Boundary: reset preserves the persistent layout, capacity, and allocation. */
 static int state_reset(
     attention_state *state,
     yvex_attention_failure *failure, yvex_error *err) {
     const yvex_attention_summary *plan_summary;
     unsigned long long index, generation, reset_count;
+    char content_identity[YVEX_SHA256_HEX_CAP];
     int rc = YVEX_OK;
     rc = state_enter(state, YVEX_ATTENTION_NO_LAYER, 0ull,
                      "attention state provider is required", failure, err);
@@ -1746,9 +1618,24 @@ static int state_reset(
         layer->committed_bank = 0u;
         layer->staged = 0;
     }
+    if (!state_content_identity(state, ULLONG_MAX, NULL, 0,
+                                state->summary.state_layout_identity,
+                                content_identity)) {
+        state->summary.invalidated = 1;
+        rc = state_reject(failure, YVEX_ATTENTION_NO_LAYER, 1ull, 0ull,
+                          "attention state reset content identity failed",
+                          YVEX_ERR_STATE, err);
+        goto done;
+    }
     memset(&state->transaction, 0, sizeof(state->transaction));
     state->summary.generation = generation;
     state->summary.reset_count = reset_count;
+    state->summary.committed_sequence_length = 0ull;
+    state->summary.next_position = 0ull;
+    state->summary.position_consistent = 1;
+    yvex_core_text_copy(state->summary.state_content_identity,
+                        sizeof(state->summary.state_content_identity),
+                        content_identity);
 done:
     return state_unlock_result(state, rc, failure, err);
 }
@@ -1808,8 +1695,8 @@ static void state_close(attention_state **state_ptr) {
     memset(state, 0, sizeof(*state));
     free(state);
 }
-/* Purpose: project one recipe into the default ephemeral state implementation. */
-static int provider_ephemeral_prepare(void *context, unsigned long long layer_index,
+/* Purpose: project one recipe into the canonical persistent state implementation. */
+static int provider_persistent_prepare(void *context, unsigned long long layer_index,
                                       const yvex_attention_state_recipe *recipe,
                                       const yvex_attention_history_view *initial_history,
                                       yvex_attention_failure *failure, yvex_error *err) {
@@ -1817,17 +1704,17 @@ static int provider_ephemeral_prepare(void *context, unsigned long long layer_in
                          failure, err);
 }
 /* Purpose: copy provider lifecycle facts without exposing concrete storage. */
-static int provider_ephemeral_summary(void *context, yvex_graph_attention_state_summary *out,
+static int provider_persistent_summary(void *context, yvex_graph_attention_state_summary *out,
                                       yvex_error *err) {
     return state_summary_copy((const attention_state *)context, out, err);
 }
 /* Purpose: borrow one immutable committed or candidate history through the provider ABI. */
-static const yvex_attention_history_view *provider_ephemeral_view(
+static const yvex_attention_history_view *provider_persistent_view(
     void *context, unsigned long long layer_index, yvex_attention_state_view_kind kind) {
     return state_view((const attention_state *)context, layer_index, kind);
 }
 /* Purpose: copy one committed layer identity through the opaque provider boundary. */
-static int provider_ephemeral_identity(void *context, unsigned long long layer_index,
+static int provider_persistent_identity(void *context, unsigned long long layer_index,
                                        char output[YVEX_SHA256_HEX_CAP], yvex_error *err) {
     return state_identity_copy((attention_state *)context, layer_index, output, err);
 }
@@ -1835,8 +1722,8 @@ static int provider_ephemeral_identity(void *context, unsigned long long layer_i
  * Inputs: prepared provider, exact layer and contiguous token range.
  * Effects: opens one candidate transaction and borrows its committed history.
  * Failure: invalid or non-contiguous state preserves the committed bank.
- * Boundary: this default provider remains ephemeral and does not own persistent KV. */
-static int provider_ephemeral_begin(void *context, unsigned long long layer_ordinal,
+ * Boundary: the provider owns persistent session state but no family geometry or backend placement. */
+static int provider_persistent_begin(void *context, unsigned long long layer_ordinal,
     const yvex_attention_layer_plan *layer,
     const yvex_attention_history_view *initial_history,
     unsigned long long token_position, unsigned long long token_count,
@@ -1865,7 +1752,7 @@ static int provider_ephemeral_begin(void *context, unsigned long long layer_ordi
     return rc;
 }
 /* Purpose: apply and stage one complete publication in the default provider. */
-static int provider_ephemeral_stage(void *context,
+static int provider_persistent_stage(void *context,
     const yvex_attention_publication *publication,
     const yvex_attention_cancellation *cancellation,
     char state_delta_identity[YVEX_SHA256_HEX_CAP],
@@ -1877,18 +1764,18 @@ static int provider_ephemeral_stage(void *context,
  * Inputs: active provider transaction and typed failure outputs.
  * Effects: swaps all staged banks as one publication.
  * Failure: graph-state publication preserves the previous committed generation.
- * Boundary: commits attention-local state only, never persistent KV storage. */
-static int provider_ephemeral_commit(void *context, yvex_attention_failure *failure,
+ * Boundary: commits persistent attention state only; model phases remain external. */
+static int provider_persistent_commit(void *context, yvex_attention_failure *failure,
                                      yvex_error *err) {
     return state_publish((attention_state *)context, failure, err);
 }
 /* Purpose: discard every staged default-provider candidate without changing priors. */
-static int provider_ephemeral_abort(void *context, yvex_attention_failure *failure,
+static int provider_persistent_abort(void *context, yvex_attention_failure *failure,
                                     yvex_error *err) {
     return state_abort((attention_state *)context, failure, err);
 }
 /* Purpose: reset the default provider while retaining its prepared allocation layout. */
-static int provider_ephemeral_reset(void *context, yvex_attention_failure *failure,
+static int provider_persistent_reset(void *context, yvex_attention_failure *failure,
                                     yvex_error *err) {
     return state_reset((attention_state *)context, failure, err);
 }
@@ -1897,7 +1784,7 @@ static int provider_ephemeral_reset(void *context, yvex_attention_failure *failu
  * Effects: latches invalidation for every prepared layer.
  * Failure: synchronization refusal leaves state fail-closed.
  * Boundary: invalidation does not release storage or mutate external KV. */
-static int provider_ephemeral_invalidate(void *context, yvex_error *err) {
+static int provider_persistent_invalidate(void *context, yvex_error *err) {
     return state_invalidate((attention_state *)context, err);
 }
 /* Purpose: release one default provider through retry-safe pointer ownership.
@@ -1905,7 +1792,7 @@ static int provider_ephemeral_invalidate(void *context, yvex_error *err) {
  * Effects: closes graph state and nulls the provider context.
  * Failure: incomplete cleanup retains exact ownership for retry.
  * Boundary: never releases a runtime model, artifact, or external state provider. */
-static int provider_ephemeral_release(void **context, yvex_error *err) {
+static int provider_persistent_release(void **context, yvex_error *err) {
     attention_state *state;
     if (!context || !*context) {
         yvex_error_clear(err);
@@ -1916,18 +1803,18 @@ static int provider_ephemeral_release(void **context, yvex_error *err) {
     *context = state;
     if (state) {
         yvex_error_set(err, YVEX_ERR_STATE, "graph.state.provider.release",
-                       "ephemeral attention state cleanup is incomplete");
+                       "persistent attention state cleanup is incomplete");
         return YVEX_ERR_STATE;
     }
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: open the canonical ephemeral implementation of the graph state-provider ABI.
+/* Purpose: open the canonical persistent implementation of the graph state-provider ABI.
  * Inputs: family state recipe, sealed plan, host budget, and caller-owned output.
  * Effects: owns one bounded graph-state context behind the provider interface.
  * Failure: invalid input or state allocation publishes no provider.
  * Boundary: runtime may consume this default; KV may supply another implementation. */
-int yvex_attention_state_provider_open_ephemeral(
+int yvex_attention_state_provider_open_persistent(
     const yvex_graph_family_api *family, const yvex_attention_plan *plan,
     unsigned long long maximum_host_bytes, yvex_attention_state_provider *out,
     yvex_attention_failure *failure, yvex_error *err) {
@@ -1942,19 +1829,19 @@ int yvex_attention_state_provider_open_ephemeral(
     rc = state_open(&state, family, plan, maximum_host_bytes, failure, err);
     if (rc != YVEX_OK) return rc;
     *out = (yvex_attention_state_provider){
-        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V1,
+        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V2,
         .context = state,
-        .prepare = provider_ephemeral_prepare,
-        .summary = provider_ephemeral_summary,
-        .view = provider_ephemeral_view,
-        .identity = provider_ephemeral_identity,
-        .begin = provider_ephemeral_begin,
-        .stage = provider_ephemeral_stage,
-        .commit = provider_ephemeral_commit,
-        .abort = provider_ephemeral_abort,
-        .reset = provider_ephemeral_reset,
-        .invalidate = provider_ephemeral_invalidate,
-        .release = provider_ephemeral_release,
+        .prepare = provider_persistent_prepare,
+        .summary = provider_persistent_summary,
+        .view = provider_persistent_view,
+        .identity = provider_persistent_identity,
+        .begin = provider_persistent_begin,
+        .stage = provider_persistent_stage,
+        .commit = provider_persistent_commit,
+        .abort = provider_persistent_abort,
+        .reset = provider_persistent_reset,
+        .invalidate = provider_persistent_invalidate,
+        .release = provider_persistent_release,
     };
     yvex_error_clear(err);
     return YVEX_OK;

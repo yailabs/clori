@@ -382,10 +382,12 @@ grep -F '| `V010.CLI.GRAPH.0` | DeepSeek + common operator | `complete` |' "$pro
   fail "DeepSeek attention operator reachability is not complete"
 grep -F '| `V010.RUNTIME.1` | common | `complete` |' "$project" >/dev/null ||
   fail "common runtime model/session plane is not complete"
-grep -F '| `V010.RUNTIME.DEEPSEEK.KV.0` | DeepSeek | `active` |' "$project" >/dev/null ||
-  fail "DeepSeek KV is not active"
-grep -F '| `V010.RUNTIME.DEEPSEEK.KV.0` | DeepSeek | `active` | Allocate, index, write, read, advance, bound, clear, and release the exact persistent DeepSeek KV state used by prefill and decode. | V010.RUNTIME.1 | current |' "$project" >/dev/null ||
+grep -F '| `V010.RUNTIME.DEEPSEEK.KV.0` | DeepSeek | `complete` |' "$project" >/dev/null ||
+  fail "DeepSeek KV is not complete"
+grep -F '| `V010.RUNTIME.DEEPSEEK.KV.0` | DeepSeek | `complete` | Own exact session-local DeepSeek state for every attention class and layer through checked CPU/CUDA residency, all-layer transactional publication, causal read-after-write, capacity/position continuity, clear/reuse, invalidation, and release. | V010.RUNTIME.1 | current |' "$project" >/dev/null ||
   fail "DeepSeek KV does not depend on the common runtime milestone"
+grep -F '| `V010.RUNTIME.DEEPSEEK.PREFILL.0` | DeepSeek | `active` |' "$project" >/dev/null ||
+  fail "DeepSeek prefill is not active after persistent KV closure"
 grep -F '| V010.MODEL.TRANSFORM.IR.0 | recovered/promoted |' "$project" >/dev/null ||
   fail "quantization does not depend on the transformation IR"
 

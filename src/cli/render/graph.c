@@ -48,8 +48,8 @@ static const char *const literal_lines_0[] = {
     "           [--local-capacity N] [--compressed-capacity N] [--indexer-capacity N]",
     "",
     "example: yvex graph attention execute --target deepseek4-v4-flash --backend cpu --scope quick",
-    "boundary: the attention command executes a canonical production probe over admitted weights; it is not "
-        "prompt execution, persistent KV, transformer execution, or generation"
+    "boundary: attention commands execute canonical activations over admitted weights and session-persistent "
+        "state; they are not prompt, transformer, or generation execution"
 };
 
 #define ATTENTION_FIELD(KEY, KIND, MEMBER) \
@@ -152,16 +152,36 @@ static const yvex_cli_field_spec attention_execution_fields[] = {
 };
 static const yvex_cli_field_spec attention_state_fields[] = {
     ATTENTION_FIELD("state_layout_identity", YVEX_CLI_FIELD_TEXT_ARRAY, state_layout_identity),
+    ATTENTION_FIELD("state_content_identity", YVEX_CLI_FIELD_TEXT_ARRAY, state_content_identity),
+    ATTENTION_FIELD("state_residency_identity", YVEX_CLI_FIELD_TEXT_ARRAY, state_residency_identity),
     ATTENTION_FIELD("state_layer_count", YVEX_CLI_FIELD_U64, state_layer_count),
     ATTENTION_FIELD("state_prepared_layer_count", YVEX_CLI_FIELD_U64, state_prepared_layer_count),
     ATTENTION_FIELD("state_allocated_bytes", YVEX_CLI_FIELD_U64, state_allocated_bytes),
+    ATTENTION_FIELD("state_capacity", YVEX_CLI_FIELD_U64, state_capacity),
+    ATTENTION_FIELD("state_committed_sequence_length", YVEX_CLI_FIELD_U64,
+                    state_committed_sequence_length),
+    ATTENTION_FIELD("state_next_position", YVEX_CLI_FIELD_U64, state_next_position),
+    ATTENTION_FIELD("state_generation", YVEX_CLI_FIELD_U64, state_generation),
+    ATTENTION_FIELD("state_residency_generation", YVEX_CLI_FIELD_U64,
+                    state_residency_generation),
+    ATTENTION_FIELD("state_device_bytes", YVEX_CLI_FIELD_U64, state_device_bytes),
+    ATTENTION_FIELD("state_upload_bytes", YVEX_CLI_FIELD_U64, state_upload_bytes),
+    ATTENTION_FIELD("state_upload_count", YVEX_CLI_FIELD_U64, state_upload_count),
     ATTENTION_FIELD("state_commit_count", YVEX_CLI_FIELD_U64, state_commit_count),
     ATTENTION_FIELD("state_abort_count", YVEX_CLI_FIELD_U64, state_abort_count),
     ATTENTION_FIELD("state_cancellation_count", YVEX_CLI_FIELD_U64, state_cancellation_count),
     ATTENTION_FIELD("state_reset_count", YVEX_CLI_FIELD_U64, state_reset_count),
     ATTENTION_FIELD("state_sealed", YVEX_CLI_FIELD_BOOL, state_sealed),
+    ATTENTION_FIELD("state_persistent", YVEX_CLI_FIELD_BOOL, state_persistent),
+    ATTENTION_FIELD("state_position_consistent", YVEX_CLI_FIELD_BOOL,
+                    state_position_consistent),
+    ATTENTION_FIELD("state_cuda_ready", YVEX_CLI_FIELD_BOOL, state_cuda_ready),
     ATTENTION_FIELD("state_transaction_active", YVEX_CLI_FIELD_BOOL, state_transaction_active),
     ATTENTION_FIELD("state_validation_passed", YVEX_CLI_FIELD_BOOL, state_validation_passed),
+    ATTENTION_FIELD("state_read_after_write_verified", YVEX_CLI_FIELD_BOOL,
+                    state_read_after_write_verified),
+    ATTENTION_FIELD("state_clear_reuse_verified", YVEX_CLI_FIELD_BOOL,
+                    state_clear_reuse_verified),
 };
 static const yvex_cli_field_spec attention_runtime_fields[] = {
     ATTENTION_FIELD("artifact_hash_passes", YVEX_CLI_FIELD_U64, artifact_hash_passes),

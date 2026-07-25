@@ -1277,7 +1277,7 @@ assert result["warm_weight_upload_bytes"] == 0
 assert result["warm_host_allocations"] == 0
 assert result["warm_device_allocations"] == 0
 assert result["warm_device_frees"] == 0
-assert result["persistent_kv_ready"] is False
+assert result["persistent_kv_ready"] is True
 assert result["transformer_ready"] is False
 assert result["runtime_generation_ready"] is False
 PY
@@ -1319,6 +1319,7 @@ assert result["model_quality_evaluation_available"] is False
 assert result["agent_runtime_available"] is False
 assert result["agent_evaluation_available"] is False
 assert result["release_qualification_available"] is False
+assert result["persistent_kv_ready"] is True
 assert result["runtime_generation_ready"] is False
 PY
 

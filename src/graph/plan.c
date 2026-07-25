@@ -158,7 +158,7 @@ static void workspace_recipe_add(
         .schema_version = YVEX_ATTENTION_WORKSPACE_RECIPE_SCHEMA_V1,
         .ordinal = recipe->component_count++, .kind = slot->kind,
         .lifetime = slot->lifetime,
-        .element_count = count, .element_width = width, .alignment = 8ull,
+        .element_count = count, .element_width = width, .alignment = 256ull,
         .scales_with_tokens = slot->scales_with_tokens};
 }
 
@@ -202,7 +202,8 @@ static const workspace_recipe_slot workspace_recipe_layout[] = {
     {YVEX_ATTENTION_WORKSPACE_INDEXER_ROLLING_CANDIDATE_SCORES,
      YVEX_ATTENTION_WORKSPACE_STATE_DELTA, 0},
     {YVEX_ATTENTION_WORKSPACE_CORE_INPUT_EVIDENCE,
-     YVEX_ATTENTION_WORKSPACE_EXECUTION, 1}
+     YVEX_ATTENTION_WORKSPACE_EXECUTION, 1},
+    {YVEX_ATTENTION_WORKSPACE_OUTPUT_LOW, YVEX_ATTENTION_WORKSPACE_EXECUTION, 1}
 };
 
 /* Purpose: derive one generic attention-workspace recipe from sealed state facts.
@@ -221,7 +222,7 @@ int yvex_attention_workspace_recipe_build(
     const yvex_attention_state_component_recipe *local, *compressed, *indexer, *main, *index;
     yvex_attention_state_recipe state_copy;
     unsigned long long query, index_query = 0ull, head_bytes, index_bytes = 0ull;
-    unsigned long long input_bytes, residual_bytes, candidates = 0ull, selected = 0ull;
+    unsigned long long input_bytes, residual_bytes, output_low, candidates = 0ull, selected = 0ull;
     unsigned long long counts[sizeof(workspace_recipe_layout) / sizeof(workspace_recipe_layout[0])];
     unsigned long long widths[sizeof(workspace_recipe_layout) / sizeof(workspace_recipe_layout[0])] = {0ull};
     size_t slot;
@@ -234,6 +235,7 @@ int yvex_attention_workspace_recipe_build(
         !yvex_core_u64_mul(layer->head_dimension, sizeof(float), &head_bytes) ||
         !yvex_core_u64_mul(layer->hidden_dimension, sizeof(float), &input_bytes) ||
         !yvex_core_u64_mul(layer->residual_expanded_width, sizeof(float), &residual_bytes) ||
+        !yvex_core_u64_mul(layer->output_groups, layer->output_lora_rank, &output_low) ||
         (layer->indexer_required &&
          (!yvex_core_u64_mul(layer->indexer_heads, layer->indexer_head_dimension,
                              &index_query) ||
@@ -290,6 +292,7 @@ int yvex_attention_workspace_recipe_build(
     counts[30] = index ? index->rolling.kv_state_extent : 0ull;
     counts[31] = index ? index->rolling.score_state_extent : 0ull;
     counts[32] = evidence_level == YVEX_ATTENTION_EVIDENCE_FULL ? layer->hidden_dimension : 0ull;
+    counts[33] = output_low;
     widths[0] = scope == YVEX_ATTENTION_OPERATION_CORE ? input_bytes : residual_bytes;
     widths[1] = head_bytes;
     widths[2] = sizeof(unsigned long long);
@@ -301,7 +304,7 @@ int yvex_attention_workspace_recipe_build(
     widths[11] = widths[13] = widths[22] = widths[24] = widths[27] =
         sizeof(unsigned long long);
     widths[12] = sizeof(int);
-    for (slot = 14u; slot < 33u; ++slot)
+    for (slot = 14u; slot < 34u; ++slot)
         if (!widths[slot]) widths[slot] = sizeof(float);
     for (slot = 0u;
          slot < sizeof(workspace_recipe_layout) / sizeof(workspace_recipe_layout[0]);

@@ -272,7 +272,16 @@ static int injected_state_identity(void *context, unsigned long long layer_index
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
+static const yvex_attention_history_view injected_state_history = {.immutable = 1};
+/* Purpose: expose one immutable empty test view through the complete provider ABI. */
+static const yvex_attention_history_view *injected_state_view(
+    void *context, unsigned long long layer_index, yvex_attention_state_view_kind kind)
+{
+    (void)context;
+    (void)layer_index;
+    (void)kind;
+    return &injected_state_history;
+}
 static int injected_state_begin(
     void *context, unsigned long long layer_index,
     const yvex_attention_layer_plan *layer,
@@ -423,11 +432,19 @@ static int injected_state_factory_open(
     control->active = state;
     control->opens++;
     *out = (yvex_attention_state_provider){
-        YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V1, state,
-        injected_state_prepare, injected_state_summary, NULL, injected_state_identity,
-        injected_state_begin, injected_state_stage, injected_state_commit,
-        injected_state_abort, injected_state_reset, injected_state_invalidate,
-        injected_state_release};
+        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V2,
+        .context = state,
+        .prepare = injected_state_prepare,
+        .summary = injected_state_summary,
+        .view = injected_state_view,
+        .identity = injected_state_identity,
+        .begin = injected_state_begin,
+        .stage = injected_state_stage,
+        .commit = injected_state_commit,
+        .abort = injected_state_abort,
+        .reset = injected_state_reset,
+        .invalidate = injected_state_invalidate,
+        .release = injected_state_release};
     if (control->malformed_success) {
         control->malformed_success = 0;
         out->commit = NULL;
@@ -2580,6 +2597,10 @@ static int test_runtime_probe_consumer_boundary(
     yvex_attention_probe_result result;
     yvex_runtime_model_failure model_failure;
     yvex_attention_failure attention_failure;
+    yvex_graph_attention_state_summary state_before, state_after;
+    yvex_runtime_state_residency_summary state_residency;
+    yvex_runtime_session_summary session_summary;
+    const yvex_attention_history_view *stable_view;
     yvex_error err;
     int rc;
 
@@ -2618,6 +2639,40 @@ static int test_runtime_probe_consumer_boundary(
         yvex_runtime_session_prepare_attention_probe_state(
             session, model, capacity, &attention_failure, &err) == YVEX_OK,
         "matching runtime owners prepare canonical probe state");
+    stable_view = yvex_runtime_session_view_get(session)->attention_state_provider->view(
+        yvex_runtime_session_view_get(session)->attention_state_provider->context, 0ull,
+        YVEX_ATTENTION_STATE_VIEW_COMMITTED);
+    YVEX_TEST_ASSERT(stable_view, "persistent state exposes its initial committed view");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_view_get(session)->attention_state_provider->summary(
+            yvex_runtime_session_view_get(session)->attention_state_provider->context,
+            &state_before, &err) == YVEX_OK &&
+            yvex_runtime_state_residency_summary_copy(
+                yvex_runtime_session_view_get(session)->state_residency,
+                &state_residency, &err) == YVEX_OK &&
+            yvex_runtime_session_summary_copy(session, &session_summary, &err) == YVEX_OK,
+        "probe preparation seals readable persistent provider, residency, and session summaries");
+    YVEX_TEST_ASSERT(
+        state_before.persistent && state_before.position_consistent &&
+            state_before.prepared_layer_count == 1ull &&
+            state_residency.sealed && state_residency.layer_count == 1ull &&
+            !state_residency.cuda_ready && !state_residency.host_bytes &&
+            !state_residency.device_bytes && session_summary.capabilities.persistent_kv_ready,
+        "CPU session admits persistent state only after complete plan and residency coverage");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_prepare_persistent_state(
+            session, capacity, &model_failure, &err) == YVEX_ERR_STATE &&
+            yvex_runtime_session_reset_persistent_state(
+                session, &model_failure, &err) == YVEX_OK &&
+            yvex_runtime_session_view_get(session)->attention_state_provider->summary(
+                yvex_runtime_session_view_get(session)->attention_state_provider->context,
+                &state_after, &err) == YVEX_OK &&
+            state_after.generation == state_before.generation + 1ull &&
+            state_after.reset_count == state_before.reset_count + 1ull &&
+            stable_view == yvex_runtime_session_view_get(session)->attention_state_provider->view(
+                yvex_runtime_session_view_get(session)->attention_state_provider->context, 0ull,
+                YVEX_ATTENTION_STATE_VIEW_COMMITTED),
+        "persistent state refuses duplicate seal and clears through allocation-stable reuse");
     memset(&probe_request, 0, sizeof(probe_request));
     memset(&result, 0, sizeof(result));
     probe_request.backend = YVEX_BACKEND_KIND_CPU;

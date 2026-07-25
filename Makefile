@@ -14,6 +14,8 @@
 #   make test
 #   make test-core
 #   make test-runtime
+#   make test-runtime-deepseek-kv-live \
+#       YVEX_RUNTIME_BINDING=/absolute/file.yvex-runtime-binding
 #   make test-runtime-benchmark-chart
 #   make test-runtime-benchmark-chart-live YVEX_RUNTIME_BENCHMARK_DIR=/absolute/path \
 #       YVEX_RUNTIME_BINDING=/absolute/file.yvex-runtime-binding
@@ -39,7 +41,7 @@
 	test-runtime-operator test-runtime-digests test-runtime-family-neutrality \
 	test-runtime-state test-runtime-benchmark test-runtime-benchmark-chart \
 	test-runtime-benchmark-chart-live update-runtime-benchmark-charts \
-	test-runtime-attention-live \
+	test-runtime-attention-live test-runtime-deepseek-kv-live \
 	test-runtime test-runtime-asan test-runtime-asan-live \
 	test-runtime-ubsan test-runtime-ubsan-live test-runtime-sanitizers \
 	test-runtime-sanitizers-live test-materialize-live-plan \
@@ -355,7 +357,7 @@ info:
 	@echo "daemon: ./yvexd bounded status shell"
 	@echo "runtime_attention: CPU eager and admitted GB10 CUDA eager/piecewise/full implemented"
 	@echo "benchmark_attention: identity-bound baseline, JSON/CSV, and deterministic SVG capability implemented"
-	@echo "persistent_kv: not implemented"
+	@echo "persistent_kv: session-owned DeepSeek CPU/CUDA state implemented"
 	@echo "full_model_inference: not implemented"
 	@echo "generation: not implemented"
 	@echo "release: blocked"
@@ -697,6 +699,40 @@ test-runtime-attention-live: $(ATTENTION_LIVE_RUNNER)
 	cmp "$$tmp_dir/first.out" "$$tmp_dir/second.out"; \
 	cat "$$tmp_dir/first.out"; \
 	echo "runtime attention live repeat: byte-identical"
+
+# This operator lane proves all 43 real layers consume session-persistent state
+# on CPU and CUDA without retaining the external artifact or result files.
+test-runtime-deepseek-kv-live: cuda
+	@set -eu; \
+	tmp_tag=runtime-deepseek-kv-live; \
+	$(ATTENTION_OWNED_TMP_BEGIN) \
+	binding='$(YVEX_RUNTIME_BINDING)'; \
+	case "$$binding" in /*) ;; *) \
+		echo "YVEX_RUNTIME_BINDING must be an absolute file" >&2; exit 2;; \
+	esac; \
+	test -f "$$binding" && test ! -L "$$binding" || { \
+		echo "runtime binding must be a regular non-symlink file" >&2; exit 2; }; \
+	for backend in cpu cuda; do \
+		$(YVEX_BIN) graph attention state exercise --target deepseek4-v4-flash \
+			--models-root "$(DEEPSEEK_OPERATOR_MODELS_ROOT)" \
+			--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
+			--backend "$$backend" --phase prefill --mode eager --scope full \
+			--operation-scope core --tokens 2 --probe canonical --progress off \
+			--output json >"$$tmp_dir/$$backend.json"; \
+	done; \
+	python3 -c 'import json,sys; rows=[json.load(open(p,encoding="utf-8")) for p in sys.argv[1:]]; \
+		assert all(r["status"]=="complete" and r["layers_executed"]==43 and \
+		r["bindings_executed"]==634 and r["swa_layers_executed"]==2 and \
+		r["csa_layers_executed"]==21 and r["hca_layers_executed"]==20 and \
+		r["state_layer_count"]==43 and r["state_prepared_layer_count"]==43 and \
+		r["state_persistent"] and r["state_position_consistent"] and \
+		r["state_read_after_write_verified"] and r["state_clear_reuse_verified"] and \
+		r["persistent_kv_ready"] and not r["runtime_generation_ready"] for r in rows); \
+		assert not rows[0]["state_cuda_ready"] and rows[1]["state_cuda_ready"]; \
+		assert rows[0]["tensor_output_digest"]==rows[1]["tensor_output_digest"]; \
+		assert rows[0]["state_delta_digest"]==rows[1]["state_delta_digest"]' \
+		"$$tmp_dir/cpu.json" "$$tmp_dir/cuda.json"; \
+	echo "persistent DeepSeek KV live: CPU/CUDA 43 layers and 634 bindings"
 
 test-attention-cli-live: $(YVEX_BIN) tests/cli/attention_graph.sh
 	@set -eu; \

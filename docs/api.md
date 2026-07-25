@@ -119,7 +119,7 @@ The internal runtime is family-neutral. Its main objects are:
 | `yvex_runtime_binding` | immutable content-addressed bridge from an admitted artifact to runtime identities and executable requirements |
 | `yvex_runtime_family_adapter` | typed family projection; DeepSeek is the first admitted adapter, not a separate runtime |
 | `yvex_runtime_model` | immutable verified artifact handle, binding, imported descriptor/plan and read-only resident weights |
-| `yvex_runtime_execution_session` | mutable backend context, reusable workspace, attention-local state, cancellation and CUDA Graph registry |
+| `yvex_runtime_execution_session` | mutable backend context, reusable workspace, persistent attention state/residency, cancellation and CUDA Graph registry |
 | execution descriptor | canonical pointer-free identity over phase, mode, scope, geometry, residency, workspace, state and device facts |
 
 The binding is generated transactionally outside the repository, named by its
@@ -134,10 +134,17 @@ attention graph and resident weight pack. Before and after execution, snapshot
 drift invalidates the model, sessions, residency, workspace, graph executables
 and candidate state.
 
-Sessions own mutable state. Prepared steady-state execution performs no host or
-device allocation, weight read, upload, workspace resize or graph capture. The
-runtime refuses requests outside the prepared capacities instead of resizing a
-captured execution implicitly.
+Sessions own mutable state. `yvex_runtime_session_prepare_persistent_state`
+seals the provider layout and CPU/CUDA residency for an exact capacity;
+`yvex_runtime_session_reset_persistent_state` clears committed content while
+retaining compatible allocation. The graph-state ABI provides checked
+begin/stage/commit/abort, committed/candidate views, summaries, invalidation,
+and release. These declarations are internal C contracts, not installed ABI.
+
+Prepared steady-state execution performs no host or device allocation, weight
+read, upload, workspace resize or graph capture. The runtime refuses requests
+outside the prepared capacities instead of resizing a captured execution
+implicitly.
 
 ### Internal DeepSeek Attention Operator Boundary
 
@@ -155,8 +162,9 @@ The operator distinguishes:
 - attention core, attention envelope and complete release-attention-set scopes.
 
 These phase names do not mean tokenizer-backed prompt prefill or model decode.
-Persistent KV, embedding, MoE, transformer composition, logits, sampling and
-generation remain outside this API.
+The same operator may consume and publish the session-owned persistent
+attention-state provider. Embedding, full-model prefill, MoE, transformer
+composition, logits, sampling and generation remain outside this API.
 
 CPU admits eager execution. CUDA admits eager, piecewise CUDA Graph and full
 CUDA Graph execution plus an `auto` dispatcher. Explicit mode requests either
@@ -202,8 +210,10 @@ yvex graph attention benchmark compare
 
 `prepare` is the compiler-side producer for an external runtime binding.
 Execution actions require the binding and do not regenerate it. `plan` seals a
-request descriptor without numerical dispatch. State and graph-registry actions
-operate on real process-local session state rather than report-only labels.
+request descriptor without numerical dispatch. State actions allocate and
+exercise the real process-local persistent provider through multiple production
+executions, including causal read-after-write and clear/reuse. Graph-registry
+actions operate on the same session rather than report-only labels.
 Registry inspection reports captured kernel, copy and memset nodes plus capture,
 instantiation, update and replay timings. It is not a persistent cross-process
 graph cache.
@@ -270,8 +280,9 @@ benchmark readiness. Compatibility booleans may be derived from that lattice;
 they are not independent capability authorities.
 
 The current runtime supports production DeepSeek attention over admitted
-weights. It does not provide persistent KV, tokenizer-backed prompt prefill,
-MoE, a complete transformer, model decode, logits, sampling, text generation,
+weights and session-owned persistent attention state on CPU and the admitted
+GB10 CUDA path. It does not provide tokenizer-backed prompt prefill, MoE, a
+complete transformer, model decode, logits, sampling, text generation,
 evaluation, a full-model benchmark or release readiness.
 
 ## Extension Rules

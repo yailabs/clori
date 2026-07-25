@@ -1,6 +1,6 @@
 # YVEX Operator Runbook
 
-Date: 2026-07-22
+Date: 2026-07-25
 Status: runbook index and repository operation boundary
 
 ## Purpose
@@ -16,8 +16,9 @@ $HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash
 ```
 
 The canonical full target is `deepseek4-v4-flash`. Its selected GGUF and
-common attention runtime are admitted; persistent KV, transformer composition,
-and model generation remain unsupported.
+common attention runtime, including session-owned persistent attention state,
+are admitted. Tokenizer-backed prefill, transformer composition, and model
+generation remain unsupported.
 
 ## Runbook Index
 
@@ -32,10 +33,10 @@ Active Next are defined only in `../PROJECT.md`.
 
 ## Current Entry
 
-Use the DeepSeek runbook for source verification and real artifact-backed
-attention execution. Use the common runbook for repository validation. Do not
-misclassify the attention activation probe as prompt prefill, model decode, or
-generation.
+Use the DeepSeek runbook for source verification, real artifact-backed
+attention execution, and persistent-state exercise. Use the common runbook for
+repository validation. Do not misclassify the attention activation probe or
+its state lifecycle as prompt prefill, model decode, or generation.
 
 The attention `qualify` surface separates software acceptance, numerical
 conformance and runtime reliability. The attention `benchmark` surface measures

@@ -138,6 +138,8 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
                          "cuMemFreeAsync", NULL);
     load_optional_symbol(driver->library, (void **)&driver->cuMemcpyHtoDAsync_v2,
                          "cuMemcpyHtoDAsync_v2", "cuMemcpyHtoDAsync");
+    load_optional_symbol(driver->library, (void **)&driver->cuMemcpyDtoDAsync_v2,
+                         "cuMemcpyDtoDAsync_v2", "cuMemcpyDtoDAsync");
     load_optional_symbol(driver->library, (void **)&driver->cuMemcpyDtoHAsync_v2,
                          "cuMemcpyDtoHAsync_v2", "cuMemcpyDtoHAsync");
     load_optional_symbol(driver->library, (void **)&driver->cuMemsetD8Async,

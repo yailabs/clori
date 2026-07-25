@@ -119,9 +119,13 @@ int yvex_cuda_work_allocate(yvex_cuda_work *work,
     } else if (!work->raw_only && work->backend->workspace_device_tensor) {
         if (failure)
             *failure = YVEX_CUDA_WORK_FAILURE_BUDGET;
-        yvex_error_set(err, acquired == YVEX_BACKEND_RESIDENT_INVALID
-                                ? YVEX_ERR_BOUNDS : YVEX_ERR_NOMEM,
-                       stage, "CUDA reusable workspace capacity is insufficient");
+        yvex_error_setf(
+            err, acquired == YVEX_BACKEND_RESIDENT_INVALID
+                     ? YVEX_ERR_BOUNDS : YVEX_ERR_NOMEM,
+            stage,
+            "CUDA reusable workspace needs %zu bytes at cursor %llu of %llu",
+            bytes, work->backend->workspace_cursor,
+            work->backend->workspace_bytes);
         return acquired == YVEX_BACKEND_RESIDENT_INVALID ? YVEX_ERR_BOUNDS
                                                          : YVEX_ERR_NOMEM;
     } else {
@@ -313,8 +317,16 @@ static int attention_allocate(yvex_cuda_work *work,
         : code == YVEX_BACKEND_ATTENTION_FAILURE_COPY
               ? "CUDA attention device initialization failed"
               : "CUDA attention device allocation failed";
-    return attention_fail(failure, code, stage, bytes, 0ull, err,
-                                    (yvex_status)rc, message);
+    rc = attention_fail(failure, code, stage, bytes, 0ull, err,
+                        (yvex_status)rc, message);
+    if (code == YVEX_BACKEND_ATTENTION_FAILURE_BUDGET &&
+        work->backend->workspace_device_tensor)
+        yvex_error_setf(
+            err, (yvex_status)rc, stage,
+            "CUDA reusable workspace needs %zu bytes at cursor %llu of %llu",
+            bytes, work->backend->workspace_cursor,
+            work->backend->workspace_bytes);
+    return rc;
 }
 
 /* Purpose: initialize an already allocated attention range inside eager or captured execution.

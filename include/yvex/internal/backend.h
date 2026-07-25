@@ -9,14 +9,12 @@
  * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
 #ifndef INCLUDE_YVEX_INTERNAL_BACKEND_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_BACKEND_H_INCLUDED
-
 #include <limits.h>
 #include <stdatomic.h>
 #include <yvex/backend.h>
 #include <yvex/core.h>
 #include <yvex/internal/core.h>
 #include <yvex/model.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -205,6 +203,9 @@ typedef struct yvex_backend_vtable {
     int (*host_workspace_free)(yvex_backend *backend, unsigned char **base,
                                yvex_error *err);
 } yvex_backend_vtable;
+typedef int (*yvex_backend_state_resolve_fn)(
+    const void *context, const void *host, unsigned long long bytes,
+    unsigned long long *device_address);
 struct yvex_backend {
     yvex_backend_kind kind;
     _Atomic(yvex_backend_status) status;
@@ -221,6 +222,9 @@ struct yvex_backend {
     const yvex_device_tensor *resident_device_tensor;
     unsigned long long resident_device_address;
     unsigned long long resident_generation;
+    const void *state_residency_context;
+    yvex_backend_state_resolve_fn state_residency_resolve;
+    unsigned long long state_residency_generation;
     const yvex_device_tensor *workspace_device_tensor;
     unsigned long long workspace_device_address;
     unsigned long long workspace_bytes;
@@ -265,7 +269,6 @@ static inline int backend_variant_supported(const yvex_backend *backend,
 {
     yvex_backend_capability_result result;
     yvex_error err;
-
     yvex_error_clear(&err);
     return yvex_backend_query_capability(backend, variant, &result, &err) == YVEX_OK &&
            result.state == YVEX_BACKEND_CAPABILITY_SUPPORTED;
@@ -361,6 +364,14 @@ int yvex_backend_resident_attach(yvex_backend *backend, const unsigned char *hos
 void yvex_backend_resident_detach(yvex_backend *backend);
 int yvex_backend_resident_resolve(const yvex_backend *backend, const unsigned char *host,
                                   unsigned long long bytes, unsigned long long *device_address);
+int yvex_backend_state_residency_attach(
+    yvex_backend *backend, const void *context,
+    yvex_backend_state_resolve_fn resolve, unsigned long long generation,
+    yvex_error *err);
+void yvex_backend_state_residency_detach(yvex_backend *backend);
+int yvex_backend_state_residency_resolve(
+    const yvex_backend *backend, const void *host, unsigned long long bytes,
+    unsigned long long *device_address);
 int yvex_backend_workspace_attach(yvex_backend *backend,
                                   const yvex_device_tensor *device_tensor, unsigned long long generation,
                                   yvex_error *err);
@@ -409,7 +420,6 @@ int yvex_backend_validate_mlp(const yvex_backend *backend,
                               unsigned long long *down_offset, const char *where, yvex_error *err);
 int yvex_backend_open_cuda_impl(yvex_backend **out, const char *device,
                                 unsigned long long memory_limit_bytes, yvex_error *err);
-
 /* CUDA launch-graph lifecycle shared by runtime execution sessions. */
 #define YVEX_BACKEND_CUDA_GRAPH_SCHEMA 1u
 #define YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP 65u
@@ -422,7 +432,6 @@ typedef enum {
     YVEX_BACKEND_CUDA_GRAPH_INVALIDATED,
     YVEX_BACKEND_CUDA_GRAPH_FAILED
 } yvex_backend_cuda_graph_state;
-
 typedef enum {
     YVEX_BACKEND_CUDA_GRAPH_REASON_NONE = 0,
     YVEX_BACKEND_CUDA_GRAPH_REASON_NOT_CUDA,
@@ -442,13 +451,11 @@ typedef enum {
     YVEX_BACKEND_CUDA_GRAPH_REASON_SYNCHRONIZE_FAILED,
     YVEX_BACKEND_CUDA_GRAPH_REASON_CLEANUP_FAILED
 } yvex_backend_cuda_graph_reason;
-
 typedef enum {
     YVEX_BACKEND_CUDA_CAPTURE_GLOBAL = 0,
     YVEX_BACKEND_CUDA_CAPTURE_THREAD_LOCAL,
     YVEX_BACKEND_CUDA_CAPTURE_RELAXED
 } yvex_backend_cuda_capture_mode;
-
 typedef struct {
     unsigned int schema;
     yvex_backend_cuda_graph_state state;
@@ -457,19 +464,16 @@ typedef struct {
     int edge_inventory_available, async_memory_available, async_copy_available;
     int pinned_host_memory_available, event_timing_available;
 } yvex_backend_cuda_graph_capability;
-
 typedef struct {
     unsigned int schema;
     yvex_backend_cuda_capture_mode capture_mode;
     const char *compatibility_identity;
 } yvex_backend_cuda_graph_options;
-
 typedef struct {
     unsigned long long node_count, edge_count, kernel_node_count, memcpy_node_count;
     unsigned long long memset_node_count, host_node_count, child_graph_node_count;
     unsigned long long event_node_count, memory_node_count, other_node_count;
 } yvex_backend_cuda_graph_inventory;
-
 typedef struct {
     unsigned int schema;
     yvex_backend_cuda_graph_state state;
@@ -484,7 +488,6 @@ typedef struct {
     char launch_graph_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
     char graph_exec_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
 } yvex_backend_cuda_graph_info;
-
 /* Session-selected CUDA attention execution over the graph lifecycle above. */
 #define YVEX_BACKEND_CUDA_ATTENTION_GRAPH_SCHEMA 1u
 #define YVEX_BACKEND_CUDA_CAPTURE_BUCKET_CAP 64u
@@ -590,9 +593,7 @@ int yvex_backend_report_build(const yvex_backend_report_request *request,
                               yvex_error *err);
 const char *yvex_backend_bundle_admission_name(
     yvex_backend_bundle_admission admission);
-
 #ifdef __cplusplus
 }
 #endif
-
 #endif /* INCLUDE_YVEX_INTERNAL_BACKEND_H_INCLUDED */

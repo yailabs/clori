@@ -1,12 +1,9 @@
 /* Owner: runtime engine and session lifecycle
- * Owns: common runtime coordination, model/session state, summaries, and typed lifecycle refusal.
+ * Owns: runtime coordination, model/session state, summaries, and typed refusal.
  * Does not own: graph math, mapping, tokenizers, rendering, artifact emission, or generation.
- * Invariants: state and cleanup ownership are explicit; bounded evidence cannot promote later capabilities.
- * Boundary: attention runtime is not persistent KV, a transformer, generation, evaluation, or release.
- * Purpose: bind admitted artifact, model, and backend state into reusable model/session lifecycles.
- * Inputs: typed lifecycle requests and admitted subsystem objects.
- * Effects: owns model/session resources, counters, invalidation, and deterministic release.
- * Failure: typed admission, state, allocation, backend, cancellation, and cleanup failures. */
+ * Invariants: ownership is explicit. Boundary: runtime evidence cannot promote generation.
+ * Purpose: bind admitted artifacts and requests. Inputs: typed identities and resources.
+ * Effects: owns sessions and invalidation. Failure: returns typed lifecycle failures. */
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
@@ -20,7 +17,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <yvex/artifact.h>
-/* Runtime/session structs and small text/status helpers. */
 /* One sealed runtime model owns the cold trust and compilation-free import lifecycle. */
 struct yvex_runtime_model {
     const yvex_runtime_family_adapter *adapter;
@@ -49,6 +45,7 @@ struct yvex_runtime_execution_session {
     yvex_attention_state_provider attention_state_provider;
     yvex_attention_state_provider_factory attention_state_factory;
     yvex_attention_workspace *attention_workspace;
+    yvex_runtime_state_residency *state_residency;
     yvex_device_tensor *workspace;
     yvex_runtime_session_summary summary;
     yvex_runtime_session_view view;
@@ -95,25 +92,21 @@ static int runtime_model_reject(yvex_runtime_model_failure *failure,
 typedef enum {
     REFUSE_MODEL_LOCK_UNAVAILABLE = 0, REFUSE_MODEL_INVALID_OR_DRAINING,
     REFUSE_ARTIFACT_IDENTITY, REFUSE_MODEL_OPEN_REQUEST, REFUSE_FAMILY_ADAPTER,
-    REFUSE_MODEL_ALLOCATION, REFUSE_MODEL_LOCK_INITIALIZATION, REFUSE_MODEL_REQUIRED,
-    REFUSE_MODEL_UNSEALED, REFUSE_DRIFT_COUNTER, REFUSE_HOST_RESIDENCY,
-    REFUSE_CUDA_EAGER, REFUSE_SESSION_REQUEST, REFUSE_SESSION_ALLOCATION,
-    REFUSE_SESSION_LOCK_INITIALIZATION, REFUSE_SESSION_CONDITION_INITIALIZATION,
-    REFUSE_WORKSPACE_IDENTITY, REFUSE_SESSION_RESOURCE_INJECTION,
-    REFUSE_MODEL_DRAINING_PUBLICATION, REFUSE_WORKSPACE_REQUEST, REFUSE_WORKSPACE_LOCK,
-    REFUSE_WORKSPACE_SESSION_STATE, REFUSE_WORKSPACE_STATE,
+    REFUSE_MODEL_ALLOCATION, REFUSE_MODEL_LOCK_INITIALIZATION, REFUSE_MODEL_REQUIRED, REFUSE_MODEL_UNSEALED,
+    REFUSE_DRIFT_COUNTER, REFUSE_HOST_RESIDENCY, REFUSE_CUDA_EAGER, REFUSE_SESSION_REQUEST,
+    REFUSE_SESSION_ALLOCATION, REFUSE_SESSION_LOCK_INITIALIZATION, REFUSE_SESSION_CONDITION_INITIALIZATION,
+    REFUSE_WORKSPACE_IDENTITY, REFUSE_SESSION_RESOURCE_INJECTION, REFUSE_MODEL_DRAINING_PUBLICATION,
+    REFUSE_WORKSPACE_REQUEST, REFUSE_WORKSPACE_LOCK, REFUSE_WORKSPACE_SESSION_STATE, REFUSE_WORKSPACE_STATE,
     REFUSE_WORKSPACE_ALREADY_SEALED, REFUSE_WORKSPACE_BUDGET,
     REFUSE_WORKSPACE_CAPABILITY_INJECTION, REFUSE_SESSION_REQUIRED,
     REFUSE_SESSION_INVALIDATED, REFUSE_SESSION_CLOSING, REFUSE_SESSION_BUSY,
     REFUSE_SESSION_CANCELLED, REFUSE_BINDING_ADMISSION, REFUSE_ADAPTER_CAPABILITY,
-    REFUSE_ADAPTER_CAPABILITY_STALE, REFUSE_ARTIFACT_DRIFT, REFUSE_DEVICE_CAPABILITY,
-    REFUSE_CUDA_CAPABILITY, REFUSE_SESSION_OPEN_CLEANUP, REFUSE_DEVICE_WORKSPACE_BUDGET,
-    REFUSE_CLEANUP_LEASE, REFUSE_CLEANUP_LEASE_ALLOCATION,
-    REFUSE_CLEANUP_LEASE_SESSION, REFUSE_OPEN_BINDING, REFUSE_OPEN_ADAPTER,
-    REFUSE_OPEN_LOGICAL_TRANSFORM, REFUSE_OPEN_ARTIFACT, REFUSE_OPEN_MATERIALIZATION,
-    REFUSE_OPEN_IMPORT, REFUSE_OPEN_IMPORTED_IDENTITY, REFUSE_OPEN_SEAL,
-    REFUSE_OPEN_BUILD, REFUSE_OPEN_CAPABILITIES, REFUSE_OPEN_RESIDENCY,
-    REFUSE_OPEN_RESIDENCY_COMPLETE, REFUSE_OPEN_DRIFT, REFUSE_COUNT
+    REFUSE_ADAPTER_CAPABILITY_STALE, REFUSE_ARTIFACT_DRIFT, REFUSE_DEVICE_CAPABILITY, REFUSE_CUDA_CAPABILITY,
+    REFUSE_SESSION_OPEN_CLEANUP, REFUSE_DEVICE_WORKSPACE_BUDGET, REFUSE_CLEANUP_LEASE,
+    REFUSE_CLEANUP_LEASE_ALLOCATION, REFUSE_CLEANUP_LEASE_SESSION, REFUSE_OPEN_BINDING, REFUSE_OPEN_ADAPTER,
+    REFUSE_OPEN_LOGICAL_TRANSFORM, REFUSE_OPEN_ARTIFACT, REFUSE_OPEN_MATERIALIZATION, REFUSE_OPEN_IMPORT,
+    REFUSE_OPEN_IMPORTED_IDENTITY, REFUSE_OPEN_SEAL, REFUSE_OPEN_BUILD, REFUSE_OPEN_CAPABILITIES,
+    REFUSE_OPEN_RESIDENCY, REFUSE_OPEN_RESIDENCY_COMPLETE, REFUSE_OPEN_DRIFT, REFUSE_COUNT
 } runtime_refusal_id;
 typedef struct {
     yvex_runtime_model_failure_code code;
@@ -123,99 +116,69 @@ typedef struct {
 } runtime_refusal_spec;
 /* Ordered with runtime_refusal_id so one typed row owns each stable refusal contract. */
 static const runtime_refusal_spec runtime_refusals[] = {
-    {YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, YVEX_ERR_STATE, "model-lifecycle-lock",
-     "runtime model lifecycle lock is unavailable"},
+    {YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, YVEX_ERR_STATE, "model-lifecycle-lock", "model lock unavailable"},
     {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "runtime-model-draining", "runtime model is invalid or draining"},
-    {YVEX_RUNTIME_MODEL_FAILURE_IDENTITY, YVEX_ERR_FORMAT, "artifact-identity",
-     "runtime binding and admitted artifact identities disagree"},
-    {YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT, YVEX_ERR_INVALID_ARG, "request",
-     "artifact, runtime binding, adapter, and output are required"},
-    {YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_ERR_UNSUPPORTED, "family-adapter",
-     "family adapter contract is incomplete"},
+    {YVEX_RUNTIME_MODEL_FAILURE_IDENTITY, YVEX_ERR_FORMAT, "artifact-identity", "artifact identity differs"},
+    {YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT, YVEX_ERR_INVALID_ARG, "request", "model request is incomplete"},
+    {YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_ERR_UNSUPPORTED, "family-adapter", "family adapter is incomplete"},
     {YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_ERR_NOMEM, "allocation", "runtime model allocation failed"},
-    {YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, YVEX_ERR_STATE, "model-lifecycle-lock",
-     "runtime model lifecycle lock initialization failed"},
-    {YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT, YVEX_ERR_INVALID_ARG, "runtime-model",
-     "synchronized runtime model is required"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "runtime-model-draining",
-     "runtime model is unsealed or draining"},
-    {YVEX_RUNTIME_MODEL_FAILURE_DRIFT, YVEX_ERR_BOUNDS, "drift-check-counter",
-     "runtime drift-check counter overflowed"},
-    {YVEX_RUNTIME_MODEL_FAILURE_MATERIALIZATION, YVEX_ERR_STATE, "host-residency",
-     "sealed host attention residency is required before CUDA session open"},
+    {YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, YVEX_ERR_STATE, "model-lifecycle-lock", "model lock init failed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT, YVEX_ERR_INVALID_ARG, "runtime-model", "runtime model is required"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "runtime-model-draining", "model is unsealed or draining"},
+    {YVEX_RUNTIME_MODEL_FAILURE_DRIFT, YVEX_ERR_BOUNDS, "drift-check-counter", "drift counter overflowed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_MATERIALIZATION, YVEX_ERR_STATE, "host-residency", "host residency is required"},
     {YVEX_RUNTIME_MODEL_FAILURE_BACKEND, YVEX_ERR_UNSUPPORTED, "cuda-eager-capability",
      "exact CUDA eager kernels, device, residency, and pinned workspace are required"},
     {YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT, YVEX_ERR_INVALID_ARG, "session-request",
-     "valid model and cpu or cuda session request are required"},
+     "valid model and backend session request are required"},
     {YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_ERR_NOMEM, "session-allocation", "runtime session allocation failed"},
-    {YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, YVEX_ERR_STATE, "session-lifecycle-lock",
-     "runtime session lifecycle lock initialization failed"},
-    {YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, YVEX_ERR_STATE, "session-idle-condition",
-     "runtime session idle condition initialization failed"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BACKEND, YVEX_ERR_STATE, "workspace-identity",
-     "runtime workspace identity could not be constructed"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BACKEND, YVEX_ERR_STATE, "session-open-after-resources",
-     "injected runtime session failure after resource preparation"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "runtime-model-draining",
-     "runtime model began draining before session publication"},
+    {YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, YVEX_ERR_STATE, "session-lifecycle-lock", "session lock init failed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, YVEX_ERR_STATE, "session-idle-condition", "session condition init failed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BACKEND, YVEX_ERR_STATE, "workspace-identity", "workspace identity failed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BACKEND, YVEX_ERR_STATE, "session-open-after-resources", "injected resource failure"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "runtime-model-draining", "model began draining"},
     {YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT, YVEX_ERR_INVALID_ARG,
      "attention-workspace-plan", "open CUDA session and an exact execution mode are required"},
     {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "session-lock", "runtime session workspace lock is unavailable"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "session-state",
-     "idle open runtime session is required for workspace preparation"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "attention-state",
-     "sealed idle attention state is required for workspace preparation"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "host-workspace",
-     "runtime session host workspace is already sealed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "session-state", "idle open session is required"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "attention-state", "sealed idle state is required"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "host-workspace", "host workspace is already sealed"},
     {YVEX_RUNTIME_MODEL_FAILURE_GRAPH, YVEX_ERR_BOUNDS, "host-workspace-budget",
      "descriptor-bucket CUDA staging exceeds the session host budget"},
     {YVEX_RUNTIME_MODEL_FAILURE_BACKEND, YVEX_ERR_STATE, "workspace-capability-publication",
      "injected runtime workspace capability publication failure"},
     {YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT, YVEX_ERR_INVALID_ARG, "session", "open runtime session is required"},
-    {YVEX_RUNTIME_MODEL_FAILURE_DRIFT, YVEX_ERR_STATE, "session-invalidated",
-     "runtime session was invalidated by artifact drift"},
+    {YVEX_RUNTIME_MODEL_FAILURE_DRIFT, YVEX_ERR_STATE, "session-invalidated", "artifact drift invalidated session"},
     {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "session-closing", "runtime session is closing"},
     {YVEX_RUNTIME_MODEL_FAILURE_BUSY, YVEX_ERR_STATE, "session-busy", "runtime session already owns an execution"},
-    {YVEX_RUNTIME_MODEL_FAILURE_CANCELLED, YVEX_ERR_CANCELLED, "session-cancelled",
-     "runtime session was cancelled before dispatch"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-binding-admission",
-     "runtime binding has no admitted artifact record"},
+    {YVEX_RUNTIME_MODEL_FAILURE_CANCELLED, YVEX_ERR_CANCELLED, "session-cancelled", "session cancelled"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-binding-admission", "binding lacks artifact"},
     {YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_ERR_FORMAT, "execution-capabilities",
      "family adapter has no typed execution capability contract"},
     {YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_ERR_FORMAT, "execution-capabilities",
      "bound family execution capability contract is stale or promoted"},
-    {YVEX_RUNTIME_MODEL_FAILURE_DRIFT, YVEX_ERR_STATE, "artifact-snapshot",
-     "runtime artifact snapshot drift invalidated the model"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BACKEND, YVEX_ERR_UNSUPPORTED, "device-capability",
-     "runtime session device admission failed"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BACKEND, YVEX_ERR_UNSUPPORTED, "cuda-capability",
-     "CUDA session capability admission failed"},
-    {YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, YVEX_ERR_STATE, "session-open-cleanup",
-     "runtime session candidate cleanup failed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_DRIFT, YVEX_ERR_STATE, "artifact-snapshot", "artifact drift invalidated model"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BACKEND, YVEX_ERR_UNSUPPORTED, "device-capability", "device admission failed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BACKEND, YVEX_ERR_UNSUPPORTED, "cuda-capability", "CUDA admission failed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_CLEANUP, YVEX_ERR_STATE, "session-open-cleanup", "session cleanup failed"},
     {YVEX_RUNTIME_MODEL_FAILURE_BACKEND, YVEX_ERR_BOUNDS, "device-workspace-budget",
      "descriptor-bucket CUDA workspace exceeds the session device budget"},
     {YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT, YVEX_ERR_INVALID_ARG, "cleanup-lease",
      "empty cleanup lease, model request, and borrowed outputs are required"},
-    {YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_ERR_NOMEM, "cleanup-lease",
-     "runtime cleanup lease allocation failed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_ERR_NOMEM, "cleanup-lease", "lease allocation failed"},
     {YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT, YVEX_ERR_INVALID_ARG,
      "cleanup-lease-session", "model-owning cleanup lease and session request are required"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-binding",
-     "runtime binding could not be opened"},
-    {YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_ERR_FORMAT, "family-adapter-id",
-     "runtime binding requires a different family adapter"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-binding", "runtime binding open failed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_ERR_FORMAT, "family-adapter-id", "family adapter identity differs"},
     {YVEX_RUNTIME_MODEL_FAILURE_IDENTITY, YVEX_ERR_FORMAT, "logical-transform-identity",
      "runtime binding logical Transformation IR identity is stale"},
-    {YVEX_RUNTIME_MODEL_FAILURE_ARTIFACT, YVEX_ERR_FORMAT, "artifact-open",
-     "runtime artifact authentication or GGUF admission failed"},
+    {YVEX_RUNTIME_MODEL_FAILURE_ARTIFACT, YVEX_ERR_FORMAT, "artifact-open", "artifact admission failed"},
     {YVEX_RUNTIME_MODEL_FAILURE_MATERIALIZATION, YVEX_ERR_FORMAT, "runtime-materialization",
      "runtime binding materialization could not be reopened"},
     {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-import",
      "runtime binding import did not reconstruct sealed runtime facts"},
-    {YVEX_RUNTIME_MODEL_FAILURE_IDENTITY, YVEX_ERR_FORMAT, "imported-identity",
-     "imported descriptor or attention identity is invalid"},
-    {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-model-seal",
-     "runtime model sealing was cancelled"},
+    {YVEX_RUNTIME_MODEL_FAILURE_IDENTITY, YVEX_ERR_FORMAT, "imported-identity", "import identity is invalid"},
+    {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-model-seal", "model seal was cancelled"},
     {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-model-build",
      "runtime model construction was not observed exactly once"},
     {YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_ERR_FORMAT, "execution-capabilities",
@@ -225,15 +188,13 @@ static const runtime_refusal_spec runtime_refusals[] = {
     {YVEX_RUNTIME_MODEL_FAILURE_MATERIALIZATION, YVEX_ERR_FORMAT,
      "attention-residency-completeness",
      "runtime attention residency is not complete for core and envelope"},
-    {YVEX_RUNTIME_MODEL_FAILURE_DRIFT, YVEX_ERR_STATE, "artifact-snapshot",
-     "runtime artifact drifted before model publication"}
+    {YVEX_RUNTIME_MODEL_FAILURE_DRIFT, YVEX_ERR_STATE, "artifact-snapshot", "artifact drifted before publication"}
 };
 _Static_assert(sizeof(runtime_refusals) / sizeof(runtime_refusals[0]) == REFUSE_COUNT,
                "runtime refusal catalog must cover every identity");
 /* Purpose: publish one catalog refusal while preserving an originating status when supplied. */
 static int runtime_refuse_as(yvex_runtime_model_failure *failure, runtime_refusal_id id,
-                             unsigned long long expected, unsigned long long actual,
-                             yvex_status status, yvex_error *err) {
+    unsigned long long expected, unsigned long long actual, yvex_status status, yvex_error *err) {
     const runtime_refusal_spec *spec;
     if ((unsigned int)id >= REFUSE_COUNT) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.refusal",
@@ -246,8 +207,7 @@ static int runtime_refuse_as(yvex_runtime_model_failure *failure, runtime_refusa
 }
 /* Purpose: publish one canonical lifecycle refusal selected from the typed runtime catalog. */
 static int runtime_refuse(yvex_runtime_model_failure *failure, runtime_refusal_id id,
-                          unsigned long long expected, unsigned long long actual,
-                          yvex_error *err) {
+    unsigned long long expected, unsigned long long actual, yvex_error *err) {
     return runtime_refuse_as(failure, id, expected, actual, YVEX_OK, err);
 }
 /* Purpose: finalize one successful runtime operation through the canonical error boundary. */
@@ -257,14 +217,13 @@ static int runtime_success(yvex_error *err) {
 }
 /* Purpose: validate the complete opaque attention-state lifecycle required by one session. */
 static int runtime_attention_state_provider_valid(const yvex_attention_state_provider *provider) {
-    return provider && provider->schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V1 &&
-           provider->context && provider->prepare && provider->summary && provider->identity &&
-           provider->begin && provider->stage && provider->commit && provider->abort &&
+    return provider && provider->schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V2 &&
+           provider->context && provider->prepare && provider->summary && provider->view &&
+           provider->identity && provider->begin && provider->stage && provider->commit && provider->abort &&
            provider->reset && provider->invalidate && provider->release;
 }
 /* Purpose: record one observed cold construction event exactly once.
- * Inputs: model-owned counter and stable phase name. Effects: increments only from zero to one.
- * Failure: null, overflow, or duplicate events refuse. Boundary: evidence only; no work is simulated. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_model_once(unsigned long long *counter, const char *phase, yvex_error *err) {
     unsigned long long next;
     if (!counter || !phase || *counter != 0ull ||
@@ -287,9 +246,8 @@ static int runtime_model_progress(const yvex_runtime_model_open_request *request
                    "runtime model preparation was cancelled");
     return YVEX_ERR_CANCELLED;
 }
-/* Purpose: adapt exact artifact hash bytes to the runtime lifecycle callback.
- * Inputs: immutable request and byte counters. Effects: invokes only its observer.
- * Failure: false on cancellation. Boundary: artifact, trust, and timing remain immutable. */
+/* Purpose: adapt artifact hash bytes to the runtime lifecycle observer.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_model_hash_progress(void *opaque, unsigned long long completed,
                                        unsigned long long total) {
     const yvex_runtime_model_open_request *request =
@@ -305,9 +263,8 @@ static void runtime_model_timing(yvex_runtime_model *model, yvex_runtime_lifecyc
     if (ended >= started)
         model->summary.lifecycle_seconds[phase] += (double)(ended - started) / 1000000000.0;
 }
-/* Purpose: derive runtime-model identity from immutable semantic compatibility facts.
- * Inputs: sealed binding and adapter. Effects: writes one canonical SHA-256 identity.
- * Failure: false on encoding failure. Boundary: excludes paths, pointers, time, and allocation order. */
+/* Purpose: derive runtime-model identity from immutable compatibility facts.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_model_identity_build(const yvex_runtime_binding_summary *binding,
                                         const yvex_runtime_family_adapter *adapter,
                                         char output[YVEX_SHA256_HEX_CAP]) {
@@ -332,9 +289,8 @@ static int runtime_model_identity_build(const yvex_runtime_binding_summary *bind
     yvex_sha256_hex(digest, output);
     return 1;
 }
-/* Purpose: resolve an operator target through registered typed adapters.
- * Inputs: exact target identifier. Effects: none.
- * Failure: null when unregistered. Boundary: generic lookup has no family-specific branch. */
+/* Purpose: resolve an exact target through registered typed adapters.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 const yvex_runtime_family_adapter *yvex_runtime_family_adapter_find(const char *target_id) {
     unsigned long long index;
     if (!target_id)
@@ -373,8 +329,7 @@ static void runtime_model_session_register_locked(
     session->model_registered = 1;
 }
 /* Purpose: remove one drained session from model-wide invalidation traversal.
- * Inputs: registered session. Effects: unlinks it while preserving other reservations.
- * Failure: lock failure retains the link. Boundary: unlink precedes storage release. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_model_session_unregister(yvex_runtime_model *model,
     yvex_runtime_execution_session *session, yvex_error *err) {
     if (!model || !session || !model->lifecycle_mutex_ready ||
@@ -397,9 +352,8 @@ static int runtime_model_session_unregister(yvex_runtime_model *model,
     (void)pthread_mutex_unlock(&model->lifecycle_mutex);
     return runtime_success(err);
 }
-/* Purpose: invalidate quiescent attention state and CUDA graphs as one dependent resource set.
- * Inputs: quiescent session and state selector. Effects: invalidates state before graph removal.
- * Failure: preserves first cleanup error. Boundary: resident weights remain owned. */
+/* Purpose: invalidate quiescent attention state and CUDA graphs as one resource set.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_session_invalidate(yvex_runtime_execution_session *session,
                                       int include_state, yvex_error *err) {
     unsigned long long affected;
@@ -408,6 +362,14 @@ static int runtime_session_invalidate(yvex_runtime_execution_session *session,
     if (include_state && session->attention_state_provider_ready)
         rc = session->attention_state_provider.invalidate(
             session->attention_state_provider.context, err);
+    if (include_state && session->state_residency) {
+        graph_rc = yvex_runtime_state_residency_invalidate(
+            session->state_residency, &cleanup);
+        if (rc == YVEX_OK && graph_rc != YVEX_OK) {
+            rc = graph_rc;
+            if (err) *err = cleanup;
+        }
+    }
     if (session->backend && session->backend->kind == YVEX_BACKEND_KIND_CUDA) {
         yvex_error_clear(&cleanup);
         graph_rc = yvex_backend_cuda_attention_graph_registry_apply(
@@ -420,9 +382,8 @@ static int runtime_session_invalidate(yvex_runtime_execution_session *session,
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-/* Purpose: poison every resident and session resource derived from one drifted model.
- * Inputs: locked invalid model. Effects: invalidates residency, sessions, state, and graph registries.
- * Failure: cleanup stays fail-closed. Boundary: external artifacts and persistent state are unchanged. */
+/* Purpose: poison resources derived from one drifted model.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_model_dependents_invalidate_locked(yvex_runtime_model *model, yvex_error *err) {
     yvex_runtime_execution_session *session;
     yvex_error first_error, cleanup;
@@ -454,9 +415,8 @@ static int runtime_model_dependents_invalidate_locked(yvex_runtime_model *model,
     else if (err) *err = first_error;
     return first_rc;
 }
-/* Purpose: release a partially or fully opened common runtime model in dependency order.
- * Inputs: exclusive drained model or null. Effects: closes children and frees the model.
- * Failure: null is harmless. Boundary: never removes the artifact or external binding. */
+/* Purpose: release a common runtime model in dependency order.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_model_release(yvex_runtime_model *model, yvex_error *err) {
     int rc;
     if (!model)
@@ -487,9 +447,8 @@ static int runtime_model_release(yvex_runtime_model *model, yvex_error *err) {
     free(model);
     return runtime_success(err);
 }
-/* Purpose: discharge one session reservation and any deferred final model release.
- * Inputs: drained unlinked session. Effects: discharges one reservation and deferred model release.
- * Failure: cleanup retains retry ownership. Boundary: storage survives until both flags clear. */
+/* Purpose: discharge one session reservation and deferred model release.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_session_model_discharge(yvex_runtime_execution_session *session,
                                            yvex_error *err) {
     yvex_runtime_model *model = session ? session->model : NULL;
@@ -531,9 +490,8 @@ static int runtime_session_model_discharge(yvex_runtime_execution_session *sessi
     session->model = NULL;
     return runtime_success(err);
 }
-/* Purpose: reject one failed model-open candidate after releasing all partial ownership.
- * Inputs: partial model and refusal. Effects: releases the candidate before failure publication.
- * Failure: returns supplied status. Boundary: external artifact and binding remain untouched. */
+/* Purpose: reject one failed model-open candidate after partial cleanup.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_model_open_fail(yvex_runtime_model **out, yvex_runtime_model *model,
                                    yvex_runtime_model_failure *failure,
                                    runtime_refusal_id refusal,
@@ -556,9 +514,8 @@ static int runtime_model_open_fail(yvex_runtime_model **out, yvex_runtime_model 
     if (err) *err = primary;
     return status;
 }
-/* Purpose: open and authenticate one artifact through exact runtime progress phases.
- * Inputs: model, request, and binding. Effects: retains artifact, admission, GGUF, and tensor table.
- * Failure: typed refusal for cleanup. Boundary: owns the sole cold hash and reads no compiler inputs. */
+/* Purpose: open and authenticate one artifact through exact runtime phases.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_model_artifact_open(
     yvex_runtime_model *model, const yvex_runtime_model_open_request *request,
     const yvex_runtime_binding_summary *binding, yvex_runtime_model_failure *failure,
@@ -615,9 +572,8 @@ static int runtime_model_artifact_open(
     runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_ADMISSION, started);
     return rc;
 }
-/* Purpose: intersect one family-declared execution contract with admitted graph semantics.
- * Inputs: adapter and imported graph summary. Effects: publishes model implementation facts only.
- * Failure: invalid promotion refuses sealing. Boundary: sessions alone publish resource readiness. */
+/* Purpose: intersect one family execution contract with admitted graph semantics.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_model_capabilities_bind(
     yvex_runtime_model *model, const yvex_runtime_binding_summary *binding,
     const yvex_attention_summary *attention,
@@ -653,8 +609,7 @@ static int runtime_model_capabilities_bind(
     return YVEX_OK;
 }
 /* Purpose: open, authenticate, import, and seal one compilation-free runtime model.
- * Inputs: artifact, binding, and adapter. Effects: hashes/parses once and imports immutable plans.
- * Failure: reverse cleanup publishes no partial model. Boundary: builds no compiler or writer plan. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_open_request *request,
                             yvex_runtime_model_failure *failure, yvex_error *err) {
     yvex_runtime_model *model = NULL;
@@ -845,9 +800,8 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     if (failure) memset(failure, 0, sizeof(*failure));
     return runtime_success(err);
 }
-/* Purpose: revalidate the retained artifact snapshot before or after execution.
- * Inputs: sealed model. Effects: counts checks and atomically invalidates dependents on drift.
- * Failure: typed drift without rehash. Boundary: warm validation uses the retained handle. */
+/* Purpose: revalidate the retained artifact snapshot around execution.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 int yvex_runtime_model_validate(yvex_runtime_model *model,
                                 yvex_runtime_model_failure *failure, yvex_error *err) {
     yvex_error cleanup;
@@ -902,9 +856,8 @@ cleanup_failed:
     if (err) *err = cleanup;
     return cleanup_rc;
 }
-/* Purpose: copy one lifecycle-protected runtime summary through the shared mutex contract.
- * Inputs: owner, summary, output, size, lock, diagnostics. Effects: copies under the owner lock.
- * Failure: invalid input or lock refuses. Boundary: does not extend ownership or validate state. */
+/* Purpose: copy one lifecycle-protected runtime summary through its shared mutex.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_summary_copy(const void *owner, const void *summary, void *out,
                                 size_t size, int mutex_ready, pthread_mutex_t *mutex,
                                 const char *where, const char *argument_reason,
@@ -922,8 +875,7 @@ static int runtime_summary_copy(const void *owner, const void *summary, void *ou
     return runtime_success(err);
 }
 /* Purpose: copy synchronized model trust, build, and invalidation counters.
- * Inputs: retained model and output. Effects: copies lifecycle facts under the model lock.
- * Failure: missing model or lock refuses. Boundary: performs no artifact validation or hash. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 int yvex_runtime_model_summary_copy(const yvex_runtime_model *model,
                                     yvex_runtime_model_summary *out,
                                     yvex_error *err) {
@@ -935,9 +887,8 @@ int yvex_runtime_model_summary_copy(const yvex_runtime_model *model,
         "runtime model and summary output are required",
         "runtime model synchronization is unavailable", err);
 }
-/* Purpose: close one runtime model without leaving the caller with a dangling handle.
- * Inputs: exclusive model handle address. Effects: releases now or delegates drain to sessions.
- * Failure: null is harmless; lock failure retains ownership. Boundary: artifacts remain unchanged. */
+/* Purpose: close one runtime model without leaving a dangling handle.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 void yvex_runtime_model_close(yvex_runtime_model **model_ptr) {
     yvex_runtime_model *model;
     int release;
@@ -953,15 +904,13 @@ void yvex_runtime_model_close(yvex_runtime_model **model_ptr) {
     if (!release || runtime_model_release(model, NULL) == YVEX_OK)
         *model_ptr = NULL;
 }
-/* Purpose: borrow every sealed runtime-model component through one typed immutable view.
- * Inputs: model or null. Effects: none.
- * Failure: null returns null. Boundary: borrowed components cannot outlive the model. */
+/* Purpose: borrow sealed runtime-model components through one immutable view.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 const yvex_runtime_model_view *yvex_runtime_model_view_get(const yvex_runtime_model *model) {
     return model ? &model->view : NULL;
 }
 /* Purpose: acquire one isolated CUDA backend over model-owned resident weights.
- * Inputs: session, budget, upload output. Effects: attaches residency to session-local state.
- * Failure: publishes no backend on error. Boundary: residency bytes remain model-owned. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_session_attach_cuda_residency(
     yvex_runtime_execution_session *session, int *uploaded,
     yvex_runtime_model_failure *failure, yvex_error *err) {
@@ -987,24 +936,33 @@ static int runtime_session_attach_cuda_residency(
     session->summary.peak_device_bytes = summary.device_resident_bytes;
     return YVEX_OK;
 }
-/* Purpose: derive session-admitted readiness from implementation, backend, device, and memory facts.
- * Inputs: prepared session and model facts. Effects: admits readiness for this session only.
- * Failure: missing device/resources refuses. Boundary: model semantics never imply CUDA readiness. */
+/* Purpose: derive readiness. Inputs: resources. Effects: facts. Failure: refusal. Boundary: policy-free. */
 static int runtime_session_capabilities_bind(
     yvex_runtime_execution_session *session, yvex_runtime_model_failure *failure,
     int require_workspace, yvex_error *err) {
     yvex_runtime_capabilities capabilities = session->model->summary.capabilities;
-    yvex_backend_capability_result encoded;
-    yvex_backend_cuda_graph_capability graph;
-    yvex_backend_device_info device;
-    yvex_runtime_residency_summary residency;
+    yvex_graph_attention_state_summary state = {0};
+    yvex_runtime_state_residency_summary state_residency = {0};
+    yvex_backend_capability_result encoded = {0};
+    yvex_backend_cuda_graph_capability graph = {0};
+    yvex_backend_device_info device = {0};
+    yvex_runtime_residency_summary residency = {0};
     int implementation_ready, workspace_ready, graph_ready, rc;
-    memset(&encoded, 0, sizeof(encoded));
-    memset(&graph, 0, sizeof(graph));
-    memset(&device, 0, sizeof(device));
-    memset(&residency, 0, sizeof(residency));
     capabilities.attention_workspace_ready =
-        session->attention_workspace && session->summary.workspace_bytes > 0ull;
+        session->attention_workspace && session->summary.workspace_bytes;
+    if (session->attention_state_provider_ready && session->state_residency &&
+        session->attention_state_provider.summary(session->attention_state_provider.context,
+                                                  &state, err) == YVEX_OK &&
+        yvex_runtime_state_residency_summary_copy(session->state_residency, &state_residency,
+                                                  err) == YVEX_OK)
+        capabilities.persistent_kv_ready =
+            state.sealed && state.persistent && state.position_consistent &&
+            state.prepared_layer_count == state.layer_count && state_residency.sealed &&
+            !state_residency.invalidated &&
+            state_residency.layer_count == state.prepared_layer_count &&
+            (session->summary.backend == YVEX_BACKEND_KIND_CPU || state_residency.cuda_ready);
+    else
+        yvex_error_clear(err);
     rc = yvex_backend_get_device_info(session->backend, &device, err);
     if (rc == YVEX_OK) {
         session->summary.device_index = device.device_index;
@@ -1015,35 +973,32 @@ static int runtime_session_capabilities_bind(
                             device.name ? device.name : "unavailable");
     }
     if (rc != YVEX_OK)
-        return runtime_refuse_as(
-            failure, REFUSE_DEVICE_CAPABILITY, 1ull, 0ull, (yvex_status)rc, err);
+        return runtime_refuse_as(failure, REFUSE_DEVICE_CAPABILITY, 1ull, 0ull,
+                                 (yvex_status)rc, err);
     if (session->summary.backend == YVEX_BACKEND_KIND_CPU) {
         session->summary.capabilities = capabilities;
         return YVEX_OK;
     }
     rc = session->model->view.residency
-             ? yvex_runtime_residency_snapshot(
-                   session->model->view.residency, &residency, NULL, NULL, err)
-             : YVEX_OK;
+             ? yvex_runtime_residency_snapshot(session->model->view.residency, &residency,
+                                               NULL, NULL, err) : YVEX_OK;
     if (rc == YVEX_OK)
-        rc = yvex_backend_query_capability(
-        session->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, &encoded, err);
+        rc = yvex_backend_query_capability(session->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                                           &encoded, err);
     if (rc != YVEX_OK)
-        return runtime_refuse_as(
-            failure, REFUSE_CUDA_CAPABILITY, 1ull, 0ull, (yvex_status)rc, err);
-    implementation_ready = capabilities.cuda_eager_implemented &&
-            yvex_backend_status_of(session->backend) == YVEX_BACKEND_STATUS_READY &&
-            encoded.state == YVEX_BACKEND_CAPABILITY_SUPPORTED &&
-            device.kind == YVEX_BACKEND_KIND_CUDA &&
-            device.compute_capability_major > 0 &&
-            residency.core_binding_count ==
-                session->model->summary.attention_binding_count &&
-            session->summary.resident_binding_count == residency.binding_count &&
-            session->summary.device_resident_bytes > 0ull;
-    workspace_ready = session->summary.host_workspace_owned &&
-                      session->summary.host_workspace_pinned &&
-                      session->summary.host_workspace_bytes > 0ull &&
-                      session->workspace && session->summary.device_workspace_bytes > 0ull;
+        return runtime_refuse_as(failure, REFUSE_CUDA_CAPABILITY, 1ull, 0ull,
+                                 (yvex_status)rc, err);
+    implementation_ready =
+        capabilities.cuda_eager_implemented &&
+        yvex_backend_status_of(session->backend) == YVEX_BACKEND_STATUS_READY &&
+        encoded.state == YVEX_BACKEND_CAPABILITY_SUPPORTED &&
+        device.kind == YVEX_BACKEND_KIND_CUDA && device.compute_capability_major > 0 &&
+        residency.core_binding_count == session->model->summary.attention_binding_count &&
+        session->summary.resident_binding_count == residency.binding_count &&
+        session->summary.device_resident_bytes > 0ull;
+    workspace_ready = session->summary.host_workspace_owned && session->summary.host_workspace_pinned &&
+                      session->summary.host_workspace_bytes && session->workspace &&
+                      session->summary.device_workspace_bytes;
     if (require_workspace && (!implementation_ready || !workspace_ready))
         return runtime_refuse(failure, REFUSE_CUDA_EAGER, 1ull, 0ull, err);
     if (!implementation_ready || !workspace_ready) {
@@ -1053,26 +1008,23 @@ static int runtime_session_capabilities_bind(
     capabilities.cuda_prefill_eager_ready = 1;
     capabilities.cuda_decode_eager_ready = 1;
     if (yvex_backend_cuda_graph_query(session->backend, &graph, err) != YVEX_OK) {
-        memset(&graph, 0, sizeof(graph));
+        graph = (yvex_backend_cuda_graph_capability){0};
         yvex_error_clear(err);
     }
-    graph_ready = graph.state == YVEX_BACKEND_CUDA_GRAPH_OPEN &&
-                  graph.stream_api_available && graph.graph_api_available &&
-                  graph.update_api_available && graph.edge_inventory_available &&
-                  graph.async_memory_available && graph.async_copy_available &&
-                  graph.pinned_host_memory_available;
+    graph_ready = graph.state == YVEX_BACKEND_CUDA_GRAPH_OPEN && graph.stream_api_available &&
+                  graph.graph_api_available && graph.update_api_available &&
+                  graph.edge_inventory_available && graph.async_memory_available &&
+                  graph.async_copy_available && graph.pinned_host_memory_available;
     capabilities.cuda_prefill_piecewise_graph_ready =
         capabilities.cuda_decode_piecewise_graph_ready =
-            capabilities.cuda_piecewise_graph_implemented && graph_ready;
-    capabilities.cuda_prefill_full_graph_ready =
-        capabilities.cuda_decode_full_graph_ready =
-            capabilities.cuda_full_graph_implemented && graph_ready;
+        capabilities.cuda_piecewise_graph_implemented && graph_ready;
+    capabilities.cuda_prefill_full_graph_ready = capabilities.cuda_decode_full_graph_ready =
+        capabilities.cuda_full_graph_implemented && graph_ready;
     session->summary.capabilities = capabilities;
     return YVEX_OK;
 }
 /* Purpose: discharge one session-owned host/device workspace candidate exactly once.
- * Inputs: session attachments and cleanup output. Effects: detaches host/device arenas.
- * Failure: retains failed ownership. Boundary: residency, graphs, and counters remain unchanged. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_session_workspace_discard(yvex_runtime_execution_session *session,
                                              yvex_error *err) {
     yvex_backend_host_workspace_summary remaining;
@@ -1099,9 +1051,8 @@ static int runtime_session_workspace_discard(yvex_runtime_execution_session *ses
     else if (err) *err = first_error;
     return first_rc;
 }
-/* Purpose: release one unpublished or drained session's backend-dependent child ownership.
- * Inputs: exclusive candidate and cleanup output. Effects: invalidates graphs then closes children.
- * Failure: retains failed child. Boundary: storage and model references remain caller-owned. */
+/* Purpose: release an unpublished or drained session's backend-dependent children.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_session_resources_release(yvex_runtime_execution_session *session,
                                              yvex_error *err) {
     yvex_error cleanup;
@@ -1122,6 +1073,15 @@ static int runtime_session_resources_release(yvex_runtime_execution_session *ses
         }
     }
     session->invalidation_pending = 0;
+    if (session->state_residency) {
+        rc = yvex_runtime_state_residency_close(
+            &session->state_residency, &cleanup);
+        session->view.state_residency = session->state_residency;
+        if (rc != YVEX_OK) {
+            if (err) *err = cleanup;
+            return rc;
+        }
+    }
     if (session->attention_state_provider_ready < 0) {
         rc = session->attention_state_factory.discard(session->attention_state_factory.context,
             &session->attention_state_provider, &cleanup);
@@ -1161,8 +1121,7 @@ static int runtime_session_resources_release(yvex_runtime_execution_session *ses
     return runtime_success(err);
 }
 /* Purpose: destroy one discharged session's synchronization and host wrapper.
- * Inputs: child-free session. Effects: destroys synchronization then frees storage.
- * Failure: retains failed storage. Boundary: model-reference accounting remains caller-owned. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_session_storage_release(yvex_runtime_execution_session *session,
                                            yvex_error *err) {
     if (!session) {
@@ -1186,9 +1145,8 @@ static int runtime_session_storage_release(yvex_runtime_execution_session *sessi
     free(session);
     return runtime_success(err);
 }
-/* Purpose: unwind one failed session-open candidate and its reserved model reference.
- * Inputs: partial session and status. Effects: releases resources and any deferred model drain.
- * Failure: returns supplied status. Boundary: models with another reservation stay open. */
+/* Purpose: unwind one failed session-open candidate and model reservation.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 static int runtime_session_open_fail(yvex_runtime_execution_session **out,
                                      yvex_runtime_execution_session *session,
                                      int status, yvex_runtime_model_failure *failure,
@@ -1213,9 +1171,8 @@ static int runtime_session_open_fail(yvex_runtime_execution_session **out,
     if (err) *err = primary;
     return status;
 }
-/* Purpose: open one mutable execution session over a sealed shared runtime model.
- * Inputs: model, backend, and budgets. Effects: owns a backend and one model reservation.
- * Failure: releases partial state. Boundary: performs no attention or persistent-KV execution. */
+/* Purpose: open one mutable session over a sealed shared runtime model.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 int yvex_runtime_session_open(yvex_runtime_execution_session **out,
                               yvex_runtime_model *model,
                               const yvex_runtime_session_open_request *request,
@@ -1307,7 +1264,7 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
                                  state_budget, &session->attention_state_provider,
                                  &state_failure, err);
     } else
-        rc = yvex_attention_state_provider_open_ephemeral(
+        rc = yvex_attention_state_provider_open_persistent(
             graph, model->attention, state_budget, &session->attention_state_provider,
             &state_failure, err);
     if (rc == YVEX_OK &&
@@ -1395,10 +1352,7 @@ int yvex_runtime_session_open(yvex_runtime_execution_session **out,
 typedef struct {
     unsigned long long required, host_total, device_total, generation;
 } runtime_workspace_requirements;
-
-/* Purpose: project one per-layer recipe into the capture-wide history envelope.
- * Inputs: capacity summary and layer recipe. Effects: reseals aggregate capture capacities.
- * Failure: malformed binding refuses. Boundary: sizes shared storage without changing state. */
+/* Purpose: derive capacity. Inputs: recipes. Effects: seals facts. Failure: refusal. Boundary: no state. */
 static int runtime_workspace_state_envelope(
     const yvex_graph_attention_capacity_summary *summary,
     const yvex_attention_state_recipe *layer,
@@ -1427,17 +1381,12 @@ static int runtime_workspace_state_envelope(
     envelope->identity[0] = '\0';
     return yvex_attention_state_recipe_seal(envelope, err);
 }
-
-/* Purpose: derive exact CUDA workspace extents before resource mutation.
- * Inputs: session state, mode, capacity plan. Effects: writes checked totals and next generation.
- * Failure: geometry/budget refuses. Boundary: translates facts without mutating resources. */
+/* Purpose: size workspace. Inputs: plans. Effects: totals. Failure: refusal. Boundary: before mutation. */
 static int runtime_session_workspace_requirements(
     const yvex_runtime_execution_session *session, yvex_runtime_execution_mode mode,
     yvex_runtime_execution_scope scope, yvex_attention_evidence_level evidence_level,
-    const yvex_graph_attention_capacity_plan *capacity,
-    const yvex_graph_attention_state_summary *state,
-    runtime_workspace_requirements *requirements,
-    yvex_runtime_model_failure *failure, yvex_error *err) {
+    const yvex_graph_attention_capacity_plan *capacity, const yvex_graph_attention_state_summary *state,
+    runtime_workspace_requirements *requirements, yvex_runtime_model_failure *failure, yvex_error *err) {
     static const yvex_attention_execution_mode graph_modes[] = {
         YVEX_ATTENTION_EXECUTION_EAGER, YVEX_ATTENTION_EXECUTION_PIECEWISE, YVEX_ATTENTION_EXECUTION_FULL};
     static const yvex_attention_operation_scope graph_scopes[] = {
@@ -1460,7 +1409,8 @@ static int runtime_session_workspace_requirements(
     graph_mode = graph_modes[mode];
     graph_scope = graph_scopes[scope];
     for (index = 0ull; index < count; ++index) {
-        const yvex_attention_layer_plan *layer = yvex_attention_plan_layer_at(attention, index);
+        const yvex_attention_layer_plan *layer =
+            yvex_attention_plan_layer_at(attention, index);
         const yvex_graph_attention_capacity_layer *capacity_layer =
             yvex_graph_attention_capacity_plan_layer(capacity, index);
         yvex_attention_state_recipe envelope;
@@ -1474,46 +1424,36 @@ static int runtime_session_workspace_requirements(
             return YVEX_ERR_STATE;
         }
         if (!capacity_layer->selected) continue;
-        rc = runtime_workspace_state_envelope(
-            summary, &capacity_layer->recipe, &envelope, err);
+        rc = runtime_workspace_state_envelope(summary, &capacity_layer->recipe, &envelope, err);
         if (rc != YVEX_OK) return rc;
         memset(&recipe, 0, sizeof(recipe));
         memset(&graph_failure, 0, sizeof(graph_failure));
-        rc = graph->workspace_recipe(
-            layer, &envelope, graph_mode, graph_scope, evidence_level,
+        rc = graph->workspace_recipe(layer, &envelope, graph_mode, graph_scope, evidence_level,
             summary->maximum_token_count, &recipe, &graph_failure, err);
         if (rc == YVEX_OK)
-            rc = yvex_backend_attention_workspace_required_from_recipe(
-                &recipe, &layer_bytes, err);
+            rc = yvex_backend_attention_workspace_required_from_recipe(&recipe, &layer_bytes, err);
         if (rc != YVEX_OK) return rc;
         if (layer_bytes > requirements->required) requirements->required = layer_bytes;
     }
     if (!requirements->required ||
-        !yvex_core_u64_add(session->summary.host_resident_bytes,
-                           session->summary.workspace_bytes, &requirements->host_total) ||
+        !yvex_core_u64_add(session->summary.host_resident_bytes, session->summary.workspace_bytes,
+                           &requirements->host_total) ||
         !yvex_core_u64_add(requirements->host_total, state->allocated_bytes,
                            &requirements->host_total) ||
         !yvex_core_u64_add(requirements->host_total, requirements->required,
                            &requirements->host_total) ||
-        (session->maximum_host_bytes &&
-         requirements->host_total > session->maximum_host_bytes))
-        return runtime_refuse(failure, REFUSE_WORKSPACE_BUDGET,
-                              session->maximum_host_bytes,
+        (session->maximum_host_bytes && requirements->host_total > session->maximum_host_bytes))
+        return runtime_refuse(failure, REFUSE_WORKSPACE_BUDGET, session->maximum_host_bytes,
                               requirements->host_total, err);
-    if (!yvex_core_u64_add(session->summary.device_resident_bytes,
-                           requirements->required, &requirements->device_total) ||
-        !yvex_core_u64_add(session->summary.workspace_generation, 1ull,
-                           &requirements->generation) ||
-        (session->maximum_device_bytes &&
-         requirements->device_total > session->maximum_device_bytes))
-        return runtime_refuse(failure, REFUSE_DEVICE_WORKSPACE_BUDGET,
-                              session->maximum_device_bytes,
+    if (!yvex_core_u64_add(session->summary.device_resident_bytes, requirements->required,
+                           &requirements->device_total) ||
+        !yvex_core_u64_add(session->summary.workspace_generation, 1ull, &requirements->generation) ||
+        (session->maximum_device_bytes && requirements->device_total > session->maximum_device_bytes))
+        return runtime_refuse(failure, REFUSE_DEVICE_WORKSPACE_BUDGET, session->maximum_device_bytes,
                               requirements->device_total, err);
     return YVEX_OK;
 }
-/* Purpose: prepare one exact descriptor-bucket CUDA staging arena before dispatch.
- * Inputs: CUDA session, mode, scope, evidence, capacities. Effects: seals device/host staging.
- * Failure: any preparation error publishes nothing. Boundary: executes no family math or kernel. */
+/* Purpose: seal staging. Inputs: bucket. Effects: owns workspace. Failure: typed. Boundary: no math. */
 int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_session *session,
     yvex_runtime_execution_mode mode, yvex_runtime_execution_scope scope,
     yvex_attention_evidence_level evidence_level, const yvex_graph_attention_capacity_plan *capacity,
@@ -1658,9 +1598,73 @@ done:
     }
     return rc;
 }
+/* Purpose: seal state banks. Inputs: capacity. Effects: residency. Failure: typed. Boundary: keeps recipes. */
+int yvex_runtime_session_prepare_persistent_state(yvex_runtime_execution_session *session,
+    const yvex_graph_attention_capacity_plan *capacity, yvex_runtime_model_failure *failure,
+    yvex_error *err) {
+    int rc;
+    if (!session || !capacity || !session->lifecycle_mutex_ready ||
+        pthread_mutex_lock(&session->lifecycle_mutex) != 0)
+        return runtime_refuse(failure, REFUSE_WORKSPACE_LOCK, 1ull, 0ull, err);
+    if (!session->summary.open || session->summary.busy || session->closing ||
+        session->state_residency || !session->attention_state_provider_ready) {
+        rc = runtime_refuse(failure, REFUSE_WORKSPACE_SESSION_STATE, 0ull, 1ull, err);
+    } else {
+        rc = yvex_runtime_state_residency_prepare(&session->state_residency, session->backend,
+            capacity, &session->attention_state_provider, session->summary.peak_host_bytes,
+            session->maximum_host_bytes, session->summary.device_resident_bytes,
+            session->maximum_device_bytes, err);
+        if (rc == YVEX_OK) {
+            session->view.state_residency = session->state_residency;
+            rc = runtime_session_capabilities_bind(session, failure, 0, err);
+        }
+        if (rc != YVEX_OK) {
+            yvex_error primary = err ? *err : (yvex_error){0}, cleanup;
+            int cleanup_rc =
+                yvex_runtime_state_residency_close(&session->state_residency, &cleanup);
+            session->view.state_residency = session->state_residency;
+            if (cleanup_rc != YVEX_OK) {
+                rc = cleanup_rc;
+                if (err) *err = cleanup;
+            } else if (err) *err = primary;
+            runtime_model_failure_record(failure, cleanup_rc == YVEX_OK
+                ? YVEX_RUNTIME_MODEL_FAILURE_GRAPH : YVEX_RUNTIME_MODEL_FAILURE_CLEANUP,
+                "persistent-state-residency", 1ull, 0ull, cleanup_rc == YVEX_OK
+                    ? "persistent state preparation failed" : "persistent state cleanup failed");
+        }
+    }
+    (void)pthread_mutex_unlock(&session->lifecycle_mutex);
+    return rc;
+}
+/* Purpose: clear state. Inputs: session. Effects: reuses banks. Failure: invalidates. Boundary: no model change. */
+int yvex_runtime_session_reset_persistent_state(yvex_runtime_execution_session *session,
+    yvex_runtime_model_failure *failure, yvex_error *err) {
+    yvex_attention_failure state_failure;
+    int rc;
+    if (!session || !session->lifecycle_mutex_ready ||
+        pthread_mutex_lock(&session->lifecycle_mutex) != 0)
+        return runtime_refuse(failure, REFUSE_WORKSPACE_LOCK, 1ull, 0ull, err);
+    if (!session->summary.open || session->summary.busy || session->closing ||
+        !session->state_residency || !session->attention_state_provider_ready) {
+        rc = runtime_refuse(failure, REFUSE_WORKSPACE_SESSION_STATE, 0ull, 1ull, err);
+    } else {
+        rc = yvex_runtime_state_residency_reset(session->state_residency, err);
+        if (rc == YVEX_OK)
+            rc = session->attention_state_provider.reset(
+                session->attention_state_provider.context, &state_failure, err);
+        if (rc != YVEX_OK) {
+            yvex_error cleanup;
+            session->summary.invalidated = 1;
+            (void)runtime_session_invalidate(session, 1, &cleanup);
+            runtime_model_failure_record(failure, YVEX_RUNTIME_MODEL_FAILURE_GRAPH,
+                "persistent-state-reset", 1ull, 0ull, "persistent attention state reset failed");
+        }
+    }
+    (void)pthread_mutex_unlock(&session->lifecycle_mutex);
+    return rc;
+}
 /* Purpose: acquire exclusive mutable execution ownership for one session operation.
- * Inputs: open session and failure output. Effects: marks busy after model/cancellation validation.
- * Failure: concurrent, cancelled, or invalid state refuses. Boundary: performs no numerical work. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 int yvex_runtime_session_begin(yvex_runtime_execution_session *session,
                                yvex_runtime_model_failure *failure, yvex_error *err) {
     runtime_refusal_id refusal = REFUSE_COUNT;
@@ -1699,9 +1703,8 @@ int yvex_runtime_session_begin(yvex_runtime_execution_session *session,
     }
     return runtime_success(err);
 }
-/* Purpose: finish one acquired operation through one state and session commit point.
- * Inputs: busy session, staged batch, status. Effects: commits/aborts state and accounts execution.
- * Failure: cleanup faults invalidate the session. Boundary: publishes no tensors or persistent KV. */
+/* Purpose: finish one acquired operation through one state/session commit point.
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 int yvex_runtime_session_finish(yvex_runtime_execution_session *session, int status,
                                 yvex_error *err) {
     yvex_graph_attention_state_summary state;
@@ -1759,26 +1762,34 @@ int yvex_runtime_session_finish(yvex_runtime_execution_session *session, int sta
     }
     if (session->attention_state_provider_ready && ((state_ready && state.transaction_active) ||
         primary_status != YVEX_OK || cleanup_rc != YVEX_OK || session->invalidation_pending)) {
+        int committing = primary_status == YVEX_OK && cleanup_rc == YVEX_OK &&
+            !session->invalidation_pending;
         yvex_error_clear(&state_error);
-        rc = primary_status == YVEX_OK && cleanup_rc == YVEX_OK &&
-                     !session->invalidation_pending
-                 ? session->attention_state_provider.commit(
-                       session->attention_state_provider.context,
-                       &state_failure, &state_error)
-                 : session->attention_state_provider.abort(
-                       session->attention_state_provider.context,
-                       &state_failure, &state_error);
+        rc = committing && session->state_residency
+                 ? yvex_runtime_state_residency_publish(session->state_residency, &state_error)
+                 : YVEX_OK;
+        if (rc == YVEX_OK)
+            rc = committing
+                     ? session->attention_state_provider.commit(session->attention_state_provider.context,
+                           &state_failure, &state_error)
+                     : session->attention_state_provider.abort(session->attention_state_provider.context,
+                           &state_failure, &state_error);
+        if (rc == YVEX_OK && committing && session->state_residency)
+            yvex_runtime_state_residency_commit(session->state_residency);
+        else if (!committing && session->state_residency)
+            yvex_runtime_state_residency_abort(session->state_residency);
         if (rc != YVEX_OK) {
             cleanup_rc = rc;
             cleanup = state_error;
             yvex_error_clear(&state_error);
-            rc = session->attention_state_provider.abort(
-                session->attention_state_provider.context,
+            rc = session->attention_state_provider.abort(session->attention_state_provider.context,
                 &state_failure, &state_error);
             if (rc != YVEX_OK) {
                 cleanup_rc = rc;
                 cleanup = state_error;
             }
+            if (session->state_residency)
+                yvex_runtime_state_residency_abort(session->state_residency);
         }
     }
     if (session->invalidation_pending) {
@@ -1822,8 +1833,7 @@ int yvex_runtime_session_finish(yvex_runtime_execution_session *session, int sta
     return runtime_success(err);
 }
 /* Purpose: release mutable session resources without invalidating the shared model.
- * Inputs: exclusive session handle and cleanup output. Effects: drains and releases all session resources.
- * Failure: cleanup errors retain ownership. Boundary: final close may release an idle requested model. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 int yvex_runtime_session_close(yvex_runtime_execution_session **session_ptr, yvex_error *err) {
     yvex_runtime_execution_session *session;
     yvex_runtime_model *model;
@@ -1866,8 +1876,7 @@ int yvex_runtime_session_close(yvex_runtime_execution_session **session_ptr, yve
     return runtime_success(err);
 }
 /* Purpose: copy synchronized mutable session lifecycle and resource counters.
- * Inputs: retained session and output. Effects: copies one coherent summary.
- * Failure: missing session or lock refuses. Boundary: does not execute or extend ownership. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 int yvex_runtime_session_summary_copy(const yvex_runtime_execution_session *session,
                                       yvex_runtime_session_summary *out, yvex_error *err) {
     yvex_runtime_execution_session *mutable_session = (yvex_runtime_execution_session *)session;
@@ -1878,15 +1887,12 @@ int yvex_runtime_session_summary_copy(const yvex_runtime_execution_session *sess
         "runtime session and summary output are required",
         "runtime session synchronization is unavailable", err);
 }
-/* Purpose: borrow session counters and backend through one typed lifecycle view.
- * Inputs: session or null. Effects: none.
- * Failure: null returns null. Boundary: backend mutation remains constrained by its ABI. */
+/* Purpose: borrow view. Inputs: session. Effects: none. Failure: null. Boundary: session lifetime. */
 const yvex_runtime_session_view *yvex_runtime_session_view_get(const yvex_runtime_execution_session *session) {
     return session ? &session->view : NULL;
 }
 /* Purpose: close one runtime lease in dependency order without losing retry ownership.
- * Inputs: exclusive lease address. Effects: closes dependent, session, model, then lease.
- * Failure: retains undischarged handles. Boundary: no child is force-freed or transferred. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 int yvex_runtime_cleanup_lease_close(yvex_runtime_cleanup_lease **lease_ptr, yvex_error *err) {
     yvex_runtime_cleanup_lease *lease;
     int rc;
@@ -1919,8 +1925,7 @@ int yvex_runtime_cleanup_lease_close(yvex_runtime_cleanup_lease **lease_ptr, yve
     return runtime_success(err);
 }
 /* Purpose: make one model-dependent resource retry-safe through the runtime cleanup lease.
- * Inputs: model lease, context, release operation. Effects: transfers cleanup ownership.
- * Failure: invalid adoption retains caller ownership. Boundary: dependent closes before session/model. */
+ * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
 int yvex_runtime_cleanup_lease_adopt(yvex_runtime_cleanup_lease *lease, void *context,
     yvex_runtime_cleanup_release_fn release, yvex_error *err) {
     if (!lease || !context || !release || lease->dependent_context || lease->dependent_release) {
@@ -1932,11 +1937,7 @@ int yvex_runtime_cleanup_lease_adopt(yvex_runtime_cleanup_lease *lease, void *co
     lease->dependent_release = release;
     return runtime_success(err);
 }
-/* Purpose: acquire one model and optional session into a preallocated retry-safe lease.
- * Inputs: empty owner output, exact model request, optional session request, and typed failure outputs.
- * Effects: authenticates the model and opens the session while retaining each acquired handle immediately.
- * Failure: successful cleanup restores the primary refusal; cleanup failure publishes the retained lease.
- * Boundary: callers borrow through accessors and never close lease children directly. */
+/* Purpose: acquire a lease. Inputs: requests. Effects: retains handles. Failure: cleanup. Boundary: owns children. */
 int yvex_runtime_cleanup_lease_acquire(
     yvex_runtime_cleanup_lease **out, const yvex_runtime_model_open_request *model_request,
     const yvex_runtime_session_open_request *session_request,
@@ -1980,11 +1981,7 @@ int yvex_runtime_cleanup_lease_acquire(
     if (err) *err = primary;
     return rc;
 }
-/* Purpose: add one mutable session to a model-owning cleanup lease.
- * Inputs: exclusive model lease and exact session request.
- * Effects: stores any published or retryable closing session directly in the lease.
- * Failure: malformed/open leases refuse; failed-open cleanup ownership remains reachable.
- * Boundary: the lease remains the sole close authority for both handles. */
+/* Purpose: add a session. Inputs: lease/request. Effects: stores it. Failure: refusal. Boundary: lease closes. */
 int yvex_runtime_cleanup_lease_session_open(
     yvex_runtime_cleanup_lease *lease, const yvex_runtime_session_open_request *request,
     yvex_runtime_execution_session **borrowed_session,

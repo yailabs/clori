@@ -26,14 +26,15 @@ complete external artifact
   -> immutable common runtime model
   -> mutable execution session
   -> resident attention weights + reusable workspace
+  -> session-owned persistent attention state
   -> phase- and mode-aware attention execution
-  -> output tensor + candidate state delta + typed evidence
+  -> output tensor + atomically committed state delta + typed evidence
 ```
 
 DeepSeek-V4-Flash is the first family adapter. It is not the owner of a second
-runtime. Persistent KV, tokenizer-backed prompt prefill, MoE, complete
-transformer execution, model decode, logits, sampling and generation remain
-outside this contract.
+runtime. The admitted persistent state is an attention-session boundary;
+tokenizer-backed prompt prefill, MoE, complete transformer execution, model
+decode, logits, sampling and generation remain outside this contract.
 
 ## Command Contract
 
@@ -64,8 +65,10 @@ trace, profile, benchmark
 The CLI parses typed input, invokes production runtime APIs and renders copied
 results. CUDA Graph lifecycle actions operate on a real registry within the
 command's process-lifetime session; they do not claim persistent cross-process
-state. The CLI does not implement attention math, call Make, run a test program,
-spawn another YVEX process or link the test-only oracle.
+state. State actions allocate, inspect, validate, exercise, clear, and reuse the
+production session-owned persistent provider; they do not use a CLI cache. The
+CLI does not implement attention math, call Make, run a test program, spawn
+another YVEX process or link the test-only oracle.
 
 ## Filesystem Contract
 
@@ -213,11 +216,21 @@ These names do not mean prompt prefill or autoregressive model decode. Input is
 an explicit activation tensor or the canonical deterministic attention probe at
 real model geometry.
 
-Attention-local state has an immutable prior view and a transactional candidate
-delta. Execution reports exact produced spans, next position and a state-delta
-identity. Commit publishes the complete delta; abort and cancellation preserve
-the previous state. This is the consumer boundary for future persistent KV, not
-the persistent KV implementation itself.
+Each execution session owns one sealed persistent-state layout derived from the
+runtime descriptor and exact family recipes. DeepSeek projects distinct SWA,
+CSA, and HCA local, compressed, indexer, and rolling components across all 43
+main layers. CPU state remains in stable reusable host storage; admitted CUDA
+sessions own two stable device banks and resolve committed spans directly
+without CPU numerical fallback.
+
+State has an immutable committed view and a transactional candidate generation.
+One append begins at the committed position, stages every required layer
+publication, validates completion, and commits all layer banks plus sequence
+position exactly once. Failure, cancellation, or abort publishes neither a
+partial state nor an advanced position. Clear retains compatible allocation,
+resets content and position, and invalidates dependent graph executions.
+Capacity, non-contiguous append, stale generation, invalid coordinates, and
+artifact/runtime incompatibility refuse before mutation.
 
 For equal initial state and input activation sequence, one N-token attention
 chunk and N ordered one-token attention decode operations must agree on every
@@ -465,7 +478,7 @@ attention benchmark is not a full-model benchmark.
 
 The current common runtime admits attention semantics, attention core/envelope,
 CPU eager phases, CUDA eager/piecewise/full phases, resident attention weights,
-reusable workspace, transactional state deltas and runtime-local operator
-evidence. Persistent KV, mixed/speculative attention, MoE, transformer, model
-decode, logits, sampling, generation, evaluation, full-model benchmark and
-release remain unsupported.
+reusable workspace, session-owned persistent DeepSeek attention state, and
+runtime-local operator evidence. Mixed/speculative attention, tokenizer-backed
+full-model prefill, MoE, transformer, model decode, logits, sampling,
+generation, evaluation, full-model benchmark and release remain unsupported.

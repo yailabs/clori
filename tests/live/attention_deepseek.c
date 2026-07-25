@@ -127,7 +127,7 @@ static int runtime_oracle_state_factory_open(
     int rc;
 
     if (!control) return YVEX_ERR_INVALID_ARG;
-    rc = yvex_attention_state_provider_open_ephemeral(
+    rc = yvex_attention_state_provider_open_persistent(
         family, plan, maximum_host_bytes, out, failure, err);
     if (rc == YVEX_OK) control->opens++;
     return rc;

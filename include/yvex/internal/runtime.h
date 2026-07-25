@@ -301,6 +301,13 @@ typedef struct {
     char residency_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_residency_summary;
 typedef struct yvex_runtime_residency yvex_runtime_residency;
+typedef struct yvex_runtime_state_residency yvex_runtime_state_residency;
+typedef struct {
+    int sealed, cuda_ready, invalidated;
+    unsigned long long layer_count, host_bytes, device_bytes, upload_bytes, upload_count;
+    unsigned long long generation, staged_layer_count, commit_count, abort_count;
+    char layout_identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_state_residency_summary;
 typedef struct {
     const yvex_runtime_residency *residency;
     const yvex_runtime_binding_summary *binding;
@@ -317,6 +324,20 @@ int yvex_runtime_residency_snapshot(const yvex_runtime_residency *residency, yve
 int yvex_runtime_residency_cuda_session_attach(yvex_runtime_residency *residency, yvex_backend **backend,
     unsigned long long maximum_device_bytes, int *uploaded, yvex_runtime_residency_summary *summary, yvex_error *err);
 int yvex_runtime_residency_invalidate(yvex_runtime_residency *residency, yvex_error *err);
+int yvex_runtime_state_residency_prepare(yvex_runtime_state_residency **out, yvex_backend *backend,
+    const yvex_graph_attention_capacity_plan *capacity, const yvex_attention_state_provider *provider,
+    unsigned long long prior_host_bytes, unsigned long long maximum_host_bytes,
+    unsigned long long prior_device_bytes, unsigned long long maximum_device_bytes, yvex_error *err);
+int yvex_runtime_state_residency_stage(yvex_runtime_state_residency *residency,
+    const yvex_attention_state_provider *provider, unsigned long long layer_index, yvex_error *err);
+int yvex_runtime_state_residency_publish(yvex_runtime_state_residency *residency, yvex_error *err);
+void yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency);
+void yvex_runtime_state_residency_abort(yvex_runtime_state_residency *residency);
+int yvex_runtime_state_residency_reset(yvex_runtime_state_residency *residency, yvex_error *err);
+int yvex_runtime_state_residency_invalidate(yvex_runtime_state_residency *residency, yvex_error *err);
+int yvex_runtime_state_residency_close(yvex_runtime_state_residency **residency, yvex_error *err);
+int yvex_runtime_state_residency_summary_copy(const yvex_runtime_state_residency *residency,
+    yvex_runtime_state_residency_summary *out, yvex_error *err);
 const yvex_runtime_family_adapter *yvex_runtime_family_adapter_find(const char *target_id);
 /* A cleanup failure may publish an unpublished model in out; close retries exact ownership. */
 int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_open_request *request,
@@ -358,6 +379,7 @@ typedef struct {
     yvex_backend *backend;
     const yvex_attention_state_provider *attention_state_provider;
     yvex_attention_workspace *attention_workspace;
+    yvex_runtime_state_residency *state_residency;
 } yvex_runtime_session_view;
 /* A cleanup failure may retain an unpublished closing session in out; retry close discharges it. */
 int yvex_runtime_session_open(yvex_runtime_execution_session **out, yvex_runtime_model *model,
@@ -367,6 +389,12 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
     yvex_runtime_execution_mode mode, yvex_runtime_execution_scope scope,
     yvex_attention_evidence_level evidence_level,
     const yvex_graph_attention_capacity_plan *capacity,
+    yvex_runtime_model_failure *failure, yvex_error *err);
+int yvex_runtime_session_prepare_persistent_state(yvex_runtime_execution_session *session,
+    const yvex_graph_attention_capacity_plan *capacity,
+    yvex_runtime_model_failure *failure, yvex_error *err);
+int yvex_runtime_session_reset_persistent_state(
+    yvex_runtime_execution_session *session,
     yvex_runtime_model_failure *failure, yvex_error *err);
 int yvex_runtime_session_prepare_attention_probe_state(yvex_runtime_execution_session *session,
     yvex_runtime_model *model, const yvex_graph_attention_capacity_plan *capacity,
@@ -501,7 +529,8 @@ typedef struct yvex_graph_attention_operator_result {
     char cuda_launch_graph_identity[YVEX_SHA256_HEX_CAP], cuda_graph_exec_identity[YVEX_SHA256_HEX_CAP];
     char cuda_graph_registry_scope[32], cuda_graph_entry_compatibility_identity[160];
     char residency_identity[YVEX_SHA256_HEX_CAP], workspace_identity[YVEX_SHA256_HEX_CAP];
-    char state_layout_identity[YVEX_SHA256_HEX_CAP];
+    char state_layout_identity[YVEX_SHA256_HEX_CAP], state_content_identity[YVEX_SHA256_HEX_CAP],
+         state_residency_identity[YVEX_SHA256_HEX_CAP];
     char execution_evidence_digest[YVEX_SHA256_HEX_CAP], execution_identity[YVEX_SHA256_HEX_CAP];
     char qualification_identity[YVEX_SHA256_HEX_CAP], quality_matrix_identity[YVEX_SHA256_HEX_CAP];
     char quality_status[YVEX_RUNTIME_QUALITY_STATUS_COUNT][24];
@@ -533,6 +562,9 @@ typedef struct yvex_graph_attention_operator_result {
                        cuda_graph_last_update_elapsed_ns, cuda_graph_last_replay_elapsed_ns;
     unsigned long long execution_dispatch_count, trace_stage_count, trace_value_count;
     unsigned long long state_layer_count, state_prepared_layer_count, state_allocated_bytes;
+    unsigned long long state_capacity, state_committed_sequence_length, state_next_position;
+    unsigned long long state_generation, state_residency_generation, state_device_bytes;
+    unsigned long long state_upload_bytes, state_upload_count;
     unsigned long long state_commit_count, state_abort_count, state_cancellation_count, state_reset_count;
     int cuda_graph_entry_state, cuda_graph_entry_reason, cuda_graph_entry_capture_mode;
     int cuda_graph_entry_uploaded, cuda_graph_entry_update_requested, pinned_host_residency;
@@ -541,7 +573,9 @@ typedef struct yvex_graph_attention_operator_result {
     yvex_attention_probe_result probe;
     yvex_runtime_capabilities capabilities;
     int attention_cuda_execution_ready;
-    int state_sealed, state_transaction_active, state_validation_passed;
+    int state_sealed, state_persistent, state_position_consistent, state_cuda_ready;
+    int state_transaction_active, state_validation_passed, state_read_after_write_verified,
+        state_clear_reuse_verified;
     int production_api_available, internal_live_runner_available, operator_command_available;
     int end_user_generation_available;
     int model_behavior_evaluation_available, model_quality_evaluation_available;
@@ -559,8 +593,7 @@ typedef struct yvex_graph_attention_operator_result {
 } yvex_graph_attention_operator_result;
 int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_request *request,
                                           yvex_graph_attention_operator_result *result,
-                                          yvex_runtime_cleanup_lease **retained_cleanup,
-                                          yvex_error *err);
+                                          yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err);
 #ifdef __cplusplus
 }
 #endif

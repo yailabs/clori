@@ -1400,7 +1400,8 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
         !yvex_sha256_update_text(&hash, state->attention_compatibility_identity) ||
         !yvex_sha256_update_text(&hash, state->attention_capture_bucket))
         goto failed;
-    HASH(backend->resident_generation); HASH(backend->workspace_generation);
+    HASH(backend->resident_generation); HASH(backend->state_residency_generation);
+    HASH(backend->workspace_generation);
     HASH(backend->host_workspace_generation);
     HASH(state->attention_mode); HASH(YVEX_CUDA_ATTENTION_STAGE_COUNT);
     HASH(first); HASH(last);

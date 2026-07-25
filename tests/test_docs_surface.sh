@@ -301,7 +301,7 @@ do
 done
 
 for snapshot in \
-  '| Persistent KV | Unsupported |' \
+  '| Persistent attention state | Admitted for all 43 DeepSeek attention layers' \
   '| Tokenizer-backed model prefill and model decode | Unsupported |' \
   '| FFN/MoE and complete transformer composition | Unsupported |' \
   '| Logits, sampling, and text generation | Unsupported |' \
@@ -321,6 +321,7 @@ for command in \
   './yvex graph attention describe' \
   './yvex graph attention execute' \
   './yvex graph attention compare' \
+  './yvex graph attention state exercise' \
   './yvex graph attention benchmark'
 do
   require_text README.md "$command"
@@ -339,6 +340,7 @@ while IFS= read -r command; do
     './yvex graph attention describe \' | \
     './yvex graph attention execute \' | \
     './yvex graph attention compare \' | \
+    './yvex graph attention state exercise \' | \
     './yvex graph attention benchmark \') ;;
     *) fail "README contains an unregistered operator command: $command" ;;
   esac
@@ -548,13 +550,13 @@ require_text "$project" 'Manifest v3 binds every shard to its authoritative Hugg
 require_text "$project" 'all 69,187 contributions and mapping identity `1aecbbe25b04de0d` remain exact'
 require_text "$project" 'Production C contains no fallback PTX.'
 require_text "$project" 'A no-`nvcc` build refuses every kernel before dispatch'
-require_text "$project" 'Complete resident DeepSeek attention is admitted on the generated-bundle GB10 path'
+require_text "$project" 'Complete resident DeepSeek attention and stable double-buffered session state are admitted on the generated-bundle GB10 path'
 require_text "$project" '`attention_execution_supported=1`, `attention_cuda_execution_ready=1`, and'
 require_text "$project" 'complete DeepSeek SWA/CSA/HCA attention core and its immediate envelope are admitted'
 require_text "$project" 'a supported DeepSeek-V4-Flash model artifact; the admitted artifacts are consumed by attention but have not passed the complete runtime and release gates;'
-require_text "$project" 'complete-model, MoE, output-head, or persistent-KV residency; only the admitted attention weight pack is resident;'
-require_text "$project" 'an execution-complete DeepSeek transformer runtime; the common attention runtime is admitted but persistent KV, FFN/MoE, complete layer composition, and final model output are not;'
-require_text "$project" 'Persistent KV, prefill, MoE, transformer'
+require_text "$project" 'complete-model, MoE, or output-head residency; only the admitted attention weight pack and session-owned persistent attention state are resident;'
+require_text "$project" 'an execution-complete DeepSeek transformer runtime; the common attention runtime and persistent state are admitted but full-model prefill, FFN/MoE, complete layer composition, and final model output are not;'
+require_text "$project" 'persistent_kv_ready=1'
 reject_text "$project" 'complete GGUF writer, complete-model emission, writer-reader roundtrip, or artifact support admission;'
 require_text "$project" '| Recovered IDs | 631 |'
 require_text "$project" '| Explicit new IDs | 50 |'
@@ -678,14 +680,14 @@ require_text docs/system-target.md '## GGUF Structural Reader Boundary'
 require_text docs/system-target.md '## GGUF Qtype ABI Boundary'
 require_text docs/system-target.md '| Transformation plan | sealed artifact-neutral IR binds all 69,187 source values to 1,360 terminal tensors'
 require_text docs/system-target.md '| GGUF writer | deterministic v3 plan and transactional file writer complete |'
-require_text docs/system-target.md '| Runtime descriptor | immutable DeepSeek descriptor binds all 1,360 admitted tensors and topology facts and is consumed by the common attention runtime |'
+require_text docs/system-target.md '| Runtime descriptor | immutable DeepSeek descriptor binds all 1,360 admitted tensors and topology facts and is consumed by the common attention runtime and persistent-state recipes |'
 reject_text docs/system-target.md '| Transformation plan | no artifact-neutral transformation IR exists |'
 require_text docs/topology-closure-audit.md 'point-in-time inventory'
 require_text docs/topology-closure-audit.md '`PROJECT.md` owns when each finding is removed or'
 require_text docs/cli-output-architecture.md '## Project State Ownership'
 require_text docs/model-families.md 'exact v0.1.0 target'
 require_text docs/model-families.md 'sealed Transformation IR, complete quantization, two admitted complete artifacts'
-require_text docs/model-families.md 'complete CPU/GB10 attention exist; persistent KV, prefill, MoE, transformer execution, and generation remain unsupported'
+require_text docs/model-families.md 'complete CPU/GB10 attention, and session-owned persistent attention state exist; tokenizer-backed prefill, MoE, transformer execution, and generation remain unsupported'
 reject_text docs/model-families.md 'no artifact-neutral transformation plan, payload conversion, complete model artifact, or runtime path'
 require_text docs/contract.md 'These are implementation facts, not a runtime progress ladder.'
 require_text docs/contract.md 'defined only by `PROJECT.md`.'

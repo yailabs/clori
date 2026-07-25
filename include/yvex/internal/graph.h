@@ -465,7 +465,7 @@ typedef struct {
     yvex_attention_probe_scope scope;
     yvex_attention_operation_scope operation_scope;
     unsigned long long token_count, layer_ordinal, token_position;
-    int select_layer, select_position;
+    int select_layer, select_position, perturb_input;
     int compare_backends;
     int (*cancel_requested)(void *context);
     void *cancel_context;
@@ -557,7 +557,7 @@ void yvex_attention_probe_history_close(yvex_attention_probe_history **history);
  * Inputs: sealed attention owners, immutable request, and caller-owned result.
  * Effects: executes CPU and/or CUDA attention and publishes only a complete aggregate.
  * Failure: releases all probe state and backend resources without committing partial result.
- * Boundary: bounded attention input only; no persistent KV, prompt, transformer, or generation. */
+ * Boundary: consumes an optional persistent state provider but owns no prompt, transformer, or generation. */
 int yvex_attention_probe_execute(const yvex_graph_family_api *family,
                                  const yvex_attention_plan *plan, const void *family_ir,
                                  yvex_materialization_session *session,
@@ -570,5 +570,5 @@ int yvex_attention_probe_execute(const yvex_graph_family_api *family,
  * Inputs: explicit canonical paths, backend, probe, and scope.
  * Effects: owns the temporary lifecycle and publishes only a complete typed result.
  * Failure: reverse-order cleanup preserves external source/artifact state.
- * Boundary: attention probe only; no prompt, persistent KV, transformer, or generation. */
+ * Boundary: attention probe only; persistent state remains session-owned and no prompt or generation is accepted. */
 #endif

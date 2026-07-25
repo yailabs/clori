@@ -1,6 +1,6 @@
 /* Owner: graph attention state.
  * Owns: family-projected capacity recipes and transactional attention-local state.
- * Does not own: persistent KV, family geometry policy, graph equations, runtime sessions, or backends.
+ * Does not own: family geometry policy, graph equations, runtime sessions, or backend placement.
  * Invariants: state storage is derived only from sealed component recipes; commits are all-or-none.
  * Boundary: runtime retains an opaque handle while graph owns layout, mutation, identity, and cleanup.
  * Purpose: expose one bounded family-neutral state lifecycle to runtime and graph execution owners.
@@ -21,7 +21,7 @@ extern "C" {
 #define YVEX_ATTENTION_STATE_RECIPE_SCHEMA_V1 1u
 #define YVEX_ATTENTION_STATE_COMPONENT_CAP 8u
 #define YVEX_ATTENTION_WORKSPACE_RECIPE_SCHEMA_V1 1u
-#define YVEX_ATTENTION_WORKSPACE_COMPONENT_CAP 33u
+#define YVEX_ATTENTION_WORKSPACE_COMPONENT_CAP 34u
 
 typedef enum {
     YVEX_ATTENTION_STATE_COMPONENT_HISTORY = 0,
@@ -88,7 +88,8 @@ typedef enum {
     YVEX_ATTENTION_WORKSPACE_MAIN_ROLLING_CANDIDATE_SCORES,
     YVEX_ATTENTION_WORKSPACE_INDEXER_ROLLING_CANDIDATE_VALUES,
     YVEX_ATTENTION_WORKSPACE_INDEXER_ROLLING_CANDIDATE_SCORES,
-    YVEX_ATTENTION_WORKSPACE_CORE_INPUT_EVIDENCE
+    YVEX_ATTENTION_WORKSPACE_CORE_INPUT_EVIDENCE,
+    YVEX_ATTENTION_WORKSPACE_OUTPUT_LOW
 } yvex_attention_workspace_component_kind;
 typedef enum {
     YVEX_ATTENTION_WORKSPACE_EXECUTION = 0,
@@ -120,7 +121,7 @@ typedef struct {
     yvex_attention_probe_scope scope;
     unsigned long long history_tokens, start_position, token_count, execution_count;
     unsigned long long layer_start, selection_key;
-    int select_layer, select_selection_key;
+    int select_layer, select_selection_key, use_requested_position;
 } yvex_graph_attention_capacity_request;
 
 typedef struct {
@@ -159,18 +160,20 @@ typedef struct {
 } yvex_graph_attention_state_component_summary;
 typedef struct {
     unsigned int schema_version;
-    int sealed, cancelled, invalidated, transaction_active, candidate_active, abort_required;
+    int sealed, persistent, cancelled, invalidated, transaction_active;
+    int candidate_active, abort_required, position_consistent;
     unsigned long long layer_count, prepared_layer_count, staged_layer_count, allocated_bytes;
     unsigned long long commit_count, abort_count, cancellation_count, reset_count, generation;
+    unsigned long long capacity, committed_sequence_length, next_position;
     yvex_graph_attention_state_component_summary components[YVEX_ATTENTION_STATE_BINDING_COUNT];
-    char state_layout_identity[YVEX_SHA256_HEX_CAP];
+    char state_layout_identity[YVEX_SHA256_HEX_CAP], state_content_identity[YVEX_SHA256_HEX_CAP];
 } yvex_graph_attention_state_summary;
 typedef enum {
     YVEX_ATTENTION_STATE_VIEW_COMMITTED = 0,
     YVEX_ATTENTION_STATE_VIEW_CANDIDATE
 } yvex_attention_state_view_kind;
 
-#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V1 1u
+#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V2 2u
 typedef struct yvex_attention_state_provider {
     unsigned int schema_version;
     void *context;
@@ -214,7 +217,7 @@ typedef struct {
                    yvex_error *err);
 } yvex_attention_state_provider_factory;
 
-int yvex_attention_state_provider_open_ephemeral(
+int yvex_attention_state_provider_open_persistent(
     const yvex_graph_family_api *family, const yvex_attention_plan *plan,
     unsigned long long maximum_host_bytes, yvex_attention_state_provider *out,
     yvex_attention_failure *failure, yvex_error *err);

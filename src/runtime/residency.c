@@ -1,14 +1,16 @@
 /* Owner: runtime attention residency.
- * Owns: sealed host/device arenas of encoded attention/core-envelope weight ranges.
- * Does not own: artifact admission, placement policy, execution workspace, graph math, or KV.
- * Invariants: every admitted range is read exactly once cold and resolved by tensor identity.
- * Boundary: runtime models share immutable bytes; execution sessions own mutable workspaces.
- * Purpose: retain exact encoded attention bytes across warm executions without artifact rereads.
+ * Owns: sealed weight residency and session-owned persistent-state device banks.
+ * Does not own: artifact admission, family state geometry, execution workspace, or graph math.
+ * Invariants: immutable ranges read once; mutable state uses stable addresses and explicit generations.
+ * Boundary: models share weights; sessions own persistent state and mutable staging.
+ * Purpose: retain exact encoded weights and state across warm executions.
  * Inputs: sealed runtime model, imported descriptor/plan, and an explicit host budget.
  * Effects: reads admitted ranges, seals identities, and attaches one borrowed read provider.
  * Failure: partial arenas detach and release without changing the materialization session. */
 #include <limits.h>
 #include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -34,6 +36,351 @@ struct yvex_runtime_residency {
     pthread_mutex_t access_mutex;
     int access_mutex_ready;
 };
+typedef struct {
+    const void *host[2][3];
+    unsigned long long offset[3], bytes[3];
+} state_resident_component;
+typedef struct {
+    int selected, staged;
+    unsigned long long bytes;
+    yvex_attention_state_recipe recipe;
+    yvex_device_tensor *device[2];
+    unsigned char *host[2];
+    unsigned int component_count;
+    state_resident_component components[YVEX_ATTENTION_STATE_COMPONENT_CAP];
+} state_resident_layer;
+struct yvex_runtime_state_residency {
+    yvex_backend *backend;
+    state_resident_layer *layers;
+    unsigned long long layer_count;
+    yvex_runtime_state_residency_summary summary;
+};
+
+/* Purpose: append one aligned state span to a checked per-layer device layout. */
+static int state_resident_span(unsigned long long bytes, unsigned long long *cursor,
+                               unsigned long long *offset)
+{
+    unsigned long long aligned;
+    if (!cursor || !offset || *cursor > ULLONG_MAX - 7ull) return 0;
+    aligned = (*cursor + 7ull) & ~7ull;
+    if (bytes > ULLONG_MAX - aligned) return 0;
+    *offset = aligned;
+    *cursor = aligned + bytes;
+    return 1;
+}
+
+/* Purpose: derive one pointer-free mutable-state residency identity.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+static int state_resident_identity(
+    const yvex_runtime_state_residency *residency,
+    const yvex_graph_attention_capacity_summary *capacity,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_backend_device_info device;
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    yvex_error err;
+    if (!residency || !capacity ||
+        yvex_backend_get_device_info(residency->backend, &device, &err) != YVEX_OK)
+        return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.persistent-state-residency.v1") ||
+        !yvex_sha256_update_text(&hash, capacity->identity) ||
+        !yvex_sha256_update_u64(&hash, yvex_backend_kind_of(residency->backend)) ||
+        !yvex_sha256_update_u64(&hash, (unsigned long long)device.device_index) ||
+        !yvex_sha256_update_u64(&hash, (unsigned long long)device.compute_capability_major) ||
+        !yvex_sha256_update_u64(&hash, (unsigned long long)device.compute_capability_minor) ||
+        !yvex_sha256_update_u64(&hash, residency->layer_count))
+        return 0;
+    for (index = 0ull; index < residency->layer_count; ++index) {
+        const state_resident_layer *layer = &residency->layers[index];
+        if (!yvex_sha256_update_u64(&hash, index) ||
+            !yvex_sha256_update_u64(&hash, (unsigned long long)layer->selected) ||
+            (layer->selected &&
+             !yvex_sha256_update_u64(&hash, layer->bytes)))
+            return 0;
+    }
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+/* Purpose: project one generic state binding to its immutable history spans.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+static int state_resident_source(
+    const yvex_attention_history_view *view,
+    yvex_attention_state_binding binding, const void *spans[3])
+{
+    memset(spans, 0, 3u * sizeof(*spans));
+    if (!view) return 0;
+    switch (binding) {
+    case YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY:
+        spans[0] = view->local_kv; spans[1] = view->local_positions; return 1;
+    case YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY:
+        spans[0] = view->compressed_kv; spans[1] = view->compressed_positions; return 1;
+    case YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY:
+        spans[0] = view->indexer_kv; spans[1] = view->indexer_positions; return 1;
+    case YVEX_ATTENTION_STATE_BINDING_MAIN_ROLLING:
+        spans[0] = view->main_rolling_state.kv_state;
+        spans[2] = view->main_rolling_state.score_state;
+        return 1;
+    case YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING:
+        spans[0] = view->indexer_rolling_state.kv_state;
+        spans[2] = view->indexer_rolling_state.score_state;
+        return 1;
+    default: return 0;
+    }
+}
+
+/* Purpose: pack one provider history bank into its stable runtime staging arena.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+static int state_resident_pack(
+    state_resident_layer *layer, unsigned int bank,
+    const yvex_attention_history_view *view,
+    const yvex_attention_state_recipe *recipe, yvex_error *err)
+{
+    unsigned int index;
+    if (!layer || bank > 1u || !view || !recipe ||
+        recipe->component_count != layer->component_count) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.state.residency.pack",
+                       "persistent state storage inventory is incompatible");
+        return YVEX_ERR_FORMAT;
+    }
+    if (layer->host[bank])
+        memset(layer->host[bank], 0, (size_t)layer->bytes);
+    for (index = 0u; index < recipe->component_count; ++index) {
+        state_resident_component *target = &layer->components[index];
+        const void *pointers[3];
+        unsigned int span;
+        if (!state_resident_source(view, recipe->components[index].binding, pointers)) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.state.residency.pack",
+                           "persistent state component binding is invalid");
+            return YVEX_ERR_FORMAT;
+        }
+        for (span = 0u; span < 3u; ++span) {
+            if (target->bytes[span] && !pointers[span]) {
+                yvex_error_set(err, YVEX_ERR_FORMAT,
+                               "runtime.state.residency.pack",
+                               "persistent state component span drifted");
+                return YVEX_ERR_FORMAT;
+            }
+            target->host[bank][span] = pointers[span];
+            if (target->bytes[span] && layer->host[bank])
+                memcpy(layer->host[bank] + target->offset[span],
+                       pointers[span], (size_t)target->bytes[span]);
+        }
+    }
+    return YVEX_OK;
+}
+
+/* Purpose: upload one complete packed bank through the canonical backend tensor owner.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+static int state_resident_upload(yvex_runtime_state_residency *residency,
+                                 state_resident_layer *layer, unsigned int bank,
+                                 yvex_error *err)
+{
+    int rc;
+    if (yvex_backend_kind_of(residency->backend) != YVEX_BACKEND_KIND_CUDA)
+        return YVEX_OK;
+    rc = yvex_backend_tensor_write(
+        residency->backend, layer->device[bank], layer->host[bank],
+        layer->bytes, err);
+    if (rc == YVEX_OK) {
+        residency->summary.upload_count++;
+        if (!yvex_core_u64_add(residency->summary.upload_bytes, layer->bytes,
+                               &residency->summary.upload_bytes)) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.state.residency.upload",
+                           "persistent state upload accounting overflowed");
+            return YVEX_ERR_BOUNDS;
+        }
+    }
+    return rc;
+}
+
+/* Purpose: derive the canonical checked span mapping for one persistent layer.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+static int state_resident_layer_layout(state_resident_layer *layer,
+    const yvex_attention_state_recipe *recipe, yvex_error *err)
+{
+    unsigned long long cursor = 0ull;
+    unsigned int index;
+    if (!layer || !recipe || !recipe->component_count ||
+        recipe->component_count > YVEX_ATTENTION_STATE_COMPONENT_CAP) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.state.residency.layout",
+                       "persistent state recipe geometry is invalid");
+        return YVEX_ERR_FORMAT;
+    }
+    memset(layer, 0, sizeof(*layer));
+    layer->selected = 1;
+    layer->recipe = *recipe;
+    layer->component_count = recipe->component_count;
+    for (index = 0u; index < recipe->component_count; ++index) {
+        const yvex_attention_state_component_recipe *component =
+            &recipe->components[index];
+        state_resident_component *map = &layer->components[index];
+        unsigned long long values, positions = 0ull, auxiliary = 0ull;
+        if (component->kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY) {
+            if (!yvex_core_u64_mul(component->capacity, component->value_width,
+                                   &values) ||
+                !yvex_core_u64_mul(values, sizeof(float), &values) ||
+                !yvex_core_u64_mul(component->capacity,
+                                   sizeof(unsigned long long), &positions))
+                goto overflow;
+        } else if (!yvex_core_u64_mul(component->rolling.kv_state_extent,
+                                      sizeof(float), &values) ||
+                   !yvex_core_u64_mul(component->rolling.score_state_extent,
+                                      sizeof(float), &auxiliary)) {
+            goto overflow;
+        }
+        map->bytes[0] = values;
+        map->bytes[1] = positions;
+        map->bytes[2] = auxiliary;
+        if (!state_resident_span(values, &cursor, &map->offset[0]) ||
+            !state_resident_span(positions, &cursor, &map->offset[1]) ||
+            !state_resident_span(auxiliary, &cursor, &map->offset[2]))
+            goto overflow;
+    }
+    if (cursor > (unsigned long long)SIZE_MAX) goto overflow;
+    layer->bytes = cursor;
+    return YVEX_OK;
+overflow:
+    yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.state.residency.layout",
+                   "persistent state device layout overflowed");
+    return YVEX_ERR_BOUNDS;
+}
+
+/* Purpose: allocate and seed both stable device banks for one selected layer.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+static int state_resident_layer_prepare(
+    yvex_runtime_state_residency *residency, state_resident_layer *layer,
+    unsigned long long layer_index, const yvex_attention_state_provider *provider,
+    const yvex_attention_state_recipe *recipe, yvex_error *err)
+{
+    const yvex_attention_history_view *view;
+    yvex_backend_tensor_desc descriptor = {0};
+    unsigned int bank;
+    int rc = state_resident_layer_layout(layer, recipe, err);
+    if (rc != YVEX_OK) return rc;
+    for (bank = 0u; bank < 2u; ++bank) {
+        if (yvex_backend_kind_of(residency->backend) == YVEX_BACKEND_KIND_CUDA)
+            layer->host[bank] = calloc(1u, (size_t)layer->bytes);
+        view = provider->view(
+            provider->context, layer_index,
+            bank ? YVEX_ATTENTION_STATE_VIEW_CANDIDATE
+                 : YVEX_ATTENTION_STATE_VIEW_COMMITTED);
+        rc = view ? YVEX_OK : YVEX_ERR_STATE;
+        if ((yvex_backend_kind_of(residency->backend) == YVEX_BACKEND_KIND_CUDA &&
+             !layer->host[bank]) ||
+            rc != YVEX_OK ||
+            state_resident_pack(layer, bank, view, recipe, err) != YVEX_OK)
+        {
+            if (rc != YVEX_OK && !yvex_error_is_set(err))
+                yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.prepare",
+                               "persistent state provider view is unavailable");
+            else if (rc == YVEX_OK && !yvex_error_is_set(err))
+                yvex_error_set(err, YVEX_ERR_NOMEM, "runtime.state.residency.prepare",
+                               "persistent state staging allocation failed");
+            return rc == YVEX_OK ? yvex_error_code(err) : rc;
+        }
+        if (yvex_backend_kind_of(residency->backend) == YVEX_BACKEND_KIND_CUDA) {
+            char name[48];
+            (void)snprintf(name, sizeof(name), "persistent-state-%llu-%u",
+                           layer_index, bank);
+            descriptor.name = name;
+            descriptor.dtype = YVEX_DTYPE_I8;
+            descriptor.rank = 1u;
+            descriptor.dims[0] = layer->bytes;
+            descriptor.bytes = layer->bytes;
+            rc = yvex_backend_tensor_alloc(
+                residency->backend, &descriptor, &layer->device[bank], err);
+            if (rc != YVEX_OK ||
+                state_resident_upload(residency, layer, bank, err) != YVEX_OK)
+                return rc == YVEX_OK ? yvex_error_code(err) : rc;
+            if (!yvex_core_u64_add(residency->summary.device_bytes, layer->bytes,
+                                   &residency->summary.device_bytes)) {
+                yvex_error_set(err, YVEX_ERR_BOUNDS, "runtime.state.residency.prepare",
+                               "persistent state device-byte accounting overflowed");
+                return YVEX_ERR_BOUNDS;
+            }
+        }
+    }
+    return YVEX_OK;
+}
+
+/* Purpose: identify one provider bank without reconstructing state offsets.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+static int state_resident_bank(const state_resident_layer *layer,
+    const yvex_attention_history_view *view, unsigned int *bank, yvex_error *err)
+{
+    int matches[2] = {1, 1};
+    unsigned int component, candidate, span;
+    for (component = 0u; component < layer->component_count; ++component) {
+        const state_resident_component *map = &layer->components[component];
+        const void *pointers[3] = {0};
+        if (!state_resident_source(view, layer->recipe.components[component].binding, pointers)) {
+            matches[0] = matches[1] = 0;
+            continue;
+        }
+        for (candidate = 0u; candidate < 2u; ++candidate)
+            for (span = 0u; span < 3u; ++span)
+                if (map->bytes[span] && pointers[span] != map->host[candidate][span])
+                    matches[candidate] = 0;
+    }
+    if (matches[0] == matches[1]) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.bank",
+                       "candidate state does not resolve to one stable bank");
+        return YVEX_ERR_STATE;
+    }
+    *bank = matches[1] ? 1u : 0u;
+    return YVEX_OK;
+}
+
+/* Purpose: resolve one provider-owned bank span to its exact stable device address.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+static int state_resident_resolve(const void *context, const void *host,
+                                  unsigned long long bytes,
+                                  unsigned long long *device_address)
+{
+    const yvex_runtime_state_residency *residency = context;
+    unsigned long long layer_index;
+    uintptr_t pointer = (uintptr_t)host;
+    if (device_address) *device_address = 0ull;
+    if (!residency || residency->summary.invalidated || !host || !bytes ||
+        !device_address)
+        return YVEX_BACKEND_RESIDENT_INVALID;
+    for (layer_index = 0ull; layer_index < residency->layer_count; ++layer_index) {
+        const state_resident_layer *layer = &residency->layers[layer_index];
+        unsigned int component, bank, span;
+        if (!layer->selected) continue;
+        for (component = 0u; component < layer->component_count; ++component)
+            for (bank = 0u; bank < 2u; ++bank)
+                for (span = 0u; span < 3u; ++span) {
+                    uintptr_t base =
+                        (uintptr_t)layer->components[component].host[bank][span];
+                    unsigned long long extent =
+                        layer->components[component].bytes[span];
+                    if (!base || pointer < base ||
+                        (unsigned long long)(pointer - base) > extent ||
+                        bytes > extent - (unsigned long long)(pointer - base))
+                        continue;
+                    *device_address =
+                        (unsigned long long)(uintptr_t)layer->device[bank]->data +
+                        layer->components[component].offset[span] +
+                        (unsigned long long)(pointer - base);
+                    return YVEX_BACKEND_RESIDENT_HIT;
+                }
+    }
+    return YVEX_BACKEND_RESIDENT_MISS;
+}
 
 /* Purpose: publish one typed residency refusal without exposing a partial arena. */
 static int residency_reject(yvex_runtime_residency_failure *failure,
@@ -744,6 +1091,321 @@ int yvex_runtime_residency_invalidate(yvex_runtime_residency *residency,
     }
     residency->summary.generation = next;
     (void)pthread_mutex_unlock(&residency->access_mutex);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Purpose: release every mutable-state residency allocation through exact ownership.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+int yvex_runtime_state_residency_close(
+    yvex_runtime_state_residency **owner, yvex_error *err)
+{
+    yvex_runtime_state_residency *residency = owner ? *owner : NULL;
+    yvex_error cleanup;
+    unsigned long long index;
+    int result = YVEX_OK;
+    if (!residency) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    yvex_backend_state_residency_detach(residency->backend);
+    for (index = 0ull; index < residency->layer_count; ++index) {
+        state_resident_layer *layer = &residency->layers[index];
+        unsigned int bank;
+        for (bank = 0u; bank < 2u; ++bank) {
+            int rc = layer->device[bank]
+                         ? yvex_backend_tensor_release(
+                               residency->backend, &layer->device[bank], &cleanup)
+                         : YVEX_OK;
+            if (result == YVEX_OK && rc != YVEX_OK) {
+                result = rc;
+                if (err) *err = cleanup;
+            }
+            if (!layer->device[bank]) {
+                free(layer->host[bank]);
+                layer->host[bank] = NULL;
+            }
+        }
+    }
+    if (result != YVEX_OK) return result;
+    free(residency->layers);
+    memset(residency, 0, sizeof(*residency));
+    free(residency);
+    *owner = NULL;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Purpose: prepare one session-owned persistent-state residency from sealed recipes.
+ * Inputs: backend, exact capacity plan, provider banks, and device budget.
+ * Effects: allocates stable CUDA banks once and attaches their range resolver.
+ * Failure: releases all partial ownership and publishes no residency.
+ * Boundary: CPU uses provider-owned host state; CUDA adds no numerical fallback. */
+int yvex_runtime_state_residency_prepare(
+    yvex_runtime_state_residency **out, yvex_backend *backend,
+    const yvex_graph_attention_capacity_plan *capacity,
+    const yvex_attention_state_provider *provider,
+    unsigned long long prior_host_bytes, unsigned long long maximum_host_bytes,
+    unsigned long long prior_device_bytes,
+    unsigned long long maximum_device_bytes, yvex_error *err)
+{
+    const yvex_graph_attention_capacity_summary *summary =
+        yvex_graph_attention_capacity_plan_summary(capacity);
+    yvex_runtime_state_residency *residency;
+    yvex_graph_attention_state_summary state;
+    unsigned long long index, required_bytes = 0ull, host_total, device_total;
+    int rc = YVEX_OK;
+    if (!out || *out || !backend || !summary || !provider || !provider->view ||
+        !provider->summary || !summary->selected_layer_count) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.state.residency.prepare",
+                       "backend, capacity, and persistent provider are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = provider->summary(provider->context, &state, err);
+    if (rc != YVEX_OK) return rc;
+    residency = calloc(1u, sizeof(*residency));
+    if (!residency) return YVEX_ERR_NOMEM;
+    residency->backend = backend;
+    residency->layer_count = summary->layer_count;
+    residency->layers = calloc((size_t)residency->layer_count,
+                               sizeof(*residency->layers));
+    if (!residency->layers) {
+        free(residency);
+        yvex_error_set(err, YVEX_ERR_NOMEM, "runtime.state.residency.prepare",
+                       "persistent state residency allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    for (index = 0ull; rc == YVEX_OK && index < residency->layer_count; ++index) {
+        const yvex_graph_attention_capacity_layer *layer =
+            yvex_graph_attention_capacity_plan_layer(capacity, index);
+        state_resident_layer layout;
+        unsigned long long banks;
+        if (!layer) {
+            rc = YVEX_ERR_FORMAT;
+            yvex_error_set(err, rc, "runtime.state.residency.prepare",
+                           "persistent state capacity layer is unavailable");
+        } else if (layer->selected) {
+            rc = state_resident_layer_layout(&layout, &layer->recipe, err);
+            if (rc == YVEX_OK &&
+                (!yvex_core_u64_mul(layout.bytes, 2ull, &banks) ||
+                 !yvex_core_u64_add(required_bytes, banks, &required_bytes))) {
+                rc = YVEX_ERR_BOUNDS;
+                yvex_error_set(err, rc, "runtime.state.residency.prepare",
+                               "persistent state residency size overflowed");
+            }
+        }
+    }
+    if (rc == YVEX_OK &&
+        (!yvex_core_u64_add(prior_host_bytes, state.allocated_bytes, &host_total) ||
+         (yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA &&
+          (!yvex_core_u64_add(prior_device_bytes, required_bytes, &device_total) ||
+           !yvex_core_u64_add(host_total, required_bytes, &host_total))))) {
+        rc = YVEX_ERR_BOUNDS;
+        yvex_error_set(err, rc, "runtime.state.residency.prepare",
+                       "persistent state residency budget arithmetic overflowed");
+    }
+    if (rc == YVEX_OK &&
+        ((maximum_host_bytes && host_total > maximum_host_bytes) ||
+         (yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA &&
+          maximum_device_bytes && device_total > maximum_device_bytes))) {
+        rc = YVEX_ERR_BOUNDS;
+        yvex_error_set(err, rc, "runtime.state.residency.prepare",
+                       "persistent state residency exceeds its session budget");
+    }
+    for (index = 0ull; rc == YVEX_OK && index < residency->layer_count; ++index) {
+        const yvex_graph_attention_capacity_layer *layer =
+            yvex_graph_attention_capacity_plan_layer(capacity, index);
+        if (!layer) {
+            rc = YVEX_ERR_FORMAT;
+            yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.state.residency.prepare",
+                           "persistent state capacity layer is unavailable");
+        } else if (layer->selected) {
+            rc = state_resident_layer_prepare(
+                residency, &residency->layers[index], index,
+                provider, &layer->recipe, err);
+            if (rc == YVEX_OK) residency->summary.layer_count++;
+        }
+    }
+    if (rc == YVEX_OK && yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA)
+        residency->summary.host_bytes = required_bytes;
+    residency->summary.generation = 1ull;
+    residency->summary.cuda_ready =
+        yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA;
+    residency->summary.sealed =
+        rc == YVEX_OK && state_resident_identity(
+            residency, summary, residency->summary.layout_identity);
+    if (rc == YVEX_OK && !residency->summary.sealed) {
+        rc = YVEX_ERR_STATE;
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.prepare",
+                       "persistent state residency identity failed");
+    }
+    if (rc == YVEX_OK && residency->summary.cuda_ready)
+        rc = yvex_backend_state_residency_attach(
+            backend, residency, state_resident_resolve,
+            residency->summary.generation, err);
+    if (rc != YVEX_OK) {
+        yvex_error primary = *err;
+        yvex_error cleanup;
+        (void)yvex_runtime_state_residency_close(&residency, &cleanup);
+        *err = primary;
+        return rc;
+    }
+    *out = residency;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Purpose: upload one complete candidate layer without changing committed mappings.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+int yvex_runtime_state_residency_stage(
+    yvex_runtime_state_residency *residency,
+    const yvex_attention_state_provider *provider,
+    unsigned long long layer_index, yvex_error *err)
+{
+    const yvex_attention_history_view *view;
+    state_resident_layer *layer;
+    const yvex_attention_state_recipe *recipe;
+    unsigned int bank = 0u;
+    int rc;
+    if (!residency || !provider || !provider->view ||
+        layer_index >= residency->layer_count ||
+        !residency->layers[layer_index].selected ||
+        residency->summary.invalidated) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.stage",
+                       "valid selected persistent state layer is required");
+        return YVEX_ERR_STATE;
+    }
+    layer = &residency->layers[layer_index];
+    recipe = &layer->recipe;
+    view = provider->view(
+        provider->context, layer_index, YVEX_ATTENTION_STATE_VIEW_CANDIDATE);
+    if (!view) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.stage",
+                       "candidate persistent state view is unavailable");
+        return YVEX_ERR_STATE;
+    }
+    rc = state_resident_bank(layer, view, &bank, err);
+    if (rc == YVEX_OK) rc = state_resident_pack(layer, bank, view, recipe, err);
+    if (rc != YVEX_OK ||
+        state_resident_upload(residency, layer, bank, err) != YVEX_OK)
+        return rc == YVEX_OK ? yvex_error_code(err) : rc;
+    if (!layer->staged) {
+        layer->staged = 1;
+        residency->summary.staged_layer_count++;
+    }
+    return YVEX_OK;
+}
+
+/* Purpose: invalidate captured launch graphs before publishing a new state generation.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+int yvex_runtime_state_residency_publish(
+    yvex_runtime_state_residency *residency, yvex_error *err)
+{
+    unsigned long long affected = 0ull;
+    if (!residency || residency->summary.invalidated ||
+        residency->summary.staged_layer_count != residency->summary.layer_count) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.publish",
+                       "complete staged persistent state residency is required");
+        return YVEX_ERR_STATE;
+    }
+    if (residency->summary.cuda_ready &&
+        yvex_backend_cuda_attention_graph_registry_apply(
+            residency->backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_INVALIDATE,
+            &affected, err) != YVEX_OK)
+        return yvex_error_code(err);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Purpose: finish one already admitted state publication through infallible counters.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+void yvex_runtime_state_residency_commit(yvex_runtime_state_residency *residency)
+{
+    unsigned long long index;
+    if (!residency) return;
+    for (index = 0ull; index < residency->layer_count; ++index)
+        residency->layers[index].staged = 0;
+    residency->summary.staged_layer_count = 0ull;
+    residency->summary.commit_count++;
+    residency->summary.generation++;
+    if (residency->backend)
+        residency->backend->state_residency_generation =
+            residency->summary.generation;
+}
+
+/* Purpose: discard candidate residency publication without touching committed banks.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+void yvex_runtime_state_residency_abort(yvex_runtime_state_residency *residency)
+{
+    unsigned long long index;
+    if (!residency) return;
+    for (index = 0ull; index < residency->layer_count; ++index)
+        residency->layers[index].staged = 0;
+    residency->summary.staged_layer_count = 0ull;
+    residency->summary.abort_count++;
+}
+
+/* Purpose: prepublish zeroed stable banks before a provider reset.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+int yvex_runtime_state_residency_reset(
+    yvex_runtime_state_residency *residency, yvex_error *err)
+{
+    unsigned long long index;
+    int rc = YVEX_OK;
+    if (!residency || residency->summary.invalidated)
+        return YVEX_ERR_STATE;
+    for (index = 0ull; rc == YVEX_OK && index < residency->layer_count; ++index) {
+        state_resident_layer *layer = &residency->layers[index];
+        unsigned int bank;
+        if (!layer->selected) continue;
+        for (bank = 0u; rc == YVEX_OK && bank < 2u; ++bank) {
+            if (layer->host[bank])
+                memset(layer->host[bank], 0, (size_t)layer->bytes);
+            if (rc == YVEX_OK)
+                rc = state_resident_upload(residency, layer, bank, err);
+        }
+    }
+    if (rc == YVEX_OK) {
+        yvex_runtime_state_residency_abort(residency);
+        residency->summary.generation++;
+        if (residency->backend)
+            residency->backend->state_residency_generation =
+                residency->summary.generation;
+    }
+    return rc;
+}
+
+/* Purpose: fail closed one mutable-state residency and detach device resolution.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+int yvex_runtime_state_residency_invalidate(
+    yvex_runtime_state_residency *residency, yvex_error *err)
+{
+    if (!residency) return YVEX_ERR_INVALID_ARG;
+    if (!residency->summary.invalidated) {
+        residency->summary.invalidated = 1;
+        residency->summary.generation++;
+        yvex_backend_state_residency_detach(residency->backend);
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Purpose: copy immutable persistent-state residency lifecycle evidence.
+ * Inputs: exact owner facts. Effects: updates only declared state.
+ * Failure: returns typed status without partial publication. Boundary: owner-local. */
+int yvex_runtime_state_residency_summary_copy(
+    const yvex_runtime_state_residency *residency,
+    yvex_runtime_state_residency_summary *out, yvex_error *err)
+{
+    if (!residency || !out) return YVEX_ERR_INVALID_ARG;
+    *out = residency->summary;
     yvex_error_clear(err);
     return YVEX_OK;
 }

@@ -1087,6 +1087,12 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     YVEX_TEST_ASSERT(rc == YVEX_OK && full_key[0] != '\0' &&
                      strcmp(first_key, full_key) != 0,
                      "full canonical attention stage interval is admitted distinctly");
+    backend->state_residency_generation = 7ull;
+    rc = yvex_cuda_attention_graph_key(
+        backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && strcmp(full_key, dynamic_key) != 0,
+                     "persistent-state generation invalidates CUDA graph compatibility");
+    backend->state_residency_generation = 0ull;
     job.token_position = 3ull;
     job.local_count = 3ull;
     job.compressed_count = 1ull;

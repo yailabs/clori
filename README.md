@@ -225,9 +225,11 @@ The admitted vertical includes:
   NVIDIA GB10 CUDA path.
 
 These results establish the current complete-artifact and attention execution
-boundary. Persistent KV, tokenizer-backed prefill, FFN/MoE execution, complete
-transformer composition, model decode, logits, sampling, text generation,
-evaluation, full-model benchmark, and release admission retain separate gates.
+boundary. Session-owned persistent DeepSeek attention state is also admitted
+on CPU and the GB10 CUDA path. Tokenizer-backed prefill, FFN/MoE execution,
+complete transformer composition, model decode, logits, sampling, text
+generation, evaluation, full-model benchmark, and release admission retain
+separate gates.
 
 Detailed family semantics live in
 [`docs/model-families.md`](docs/model-families.md). Artifact terminology and
@@ -237,7 +239,7 @@ operator procedures live in
 
 ## Verified implementation snapshot
 
-Snapshot: 23 July 2026.
+Snapshot: 25 July 2026.
 [`PROJECT.md`](PROJECT.md) is the sole live authority for implementation state,
 dependencies, capability gates, and release admission.
 
@@ -250,7 +252,7 @@ dependencies, capability gates, and release admission.
 | Runtime binding, model, and session | Implemented and consumed by the attention operator |
 | Attention residency | Core and envelope weights prepared for reusable CPU and CUDA execution |
 | Attention core and envelope | All 43 layers and 634 core bindings execute on CPU eager and admitted GB10 CUDA eager, piecewise, and full graph modes |
-| Persistent KV | Unsupported |
+| Persistent attention state | Admitted for all 43 DeepSeek attention layers through isolated CPU/GB10 CUDA sessions, atomic append/read, capacity, clear/reuse, and causal production consumption |
 | Tokenizer-backed model prefill and model decode | Unsupported |
 | FFN/MoE and complete transformer composition | Unsupported |
 | Logits, sampling, and text generation | Unsupported |
@@ -353,6 +355,29 @@ Compare CPU and CUDA production execution for one requested mode:
   --scope full \
   --output json
 ```
+
+Exercise persistent state through multiple production executions:
+
+```sh
+./yvex graph attention state exercise \
+  --target deepseek4-v4-flash \
+  --models-root "$MODELS_ROOT" \
+  --artifact "$ARTIFACT" \
+  --runtime-binding "$BINDING" \
+  --backend cuda \
+  --phase prefill \
+  --mode eager \
+  --operation-scope core \
+  --tokens 2 \
+  --probe canonical \
+  --scope full \
+  --output json
+```
+
+This command allocates the exact session layout, commits real publications,
+proves that later attention consumes committed history, clears the session, and
+proves compatible reuse. It does not execute tokenizer-backed prompt prefill or
+model decode.
 
 Measure the attention-local CUDA boundary:
 

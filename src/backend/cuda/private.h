@@ -142,6 +142,10 @@ typedef struct {
                                     const void *src,
                                     size_t bytes,
                                     CUstream stream);
+    CUresult (*cuMemcpyDtoDAsync_v2)(CUdeviceptr dst,
+                                    CUdeviceptr src,
+                                    size_t bytes,
+                                    CUstream stream);
     CUresult (*cuMemcpyDtoHAsync_v2)(void *dst,
                                     CUdeviceptr src,
                                     size_t bytes,
