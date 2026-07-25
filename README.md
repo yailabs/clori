@@ -376,7 +376,7 @@ Measure the attention-local CUDA boundary:
 
 The [DeepSeek runbook](docs/runbooks/deepseek.md) covers binding discovery,
 CUDA prerequisites, refusal recovery, identity-bound benchmark baselines, CSV
-output, and deterministic external SVG chart generation.
+output, and deterministic publication of the curated SVG chart set.
 
 ## Build products and validation
 

@@ -14,7 +14,11 @@ Work in this order unless the delivery explicitly owns a doctrine boundary:
 3. project control and documentation.
 
 Never commit model weights, generated complete artifacts, local registries,
-provider credentials, build output, reports, or downloaded dependencies.
+provider credentials, build output, raw benchmark records, reports, or
+downloaded dependencies. Curated deterministic SVG documentation assets may be
+tracked under `docs/assets/` when a canonical production command regenerates
+them from identity-bound evidence, the owning documentation links them, and
+repository guards validate their provenance and bounded content.
 
 ## 1. Directory is the namespace
 
@@ -281,9 +285,11 @@ transformer. Transformer execution is not generation.
 Runtime execution consumes an admitted content-addressed runtime binding. It
 does not reopen source inventories, reconstruct Transformation IR, rebuild
 quantization or writer plans, or branch on family names. Family semantics enter
-through a typed adapter. Runtime benchmark baselines, CSV/JSON evidence, and
-generated charts are identity-bound external operator assets and are never
-tracked in the source repository or treated as release benchmark authority.
+through a typed adapter. Runtime benchmark baselines and CSV/JSON evidence are
+identity-bound external operator assets and are never tracked in the source
+repository. A curated deterministic SVG derived from that evidence may be
+tracked under `docs/assets/` as documentation, but it never becomes release
+benchmark authority.
 
 ## 8. CLI, reports, and output
 

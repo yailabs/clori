@@ -143,8 +143,9 @@ require_text AGENTS.md 'complete model artifact'
 require_text AGENTS.md 'supported model artifact'
 require_text AGENTS.md '### Commit format'
 require_text AGENTS.md 'New commits use Conventional Commits:'
-require_text AGENTS.md 'Runtime benchmark baselines, CSV/JSON evidence, and'
-require_text AGENTS.md 'generated charts are identity-bound external operator assets'
+require_text AGENTS.md 'Runtime benchmark baselines and CSV/JSON evidence are'
+require_text AGENTS.md 'A curated deterministic SVG derived from that evidence may be'
+require_text AGENTS.md 'tracked under `docs/assets/` as documentation'
 require_text AGENTS.md '### Progression admissibility'
 require_text AGENTS.md '### Six-pass vertical iteration'
 require_text AGENTS.md '### Quality and evaluation taxonomy'
@@ -446,8 +447,14 @@ fi
 if grep -nE 'former .* owner|former CLI .* adapter' docs/topology-closure-audit.md; then
   fail 'historical topology evidence lost its commit-qualified path'
 fi
-if test -n "$(git ls-files '*.yvex-benchmark' '*.svg')"; then
-  fail 'generated benchmark baseline or SVG is tracked'
+if test -n "$(git ls-files '*.yvex-benchmark')"; then
+  fail 'generated benchmark baseline is tracked'
+fi
+unexpected_svg=$(git ls-files '*.svg' |
+  grep -Ev '^docs/assets/benchmarks/attention/(eager|eager-comparison|piecewise|piecewise-comparison|full|full-comparison)[.]svg$' ||
+  true)
+if test -n "$unexpected_svg"; then
+  fail "unexpected generated SVG is tracked: $unexpected_svg"
 fi
 if grep -nE '(/home/|/Users/|\$HOME/)' README.md; then
   fail 'README exposes a local filesystem path'

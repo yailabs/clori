@@ -256,8 +256,11 @@ seals those structural counters, timings and complete reproducibility identity.
 Schemas one through four require regeneration.
 Baseline and SVG publication are independently atomic and
 no-replace; an SVG failure never withdraws an already admitted baseline. JSON,
-CSV, baseline and SVG outputs are external operator assets. They are never
-tracked and they are not full-model benchmark or release evidence.
+CSV, baseline and ad hoc SVG outputs are external operator assets. The
+repository publication target validates a complete external lane and copies
+only its six deterministic SVG documentation snapshots into
+`docs/assets/benchmarks/attention/`. Tracked snapshots are not full-model
+benchmark or release evidence.
 
 ## Capability And Claim Boundary
 

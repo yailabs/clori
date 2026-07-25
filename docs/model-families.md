@@ -1424,7 +1424,7 @@ It does not claim dense runtime support. It does not claim sparse or MoE runtime
 support. It does not claim tokenizer support, full artifact support, backend
 support, generation, serving, evaluation, full-model benchmark performance, or
 release readiness. Runtime-local attention benchmark/profile evidence and its
-external identity-bound SVG charts do not change those claims.
+identity-bound SVG documentation snapshots do not change those claims.
 
 Family-specific non-claims:
 

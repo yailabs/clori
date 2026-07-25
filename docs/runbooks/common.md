@@ -166,8 +166,11 @@ git diff -- docs MODEL_ARTIFACTS.md AGENTS.md
 ## Operator-Local Cleanup
 
 Never add source weights, emitted artifacts, runtime bindings, registries,
-benchmark baselines, JSON/CSV reports, SVG charts, logs, pid files, caches,
-partial downloads, or generated backend outputs to git.
+benchmark baselines, JSON/CSV reports, ad hoc SVG charts, logs, pid files,
+caches, partial downloads, or generated backend outputs to git. The only chart
+exception is the validated deterministic attention set under
+`../assets/benchmarks/attention/`, regenerated through its canonical Make
+target from external raw evidence.
 
 Before committing:
 

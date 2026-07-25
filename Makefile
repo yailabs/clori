@@ -17,6 +17,8 @@
 #   make test-runtime-benchmark-chart
 #   make test-runtime-benchmark-chart-live YVEX_RUNTIME_BENCHMARK_DIR=/absolute/path \
 #       YVEX_RUNTIME_BINDING=/absolute/file.yvex-runtime-binding
+#   make update-runtime-benchmark-charts YVEX_RUNTIME_BENCHMARK_DIR=/absolute/empty/path \
+#       YVEX_RUNTIME_BINDING=/absolute/file.yvex-runtime-binding
 #   make test-runtime-sanitizers
 #   make test-runtime-sanitizers-live
 #   make test-cli
@@ -36,7 +38,8 @@
 	test-runtime-residency test-runtime-phases test-runtime-envelope \
 	test-runtime-operator test-runtime-digests test-runtime-family-neutrality \
 	test-runtime-state test-runtime-benchmark test-runtime-benchmark-chart \
-	test-runtime-benchmark-chart-live test-runtime-attention-live \
+	test-runtime-benchmark-chart-live update-runtime-benchmark-charts \
+	test-runtime-attention-live \
 	test-runtime test-runtime-asan test-runtime-asan-live \
 	test-runtime-ubsan test-runtime-ubsan-live test-runtime-sanitizers \
 	test-runtime-sanitizers-live test-materialize-live-plan \
@@ -351,7 +354,7 @@ info:
 	@echo "operator: ./yvex graph attention"
 	@echo "daemon: ./yvexd bounded status shell"
 	@echo "runtime_attention: CPU eager and admitted GB10 CUDA eager/piecewise/full implemented"
-	@echo "benchmark_attention: identity-bound baseline, JSON/CSV, and external SVG capability implemented"
+	@echo "benchmark_attention: identity-bound baseline, JSON/CSV, and deterministic SVG capability implemented"
 	@echo "persistent_kv: not implemented"
 	@echo "full_model_inference: not implemented"
 	@echo "generation: not implemented"
@@ -502,6 +505,39 @@ test-runtime-benchmark-chart-live: cuda
 	done; \
 	python3 tests/support/validate_runtime_benchmark.py "$$evidence_dir" "$$binding"; \
 	printf 'runtime benchmark evidence retained: %s\n' "$$evidence_dir"
+
+# Generate fresh identity-bound evidence outside the repository, validate the
+# complete lane, then atomically publish only the six curated documentation
+# charts. Raw baselines and JSON/CSV records remain operator-local.
+update-runtime-benchmark-charts: test-runtime-benchmark-chart-live
+	@set -eu; \
+	evidence_dir='$(YVEX_RUNTIME_BENCHMARK_DIR)'; \
+	evidence_dir=$$(cd "$$evidence_dir" && pwd -P); \
+	repository_root=$$(pwd -P); \
+	test -d docs && test ! -L docs; \
+	mkdir -p docs/assets/benchmarks/attention; \
+	for part in docs/assets docs/assets/benchmarks docs/assets/benchmarks/attention; do \
+		test -d "$$part" && test ! -L "$$part" || { \
+			echo "tracked chart destination must be a real repository directory" >&2; exit 2; }; \
+	done; \
+	chart_dir=$$(cd docs/assets/benchmarks/attention && pwd -P); \
+	test "$$chart_dir" = "$$repository_root/docs/assets/benchmarks/attention" || { \
+		echo "tracked chart destination escaped the repository contract" >&2; exit 2; }; \
+	tmp_path=; \
+	trap 'test -z "$$tmp_path" || test ! -e "$$tmp_path" || unlink -- "$$tmp_path"' \
+		EXIT HUP INT TERM; \
+	for name in eager eager-comparison piecewise piecewise-comparison full full-comparison; do \
+		source_path="$$evidence_dir/$$name.svg"; \
+		test -f "$$source_path" && test ! -L "$$source_path" || { \
+			echo "validated chart is missing: $$source_path" >&2; exit 2; }; \
+		tmp_path="$$chart_dir/.$$name.svg.tmp.$$$$"; \
+		cp -- "$$source_path" "$$tmp_path"; \
+		chmod 0644 "$$tmp_path"; \
+		mv -f -- "$$tmp_path" "$$chart_dir/$$name.svg"; \
+		tmp_path=; \
+	done; \
+	trap - EXIT HUP INT TERM; \
+	printf 'tracked benchmark charts updated: %s\n' "$$chart_dir"
 
 # Keep focused harness invocations serial even when the outer make uses -j.
 test-runtime: $(TEST_RUNNER)

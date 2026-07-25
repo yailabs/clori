@@ -53,9 +53,14 @@ The following remain outside git:
 
 - model sources, emitted GGUF files, and runtime bindings;
 - local registries and artifact identities;
-- benchmark baselines, JSON/CSV reports, SVG charts, logs, pid files, caches,
-  and partial downloads;
+- benchmark baselines, JSON/CSV reports, ad hoc SVG charts, logs, pid files,
+  caches, and partial downloads;
 - generated backend outputs and build products.
+
+The six curated attention benchmark SVGs under
+`assets/benchmarks/attention/` are the sole chart exception. The DeepSeek
+runbook documents their canonical regeneration target; raw evidence remains
+external.
 
 Repository guardrails are listed in `runbooks/common.md` and
 `MODEL_ARTIFACTS.md` at the repository root.

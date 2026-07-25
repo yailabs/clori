@@ -183,7 +183,7 @@ domain algorithms. No writer owns command output.
 | `src/runtime/binding.c` | transactional, content-addressed runtime-binding serialization and admission |
 | `src/runtime/residency.c` | read-only resident attention-weight packs and generation-bound invalidation |
 | `src/runtime/graph.c` | execution descriptors, phase/mode dispatch, reusable workspace, and transactional publication |
-| `src/runtime/benchmark.c` | identity-bound runtime timing, baseline, CSV, and external SVG serialization |
+| `src/runtime/benchmark.c` | identity-bound runtime timing, baseline, CSV, and deterministic SVG serialization |
 
 ## Model Architecture Target Map
 
@@ -262,5 +262,7 @@ This target does not claim:
 
 Attention-local prefill/decode phases operate on activation tensors and an
 explicit state view. Runtime-local benchmark/profile output and deterministic
-external SVG charts measure cold/warm latency plus identity-bound residency,
-transfer, allocation and graph-launch facts for that boundary only.
+SVG charts measure cold/warm latency plus identity-bound residency, transfer,
+allocation and graph-launch facts for that boundary only. The curated chart
+set may be retained under `assets/benchmarks/attention/`; raw evidence remains
+external.

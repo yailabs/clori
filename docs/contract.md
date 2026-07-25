@@ -70,8 +70,10 @@ spawn another YVEX process or link the test-only oracle.
 ## Filesystem Contract
 
 Build output, external runtime bindings, model artifacts, benchmark baselines,
-JSON/CSV reports and generated SVG charts are operator assets. They remain
-outside source control.
+and JSON/CSV reports are operator assets. They remain outside source control.
+The canonical chart publication target may retain six validated deterministic
+SVG snapshots under `docs/assets/benchmarks/attention/`; these are bounded
+documentation assets derived from external evidence, not benchmark records.
 
 Complete artifacts are opened read-only. Canonical filesystem owners reject
 symlink substitution, unsafe paths and accidental replacement. Transactional
@@ -80,8 +82,9 @@ complete writes, file sync, atomic no-replace rename and parent-directory sync.
 Failure removes only temporary resources created by that operation.
 
 Tracked GGUF files are reserved for bounded fixtures. No complete artifact,
-source model payload, runtime binding, resident snapshot, benchmark baseline or
-generated chart belongs in git.
+source model payload, runtime binding, resident snapshot, benchmark baseline,
+or raw benchmark report belongs in git. Curated chart snapshots follow the
+bounded documentation exception above.
 
 ### Native GGUF Reader Contract
 
@@ -381,7 +384,7 @@ qualification violations refuse before performance policy is evaluated.
 
 `--chart PATH.svg` is accepted by `profile`, `benchmark`, and `benchmark
 compare`; execution and inspection actions do not manufacture charts. It
-produces a deterministic external SVG of cold preparation, warm latency,
+produces a deterministic SVG of cold preparation, warm latency,
 resident/workspace bytes, resident H2D bytes, and kernel/graph launch, capture,
 replay, and node counters, optionally paired with a compatible baseline. Schema
 five seals complete reproducibility identity, timing boundaries, resource
@@ -448,8 +451,9 @@ make test-cuda-no-nvcc
 make check-cuda
 ```
 
-Real weights, complete GGUF artifacts, runtime bindings, generated charts and
-benchmark reports must remain untracked.
+Real weights, complete GGUF artifacts, runtime bindings, benchmark baselines,
+and raw benchmark reports must remain untracked. Only the curated SVG
+documentation snapshots admitted by the filesystem contract may be tracked.
 
 ## Claim Promotion Contract
 
