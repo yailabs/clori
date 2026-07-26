@@ -10,6 +10,7 @@
 #include <yvex/internal/runtime.h>
 
 #include <yvex/internal/core.h>
+#include <yvex/internal/moe.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -29,7 +30,7 @@
 #define O_NOFOLLOW 0
 #endif
 
-#define BINDING_MAGIC "YVRBND4\0"
+#define BINDING_MAGIC "YVRBND5\0"
 #define BINDING_MAGIC_BYTES 8u
 #define BINDING_HEADER_BYTES (BINDING_MAGIC_BYTES + 16u + 64u)
 #define BINDING_MAX_BYTES (64u * 1024u * 1024u)
@@ -658,9 +659,39 @@ static const binding_field capability_fields[] = {
     FIELD_U(yvex_runtime_capabilities, mixed_attention_ready),
     FIELD_U(yvex_runtime_capabilities, speculative_attention_ready),
     FIELD_U(yvex_runtime_capabilities, persistent_kv_ready),
+    FIELD_U(yvex_runtime_capabilities, moe_plan_ready),
+    FIELD_U(yvex_runtime_capabilities, moe_router_ready),
+    FIELD_U(yvex_runtime_capabilities, moe_routed_expert_ready),
+    FIELD_U(yvex_runtime_capabilities, moe_shared_expert_ready),
+    FIELD_U(yvex_runtime_capabilities, moe_block_ready),
     FIELD_U(yvex_runtime_capabilities, transformer_ready),
     FIELD_U(yvex_runtime_capabilities, generation_ready),
 };
+
+/* Purpose: validate facts. Inputs: lattice. Effects: none. Failure: false. Boundary: pre-admission only. */
+int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *facts)
+{
+    return facts && (!facts->attention_core_ready || facts->attention_semantics_ready) &&
+           (!facts->attention_envelope_ready || facts->attention_core_ready) &&
+           (!(facts->cpu_prefill_eager_ready || facts->cpu_decode_eager_ready ||
+              facts->cuda_eager_implemented) || facts->attention_core_ready) &&
+           (!(facts->cuda_piecewise_graph_implemented || facts->cuda_full_graph_implemented) ||
+            facts->cuda_eager_implemented) &&
+           (!(facts->attention_operator_ready || facts->attention_trace_ready ||
+              facts->attention_profile_ready || facts->attention_benchmark_ready) ||
+            facts->attention_core_ready) && !facts->cuda_prefill_eager_ready &&
+           !facts->cuda_decode_eager_ready && !facts->cuda_prefill_piecewise_graph_ready &&
+           !facts->cuda_decode_piecewise_graph_ready && !facts->cuda_prefill_full_graph_ready &&
+           !facts->cuda_decode_full_graph_ready && !facts->attention_weight_residency_ready &&
+           !facts->attention_workspace_ready && !facts->mixed_attention_ready &&
+           !facts->speculative_attention_ready && !facts->persistent_kv_ready &&
+           (!facts->moe_router_ready || facts->moe_plan_ready) &&
+           (!facts->moe_routed_expert_ready || facts->moe_router_ready) &&
+           (!facts->moe_shared_expert_ready || facts->moe_plan_ready) &&
+           (!facts->moe_block_ready ||
+            (facts->moe_routed_expert_ready && facts->moe_shared_expert_ready)) &&
+           !facts->transformer_ready && !facts->generation_ready;
+}
 
 /* Purpose: identify one pre-admission execution capability contract field-by-field.
  * Inputs: complete binary capability matrix and caller-owned SHA-256 output.
@@ -696,6 +727,25 @@ int yvex_runtime_capabilities_identity(
     return 1;
 }
 
+/* Purpose: admit facts. Inputs: two lattices. Effects: none. Failure: false. Boundary: adapter maximum. */
+int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts,
+                                          const yvex_runtime_capabilities *maximum)
+{
+    size_t index;
+    if (!yvex_runtime_capabilities_contract_valid(facts) ||
+        !yvex_runtime_capabilities_contract_valid(maximum)) return 0;
+    for (index = 0u; index < FIELD_COUNT(capability_fields); ++index) {
+        const binding_field *field = &capability_fields[index];
+        unsigned long long actual, admitted;
+        if (!field_unsigned_load((const unsigned char *)facts + field->offset,
+                                 field->width, &actual) ||
+            !field_unsigned_load((const unsigned char *)maximum + field->offset,
+                                 field->width, &admitted) || actual > admitted)
+            return 0;
+    }
+    return 1;
+}
+
 /* Purpose: compare a binding capability matrix with the exact registered adapter version.
  * Inputs: adapter identity/version and a validated immutable capability matrix.
  * Effects: invokes only the matching adapter's typed declaration callback.
@@ -705,10 +755,9 @@ static int binding_capabilities_match_adapter(
     unsigned long long adapter_id, unsigned long long adapter_version,
     const yvex_runtime_capabilities *facts)
 {
-    char actual[YVEX_SHA256_HEX_CAP], declared_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long index;
 
-    if (!yvex_runtime_capabilities_identity(facts, actual)) return 0;
+    if (!yvex_runtime_capabilities_contract_valid(facts)) return 0;
     for (index = 0ull;; ++index) {
         const yvex_runtime_family_adapter *adapter =
             yvex_graph_runtime_family_at(index);
@@ -720,9 +769,26 @@ static int binding_capabilities_match_adapter(
             continue;
         return adapter->execution_capabilities &&
                adapter->execution_capabilities(&declared) &&
-               yvex_runtime_capabilities_identity(&declared, declared_identity) &&
-               strcmp(actual, declared_identity) == 0;
+               yvex_runtime_capabilities_admitted_by(facts, &declared);
     }
+}
+
+/* Purpose: bind a non-MoE artifact to an explicit deterministic unavailable-plan identity. */
+static int binding_moe_unavailable_identity(
+    const yvex_runtime_binding_prepare_request *request,
+    const yvex_runtime_descriptor_summary *descriptor,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.moe.plan.unavailable.v1") ||
+        !yvex_sha256_update_u64(&hash, request->family_adapter_id) ||
+        !yvex_sha256_update_u64(&hash, request->family_adapter_version) ||
+        !yvex_sha256_update_text(&hash, descriptor->runtime_descriptor_identity) ||
+        !yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
 }
 
 static const binding_field layer_prefix_fields[] = {
@@ -985,11 +1051,14 @@ static int binding_graph_identities(
 static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
                             char semantic[YVEX_SHA256_HEX_CAP],
                             char executable[YVEX_SHA256_HEX_CAP],
+                            char moe_identity[YVEX_SHA256_HEX_CAP],
                             yvex_runtime_binding_failure *failure, yvex_error *err)
 {
     const yvex_materialization_summary *materialization;
     const yvex_runtime_descriptor_summary *descriptor;
     const yvex_attention_summary *attention;
+    const yvex_moe_plan_summary *moe_summary;
+    yvex_moe_plan *moe = NULL;
     const char *compatibility_mismatch;
 
     if (!request || !request->directory || !request->directory[0] || !request->admission ||
@@ -999,7 +1068,7 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
         strlen(request->artifact_format) >= sizeof(((yvex_runtime_binding_summary *)0)->artifact_format) ||
         !request->artifact_format_version ||
         !yvex_sha256_hex_is_valid(request->logical_transform_identity) ||
-        !semantic || !executable)
+        !semantic || !executable || !moe_identity)
         return binding_reject(
             failure, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT, "request",
             request ? request->directory : NULL, 0ull, 1ull, 0ull, YVEX_ERR_INVALID_ARG,
@@ -1057,6 +1126,29 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
             failure, YVEX_RUNTIME_BINDING_FAILURE_IDENTITY, "graph-identity-inputs",
             request->directory, 0ull, 1ull, 0ull, YVEX_ERR_STATE,
             "runtime binding graph identity inputs are incomplete", err);
+    if (request->capabilities.moe_plan_ready) {
+        if (yvex_moe_plan_build(&moe, request->family_adapter_id,
+                                request->family_adapter_version, request->materialization,
+                                request->runtime_descriptor, request->attention_plan, err) != YVEX_OK ||
+            !(moe_summary = yvex_moe_plan_summary_get(moe))) {
+            char reason[YVEX_ERROR_MESSAGE_CAP];
+            yvex_status status = err && err->code != YVEX_OK ? err->code : YVEX_ERR_STATE;
+            yvex_core_text_copy(reason, sizeof(reason),
+                                err && err->message[0] ? err->message
+                                                      : "runtime binding requires an admitted MoE plan");
+            yvex_moe_plan_close(&moe);
+            return binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY,
+                                  "moe-plan", request->directory, 0ull, 1ull, 0ull,
+                                  status, reason, err);
+        }
+        yvex_runtime_identity_copy(moe_identity, moe_summary->moe_plan_identity);
+        yvex_moe_plan_close(&moe);
+    } else if (!binding_moe_unavailable_identity(request, descriptor, moe_identity)) {
+        return binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_IDENTITY,
+                              "moe-plan", request->directory, 0ull, 1ull, 0ull,
+                              YVEX_ERR_STATE, "unavailable MoE plan identity could not be derived", err);
+    }
+    yvex_error_clear(err);
     return YVEX_OK;
 }
 
@@ -1067,6 +1159,7 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
  * Boundary: serialization reads metadata only and never reconstructs source or compiler state. */
 static int binding_body_write(const yvex_runtime_binding_prepare_request *request,
                               const char *semantic, const char *executable,
+                              const char *moe_identity,
                               binding_bytes *body)
 {
     yvex_materialization_summary canonical;
@@ -1100,12 +1193,13 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     tensor_count = materialization->tensor_count;
     layer_count = attention->layer_count;
     if (!yvex_runtime_capabilities_identity(capabilities, capability_identity) ||
-        !bytes_put_text(body, "yvex.runtime.binding.payload.v4") ||
-        !bytes_put_u64(body, YVEX_RUNTIME_BINDING_SCHEMA_V4) ||
+        !bytes_put_text(body, "yvex.runtime.binding.payload.v5") ||
+        !bytes_put_u64(body, YVEX_RUNTIME_BINDING_SCHEMA_V5) ||
         !bytes_put_u64(body, adapter_id) || !bytes_put_u64(body, adapter_version) ||
         !bytes_put_text(body, format) || !bytes_put_u64(body, format_version) ||
         !bytes_put_text(body, logical) || !bytes_put_text(body, semantic) ||
-        !bytes_put_text(body, executable) || !bytes_put_text(body, capability_identity) ||
+        !bytes_put_text(body, executable) || !bytes_put_text(body, moe_identity) ||
+        !bytes_put_text(body, capability_identity) ||
         !fields_write(body, capabilities, capability_fields,
                       FIELD_COUNT(capability_fields)) ||
         !fields_write(body, compatibility, physical_compatibility_fields,
@@ -1147,8 +1241,8 @@ static int binding_identity(const unsigned char *body, size_t body_bytes,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v4") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V4) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v5") ||
+        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V5) ||
         !yvex_sha256_update(&hash, body, body_bytes) ||
         !yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, output);
@@ -1166,7 +1260,7 @@ static int build_file(const binding_bytes *body, const char *identity, binding_b
     file->maximum = BINDING_MAX_BYTES;
     file->initial_capacity = 4096u;
     return yvex_core_bytes_append(file, BINDING_MAGIC, BINDING_MAGIC_BYTES) &&
-           bytes_put_u64(file, YVEX_RUNTIME_BINDING_SCHEMA_V4) &&
+           bytes_put_u64(file, YVEX_RUNTIME_BINDING_SCHEMA_V5) &&
            bytes_put_u64(file, (unsigned long long)body->count) &&
            yvex_core_bytes_append(file, identity, 64u) &&
            yvex_core_bytes_append(file, body->data, body->count);
@@ -1183,14 +1277,15 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
     binding_cursor cursor = {data, count, 0u};
     char domain[64], logical_transform[YVEX_SHA256_HEX_CAP];
     char semantic[YVEX_SHA256_HEX_CAP], executable[YVEX_SHA256_HEX_CAP];
+    char moe_identity[YVEX_SHA256_HEX_CAP];
     char capability_identity[YVEX_SHA256_HEX_CAP];
     char format[16];
     unsigned long long schema, family_id, family_version, format_version;
     unsigned long long material_count, runtime_count, layer_count, i;
 
     if (!cursor_text(&cursor, domain, sizeof(domain)) ||
-        strcmp(domain, "yvex.runtime.binding.payload.v4") != 0 ||
-        !cursor_u64(&cursor, &schema) || schema != YVEX_RUNTIME_BINDING_SCHEMA_V4 ||
+        strcmp(domain, "yvex.runtime.binding.payload.v5") != 0 ||
+        !cursor_u64(&cursor, &schema) || schema != YVEX_RUNTIME_BINDING_SCHEMA_V5 ||
         !cursor_u64(&cursor, &family_id) || !family_id ||
         !cursor_u64(&cursor, &family_version) || !family_version ||
         !cursor_text(&cursor, format, sizeof(format)) || !format[0] ||
@@ -1198,9 +1293,11 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
         !cursor_text(&cursor, logical_transform, sizeof(logical_transform)) ||
         !cursor_text(&cursor, semantic, sizeof(semantic)) ||
         !cursor_text(&cursor, executable, sizeof(executable)) ||
+        !cursor_text(&cursor, moe_identity, sizeof(moe_identity)) ||
         !cursor_text(&cursor, capability_identity, sizeof(capability_identity)) ||
         !yvex_sha256_hex_is_valid(logical_transform) ||
         !yvex_sha256_hex_is_valid(semantic) || !yvex_sha256_hex_is_valid(executable) ||
+        !yvex_sha256_hex_is_valid(moe_identity) ||
         !yvex_sha256_hex_is_valid(capability_identity) ||
         !record_read(&cursor, &binding->summary.capabilities,
                      sizeof(binding->summary.capabilities), capability_fields,
@@ -1264,6 +1361,7 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
                                logical_transform);
     yvex_runtime_identity_copy(binding->summary.semantic_graph_identity, semantic);
     yvex_runtime_identity_copy(binding->summary.executable_graph_identity, executable);
+    yvex_runtime_identity_copy(binding->summary.moe_plan_identity, moe_identity);
     yvex_runtime_identity_copy(binding->summary.execution_capability_identity,
                                capability_identity);
     return cursor.offset == cursor.count ? BINDING_PARSE_OK : BINDING_PARSE_FORMAT;
@@ -1434,10 +1532,10 @@ static int binding_file_decode(yvex_runtime_binding **out,
                             "runtime binding file magic is invalid", err);
         goto done;
     }
-    if (!cursor_u64(&header, &schema) || schema != YVEX_RUNTIME_BINDING_SCHEMA_V4) {
+    if (!cursor_u64(&header, &schema) || schema != YVEX_RUNTIME_BINDING_SCHEMA_V5) {
         rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_SCHEMA,
                             "schema-version", path, 0ull,
-                            YVEX_RUNTIME_BINDING_SCHEMA_V4, schema,
+                            YVEX_RUNTIME_BINDING_SCHEMA_V5, schema,
                             YVEX_ERR_FORMAT,
                             "runtime binding schema is unsupported", err);
         goto done;
@@ -1659,13 +1757,14 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
     binding_bytes body = {0}, file = {0};
     char identity[YVEX_SHA256_HEX_CAP] = {0};
     char semantic[YVEX_SHA256_HEX_CAP] = {0}, executable[YVEX_SHA256_HEX_CAP] = {0};
+    char moe_identity[YVEX_SHA256_HEX_CAP] = {0};
     char final_name[96], final_path[YVEX_PATH_CAP];
     yvex_core_file_result file_result;
     binding_candidate_context candidate;
     int rc;
 
     if (result) memset(result, 0, sizeof(*result));
-    rc = prepare_validate(request, semantic, executable, failure, err);
+    rc = prepare_validate(request, semantic, executable, moe_identity, failure, err);
     if (!result || rc != YVEX_OK) {
         if (rc == YVEX_OK)
             rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -1673,7 +1772,7 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
                                 "runtime binding result is required", err);
         return rc;
     }
-    if (!binding_body_write(request, semantic, executable, &body))
+    if (!binding_body_write(request, semantic, executable, moe_identity, &body))
         rc = binding_reject(
             failure, YVEX_RUNTIME_BINDING_FAILURE_ALLOCATION, "canonical-body",
             request->directory, 0ull, BINDING_MAX_BYTES, body.count, YVEX_ERR_NOMEM,

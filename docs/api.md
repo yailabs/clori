@@ -178,6 +178,34 @@ transformer hidden state. Prompt text, tokenization, embedding, FFN/MoE,
 cross-layer transformer composition, model decode, and generation remain
 outside this API.
 
+### Internal MoE Execution Boundary
+
+`include/yvex/internal/moe.h` owns the non-installed MoE plan, typed input,
+generic graph/backend execution packets, runtime context, and operator result.
+The plan imports immutable runtime descriptor and materialization facts for all
+43 layers; family policy enters through one registered projection callback.
+
+`yvex_moe_input_open_memory` and `yvex_moe_input_open_file` admit the same
+schema-v1 identity chain. The bounded file form stores explicit little-endian
+header and layer records followed by finite F32 activations and numeric U32
+token IDs. Token IDs are routing input only. The adapter rejects unsafe files,
+stale identities, malformed layer order or geometry, invalid ranges, payload
+digest mismatch, non-finite values, drift, and resource overflow.
+
+`yvex_runtime_moe_context_open` seals reusable session resources.
+`yvex_runtime_moe_execute_layer` is the in-memory token-local consumer for
+future transformer composition; it accepts one expanded hidden activation and
+returns distinct router, routed, shared, combined, and deferred mHC post facts.
+`yvex_runtime_moe_execute` executes an ordered all-layer input and publishes
+only after the complete request succeeds. Reset and close preserve session
+isolation and never advance persistent KV or sequence position.
+
+The CPU and CUDA backends consume `yvex_moe_layer_job`. They execute only exact
+selected routed-expert subviews plus the separate shared expert. CUDA performs
+all numerical stages on device and has no CPU fallback. `yvex_moe_operator_result`
+is a copied result surface; it is not capability authority and is not a
+transformer or generation result.
+
 ### Internal DeepSeek Attention Operator Boundary
 
 `yvex_graph_attention_operator_execute` is the non-installed typed adapter used
@@ -239,6 +267,7 @@ yvex graph attention capture|replay
 yvex graph attention cuda-graph list|inspect|warmup|update|invalidate|release
 yvex graph attention trace|profile|benchmark|qualify
 yvex graph attention benchmark compare
+yvex graph moe execute
 ```
 
 `prepare` is the compiler-side producer for an external runtime binding.
@@ -257,6 +286,11 @@ input, not prompt text. Production activation prefill instead selects
 `--input tensor-file --input-file FILE`, validates the schema-v1 bundle, and
 reports `activation_prefill_ready` separately from
 `full_model_prefill_ready`.
+
+`graph moe execute` requires explicit artifact and runtime-binding paths,
+`--backend cpu|cuda`, `--input tensor-file`, `--input-file FILE`, `--scope
+full`, and `--progress off`. It calls the production runtime MoE API directly;
+it does not run a fixture, test executable, Make target, or second process.
 
 ## Qualification, Benchmark, And Chart Contract
 
@@ -318,8 +352,9 @@ they are not independent capability authorities.
 The current runtime supports production DeepSeek attention over admitted
 weights and session-owned persistent attention state on CPU and the admitted
 GB10 CUDA path. It also supports identity-bound activation prefill across all
-43 attention layers with per-chunk atomic state publication. It does not
-provide prompt/token embedding, tokenizer-backed full-model prefill, MoE, a
+43 attention layers with per-chunk atomic state publication and token-local
+DeepSeek MoE execution across all 43 layers on CPU and GB10 CUDA. It does not
+provide prompt/token embedding, tokenizer-backed full-model prefill, a
 complete transformer, model decode, logits, sampling, text generation,
 evaluation, a full-model benchmark or release readiness.
 

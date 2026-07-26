@@ -36,7 +36,7 @@
 
 #define TEST_BINDING_HEADER_BYTES 88u
 #define TEST_BINDING_IDENTITY_OFFSET 24u
-#define TEST_BINDING_CAPABILITY_FIELDS 26u
+#define TEST_BINDING_CAPABILITY_FIELDS 31u
 
 typedef struct {
     yvex_artifact *artifact;
@@ -598,7 +598,7 @@ static int test_binding_offsets(const unsigned char *file, size_t count,
         return 0;
     *format_version = offset;
     offset += 8u;
-    for (index = 0u; index < 3u; ++index)
+    for (index = 0u; index < 4u; ++index)
         if (!test_binding_text_skip(file, count, &offset, NULL)) return 0;
     if (!test_binding_text_skip(file, count, &offset, NULL)) return 0;
     *capability_value = offset;
@@ -642,7 +642,7 @@ static int test_binding_material_count_offset(const unsigned char *file, size_t 
         !test_binding_text_skip(file, count, &offset, NULL) ||
         !test_binding_u64_skip(count, &offset, 1u))
         return 0;
-    for (index = 0u; index < 3u; ++index)
+    for (index = 0u; index < 4u; ++index)
         if (!test_binding_text_skip(file, count, &offset, NULL)) return 0;
     if (!test_binding_text_skip(file, count, &offset, NULL) ||
         !test_binding_u64_skip(count, &offset, TEST_BINDING_CAPABILITY_FIELDS) ||
@@ -786,8 +786,8 @@ static int test_binding_readdress(const char *path, unsigned char *file, size_t 
 
     if (!slash || count < TEST_BINDING_HEADER_BYTES) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v4") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V4) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v5") ||
+        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V5) ||
         !yvex_sha256_update(&hash, file + TEST_BINDING_HEADER_BYTES,
                             count - TEST_BINDING_HEADER_BYTES) ||
         !yvex_sha256_final(&hash, digest))
@@ -1117,7 +1117,13 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
     request->artifact_format_version = 3u;
     request->logical_transform_identity =
         adapter->logical_transform_identity;
-    return adapter->execution_capabilities(&request->capabilities) &&
+    if (!adapter->execution_capabilities(&request->capabilities)) return 0;
+    request->capabilities.moe_plan_ready = 0;
+    request->capabilities.moe_router_ready = 0;
+    request->capabilities.moe_routed_expert_ready = 0;
+    request->capabilities.moe_shared_expert_ready = 0;
+    request->capabilities.moe_block_ready = 0;
+    return
            yvex_runtime_capabilities_contract_valid(&request->capabilities);
 }
 
@@ -1231,7 +1237,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     YVEX_TEST_ASSERT(rc == YVEX_OK, "runtime binding reopened");
     YVEX_TEST_ASSERT(strcmp(summary.identity, prepared->summary.identity) == 0,
                      "reopened runtime binding identity");
-    YVEX_TEST_ASSERT(summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V4,
+    YVEX_TEST_ASSERT(summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V5,
                      "reopened runtime binding schema");
     YVEX_TEST_ASSERT(
         yvex_sha256_hex_is_valid(summary.semantic_graph_identity) &&
@@ -1292,15 +1298,12 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     YVEX_TEST_ASSERT(
         yvex_runtime_capabilities_contract_valid(&mutated_request.capabilities),
         "capability mismatch fixture remains internally valid");
-    memset(&rejected_result, 0, sizeof(rejected_result));
-    rc = yvex_runtime_binding_prepare(
-        &mutated_request, &rejected_result, &failure, &err);
     YVEX_TEST_ASSERT(
-        rc == YVEX_ERR_STATE && !rejected_result.published &&
-            failure.code == YVEX_RUNTIME_BINDING_FAILURE_COMPATIBILITY &&
-            strcmp(failure.field, "execution-capabilities") == 0 &&
-            !directory_has_temporary(directory),
-        "binding refuses a valid capability matrix that differs from its adapter");
+        yvex_runtime_capabilities_admitted_by(&mutated_request.capabilities,
+                                              &request.capabilities) &&
+            !yvex_runtime_capabilities_admitted_by(&request.capabilities,
+                                                   &mutated_request.capabilities),
+        "artifact capability subsets admit while unsupported promotions refuse");
 
     rejected_compatibility = fixture->compatibility;
     rejected_compatibility.payload_digest_equal = 0;

@@ -34,7 +34,7 @@ static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_C
     if (length) memcpy(destination, source, length);
 }
 #define YVEX_RUNTIME_REASON_CAP 256u
-#define YVEX_RUNTIME_BINDING_SCHEMA_V4 4u
+#define YVEX_RUNTIME_BINDING_SCHEMA_V5 5u
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
 typedef enum {
     YVEX_RUNTIME_BINDING_FAILURE_NONE = 0, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -120,33 +120,18 @@ typedef struct {
     int attention_weight_residency_ready, attention_workspace_ready;
     int attention_state_delta_ready, attention_operator_ready, attention_trace_ready;
     int attention_profile_ready, attention_benchmark_ready, mixed_attention_ready;
-    int speculative_attention_ready, persistent_kv_ready, transformer_ready, generation_ready;
+    int speculative_attention_ready, persistent_kv_ready;
+    int moe_plan_ready, moe_router_ready, moe_routed_expert_ready, moe_shared_expert_ready,
+        moe_block_ready;
+    int transformer_ready, generation_ready;
 } yvex_runtime_capabilities;
 #define YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V1 1u
 int yvex_runtime_capabilities_identity(
     const yvex_runtime_capabilities *facts,
     char output[YVEX_SHA256_HEX_CAP]);
-/* Purpose: reject capability implication errors and pre-admission resource claims. */
-static inline int yvex_runtime_capabilities_contract_valid(
-    const yvex_runtime_capabilities *facts)
-{
-    return facts && (!facts->attention_core_ready || facts->attention_semantics_ready) &&
-           (!facts->attention_envelope_ready || facts->attention_core_ready) &&
-           (!(facts->cpu_prefill_eager_ready || facts->cpu_decode_eager_ready ||
-              facts->cuda_eager_implemented) || facts->attention_core_ready) &&
-           (!(facts->cuda_piecewise_graph_implemented ||
-              facts->cuda_full_graph_implemented) || facts->cuda_eager_implemented) &&
-           (!(facts->attention_operator_ready || facts->attention_trace_ready ||
-              facts->attention_profile_ready || facts->attention_benchmark_ready) ||
-            facts->attention_core_ready) &&
-           !facts->cuda_prefill_eager_ready && !facts->cuda_decode_eager_ready &&
-           !facts->cuda_prefill_piecewise_graph_ready &&
-           !facts->cuda_decode_piecewise_graph_ready &&
-           !facts->cuda_prefill_full_graph_ready && !facts->cuda_decode_full_graph_ready &&
-           !facts->attention_weight_residency_ready && !facts->attention_workspace_ready &&
-           !facts->mixed_attention_ready && !facts->speculative_attention_ready &&
-           !facts->persistent_kv_ready && !facts->transformer_ready && !facts->generation_ready;
-}
+int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts,
+                                          const yvex_runtime_capabilities *maximum);
+int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *facts);
 struct yvex_model_family_api;
 typedef struct yvex_runtime_family_adapter {
     unsigned int schema_version;
@@ -171,7 +156,7 @@ typedef struct {
     const char *logical_transform_identity;
     yvex_runtime_capabilities capabilities;
 } yvex_runtime_binding_prepare_request;
-typedef struct {
+typedef struct yvex_runtime_binding_summary {
     unsigned int schema_version;
     unsigned long long family_adapter_id, family_adapter_version;
     unsigned long long tensor_count, layer_count, file_bytes;
@@ -186,7 +171,7 @@ typedef struct {
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char materialization_identity[YVEX_SHA256_HEX_CAP], logical_model_identity[YVEX_SHA256_HEX_CAP];
     char runtime_numeric_identity[YVEX_SHA256_HEX_CAP], runtime_descriptor_identity[YVEX_SHA256_HEX_CAP];
-    char attention_plan_identity[YVEX_SHA256_HEX_CAP];
+    char attention_plan_identity[YVEX_SHA256_HEX_CAP], moe_plan_identity[YVEX_SHA256_HEX_CAP];
     char semantic_graph_identity[YVEX_SHA256_HEX_CAP], executable_graph_identity[YVEX_SHA256_HEX_CAP];
     yvex_artifact_physical_compatibility physical_compatibility;
     yvex_runtime_capabilities capabilities;

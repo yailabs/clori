@@ -222,14 +222,16 @@ The admitted vertical includes:
 - a selected complete GGUF of approximately 102.4 GB;
 - 43 main attention layers and 634 core attention bindings;
 - complete attention core and envelope execution on CPU and the admitted
-  NVIDIA GB10 CUDA path.
+  NVIDIA GB10 CUDA path;
+- complete token-local MoE execution across all 43 main layers, including
+  hash and learned routing, selected routed experts, and shared experts.
 
 These results establish the current complete-artifact and attention execution
 boundary. Session-owned persistent DeepSeek attention state is also admitted
 on CPU and the GB10 CUDA path. Identity-bound activation chunks can execute all
 43 attention layers and atomically populate that state. Prompt/token embedding,
-tokenizer-backed full-model prefill, FFN/MoE execution, complete transformer
-composition, model decode, logits, sampling, text generation, evaluation,
+tokenizer-backed full-model prefill, cross-layer transformer composition,
+model decode, logits, sampling, text generation, evaluation,
 full-model benchmark, and release admission retain separate gates.
 
 Detailed family semantics live in
@@ -240,7 +242,7 @@ operator procedures live in
 
 ## Verified implementation snapshot
 
-Snapshot: 25 July 2026.
+Snapshot: 26 July 2026.
 [`PROJECT.md`](PROJECT.md) is the sole live authority for implementation state,
 dependencies, capability gates, and release admission.
 
@@ -256,7 +258,8 @@ dependencies, capability gates, and release admission.
 | Persistent attention state | Admitted for all 43 DeepSeek attention layers through isolated CPU/GB10 CUDA sessions, atomic append/read, capacity, clear/reuse, and causal production consumption |
 | Activation-driven attention prefill | Versioned 43-layer activation bundles execute on CPU/GB10 CUDA eager and commit persistent state atomically per chunk |
 | Tokenizer-backed model prefill and model decode | Unsupported |
-| FFN/MoE and complete transformer composition | Unsupported |
+| Token-local MoE block | All 43 layers execute admitted hash/learned routing, selected Q2_K routed experts, Q8_0 shared experts, and exact combination on CPU and GB10 CUDA |
+| Complete transformer composition | Unsupported |
 | Logits, sampling, and text generation | Unsupported |
 | Evaluation | Blocked |
 | Benchmark | Attention-local measurement is executable; full-model benchmark is not measured |
@@ -269,16 +272,18 @@ evaluation, benchmark, and release gates described in
 
 ## Current executable surfaces
 
-The admitted graph commands consume either a canonical diagnostic activation
-probe or a versioned tensor-file activation bundle at exact model geometry.
-Prompt-backed prefill, model decode, and generation remain outside this
-operator surface.
+The admitted graph commands consume canonical diagnostic activations or
+versioned tensor-file bundles at exact model geometry. Attention and MoE input
+schemas are distinct. Numeric token IDs used by hash routing do not establish
+tokenizer support. Prompt-backed prefill, model decode, and generation remain
+outside this operator surface.
 
 Discover the command hierarchy:
 
 ```sh
 ./yvex commands
 ./yvex graph attention --help
+./yvex graph moe execute --help
 ```
 
 Set `MODELS_ROOT` and `ARTIFACT` to the external admitted model locations.
@@ -408,6 +413,26 @@ The bundle is activation input, not prompt text or tokenized input. Exact
 schema and production API details live in
 [`docs/api.md`](docs/api.md); operator preparation and refusal guidance lives
 in [`docs/runbooks/deepseek.md`](docs/runbooks/deepseek.md).
+
+Execute a versioned MoE activation bundle across all 43 token-local blocks:
+
+```sh
+MOE_INPUT="/absolute/path/to/input.yvex-moe-input"
+./yvex graph moe execute \
+  --target deepseek4-v4-flash \
+  --artifact "$ARTIFACT" \
+  --runtime-binding "$BINDING" \
+  --backend cuda \
+  --input tensor-file \
+  --input-file "$MOE_INPUT" \
+  --scope full \
+  --progress off \
+  --output json
+```
+
+The result contains router, selected-expert, qtype, transfer, and distinct
+routed/shared/combined digest facts. It is a token-local MoE result ready for
+transformer composition, not a complete transformer or model output.
 
 Measure the attention-local CUDA boundary:
 

@@ -65,6 +65,8 @@ expect_nonzero() {
     2>"$OUT_DIR/attention-help.err"
 "$YVEX_BIN" graph attention execute --help >"$OUT_DIR/execute-help.out" \
     2>"$OUT_DIR/execute-help.err"
+"$YVEX_BIN" graph moe execute --help >"$OUT_DIR/moe-help.out" \
+    2>"$OUT_DIR/moe-help.err"
 for action in prepare describe capabilities plan execute compare; do
     "$YVEX_BIN" graph attention "$action" --help \
         >"$OUT_DIR/$action-help.out" 2>"$OUT_DIR/$action-help.err"
@@ -81,7 +83,7 @@ for action in "state inspect" "state validate" "state exercise" \
     contains "$OUT_DIR/action-help.out" "graph attention"
 done
 "$YVEX_BIN" commands >"$OUT_DIR/catalog.out" 2>"$OUT_DIR/catalog.err"
-contains "$OUT_DIR/catalog.out" "Graph diagnostics and production attention probes."
+contains "$OUT_DIR/catalog.out" "Production attention and MoE graph execution."
 contains "$OUT_DIR/help.out" "yvex graph attention execute --target deepseek4-v4-flash"
 contains "$OUT_DIR/help.out" "--backend cpu|cuda"
 contains "$OUT_DIR/help.out" "--compare-backends"
@@ -124,6 +126,39 @@ contains "$OUT_DIR/help.out" "--output normal|table|audit|json|csv"
 contains "$OUT_DIR/help.out" "not prompt execution"
 contains "$OUT_DIR/attention-help.out" "yvex graph attention execute"
 contains "$OUT_DIR/execute-help.out" "yvex graph attention execute"
+contains "$OUT_DIR/moe-help.out" "yvex graph moe execute"
+contains "$OUT_DIR/moe-help.out" "--input tensor-file --input-file FILE"
+contains "$OUT_DIR/moe-help.out" "token IDs are numeric routing input"
+
+expect_status 2 "$YVEX_BIN" graph moe execute \
+    >"$OUT_DIR/moe-missing-options.out" 2>"$OUT_DIR/moe-missing-options.err"
+contains "$OUT_DIR/moe-missing-options.err" \
+    "requires target, artifact, runtime binding, backend, and tensor-file input"
+
+expect_status 2 "$YVEX_BIN" graph moe execute --target deepseek4-v4-flash \
+    --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
+    --backend cpu --input canonical --input-file /tmp/missing.input \
+    --scope full --progress off --output json \
+    >"$OUT_DIR/moe-input-class.out" 2>"$OUT_DIR/moe-input-class.err"
+contains "$OUT_DIR/moe-input-class.err" "requires --input tensor-file"
+
+expect_status 2 "$YVEX_BIN" graph moe execute --target deepseek4-v4-flash \
+    --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
+    --backend cpu --input tensor-file --input-file /tmp/missing.input \
+    --scope quick --progress off --output json \
+    >"$OUT_DIR/moe-scope.out" 2>"$OUT_DIR/moe-scope.err"
+contains "$OUT_DIR/moe-scope.err" "supports only --scope full"
+
+expect_status 3 "$YVEX_BIN" graph moe execute --target deepseek4-v4-flash \
+    --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
+    --backend cpu --input tensor-file --input-file /tmp/missing.input \
+    --scope full --progress off --output json \
+    >"$OUT_DIR/moe-runtime-refusal.json" 2>"$OUT_DIR/moe-runtime-refusal.err"
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); \
+    assert r["status"]=="refused" and not r["completed"] \
+    and not r["moe_block_ready"] and not r["transformer_ready"] \
+    and not r["generation_ready"]' "$OUT_DIR/moe-runtime-refusal.json"
+contains "$OUT_DIR/moe-runtime-refusal.err" "runtime binding open failed"
 
 expect_status 2 "$YVEX_BIN" graph attention qualify \
     --target deepseek4-v4-flash \
@@ -236,6 +271,7 @@ expect_status 3 "$YVEX_BIN" graph attention execute \
     --scope full --operation-scope core --input tensor-file \
     --input-file "$OUT_DIR/missing.activations" --chunk-tokens 1 \
     --context-capacity 1 \
+    --runtime-binding "$OUT_DIR/missing-input.yvex-runtime-binding" \
     >"$OUT_DIR/input-runtime-refusal.out" 2>"$OUT_DIR/input-runtime-refusal.err"
 contains "$OUT_DIR/input-runtime-refusal.err" "runtime binding"
 expect_status 3 "$YVEX_BIN" graph attention execute \

@@ -18,14 +18,16 @@ $HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash
 The canonical full target is `deepseek4-v4-flash`. Its selected GGUF and
 common attention runtime, including session-owned persistent attention state,
 are admitted. Identity-bound activation chunks can populate that state across
-all 43 attention layers. Prompt/token embedding, tokenizer-backed full-model
-prefill, transformer composition, and model generation remain unsupported.
+all 43 attention layers. The separate token-local MoE command executes admitted
+hash/learned routing, selected routed experts, shared experts, and output
+combination. Prompt/token embedding, tokenizer-backed full-model prefill,
+transformer composition, and model generation remain unsupported.
 
 ## Runbook Index
 
 | Runbook | Current purpose | Capability boundary |
 | --- | --- | --- |
-| `runbooks/deepseek.md` | Exact source trust, admitted artifact, runtime-binding, attention diagnostics, tensor-file activation prefill, and benchmark-chart procedure | no prompt, complete-transformer, or generation procedure |
+| `runbooks/deepseek.md` | Exact source trust, admitted artifact, runtime binding, attention diagnostics, activation prefill, token-local MoE, and benchmark-chart procedure | no prompt, complete-transformer, or generation procedure |
 | `runbooks/common.md` | Build, validation, documentation guards, artifact hygiene, and operator-local cleanup | validation does not create runtime capability |
 
 Model-family architecture is defined in `model-families.md`. Release gates are
@@ -35,10 +37,11 @@ Active Next are defined only in `../PROJECT.md`.
 ## Current Entry
 
 Use the DeepSeek runbook for source verification, real artifact-backed
-attention execution, tensor-file activation prefill, and persistent-state
-exercise. Use the common runbook for repository validation. Do not misclassify
-an activation probe or an admitted activation bundle as prompt prefill, model
-decode, or generation.
+attention execution, tensor-file activation prefill, persistent-state exercise,
+and token-local MoE execution. Use the common runbook for repository validation.
+Do not misclassify an activation probe, numeric router token ID, or admitted
+activation bundle as tokenizer-backed prompt prefill, model decode, or
+generation.
 
 The attention `qualify` surface separates software acceptance, numerical
 conformance and runtime reliability. The attention `benchmark` surface measures

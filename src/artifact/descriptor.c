@@ -114,11 +114,12 @@ static int runtime_descriptor_family_facts(
 {
     const yvex_model_family_api *api = yvex_model_register_deepseek_v4();
     const yvex_deepseek_v4_model_spec *model = api->ir.model(ir);
+    const yvex_deepseek_v4_layer_spec *first = api->ir.layer_at(ir, 0ull);
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256 hash;
     unsigned long long count, index;
 
-    if (!model || model->runtime_numeric_schema_version != 2u ||
+    if (!model || !first || model->runtime_numeric_schema_version != 2u ||
         model->runtime_compute_policy_count != 1ull ||
         !model->runtime_activation_policy_count || !model->hadamard_revision[0] ||
         !api->transform.architecture_identity(ir, logical))
@@ -138,7 +139,8 @@ static int runtime_descriptor_family_facts(
     yvex_sha256_update_u64(&hash, count);
     for (index = 0ull; index < count; ++index) {
         const yvex_deepseek_v4_layer_spec *layer = api->ir.layer_at(ir, index);
-        if (!layer)
+        if (!layer || layer->moe.routed_experts != first->moe.routed_experts ||
+            layer->moe.experts_per_token != first->moe.experts_per_token)
             return runtime_descriptor_refuse(
                 failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE, NULL, index,
                 1ull, 0ull, "DeepSeek runtime numeric layer is missing", err,
@@ -161,7 +163,9 @@ static int runtime_descriptor_family_facts(
     *facts = (yvex_runtime_descriptor_family_facts){
         logical, numeric, model->hadamard_revision, model->runtime_numeric_schema_version,
         model->runtime_compute_policy_count, model->runtime_activation_policy_count,
-        model->runtime_sparse_topk_policy_count, 61ull, 1ull, 256ull, 8ull, 129280ull};
+        model->runtime_sparse_topk_policy_count, model->main_layer_count,
+        model->auxiliary_layer_count, first->moe.routed_experts,
+        first->moe.experts_per_token, model->vocabulary_size};
     return YVEX_OK;
 }
 

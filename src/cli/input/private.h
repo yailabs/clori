@@ -19,6 +19,7 @@
 #include <yvex/internal/graph.h>
 #include <yvex/internal/model_artifact.h>
 #include <yvex/internal/model_target.h>
+#include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/source_payload.h>
 #include <yvex/model.h>
@@ -162,6 +163,12 @@ typedef struct {
         int require_mode;
         int write_baseline;
     } attention;
+    struct {
+        const char *target, *artifact_path, *runtime_binding_path, *backend;
+        const char *input_class, *input_file, *coverage, *progress;
+        unsigned long long maximum_host_bytes, maximum_device_bytes;
+        int active;
+    } moe;
     int help_requested;
     int help_exit_code;
 } yvex_graph_args;

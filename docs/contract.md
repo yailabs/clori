@@ -33,8 +33,19 @@ complete external artifact
 
 DeepSeek-V4-Flash is the first family adapter. It is not the owner of a second
 runtime. The admitted persistent state is an attention-session boundary;
-tokenizer-backed prompt prefill, MoE, complete transformer execution, model
+tokenizer-backed prompt prefill, complete transformer execution, model
 decode, logits, sampling and generation remain outside this contract.
+
+The admitted token-local MoE path is:
+
+```text
+typed per-layer expanded activation + numeric token ID
+  -> immutable family-projected MoE plan
+  -> hash or learned router + deterministic top-k
+  -> selected routed expert subviews + shared expert
+  -> CPU or CUDA encoded execution
+  -> combined MoE output + deferred transformer-owned post state
+```
 
 ## Command Contract
 
@@ -61,6 +72,11 @@ capture, replay
 cuda-graph list, inspect, warmup, update, invalidate, release
 trace, profile, benchmark
 ```
+
+`graph moe execute` is the operator surface for the production token-local MoE
+boundary. It consumes a schema-v1 tensor file and the admitted artifact/runtime
+binding directly. Numeric token IDs participate only in hash routing; they are
+not tokenizer output or tokenizer support.
 
 The CLI parses typed input, invokes production runtime APIs and renders copied
 results. CUDA Graph lifecycle actions operate on a real registry within the
@@ -273,6 +289,44 @@ transitions, and identities. It does not publish a complete transformer hidden
 state. Prompt text, tokenization, embedding, cross-layer hidden-state
 propagation, FFN/MoE, complete transformer prefill, model decode, logits,
 sampling, and generation remain unsupported.
+
+## Production MoE Contract
+
+The immutable MoE plan is derived from the admitted runtime descriptor,
+attention plan, materialization, and registered family adapter. Each of the 43
+main layers binds its router class, score/top-k policy, routed/shared geometry,
+activation and scaling policy, mHC FFN ordering, exact tensor roles, qtypes,
+and stable identity. Runtime execution reopens no source inventory and infers
+neither family policy from target strings nor roles from tensor names.
+
+Schema-v1 MoE input binds the logical model, numeric policy, runtime descriptor,
+MoE plan, token range, all ordered layer identities, exact widths/strides,
+finite little-endian F32 activation ranges, numeric token IDs, payload digests,
+and input identity. File admission retains a regular non-symlink handle and
+rejects malformed geometry, ordering, overlap, truncation, trailing data,
+digest mismatch, stale identity, drift, and resource overflow.
+
+The first three admitted DeepSeek layers select six routed experts from the
+exact token-ID hash-table row. The remaining 40 execute the real BF16 router
+projection, sqrt-softplus scoring, correction bias, deterministic noaux top-k,
+unbiased probability normalization, and routed scaling. Selected routed
+gate/up/down subviews are addressed through the materialization expert API;
+the runtime neither decodes nor uploads the complete 256-expert collection.
+Each selected Q2_K SwiGLU path and the distinct Q8_0 shared expert execute
+through the requested backend, then combine under the family plan.
+
+CPU and GB10 CUDA consume the same typed plan and input. A CUDA request performs
+the numerical work on device and refuses unavailable qtypes, kernels, device
+capabilities, transfers, or synchronization without CPU fallback. Runtime
+contexts own reusable host scratch and stable device workspace. Cancellation,
+read/upload/kernel failure, or cleanup failure publishes no partial result and
+does not mutate persistent attention state or sequence position.
+
+The result distinguishes router selection, routed aggregate, shared-expert
+output, combined MoE output, and deferred transformer-owned post state. It
+publishes qtype/access/transfer counters and separate routing, routed, shared,
+combined, input, plan, and execution identities. It is not a complete
+transformer hidden state, full-model prefill/decode, or generation output.
 
 ## Graph Execution Contract
 
@@ -525,6 +579,9 @@ attention benchmark is not a full-model benchmark.
 The current common runtime admits attention semantics, attention core/envelope,
 CPU eager phases, CUDA eager/piecewise/full phases, resident attention weights,
 reusable workspace, session-owned persistent DeepSeek attention state, and
-runtime-local operator evidence. Mixed/speculative attention, tokenizer-backed
-full-model prefill, MoE, transformer, model decode, logits, sampling,
+runtime-local operator evidence. The token-local DeepSeek MoE plan, hash and
+learned routing, selected routed experts, shared expert, and combined block
+output are also admitted on CPU and GB10 CUDA. Mixed/speculative attention,
+tokenizer-backed full-model prefill, transformer composition, model decode,
+logits, sampling,
 generation, evaluation, full-model benchmark and release remain unsupported.

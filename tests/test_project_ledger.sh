@@ -388,8 +388,10 @@ grep -F '| `V010.RUNTIME.DEEPSEEK.KV.0` | DeepSeek | `complete` | Own exact sess
   fail "DeepSeek KV does not depend on the common runtime milestone"
 grep -F '| `V010.RUNTIME.DEEPSEEK.PREFILL.0` | DeepSeek | `complete` | Admit exact activation chunks for all 43 attention layers, execute them on CPU or GB10 CUDA, and atomically publish persistent state and committed-prefix progression without claiming prompt or full-model prefill. | V010.RUNTIME.DEEPSEEK.KV.0 | current |' "$project" >/dev/null ||
   fail "DeepSeek activation prefill is not complete"
-grep -F '| `V010.RUNTIME.DEEPSEEK.MOE.0` | DeepSeek | `active` |' "$project" >/dev/null ||
-  fail "DeepSeek MoE is not active after activation prefill closure"
+grep -F '| `V010.RUNTIME.DEEPSEEK.MOE.0` | DeepSeek | `complete` |' "$project" >/dev/null ||
+  fail "DeepSeek MoE is not complete"
+grep -F '| `V010.GRAPH.DEEPSEEK.TRANSFORMER.0` | DeepSeek | `active` |' "$project" >/dev/null ||
+  fail "DeepSeek transformer composition is not active after MoE closure"
 grep -F '| V010.MODEL.TRANSFORM.IR.0 | recovered/promoted |' "$project" >/dev/null ||
   fail "quantization does not depend on the transformation IR"
 

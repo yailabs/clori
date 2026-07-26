@@ -190,6 +190,9 @@ typedef struct {
     CUfunction deepseek_rolling_function;
     CUfunction deepseek_topk_function;
     CUfunction deepseek_reduce_function;
+    CUfunction moe_route_function;
+    CUfunction moe_swiglu_function;
+    CUfunction moe_accumulate_function;
     CUfunction mlp_function;
     CUfunction attention_function;
     int module_loaded;

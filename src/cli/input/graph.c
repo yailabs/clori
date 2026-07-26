@@ -38,6 +38,8 @@ static void graph_args_defaults(yvex_graph_args *out) {
     out->attention.token_count = 1ull;
     out->attention.repeat = 1ull;
     out->attention.regression_basis_points = ULLONG_MAX;
+    out->moe.coverage = "full";
+    out->moe.progress = "off";
 }
 
 typedef enum {
@@ -569,6 +571,73 @@ static int graph_parse_attention(int argc, char **argv, yvex_graph_args *out,
     yvex_error_clear(err);
     return YVEX_OK;
 }
+
+/* Purpose: consume one required MoE option value without opening an operator asset. */
+static const char *graph_moe_value(int argc, char **argv, int *index, yvex_error *err)
+{
+    if (*index + 1 >= argc) {
+        graph_arg_errorf(err, "yvex: graph moe option requires a value: %s", argv[*index]);
+        return NULL;
+    }
+    return argv[++*index];
+}
+
+/* Purpose: parse the bounded production MoE execution grammar.
+ * Inputs: argv. Effects: fills args. Failure: typed refusal. Boundary: no runtime execution. */
+static int graph_parse_moe(int argc, char **argv, yvex_graph_args *out, yvex_error *err)
+{
+    int index;
+    if (argc < 4 || strcmp(argv[3], "execute") != 0)
+        return graph_arg_error(err, "yvex: graph moe requires the execute action");
+    out->moe.active = 1;
+    for (index = 4; index < argc; ++index) {
+        const char *flag = argv[index];
+        const char *value;
+        if (strcmp(flag, "--help") == 0 || strcmp(flag, "-h") == 0) {
+            out->help_requested = 1;
+            return YVEX_OK;
+        }
+        value = graph_moe_value(argc, argv, &index, err);
+        if (!value) return YVEX_ERR_INVALID_ARG;
+        if (strcmp(flag, "--target") == 0) out->moe.target = value;
+        else if (strcmp(flag, "--artifact") == 0) out->moe.artifact_path = value;
+        else if (strcmp(flag, "--runtime-binding") == 0) out->moe.runtime_binding_path = value;
+        else if (strcmp(flag, "--backend") == 0) out->moe.backend = value;
+        else if (strcmp(flag, "--input") == 0) out->moe.input_class = value;
+        else if (strcmp(flag, "--input-file") == 0) out->moe.input_file = value;
+        else if (strcmp(flag, "--scope") == 0) out->moe.coverage = value;
+        else if (strcmp(flag, "--progress") == 0) out->moe.progress = value;
+        else if (strcmp(flag, "--max-host-bytes") == 0) {
+            if (!parse_positive_ull(value, &out->moe.maximum_host_bytes))
+                return graph_arg_error(err, "yvex: --max-host-bytes requires a positive integer");
+        } else if (strcmp(flag, "--max-device-bytes") == 0) {
+            if (!parse_positive_ull(value, &out->moe.maximum_device_bytes))
+                return graph_arg_error(err, "yvex: --max-device-bytes requires a positive integer");
+        } else if (strcmp(flag, "--output") == 0) {
+            if (!graph_parse_output_mode(value, 1, &out->render_mode))
+                return graph_arg_errorf(err, "yvex: unsupported graph output mode: %s", value);
+        } else {
+            return graph_arg_errorf(err, "yvex: unknown graph moe option: %s", flag);
+        }
+    }
+    if (!out->moe.target || !out->moe.artifact_path || !out->moe.runtime_binding_path ||
+        !out->moe.backend || !out->moe.input_class || !out->moe.input_file)
+        return graph_arg_error(
+            err, "yvex: graph moe execute requires target, artifact, runtime binding, backend, "
+                 "and tensor-file input");
+    if (!cli_backend_name_valid(out->moe.backend))
+        return graph_arg_errorf(err, "yvex: unknown backend kind: %s", out->moe.backend);
+    if (strcmp(out->moe.input_class, "tensor-file") != 0)
+        return graph_arg_error(err, "yvex: graph moe execute requires --input tensor-file");
+    if (strcmp(out->moe.coverage, "full") != 0)
+        return graph_arg_error(err, "yvex: graph moe execute supports only --scope full");
+    if (strcmp(out->moe.progress, "off") != 0)
+        return graph_arg_error(err, "yvex: graph moe execute requires --progress off");
+    if (out->moe.maximum_device_bytes && strcmp(out->moe.backend, "cpu") == 0)
+        return graph_arg_error(err, "yvex: --max-device-bytes requires backend cuda");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
 /* Purpose: Parse graph argv.
  * Inputs: argv and output. Effects: publishes request.
  * Failure: typed refusal. Boundary: CLI grammar. */
@@ -601,6 +670,8 @@ int yvex_graph_args_parse(int argc, char **argv, yvex_graph_args *out, yvex_erro
         }
         return graph_parse_attention(argc, argv, out, err);
     }
+    if (strcmp(argv[2], "moe") == 0)
+        return graph_parse_moe(argc, argv, out, err);
 
     return graph_arg_errorf(err, "yvex: unknown graph namespace: %s", argv[2]);
 }

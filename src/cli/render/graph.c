@@ -30,6 +30,9 @@ static const char *const literal_lines_0[] = {
     "       yvex graph attention cuda-graph list|inspect|warmup|update|invalidate|release --target TARGET",
     "       yvex graph attention trace|profile|benchmark|qualify --target TARGET --backend cpu|cuda",
     "       yvex graph attention benchmark compare --baseline FILE --current FILE",
+    "       yvex graph moe execute --target TARGET --artifact FILE --runtime-binding FILE",
+    "           --backend cpu|cuda --input tensor-file --input-file FILE --scope full",
+    "           token IDs are numeric routing input; they do not establish tokenizer support",
     "           [--models-root DIR] [--artifact FILE] [--runtime-binding FILE] [--runtime-binding-dir DIR]",
     "           [--backend cpu|cuda] [--phase prefill|decode|mixed|verify]",
     "           [--mode eager|piecewise|full|auto] [--scope quick|full]",
@@ -50,7 +53,7 @@ static const char *const literal_lines_0[] = {
     "",
     "example: yvex graph attention execute --target deepseek4-v4-flash --backend cpu --scope quick",
     "boundary: attention commands execute canonical activations over admitted weights and session-persistent "
-        "state; they are not prompt, transformer, or generation execution"
+        "state; they are not prompt execution, transformer composition, or generation"
 };
 
 #define ATTENTION_FIELD(KEY, KIND, MEMBER) \
@@ -69,6 +72,81 @@ static const char *const literal_lines_0[] = {
      offsetof(yvex_graph_attention_operator_result, capabilities) + \
          offsetof(yvex_runtime_capabilities, MEMBER), ""}
 #define FIELD_COUNT(FIELDS) (sizeof(FIELDS) / sizeof((FIELDS)[0]))
+
+#define MOE_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_moe_operator_result, MEMBER), ""}
+#define MOE_EXECUTION_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_moe_operator_result, execution) + \
+                    offsetof(yvex_runtime_moe_result, MEMBER), ""}
+#define MOE_QTYPE_FIELD(KEY, QTYPE) \
+    {KEY, YVEX_CLI_FIELD_U64, offsetof(yvex_moe_operator_result, execution) + \
+         offsetof(yvex_runtime_moe_result, qtype_counts) + \
+         (QTYPE) * sizeof(unsigned long long), ""}
+
+static const yvex_cli_field_spec moe_fields[] = {
+    MOE_FIELD("command", YVEX_CLI_FIELD_TEXT_ARRAY, command),
+    MOE_FIELD("status", YVEX_CLI_FIELD_TEXT_ARRAY, status),
+    MOE_FIELD("target", YVEX_CLI_FIELD_TEXT_ARRAY, target),
+    MOE_FIELD("family", YVEX_CLI_FIELD_TEXT_ARRAY, family),
+    MOE_FIELD("backend", YVEX_CLI_FIELD_TEXT_ARRAY, backend),
+    MOE_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY, artifact_identity),
+    MOE_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+              runtime_binding_identity),
+    MOE_FIELD("runtime_descriptor_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+              runtime_descriptor_identity),
+    MOE_FIELD("runtime_numeric_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+              runtime_numeric_identity),
+    MOE_FIELD("moe_plan_identity", YVEX_CLI_FIELD_TEXT_ARRAY, moe_plan_identity),
+    MOE_FIELD("layers", YVEX_CLI_FIELD_U64, layer_count),
+    MOE_FIELD("tokens", YVEX_CLI_FIELD_U64, token_count),
+    MOE_FIELD("hash_router_layers", YVEX_CLI_FIELD_U64, hash_router_count),
+    MOE_FIELD("learned_router_layers", YVEX_CLI_FIELD_U64, learned_router_count),
+    MOE_FIELD("routed_experts", YVEX_CLI_FIELD_U64, routed_experts),
+    MOE_FIELD("shared_experts", YVEX_CLI_FIELD_U64, shared_experts),
+    MOE_FIELD("experts_per_token", YVEX_CLI_FIELD_U64, experts_per_token),
+    MOE_EXECUTION_FIELD("layers_executed", YVEX_CLI_FIELD_U64, layers_executed),
+    MOE_EXECUTION_FIELD("hash_router_executions", YVEX_CLI_FIELD_U64,
+                        hash_router_executions),
+    MOE_EXECUTION_FIELD("learned_router_executions", YVEX_CLI_FIELD_U64,
+                        learned_router_executions),
+    MOE_EXECUTION_FIELD("routed_expert_executions", YVEX_CLI_FIELD_U64,
+                        routed_expert_executions),
+    MOE_EXECUTION_FIELD("shared_expert_executions", YVEX_CLI_FIELD_U64,
+                        shared_expert_executions),
+    MOE_EXECUTION_FIELD("expert_subviews_accessed", YVEX_CLI_FIELD_U64,
+                        expert_subviews_accessed),
+    MOE_EXECUTION_FIELD("encoded_bytes_read", YVEX_CLI_FIELD_U64, encoded_bytes_read),
+    MOE_EXECUTION_FIELD("h2d_bytes", YVEX_CLI_FIELD_U64, host_to_device_bytes),
+    MOE_EXECUTION_FIELD("d2h_bytes", YVEX_CLI_FIELD_U64, device_to_host_bytes),
+    MOE_EXECUTION_FIELD("kernel_launches", YVEX_CLI_FIELD_U64, kernel_launches),
+    MOE_EXECUTION_FIELD("upload_count", YVEX_CLI_FIELD_U64, upload_count),
+    MOE_EXECUTION_FIELD("selected_expert_cache_hits", YVEX_CLI_FIELD_U64, cache_hits),
+    MOE_EXECUTION_FIELD("selected_expert_cache_misses", YVEX_CLI_FIELD_U64, cache_misses),
+    MOE_QTYPE_FIELD("qtype_f32_weight_accesses", YVEX_GGUF_QTYPE_F32),
+    MOE_QTYPE_FIELD("qtype_q8_0_weight_accesses", YVEX_GGUF_QTYPE_Q8_0),
+    MOE_QTYPE_FIELD("qtype_q2_k_weight_accesses", YVEX_GGUF_QTYPE_Q2_K),
+    MOE_QTYPE_FIELD("qtype_bf16_weight_accesses", YVEX_GGUF_QTYPE_BF16),
+    MOE_QTYPE_FIELD("qtype_i32_weight_accesses", YVEX_GGUF_QTYPE_I32),
+    MOE_EXECUTION_FIELD("input_identity", YVEX_CLI_FIELD_TEXT_ARRAY, input_identity),
+    MOE_EXECUTION_FIELD("routing_digest", YVEX_CLI_FIELD_TEXT_ARRAY, routing_digest),
+    MOE_EXECUTION_FIELD("routed_digest", YVEX_CLI_FIELD_TEXT_ARRAY, routed_digest),
+    MOE_EXECUTION_FIELD("shared_digest", YVEX_CLI_FIELD_TEXT_ARRAY, shared_digest),
+    MOE_EXECUTION_FIELD("combined_output_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
+                        combined_output_digest),
+    MOE_EXECUTION_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                        execution_identity),
+    MOE_FIELD("moe_plan_ready", YVEX_CLI_FIELD_BOOL, moe_plan_ready),
+    MOE_FIELD("moe_router_ready", YVEX_CLI_FIELD_BOOL, moe_router_ready),
+    MOE_FIELD("moe_routed_expert_ready", YVEX_CLI_FIELD_BOOL, moe_routed_expert_ready),
+    MOE_FIELD("moe_shared_expert_ready", YVEX_CLI_FIELD_BOOL, moe_shared_expert_ready),
+    MOE_FIELD("moe_block_ready", YVEX_CLI_FIELD_BOOL, moe_block_ready),
+    MOE_FIELD("moe_prefill_composed", YVEX_CLI_FIELD_BOOL, moe_prefill_composed),
+    MOE_FIELD("moe_decode_composed", YVEX_CLI_FIELD_BOOL, moe_decode_composed),
+    MOE_FIELD("transformer_ready", YVEX_CLI_FIELD_BOOL, transformer_ready),
+    MOE_FIELD("generation_ready", YVEX_CLI_FIELD_BOOL, generation_ready),
+    MOE_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
+    MOE_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
+};
 
 static const yvex_cli_field_spec attention_base_fields[] = {
     ATTENTION_FIELD("command", YVEX_CLI_FIELD_TEXT_ARRAY, command),
@@ -683,11 +761,10 @@ static int graph_attention_csv_cell(FILE *fp, const char *text)
 /* Purpose: serialize one typed field as a stable two-column CSV record.
  * Inputs: output stream, result, and field schema. Effects: writes one escaped record.
  * Failure: returns typed I/O or unsupported-kind refusal. Boundary: derives no domain facts. */
-static int graph_attention_csv_field(FILE *fp,
-                                     const yvex_graph_attention_operator_result *result,
-                                     const yvex_cli_field_spec *field)
+static int graph_csv_field(FILE *fp, const void *object,
+                           const yvex_cli_field_spec *field)
 {
-    const unsigned char *base = (const unsigned char *)result;
+    const unsigned char *base = (const unsigned char *)object;
     const void *value = base + field->offset;
     char number[64];
     const char *text = number;
@@ -753,7 +830,7 @@ static int graph_attention_render_fields(FILE *fp,
         if (!(visible & (unsigned int)group->condition)) continue;
         if (csv) {
             for (field_index = 0; field_index < group->count; ++field_index)
-                if (graph_attention_csv_field(fp, result, &group->fields[field_index]) != YVEX_OK)
+                if (graph_csv_field(fp, result, &group->fields[field_index]) != YVEX_OK)
                     return YVEX_ERR_IO;
         } else {
             rc = graph_attention_emit(fp, json, result, group->fields, group->count, !group->final);
@@ -771,6 +848,31 @@ int yvex_graph_attention_render(FILE *fp,
 {
     if (!fp || !result) return YVEX_ERR_INVALID_ARG;
     return graph_attention_render_fields(fp, mode, result);
+}
+
+/* Purpose: render one typed production MoE result without deriving capability facts.
+ * Inputs: result and mode. Effects: writes stream. Failure: I/O status. Boundary: no claims. */
+int yvex_graph_moe_render(FILE *fp, yvex_graph_report_mode mode,
+                          const yvex_moe_operator_result *result)
+{
+    size_t index;
+    int rc;
+    if (!fp || !result) return YVEX_ERR_INVALID_ARG;
+    if (mode == YVEX_GRAPH_REPORT_MODE_CSV) {
+        if (yvex_cli_out_writef(fp, "field,value\n") < 0) return YVEX_ERR_IO;
+        for (index = 0; index < FIELD_COUNT(moe_fields); ++index)
+            if (graph_csv_field(fp, result, &moe_fields[index]) != YVEX_OK)
+                return YVEX_ERR_IO;
+        return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+    }
+    if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
+        yvex_cli_json_begin(fp);
+        rc = yvex_cli_json_fields(fp, result, moe_fields, FIELD_COUNT(moe_fields), 0);
+        yvex_cli_json_end(fp);
+    } else {
+        rc = yvex_cli_out_fields(fp, result, moe_fields, FIELD_COUNT(moe_fields));
+    }
+    return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
 /* Purpose: Render graph help.
  * Inputs: stream. Effects: writes CLI text.

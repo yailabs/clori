@@ -29,6 +29,7 @@
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/graph.h>
+#include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
 
 #include <build_commit.h>
@@ -1124,6 +1125,67 @@ static int graph_cli_attention_execute(const yvex_graph_args *args,
     }
     return 0;
 }
+
+/* Purpose: execute the typed MoE command through the production runtime API.
+ * Inputs: parsed CLI facts. Effects: renders once. Failure: typed exit. Boundary: adapter only. */
+static int graph_cli_moe_execute(const yvex_graph_args *args,
+                                 yvex_runtime_cleanup_lease **retained_cleanup,
+                                 yvex_error *err)
+{
+    yvex_moe_operator_request request = {0};
+    yvex_moe_operator_result result;
+    struct sigaction old_interrupt, old_terminate;
+    yvex_error restore_error;
+    char artifact[YVEX_PATH_CAP], binding[YVEX_PATH_CAP], input[YVEX_PATH_CAP];
+    int rc, render_rc, restore_rc, cancellation_seen;
+
+    memset(&result, 0, sizeof(result));
+    rc = expand_operator_path(args->moe.artifact_path, artifact, sizeof(artifact), err,
+                              "graph_moe_cli");
+    if (rc == YVEX_OK)
+        rc = expand_operator_path(args->moe.runtime_binding_path, binding,
+                                  sizeof(binding), err, "graph_moe_cli");
+    if (rc == YVEX_OK)
+        rc = expand_operator_path(args->moe.input_file, input, sizeof(input), err,
+                                  "graph_moe_cli");
+    if (rc == YVEX_OK)
+        rc = yvex_backend_kind_parse(args->moe.backend, &request.backend, err);
+    if (rc != YVEX_OK)
+        return graph_cli_print_runtime_error(err, exit_for_status(rc));
+    request.target = args->moe.target;
+    request.artifact_path = artifact;
+    request.runtime_binding_path = binding;
+    request.input_path = input;
+    request.maximum_host_bytes = args->moe.maximum_host_bytes;
+    request.maximum_device_bytes = args->moe.maximum_device_bytes;
+    rc = graph_attention_signals_install(&old_interrupt, &old_terminate, err);
+    if (rc != YVEX_OK)
+        return graph_cli_print_runtime_error(err, exit_for_status(rc));
+    request.cancel_requested = graph_attention_cancel_requested;
+    rc = yvex_runtime_moe_operator_execute(&request, &result, retained_cleanup, err);
+    yvex_error_clear(&restore_error);
+    restore_rc = graph_attention_signals_restore(&old_interrupt, &old_terminate,
+                                                 &restore_error);
+    cancellation_seen = graph_attention_signal_seen != 0;
+    graph_attention_signal_seen = 0;
+    if (restore_rc != YVEX_OK) {
+        *err = restore_error;
+        rc = restore_rc;
+    } else if (cancellation_seen && rc == YVEX_OK) {
+        yvex_error_set(err, YVEX_ERR_CANCELLED, "graph_moe_cli",
+                       "MoE execution cancelled before command publication");
+        rc = YVEX_ERR_CANCELLED;
+    }
+    render_rc = yvex_graph_moe_render(yvex_cli_out_stdout(), args->render_mode, &result);
+    if (render_rc != YVEX_OK) {
+        yvex_error_set(err, render_rc, "graph_moe_cli", "MoE result rendering failed");
+        return graph_cli_print_runtime_error(err, exit_for_status(render_rc));
+    }
+    if (rc != YVEX_OK)
+        return graph_cli_print_runtime_error(err, exit_for_status(rc));
+    return result.completed ? 0 : graph_cli_print_runtime_error(
+        err, exit_for_status(YVEX_ERR_STATE));
+}
 /* Purpose: Dispatch graph.
  * Inputs: argv. Effects: executes and renders a typed request.
  * Failure: nonzero CLI status. Boundary: domain owners retain capability truth. */
@@ -1151,6 +1213,8 @@ int yvex_graph_command(int argc, char **argv,
         return args.help_exit_code;
     }
 
+    if (args.moe.active)
+        return graph_cli_moe_execute(&args, retained_cleanup, &err);
     if (args.attention.action == YVEX_GRAPH_ATTENTION_ACTION_PREPARE)
         return graph_cli_attention_prepare(&args, &err);
     if (args.attention.action == YVEX_GRAPH_ATTENTION_ACTION_DESCRIBE)

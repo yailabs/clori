@@ -304,7 +304,8 @@ for snapshot in \
   '| Persistent attention state | Admitted for all 43 DeepSeek attention layers' \
   '| Activation-driven attention prefill | Versioned 43-layer activation bundles' \
   '| Tokenizer-backed model prefill and model decode | Unsupported |' \
-  '| FFN/MoE and complete transformer composition | Unsupported |' \
+  '| Token-local MoE block | All 43 layers execute admitted hash/learned routing' \
+  '| Complete transformer composition | Unsupported |' \
   '| Logits, sampling, and text generation | Unsupported |' \
   '| Evaluation | Blocked |' \
   'full-model benchmark is not measured' \
@@ -318,6 +319,7 @@ require_text README.md 'supported model artifact'
 for command in \
   './yvex commands' \
   './yvex graph attention --help' \
+  './yvex graph moe execute --help' \
   './yvex graph attention prepare' \
   './yvex graph attention describe' \
   './yvex graph attention execute' \
@@ -328,7 +330,7 @@ do
   require_text README.md "$command"
 done
 require_text README.md 'canonical diagnostic activation'
-require_text README.md 'versioned tensor-file activation bundle'
+require_text README.md 'versioned tensor-file bundles'
 require_text README.md '--input tensor-file'
 require_text README.md 'Prompt-backed prefill, model decode, and generation'
 
@@ -339,12 +341,14 @@ while IFS= read -r command; do
   case "$command" in
     './yvex commands' | \
     './yvex graph attention --help' | \
+    './yvex graph moe execute --help' | \
     './yvex graph attention prepare \' | \
     './yvex graph attention describe \' | \
     './yvex graph attention execute \' | \
     './yvex graph attention compare \' | \
     './yvex graph attention state exercise \' | \
-    './yvex graph attention benchmark \') ;;
+    './yvex graph attention benchmark \' | \
+    './yvex graph moe execute \') ;;
     *) fail "README contains an unregistered operator command: $command" ;;
   esac
 done <<EOF
@@ -366,7 +370,6 @@ require_text docs/contract.md 'Model behavior,'
 require_text docs/contract.md 'agent runtime/evaluation,'
 require_text docs/api.md 'benchmark compare --baseline OLD'
 require_text docs/api.md 'benchmark compare --max-regression-bps N'
-require_text docs/runbooks/deepseek.md '--chart "$EVIDENCE/$MODE.svg"'
 require_text docs/runbooks/deepseek.md './yvex graph attention qualify'
 require_text docs/runbooks/deepseek.md './yvex graph attention benchmark compare'
 require_text docs/runbooks/deepseek.md '--max-regression-bps 500'
@@ -555,12 +558,12 @@ require_text "$project" 'Manifest v3 binds every shard to its authoritative Hugg
 require_text "$project" 'all 69,187 contributions and mapping identity `1aecbbe25b04de0d` remain exact'
 require_text "$project" 'Production C contains no fallback PTX.'
 require_text "$project" 'A no-`nvcc` build refuses every kernel before dispatch'
-require_text "$project" 'Complete resident DeepSeek attention and stable double-buffered session state are admitted on the generated-bundle GB10 path'
+require_text "$project" 'Complete DeepSeek attention and selected routed/shared MoE expert execution are admitted on the generated-bundle GB10 path'
 require_text "$project" '`attention_execution_supported=1`, `attention_cuda_execution_ready=1`, and'
-require_text "$project" 'complete DeepSeek SWA/CSA/HCA attention core and its immediate envelope are admitted'
+require_text "$project" 'Complete SWA/CSA/HCA attention and the token-local DeepSeek MoE block execute'
 require_text "$project" 'a supported DeepSeek-V4-Flash model artifact; the admitted artifacts are consumed by attention but have not passed the complete runtime and release gates;'
-require_text "$project" 'complete-model, MoE, or output-head residency; only the admitted attention weight pack and session-owned persistent attention state are resident;'
-require_text "$project" 'an execution-complete DeepSeek transformer runtime; the common attention runtime, persistent state, and activation-driven attention prefill are admitted but embedding, cross-layer hidden-state propagation, full-model prefill, FFN/MoE, complete layer composition, and final model output are not;'
+require_text "$project" 'complete-model or output-head residency; attention/state resources are resident and MoE reads/uploads selected expert subviews only, without whole-collection residency;'
+require_text "$project" 'an execution-complete DeepSeek transformer runtime; attention, persistent state, activation-driven attention prefill, and token-local MoE are admitted but embedding, cross-layer hidden-state propagation, full-model prefill, attention/MoE composition, complete layer composition, and final model output are not;'
 require_text "$project" 'persistent_kv_ready=1'
 reject_text "$project" 'complete GGUF writer, complete-model emission, writer-reader roundtrip, or artifact support admission;'
 require_text "$project" '| Recovered IDs | 631 |'
@@ -692,7 +695,7 @@ require_text docs/topology-closure-audit.md '`PROJECT.md` owns when each finding
 require_text docs/cli-output-architecture.md '## Project State Ownership'
 require_text docs/model-families.md 'exact v0.1.0 target'
 require_text docs/model-families.md 'sealed Transformation IR, complete quantization, two admitted complete artifacts'
-require_text docs/model-families.md 'complete CPU/GB10 attention, and session-owned persistent attention state exist; tokenizer-backed prefill, MoE, transformer execution, and generation remain unsupported'
+require_text docs/model-families.md 'complete CPU/GB10 attention, persistent attention state, activation prefill, and token-local MoE execution exist; tokenizer-backed prefill, transformer execution, and generation remain unsupported'
 reject_text docs/model-families.md 'no artifact-neutral transformation plan, payload conversion, complete model artifact, or runtime path'
 require_text docs/contract.md 'These are implementation facts, not a runtime progress ladder.'
 require_text docs/contract.md 'defined only by `PROJECT.md`.'

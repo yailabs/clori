@@ -1443,6 +1443,7 @@ int yvex_runtime_activation_prefill_operator_execute(
     yvex_runtime_model *model = NULL;
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_model_failure failure;
+    yvex_error primary;
     const yvex_runtime_activation_input_summary *summary;
     unsigned long long final;
     int rc, cleanup_rc;
@@ -1509,8 +1510,10 @@ int yvex_runtime_activation_prefill_operator_execute(
         rc = activation_prefill_operator_publish(
             request, model, session, &prefill, result, err);
     yvex_runtime_activation_input_close(&input);
+    primary = err ? *err : (yvex_error){0};
     cleanup_rc = yvex_runtime_cleanup_lease_close(&cleanup, err);
     if (cleanup_rc != YVEX_OK) rc = cleanup_rc;
+    else if (rc != YVEX_OK && err) *err = primary;
     if (cleanup) *retained_cleanup = cleanup;
     if (rc == YVEX_OK) {
         result->completed = 1;

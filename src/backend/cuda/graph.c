@@ -230,6 +230,7 @@ static const char *kernel_function_identity(const yvex_cuda_backend_state *state
     MATCH(deepseek_activation_function); MATCH(deepseek_mhc_pre_function);
     MATCH(deepseek_mhc_post_function); MATCH(deepseek_rolling_function);
     MATCH(deepseek_topk_function); MATCH(deepseek_reduce_function);
+    MATCH(moe_route_function); MATCH(moe_swiglu_function); MATCH(moe_accumulate_function);
     MATCH(mlp_function); MATCH(attention_function);
 #undef MATCH
     return NULL;

@@ -1544,6 +1544,113 @@ extern "C" __global__ void yvex_deepseek_topk(
     *valid_count = valid;
 }
 
+/* Purpose: execute exact hash/learned routing and noaux top-k. Inputs: typed router values.
+ * Effects: writes device selection. Failure: sets device status. Boundary: CUDA MoE kernel. */
+extern "C" __global__ void yvex_moe_route(
+    const float *logits, const float *bias, const unsigned long long *hash_experts,
+    unsigned int router_class, unsigned long long routed_experts,
+    unsigned long long topk, int normalize, double scaling,
+    float *scores, unsigned long long *selected, float *weights, int *status)
+{
+    if (blockIdx.x || threadIdx.x || !status || *status) return;
+    if (!logits || !scores || !selected || !weights || !routed_experts ||
+        routed_experts > 256ull || !topk || topk > 16ull || topk > routed_experts ||
+        router_class > 1u || !isfinite(scaling) || scaling <= 0.0 ||
+        (router_class == 0u && !hash_experts) || (router_class == 1u && !bias)) {
+        atomicCAS(status, 0, 2);
+        return;
+    }
+    for (unsigned long long expert = 0ull; expert < routed_experts; ++expert) {
+        double value = (double)logits[expert];
+        double softplus = value > 0.0 ? value + log1p(exp(-value)) : log1p(exp(value));
+        double score = sqrt(softplus);
+        if (!isfinite(score)) {
+            atomicCAS(status, 0, 1);
+            return;
+        }
+        scores[expert] = (float)score;
+    }
+    for (unsigned long long rank = 0ull; rank < topk; ++rank) {
+        unsigned long long chosen = ~0ull;
+        if (router_class == 0u) {
+            chosen = hash_experts[rank];
+        } else {
+            for (unsigned long long candidate = 0ull; candidate < routed_experts; ++candidate) {
+                int used = 0;
+                for (unsigned long long prior = 0ull; prior < rank; ++prior)
+                    if (selected[prior] == candidate) used = 1;
+                double candidate_score = (double)scores[candidate] + (double)bias[candidate];
+                double chosen_score = chosen == ~0ull
+                    ? -INFINITY : (double)scores[chosen] + (double)bias[chosen];
+                if (!used && (chosen == ~0ull || candidate_score > chosen_score ||
+                              (candidate_score == chosen_score && candidate < chosen)))
+                    chosen = candidate;
+            }
+        }
+        if (chosen >= routed_experts) {
+            atomicCAS(status, 0, 2);
+            return;
+        }
+        for (unsigned long long prior = 0ull; prior < rank; ++prior)
+            if (selected[prior] == chosen) {
+                atomicCAS(status, 0, 2);
+                return;
+            }
+        selected[rank] = chosen;
+        weights[rank] = scores[chosen];
+    }
+    double total = 0.0;
+    for (unsigned long long rank = 0ull; rank < topk; ++rank)
+        total += (double)weights[rank];
+    if (normalize && (!isfinite(total) || total <= 0.0)) {
+        atomicCAS(status, 0, 1);
+        return;
+    }
+    for (unsigned long long rank = 0ull; rank < topk; ++rank) {
+        double value = (double)weights[rank];
+        if (normalize) value /= total;
+        value *= scaling;
+        weights[rank] = (float)value;
+    }
+}
+
+/* Purpose: apply limited SiLU/SwiGLU. Inputs: finite gate/up values and limit.
+ * Effects: writes device output. Failure: sets device status. Boundary: CUDA MoE kernel. */
+extern "C" __global__ void yvex_moe_swiglu(
+    const float *gate, const float *up, unsigned long long count,
+    double limit, float *output, int *status)
+{
+    unsigned long long index = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (!status || *status || index >= count) return;
+    if (!gate || !up || !output || !isfinite(limit) || limit <= 0.0) {
+        atomicCAS(status, 0, 2);
+        return;
+    }
+    double g = fmin((double)gate[index], limit);
+    double u = fmax(-limit, fmin((double)up[index], limit));
+    double silu = g >= 0.0 ? g / (1.0 + exp(-g)) : g * exp(g) / (1.0 + exp(g));
+    float value = float_to_bf16_rne((float)(silu * u));
+    if (!isfinite(value)) atomicCAS(status, 0, 1);
+    else output[index] = value;
+}
+
+/* Purpose: accumulate one expert output. Inputs: finite device values and weight.
+ * Effects: updates device aggregate. Failure: sets device status. Boundary: CUDA MoE kernel. */
+extern "C" __global__ void yvex_moe_accumulate(
+    const float *expert, unsigned long long count, float weight,
+    float *aggregate, int *status)
+{
+    unsigned long long index = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (!status || *status || index >= count) return;
+    if (!expert || !aggregate || !isfinite(weight)) {
+        atomicCAS(status, 0, 2);
+        return;
+    }
+    float value = __fadd_rn(aggregate[index], __fmul_rn(expert[index], weight));
+    if (!isfinite(value)) atomicCAS(status, 0, 1);
+    else aggregate[index] = value;
+}
+
 /* Executes sparse/local masking, stable softmax and value reduction on device.
  * One block owns one query head and retains the versioned scalar lane/candidate
  * order; selected compressed indexes originate only from device top-k. */

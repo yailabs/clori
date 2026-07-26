@@ -308,7 +308,9 @@ mHC is represented as a residual transformation, not a feature bit. Four
 16,384 mixing geometry, 20 Sinkhorn iterations, pre/post attention and deferred
 feed-forward transitions, and the final post/head collapse before the final
 RMS normalization. This contract determines later tensor and graph
-requirements without asserting that those transitions execute today.
+requirements. The MoE boundary executes its exact local input preparation and
+publishes the deferred post state; cross-layer application remains
+transformer-owned.
 
 All 43 main layers carry one shared and 256 routed experts with top-6
 selection. The first three layers require token-ID hash routing; the remaining
@@ -334,8 +336,13 @@ reference, production CPU path, and device-complete GB10 CUDA path execute all
 deterministic top-k, masks, stable softmax, reductions, and output projection
 participate in the numerical result. This is complete attention execution with
 attention-local activation prefill/decode phases, not persistent runtime KV,
-tokenizer-backed full-model prompt prefill, model decode, MoE, transformer
-composition, or generation.
+tokenizer-backed full-model prompt prefill, model decode, transformer
+composition, or generation. The admitted token-local MoE executor separately
+consumes the same family facts: the first three layers use token-ID hash rows;
+the remaining 40 use learned BF16 router projections, sqrt-softplus scores,
+correction bias, deterministic noaux top-k, and unbiased normalized route
+weights. It executes only the selected Q2_K expert subviews plus each Q8_0
+shared expert and publishes the deferred transformer-owned mHC post state.
 
 ### DeepSeek Logical GGUF Mapping
 
@@ -1167,7 +1174,7 @@ This table records architectural scope, not delivery progress.
 
 | Family | v0.1.0 relation | Runtime class | Current support truth |
 | --- | --- | --- | --- |
-| DeepSeek-V4-Flash | exact release target at `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; canonical target id `deepseek4-v4-flash` | hybrid SWA/CSA/HCA decoder with mHC and MoE | typed architecture, exact 69,187-entry source coverage, sealed Transformation IR, complete quantization, two admitted complete artifacts, bounded materialization, a content-addressed runtime binding, one common runtime model/session, resident attention weights, complete CPU/GB10 attention, and session-owned persistent attention state exist; tokenizer-backed prefill, MoE, transformer execution, and generation remain unsupported |
+| DeepSeek-V4-Flash | exact release target at `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; canonical target id `deepseek4-v4-flash` | hybrid SWA/CSA/HCA decoder with mHC and MoE | typed architecture, exact 69,187-entry source coverage, sealed Transformation IR, complete quantization, two admitted complete artifacts, bounded materialization, a content-addressed runtime binding, one common runtime model/session, resident attention weights, complete CPU/GB10 attention, persistent attention state, activation prefill, and token-local MoE execution exist; tokenizer-backed prefill, transformer execution, and generation remain unsupported |
 | Qwen | outside v0.1.0 | target-dependent dense or sparse/MoE | unsupported; existing source/report facts do not enter the release path |
 | Gemma | outside v0.1.0 | dense | unsupported; existing source/report facts do not enter the release path |
 | GLM | outside v0.1.0 source-pressure work | sparse/MoE | unsupported; source evidence is not runtime support |
@@ -1342,7 +1349,7 @@ This table records families as integration classes, not support claims.
 
 | Family | Runtime class | Architectural pressure | Current posture |
 | --- | --- | --- | --- |
-| DeepSeek | Sparse / MoE | Large sparse runtime, expert routing, KV pressure, high-end local inference | exact v0.1.0 target; unsupported |
+| DeepSeek | Sparse / MoE | Large sparse runtime, expert routing, KV pressure, high-end local inference | exact v0.1.0 target; token-local MoE admitted, complete model unsupported |
 | GLM | Sparse / MoE | Huge source inventory and architecture pressure | outside v0.1.0; unsupported |
 | Qwen | Dense or Sparse / MoE depending target | Dense/sparse comparison, tokenizer/runtime comparison, portability pressure | outside v0.1.0; unsupported |
 | Gemma | Dense | Smaller local runtime and device-oriented pressure | outside v0.1.0; unsupported |

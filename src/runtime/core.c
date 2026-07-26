@@ -580,7 +580,7 @@ static int runtime_model_capabilities_bind(
     yvex_runtime_model_failure *failure, yvex_error *err) {
     yvex_runtime_capabilities *capabilities = &model->summary.capabilities;
     yvex_runtime_capabilities declared;
-    char declared_identity[YVEX_SHA256_HEX_CAP];
+    char binding_identity[YVEX_SHA256_HEX_CAP];
     const int graph_ready = attention &&
         attention->history_contract_ready && attention->full_execution_ready;
     const int cpu_ready = graph_ready && attention->cpu_reference_ready;
@@ -590,9 +590,9 @@ static int runtime_model_capabilities_bind(
         !model->adapter->execution_capabilities ||
         !model->adapter->execution_capabilities(&declared))
         return runtime_refuse(failure, REFUSE_ADAPTER_CAPABILITY, 1ull, 0ull, err);
-    if (!yvex_runtime_capabilities_contract_valid(&declared) ||
-        !yvex_runtime_capabilities_identity(&declared, declared_identity) ||
-        strcmp(declared_identity, binding->execution_capability_identity) != 0)
+    if (!yvex_runtime_capabilities_admitted_by(&binding->capabilities, &declared) ||
+        !yvex_runtime_capabilities_identity(&binding->capabilities, binding_identity) ||
+        strcmp(binding_identity, binding->execution_capability_identity) != 0)
         return runtime_refuse(failure, REFUSE_ADAPTER_CAPABILITY_STALE, 1ull, 0ull, err);
     *capabilities = binding->capabilities;
     capabilities->attention_semantics_ready = declared.attention_semantics_ready && graph_ready;

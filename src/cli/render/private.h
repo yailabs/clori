@@ -19,6 +19,7 @@
 #include <yvex/internal/graph.h>
 #include <yvex/internal/model_artifact.h>
 #include <yvex/internal/model_target.h>
+#include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/source_payload.h>
 
@@ -130,6 +131,8 @@ int yvex_cuda_info_render_help(FILE *fp);
 /* Graph contract. */
 int yvex_graph_attention_render(FILE *fp, yvex_graph_report_mode mode,
                                 const yvex_graph_attention_operator_result *result);
+int yvex_graph_moe_render(FILE *fp, yvex_graph_report_mode mode,
+                          const yvex_moe_operator_result *result);
 int yvex_graph_render_help(FILE *fp);
 
 /* Model Target contract. */

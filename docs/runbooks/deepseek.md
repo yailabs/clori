@@ -10,8 +10,12 @@ Canonical source: `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; target:
 YVEX admits the selected complete GGUF and executes its attention bindings
 through the common CPU/CUDA runtime. Sessions own exact persistent state for
 all 43 layers. Versioned activation bundles commit that state atomically per
-chunk. Prompt/token embedding, full-model prefill, transformer/MoE execution, and
-text generation remain unsupported. There is no supported DeepSeek generation command to run yet.
+chunk. A distinct token-local MoE input executes hash/learned routing, selected
+routed experts, shared experts, and combination across all 43 layers. Prompt/
+token embedding, full-model prefill, transformer composition, and text
+generation remain unsupported.
+
+There is no supported DeepSeek generation command to run yet.
 
 Prepare the immutable runtime binding, then execute the production attention
 path. Raw generated evidence remains outside the repository:
@@ -52,38 +56,27 @@ ACTIVATIONS="/absolute/path/to/input.yvex-activations"
 The file binds exact runtime identities, token/layer geometry, payload ranges,
 and digest. It reports attention/state facts, never a model or prompt output.
 
-The canonical activation probe is not prompt text. This lane writes an
-identity-bound baseline, JSON/CSV reports, and deterministic SVGs:
+An upstream production consumer or the focused live target may also create an
+untracked schema-v1 MoE input. Execute it with:
 
 ```sh
-MODE=full
-./yvex graph attention benchmark --target deepseek4-v4-flash \
-  --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" --runtime-binding "$BINDING" \
-  --backend cuda --phase decode --mode "$MODE" --scope full --probe canonical \
-  --operation-scope release-attention-set --warmup 3 --repeat 20 \
-  --progress off --baseline "$EVIDENCE/$MODE.yvex-benchmark" --write-baseline \
-  --chart "$EVIDENCE/$MODE.svg" --output json >"$EVIDENCE/$MODE.json"
-./yvex graph attention benchmark compare \
-  --baseline "$EVIDENCE/$MODE.yvex-benchmark" \
-  --current "$EVIDENCE/$MODE-current.yvex-benchmark" \
-  --max-regression-bps 500 --chart "$EVIDENCE/$MODE-file-comparison.svg" \
-  --output json
+MOE_INPUT="/absolute/path/to/input.yvex-moe-input"
+./yvex graph moe execute \
+  --target deepseek4-v4-flash --artifact "$ARTIFACT" \
+  --runtime-binding "$BINDING" --backend cuda \
+  --input tensor-file --input-file "$MOE_INPUT" \
+  --scope full --progress off --output json
 ```
 
-Repeat with `MODE=eager` and `MODE=piecewise`. These files are component
-evidence, not model evaluation, agent evaluation or full-model benchmark. Omitting
-`--max-regression-bps` reports deltas without a pass threshold.
+The file contains one exact expanded activation per main layer plus numeric
+token IDs required by the first three hash-router layers. Those IDs do not
+establish tokenizer support. The result is token-local MoE output and deferred
+transformer-owned state; it neither mutates KV nor produces model output.
 
-Regenerate and publish the chart set from one clean external evidence directory:
-
-```sh
-EVIDENCE="$(mktemp -d /tmp/yvex-runtime-benchmark.XXXXXX)"
-make update-runtime-benchmark-charts \
-  YVEX_RUNTIME_BENCHMARK_DIR="$EVIDENCE" YVEX_RUNTIME_BINDING="$BINDING"
-```
-
-The target measures all CUDA modes twice and updates only validated
-`../assets/benchmarks/attention/*.svg`.
+The installed namespace also provides `./yvex graph attention qualify` and
+`./yvex graph attention benchmark compare`. The latter accepts
+`--max-regression-bps 500` as an explicit operator policy. Attention component
+evidence is not model evaluation, agent evaluation or full-model benchmark.
 
 ## Source Verification
 

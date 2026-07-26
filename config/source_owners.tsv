@@ -11,6 +11,7 @@ include/yvex/internal/benchmark.h	runtime	runtime.benchmark	generic	private	inte
 include/yvex/internal/compilation.h	model.compilation	model.compilation.internal	generic	private	internal-abi	model.family,quant	interface	none
 include/yvex/internal/core.h	core	core.internal	generic	private	internal-abi	repository	interface	none
 include/yvex/internal/graph.h	graph	graph.internal	generic	private	internal-abi	runtime,backend,cli	interface	none
+include/yvex/internal/moe.h	graph	graph.moe	generic	private	internal-abi	graph,runtime,backend,cli,tests	interface	none
 include/yvex/internal/gguf.h	gguf	gguf.internal	generic	private	internal-abi	artifact,model,quant	interface	none
 include/yvex/internal/gguf_writer.h	gguf	gguf.writer	generic	private	internal-abi	artifact,quant	interface	none
 include/yvex/internal/io.h	io	io.internal	generic	private	internal-abi	repository	interface	none
@@ -111,6 +112,8 @@ src/gguf/tokenizer_metadata.c	gguf	gguf.tokenizer_metadata	generic	private	reusa
 src/gguf/tools.c	gguf	gguf.tools	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
 src/gguf/writer.c	gguf	gguf.writer	generic	private	transactional-io	artifact,model,quant	implementation	none
 src/graph/attention.c	graph	graph.attention	generic	private	reusable-algorithm	runtime,cli	implementation	none
+src/graph/moe.c	graph	graph.moe	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none
+src/backend/cuda/moe.c	backend.cuda	backend.cuda.moe	backend	private	backend-implementation	runtime,graph,tests	implementation	none
 src/graph/core.c	graph	graph.core	generic	private	resource-lifecycle	runtime,cli	implementation	none
 src/graph/families/deepseek_v4.c	graph.family	graph.family.deepseek_v4	family	private	reusable-algorithm	graph	implementation	none
 src/graph/memory_plan.c	graph	graph.memory_plan	generic	private	immutable-planning	runtime,cli	implementation	none
@@ -131,6 +134,8 @@ include/yvex/internal/families/deepseek_v4.h	model	model.families.deepseek_v4	fa
 src/model/families/deepseek_v4.c	model.family	model.family.deepseek_v4	family	private	reusable-algorithm	model,graph,gguf	implementation	none
 src/runtime/descriptor.c	runtime	runtime.descriptor	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
 src/runtime/binding.c	runtime	runtime.binding	generic	private	file-serialization	artifact,graph,runtime,cli	implementation	none
+src/runtime/moe.c	runtime	runtime.moe	generic	private	transactional-execution	runtime,graph,backend,cli,tests	implementation	none
+src/runtime/moe_input.c	runtime	runtime.moe_input	generic	private	file-serialization	runtime,cli,tests	implementation	none
 src/runtime/benchmark.c	runtime	runtime.benchmark	generic	private	file-serialization	runtime,cli,tests	implementation	none
 include/yvex/internal/runtime_prefill.h	runtime	runtime.prefill	generic	private	internal-abi	runtime,graph,cli,tests	interface	none
 src/runtime/prefill.c	runtime	runtime.prefill	generic	private	transactional-execution	runtime,graph,cli,tests	implementation	none
