@@ -42,6 +42,44 @@ static int moe_refuse(yvex_error *err, yvex_status status, const char *reason)
     return status;
 }
 
+/* Purpose: identify routing evidence field-by-field without native structure layout.
+ * Inputs: admitted router result and exact routed-expert extent. Effects: writes one digest.
+ * Failure: malformed/non-finite evidence returns false. Boundary: excludes padding and unused capacity. */
+int yvex_moe_router_result_identity(const yvex_moe_router_result *router,
+                                    unsigned long long routed_experts,
+                                    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    uint32_t bits;
+    if (!router || !output || !router->selected_count ||
+        router->selected_count > YVEX_MOE_MAX_SELECTED || !routed_experts ||
+        routed_experts > 256ull) return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.moe.router-result.v1") ||
+        !yvex_sha256_update_u64(&hash, router->selected_count)) return 0;
+    for (index = 0ull; index < router->selected_count; ++index)
+        if (router->selected_experts[index] >= routed_experts ||
+            !yvex_sha256_update_u64(&hash, router->selected_experts[index])) return 0;
+    for (index = 0ull; index < routed_experts; ++index) {
+        if (!isfinite(router->router_logits[index]) ||
+            !isfinite(router->router_scores[index])) return 0;
+        memcpy(&bits, &router->router_logits[index], sizeof(bits));
+        if (!yvex_sha256_update_u64(&hash, bits)) return 0;
+        memcpy(&bits, &router->router_scores[index], sizeof(bits));
+        if (!yvex_sha256_update_u64(&hash, bits)) return 0;
+    }
+    for (index = 0ull; index < router->selected_count; ++index) {
+        if (!isfinite(router->selected_weights[index])) return 0;
+        memcpy(&bits, &router->selected_weights[index], sizeof(bits));
+        if (!yvex_sha256_update_u64(&hash, bits)) return 0;
+    }
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
 /* Purpose: resolve the typed family adapter by immutable numeric identity. */
 static const yvex_moe_family_api *moe_family_find(unsigned long long adapter_id,
                                                    unsigned long long adapter_version)

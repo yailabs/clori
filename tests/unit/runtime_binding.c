@@ -1123,6 +1123,7 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
     request->capabilities.moe_routed_expert_ready = 0;
     request->capabilities.moe_shared_expert_ready = 0;
     request->capabilities.moe_block_ready = 0;
+    request->capabilities.transformer_ready = 0;
     return
            yvex_runtime_capabilities_contract_valid(&request->capabilities);
 }
@@ -2867,7 +2868,7 @@ static int test_runtime_cuda_workspace_transaction(
     rc = yvex_runtime_session_prepare_attention_workspace(
         session, (yvex_runtime_execution_mode)-1,
         YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE, YVEX_ATTENTION_EVIDENCE_NONE,
-        capacity, &failure, &err);
+        capacity, 0ull, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG &&
                          failure.code == YVEX_RUNTIME_MODEL_FAILURE_INVALID_ARGUMENT &&
                          yvex_runtime_session_summary_copy(session, &after, &err) == YVEX_OK &&
@@ -2879,7 +2880,7 @@ static int test_runtime_cuda_workspace_transaction(
                      "inject workspace publication and pre-release cleanup failures");
     rc = yvex_runtime_session_prepare_attention_workspace(
         session, YVEX_RUNTIME_MODE_EAGER, YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
-        YVEX_ATTENTION_EVIDENCE_NONE, capacity, &failure, &err);
+        YVEX_ATTENTION_EVIDENCE_NONE, capacity, 0ull, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_BACKEND &&
                          failure.code == YVEX_RUNTIME_MODEL_FAILURE_CLEANUP &&
                          yvex_runtime_session_summary_copy(session, &after, &err) == YVEX_OK &&
@@ -2889,7 +2890,7 @@ static int test_runtime_cuda_workspace_transaction(
                      "clear workspace pre-release cleanup failure");
     rc = yvex_runtime_session_prepare_attention_workspace(
         session, YVEX_RUNTIME_MODE_EAGER, YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
-        YVEX_ATTENTION_EVIDENCE_NONE, capacity, &failure, &err);
+        YVEX_ATTENTION_EVIDENCE_NONE, capacity, 0ull, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE &&
                          failure.code == YVEX_RUNTIME_MODEL_FAILURE_BACKEND &&
                          yvex_runtime_session_summary_copy(session, &after, &err) == YVEX_OK &&
@@ -2899,7 +2900,7 @@ static int test_runtime_cuda_workspace_transaction(
                      "clear workspace publication failure");
     rc = yvex_runtime_session_prepare_attention_workspace(
         session, YVEX_RUNTIME_MODE_EAGER, YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
-        YVEX_ATTENTION_EVIDENCE_NONE, capacity, &failure, &err);
+        YVEX_ATTENTION_EVIDENCE_NONE, capacity, 0ull, &failure, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK &&
             yvex_runtime_session_summary_copy(session, &after, &err) == YVEX_OK &&

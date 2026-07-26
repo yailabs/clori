@@ -62,9 +62,9 @@ domain algorithms. No writer owns command output.
 | Artifact emission | source-faithful and selected complete DeepSeek artifacts emitted outside the repository | preserve exact physical identities and complete metadata/tokenizer evidence | see `PROJECT.md` |
 | GGUF roundtrip | both complete artifacts pass native full-byte and pinned official-reader admission; the selected artifact has deterministic second-serialization proof | preserve reader/writer equivalence and corruption refusal | see `PROJECT.md` |
 | Materialization | family-neutral materialization and a full bounded selected-artifact walk are complete; the runtime owns an attention-only resident pack, not full-model device residency | preserve exact physical bindings while later owners add KV, MoE and output-head residency | see `PROJECT.md` |
-| Runtime descriptor | immutable DeepSeek descriptor binds all 1,360 admitted tensors and topology facts and is consumed by the common attention runtime and persistent-state recipes | feed full-model prefill and complete transformer composition without rebuilding compiler truth | see `PROJECT.md` |
-| Graph/backend | complete DeepSeek SWA/CSA/HCA attention is admitted on CPU eager and GB10 CUDA eager/piecewise/full modes over all 43 layers and 634 bindings; later executions consume committed session state | model prefill, MoE, and backend-bound complete transformer path | see `PROJECT.md` |
-| Common runtime | content-addressed binding, immutable family-neutral model, session-owned persistent state/workspace, resident attention weights, phase-aware dispatch, and CPU/CUDA execution | preserve warm reuse and typed family adapters while full-model prefill becomes the next consumer | see `PROJECT.md` |
+| Runtime descriptor | immutable DeepSeek descriptor binds all 1,360 admitted tensors and topology facts and is consumed by the common attention, MoE, transformer, and persistent-state owners | feed repeated decode and output-head execution without rebuilding compiler truth | see `PROJECT.md` |
+| Graph/backend | complete DeepSeek attention, token-local MoE, selected-row embedding, 43-block transformer composition, final mHC collapse, and final RMSNorm execute on CPU and GB10 CUDA; committed state spans the whole request | preserve the admitted backbone while decode and logits consume it | see `PROJECT.md` |
+| Common runtime | content-addressed binding, immutable family-neutral model, session-owned persistent state/workspace, typed transformer plan, phase-aware dispatch, and CPU/CUDA execution | preserve warm reuse and the one-token backbone component while repeated decode becomes the next consumer | see `PROJECT.md` |
 
 ## Owner Rules
 
@@ -253,10 +253,8 @@ to `PROJECT.md`.
 
 This target does not claim:
 
-- persistent family-correct KV
 - tokenizer-backed prompt prefill
-- MoE or complete transformer execution
-- model decode, logits, sampling, or generation
+- repeated model decode, logits, sampling, or generation
 - evaluation or full-model benchmark results
 - supported-model or release readiness
 

@@ -1386,7 +1386,8 @@ static int runtime_session_workspace_requirements(
     const yvex_runtime_execution_session *session, yvex_runtime_execution_mode mode,
     yvex_runtime_execution_scope scope, yvex_attention_evidence_level evidence_level,
     const yvex_graph_attention_capacity_plan *capacity, const yvex_graph_attention_state_summary *state,
-    runtime_workspace_requirements *requirements, yvex_runtime_model_failure *failure, yvex_error *err) {
+    unsigned long long minimum_bytes, runtime_workspace_requirements *requirements,
+    yvex_runtime_model_failure *failure, yvex_error *err) {
     static const yvex_attention_execution_mode graph_modes[] = {
         YVEX_ATTENTION_EXECUTION_EAGER, YVEX_ATTENTION_EXECUTION_PIECEWISE, YVEX_ATTENTION_EXECUTION_FULL};
     static const yvex_attention_operation_scope graph_scopes[] = {
@@ -1435,6 +1436,7 @@ static int runtime_session_workspace_requirements(
         if (rc != YVEX_OK) return rc;
         if (layer_bytes > requirements->required) requirements->required = layer_bytes;
     }
+    if (minimum_bytes > requirements->required) requirements->required = minimum_bytes;
     if (!requirements->required ||
         !yvex_core_u64_add(session->summary.host_resident_bytes, session->summary.workspace_bytes,
                            &requirements->host_total) ||
@@ -1457,6 +1459,7 @@ static int runtime_session_workspace_requirements(
 int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_session *session,
     yvex_runtime_execution_mode mode, yvex_runtime_execution_scope scope,
     yvex_attention_evidence_level evidence_level, const yvex_graph_attention_capacity_plan *capacity,
+    unsigned long long minimum_bytes,
     yvex_runtime_model_failure *failure,
     yvex_error *err) {
     const yvex_graph_attention_capacity_summary *capacity_summary;
@@ -1513,7 +1516,8 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
         goto done;
     }
     rc = runtime_session_workspace_requirements(
-        session, mode, scope, evidence_level, capacity, &state, &requirements, failure, err);
+        session, mode, scope, evidence_level, capacity, &state, minimum_bytes,
+        &requirements, failure, err);
     if (rc != YVEX_OK) goto done;
     memset(&device_descriptor, 0, sizeof(device_descriptor));
     device_descriptor.name = "runtime-attention-workspace";

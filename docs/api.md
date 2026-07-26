@@ -206,6 +206,28 @@ all numerical stages on device and has no CPU fallback. `yvex_moe_operator_resul
 is a copied result surface; it is not capability authority and is not a
 transformer or generation result.
 
+### Internal Transformer Execution Boundary
+
+`include/yvex/internal/transformer.h` owns the non-installed transformer plan,
+canonical numeric token input, reusable execution context, single-block
+completion, full-stack coordination, and copied operator result. Schema-v1
+plans bind exact runtime, attention, MoE, embedding, mHC, and final-norm facts;
+schema-v1 inputs bind canonical U32 token IDs and their model/runtime/plan
+identities. Memory and bounded-file admission share one validation contract.
+
+`yvex_runtime_transformer_execute_block` consumes the attention publication
+already staged inside an active request transaction, executes the admitted MoE
+layer and deferred FFN mHC post, and returns field-wise routing/output/execution
+identities. `yvex_runtime_transformer_execute` owns chunk planning, selected-row
+embedding, 43 ordered blocks, final mHC collapse, final RMSNorm, atomic state
+commit, and normalized-hidden publication. The one-token form is the component
+future decode will reuse; this API does not establish repeated decode.
+
+CPU and CUDA share the typed contracts. The GB10 CUDA path retains inter-layer
+activations on device and has no CPU numerical fallback. The API publishes
+normalized hidden state only; tokenizer text, output-head projection, logits,
+sampling, and generation remain outside it.
+
 ### Internal DeepSeek Attention Operator Boundary
 
 `yvex_graph_attention_operator_execute` is the non-installed typed adapter used
@@ -268,6 +290,7 @@ yvex graph attention cuda-graph list|inspect|warmup|update|invalidate|release
 yvex graph attention trace|profile|benchmark|qualify
 yvex graph attention benchmark compare
 yvex graph moe execute
+yvex graph transformer execute
 ```
 
 `prepare` is the compiler-side producer for an external runtime binding.
@@ -291,6 +314,13 @@ reports `activation_prefill_ready` separately from
 `--backend cpu|cuda`, `--input tensor-file`, `--input-file FILE`, `--scope
 full`, and `--progress off`. It calls the production runtime MoE API directly;
 it does not run a fixture, test executable, Make target, or second process.
+
+`graph transformer execute` requires explicit artifact, runtime binding, and a
+schema-v1 `--input token-ids --input-file FILE`. It accepts `--backend
+cpu|cuda`, `--phase prefill`, positive chunk/context capacities, and
+`--progress off`. It calls the production transformer API directly and reports
+normalized hidden and persistent-state facts without invoking tokenizer,
+logits, or generation owners.
 
 ## Qualification, Benchmark, And Chart Contract
 
@@ -349,14 +379,12 @@ CPU/CUDA phase and mode, residency, workspace, state delta, trace, profile and
 benchmark readiness. Compatibility booleans may be derived from that lattice;
 they are not independent capability authorities.
 
-The current runtime supports production DeepSeek attention over admitted
-weights and session-owned persistent attention state on CPU and the admitted
-GB10 CUDA path. It also supports identity-bound activation prefill across all
-43 attention layers with per-chunk atomic state publication and token-local
-DeepSeek MoE execution across all 43 layers on CPU and GB10 CUDA. It does not
-provide prompt/token embedding, tokenizer-backed full-model prefill, a
-complete transformer, model decode, logits, sampling, text generation,
-evaluation, a full-model benchmark or release readiness.
+The current runtime supports production DeepSeek attention, persistent state,
+activation prefill, token-local MoE, and the numeric token-ID complete
+transformer backbone on CPU and the admitted GB10 CUDA path. It does not
+provide prompt text, tokenizer execution, repeated model decode, logits,
+sampling, text generation, evaluation, a full-model benchmark or release
+readiness.
 
 ## Extension Rules
 

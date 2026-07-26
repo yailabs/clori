@@ -33,6 +33,10 @@ static const char *const literal_lines_0[] = {
     "       yvex graph moe execute --target TARGET --artifact FILE --runtime-binding FILE",
     "           --backend cpu|cuda --input tensor-file --input-file FILE --scope full",
     "           token IDs are numeric routing input; they do not establish tokenizer support",
+    "       yvex graph transformer execute --target TARGET --artifact FILE --runtime-binding FILE",
+    "           --backend cpu|cuda --phase prefill --input token-ids --input-file FILE",
+    "           --chunk-tokens N --context-capacity N --progress off",
+    "           numeric token IDs do not establish tokenizer, logits, decode, or generation support",
     "           [--models-root DIR] [--artifact FILE] [--runtime-binding FILE] [--runtime-binding-dir DIR]",
     "           [--backend cpu|cuda] [--phase prefill|decode|mixed|verify]",
     "           [--mode eager|piecewise|full|auto] [--scope quick|full]",
@@ -146,6 +150,102 @@ static const yvex_cli_field_spec moe_fields[] = {
     MOE_FIELD("generation_ready", YVEX_CLI_FIELD_BOOL, generation_ready),
     MOE_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
     MOE_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
+};
+
+#define TRANSFORMER_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_transformer_operator_result, MEMBER), ""}
+#define TRANSFORMER_EXECUTION_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_transformer_operator_result, execution) + \
+                    offsetof(yvex_runtime_transformer_result, MEMBER), ""}
+
+static const yvex_cli_field_spec transformer_fields[] = {
+    TRANSFORMER_FIELD("command", YVEX_CLI_FIELD_TEXT_ARRAY, command),
+    TRANSFORMER_FIELD("status", YVEX_CLI_FIELD_TEXT_ARRAY, status),
+    TRANSFORMER_FIELD("target", YVEX_CLI_FIELD_TEXT_ARRAY, target),
+    TRANSFORMER_FIELD("family", YVEX_CLI_FIELD_TEXT_ARRAY, family),
+    TRANSFORMER_FIELD("backend", YVEX_CLI_FIELD_TEXT_ARRAY, backend),
+    TRANSFORMER_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY, artifact_identity),
+    TRANSFORMER_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                      runtime_binding_identity),
+    TRANSFORMER_FIELD("transformer_plan_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                      transformer_plan_identity),
+    TRANSFORMER_EXECUTION_FIELD("input_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                                input_identity),
+    TRANSFORMER_EXECUTION_FIELD("token_start", YVEX_CLI_FIELD_U64, token_start),
+    TRANSFORMER_EXECUTION_FIELD("token_count", YVEX_CLI_FIELD_U64, token_count),
+    TRANSFORMER_EXECUTION_FIELD("chunk_count", YVEX_CLI_FIELD_U64, chunk_count),
+    TRANSFORMER_EXECUTION_FIELD("committed_prefix", YVEX_CLI_FIELD_U64,
+                                committed_prefix),
+    TRANSFORMER_EXECUTION_FIELD("position_before", YVEX_CLI_FIELD_U64, position_before),
+    TRANSFORMER_EXECUTION_FIELD("position_after", YVEX_CLI_FIELD_U64, position_after),
+    TRANSFORMER_EXECUTION_FIELD("generation_before", YVEX_CLI_FIELD_U64,
+                                generation_before),
+    TRANSFORMER_EXECUTION_FIELD("generation_after", YVEX_CLI_FIELD_U64,
+                                generation_after),
+    TRANSFORMER_FIELD("hidden_width", YVEX_CLI_FIELD_U64, hidden_width),
+    TRANSFORMER_FIELD("expanded_width", YVEX_CLI_FIELD_U64, expanded_width),
+    TRANSFORMER_FIELD("layers", YVEX_CLI_FIELD_U64, layer_count),
+    TRANSFORMER_EXECUTION_FIELD("embedding_rows", YVEX_CLI_FIELD_U64, embedding_rows),
+    TRANSFORMER_EXECUTION_FIELD("embedding_bytes", YVEX_CLI_FIELD_U64,
+                                embedding_bytes),
+    TRANSFORMER_EXECUTION_FIELD("layers_executed", YVEX_CLI_FIELD_U64,
+                                layers_executed),
+    TRANSFORMER_EXECUTION_FIELD("swa_layers", YVEX_CLI_FIELD_U64, swa_layers),
+    TRANSFORMER_EXECUTION_FIELD("csa_layers", YVEX_CLI_FIELD_U64, csa_layers),
+    TRANSFORMER_EXECUTION_FIELD("hca_layers", YVEX_CLI_FIELD_U64, hca_layers),
+    TRANSFORMER_EXECUTION_FIELD("hash_router_executions", YVEX_CLI_FIELD_U64,
+                                hash_routers),
+    TRANSFORMER_EXECUTION_FIELD("learned_router_executions", YVEX_CLI_FIELD_U64,
+                                learned_routers),
+    TRANSFORMER_EXECUTION_FIELD("routed_expert_executions", YVEX_CLI_FIELD_U64,
+                                routed_experts),
+    TRANSFORMER_EXECUTION_FIELD("shared_expert_executions", YVEX_CLI_FIELD_U64,
+                                shared_experts),
+    TRANSFORMER_EXECUTION_FIELD("h2d_bytes", YVEX_CLI_FIELD_U64, h2d_bytes),
+    TRANSFORMER_EXECUTION_FIELD("d2h_bytes", YVEX_CLI_FIELD_U64, d2h_bytes),
+    TRANSFORMER_EXECUTION_FIELD("kernel_launches", YVEX_CLI_FIELD_U64,
+                                kernel_launches),
+    TRANSFORMER_EXECUTION_FIELD("embedding_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
+                                embedding_digest),
+    TRANSFORMER_EXECUTION_FIELD("layer_digest", YVEX_CLI_FIELD_TEXT_ARRAY, layer_digest),
+    TRANSFORMER_EXECUTION_FIELD("final_expanded_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
+                                final_expanded_digest),
+    TRANSFORMER_EXECUTION_FIELD("normalized_hidden_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
+                                normalized_hidden_digest),
+    TRANSFORMER_EXECUTION_FIELD("persistent_state_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
+                                persistent_state_digest),
+    TRANSFORMER_EXECUTION_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                                execution_identity),
+    TRANSFORMER_FIELD("embedding_ready", YVEX_CLI_FIELD_BOOL, embedding_ready),
+    TRANSFORMER_FIELD("transformer_plan_ready", YVEX_CLI_FIELD_BOOL,
+                      transformer_plan_ready),
+    TRANSFORMER_FIELD("transformer_block_ready", YVEX_CLI_FIELD_BOOL,
+                      transformer_block_ready),
+    TRANSFORMER_FIELD("transformer_stack_ready", YVEX_CLI_FIELD_BOOL,
+                      transformer_stack_ready),
+    TRANSFORMER_FIELD("transformer_final_head_ready", YVEX_CLI_FIELD_BOOL,
+                      transformer_final_head_ready),
+    TRANSFORMER_FIELD("transformer_final_norm_ready", YVEX_CLI_FIELD_BOOL,
+                      transformer_final_norm_ready),
+    TRANSFORMER_FIELD("transformer_hidden_state_ready", YVEX_CLI_FIELD_BOOL,
+                      transformer_hidden_state_ready),
+    TRANSFORMER_FIELD("full_model_prefill_ready", YVEX_CLI_FIELD_BOOL,
+                      full_model_prefill_ready),
+    TRANSFORMER_FIELD("transformer_ready", YVEX_CLI_FIELD_BOOL, transformer_ready),
+    TRANSFORMER_FIELD("single_token_transformer_component_ready", YVEX_CLI_FIELD_BOOL,
+                      single_token_transformer_component_ready),
+    TRANSFORMER_FIELD("model_decode_ready", YVEX_CLI_FIELD_BOOL, model_decode_ready),
+    TRANSFORMER_FIELD("logits_ready", YVEX_CLI_FIELD_BOOL, logits_ready),
+    TRANSFORMER_FIELD("sampling_ready", YVEX_CLI_FIELD_BOOL, sampling_ready),
+    TRANSFORMER_FIELD("tokenizer_runtime_ready", YVEX_CLI_FIELD_BOOL,
+                      tokenizer_runtime_ready),
+    TRANSFORMER_FIELD("generation_ready", YVEX_CLI_FIELD_BOOL, generation_ready),
+    TRANSFORMER_FIELD("model_behavior_evaluation_ready", YVEX_CLI_FIELD_BOOL,
+                      model_behavior_evaluation_ready),
+    TRANSFORMER_FIELD("release_qualification_ready", YVEX_CLI_FIELD_BOOL,
+                      release_qualification_ready),
+    TRANSFORMER_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
+    TRANSFORMER_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
 };
 
 static const yvex_cli_field_spec attention_base_fields[] = {
@@ -871,6 +971,34 @@ int yvex_graph_moe_render(FILE *fp, yvex_graph_report_mode mode,
         yvex_cli_json_end(fp);
     } else {
         rc = yvex_cli_out_fields(fp, result, moe_fields, FIELD_COUNT(moe_fields));
+    }
+    return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
+}
+
+/* Purpose: render one typed transformer result.
+ * Inputs: output stream, mode, and domain result. Effects: writes through CLI I/O.
+ * Failure: typed I/O refusal. Boundary: never derives capability or executes graph work. */
+int yvex_graph_transformer_render(FILE *fp, yvex_graph_report_mode mode,
+                                  const yvex_transformer_operator_result *result)
+{
+    size_t index;
+    int rc;
+    if (!fp || !result) return YVEX_ERR_INVALID_ARG;
+    if (mode == YVEX_GRAPH_REPORT_MODE_CSV) {
+        if (yvex_cli_out_writef(fp, "field,value\n") < 0) return YVEX_ERR_IO;
+        for (index = 0; index < FIELD_COUNT(transformer_fields); ++index)
+            if (graph_csv_field(fp, result, &transformer_fields[index]) != YVEX_OK)
+                return YVEX_ERR_IO;
+        return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+    }
+    if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
+        yvex_cli_json_begin(fp);
+        rc = yvex_cli_json_fields(fp, result, transformer_fields,
+                                  FIELD_COUNT(transformer_fields), 0);
+        yvex_cli_json_end(fp);
+    } else {
+        rc = yvex_cli_out_fields(fp, result, transformer_fields,
+                                 FIELD_COUNT(transformer_fields));
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }

@@ -113,6 +113,7 @@ src/gguf/tools.c	gguf	gguf.tools	generic	private	reusable-algorithm	artifact,mod
 src/gguf/writer.c	gguf	gguf.writer	generic	private	transactional-io	artifact,model,quant	implementation	none
 src/graph/attention.c	graph	graph.attention	generic	private	reusable-algorithm	runtime,cli	implementation	none
 src/graph/moe.c	graph	graph.moe	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none
+src/graph/transformer.c	graph	graph.transformer	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none
 src/backend/cuda/moe.c	backend.cuda	backend.cuda.moe	backend	private	backend-implementation	runtime,graph,tests	implementation	none
 src/graph/core.c	graph	graph.core	generic	private	resource-lifecycle	runtime,cli	implementation	none
 src/graph/families/deepseek_v4.c	graph.family	graph.family.deepseek_v4	family	private	reusable-algorithm	graph	implementation	none
@@ -139,6 +140,9 @@ src/runtime/moe_input.c	runtime	runtime.moe_input	generic	private	file-serializa
 src/runtime/benchmark.c	runtime	runtime.benchmark	generic	private	file-serialization	runtime,cli,tests	implementation	none
 include/yvex/internal/runtime_prefill.h	runtime	runtime.prefill	generic	private	internal-abi	runtime,graph,cli,tests	interface	none
 src/runtime/prefill.c	runtime	runtime.prefill	generic	private	transactional-execution	runtime,graph,cli,tests	implementation	none
+include/yvex/internal/transformer.h	graph	graph.transformer	generic	private	internal-abi	graph,runtime,cli,tests	interface	none
+src/runtime/transformer.c	runtime	runtime.transformer	generic	private	transactional-execution	runtime,graph,cli,tests	implementation	none
+src/runtime/transformer_input.c	runtime	runtime.transformer_input	generic	private	file-serialization	runtime,cli,tests	implementation	none
 src/runtime/residency.c	runtime	runtime.residency	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
 include/yvex/internal/graph_state.h	graph	graph.state	generic	private	resource-lifecycle	graph,runtime,tests	interface	none
 src/graph/state.c	graph	graph.state	generic	private	resource-lifecycle	graph,runtime,tests	implementation	none

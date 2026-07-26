@@ -187,6 +187,7 @@ typedef struct {
     CUfunction deepseek_activation_function;
     CUfunction deepseek_mhc_pre_function;
     CUfunction deepseek_mhc_post_function;
+    CUfunction deepseek_transformer_final_function;
     CUfunction deepseek_rolling_function;
     CUfunction deepseek_topk_function;
     CUfunction deepseek_reduce_function;
@@ -359,6 +360,14 @@ static inline int yvex_cuda_work_checked_bytes(unsigned long long count,
     return 1;
 }
 int yvex_cuda_work_cleanup(yvex_cuda_work *work, yvex_error *err);
+int yvex_cuda_activation_views_valid(yvex_backend *backend,
+    const yvex_device_tensor *input, unsigned long long input_elements,
+    const yvex_device_tensor *output, unsigned long long output_elements);
+CUdeviceptr yvex_cuda_activation_pointer(
+    yvex_backend *backend, const yvex_device_tensor *tensor);
+int yvex_cuda_activation_copy(yvex_backend *backend, CUdeviceptr source,
+    yvex_device_tensor *output, unsigned long long elements,
+    const char *stage, yvex_error *err);
 typedef struct {
     int (*fail)(yvex_backend_attention_failure *, yvex_backend_attention_failure_code,
                 const char *, unsigned long long, unsigned long long, yvex_error *,

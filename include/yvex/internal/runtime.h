@@ -133,6 +133,7 @@ int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts
                                           const yvex_runtime_capabilities *maximum);
 int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *facts);
 struct yvex_model_family_api;
+struct yvex_transformer_family_policy;
 typedef struct yvex_runtime_family_adapter {
     unsigned int schema_version;
     unsigned long long adapter_id, adapter_version;
@@ -142,6 +143,7 @@ typedef struct yvex_runtime_family_adapter {
     int (*mixer_capability)(yvex_sequence_mixer_semantics, yvex_runtime_mixer_capability *);
     const yvex_graph_family_api *(*graph)(void);
     int (*execution_capabilities)(yvex_runtime_capabilities *out);
+    int (*transformer_policy)(struct yvex_transformer_family_policy *out);
 } yvex_runtime_family_adapter;
 typedef struct {
     const char *directory;
@@ -374,6 +376,7 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
     yvex_runtime_execution_mode mode, yvex_runtime_execution_scope scope,
     yvex_attention_evidence_level evidence_level,
     const yvex_graph_attention_capacity_plan *capacity,
+    unsigned long long minimum_bytes,
     yvex_runtime_model_failure *failure, yvex_error *err);
 int yvex_runtime_session_prepare_persistent_state(yvex_runtime_execution_session *session,
     const yvex_graph_attention_capacity_plan *capacity,

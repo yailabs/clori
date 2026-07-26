@@ -228,7 +228,8 @@ static const char *kernel_function_identity(const yvex_cuda_backend_state *state
     MATCH(deepseek_decode_function); MATCH(deepseek_weighted_norm_function);
     MATCH(deepseek_unit_norm_function); MATCH(deepseek_rope_function);
     MATCH(deepseek_activation_function); MATCH(deepseek_mhc_pre_function);
-    MATCH(deepseek_mhc_post_function); MATCH(deepseek_rolling_function);
+    MATCH(deepseek_mhc_post_function); MATCH(deepseek_transformer_final_function);
+    MATCH(deepseek_rolling_function);
     MATCH(deepseek_topk_function); MATCH(deepseek_reduce_function);
     MATCH(moe_route_function); MATCH(moe_swiglu_function); MATCH(moe_accumulate_function);
     MATCH(mlp_function); MATCH(attention_function);

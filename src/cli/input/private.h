@@ -21,6 +21,7 @@
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/transformer.h>
 #include <yvex/internal/source_payload.h>
 #include <yvex/model.h>
 #include <yvex/registry.h>
@@ -169,6 +170,13 @@ typedef struct {
         unsigned long long maximum_host_bytes, maximum_device_bytes;
         int active;
     } moe;
+    struct {
+        const char *target, *artifact_path, *runtime_binding_path, *backend;
+        const char *phase, *input_class, *input_file, *progress;
+        unsigned long long chunk_tokens, context_capacity;
+        unsigned long long maximum_host_bytes, maximum_device_bytes;
+        int active;
+    } transformer;
     int help_requested;
     int help_exit_code;
 } yvex_graph_args;

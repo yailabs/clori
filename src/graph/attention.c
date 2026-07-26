@@ -180,7 +180,6 @@ static int attention_envelope_reject(const yvex_attention_layer_plan *layer,
         failure, code, binding, layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER, role,
         expected, actual, err, status, reason);
 }
-
 /* Purpose: validate the four exact bindings consumed by the attention envelope.
  * Inputs: family-projected layer geometry and borrowed runtime/materialization bindings.
  * Effects: none.
@@ -192,7 +191,6 @@ static int attention_envelope_bindings_validate(
     const yvex_runtime_tensor_binding *norm, yvex_attention_failure *failure, yvex_error *err)
 {
     unsigned long long base_elements, scale_elements, norm_elements;
-
     if (!layer || !function || !base || !scale || !norm || !function->binding || !base->binding ||
         !scale->binding || !norm->binding)
         return attention_envelope_reject(
@@ -224,7 +222,6 @@ static int attention_envelope_bindings_validate(
             "attention envelope binding shapes do not match the immutable plan");
     return YVEX_OK;
 }
-
 /* Purpose: resolve the exact envelope roles and then apply canonical binding validation. */
 static int attention_envelope_bind(
     const yvex_runtime_descriptor *descriptor, const yvex_attention_layer_plan *layer,
@@ -241,7 +238,6 @@ static int attention_envelope_bind(
     return attention_envelope_bindings_validate(
         layer, *function, *base, *scale, *norm, failure, err);
 }
-
 /* Purpose: prepare exact mHC ingress and attention input RMS normalization for one CPU chunk.
  * Inputs: admitted materialization/descriptor, immutable layer plan, and expanded residual input.
  * Effects: reads four bound tensors and owns coefficients until workspace release.
@@ -259,7 +255,6 @@ int yvex_attention_envelope_prepare(
     yvex_attention_mhc_pre_args pre;
     unsigned long long rows = 0ull, token;
     int rc = YVEX_OK;
-
     if (!session || !descriptor || !layer || !expanded_input || !token_count || !core_input ||
         !workspace || workspace->linear_mixes || input_stride < layer->residual_expanded_width ||
         core_stride < layer->hidden_dimension)
@@ -311,7 +306,6 @@ int yvex_attention_envelope_prepare(
         const float *source = expanded_input + token * input_stride;
         float *residual = workspace->residual + token * workspace->residual_stride;
         unsigned long long lane;
-
         memcpy(residual, source, (size_t)workspace->residual_stride * sizeof(*residual));
         for (lane = 0ull; lane < workspace->residual_stride; ++lane)
             if (!isfinite(residual[lane])) {
@@ -373,7 +367,6 @@ done:
     if (rc != YVEX_OK) yvex_attention_envelope_workspace_release(workspace);
     return rc;
 }
-
 /* Purpose: complete the immediate attention envelope from core output and prepared mHC state.
  * Inputs: immutable layer, prepared coefficients, original residuals, and core output.
  * Effects: writes only the explicit expanded output through generic mHC egress.
@@ -386,7 +379,6 @@ int yvex_attention_envelope_finish(
     unsigned long long envelope_stride, yvex_attention_failure *failure, yvex_error *err)
 {
     yvex_attention_mhc_post_args post;
-
     if (!workspace || !workspace->residual || !workspace->post || !workspace->combination)
         return attention_envelope_reject(
             layer, YVEX_DEEPSEEK_ATTENTION_FAILURE_STATE_DELTA, NULL,
@@ -399,13 +391,11 @@ int yvex_attention_envelope_finish(
         envelope_output, envelope_stride};
     return yvex_attention_mhc_post(&post, failure, err);
 }
-
 // Purpose: Return the admitted csa select fact without transferring ownership.
 // Inputs: typed caller-owned values accepted by the graph private ABI.
 // Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
 // Failure: returns a typed refusal or neutral result without partial capability publication.
 // Boundary: remains graph-local and cannot promote attention, KV, or generation support.
-
 int yvex_attention_csa_select(
     const yvex_attention_layer_plan *layer, const yvex_attention_history_view *history,
     const float *current_indexer, unsigned long long current_indexer_count,
@@ -420,7 +410,6 @@ int yvex_attention_csa_select(
     unsigned long long candidate, valid = 0ull, ranked_count = 0ull;
     size_t base_reserved = 0u, ranked_reserved = 0u;
     int rc = YVEX_OK;
-
     if (selected_count)
         *selected_count = 0ull;
     if (valid_count)
@@ -466,7 +455,6 @@ int yvex_attention_csa_select(
             current_indexer_count, candidate);
         unsigned long long head;
         double score = 0.0;
-
         if (!key || position == ULLONG_MAX || position > query_position ||
             position > ULLONG_MAX - layer->compression_ratio + 1ull ||
             position + layer->compression_ratio - 1ull > query_position)
@@ -498,7 +486,6 @@ int yvex_attention_csa_select(
     if (valid) {
         unsigned long long ranked_capacity = attention_min_u64(valid, layer->sparse_topk.k);
         unsigned long long index;
-
         if (!yvex_attention_scratch_reserve(scratch, ranked_capacity, sizeof(*ranked),
                                             &ranked_reserved)) {
             rc = attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH,
@@ -533,14 +520,12 @@ cleanup:
     attention_scratch_release(scratch, ranked_reserved);
     attention_scratch_release(scratch, base_reserved);
     return rc;
-
 numeric:
     rc = attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC,
                           layer->layer_index, 1ull, candidate, err, YVEX_ERR_FORMAT,
                           "CSA index scoring produced non-finite values");
     goto cleanup;
 }
-
 // Purpose: Return the admitted rolling geometry fact without transferring ownership.
 // Inputs: typed caller-owned values accepted by the graph private ABI.
 // Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
@@ -551,7 +536,6 @@ int yvex_attention_rolling_geometry(const yvex_attention_layer_plan *layer,
                                     unsigned long long *head_dim, unsigned long long *state_width,
                                     unsigned long long *state_slots, int *overlap, int *rotated) {
     unsigned long long coeff;
-
     if (!layer || !ratio || !head_dim || !state_width || !state_slots || !overlap || !rotated ||
         layer->compression_ratio == 0ull)
         return 0;
@@ -576,20 +560,17 @@ int yvex_attention_rolling_geometry(const yvex_attention_layer_plan *layer,
         return 0;
     return *ratio != 0ull && *head_dim != 0ull;
 }
-
 // Purpose: Initialize rolling active values are finite to its canonical fail-closed state.
 // Inputs: typed caller-owned values accepted by the graph private ABI.
 // Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
 // Failure: returns a typed refusal or neutral result without partial capability publication.
 // Boundary: remains graph-local and cannot promote attention, KV, or generation support.
-
 static int attention_rolling_active_values_are_finite(
     const float *kv_state, const float *score_state, unsigned long long kv_stride,
     unsigned long long score_stride, unsigned long long head_dim, unsigned long long ratio,
     unsigned long long previous_fill, unsigned long long current_fill, int overlap) {
     unsigned long long slot;
     unsigned long long lane;
-
     if (!kv_state || !score_state)
         return 0;
     /* The previous half participates in the first overlap emission even
@@ -622,13 +603,11 @@ static int attention_rolling_active_values_are_finite(
     }
     return 1;
 }
-
 // Purpose: Return the admitted rolling state validate fact without transferring ownership.
 // Inputs: typed caller-owned values accepted by the graph private ABI.
 // Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
 // Failure: returns a typed refusal or neutral result without partial capability publication.
 // Boundary: remains graph-local and cannot promote attention, KV, or generation support.
-
 static int attention_rolling_state_validate(const yvex_attention_layer_plan *layer,
                                             const yvex_attention_rolling_state_view *state,
                                             yvex_attention_rolling_kind kind,
@@ -636,7 +615,6 @@ static int attention_rolling_state_validate(const yvex_attention_layer_plan *lay
     unsigned long long ratio, head_dim, state_width, state_slots, required_extent;
     unsigned long long expected_cursor, expected_previous_fill;
     int overlap, rotated;
-
     if (!layer || !state || !state->present)
         return attention_history_refuse(layer, 1ull, 0ull, failure, err, YVEX_ERR_INVALID_ARG,
                                         "DeepSeek attention rolling state is missing");
@@ -685,7 +663,6 @@ static int attention_rolling_state_validate(const yvex_attention_layer_plan *lay
                                 "DeepSeek attention rolling state contains non-finite active values");
     return yvex_attention_accept(failure, err);
 }
-
 /* Purpose: require the unique complete local and compressed history prefix.
  * Inputs: admitted layer semantics and one immutable next-token history view.
  * Effects: reads positions and cardinalities only; publishes no state.
@@ -696,7 +673,6 @@ static int attention_history_positions_validate(const yvex_attention_layer_plan 
                                                 yvex_attention_failure *failure, yvex_error *err) {
     unsigned long long local_capacity, expected_local, local_start, i;
     unsigned long long expected_compressed = 0ull;
-
     if (!layer->sliding_window)
         return attention_history_refuse(
             layer, 1ull, 0ull, failure, err, YVEX_ERR_FORMAT,
@@ -734,7 +710,6 @@ static int attention_history_positions_validate(const yvex_attention_layer_plan 
     }
     for (i = 0ull; i < expected_compressed; ++i) {
         unsigned long long expected_position = 0ull;
-
         if (!yvex_core_u64_mul(i, layer->compression_ratio, &expected_position) ||
             history->compressed_positions[i] != expected_position ||
             (layer->attention_class == YVEX_ATTENTION_CLASS_CSA &&
@@ -746,13 +721,10 @@ static int attention_history_positions_validate(const yvex_attention_layer_plan 
     }
     return yvex_attention_accept(failure, err);
 }
-
 // Purpose: Apply the checked graph-local rolling copy state invariant.
-
 static void attention_rolling_copy_state(const yvex_attention_rolling_state_view *before,
                                          yvex_attention_rolling_state_output *after) {
     unsigned long long slot;
-
     for (slot = 0ull; slot < before->state_slots; ++slot) {
         memcpy(after->kv_state + slot * after->kv_state_stride,
                before->kv_state + slot * before->kv_state_stride,
@@ -762,20 +734,17 @@ static void attention_rolling_copy_state(const yvex_attention_rolling_state_view
                (size_t)(before->state_width * sizeof(float)));
     }
 }
-
 // Purpose: Implement the graph-local rolling emit semantic operation.
 // Inputs: typed caller-owned values accepted by the graph private ABI.
 // Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
 // Failure: returns a typed refusal or neutral result without partial capability publication.
 // Boundary: remains graph-local and cannot promote attention, KV, or generation support.
-
 static int attention_rolling_emit(const yvex_attention_rolling_state_output *state,
                                   unsigned long long head_dim, unsigned long long ratio,
                                   int overlap, float *compressed_out,
                                   unsigned long long compressed_out_count) {
     unsigned long long lane;
     unsigned long long slot;
-
     if (!state || !compressed_out || compressed_out_count < head_dim)
         return 0;
     for (lane = 0ull; lane < head_dim; ++lane) {
@@ -817,13 +786,11 @@ static int attention_rolling_emit(const yvex_attention_rolling_state_output *sta
     }
     return 1;
 }
-
 // Purpose: Return the admitted rolling state step cpu fact without transferring ownership.
 // Inputs: typed caller-owned values accepted by the graph private ABI.
 // Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
 // Failure: returns a typed refusal or neutral result without partial capability publication.
 // Boundary: remains graph-local and cannot promote attention, KV, or generation support.
-
 int yvex_attention_rolling_state_step_cpu(const yvex_attention_layer_plan *layer,
                                           const yvex_attention_rolling_state_view *before,
                                           const float *token_kv, const float *token_score,
@@ -836,7 +803,6 @@ int yvex_attention_rolling_state_step_cpu(const yvex_attention_layer_plan *layer
     unsigned long long slot, lane;
     attention_rolling_output_storage storage;
     int overlap, rotated, rc;
-
     if (emitted)
         *emitted = 0;
     rc = attention_rolling_state_validate(
@@ -912,7 +878,6 @@ int yvex_attention_rolling_state_step_cpu(const yvex_attention_layer_plan *layer
     }
     return yvex_attention_accept(failure, err);
 }
-
 // Purpose: Return the admitted history validate fact without transferring ownership.
 // Inputs: typed caller-owned values accepted by the graph private ABI.
 // Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
@@ -922,7 +887,6 @@ int yvex_attention_history_validate(const yvex_attention_layer_plan *layer,
                                     const yvex_attention_history_view *history,
                                     yvex_attention_failure *failure, yvex_error *err) {
     int rc;
-
     if (!layer || !history)
         return attention_refuse(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
                                 layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER, 1ull, 0ull,
@@ -993,11 +957,8 @@ int yvex_attention_history_validate(const yvex_attention_layer_plan *layer,
     }
     return yvex_attention_accept(failure, err);
 }
-
 /* Execution composes admitted generic operations without owning their math. */
-
 #define YVEX_ATTENTION_PI 3.14159265358979323846264338327950288
-
 enum {
     ATTENTION_PROBE_CPU = 0,
     ATTENTION_PROBE_CUDA,
@@ -1021,17 +982,14 @@ typedef struct {
     double squared_error;
     int committed_state_available;
 } attention_probe_metrics;
-
 typedef struct {
     yvex_attention_cpu_result evidence;
     yvex_attention_publication publication;
 } attention_probe_backend;
-
 typedef struct {
     const char *text;
     unsigned long long number;
 } attention_probe_identity_field;
-
 static const attention_probe_identity_field attention_comparison_identity_fields[] = {
     {NULL, 3ull},     /* schema */
     {NULL, 5ull},     /* tolerance numerator */
@@ -1072,7 +1030,6 @@ static int attention_probe_fail(yvex_error *error, int code, const char *message
     yvex_error_set(error, code, "attention.probe", message);
     return code;
 }
-
 /* Purpose: release probe history.
  * Inputs: one owned history envelope.
  * Effects: frees and clears all buffers.
@@ -1080,7 +1037,6 @@ static int attention_probe_fail(yvex_error *error, int code, const char *message
  * Boundary: never releases borrowed graph state. */
 static void attention_probe_history_release(yvex_attention_probe_history *history) {
     unsigned int index;
-
     if (!history)
         return;
     if (!history->workspace)
@@ -1088,12 +1044,10 @@ static void attention_probe_history_release(yvex_attention_probe_history *histor
             free(history->owned[index]);
     memset(history, 0, sizeof(*history));
 }
-
 /* Purpose: produce deterministic probe values and optional derived scores. */
 static void attention_probe_fill(float *values, float *scores, unsigned long long count,
                                  unsigned long long seed) {
     unsigned long long index;
-
     for (index = 0ull; index < count; ++index) {
         unsigned long long code = (index * 37ull + seed * 19ull + 11ull) % 257ull;
         values[index] = (float)((long long)code - 128ll) / 257.0f;
@@ -1101,7 +1055,6 @@ static void attention_probe_fill(float *values, float *scores, unsigned long lon
             scores[index] = values[index] * 0.5f;
     }
 }
-
 /* Purpose: allocate one zeroed probe span from the prepared workspace or owned heap.
  * Inputs: optional borrowed workspace, nonzero element count, and element width.
  * Effects: advances workspace ownership or creates one caller-released heap span.
@@ -1114,7 +1067,6 @@ static void *attention_probe_calloc(yvex_attention_workspace *workspace,
     return workspace ? yvex_attention_workspace_calloc(workspace, count, width)
                      : yvex_attention_calloc_array(count, width);
 }
-
 /* Purpose: construct one release-safe rolling state at its exact probe position.
  * Inputs: admitted layer geometry, rolling kind, position, and plan identity.
  * Effects: records both allocations in the history envelope.
@@ -1131,7 +1083,6 @@ static int attention_probe_rolling_init(yvex_attention_probe_history *history,
     unsigned long long offset, extent;
     unsigned int owner = kind == YVEX_DEEPSEEK_ATTENTION_ROLLING_INDEXER ? 4u : 2u;
     int rc;
-
     yvex_error_clear(&error);
     rc = yvex_attention_rolling_storage_acquire(
         layer, kind, position, history->workspace, &values, &scores, state,
@@ -1154,7 +1105,6 @@ static int attention_probe_rolling_init(yvex_attention_probe_history *history,
     yvex_core_text_copy(state->attention_plan_identity, sizeof(state->attention_plan_identity), plan_identity);
     return 1;
 }
-
 /* Purpose: build real-geometry local, compressed, indexer, and rolling probe history.
  * Inputs: admitted layer, summary, and causal position.
  * Effects: owns all backing arrays in one release envelope.
@@ -1169,7 +1119,6 @@ static int attention_probe_history_init(yvex_attention_probe_history *history,
     unsigned long long *positions, *local_positions, *compressed_positions;
     float *values;
     unsigned int segment;
-
     if (!history || !layer || !summary || !layer->sliding_window ||
         (layer->attention_class != YVEX_ATTENTION_CLASS_SWA && !layer->compression_ratio))
         return 0;
@@ -1294,7 +1243,6 @@ static int attention_probe_identity(const char *domain,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     size_t index;
-
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, domain))
         return 0;
@@ -1309,7 +1257,6 @@ static int attention_probe_identity(const char *domain,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-
 /* Purpose: bind every CPU/CUDA comparison rule to one canonical identity.
  * Inputs: fixed-width destination.
  * Effects: writes only the versioned comparison identity.
@@ -1334,13 +1281,11 @@ static int attention_probe_compare(attention_probe_context *context,
         cpu, cuda, attention_comparison_absolute_tolerance,
         attention_comparison_relative_tolerance, &context->candidate,
         &context->metrics.squared_error, context->error);
-
     if (rc == YVEX_ERR_FORMAT)
         return attention_probe_fail(context->error, YVEX_ERR_FORMAT,
                                     "CPU/CUDA attention output or state comparison failed");
     return rc;
 }
-
 /* Purpose: discard staged state without erasing the failure that required rollback.
  * Inputs: probe context and the status produced before cleanup.
  * Effects: aborts through isolated failure storage, then restores the primary diagnostic on success.
@@ -1355,7 +1300,6 @@ static int attention_probe_state_abort(attention_probe_context *context, int pri
     yvex_error primary_error = context->error ? *context->error : (yvex_error){0};
     yvex_error cleanup_error = {0};
     int rc;
-
     if (!provider)
         return YVEX_OK;
     rc = provider->abort(provider->context, &cleanup_failure, &cleanup_error);
@@ -1385,7 +1329,6 @@ static int attention_probe_state_abort(attention_probe_context *context, int pri
     }
     return YVEX_OK;
 }
-
 /* Purpose: obtain canonical or admitted activation values for one layer.
  * Inputs: execution context, layer coordinates, token count, and exact input width.
  * Effects: borrows an admitted view or allocates and fills one canonical input.
@@ -1429,7 +1372,21 @@ static int attention_probe_input_open(
                 (unsigned long long)context->request->perturb_input);
     return YVEX_OK;
 }
-
+/* Purpose: admit optional device activation views. Inputs: request/layer extent. Effects: borrows views.
+ * Failure: typed incomplete-view refusal. Boundary: no allocation, transfer, or numerical execution. */
+static int attention_probe_device_open(
+    attention_probe_context *context, unsigned long long layer_ordinal,
+    unsigned long long token_count, const yvex_device_tensor **input,
+    yvex_device_tensor **output)
+{
+    int rc;
+    if (!context->request->device_view) return YVEX_OK;
+    rc = context->request->device_view(context->request->activation_context,
+        layer_ordinal, token_count, input, output, context->error);
+    if (rc != YVEX_OK) return rc;
+    return *input && *output ? YVEX_OK : attention_probe_fail(
+        context->error, YVEX_ERR_FORMAT, "device activation views are incomplete");
+}
 /* Purpose: execute one real-geometry layer through each requested production backend.
  * Inputs: admitted operator context, layer, and deterministic position.
  * Effects: advances aggregate evidence only after complete publications.
@@ -1451,6 +1408,8 @@ static int attention_probe_layer_execute(
     unsigned long long input_stride = input_width;
     unsigned long long workspace_mark = 0ull;
     const float *input = NULL;
+    const yvex_device_tensor *device_input = NULL;
+    yvex_device_tensor *device_output = NULL;
     float *owned_input = NULL;
     unsigned int index;
     int state_started = 0, rc = YVEX_OK;
@@ -1459,6 +1418,9 @@ static int attention_probe_layer_execute(
     rc = attention_probe_input_open(
         context, layer_ordinal, layer, position, token_count, input_width,
         &input, &owned_input, &input_stride);
+    if (rc != YVEX_OK) goto cleanup;
+    rc = attention_probe_device_open(
+        context, layer_ordinal, token_count, &device_input, &device_output);
     if (rc != YVEX_OK) goto cleanup;
     history.workspace = context->request->workspace;
     if (position && !context->request->state_provider &&
@@ -1495,6 +1457,8 @@ static int attention_probe_layer_execute(
     options.token_count = token_count;
     options.input = input;
     options.input_stride = input_stride;
+    options.device_input = device_input;
+    options.device_output = device_output;
     options.history = execution_history;
     options.evidence_level = context->request->evidence_level;
     options.workspace = context->request->workspace;
@@ -1658,7 +1622,6 @@ int yvex_attention_probe_position_resolve(const yvex_attention_layer_plan *layer
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: finalize output, execution, and comparison-contract identities.
  * Inputs: complete aggregate metrics in canonical layer order.
  * Effects: consumes backend hash states and fills copied evidence.
@@ -1674,11 +1637,9 @@ static int attention_probe_finalize(attention_probe_context *context) {
     attention_probe_identity_field fields[16];
     const char *selected_digest;
     unsigned int index;
-
     if (!attention_probe_comparison_identity(result->comparison_contract_identity))
         return attention_probe_fail(context->error, YVEX_ERR_STATE,
                                     "comparison contract identity encoding failed");
-
     result->comparison_rmse =
         result->comparison_finite_values
             ? sqrt(context->metrics.squared_error / (double)result->comparison_finite_values)
@@ -1763,7 +1724,6 @@ identity_failure:
     return attention_probe_fail(context->error, YVEX_ERR_STATE,
                                 "attention execution identity encoding failed");
 }
-
 /* Purpose: admit CUDA attention.
  * Inputs: operator execution context.
  * Effects: opens one owned backend.
@@ -1774,7 +1734,6 @@ static int attention_probe_cuda_open(attention_probe_context *context) {
     yvex_backend_capability_result capability = {0};
     yvex_backend_device_info device = {0};
     int rc = YVEX_OK;
-
     if (context->request->backend_context)
         context->cuda_backend = context->request->backend_context;
     else
@@ -1798,7 +1757,6 @@ static int attention_probe_cuda_open(attention_probe_context *context) {
     }
     return rc;
 }
-
 /* Purpose: preserve comparison diagnostics.
  * Inputs: failed candidate and caller result.
  * Effects: copies measured fields only.
@@ -1812,7 +1770,6 @@ static void attention_probe_comparison_publish(yvex_attention_probe_result *resu
                     offsetof(yvex_attention_probe_result, comparison_values);
     size_t metrics = sizeof(*result) -
                      offsetof(yvex_attention_probe_result, comparison_maximum_absolute_error);
-
     memcpy(&result->cpu_output_digest, &candidate->cpu_output_digest, identities);
     memcpy(&result->comparison_values, &candidate->comparison_values, counts);
     memcpy(&result->comparison_maximum_absolute_error,
@@ -1908,7 +1865,6 @@ int yvex_attention_execute(
         int class_selected;
         int include;
         unsigned long long position = request->token_position;
-
         if (!layer) {
             rc = attention_probe_fail(err, YVEX_ERR_STATE,
                                       "attention layer disappeared during traversal");
@@ -1954,7 +1910,6 @@ cleanup:
     if (workspace_started) {
         yvex_error workspace_error;
         int workspace_rc;
-
         yvex_error_clear(&workspace_error);
         if (rc != YVEX_OK)
             (void)yvex_attention_workspace_rewind(

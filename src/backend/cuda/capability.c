@@ -65,6 +65,8 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
      CUDA_HANDLE_OFFSET(deepseek_mhc_pre_function)},
     {"yvex_deepseek_mhc_post", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(deepseek_mhc_post_function)},
+    {"yvex_deepseek_transformer_final", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+     CUDA_HANDLE_OFFSET(deepseek_transformer_final_function)},
     {"yvex_deepseek_rolling", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
      CUDA_HANDLE_OFFSET(deepseek_rolling_function)},
     {"yvex_deepseek_topk", YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,

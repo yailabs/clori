@@ -1312,6 +1312,83 @@ extern "C" __global__ void yvex_deepseek_mhc_post(
     else output[index] = float_to_bf16_rne(published);
 }
 
+/* Purpose: collapse the final mHC streams and apply transformer-owned RMSNorm.
+ * Inputs: device-resident expanded rows and exact decoded final weights.
+ * Effects: writes one normalized hidden row per block after finite checks.
+ * Failure: records malformed or non-finite arithmetic in the shared status word.
+ * Boundary: transformer final stage only; no output-head projection or logits. */
+extern "C" __global__ void yvex_deepseek_transformer_final(
+    const float *expanded, const float *function, const float *base,
+    const float *scale, const float *norm, unsigned long long token_count,
+    unsigned long long streams, unsigned long long width, double epsilon,
+    double mhc_epsilon, float *output, int *status)
+{
+    extern __shared__ double final_scratch[];
+    unsigned int lane = threadIdx.x;
+    unsigned long long token = blockIdx.x;
+    unsigned long long expanded_width = streams * width;
+    const float *input;
+    float *row;
+    double sum = 0.0, inverse;
+    if (!status || *status || token >= token_count) return;
+    if (!expanded || !function || !base || !scale || !norm || !output ||
+        !streams || !width || epsilon <= 0.0 || mhc_epsilon <= 0.0) {
+        if (lane == 0u) atomicCAS(status, 0, 2);
+        return;
+    }
+    input = expanded + token * expanded_width;
+    row = output + token * width;
+    for (unsigned long long index = lane; index < expanded_width; index += blockDim.x)
+        sum += (double)input[index] * (double)input[index];
+    final_scratch[lane] = sum;
+    __syncthreads();
+    for (unsigned int offset = blockDim.x >> 1; offset; offset >>= 1) {
+        if (lane < offset) final_scratch[lane] += final_scratch[lane + offset];
+        __syncthreads();
+    }
+    inverse = rsqrt(final_scratch[0] / (double)expanded_width + epsilon);
+    for (unsigned long long index = lane; index < width; index += blockDim.x) row[index] = 0.0f;
+    __syncthreads();
+    for (unsigned long long stream = 0ull; stream < streams; ++stream) {
+        sum = 0.0;
+        for (unsigned long long index = lane; index < expanded_width; index += blockDim.x)
+            sum += (double)function[stream * expanded_width + index] * (double)input[index];
+        final_scratch[lane] = sum;
+        __syncthreads();
+        for (unsigned int offset = blockDim.x >> 1; offset; offset >>= 1) {
+            if (lane < offset)
+                final_scratch[lane] += final_scratch[lane + offset];
+            __syncthreads();
+        }
+        if (lane == 0u)
+            final_scratch[0] =
+                1.0 / (1.0 + exp(-(final_scratch[0] * inverse * (double)scale[0] +
+                                   (double)base[stream]))) + mhc_epsilon;
+        __syncthreads();
+        for (unsigned long long index = lane; index < width; index += blockDim.x)
+            row[index] +=
+                (float)(final_scratch[0] * (double)input[stream * width + index]);
+        __syncthreads();
+    }
+    sum = 0.0;
+    for (unsigned long long index = lane; index < width; index += blockDim.x) {
+        row[index] = float_to_bf16_rne(row[index]);
+        sum += (double)row[index] * (double)row[index];
+    }
+    final_scratch[lane] = sum;
+    __syncthreads();
+    for (unsigned int offset = blockDim.x >> 1; offset; offset >>= 1) {
+        if (lane < offset) final_scratch[lane] += final_scratch[lane + offset];
+        __syncthreads();
+    }
+    inverse = rsqrt(final_scratch[0] / (double)width + epsilon);
+    for (unsigned long long index = lane; index < width; index += blockDim.x) {
+        float value = float_to_bf16_rne((float)((double)row[index] * inverse * norm[index]));
+        if (!isfinite(value)) atomicCAS(status, 0, 1);
+        else row[index] = value;
+    }
+}
+
 /* Executes one complete ratio-4 or ratio-128 compressor transition on device. */
 /* Purpose: Implement the canonical deepseek rolling mechanism owned by the CUDA backend boundary.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.

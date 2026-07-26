@@ -114,6 +114,7 @@ typedef struct {
     yvex_backend_attention_activation compressor_rotated_activation, indexer_query_activation;
     yvex_backend_attention_weight weights[YVEX_BACKEND_ATTENTION_WEIGHT_COUNT];
     const float *input, *local_kv, *compressed_kv, *indexer_kv;
+    const yvex_device_tensor *device_input; yvex_device_tensor *device_output;
     const unsigned long long *local_positions, *compressed_positions, *indexer_positions;
     unsigned long long local_count, local_stride, compressed_count, compressed_stride;
     unsigned long long indexer_count, indexer_stride;

@@ -40,6 +40,9 @@ static void graph_args_defaults(yvex_graph_args *out) {
     out->attention.regression_basis_points = ULLONG_MAX;
     out->moe.coverage = "full";
     out->moe.progress = "off";
+    out->transformer.phase = "prefill";
+    out->transformer.input_class = "token-ids";
+    out->transformer.progress = "off";
 }
 
 typedef enum {
@@ -638,6 +641,77 @@ static int graph_parse_moe(int argc, char **argv, yvex_graph_args *out, yvex_err
     yvex_error_clear(err);
     return YVEX_OK;
 }
+
+/* Purpose: parse the bounded production transformer grammar.
+ * Inputs: argv and caller output. Effects: fills typed arguments only after validation.
+ * Failure: typed parser refusal. Boundary: never opens input or executes runtime work. */
+static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
+                                   yvex_error *err)
+{
+    int index;
+    if (argc < 4 || strcmp(argv[3], "execute") != 0)
+        return graph_arg_error(err, "yvex: graph transformer requires the execute action");
+    out->transformer.active = 1;
+    for (index = 4; index < argc; ++index) {
+        const char *flag = argv[index];
+        const char *value;
+        if (strcmp(flag, "--help") == 0 || strcmp(flag, "-h") == 0) {
+            out->help_requested = 1;
+            return YVEX_OK;
+        }
+        value = graph_moe_value(argc, argv, &index, err);
+        if (!value) return YVEX_ERR_INVALID_ARG;
+        if (strcmp(flag, "--target") == 0) out->transformer.target = value;
+        else if (strcmp(flag, "--artifact") == 0) out->transformer.artifact_path = value;
+        else if (strcmp(flag, "--runtime-binding") == 0)
+            out->transformer.runtime_binding_path = value;
+        else if (strcmp(flag, "--backend") == 0) out->transformer.backend = value;
+        else if (strcmp(flag, "--phase") == 0) out->transformer.phase = value;
+        else if (strcmp(flag, "--input") == 0) out->transformer.input_class = value;
+        else if (strcmp(flag, "--input-file") == 0) out->transformer.input_file = value;
+        else if (strcmp(flag, "--progress") == 0) out->transformer.progress = value;
+        else if (strcmp(flag, "--chunk-tokens") == 0) {
+            if (!parse_positive_ull(value, &out->transformer.chunk_tokens))
+                return graph_arg_error(err, "yvex: --chunk-tokens requires a positive integer");
+        } else if (strcmp(flag, "--context-capacity") == 0) {
+            if (!parse_positive_ull(value, &out->transformer.context_capacity))
+                return graph_arg_error(err,
+                                       "yvex: --context-capacity requires a positive integer");
+        } else if (strcmp(flag, "--max-host-bytes") == 0) {
+            if (!parse_positive_ull(value, &out->transformer.maximum_host_bytes))
+                return graph_arg_error(err, "yvex: --max-host-bytes requires a positive integer");
+        } else if (strcmp(flag, "--max-device-bytes") == 0) {
+            if (!parse_positive_ull(value, &out->transformer.maximum_device_bytes))
+                return graph_arg_error(err,
+                                       "yvex: --max-device-bytes requires a positive integer");
+        } else if (strcmp(flag, "--output") == 0) {
+            if (!graph_parse_output_mode(value, 1, &out->render_mode))
+                return graph_arg_errorf(err, "yvex: unsupported graph output mode: %s", value);
+        } else {
+            return graph_arg_errorf(err, "yvex: unknown graph transformer option: %s", flag);
+        }
+    }
+    if (!out->transformer.target || !out->transformer.artifact_path ||
+        !out->transformer.runtime_binding_path || !out->transformer.backend ||
+        !out->transformer.input_file || !out->transformer.chunk_tokens ||
+        !out->transformer.context_capacity)
+        return graph_arg_error(
+            err, "yvex: graph transformer execute requires target, artifact, runtime binding, "
+                 "backend, token input, chunk tokens, and context capacity");
+    if (!cli_backend_name_valid(out->transformer.backend))
+        return graph_arg_errorf(err, "yvex: unknown backend kind: %s", out->transformer.backend);
+    if (strcmp(out->transformer.phase, "prefill") != 0)
+        return graph_arg_error(err, "yvex: graph transformer supports only --phase prefill");
+    if (strcmp(out->transformer.input_class, "token-ids") != 0)
+        return graph_arg_error(err, "yvex: graph transformer requires --input token-ids");
+    if (strcmp(out->transformer.progress, "off") != 0)
+        return graph_arg_error(err, "yvex: graph transformer requires --progress off");
+    if (out->transformer.maximum_device_bytes &&
+        strcmp(out->transformer.backend, "cpu") == 0)
+        return graph_arg_error(err, "yvex: --max-device-bytes requires backend cuda");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
 /* Purpose: Parse graph argv.
  * Inputs: argv and output. Effects: publishes request.
  * Failure: typed refusal. Boundary: CLI grammar. */
@@ -672,6 +746,8 @@ int yvex_graph_args_parse(int argc, char **argv, yvex_graph_args *out, yvex_erro
     }
     if (strcmp(argv[2], "moe") == 0)
         return graph_parse_moe(argc, argv, out, err);
+    if (strcmp(argv[2], "transformer") == 0)
+        return graph_parse_transformer(argc, argv, out, err);
 
     return graph_arg_errorf(err, "yvex: unknown graph namespace: %s", argv[2]);
 }

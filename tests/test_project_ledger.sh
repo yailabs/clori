@@ -390,8 +390,10 @@ grep -F '| `V010.RUNTIME.DEEPSEEK.PREFILL.0` | DeepSeek | `complete` | Admit exa
   fail "DeepSeek activation prefill is not complete"
 grep -F '| `V010.RUNTIME.DEEPSEEK.MOE.0` | DeepSeek | `complete` |' "$project" >/dev/null ||
   fail "DeepSeek MoE is not complete"
-grep -F '| `V010.GRAPH.DEEPSEEK.TRANSFORMER.0` | DeepSeek | `active` |' "$project" >/dev/null ||
-  fail "DeepSeek transformer composition is not active after MoE closure"
+grep -F '| `V010.GRAPH.DEEPSEEK.TRANSFORMER.0` | DeepSeek | `complete` |' "$project" >/dev/null ||
+  fail "DeepSeek transformer composition is not complete"
+grep -F '| `V010.RUNTIME.DEEPSEEK.DECODE.0` | DeepSeek | `active` |' "$project" >/dev/null ||
+  fail "DeepSeek decode is not active after transformer closure"
 grep -F '| V010.MODEL.TRANSFORM.IR.0 | recovered/promoted |' "$project" >/dev/null ||
   fail "quantization does not depend on the transformation IR"
 

@@ -13,6 +13,7 @@
 
 #include "src/backend/cuda/private.h"
 #include <yvex/internal/graph_state.h>
+#include <yvex/internal/transformer.h>
 #include <yvex/quant.h>
 #include <limits.h>
 #include <math.h>
@@ -1761,5 +1762,217 @@ int yvex_cuda_op_attention(yvex_backend *backend,
     probability_scratch->is_written = 1;
     out->is_written = 1;
     yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Purpose: return one typed CUDA transformer refusal. */
+static int cuda_transformer_refuse(yvex_error *err, yvex_status status,
+                                   const char *where, const char *reason)
+{
+    yvex_error_set(err, status, where, reason);
+    return status;
+}
+
+/* Purpose: decode selected encoded embedding rows and initialize repeated mHC streams on CUDA.
+ * Inputs: one backend-owned encoded bundle plus exact token/hidden/stream geometry.
+ * Effects: writes device embedding and expanded tensors; allocates only transaction scratch.
+ * Failure: ownership, launch, copy, status, sync, or cleanup refusal leaves output unadmitted.
+ * Boundary: transformer embedding initialization only; no tokenizer or host numerical fallback. */
+int yvex_backend_transformer_cuda_initial(
+    yvex_backend *backend, const yvex_device_tensor *encoded, unsigned int qtype,
+    unsigned long long token_count, unsigned long long hidden_width,
+    unsigned long long residual_streams, yvex_device_tensor *embedding,
+    yvex_device_tensor *expanded, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    const yvex_gguf_qtype_geometry *geometry = yvex_gguf_qtype_geometry_find(qtype);
+    yvex_cuda_work work = {0};
+    CUstream stream = yvex_cuda_launch_stream(backend);
+    CUdeviceptr status = 0ull, encoded_ptr, embedding_ptr, expanded_ptr;
+    unsigned long long count, expanded_count, encoded_required, token, residual_stream;
+    size_t embedding_bytes, expanded_bytes, row_bytes;
+    unsigned int grid;
+    int host_status = 0, rc, cleanup_rc;
+    yvex_error cleanup;
+    if (!state || !geometry || !geometry->block_size || !geometry->bytes_per_block ||
+        !encoded || !embedding || !expanded || !token_count || !hidden_width ||
+        !residual_streams || !yvex_core_u64_mul(token_count, hidden_width, &count) ||
+        !yvex_core_u64_mul(count, residual_streams, &expanded_count) ||
+        !yvex_core_u64_mul(count / geometry->block_size,
+                           geometry->bytes_per_block, &encoded_required) ||
+        !yvex_cuda_work_checked_bytes(count, sizeof(float), &embedding_bytes) ||
+        !yvex_cuda_work_checked_bytes(expanded_count, sizeof(float), &expanded_bytes) ||
+        !yvex_cuda_work_checked_bytes(hidden_width, sizeof(float), &row_bytes) ||
+        !backend_tensor_owner_is(backend, encoded) ||
+        count % geometry->block_size ||
+        encoded->bytes < encoded_required ||
+        !backend_tensor_owner_is(backend, embedding) || embedding->dtype != YVEX_DTYPE_F32 ||
+        embedding->bytes < embedding_bytes ||
+        !backend_tensor_owner_is(backend, expanded) || expanded->dtype != YVEX_DTYPE_F32 ||
+        expanded->bytes < expanded_bytes ||
+        count > UINT_MAX * (unsigned long long)CUDA_ATTENTION_BLOCK)
+        return cuda_transformer_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.initial",
+                                       "CUDA transformer embedding geometry is incompatible");
+    work.backend = backend;
+    work.state = state;
+    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+    rc = yvex_cuda_work_allocate(&work, &status, sizeof(int), NULL, 1,
+                                 "cuda.transformer.initial.status", NULL, err);
+    encoded_ptr = (CUdeviceptr)encoded->data;
+    embedding_ptr = (CUdeviceptr)embedding->data;
+    expanded_ptr = (CUdeviceptr)expanded->data;
+    grid = (unsigned int)((count + CUDA_ATTENTION_BLOCK - 1ull) / CUDA_ATTENTION_BLOCK);
+    if (rc == YVEX_OK) {
+        void *params[] = {&encoded_ptr, &count, &qtype, &embedding_ptr, &status};
+        rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                              state->deepseek_decode_function, grid, CUDA_ATTENTION_BLOCK,
+                              0u, params, "cuda.transformer.embedding", err);
+    }
+    for (token = 0ull; rc == YVEX_OK && token < token_count; ++token)
+        for (residual_stream = 0ull;
+             rc == YVEX_OK && residual_stream < residual_streams; ++residual_stream) {
+            CUdeviceptr source = embedding_ptr + token * hidden_width * sizeof(float);
+            CUdeviceptr target = expanded_ptr +
+                (token * residual_streams + residual_stream) * hidden_width * sizeof(float);
+            CUresult copied = stream && state->driver.cuMemcpyDtoDAsync_v2
+                                  ? state->driver.cuMemcpyDtoDAsync_v2(
+                                        target, source, row_bytes, stream)
+                                  : !stream ? state->driver.cuMemcpyDtoD_v2(
+                                        target, source, row_bytes) : (CUresult)1;
+            rc = yvex_cuda_status(&state->driver, copied,
+                                  "cuda.transformer.initial.repeat", err);
+        }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                                   "cuda.transformer.initial.sync", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(&state->driver,
+                              state->driver.cuMemcpyDtoH_v2(&host_status, status, sizeof(host_status)),
+                              "cuda.transformer.initial.status", err);
+    if (rc == YVEX_OK && host_status)
+        rc = cuda_transformer_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.initial",
+                                     "CUDA transformer embedding produced invalid numerics");
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
+    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
+    if (rc == YVEX_OK) { embedding->is_written = 1; expanded->is_written = 1; yvex_error_clear(err); }
+    return rc;
+}
+
+/* Purpose: execute final mHC collapse and RMSNorm over the retained CUDA residual state.
+ * Inputs: exact backend-owned expanded state and decoded transformer-global weights.
+ * Effects: publishes one normalized device hidden tensor after synchronization.
+ * Failure: geometry, launch, numeric status, sync, or cleanup refusal publishes no output.
+ * Boundary: final transformer stage only; output-head projection remains unexecuted. */
+int yvex_backend_transformer_cuda_final(
+    yvex_backend *backend, const yvex_device_tensor *expanded,
+    const yvex_device_tensor *function, const yvex_device_tensor *base,
+    const yvex_device_tensor *scale, const yvex_device_tensor *norm,
+    unsigned long long token_count, unsigned long long hidden_width,
+    unsigned long long residual_streams, double epsilon, double mhc_epsilon,
+    yvex_device_tensor *output, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_cuda_work work = {0};
+    CUdeviceptr status = 0ull, input_ptr, function_ptr, base_ptr, scale_ptr, norm_ptr, output_ptr;
+    unsigned long long expanded_width, expanded_count, function_count, output_count;
+    int host_status = 0, rc, cleanup_rc;
+    yvex_error cleanup;
+    if (!state || !token_count || !hidden_width || !residual_streams ||
+        !yvex_core_u64_mul(hidden_width, residual_streams, &expanded_width) ||
+        !yvex_core_u64_mul(token_count, expanded_width, &expanded_count) ||
+        !yvex_core_u64_mul(residual_streams, expanded_width, &function_count) ||
+        !yvex_core_u64_mul(token_count, hidden_width, &output_count) ||
+        token_count > UINT_MAX || !backend_tensor_f32_elements(expanded, expanded_count) ||
+        !backend_tensor_f32_elements(function, function_count) ||
+        !backend_tensor_f32_elements(base, residual_streams) ||
+        !backend_tensor_f32_elements(scale, 1ull) ||
+        !backend_tensor_f32_elements(norm, hidden_width) ||
+        !backend_tensor_f32_elements(output, output_count))
+        return cuda_transformer_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.final",
+                                       "CUDA transformer final geometry is incompatible");
+    work.backend = backend;
+    work.state = state;
+    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+    rc = yvex_cuda_work_allocate(&work, &status, sizeof(int), NULL, 1,
+                                 "cuda.transformer.final.status", NULL, err);
+    input_ptr = (CUdeviceptr)expanded->data; function_ptr = (CUdeviceptr)function->data;
+    base_ptr = (CUdeviceptr)base->data; scale_ptr = (CUdeviceptr)scale->data;
+    norm_ptr = (CUdeviceptr)norm->data; output_ptr = (CUdeviceptr)output->data;
+    if (rc == YVEX_OK) {
+        void *params[] = {&input_ptr, &function_ptr, &base_ptr, &scale_ptr, &norm_ptr,
+                          &token_count, &residual_streams, &hidden_width, &epsilon,
+                          &mhc_epsilon, &output_ptr, &status};
+        rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            state->deepseek_transformer_final_function, (unsigned int)token_count,
+            CUDA_ATTENTION_BLOCK, CUDA_ATTENTION_BLOCK * (unsigned int)sizeof(double),
+            params, "cuda.transformer.final", err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                                   "cuda.transformer.final.sync", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(&state->driver,
+                              state->driver.cuMemcpyDtoH_v2(&host_status, status, sizeof(host_status)),
+                              "cuda.transformer.final.status", err);
+    if (rc == YVEX_OK && host_status)
+        rc = cuda_transformer_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.final",
+                                     "CUDA transformer final stage produced invalid numerics");
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
+    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
+    if (rc == YVEX_OK) { output->is_written = 1; yvex_error_clear(err); }
+    return rc;
+}
+
+/* Purpose: validate an exact backend-owned F32 activation input/output pair.
+ * Inputs: live backend, tensors, and required element extents. Effects: none.
+ * Failure: returns false without publishing a capability. Boundary: CUDA activation transport. */
+int yvex_cuda_activation_views_valid(yvex_backend *backend,
+    const yvex_device_tensor *input, unsigned long long input_elements,
+    const yvex_device_tensor *output, unsigned long long output_elements)
+{
+    return backend_tensor_owner_is(backend, input) &&
+           backend_tensor_owner_is(backend, output) &&
+           backend_tensor_f32_elements(input, input_elements) &&
+           backend_tensor_f32_elements(output, output_elements);
+}
+
+/* Purpose: resolve one admitted activation tensor. Inputs: backend/tensor. Effects: none.
+ * Failure: returns zero for foreign ownership. Boundary: opaque Driver API pointer only. */
+CUdeviceptr yvex_cuda_activation_pointer(
+    yvex_backend *backend, const yvex_device_tensor *tensor)
+{
+    return backend_tensor_owner_is(backend, tensor) ? (CUdeviceptr)tensor->data : 0ull;
+}
+
+/* Purpose: copy a completed F32 activation into one stable backend-owned view.
+ * Inputs: live backend, source pointer, output tensor, exact extent, and failure stage.
+ * Effects: enqueues or performs one D2D copy; marks output only after copy admission.
+ * Failure: ownership, extent, Driver API, or copy error leaves output unpublished.
+ * Boundary: transport only; no synchronization or numerical fallback. */
+int yvex_cuda_activation_copy(yvex_backend *backend, CUdeviceptr source,
+    yvex_device_tensor *output, unsigned long long elements,
+    const char *stage, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    CUstream stream = yvex_cuda_launch_stream(backend);
+    size_t bytes;
+    CUresult copied;
+    if (!state || !source || !stage || !backend_tensor_f32_elements(output, elements) ||
+        !yvex_cuda_work_checked_bytes(elements, sizeof(float), &bytes)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, stage, "CUDA activation copy extent is invalid");
+        return YVEX_ERR_BOUNDS;
+    }
+    copied = stream && state->driver.cuMemcpyDtoDAsync_v2
+                 ? state->driver.cuMemcpyDtoDAsync_v2(
+                       (CUdeviceptr)output->data, source, bytes, stream)
+                 : !stream ? state->driver.cuMemcpyDtoD_v2(
+                       (CUdeviceptr)output->data, source, bytes) : (CUresult)1;
+    {
+        int rc = yvex_cuda_status(&state->driver, copied, stage, err);
+        if (rc != YVEX_OK) return rc;
+    }
+    output->is_written = 1;
     return YVEX_OK;
 }

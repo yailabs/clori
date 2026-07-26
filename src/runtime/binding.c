@@ -690,7 +690,8 @@ int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *fa
            (!facts->moe_shared_expert_ready || facts->moe_plan_ready) &&
            (!facts->moe_block_ready ||
             (facts->moe_routed_expert_ready && facts->moe_shared_expert_ready)) &&
-           !facts->transformer_ready && !facts->generation_ready;
+           (!facts->transformer_ready || facts->moe_block_ready) &&
+           !facts->generation_ready;
 }
 
 /* Purpose: identify one pre-admission execution capability contract field-by-field.

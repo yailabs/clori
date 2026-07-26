@@ -224,14 +224,16 @@ The admitted vertical includes:
 - complete attention core and envelope execution on CPU and the admitted
   NVIDIA GB10 CUDA path;
 - complete token-local MoE execution across all 43 main layers, including
-  hash and learned routing, selected routed experts, and shared experts.
+  hash and learned routing, selected routed experts, and shared experts;
+- numeric token-ID execution through selected embedding rows, all 43 ordered
+  transformer blocks, the final mHC collapse, and final RMSNorm on CPU and the
+  admitted NVIDIA GB10 CUDA path.
 
-These results establish the current complete-artifact and attention execution
-boundary. Session-owned persistent DeepSeek attention state is also admitted
-on CPU and the GB10 CUDA path. Identity-bound activation chunks can execute all
-43 attention layers and atomically populate that state. Prompt/token embedding,
-tokenizer-backed full-model prefill, cross-layer transformer composition,
-model decode, logits, sampling, text generation, evaluation,
+These results establish a numeric token-ID-to-normalized-hidden backbone over
+the complete artifact. Session-owned persistent DeepSeek attention state is
+admitted on CPU and the GB10 CUDA path, and each successful transformer chunk
+publishes all 43 layer updates atomically. Prompt text, tokenizer execution,
+repeated model decode, logits, sampling, text generation, evaluation,
 full-model benchmark, and release admission retain separate gates.
 
 Detailed family semantics live in
@@ -257,9 +259,9 @@ dependencies, capability gates, and release admission.
 | Attention core and envelope | All 43 layers and 634 core bindings execute on CPU eager and admitted GB10 CUDA eager, piecewise, and full graph modes |
 | Persistent attention state | Admitted for all 43 DeepSeek attention layers through isolated CPU/GB10 CUDA sessions, atomic append/read, capacity, clear/reuse, and causal production consumption |
 | Activation-driven attention prefill | Versioned 43-layer activation bundles execute on CPU/GB10 CUDA eager and commit persistent state atomically per chunk |
-| Tokenizer-backed model prefill and model decode | Unsupported |
 | Token-local MoE block | All 43 layers execute admitted hash/learned routing, selected Q2_K routed experts, Q8_0 shared experts, and exact combination on CPU and GB10 CUDA |
-| Complete transformer composition | Unsupported |
+| Numeric-token transformer backbone | Selected embedding rows, all 43 attention/MoE blocks, final mHC collapse, final RMSNorm, and atomic persistent-state publication execute on CPU and GB10 CUDA |
+| Tokenizer-backed prompt prefill and repeated model decode | Unsupported |
 | Logits, sampling, and text generation | Unsupported |
 | Evaluation | Blocked |
 | Benchmark | Attention-local measurement is executable; full-model benchmark is not measured |
@@ -273,10 +275,10 @@ evaluation, benchmark, and release gates described in
 ## Current executable surfaces
 
 The admitted graph commands consume canonical diagnostic activations or
-versioned tensor-file bundles at exact model geometry. Attention and MoE input
-schemas are distinct. Numeric token IDs used by hash routing do not establish
-tokenizer support. Prompt-backed prefill, model decode, and generation remain
-outside this operator surface.
+versioned tensor-file bundles at exact model geometry. Attention, MoE, and
+transformer input schemas are distinct. Numeric token IDs drive the transformer
+backbone without establishing tokenizer support. Prompt text, repeated model
+decode, logits, sampling, and generation remain outside this operator surface.
 
 Discover the command hierarchy:
 
@@ -284,6 +286,7 @@ Discover the command hierarchy:
 ./yvex commands
 ./yvex graph attention --help
 ./yvex graph moe execute --help
+./yvex graph transformer execute --help
 ```
 
 Set `MODELS_ROOT` and `ARTIFACT` to the external admitted model locations.
@@ -434,6 +437,28 @@ The result contains router, selected-expert, qtype, transfer, and distinct
 routed/shared/combined digest facts. It is a token-local MoE result ready for
 transformer composition, not a complete transformer or model output.
 
+Execute numeric token IDs through the complete transformer backbone:
+
+```sh
+TOKENS="/absolute/path/to/input.yvex-transformer-input"
+./yvex graph transformer execute \
+  --target deepseek4-v4-flash \
+  --artifact "$ARTIFACT" \
+  --runtime-binding "$BINDING" \
+  --backend cuda \
+  --phase prefill \
+  --input token-ids \
+  --input-file "$TOKENS" \
+  --chunk-tokens 2 \
+  --context-capacity 4096 \
+  --progress off \
+  --output json
+```
+
+The schema binds canonical U32 token IDs and exact runtime/transformer
+identities. The result is a normalized hidden state plus atomically committed
+attention state; it is not tokenizer output, logits, or generation.
+
 Measure the attention-local CUDA boundary:
 
 ```sh
@@ -455,8 +480,8 @@ Measure the attention-local CUDA boundary:
 ```
 
 The [DeepSeek runbook](docs/runbooks/deepseek.md) covers binding discovery,
-CUDA prerequisites, refusal recovery, identity-bound benchmark baselines, CSV
-output, and deterministic publication of the curated SVG chart set.
+CUDA prerequisites, refusal recovery, typed transformer input, and
+identity-bound external benchmark evidence.
 
 ## Build products and validation
 

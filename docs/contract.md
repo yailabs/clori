@@ -32,9 +32,10 @@ complete external artifact
 ```
 
 DeepSeek-V4-Flash is the first family adapter. It is not the owner of a second
-runtime. The admitted persistent state is an attention-session boundary;
-tokenizer-backed prompt prefill, complete transformer execution, model
-decode, logits, sampling and generation remain outside this contract.
+runtime. The admitted persistent state is session-owned and consumed by the
+numeric token-ID transformer backbone. Tokenizer-backed prompt prefill,
+repeated model decode, logits, sampling and generation remain outside this
+contract.
 
 The admitted token-local MoE path is:
 
@@ -47,6 +48,16 @@ typed per-layer expanded activation + numeric token ID
   -> combined MoE output + deferred transformer-owned post state
 ```
 
+The admitted transformer path is:
+
+```text
+canonical numeric token IDs
+  -> selected encoded embedding rows + initial mHC residual state
+  -> 43 ordered attention/MoE blocks + one request-level state transaction
+  -> final mHC collapse + final RMSNorm
+  -> normalized hidden state + atomically committed persistent state
+```
+
 ## Command Contract
 
 The command catalog is discoverable through:
@@ -55,6 +66,7 @@ The command catalog is discoverable through:
 ./yvex commands
 ./yvex help
 ./yvex help graph attention
+./yvex help graph transformer
 ```
 
 Model selection is explicit. A command may resolve a typed registry alias or an
@@ -78,6 +90,12 @@ boundary. It consumes a schema-v1 tensor file and the admitted artifact/runtime
 binding directly. Numeric token IDs participate only in hash routing; they are
 not tokenizer output or tokenizer support.
 
+`graph transformer execute` is the operator surface for the complete numeric
+token-ID backbone. It admits a schema-v1 token file, executes the production
+CPU or CUDA transformer API, and publishes normalized hidden state plus the
+committed state transition. It does not tokenize text, project logits, or run
+an autoregressive loop.
+
 The CLI parses typed input, invokes production runtime APIs and renders copied
 results. CUDA Graph lifecycle actions operate on a real registry within the
 command's process-lifetime session; they do not claim persistent cross-process
@@ -89,10 +107,8 @@ another YVEX process or link the test-only oracle.
 ## Filesystem Contract
 
 Build output, external runtime bindings, model artifacts, benchmark baselines,
-and JSON/CSV reports are operator assets. They remain outside source control.
-The canonical chart publication target may retain six validated deterministic
-SVG snapshots under `docs/assets/benchmarks/attention/`; these are bounded
-documentation assets derived from external evidence, not benchmark records.
+JSON/CSV reports, and generated charts are operator assets. They remain outside
+source control.
 
 Complete artifacts are opened read-only. Canonical filesystem owners reject
 symlink substitution, unsafe paths and accidental replacement. Transactional
@@ -102,8 +118,7 @@ Failure removes only temporary resources created by that operation.
 
 Tracked GGUF files are reserved for bounded fixtures. No complete artifact,
 source model payload, runtime binding, resident snapshot, benchmark baseline,
-or raw benchmark report belongs in git. Curated chart snapshots follow the
-bounded documentation exception above.
+raw benchmark report, or generated chart belongs in git.
 
 ### Native GGUF Reader Contract
 
@@ -327,6 +342,38 @@ output, combined MoE output, and deferred transformer-owned post state. It
 publishes qtype/access/transfer counters and separate routing, routed, shared,
 combined, input, plan, and execution identities. It is not a complete
 transformer hidden state, full-model prefill/decode, or generation output.
+
+## Production Transformer Contract
+
+The immutable schema-v1 transformer plan binds the runtime, attention, MoE,
+embedding, residual/mHC, final-head, and final-norm identities for the exact 43
+layer order. The family adapter supplies initial residual, block ordering,
+deferred FFN post, and final collapse policy. Runtime code neither reconstructs
+these facts from tensor names nor branches on a target string.
+
+Schema-v1 transformer input binds canonical little-endian U32 token IDs to the
+logical model, numeric policy, runtime descriptor, and transformer plan. Memory
+and bounded-file forms share one identity. Admission rejects unsafe files,
+stale identity, discontinuous position, invalid vocabulary ordinals, malformed
+extent, trailing bytes, digest mismatch, drift, and resource overflow. Numeric
+token input does not establish tokenizer support.
+
+`yvex_runtime_transformer_execute_block` completes one ordered block from the
+attention publication staged inside the active request transaction. It invokes
+the admitted single-layer MoE path and exact deferred mHC post; it does not
+commit KV independently. `yvex_runtime_transformer_execute` coordinates
+embedding, all 43 blocks, final mHC collapse, final RMSNorm, and one atomic
+persistent-state commit per chunk. Failure publishes neither the failing
+chunk's state nor its hidden output, while earlier committed chunks remain
+authoritative.
+
+CPU and GB10 CUDA consume the same plan and token input. CUDA performs selected
+embedding decode, attention, MoE, residual composition, final collapse, and
+normalization on device without a CPU numerical fallback or inter-layer
+activation roundtrip. The published `[token_count, hidden_width]` tensor is a
+normalized transformer hidden state. Repeated decode, output-head projection,
+vocabulary logits, sampling, tokenizer execution, and generation remain
+separate capabilities.
 
 ## Graph Execution Contract
 
@@ -565,8 +612,7 @@ make check-cuda
 ```
 
 Real weights, complete GGUF artifacts, runtime bindings, benchmark baselines,
-and raw benchmark reports must remain untracked. Only the curated SVG
-documentation snapshots admitted by the filesystem contract may be tracked.
+raw benchmark reports, and generated charts must remain untracked.
 
 ## Claim Promotion Contract
 
@@ -579,9 +625,7 @@ attention benchmark is not a full-model benchmark.
 The current common runtime admits attention semantics, attention core/envelope,
 CPU eager phases, CUDA eager/piecewise/full phases, resident attention weights,
 reusable workspace, session-owned persistent DeepSeek attention state, and
-runtime-local operator evidence. The token-local DeepSeek MoE plan, hash and
-learned routing, selected routed experts, shared expert, and combined block
-output are also admitted on CPU and GB10 CUDA. Mixed/speculative attention,
-tokenizer-backed full-model prefill, transformer composition, model decode,
-logits, sampling,
+runtime-local operator evidence. Token-local MoE and the numeric-token complete
+transformer backbone are admitted on CPU and GB10 CUDA. Mixed/speculative
+attention, prompt/tokenizer execution, repeated model decode, logits, sampling,
 generation, evaluation, full-model benchmark and release remain unsupported.

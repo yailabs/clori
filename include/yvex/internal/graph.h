@@ -309,6 +309,7 @@ typedef struct {
     yvex_attention_workspace *workspace;
     const float *input;
     unsigned long long input_stride;
+    const yvex_device_tensor *device_input; yvex_device_tensor *device_output;
     const yvex_attention_history_view *history;
     yvex_attention_publication *publication;
     yvex_attention_execution_trace *trace;
@@ -461,6 +462,9 @@ typedef int (*yvex_attention_activation_view_fn)(
     void *context, unsigned long long layer_ordinal,
     unsigned long long token_count, const float **input,
     unsigned long long *input_stride, yvex_error *err);
+typedef int (*yvex_attention_device_view_fn)(
+    void *context, unsigned long long layer_ordinal, unsigned long long token_count,
+    const yvex_device_tensor **input, yvex_device_tensor **output, yvex_error *err);
 typedef struct {
     yvex_backend_kind backend;
     yvex_backend *backend_context;
@@ -475,6 +479,7 @@ typedef struct {
     void *cancel_context;
     const char *input_identity;
     yvex_attention_activation_view_fn activation_view;
+    yvex_attention_device_view_fn device_view;
     void *activation_context;
     const yvex_attention_probe_state_provider *state_provider;
     yvex_attention_workspace *workspace;

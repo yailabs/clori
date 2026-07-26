@@ -11,9 +11,10 @@ YVEX admits the selected complete GGUF and executes its attention bindings
 through the common CPU/CUDA runtime. Sessions own exact persistent state for
 all 43 layers. Versioned activation bundles commit that state atomically per
 chunk. A distinct token-local MoE input executes hash/learned routing, selected
-routed experts, shared experts, and combination across all 43 layers. Prompt/
-token embedding, full-model prefill, transformer composition, and text
-generation remain unsupported.
+routed experts, shared experts, and combination across all 43 layers. A
+schema-v1 numeric token input executes selected embedding rows, the complete 43
+block backbone, final mHC collapse, and final RMSNorm. Prompt text, tokenizer
+execution, repeated decode, logits, and text generation remain unsupported.
 
 There is no supported DeepSeek generation command to run yet.
 
@@ -40,38 +41,27 @@ BINDING="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["runt
   --operation-scope release-attention-set --probe canonical --scope full --output json
 ```
 
+The component attention-activation and MoE tensor-file commands remain
+available for focused operator diagnosis; `docs/api.md` owns their schemas and
+`./yvex help` owns their complete flag catalog.
+
 An upstream production consumer or the focused live target may create an
-untracked schema-v1 activation bundle. Execute one with:
+untracked schema-v1 transformer token input. Execute it with:
 
 ```sh
-ACTIVATIONS="/absolute/path/to/input.yvex-activations"
-./yvex graph attention execute \
-  --target deepseek4-v4-flash --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
-  --runtime-binding "$BINDING" --backend cuda --phase prefill --mode eager \
-  --operation-scope core --input tensor-file --input-file "$ACTIVATIONS" \
-  --chunk-tokens 2 --context-capacity 4096 --scope full \
+TOKENS="/absolute/path/to/input.yvex-transformer-input"
+./yvex graph transformer execute \
+  --target deepseek4-v4-flash --artifact "$ARTIFACT" \
+  --runtime-binding "$BINDING" --backend cuda --phase prefill \
+  --input token-ids --input-file "$TOKENS" \
+  --chunk-tokens 2 --context-capacity 4096 \
   --progress off --output json
 ```
 
-The file binds exact runtime identities, token/layer geometry, payload ranges,
-and digest. It reports attention/state facts, never a model or prompt output.
-
-An upstream production consumer or the focused live target may also create an
-untracked schema-v1 MoE input. Execute it with:
-
-```sh
-MOE_INPUT="/absolute/path/to/input.yvex-moe-input"
-./yvex graph moe execute \
-  --target deepseek4-v4-flash --artifact "$ARTIFACT" \
-  --runtime-binding "$BINDING" --backend cuda \
-  --input tensor-file --input-file "$MOE_INPUT" \
-  --scope full --progress off --output json
-```
-
-The file contains one exact expanded activation per main layer plus numeric
-token IDs required by the first three hash-router layers. Those IDs do not
-establish tokenizer support. The result is token-local MoE output and deferred
-transformer-owned state; it neither mutates KV nor produces model output.
+The file binds canonical U32 token IDs to the exact logical model, runtime
+numeric, descriptor, and transformer-plan identities. The command executes the
+production backbone and commits all 43 attention publications once per chunk.
+Its normalized hidden result is not tokenizer output, logits, or generation.
 
 The installed namespace also provides `./yvex graph attention qualify` and
 `./yvex graph attention benchmark compare`. The latter accepts

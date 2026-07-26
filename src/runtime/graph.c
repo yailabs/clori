@@ -1858,8 +1858,7 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     if (rc == YVEX_OK && (!yvex_core_u64_add(warmup, automatic_preparation, &measurement_start) ||
          !yvex_core_u64_add(measurement_start, repeat, &dispatch_count)))
         rc = runtime_refuse(err, YVEX_ERR_BOUNDS, "runtime.attention.state", "extent overflowed");
-    if (rc == YVEX_OK)
-        rc = runtime_attention_capacity_build(request, model, graph, dispatch_count, &capacity, err);
+    if (rc == YVEX_OK) rc = runtime_attention_capacity_build(request, model, graph, dispatch_count, &capacity, err);
     if (rc == YVEX_OK)
         rc = runtime_attention_trace_begin(&trace, request, result->selected_mode, err);
     if (rc == YVEX_OK &&
@@ -1872,7 +1871,8 @@ int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_re
     if (rc == YVEX_OK && (request->compare_backends || request->backend == YVEX_BACKEND_KIND_CUDA))
         rc = yvex_runtime_session_prepare_attention_workspace(
             session, selected_mode, request->operation_scope,
-            runtime_attention_evidence_levels[request->trace_policy], capacity, &model_failure, err);
+            runtime_attention_evidence_levels[request->trace_policy], capacity, 0ull,
+            &model_failure, err);
     if (rc == YVEX_OK)
         rc = runtime_attention_execution_descriptor_identity(
             request, model, session, capacity, result, result->execution_descriptor_identity, err);

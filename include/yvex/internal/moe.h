@@ -22,6 +22,7 @@ extern "C" {
 #define YVEX_MOE_INPUT_SUFFIX ".yvex-moe-input"
 #define YVEX_MOE_NO_TENSOR ULLONG_MAX
 #define YVEX_MOE_MAX_SELECTED 16u
+#define YVEX_MOE_CUDA_WORKSPACE_BYTES (16ull * 1024ull * 1024ull)
 
 typedef struct yvex_runtime_binding_summary yvex_runtime_binding_summary;
 typedef struct yvex_runtime_model yvex_runtime_model;
@@ -164,10 +165,15 @@ typedef struct {
     float router_logits[256], router_scores[256];
     float selected_weights[YVEX_MOE_MAX_SELECTED];
 } yvex_moe_router_result;
+int yvex_moe_router_result_identity(const yvex_moe_router_result *router,
+                                    unsigned long long routed_experts,
+                                    char output[YVEX_SHA256_HEX_CAP]);
 typedef struct {
     const yvex_moe_layer_plan *layer;
     yvex_moe_weight_view weights[YVEX_MOE_WEIGHT_COUNT];
     const float *expanded_input;
+    const yvex_device_tensor *device_input;
+    yvex_device_tensor *device_output;
     unsigned int token_id;
     int token_id_present;
     int (*cancel_requested)(void *context);
@@ -215,6 +221,7 @@ typedef struct {
     unsigned long long maximum_host_bytes, maximum_device_bytes;
     int (*cancel_requested)(void *context);
     void *cancel_context;
+    int defer_cuda_workspace;
 } yvex_runtime_moe_options;
 typedef struct {
     float *combined_outputs, *post, *combination;
@@ -247,6 +254,16 @@ int yvex_runtime_moe_execute_layer(yvex_runtime_moe_context *context,
                                    const float *expanded_input, unsigned int token_id,
                                    int token_id_present, yvex_moe_layer_result *result,
                                    yvex_error *err);
+int yvex_runtime_moe_execute_layer_borrowed(yvex_runtime_moe_context *context,
+                                            unsigned long long layer_index,
+                                            const float *expanded_input, unsigned int token_id,
+                                   int token_id_present,
+                                   yvex_moe_layer_result *result, yvex_error *err);
+int yvex_runtime_moe_execute_layer_device_borrowed(
+    yvex_runtime_moe_context *context, unsigned long long layer_index,
+    const float *expanded_input, const yvex_device_tensor *device_input,
+    yvex_device_tensor *device_output, unsigned int token_id, int token_id_present,
+    yvex_moe_layer_result *result, yvex_error *err);
 int yvex_runtime_moe_context_reset(yvex_runtime_moe_context *context, yvex_error *err);
 int yvex_runtime_moe_context_close(yvex_runtime_moe_context **context, yvex_error *err);
 

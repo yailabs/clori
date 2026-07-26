@@ -19,8 +19,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MOE_DEVICE_WORKSPACE_BYTES (16ull * 1024ull * 1024ull)
-
 typedef struct {
     unsigned char *data;
     unsigned long long capacity;
@@ -42,7 +40,7 @@ struct yvex_runtime_moe_context {
     unsigned long long candidate_tokens, candidate_layers;
     yvex_device_tensor *device_workspace;
     unsigned long long host_bytes, execution_count;
-    int workspace_owned, busy, invalidated;
+    int workspace_owned, workspace_ready, busy, invalidated;
     pthread_mutex_t mutex;
     int mutex_ready;
 };
@@ -202,25 +200,30 @@ static int runtime_moe_cuda_workspace(yvex_runtime_moe_context *context, yvex_er
     int rc;
     if (yvex_runtime_session_summary_copy(context->session, &session_summary, err) != YVEX_OK)
         return yvex_error_code(err);
-    if (session_summary.device_workspace_bytes)
-        return session_summary.device_workspace_bytes >= MOE_DEVICE_WORKSPACE_BYTES
-                   ? YVEX_OK
-                   : runtime_moe_refuse(err, YVEX_ERR_BOUNDS,
-                                        "existing CUDA workspace is too small for MoE");
+    if (session_summary.device_workspace_bytes) {
+        if (session_summary.device_workspace_bytes < YVEX_MOE_CUDA_WORKSPACE_BYTES)
+            return runtime_moe_refuse(err, YVEX_ERR_BOUNDS,
+                                      "existing CUDA workspace is too small for MoE");
+        context->workspace_ready = 1;
+        return YVEX_OK;
+    }
     if (context->options.maximum_device_bytes &&
-        MOE_DEVICE_WORKSPACE_BYTES > context->options.maximum_device_bytes)
+        YVEX_MOE_CUDA_WORKSPACE_BYTES > context->options.maximum_device_bytes)
         return runtime_moe_refuse(err, YVEX_ERR_BOUNDS, "MoE CUDA workspace exceeds its budget");
     descriptor.name = "moe_workspace";
     descriptor.dtype = YVEX_DTYPE_F32;
     descriptor.rank = 1u;
-    descriptor.dims[0] = MOE_DEVICE_WORKSPACE_BYTES / sizeof(float);
-    descriptor.bytes = MOE_DEVICE_WORKSPACE_BYTES;
+    descriptor.dims[0] = YVEX_MOE_CUDA_WORKSPACE_BYTES / sizeof(float);
+    descriptor.bytes = YVEX_MOE_CUDA_WORKSPACE_BYTES;
     rc = yvex_backend_tensor_alloc(context->session_view->backend, &descriptor,
                                    &context->device_workspace, err);
     if (rc == YVEX_OK)
         rc = yvex_backend_workspace_attach(context->session_view->backend,
                                            context->device_workspace, 1ull, err);
-    if (rc == YVEX_OK) context->workspace_owned = 1;
+    if (rc == YVEX_OK) {
+        context->workspace_owned = 1;
+        context->workspace_ready = 1;
+    }
     return rc;
 }
 
@@ -426,7 +429,9 @@ static int runtime_moe_layer_cuda(yvex_runtime_moe_context *context,
  * Inputs: context/layer/input. Effects: stages result. Failure: typed. Boundary: no publication. */
 static int runtime_moe_layer_owned(yvex_runtime_moe_context *context,
                                    unsigned long long layer_index,
-                                   const float *expanded_input, unsigned int token_id,
+                                   const float *expanded_input,
+                                   const yvex_device_tensor *device_input,
+                                   yvex_device_tensor *device_output, unsigned int token_id,
                                    int token_id_present, yvex_moe_layer_result *result,
                                    yvex_error *err)
 {
@@ -443,6 +448,8 @@ static int runtime_moe_layer_owned(yvex_runtime_moe_context *context,
                                   "MoE layer request is invalid or cancelled");
     rc = runtime_moe_load_layer(context, layer, token_id, &job, &fixed_bytes, err);
     job.expanded_input = expanded_input;
+    job.device_input = device_input;
+    job.device_output = device_output;
     result->combined_output = context->combined;
     result->combined_capacity = context->hidden_capacity;
     result->routed_output = context->routed;
@@ -453,6 +460,10 @@ static int runtime_moe_layer_owned(yvex_runtime_moe_context *context,
     result->post_capacity = context->residual_capacity;
     result->combination = context->combination;
     result->combination_capacity = context->residual_capacity * context->residual_capacity;
+    if (rc == YVEX_OK &&
+        yvex_backend_kind_of(context->session_view->backend) == YVEX_BACKEND_KIND_CUDA &&
+        !context->workspace_ready)
+        rc = runtime_moe_cuda_workspace(context, err);
     if (rc == YVEX_OK)
         rc = yvex_backend_kind_of(context->session_view->backend) == YVEX_BACKEND_KIND_CUDA
                  ? runtime_moe_layer_cuda(context, &job, result, err)
@@ -479,8 +490,8 @@ static int runtime_moe_layer_owned(yvex_runtime_moe_context *context,
         !runtime_moe_digest(result->combined_output,
                             (size_t)layer->hidden_width * sizeof(float),
                             result->combined_digest) ||
-        !runtime_moe_digest(&result->router, sizeof(result->router),
-                            result->routing_digest))
+        !yvex_moe_router_result_identity(&result->router, layer->routed_experts,
+                                         result->routing_digest))
         return runtime_moe_refuse(err, YVEX_ERR_STATE, "MoE result digest derivation failed");
     return YVEX_OK;
 }
@@ -525,7 +536,8 @@ int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_m
         strcmp(summary->moe_plan_identity, context->model_view->binding->moe_plan_identity) != 0))
         rc = runtime_moe_refuse(err, YVEX_ERR_STATE, "runtime binding MoE plan is stale");
     if (rc == YVEX_OK) rc = runtime_moe_buffer_plan(context, err);
-    if (rc == YVEX_OK && yvex_backend_kind_of(context->session_view->backend) == YVEX_BACKEND_KIND_CUDA)
+    if (rc == YVEX_OK && !options->defer_cuda_workspace &&
+        yvex_backend_kind_of(context->session_view->backend) == YVEX_BACKEND_KIND_CUDA)
         rc = runtime_moe_cuda_workspace(context, err);
     if (rc != YVEX_OK) goto fail;
     *out = context;
@@ -644,7 +656,7 @@ int yvex_runtime_moe_execute(yvex_runtime_moe_context *context,
             yvex_moe_layer_result staged;
             unsigned long long row = layer_index * input_summary->token_count + token_index;
             rc = runtime_moe_layer_owned(context, layer_index,
-                                         layer_values + token_index * stride,
+                                         layer_values + token_index * stride, NULL, NULL,
                                          tokens[token_index], 1, &staged, err);
             if (rc != YVEX_OK) break;
             memcpy(context->candidate_combined + row * layer->hidden_width,
@@ -725,11 +737,13 @@ int yvex_runtime_moe_execute(yvex_runtime_moe_context *context,
 
 /* Purpose: execute one in-memory layer for the future transformer consumer.
  * Inputs: typed layer/input. Effects: publishes result. Failure: typed rollback. Boundary: token-local. */
-int yvex_runtime_moe_execute_layer(yvex_runtime_moe_context *context,
-                                   unsigned long long layer_index,
-                                   const float *expanded_input, unsigned int token_id,
-                                   int token_id_present, yvex_moe_layer_result *result,
-                                   yvex_error *err)
+static int runtime_moe_execute_layer_mode(yvex_runtime_moe_context *context,
+                                          unsigned long long layer_index,
+                                          const float *expanded_input,
+                                          const yvex_device_tensor *device_input,
+                                          yvex_device_tensor *device_output, unsigned int token_id,
+                                          int token_id_present, int manage_session,
+                                          yvex_moe_layer_result *result, yvex_error *err)
 {
     yvex_runtime_model_failure failure;
     yvex_moe_layer_result staged;
@@ -766,10 +780,11 @@ int yvex_runtime_moe_execute_layer(yvex_runtime_moe_context *context,
     context->busy = 1;
     (void)pthread_mutex_unlock(&context->mutex);
     memset(&failure, 0, sizeof(failure));
-    rc = yvex_runtime_session_begin(context->session, &failure, err);
-    session_begun = rc == YVEX_OK;
+    rc = manage_session ? yvex_runtime_session_begin(context->session, &failure, err) : YVEX_OK;
+    session_begun = manage_session && rc == YVEX_OK;
     if (rc == YVEX_OK)
-        rc = runtime_moe_layer_owned(context, layer_index, expanded_input, token_id,
+        rc = runtime_moe_layer_owned(context, layer_index, expanded_input,
+                                     device_input, device_output, token_id,
                                      token_id_present, &staged, err);
     if (session_begun) {
         int finish_rc = yvex_runtime_session_finish(context->session, rc, err);
@@ -796,6 +811,61 @@ int yvex_runtime_moe_execute_layer(yvex_runtime_moe_context *context,
     }
     if (rc != YVEX_OK) memset(result, 0, sizeof(*result));
     return rc;
+}
+
+/* Purpose: execute one layer as a complete standalone session operation.
+ * Inputs: admitted context/layer/input. Effects: owns session begin/finish and output publication.
+ * Failure: aborts its session operation. Boundary: standalone component consumer. */
+int yvex_runtime_moe_execute_layer(yvex_runtime_moe_context *context,
+                                   unsigned long long layer_index,
+                                   const float *expanded_input, unsigned int token_id,
+                                   int token_id_present, yvex_moe_layer_result *result,
+                                   yvex_error *err)
+{
+    return runtime_moe_execute_layer_mode(context, layer_index, expanded_input, NULL, NULL, token_id,
+                                          token_id_present, 1, result, err);
+}
+
+/* Purpose: execute one layer inside an already acquired transformer transaction.
+ * Inputs: admitted context/layer/input and session ownership held by the caller.
+ * Effects: publishes token-local output without finishing the outer state transaction.
+ * Failure: leaves rollback to the outer owner. Boundary: transformer composition only. */
+int yvex_runtime_moe_execute_layer_borrowed(yvex_runtime_moe_context *context,
+                                            unsigned long long layer_index,
+                                            const float *expanded_input, unsigned int token_id,
+                                            int token_id_present,
+                                            yvex_moe_layer_result *result, yvex_error *err)
+{
+    const yvex_runtime_session_view *view = context ? context->session_view : NULL;
+    yvex_runtime_session_summary summary;
+    if (!view || yvex_runtime_session_summary_copy(context->session, &summary, err) != YVEX_OK ||
+        !summary.busy)
+        return runtime_moe_refuse(err, YVEX_ERR_STATE,
+                                  "borrowed MoE execution requires an acquired runtime session");
+    return runtime_moe_execute_layer_mode(context, layer_index, expanded_input, NULL, NULL, token_id,
+                                          token_id_present, 0, result, err);
+}
+
+/* Purpose: execute one borrowed layer while retaining its activation on the CUDA device.
+ * Inputs: acquired session, host evidence view, and matching device input/output tensors.
+ * Effects: publishes host evidence and the next device-resident residual atomically.
+ * Failure: leaves outer rollback and device-output publication to the transformer owner.
+ * Boundary: no session finish, attention state mutation, or CPU numerical fallback. */
+int yvex_runtime_moe_execute_layer_device_borrowed(
+    yvex_runtime_moe_context *context, unsigned long long layer_index,
+    const float *expanded_input, const yvex_device_tensor *device_input,
+    yvex_device_tensor *device_output, unsigned int token_id, int token_id_present,
+    yvex_moe_layer_result *result, yvex_error *err)
+{
+    yvex_runtime_session_summary summary;
+    if (!context || !device_input || !device_output ||
+        yvex_runtime_session_summary_copy(context->session, &summary, err) != YVEX_OK ||
+        !summary.busy)
+        return runtime_moe_refuse(err, YVEX_ERR_STATE,
+                                  "device MoE execution requires an acquired session");
+    return runtime_moe_execute_layer_mode(
+        context, layer_index, expanded_input, device_input, device_output,
+        token_id, token_id_present, 0, result, err);
 }
 
 /* Purpose: reset transient publication bytes without changing immutable plans or session state.

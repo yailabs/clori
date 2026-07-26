@@ -110,30 +110,21 @@ typedef struct {
 } attn_run;
 typedef enum {
     EXT_ONE = 0, EXT_INPUT, EXT_CORE, EXT_RAW_KV, EXT_Q_LOW, EXT_QUERY, EXT_LOW, EXT_ENVELOPE, EXT_MHC_MIX,
-    EXT_MHC_SCALE, EXT_MHC_POST, EXT_MHC_COMBINATION,
-    EXT_TOKENS, EXT_LOCAL, EXT_LOCAL_POSITIONS,
-    EXT_COMPRESSED, EXT_COMPRESSED_POSITIONS, EXT_INDEXER,
+    EXT_MHC_SCALE, EXT_MHC_POST, EXT_MHC_COMBINATION, EXT_TOKENS, EXT_LOCAL,
+    EXT_LOCAL_POSITIONS, EXT_COMPRESSED, EXT_COMPRESSED_POSITIONS, EXT_INDEXER,
     EXT_INDEXER_POSITIONS, EXT_MAIN_STATE, EXT_INDEX_STATE,
     EXT_INDEX_QUERY, EXT_INDEX_WEIGHTS, EXT_SELECTED, EXT_CANDIDATES, EXT_QUERY_HEADS, EXT_PHASE_COMPRESSED,
-    EXT_PHASE_COMPRESSED_POSITIONS, EXT_PHASE_INDEXER,
-    EXT_PHASE_INDEXER_POSITIONS, EXT_MAIN_ROLLING,
-    EXT_INDEX_ROLLING, EXT_LOCAL_USED,
-    EXT_COMPRESSED_USED, EXT_INDEXER_USED,
-    EXT_MAIN_WIDTH, EXT_MAIN_HEAD,
-    EXT_INDEX_WIDTH, EXT_INDEX_HEAD, EXT_MAIN_POSITION, EXT_INDEX_POSITION
+    EXT_PHASE_COMPRESSED_POSITIONS, EXT_PHASE_INDEXER, EXT_PHASE_INDEXER_POSITIONS,
+    EXT_MAIN_ROLLING, EXT_INDEX_ROLLING, EXT_LOCAL_USED, EXT_COMPRESSED_USED, EXT_INDEXER_USED,
+    EXT_MAIN_WIDTH, EXT_MAIN_HEAD, EXT_INDEX_WIDTH, EXT_INDEX_HEAD, EXT_MAIN_POSITION, EXT_INDEX_POSITION
 } attn_extent_kind;
 typedef enum {
-    SRC_NONE = 0, SRC_INPUT, SRC_LOCAL,
-    SRC_LOCAL_POSITIONS, SRC_COMPRESSED,
-    SRC_COMPRESSED_POSITIONS, SRC_INDEXER,
-    SRC_INDEXER_POSITIONS, SRC_MAIN_KV,
-    SRC_MAIN_SCORE, SRC_INDEX_KV, SRC_INDEX_SCORE
+    SRC_NONE = 0, SRC_INPUT, SRC_LOCAL, SRC_LOCAL_POSITIONS, SRC_COMPRESSED, SRC_COMPRESSED_POSITIONS,
+    SRC_INDEXER, SRC_INDEXER_POSITIONS, SRC_MAIN_KV, SRC_MAIN_SCORE, SRC_INDEX_KV, SRC_INDEX_SCORE
 } attn_source_kind;
 static int attn_stage_layout(attn_run *run, unsigned char *base, size_t *total);
-static int attn_extent(const attn_run *run, attn_extent_kind kind,
-                       unsigned long long *out);
-static const void *attn_allocation_source(
-    const attn_run *run, attn_source_kind source);
+static int attn_extent(const attn_run *run, attn_extent_kind kind, unsigned long long *out);
+static const void *attn_allocation_source(const attn_run *run, attn_source_kind source);
 /* Purpose: distinguish an explicit captured schedule from eager execution. */
 static int attn_graph_mode(const attn_run *run) {
     return run->state->attention_graph_configured &&
@@ -329,6 +320,8 @@ static int attn_upload_plan(attn_run *run) {
         const attn_upload_spec *spec = &attn_uploads[index];
         attn_upload upload;
         size_t bytes;
+        if (spec->device_offset == offsetof(attn_run, phase_input) && run->job->device_input)
+            continue;
         if (!attn_extent(run, spec->capacity, &upload.count) ||
             !attn_extent(run, spec->used, &upload.used))
             return attn_run_fail(
@@ -612,7 +605,9 @@ static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
             run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET, stage, ULLONG_MAX,
             count, YVEX_ERR_BOUNDS,
             "CUDA attention allocation size overflowed");
-    resident = source ? yvex_backend_state_residency_resolve(
+    if (target == &run->phase_input)
+        device_source = yvex_cuda_activation_pointer(run->backend, run->job->device_input);
+    resident = source && !device_source ? yvex_backend_state_residency_resolve(
                             run->backend, source, bytes, &resident_address)
                       : YVEX_BACKEND_RESIDENT_MISS;
     if (resident == YVEX_BACKEND_RESIDENT_INVALID)
@@ -860,6 +855,13 @@ static int attn_prepare(attn_run *run) {
     run->phase_start_position = run->job->token_position;
     run->input_extent = run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
                             ? run->job->residual_expanded_width : run->job->hidden_width;
+    if ((run->job->device_input || run->job->device_output) &&
+        !yvex_cuda_activation_views_valid(run->backend, run->job->device_input,
+            run->job->token_count * run->input_extent, run->job->device_output,
+            run->job->token_count * run->job->residual_expanded_width))
+        return attn_run_fail(run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
+            "cuda.deepseek_attention.validate.device-activation", 1ull, 0ull,
+            YVEX_ERR_FORMAT, "CUDA attention device activation views are incompatible");
     run->initial_local_count = run->job->local_count;
     run->initial_compressed_count = run->job->compressed_count;
     run->initial_indexer_count = run->job->indexer_count;
@@ -1745,7 +1747,11 @@ static int attn_synchronize(attn_run *run) {
     unsigned long long expected_topk, token;
     size_t index;
     int rc = YVEX_OK;
-    if (!attn_graph_mode(run))
+    if (run->job->device_output)
+        rc = yvex_cuda_activation_copy(run->backend, run->phase_envelope_output,
+            run->job->device_output, run->job->token_count * run->job->residual_expanded_width,
+            "cuda.deepseek_attention.copy.device-output", run->err);
+    if (rc == YVEX_OK && !attn_graph_mode(run))
         rc = yvex_cuda_synchronize(run->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
             "cuda.deepseek_attention.synchronize", run->err);
     if (rc == YVEX_OK) rc = attn_downloads_enqueue(run);
@@ -1939,14 +1945,12 @@ typedef struct {
     int (*execute)(attn_run *run); const char *cancel_stage; int pending_device_work;
 } attn_transaction_phase;
 static const attn_transaction_phase attn_transaction[] = {
-    {attn_stage_allocate, NULL, 0},
-    {attn_stage_inputs, NULL, 0},
+    {attn_stage_allocate, NULL, 0}, {attn_stage_inputs, NULL, 0},
     {attn_allocate_base, "cuda.deepseek_attention.cancel.after_allocation", 0},
     {attn_numerical_execute, "cuda.deepseek_attention.cancel.before_commit", 1},
     {attn_synchronize, "cuda.deepseek_attention.cancel.after_copy", 0}
 };
-/* Purpose: execute one admitted request-level CUDA attention phase.
- * Inputs: backend, job, and output storage.
+/* Purpose: execute one admitted request-level CUDA attention phase. Inputs: backend, job, and output storage.
  * Effects: runs transactional device work.
  * Failure: returns a typed admission, resource, or stage refusal.
  * Boundary: no CPU fallback, KV, decode, or generation. */
@@ -1954,9 +1958,8 @@ int yvex_backend_attention_execute(yvex_backend *backend, const yvex_backend_att
                                    yvex_backend_attention_output *output,
                                    yvex_backend_attention_failure *failure, yvex_error *err) {
     attn_run run = {.backend = backend, .state = yvex_cuda_state(backend),
-                              .ops = yvex_cuda_attention_operations_get(),
-                              .topk_capacity = 1ull, .output = output, .failure = failure,
-                              .err = err, .candidate_capacity = 1ull};
+                    .ops = yvex_cuda_attention_operations_get(), .topk_capacity = 1ull,
+                    .output = output, .failure = failure, .err = err, .candidate_capacity = 1ull};
     yvex_error cleanup_error;
     size_t phase;
     int cleanup_rc, rc;
@@ -1987,11 +1990,8 @@ int yvex_backend_attention_execute(yvex_backend *backend, const yvex_backend_att
             "cuda.deepseek_attention.cleanup", 0ull,
             run.state->deferred_release_bytes, (yvex_status)cleanup_rc,
             "CUDA attention temporary cleanup failed");
-    if (rc == YVEX_OK)
-        rc = attn_cancel(
-            &run, "cuda.deepseek_attention.cancel.publish", 0);
-    if (rc == YVEX_OK)
-        rc = attn_publish(&run);
+    if (rc == YVEX_OK) rc = attn_cancel(&run, "cuda.deepseek_attention.cancel.publish", 0);
+    if (rc == YVEX_OK) rc = attn_publish(&run);
     if (rc == YVEX_OK) {
         if (failure) memset(failure, 0, sizeof(*failure));
         yvex_error_clear(err);

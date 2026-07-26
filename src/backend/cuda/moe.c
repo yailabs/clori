@@ -154,7 +154,8 @@ static int moe_cuda_ranges(yvex_backend_moe_execution *execution, yvex_error *er
             rc = moe_cuda_allocate(execution, &execution->member_, (bytes_), (source_),     \
                                    (zero_), (stage_), err);                                  \
     } while (0)
-    RANGE(expanded, expanded, execution->job->expanded_input, 0, "cuda.moe.input");
+    RANGE(expanded, expanded, execution->job->device_input ? NULL : execution->job->expanded_input,
+          0, "cuda.moe.input");
     RANGE(normalized, hidden, NULL, 1, "cuda.moe.normalized");
     RANGE(post, (size_t)layer->residual_streams * sizeof(float), NULL, 1, "cuda.moe.post");
     RANGE(combination, (size_t)layer->residual_streams * layer->residual_streams * sizeof(float),
@@ -176,7 +177,21 @@ static int moe_cuda_ranges(yvex_backend_moe_execution *execution, yvex_error *er
     RANGE(weight_buffer, execution->weight_buffer_bytes, NULL, 1, "cuda.moe.weight-buffer");
     RANGE(route_aux, execution->route_aux_bytes, NULL, 1, "cuda.moe.route-aux");
 #undef RANGE
-    if (rc == YVEX_OK) execution->h2d += expanded;
+    if (rc == YVEX_OK && execution->job->device_input) {
+        CUstream stream = yvex_cuda_launch_stream(execution->backend);
+        CUresult copied = stream && execution->state->driver.cuMemcpyDtoDAsync_v2
+                              ? execution->state->driver.cuMemcpyDtoDAsync_v2(
+                                    execution->expanded,
+                                    (CUdeviceptr)execution->job->device_input->data,
+                                    expanded, stream)
+                              : !stream ? execution->state->driver.cuMemcpyDtoD_v2(
+                                    execution->expanded,
+                                    (CUdeviceptr)execution->job->device_input->data,
+                                    expanded) : (CUresult)1;
+        rc = yvex_cuda_status(&execution->state->driver, copied,
+                              "cuda.moe.device-input", err);
+    }
+    if (rc == YVEX_OK && !execution->job->device_input) execution->h2d += expanded;
     return rc;
 }
 
@@ -313,6 +328,13 @@ int yvex_backend_moe_begin(yvex_backend_moe_execution **out, yvex_backend *backe
         !result->combination ||
         result->combination_capacity < layer->residual_streams * layer->residual_streams)
         return moe_cuda_refuse(err, YVEX_ERR_INVALID_ARG, "CUDA MoE begin arguments are invalid");
+    if ((job->device_input || job->device_output) &&
+        (!backend_tensor_owner_is(backend, job->device_input) ||
+         !backend_tensor_owner_is(backend, job->device_output) ||
+         !backend_tensor_f32_elements(job->device_input, layer->expanded_width) ||
+         !backend_tensor_f32_elements(job->device_output, layer->expanded_width)))
+        return moe_cuda_refuse(err, YVEX_ERR_FORMAT,
+                               "CUDA MoE device activation views are incompatible");
     execution = (yvex_backend_moe_execution *)calloc(1u, sizeof(*execution));
     if (!execution) return moe_cuda_refuse(err, YVEX_ERR_NOMEM, "CUDA MoE owner allocation failed");
     execution->backend = backend;
@@ -436,6 +458,18 @@ int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
         rc = execution->ops->round_bf16(&execution->work, execution->combined,
                                     layer->hidden_width, execution->status,
                                     "cuda.moe.output-round", &execution->failure, err);
+    if (rc == YVEX_OK && execution->job->device_output) {
+        unsigned long long streams = layer->residual_streams, width = layer->hidden_width;
+        unsigned long long count = streams * width;
+        unsigned int grid = (unsigned int)((count + MOE_CUDA_BLOCK - 1ull) / MOE_CUDA_BLOCK);
+        CUdeviceptr output = (CUdeviceptr)execution->job->device_output->data;
+        void *params[] = {&execution->combined, &execution->expanded, &execution->post,
+                          &execution->combination, &streams, &width, &output,
+                          &execution->status};
+        rc = execution->ops->launch(&execution->work,
+            execution->state->deepseek_mhc_post_function, grid, MOE_CUDA_BLOCK, 0u,
+            params, "cuda.moe.deferred-post", &execution->failure, err);
+    }
 #define DOWNLOAD(target_, source_, bytes_, stage_)                                         \
     do {                                                                                   \
         if (rc == YVEX_OK)                                                                 \
