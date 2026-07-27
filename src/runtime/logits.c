@@ -688,6 +688,56 @@ static int logits_row_finish(yvex_runtime_logits_context *context,
     return YVEX_OK;
 }
 
+/* Purpose: independently re-admit one published complete logits row for a downstream owner.
+ * Inputs: immutable plan, caller-owned complete F32 row, capacity, and logits evidence.
+ * Effects: none.
+ * Failure: stale geometry, payload, plan, or field-wise row identity refuses before consumption.
+ * Boundary: validates logits publication and does not rank, normalize, or select tokens. */
+int yvex_runtime_logits_row_validate(
+    const yvex_runtime_logits_plan_summary *plan, const float *logits,
+    unsigned long long logits_capacity,
+    const yvex_runtime_logits_row_result *result, yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    char raw_digest[YVEX_SHA256_HEX_CAP], row_identity[YVEX_SHA256_HEX_CAP];
+    if (!plan || !logits || !result || !result->completed ||
+        result->schema_version != YVEX_RUNTIME_LOGITS_SCHEMA_V1 ||
+        result->source_phase > YVEX_LOGITS_SOURCE_DECODE ||
+        !plan->vocabulary_size || result->vocabulary_size != plan->vocabulary_size ||
+        result->logits_count != plan->vocabulary_size ||
+        result->finite_count != result->logits_count ||
+        logits_capacity < result->logits_count ||
+        strcmp(result->output_head_plan_identity,
+               plan->output_head_plan_identity) != 0 ||
+        !yvex_sha256_hex_valid(result->source_hidden_digest) ||
+        !yvex_sha256_hex_valid(result->output_head_residency_identity) ||
+        !yvex_sha256_hex_valid(result->backend_execution_identity) ||
+        !logits_values_digest("yvex.runtime.raw-logits.v1", logits,
+                              result->logits_count, raw_digest) ||
+        strcmp(raw_digest, result->raw_logits_digest) != 0)
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "complete logits row geometry or payload is stale");
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.row.v1") ||
+        !yvex_sha256_update_u64(&hash, result->source_phase) ||
+        !yvex_sha256_update_u64(&hash, result->source_position) ||
+        !yvex_sha256_update_u64(&hash, result->vocabulary_size) ||
+        !yvex_sha256_update_text(&hash, result->source_hidden_digest) ||
+        !yvex_sha256_update_text(&hash, result->output_head_plan_identity) ||
+        !yvex_sha256_update_text(&hash, result->output_head_residency_identity) ||
+        !yvex_sha256_update_text(&hash, result->raw_logits_digest) ||
+        !yvex_sha256_final(&hash, digest))
+        return logits_refuse(err, YVEX_ERR_STATE,
+                             "logits row identity validation failed");
+    yvex_sha256_hex(digest, row_identity);
+    if (strcmp(row_identity, result->logits_row_identity) != 0)
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "logits row identity is not canonical");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 /* Purpose: enter one logits context exclusively. */
 static int logits_enter(yvex_runtime_logits_context *context, yvex_error *err)
 {
@@ -901,12 +951,15 @@ static int logits_input_slice(yvex_transformer_input **out,
  * Inputs: operator result with optional row directory.
  * Effects: frees only that directory and clears its extent.
  * Failure: none.
- * Boundary: raw logits and runtime owners are not stored in this result. */
+ * Boundary: caller-owned raw logits are retained for the immediate sampling consumer only. */
 void yvex_runtime_logits_operator_result_release(yvex_logits_operator_result *result)
 {
     if (!result) return;
     free(result->rows);
+    free(result->raw_logits);
     result->rows = NULL;
+    result->raw_logits = NULL;
+    result->raw_logits_count = 0ull;
     result->row_count = 0ull;
 }
 
@@ -993,7 +1046,7 @@ static int logits_operator_finish(yvex_logits_operator_result *result, int rc,
 /* Purpose: execute one shared-context prefill/decode/logits operator workflow.
  * Inputs: exact artifact/binding/token stream, split, backend, and budgets.
  * Effects: opens once, retains model residency, projects final prefill and every decode row.
- * Failure: cleanup leases preserve exact ownership; raw logits remain unreported caller storage.
+ * Failure: cleanup leases preserve exact ownership; completed raw rows remain caller-owned evidence.
  * Boundary: no token selection, sampling, tokenization, or generation. */
 int yvex_runtime_logits_operator_execute(
     const yvex_logits_operator_request *request,
@@ -1027,8 +1080,7 @@ int yvex_runtime_logits_operator_execute(
     yvex_runtime_logits_source *sources = NULL;
     yvex_runtime_decode_step_result *decode_steps = NULL;
     float *prefill_hidden = NULL, *decode_hidden = NULL, *raw_logits = NULL;
-    unsigned long long prefill_count, decode_count, hidden_count, row_count;
-    unsigned long long logits_count;
+    unsigned long long prefill_count, decode_count, hidden_count, row_count, logits_count;
     yvex_error primary = {0}, cleanup_error;
     int adopted = 0, rc, close_rc;
     if (result) memset(result, 0, sizeof(*result));
@@ -1169,6 +1221,11 @@ int yvex_runtime_logits_operator_execute(
             logits_context, sources, row_count, request->backend,
             raw_logits, logits_count, result->rows, row_count,
             &result->execution, err);
+    if (raw_logits && result->execution.completed_rows) {
+        result->raw_logits = raw_logits;
+        result->raw_logits_count = logits_count;
+        raw_logits = NULL;
+    }
     logits_operator_publish_facts(result, plan, model_view, logits_context,
                                   request->backend, rc == YVEX_OK);
     primary = err ? *err : (yvex_error){0};

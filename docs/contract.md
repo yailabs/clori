@@ -34,7 +34,7 @@ complete external artifact
 DeepSeek-V4-Flash is the first family adapter. It is not the owner of a second
 runtime. The admitted persistent state is session-owned and consumed by the
 numeric token-ID transformer backbone. Tokenizer-backed prompt prefill,
-sampling and generation remain outside this contract.
+token append and generation remain outside this contract.
 
 The admitted token-local MoE path is:
 
@@ -81,6 +81,20 @@ transformer-authenticated normalized hidden row
 
 Logits projection does not repeat final norm, change persistent state, publish
 probabilities, or select a token.
+
+The admitted sampling path is:
+
+```text
+complete identity-bound F32 logits row
+  -> canonical greedy or temperature-scaled stochastic policy
+  -> top-k, min-p, locally typical, and top-p filtering
+  -> transactional versioned RNG draw where stochastic
+  -> one selected canonical vocabulary token ID
+```
+
+Sampling is a common host-runtime operation. It neither appends the selected
+token nor changes KV, position, generation, logits values, tokenizer state, or
+model resources.
 
 ## Command Contract
 
@@ -130,6 +144,11 @@ result publishes the exact completed count and first incomplete ordinal.
 plane, projects the final prefill hidden row and every completed teacher-forced
 decode hidden row, and reports bounded complete-row identities. It neither
 dumps the raw vocabulary tensor nor chooses a token.
+
+`graph transformer sample` runs that logits workflow once, admits every value
+and identity in each complete row, and applies one explicit greedy or seeded
+stochastic policy. Selected token IDs are evidence only: they are not appended
+or fed back into decode.
 
 The CLI parses typed input, invokes production runtime APIs and renders copied
 results. CUDA Graph lifecycle actions operate on a real registry within the
@@ -453,8 +472,32 @@ publishes no failing row, and reports the exact first incomplete ordinal.
 Plan, source, residency, backend evidence, row, and aggregate identities are
 serialized field by field. Logits execution does not advance session position
 or generation. It publishes raw values and bounded diagnostics only; softmax,
-token selection, penalties, EOS/stop policy, and generation belong to later
+token selection, penalties, EOS/stop policy, and generation remain separate
 owners.
+
+## Production Real-Logits Sampling Contract
+
+The schema-v1 family-neutral sampler consumes an immutable complete logits row
+whose raw digest, logits-row identity, output-head plan, source phase, source
+position, hidden digest, and backend evidence all validate. It rehashes every
+canonical F32 value before use, requires the complete vocabulary extent, and
+never changes caller-owned logits.
+
+Greedy scans the complete row and selects the lowest token ID among equal
+finite maxima without touching RNG state. Stochastic sampling requires an
+explicit seed and applies the versioned order: temperature, stable full-row
+softmax, top-k, min-p, locally typical, top-p, then one categorical draw over
+survivors ordered by token ID. Each filtering stage renormalizes. The private
+PCG-XSH-RR 64/32 state advances exactly once only after a stochastic result is
+fully validated and published; refusal or cancellation leaves it unchanged.
+
+One context owns fixed candidate, probability, and sorting workspace plus its
+private RNG and busy lifecycle. Warm calls allocate no workspace. Repeated
+sampling preserves successful earlier rows and reports the first incomplete
+row; a failing row publishes neither token nor RNG transition. Separate
+contexts isolate mutable state. Sampling remains a common host operation even
+when CUDA produced the logits and does not establish CUDA sampling, token
+append, tokenizer execution, stop policy, or autoregressive generation.
 
 ## Graph Execution Contract
 
@@ -710,6 +753,8 @@ runtime-local operator evidence. Token-local MoE and the numeric-token complete
 transformer backbone are admitted on CPU and GB10 CUDA. Teacher-forced repeated
 decode reuses the same token schema, transformer context, and persistent state.
 Transformer-normalized prefill/decode hidden rows project through the complete
-resident output head to raw vocabulary logits on CPU and GB10 CUDA.
-Mixed/speculative attention, prompt/tokenizer execution, sampling, generation,
+resident output head to raw vocabulary logits on CPU and GB10 CUDA. The common
+host sampler admits every value in those rows and performs deterministic greedy
+or explicitly seeded canonical stochastic token selection. Mixed/speculative
+attention, prompt/tokenizer execution, token append, CUDA sampling, generation,
 evaluation, full-model benchmark and release remain unsupported.

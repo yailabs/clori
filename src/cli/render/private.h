@@ -23,6 +23,7 @@
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/sampling.h>
 #include <yvex/internal/transformer.h>
 #include <yvex/internal/source_payload.h>
 
@@ -142,6 +143,8 @@ int yvex_graph_decode_render(FILE *fp, yvex_graph_report_mode mode,
                              const yvex_decode_operator_result *result);
 int yvex_graph_logits_render(FILE *fp, yvex_graph_report_mode mode,
                              const yvex_logits_operator_result *result);
+int yvex_graph_sampling_render(FILE *fp, yvex_graph_report_mode mode,
+                               const yvex_sampling_operator_result *result);
 int yvex_graph_render_help(FILE *fp);
 
 /* Model Target contract. */

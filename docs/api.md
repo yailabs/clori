@@ -272,6 +272,30 @@ The logits API publishes raw F32 values and field-wise plan, source, residency,
 backend, row, and aggregate identities. It neither repeats final norm nor owns
 persistent state, sampling, tokenizer, or generation policy.
 
+### Internal Real-Logits Sampling Boundary
+
+`include/yvex/internal/sampling.h` owns the non-installed family-neutral
+sampling policy, complete-logits source, reusable fixed-workspace context,
+single-row selection, ordered repeated selection, typed results, and operator
+adapter. The context copies the immutable output-head plan identity and owns
+only candidate/probability workspace, private versioned RNG state, counters,
+and concurrency exclusion. It borrows complete caller-owned logits and has no
+model, session, artifact, KV, transformer, decode, or tokenizer ownership.
+
+`yvex_runtime_sampling_source_from_logits` revalidates a completed logits-row
+identity, full vocabulary extent, canonical raw digest, finite values, source
+phase and position, hidden digest, and output-head plan. Greedy selection scans
+the complete row and resolves exact ties to the lowest token ID without RNG.
+Stochastic selection applies the schema-v1 temperature/filter order and
+commits one PCG-XSH-RR 64/32 transition only after token publication.
+`yvex_runtime_sampling_execute` preserves completed earlier rows and the exact
+committed RNG state when a later row refuses or is cancelled.
+
+Sampling result identities bind the source, policy, ordered survivor IDs,
+selected token, canonical probability, and applicable RNG states field by
+field. The API does not mutate logits or persistent state and does not append,
+decode, tokenize, stop, detokenize, or generate.
+
 ### Internal DeepSeek Attention Operator Boundary
 
 `yvex_graph_attention_operator_execute` is the non-installed typed adapter used
@@ -427,9 +451,11 @@ The current runtime supports production DeepSeek attention, persistent state,
 activation prefill, token-local MoE, the numeric token-ID complete transformer
 backbone, teacher-forced repeated decode, and complete raw vocabulary logits on
 CPU and the admitted GB10 CUDA path. Logits consume transformer-normalized
-hidden rows without repeating final norm. The runtime does not provide prompt
-text, tokenizer execution, sampling, text generation, evaluation, a full-model
-benchmark or release readiness.
+hidden rows without repeating final norm. The common host sampler consumes
+complete real logits and supports deterministic greedy plus explicitly seeded
+canonical stochastic token selection. The runtime does not append selected
+tokens or provide prompt text, tokenizer execution, EOS/stop behavior, text
+generation, evaluation, a full-model benchmark or release readiness.
 
 ## Extension Rules
 

@@ -21,6 +21,7 @@
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/sampling.h>
 #include <yvex/internal/transformer.h>
 #include <yvex/internal/source_payload.h>
 #include <yvex/model.h>
@@ -173,10 +174,13 @@ typedef struct {
     struct {
         const char *target, *artifact_path, *runtime_binding_path, *backend;
         const char *phase, *input_class, *input_file, *progress;
+        const char *strategy;
         unsigned long long chunk_tokens, context_capacity;
         unsigned long long prefill_tokens, prefill_chunk_tokens;
         unsigned long long maximum_host_bytes, maximum_device_bytes;
-        int active, decode, logits;
+        unsigned long long top_k, seed;
+        double temperature, top_p, min_p, typical_p;
+        int active, decode, logits, sample, seed_seen;
     } transformer;
     int help_requested;
     int help_exit_code;

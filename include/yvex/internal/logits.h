@@ -128,6 +128,10 @@ int yvex_runtime_logits_execute(
     yvex_backend_kind backend, float *logits, unsigned long long logits_capacity,
     yvex_runtime_logits_row_result *rows, unsigned long long row_capacity,
     yvex_runtime_logits_result *result, yvex_error *err);
+int yvex_runtime_logits_row_validate(
+    const yvex_runtime_logits_plan_summary *plan, const float *logits,
+    unsigned long long logits_capacity,
+    const yvex_runtime_logits_row_result *result, yvex_error *err);
 int yvex_runtime_logits_context_close(yvex_runtime_logits_context **context,
                                       yvex_error *err);
 
@@ -147,6 +151,8 @@ typedef struct {
     yvex_runtime_logits_plan_summary plan;
     yvex_runtime_logits_result execution;
     yvex_runtime_logits_row_result *rows;
+    float *raw_logits;
+    unsigned long long raw_logits_count;
     unsigned long long row_count, prefill_logits_rows, decode_logits_rows;
     unsigned long long output_head_host_bytes, output_head_device_bytes;
     unsigned long long output_head_upload_bytes, output_head_upload_count;

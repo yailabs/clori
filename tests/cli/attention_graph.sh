@@ -73,6 +73,8 @@ expect_nonzero() {
     2>"$OUT_DIR/decode-help.err"
 "$YVEX_BIN" graph transformer logits --help >"$OUT_DIR/logits-help.out" \
     2>"$OUT_DIR/logits-help.err"
+"$YVEX_BIN" graph transformer sample --help >"$OUT_DIR/sample-help.out" \
+    2>"$OUT_DIR/sample-help.err"
 for action in prepare describe capabilities plan execute compare; do
     "$YVEX_BIN" graph attention "$action" --help \
         >"$OUT_DIR/$action-help.out" 2>"$OUT_DIR/$action-help.err"
@@ -142,11 +144,44 @@ contains "$OUT_DIR/decode-help.out" "yvex graph transformer decode"
 contains "$OUT_DIR/decode-help.out" "--prefill-tokens N --prefill-chunk-tokens N"
 contains "$OUT_DIR/logits-help.out" "yvex graph transformer logits"
 contains "$OUT_DIR/logits-help.out" "complete raw vocabulary logits do not establish sampling or generation"
+contains "$OUT_DIR/sample-help.out" "yvex graph transformer sample"
+contains "$OUT_DIR/sample-help.out" "selected token IDs are not appended"
+
+expect_status 2 "$YVEX_BIN" graph transformer sample \
+    >"$OUT_DIR/sample-missing.out" 2>"$OUT_DIR/sample-missing.err"
+contains "$OUT_DIR/sample-missing.err" \
+    "decode/logits/sample requires target, artifact, runtime binding, backend, token input, prefill split, and context capacity"
+
+expect_status 2 "$YVEX_BIN" graph transformer sample --target deepseek4-v4-flash \
+    --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
+    --backend cpu --input token-ids --input-file /tmp/missing.input \
+    --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
+    --strategy stochastic --progress off --output json \
+    >"$OUT_DIR/sample-seed.out" 2>"$OUT_DIR/sample-seed.err"
+contains "$OUT_DIR/sample-seed.err" "stochastic strategy parameters are invalid"
+
+expect_status 3 "$YVEX_BIN" graph transformer sample --target deepseek4-v4-flash \
+    --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
+    --backend cpu --input token-ids --input-file /tmp/missing.input \
+    --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
+    --strategy stochastic --temperature 0.8 --top-k 50 --top-p 0.95 \
+    --min-p 0.05 --typical-p 1.0 --seed 42 --progress off --output json \
+    >"$OUT_DIR/sample-refusal.json" 2>"$OUT_DIR/sample-refusal.err"
+python3 - "$OUT_DIR/sample-refusal.json" <<'PY'
+import json
+import sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["command"] == "graph transformer sample"
+assert result["status"] == "refused"
+assert not result["sampling_ready"] and not result["generation_ready"]
+assert result["selected_tokens"] == []
+PY
+contains "$OUT_DIR/sample-refusal.err" "runtime binding open failed"
 
 expect_status 2 "$YVEX_BIN" graph transformer logits \
     >"$OUT_DIR/logits-missing.out" 2>"$OUT_DIR/logits-missing.err"
 contains "$OUT_DIR/logits-missing.err" \
-    "decode/logits requires target, artifact, runtime binding, backend, token input, prefill split, and context capacity"
+    "decode/logits/sample requires target, artifact, runtime binding, backend, token input, prefill split, and context capacity"
 
 expect_status 3 "$YVEX_BIN" graph transformer logits --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
@@ -168,7 +203,7 @@ contains "$OUT_DIR/logits-refusal.err" "runtime binding open failed"
 expect_status 2 "$YVEX_BIN" graph transformer decode \
     >"$OUT_DIR/decode-missing.out" 2>"$OUT_DIR/decode-missing.err"
 contains "$OUT_DIR/decode-missing.err" \
-    "decode/logits requires target, artifact, runtime binding, backend, token input, prefill split, and context capacity"
+    "decode/logits/sample requires target, artifact, runtime binding, backend, token input, prefill split, and context capacity"
 
 expect_status 3 "$YVEX_BIN" graph transformer decode --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \

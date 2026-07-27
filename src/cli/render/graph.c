@@ -10,16 +10,13 @@
  * Effects: formats admitted facts through CLI I/O without changing domain state.
  * Failure: formatting or I/O refusal cannot alter capability facts. */
 #include "src/cli/render/private.h"
-
 #include "src/cli/io/private.h"
 #include "src/cli/model_artifacts/private.h"
-
 #include <stddef.h>
 #include <string.h>
-
 #include <yvex/internal/decode.h>
 #include <yvex/internal/logits.h>
-
+#include <yvex/internal/sampling.h>
 static const char *const literal_lines_0[] = {
     "usage: yvex graph attention prepare --target TARGET",
     "       yvex graph attention describe --target TARGET",
@@ -48,6 +45,9 @@ static const char *const literal_lines_0[] = {
     "           --backend cpu|cuda --input token-ids --input-file FILE",
     "           --prefill-tokens N --prefill-chunk-tokens N --context-capacity N --progress off",
     "           complete raw vocabulary logits do not establish sampling or generation",
+    "       yvex graph transformer sample --target TARGET --artifact FILE --runtime-binding FILE",
+    "           --strategy greedy | --strategy stochastic --seed N [sampling filters]",
+    "           selected token IDs are not appended, decoded, detokenized, or generated",
     "           [--models-root DIR] [--artifact FILE] [--runtime-binding FILE] [--runtime-binding-dir DIR]",
     "           [--backend cpu|cuda] [--phase prefill|decode|mixed|verify]",
     "           [--mode eager|piecewise|full|auto] [--scope quick|full]",
@@ -70,7 +70,6 @@ static const char *const literal_lines_0[] = {
     "boundary: attention commands execute canonical activations over admitted weights and session-persistent "
         "state; they are not prompt execution, transformer composition, or generation"
 };
-
 #define ATTENTION_FIELD(KEY, KIND, MEMBER) \
     {KEY, KIND, offsetof(yvex_graph_attention_operator_result, MEMBER), ""}
 #define ATTENTION_TIMING(KEY, PHASE) \
@@ -87,7 +86,6 @@ static const char *const literal_lines_0[] = {
      offsetof(yvex_graph_attention_operator_result, capabilities) + \
          offsetof(yvex_runtime_capabilities, MEMBER), ""}
 #define FIELD_COUNT(FIELDS) (sizeof(FIELDS) / sizeof((FIELDS)[0]))
-
 #define MOE_FIELD(KEY, KIND, MEMBER) \
     {KEY, KIND, offsetof(yvex_moe_operator_result, MEMBER), ""}
 #define MOE_EXECUTION_FIELD(KEY, KIND, MEMBER) \
@@ -97,7 +95,6 @@ static const char *const literal_lines_0[] = {
     {KEY, YVEX_CLI_FIELD_U64, offsetof(yvex_moe_operator_result, execution) + \
          offsetof(yvex_runtime_moe_result, qtype_counts) + \
          (QTYPE) * sizeof(unsigned long long), ""}
-
 static const yvex_cli_field_spec moe_fields[] = {
     MOE_FIELD("command", YVEX_CLI_FIELD_TEXT_ARRAY, command),
     MOE_FIELD("status", YVEX_CLI_FIELD_TEXT_ARRAY, status),
@@ -162,13 +159,11 @@ static const yvex_cli_field_spec moe_fields[] = {
     MOE_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
     MOE_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
 };
-
 #define TRANSFORMER_FIELD(KEY, KIND, MEMBER) \
     {KEY, KIND, offsetof(yvex_transformer_operator_result, MEMBER), ""}
 #define TRANSFORMER_EXECUTION_FIELD(KEY, KIND, MEMBER) \
     {KEY, KIND, offsetof(yvex_transformer_operator_result, execution) + \
                     offsetof(yvex_runtime_transformer_result, MEMBER), ""}
-
 static const yvex_cli_field_spec transformer_fields[] = {
     TRANSFORMER_FIELD("command", YVEX_CLI_FIELD_TEXT_ARRAY, command),
     TRANSFORMER_FIELD("status", YVEX_CLI_FIELD_TEXT_ARRAY, status),
@@ -261,13 +256,11 @@ static const yvex_cli_field_spec transformer_fields[] = {
     TRANSFORMER_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
     TRANSFORMER_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
 };
-
 #define DECODE_FIELD(KEY, KIND, MEMBER) \
     {KEY, KIND, offsetof(yvex_decode_operator_result, MEMBER), ""}
 #define DECODE_EXECUTION_FIELD(KEY, KIND, MEMBER) \
     {KEY, KIND, offsetof(yvex_decode_operator_result, decode) + \
                     offsetof(yvex_runtime_decode_result, MEMBER), ""}
-
 static const yvex_cli_field_spec decode_fields[] = {
     DECODE_FIELD("command", YVEX_CLI_FIELD_TEXT_ARRAY, command),
     DECODE_FIELD("status", YVEX_CLI_FIELD_TEXT_ARRAY, status),
@@ -347,7 +340,6 @@ static const yvex_cli_field_spec decode_fields[] = {
     DECODE_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
     DECODE_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
 };
-
 #define LOGITS_FIELD(KEY, KIND, MEMBER) \
     {KEY, KIND, offsetof(yvex_logits_operator_result, MEMBER), ""}
 #define LOGITS_PLAN_FIELD(KEY, KIND, MEMBER) \
@@ -427,7 +419,59 @@ static const yvex_cli_field_spec logits_fields[] = {
     LOGITS_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
     LOGITS_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
 };
-
+#define SAMPLE_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_sampling_operator_result, MEMBER), ""}
+#define SAMPLE_POLICY(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_sampling_operator_result, policy) + \
+                    offsetof(yvex_runtime_sampling_policy, MEMBER), ""}
+#define SAMPLE_EXEC(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_sampling_operator_result, execution) + \
+                    offsetof(yvex_runtime_sampling_execution, MEMBER), ""}
+#define SAMPLE_BOOL(MEMBER) SAMPLE_FIELD(#MEMBER, YVEX_CLI_FIELD_BOOL, MEMBER)
+static const yvex_cli_field_spec sampling_fields[] = {
+    SAMPLE_FIELD("command", YVEX_CLI_FIELD_TEXT_ARRAY, command),
+    SAMPLE_FIELD("status", YVEX_CLI_FIELD_TEXT_ARRAY, status),
+    SAMPLE_FIELD("target", YVEX_CLI_FIELD_TEXT_ARRAY, target),
+    SAMPLE_FIELD("family", YVEX_CLI_FIELD_TEXT_ARRAY, family),
+    SAMPLE_FIELD("logits_backend", YVEX_CLI_FIELD_TEXT_ARRAY, logits_backend),
+    SAMPLE_FIELD("sampling_execution_kind", YVEX_CLI_FIELD_TEXT_ARRAY, sampling_execution_kind),
+    SAMPLE_FIELD("samples", YVEX_CLI_FIELD_U64, sample_count),
+    SAMPLE_FIELD("prefill_samples", YVEX_CLI_FIELD_U64, prefill_samples),
+    SAMPLE_FIELD("decode_samples", YVEX_CLI_FIELD_U64, decode_samples),
+    SAMPLE_FIELD("strategy", YVEX_CLI_FIELD_TEXT_ARRAY, strategy),
+    SAMPLE_POLICY("temperature", YVEX_CLI_FIELD_DOUBLE, temperature),
+    SAMPLE_POLICY("top_k", YVEX_CLI_FIELD_U64, top_k),
+    SAMPLE_POLICY("top_p", YVEX_CLI_FIELD_DOUBLE, top_p),
+    SAMPLE_POLICY("min_p", YVEX_CLI_FIELD_DOUBLE, min_p),
+    SAMPLE_POLICY("typical_p", YVEX_CLI_FIELD_DOUBLE, typical_p),
+    SAMPLE_POLICY("seed", YVEX_CLI_FIELD_U64, seed),
+    SAMPLE_POLICY("rng_algorithm", YVEX_CLI_FIELD_U32, rng_algorithm),
+    SAMPLE_POLICY("rng_version", YVEX_CLI_FIELD_U32, rng_version),
+    SAMPLE_POLICY("filter_order_version", YVEX_CLI_FIELD_U32, filter_order_version),
+    SAMPLE_POLICY("policy_identity", YVEX_CLI_FIELD_TEXT_ARRAY, policy_identity),
+    SAMPLE_EXEC("sampling_requested_samples", YVEX_CLI_FIELD_U64, requested_samples),
+    SAMPLE_EXEC("sampling_completed_samples", YVEX_CLI_FIELD_U64, completed_samples),
+    SAMPLE_EXEC("sampling_first_incomplete_sample", YVEX_CLI_FIELD_U64, first_incomplete_sample),
+    SAMPLE_EXEC("sampling_partial", YVEX_CLI_FIELD_BOOL, partial),
+    SAMPLE_EXEC("sampling_identity", YVEX_CLI_FIELD_TEXT_ARRAY, aggregate_sampling_identity),
+    SAMPLE_FIELD("workspace_bytes", YVEX_CLI_FIELD_U64, workspace_bytes),
+    SAMPLE_FIELD("workspace_generation", YVEX_CLI_FIELD_U64, workspace_generation),
+    SAMPLE_FIELD("warm_sampling_allocations", YVEX_CLI_FIELD_U64, warm_workspace_allocations),
+    SAMPLE_BOOL(sampling_source_contract_ready), SAMPLE_BOOL(sampling_policy_ready), SAMPLE_BOOL(sampling_greedy_ready),
+    SAMPLE_BOOL(sampling_temperature_ready),
+    SAMPLE_BOOL(sampling_top_k_ready), SAMPLE_BOOL(sampling_top_p_ready),
+    SAMPLE_BOOL(sampling_min_p_ready), SAMPLE_BOOL(sampling_typical_ready),
+    SAMPLE_BOOL(sampling_stochastic_ready), SAMPLE_BOOL(sampling_seed_reproducibility_ready),
+    SAMPLE_BOOL(sampling_real_logits_ready), SAMPLE_BOOL(sampling_partial_progress_ready),
+    SAMPLE_BOOL(sampling_ready), SAMPLE_BOOL(persistent_state_unchanged),
+    SAMPLE_BOOL(token_append_ready), SAMPLE_BOOL(tokenizer_runtime_ready),
+    SAMPLE_BOOL(eos_policy_ready), SAMPLE_BOOL(stop_policy_ready),
+    SAMPLE_BOOL(detokenization_ready), SAMPLE_BOOL(generation_ready),
+    SAMPLE_BOOL(cuda_sampling_ready), SAMPLE_BOOL(model_behavior_evaluation_ready),
+    SAMPLE_BOOL(full_model_benchmark_ready), SAMPLE_BOOL(release_qualification_ready),
+    SAMPLE_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
+    SAMPLE_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
+};
 static const yvex_cli_field_spec attention_base_fields[] = {
     ATTENTION_FIELD("command", YVEX_CLI_FIELD_TEXT_ARRAY, command),
     ATTENTION_FIELD("status", YVEX_CLI_FIELD_TEXT_ARRAY, status),
@@ -844,7 +888,6 @@ static const yvex_cli_field_spec attention_final_field[] = {
     ATTENTION_CAPABILITY("transformer_ready", transformer_ready),
     ATTENTION_CAPABILITY("runtime_generation_ready", generation_ready),
 };
-
 typedef enum {
     ATTENTION_FIELDS_ALWAYS = 1u << 0,
     ATTENTION_FIELDS_TARGET = 1u << 1,
@@ -869,14 +912,12 @@ typedef enum {
     ATTENTION_FIELDS_QUALIFICATION = 1u << 20,
     ATTENTION_FIELDS_BENCHMARK_REGRESSION = 1u << 21
 } attention_field_condition;
-
 typedef struct {
     const yvex_cli_field_spec *fields;
     size_t count;
     attention_field_condition condition;
     int final;
 } attention_field_group;
-
 typedef enum {
     ATTENTION_PRESENCE_TEXT,
     ATTENTION_PRESENCE_TARGET,
@@ -885,14 +926,12 @@ typedef enum {
     ATTENTION_PRESENCE_DOUBLE,
     ATTENTION_PRESENCE_COMPARISON_FAILURE
 } attention_presence_kind;
-
 typedef struct {
     attention_field_condition condition;
     size_t offset;
     attention_presence_kind kind;
     int detailed;
 } attention_presence_rule;
-
 #define ATTENTION_GROUP(FIELDS, CONDITION) \
     {FIELDS, FIELD_COUNT(FIELDS), CONDITION, 0}
 static const attention_field_group attention_field_groups[] = {
@@ -929,7 +968,6 @@ static const attention_field_group attention_field_groups[] = {
     ATTENTION_GROUP(attention_reason_field, ATTENTION_FIELDS_REASON),
     {attention_final_field, FIELD_COUNT(attention_final_field), ATTENTION_FIELDS_ALWAYS, 1},
 };
-
 static const attention_presence_rule attention_presence_rules[] = {
     {ATTENTION_FIELDS_TARGET, offsetof(yvex_graph_attention_operator_result, family), ATTENTION_PRESENCE_TARGET, 0},
 {ATTENTION_FIELDS_ADMITTED, offsetof(yvex_graph_attention_operator_result, attention_plan_identity),
@@ -973,7 +1011,6 @@ static const attention_presence_rule attention_presence_rules[] = {
      ATTENTION_PRESENCE_TEXT, 0},
     {ATTENTION_FIELDS_REASON, offsetof(yvex_graph_attention_operator_result, reason), ATTENTION_PRESENCE_TEXT, 0},
 };
-
 #undef ATTENTION_GROUP
 #undef ATTENTION_CAPABILITY
 #undef ATTENTION_PROBE_FIELD
@@ -985,7 +1022,6 @@ static int graph_attention_rule_present(
     const yvex_graph_attention_operator_result *result)
 {
     const unsigned char *value = (const unsigned char *)result + rule->offset;
-
     switch (rule->kind) {
     case ATTENTION_PRESENCE_TEXT: return *(const char *)value != '\0';
     case ATTENTION_PRESENCE_TARGET: return strcmp((const char *)value, "unavailable") != 0;
@@ -1006,7 +1042,6 @@ static unsigned int graph_attention_visible_groups(
 {
     unsigned int visible = ATTENTION_FIELDS_ALWAYS;
     size_t index;
-
     for (index = 0u; index < FIELD_COUNT(attention_presence_rules); ++index)
         if ((!attention_presence_rules[index].detailed || detailed) &&
             graph_attention_rule_present(&attention_presence_rules[index], result))
@@ -1030,7 +1065,6 @@ static int graph_attention_emit(FILE *fp,
 static int graph_attention_csv_cell(FILE *fp, const char *text)
 {
     const unsigned char *cursor = (const unsigned char *)(text ? text : "");
-
     if (yvex_cli_out_char(fp, '"') < 0) return YVEX_ERR_IO;
     for (; *cursor; ++cursor) {
         if (*cursor == '"' && yvex_cli_out_char(fp, '"') < 0) return YVEX_ERR_IO;
@@ -1048,7 +1082,6 @@ static int graph_csv_field(FILE *fp, const void *object,
     const void *value = base + field->offset;
     char number[64];
     const char *text = number;
-
     switch (field->kind) {
     case YVEX_CLI_FIELD_TEXT:
         text = *(const char *const *)value;
@@ -1101,12 +1134,10 @@ static int graph_attention_render_fields(FILE *fp,
     unsigned int visible = graph_attention_visible_groups(result, detailed);
     size_t index, field_index;
     int rc = YVEX_OK;
-
     if (csv && yvex_cli_out_writef(fp, "field,value\n") < 0) return YVEX_ERR_IO;
     if (json) yvex_cli_json_begin(fp);
     for (index = 0; rc == YVEX_OK && index < FIELD_COUNT(attention_field_groups); ++index) {
         const attention_field_group *group = &attention_field_groups[index];
-
         if (!(visible & (unsigned int)group->condition)) continue;
         if (csv) {
             for (field_index = 0; field_index < group->count; ++field_index)
@@ -1129,7 +1160,6 @@ int yvex_graph_attention_render(FILE *fp,
     if (!fp || !result) return YVEX_ERR_INVALID_ARG;
     return graph_attention_render_fields(fp, mode, result);
 }
-
 /* Purpose: render one typed production MoE result without deriving capability facts.
  * Inputs: result and mode. Effects: writes stream. Failure: I/O status. Boundary: no claims. */
 int yvex_graph_moe_render(FILE *fp, yvex_graph_report_mode mode,
@@ -1154,7 +1184,6 @@ int yvex_graph_moe_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-
 /* Purpose: render one typed transformer result.
  * Inputs: output stream, mode, and domain result. Effects: writes through CLI I/O.
  * Failure: typed I/O refusal. Boundary: never derives capability or executes graph work. */
@@ -1182,7 +1211,6 @@ int yvex_graph_transformer_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-
 /* Purpose: render ordered per-step decode evidence after the flat operator summary.
  * Inputs: typed step directory and output mode. Effects: writes presentation only.
  * Failure: stream refusal. Boundary: no identity or capability derivation. */
@@ -1235,7 +1263,6 @@ static int graph_decode_steps_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
-
 /* Purpose: render one typed repeated-decode operator result and ordered step directory.
  * Inputs: output stream, mode, and domain result. Effects: writes through CLI I/O.
  * Failure: typed I/O refusal. Boundary: never chooses tokens or derives capability. */
@@ -1353,6 +1380,80 @@ int yvex_graph_logits_render(FILE *fp, yvex_graph_report_mode mode,
         rc = yvex_cli_out_fields(fp, result, logits_fields,
                                  FIELD_COUNT(logits_fields));
         if (rc == YVEX_OK) rc = graph_logits_rows_render(fp, mode, result);
+    }
+    return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
+}
+/* Purpose: render bounded selected-token rows without logits or probability-vector dumps.
+ * Inputs: stream, mode, and typed rows. Effects: writes only bounded selection facts.
+ * Failure: reports I/O status. Boundary: renderer cannot append tokens or create generation authority. */
+static int graph_sampling_rows(FILE *fp, yvex_graph_report_mode mode,
+                               const yvex_sampling_operator_result *result)
+{
+    unsigned long long index;
+    if (mode == YVEX_GRAPH_REPORT_MODE_JSON)
+        yvex_cli_out_puts(fp, "  \"selected_tokens\": [\n");
+    for (index = 0ull; index < result->sample_count; ++index) {
+        const yvex_runtime_sampling_result *row = &result->samples[index];
+        const char *phase = row->source_phase == YVEX_LOGITS_SOURCE_PREFILL ? "prefill" : "decode";
+        if (mode == YVEX_GRAPH_REPORT_MODE_JSON)
+            yvex_cli_out_writef(fp, "    {\"ordinal\":%llu,\"phase\":\"%s\",\"position\":%llu,"
+                                "\"token_id\":%u,\"logit\":%.9g,\"probability\":%.17g,"
+                                "\"log_probability\":%.17g,\"candidates\":%llu,"
+                                "\"source_identity\":\"%s\",\"candidate_identity\":\"%s\","
+                                "\"rng_before\":\"%s\",\"rng_after\":\"%s\","
+                                "\"identity\":\"%s\"}%s\n",
+                                index, phase, row->source_position, row->selected_token_id,
+                                row->selected_logit, row->selected_probability,
+                                row->selected_log_probability, row->final_candidate_count,
+                                row->source_identity, row->candidate_set_identity,
+                                row->rng_state_before_identity, row->rng_state_after_identity,
+                                row->selected_token_identity,
+                                index + 1ull < result->sample_count ? "," : "");
+        else
+            yvex_cli_out_writef(fp, mode == YVEX_GRAPH_REPORT_MODE_CSV
+                ? "\"sample.%llu\",\"phase=%s position=%llu token=%u logit=%.9g "
+                  "probability=%.17g log_probability=%.17g candidates=%llu "
+                  "source=%s candidate=%s rng_before=%s rng_after=%s identity=%s\"\n"
+                : "sample.%llu: phase=%s position=%llu token=%u logit=%.9g "
+                  "probability=%.17g log_probability=%.17g candidates=%llu "
+                  "source=%s candidate=%s rng_before=%s rng_after=%s identity=%s\n",
+                index, phase, row->source_position, row->selected_token_id,
+                row->selected_logit, row->selected_probability,
+                row->selected_log_probability, row->final_candidate_count,
+                row->source_identity, row->candidate_set_identity,
+                row->rng_state_before_identity, row->rng_state_after_identity,
+                row->selected_token_identity);
+    }
+    if (mode == YVEX_GRAPH_REPORT_MODE_JSON) yvex_cli_out_line(fp, "  ]");
+    return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+}
+/* Purpose: render typed common-host sampling evidence through canonical CLI I/O.
+ * Inputs: stream, mode, and operator result. Effects: writes one schema-owned record.
+ * Failure: invalid storage or I/O refuses. Boundary: rendering cannot establish sampling capability. */
+int yvex_graph_sampling_render(FILE *fp, yvex_graph_report_mode mode,
+                               const yvex_sampling_operator_result *result)
+{
+    size_t index;
+    int rc;
+    if (!fp || !result || (result->sample_count && !result->samples))
+        return YVEX_ERR_INVALID_ARG;
+    if (mode == YVEX_GRAPH_REPORT_MODE_CSV) {
+        if (yvex_cli_out_writef(fp, "field,value\n") < 0) return YVEX_ERR_IO;
+        for (index = 0u; index < FIELD_COUNT(sampling_fields); ++index)
+            if (graph_csv_field(fp, result, &sampling_fields[index]) != YVEX_OK)
+                return YVEX_ERR_IO;
+        return graph_sampling_rows(fp, mode, result);
+    }
+    if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
+        yvex_cli_json_begin(fp);
+        rc = yvex_cli_json_fields(fp, result, sampling_fields,
+                                  FIELD_COUNT(sampling_fields), 1);
+        if (rc == YVEX_OK) rc = graph_sampling_rows(fp, mode, result);
+        yvex_cli_json_end(fp);
+    } else {
+        rc = yvex_cli_out_fields(fp, result, sampling_fields,
+                                 FIELD_COUNT(sampling_fields));
+        if (rc == YVEX_OK) rc = graph_sampling_rows(fp, mode, result);
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }

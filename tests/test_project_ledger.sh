@@ -396,8 +396,10 @@ grep -F '| `V010.RUNTIME.DEEPSEEK.DECODE.0` | DeepSeek | `complete` |' "$project
   fail "DeepSeek repeated decode is not complete"
 grep -F '| `V010.RUNTIME.DEEPSEEK.LOGITS.0` | DeepSeek | `complete` |' "$project" >/dev/null ||
   fail "DeepSeek logits is not complete"
-grep -F '| `V010.RUNTIME.SAMPLING.0` | common | `active` |' "$project" >/dev/null ||
-  fail "sampling is not active after logits closure"
+grep -F '| `V010.RUNTIME.SAMPLING.0` | common | `complete` |' "$project" >/dev/null ||
+  fail "real-logits sampling is not complete"
+grep -F '| `V010.RUNTIME.DEEPSEEK.TOKENIZER.0` | DeepSeek | `active` |' "$project" >/dev/null ||
+  fail "DeepSeek tokenizer is not active after sampling closure"
 grep -F '| V010.MODEL.TRANSFORM.IR.0 | recovered/promoted |' "$project" >/dev/null ||
   fail "quantization does not depend on the transformation IR"
 

@@ -254,7 +254,8 @@ to `PROJECT.md`.
 This target does not claim:
 
 - tokenizer-backed prompt prefill
-- repeated model decode, logits, sampling, or generation
+- token append, EOS/stop behavior, detokenized text, or autoregressive generation
+- CUDA sampling or fused logits/sampling execution
 - evaluation or full-model benchmark results
 - supported-model or release readiness
 

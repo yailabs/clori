@@ -307,8 +307,9 @@ for snapshot in \
   '| Numeric-token transformer backbone | Selected embedding rows, all 43 attention/MoE blocks' \
   '| Teacher-forced repeated model decode | Externally supplied token IDs execute one at a time' \
   '| Output-head residency and raw logits | The separate encoded BF16' \
+  '| Real-logits sampling | The common host sampler validates every value and identity' \
   '| Tokenizer-backed prompt prefill | Unsupported |' \
-  '| Sampling and text generation | Unsupported |' \
+  '| Token append and text generation | Unsupported |' \
   '| Evaluation | Blocked |' \
   'full-model benchmark is not measured' \
   '| Release | Blocked |'
@@ -325,6 +326,7 @@ for command in \
   './yvex graph transformer execute --help' \
   './yvex graph transformer decode --help' \
   './yvex graph transformer logits --help' \
+  './yvex graph transformer sample --help' \
   './yvex graph attention prepare' \
   './yvex graph attention describe' \
   './yvex graph attention execute' \
@@ -333,14 +335,15 @@ for command in \
   './yvex graph attention benchmark' \
   './yvex graph transformer execute' \
   './yvex graph transformer decode' \
-  './yvex graph transformer logits'
+  './yvex graph transformer logits' \
+  './yvex graph transformer sample'
 do
   require_text README.md "$command"
 done
 require_text README.md 'canonical diagnostic activation'
 require_text README.md 'versioned tensor-file bundles'
 require_text README.md '--input tensor-file'
-require_text README.md 'Prompt text, sampling,'
+require_text README.md 'Prompt text, tokenizer execution, and generation remain'
 
 readme_commands=$(grep -E '^[[:space:]]*\./yvex([[:space:]]|$)' README.md |
   sed 's/^[[:space:]]*//')
@@ -353,6 +356,7 @@ while IFS= read -r command; do
     './yvex graph transformer execute --help' | \
     './yvex graph transformer decode --help' | \
     './yvex graph transformer logits --help' | \
+    './yvex graph transformer sample --help' | \
     './yvex graph attention prepare \' | \
     './yvex graph attention describe \' | \
     './yvex graph attention execute \' | \
@@ -362,7 +366,8 @@ while IFS= read -r command; do
     './yvex graph moe execute \' | \
     './yvex graph transformer execute \' | \
     './yvex graph transformer decode \' | \
-    './yvex graph transformer logits \') ;;
+    './yvex graph transformer logits \' | \
+    './yvex graph transformer sample \') ;;
     *) fail "README contains an unregistered operator command: $command" ;;
   esac
 done <<EOF
@@ -378,11 +383,13 @@ require_text docs/contract.md '## Production Activation-Prefill Contract'
 require_text docs/contract.md '## Production Transformer Contract'
 require_text docs/contract.md '## Production Repeated Decode Contract'
 require_text docs/contract.md '## Production Vocabulary-Logits Contract'
+require_text docs/contract.md '## Production Real-Logits Sampling Contract'
 require_text docs/api.md '### Internal DeepSeek Attention Operator Boundary'
 require_text docs/api.md '### Internal Activation-Prefill Boundary'
 require_text docs/api.md '### Internal Repeated Decode Boundary'
 require_text docs/api.md '### Internal Transformer Execution Boundary'
 require_text docs/api.md '### Internal Vocabulary-Logits Boundary'
+require_text docs/api.md '### Internal Real-Logits Sampling Boundary'
 require_text docs/contract.md '## Quality, Qualification, Benchmark, And Evaluation Contract'
 require_text docs/api.md '## Qualification, Benchmark, And Chart Contract'
 require_text docs/contract.md '### Attention Component Benchmark'
@@ -583,7 +590,7 @@ require_text "$project" '`attention_execution_supported=1`, `attention_cuda_exec
 require_text "$project" 'Complete DeepSeek attention, token-local MoE, embedding, 43-block composition, final mHC collapse, and final RMSNorm are admitted through CPU and GB10 CUDA paths'
 require_text "$project" 'a supported DeepSeek-V4-Flash model artifact; the admitted artifact is consumed by the transformer backbone but has not passed generation, evaluation, benchmark, and release gates;'
 require_text "$project" 'complete-model or whole-expert-collection residency; the exact output head, attention/state resources'
-require_text "$project" 'autoregressive token choice; teacher-forced repeated decode consumes externally supplied token IDs;'
+require_text "$project" 'autoregressive token choice; teacher-forced repeated decode still consumes externally supplied token IDs;'
 require_text "$project" 'persistent_kv_ready=1'
 reject_text "$project" 'complete GGUF writer, complete-model emission, writer-reader roundtrip, or artifact support admission;'
 require_text "$project" '| Recovered IDs | 631 |'
@@ -715,7 +722,7 @@ require_text docs/topology-closure-audit.md '`PROJECT.md` owns when each finding
 require_text docs/cli-output-architecture.md '## Project State Ownership'
 require_text docs/model-families.md 'exact v0.1.0 target'
 require_text docs/model-families.md 'sealed Transformation IR, complete quantization, two admitted complete artifacts'
-require_text docs/model-families.md 'teacher-forced repeated decode, and complete raw vocabulary logits exist; tokenizer-backed prompt input, sampling, and generation remain unsupported'
+require_text docs/model-families.md 'complete raw vocabulary logits, and common-host real-logits sampling exist; tokenizer-backed prompt input, token append, stop behavior, and generation remain unsupported'
 reject_text docs/model-families.md 'no artifact-neutral transformation plan, payload conversion, complete model artifact, or runtime path'
 require_text docs/contract.md 'These are implementation facts, not a runtime progress ladder.'
 require_text docs/contract.md 'defined only by `PROJECT.md`.'

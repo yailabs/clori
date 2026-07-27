@@ -47,11 +47,12 @@
 	test-runtime-operator test-runtime-digests test-runtime-family-neutrality \
 	test-runtime-state test-runtime-prefill test-runtime-benchmark test-runtime-benchmark-chart \
 	test-runtime-moe test-runtime-transformer test-runtime-decode test-runtime-logits \
+	test-runtime-sampling \
 	test-runtime-benchmark-chart-live update-runtime-benchmark-charts \
 	test-runtime-attention-live test-runtime-deepseek-kv-live \
 	test-runtime-deepseek-prefill-live test-runtime-deepseek-moe-live \
 	test-runtime-deepseek-transformer-live test-runtime-deepseek-decode-live \
-	test-runtime-deepseek-logits-live \
+	test-runtime-deepseek-logits-live test-runtime-deepseek-sampling-live \
 	test-runtime test-runtime-asan test-runtime-asan-live \
 	test-runtime-ubsan test-runtime-ubsan-live test-runtime-sanitizers \
 	test-runtime-sanitizers-live test-materialize-live-plan \
@@ -186,6 +187,7 @@ CORE_SRCS := \
 	src/runtime/binding.c \
 	src/runtime/decode.c \
 	src/runtime/logits.c \
+	src/runtime/sampling.c \
 	src/runtime/moe.c \
 	src/runtime/moe_input.c \
 	src/runtime/prefill.c \
@@ -488,6 +490,9 @@ test-runtime-decode: $(TEST_RUNNER)
 
 test-runtime-logits: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_logits $(TEST_RUNNER)
+
+test-runtime-sampling: $(TEST_RUNNER)
+	YVEX_TEST_FILTER=runtime_sampling $(TEST_RUNNER)
 
 test-runtime-benchmark: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_benchmark $(TEST_RUNNER)
@@ -944,8 +949,31 @@ test-runtime-deepseek-logits-live: cuda $(LOGITS_LIVE_RUNNER) $(YVEX_BIN)
 		and r["decode_logits_rows"]==2 and len(r["rows"])==3 \
 		and all(x["logits_count"]==129280 for x in r["rows"]) \
 		and not r["sampling_ready"] and not r["generation_ready"]' "$$tmp_dir/cuda.json"; \
+	$(YVEX_BIN) graph transformer sample --target deepseek4-v4-flash \
+		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
+		--backend cuda --input token-ids --input-file "$$input" \
+		--prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
+		--strategy stochastic --temperature 0.8 --top-k 50 --top-p 0.95 \
+		--min-p 0.05 --typical-p 0.9 --seed 42 --progress off --output json \
+		>"$$tmp_dir/sample.json"; \
+	python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); \
+		assert r["status"]=="complete" and r["sampling_real_logits_ready"] \
+		and r["sampling_ready"] and r["samples"]==3 \
+		and r["strategy"]=="stochastic" and r["rng_algorithm"]==1 \
+		and r["rng_version"]==1 and r["filter_order_version"]==1 \
+		and r["sampling_completed_samples"]==3 and not r["sampling_partial"] \
+		and r["prefill_samples"]==1 and r["decode_samples"]==2 \
+		and len(r["selected_tokens"])==3 \
+		and all(x["candidates"]>0 and x["rng_before"] and x["rng_after"] \
+		        and x["source_identity"] and x["candidate_identity"] \
+		        for x in r["selected_tokens"]) \
+		and not r["token_append_ready"] and not r["tokenizer_runtime_ready"] \
+		and not r["generation_ready"] and not r["cuda_sampling_ready"]' \
+		"$$tmp_dir/sample.json"; \
 	cat "$$tmp_dir/api.out"; \
 	echo "production DeepSeek logits live: CPU/CUDA complete-vocabulary prefill/decode projection"
+
+test-runtime-deepseek-sampling-live: test-runtime-deepseek-logits-live
 
 test-attention-cli-live: $(YVEX_BIN) tests/cli/attention_graph.sh
 	@set -eu; \

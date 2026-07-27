@@ -11,7 +11,10 @@
  * Failure: invalid or ambiguous grammar leaves the request uncommitted. */
 #include "src/cli/input/private.h"
 
+#include <errno.h>
 #include <limits.h>
+#include <math.h>
+#include <stdlib.h>
 #include <string.h>
 /* Purpose: Compute graph arg error for its CLI invariant (`graph_arg_error`). */
 static int graph_arg_error(yvex_error *err, const char *message) {
@@ -43,6 +46,40 @@ static void graph_args_defaults(yvex_graph_args *out) {
     out->transformer.phase = "prefill";
     out->transformer.input_class = "token-ids";
     out->transformer.progress = "off";
+    out->transformer.strategy = "greedy";
+    out->transformer.temperature = 1.0;
+    out->transformer.top_p = 1.0;
+    out->transformer.typical_p = 1.0;
+}
+
+/* Purpose: parse one complete finite decimal without accepting suffixes.
+ * Inputs: borrowed text and caller result. Effects: publishes only on success.
+ * Failure: returns false for syntax, range, or non-finite values. Boundary: CLI parsing only. */
+static int graph_parse_finite_double(const char *text, double *out)
+{
+    char *end = NULL;
+    double value;
+    if (!text || !text[0] || !out) return 0;
+    errno = 0;
+    value = strtod(text, &end);
+    if (errno || !end || *end || !isfinite(value)) return 0;
+    *out = value;
+    return 1;
+}
+
+/* Purpose: parse one complete nonnegative U64, including zero.
+ * Inputs: borrowed text and caller result. Effects: publishes only on success.
+ * Failure: returns false for syntax or range. Boundary: CLI parsing only. */
+static int graph_parse_nonnegative_u64(const char *text, unsigned long long *out)
+{
+    char *end = NULL;
+    unsigned long long value;
+    if (!text || !text[0] || text[0] == '-' || !out) return 0;
+    errno = 0;
+    value = strtoull(text, &end, 10);
+    if (errno || !end || *end) return 0;
+    *out = value;
+    return 1;
 }
 
 typedef enum {
@@ -651,12 +688,14 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
     int index;
     if (argc < 4 || (strcmp(argv[3], "execute") != 0 &&
                      strcmp(argv[3], "decode") != 0 &&
-                     strcmp(argv[3], "logits") != 0))
+                     strcmp(argv[3], "logits") != 0 &&
+                     strcmp(argv[3], "sample") != 0))
         return graph_arg_error(err,
-                               "yvex: graph transformer requires execute, decode, or logits");
+                               "yvex: graph transformer requires execute, decode, logits, or sample");
     out->transformer.active = 1;
     out->transformer.decode = strcmp(argv[3], "decode") == 0;
     out->transformer.logits = strcmp(argv[3], "logits") == 0;
+    out->transformer.sample = strcmp(argv[3], "sample") == 0;
     for (index = 4; index < argc; ++index) {
         const char *flag = argv[index];
         const char *value;
@@ -675,6 +714,27 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
         else if (strcmp(flag, "--input") == 0) out->transformer.input_class = value;
         else if (strcmp(flag, "--input-file") == 0) out->transformer.input_file = value;
         else if (strcmp(flag, "--progress") == 0) out->transformer.progress = value;
+        else if (strcmp(flag, "--strategy") == 0) out->transformer.strategy = value;
+        else if (strcmp(flag, "--temperature") == 0) {
+            if (!graph_parse_finite_double(value, &out->transformer.temperature))
+                return graph_arg_error(err, "yvex: --temperature requires a finite decimal");
+        } else if (strcmp(flag, "--top-k") == 0) {
+            if (!graph_parse_nonnegative_u64(value, &out->transformer.top_k))
+                return graph_arg_error(err, "yvex: --top-k requires a nonnegative integer");
+        } else if (strcmp(flag, "--top-p") == 0) {
+            if (!graph_parse_finite_double(value, &out->transformer.top_p))
+                return graph_arg_error(err, "yvex: --top-p requires a finite decimal");
+        } else if (strcmp(flag, "--min-p") == 0) {
+            if (!graph_parse_finite_double(value, &out->transformer.min_p))
+                return graph_arg_error(err, "yvex: --min-p requires a finite decimal");
+        } else if (strcmp(flag, "--typical-p") == 0) {
+            if (!graph_parse_finite_double(value, &out->transformer.typical_p))
+                return graph_arg_error(err, "yvex: --typical-p requires a finite decimal");
+        } else if (strcmp(flag, "--seed") == 0) {
+            if (!graph_parse_nonnegative_u64(value, &out->transformer.seed))
+                return graph_arg_error(err, "yvex: --seed requires a nonnegative integer");
+            out->transformer.seed_seen = 1;
+        }
         else if (strcmp(flag, "--chunk-tokens") == 0) {
             if (!parse_positive_ull(value, &out->transformer.chunk_tokens))
                 return graph_arg_error(err, "yvex: --chunk-tokens requires a positive integer");
@@ -709,8 +769,8 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
         !out->transformer.input_file ||
         !out->transformer.context_capacity)
         return graph_arg_error(
-            err, (out->transformer.decode || out->transformer.logits)
-                     ? "yvex: graph transformer decode/logits requires target, artifact, runtime binding, "
+            err, (out->transformer.decode || out->transformer.logits || out->transformer.sample)
+                     ? "yvex: graph transformer decode/logits/sample requires target, artifact, runtime binding, "
                        "backend, token input, prefill split, and context capacity"
                      : "yvex: graph transformer execute requires target, artifact, runtime binding, "
                        "backend, token input, chunk tokens, and context capacity");
@@ -722,15 +782,35 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
         return graph_arg_error(err, "yvex: graph transformer requires --input token-ids");
     if (strcmp(out->transformer.progress, "off") != 0)
         return graph_arg_error(err, "yvex: graph transformer requires --progress off");
-    if ((!out->transformer.decode && !out->transformer.logits &&
+    if ((!out->transformer.decode && !out->transformer.logits && !out->transformer.sample &&
          !out->transformer.chunk_tokens) ||
-        ((out->transformer.decode || out->transformer.logits) &&
+        ((out->transformer.decode || out->transformer.logits || out->transformer.sample) &&
          (!out->transformer.prefill_tokens ||
           !out->transformer.prefill_chunk_tokens)))
         return graph_arg_error(
-            err, (out->transformer.decode || out->transformer.logits)
-                     ? "yvex: graph transformer decode/logits requires prefill tokens and prefill chunk tokens"
+            err, (out->transformer.decode || out->transformer.logits || out->transformer.sample)
+                     ? "yvex: graph transformer decode/logits/sample requires prefill tokens and prefill chunk tokens"
                      : "yvex: graph transformer execute requires chunk tokens");
+    if (out->transformer.sample) {
+        int stochastic = strcmp(out->transformer.strategy, "stochastic") == 0;
+        int greedy = strcmp(out->transformer.strategy, "greedy") == 0;
+        if (!greedy && !stochastic)
+            return graph_arg_error(err, "yvex: --strategy requires greedy or stochastic");
+        if (greedy && (out->transformer.seed_seen || out->transformer.temperature != 1.0 ||
+                       out->transformer.top_k || out->transformer.top_p != 1.0 ||
+                       out->transformer.min_p != 0.0 || out->transformer.typical_p != 1.0))
+            return graph_arg_error(err, "yvex: greedy strategy requires neutral filters and no seed");
+        if (stochastic && (!out->transformer.seed_seen || out->transformer.temperature <= 0.0 ||
+                           out->transformer.top_p <= 0.0 || out->transformer.top_p > 1.0 ||
+                           out->transformer.min_p < 0.0 || out->transformer.min_p > 1.0 ||
+                           out->transformer.typical_p <= 0.0 ||
+                           out->transformer.typical_p > 1.0))
+            return graph_arg_error(err, "yvex: stochastic strategy parameters are invalid");
+    } else if (strcmp(out->transformer.strategy, "greedy") != 0 ||
+               out->transformer.seed_seen || out->transformer.temperature != 1.0 ||
+               out->transformer.top_k || out->transformer.top_p != 1.0 ||
+               out->transformer.min_p != 0.0 || out->transformer.typical_p != 1.0)
+        return graph_arg_error(err, "yvex: sampling options require graph transformer sample");
     if (out->transformer.maximum_device_bytes &&
         strcmp(out->transformer.backend, "cpu") == 0)
         return graph_arg_error(err, "yvex: --max-device-bytes requires backend cuda");

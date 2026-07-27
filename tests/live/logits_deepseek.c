@@ -1,6 +1,6 @@
 /* Owner: live DeepSeek vocabulary-logits evidence.
- * Owns: selected-artifact prefill/decode logits, full-vocabulary reference, and CPU/CUDA comparison.
- * Does not own: production output-head math, sampling, tokenization, generation, benchmark, or release.
+ * Owns: selected-artifact logits plus real-row sampling conformance across CPU/CUDA origins.
+ * Does not own: production output-head/sampling math, tokenization, generation, benchmark, or release.
  * Invariants: three complete 129280-value rows are compared per backend without tracked dumps.
  * Boundary: test-only consumer of the production Transformer, decode, residency, and logits APIs.
  * Purpose: prove one prefill and two decode hidden rows project through the exact resident output head.
@@ -10,6 +10,7 @@
 #include <yvex/internal/logits.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/sampling.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -17,6 +18,7 @@
 #include <string.h>
 
 #include "tests/reference/logits.h"
+#include "tests/reference/sampling.h"
 
 #define LIVE_LOGITS_ROWS 3ull
 #define LIVE_LOGITS_ABSOLUTE_TOLERANCE 2.0e-2
@@ -41,6 +43,12 @@ typedef struct {
     unsigned long long compared, finite, first_failure;
     double maximum_absolute, maximum_relative, squared;
 } live_comparison;
+
+typedef struct {
+    yvex_runtime_sampling_result rows[LIVE_LOGITS_ROWS];
+    yvex_runtime_sampling_execution execution;
+    yvex_runtime_sampling_context_summary summary;
+} live_sampling_result;
 
 /* Purpose: print one typed live failure. */
 static void live_fail(const char *step, int rc, const yvex_error *err)
@@ -286,6 +294,93 @@ static int live_compare(const float *actual, const float *reference,
     return comparison->first_failure == count;
 }
 
+/* Purpose: sample three already-computed complete logits rows through one reusable context.
+ * Inputs: logits plan, rows, raw values, and explicit policy. Effects: publishes bounded selections.
+ * Failure: source, arithmetic, identity, or cleanup refusal propagates. Boundary: no session access. */
+static int live_sample_rows(
+    const yvex_runtime_logits_plan_summary *plan,
+    const yvex_runtime_logits_row_result rows[LIVE_LOGITS_ROWS],
+    const float *logits, yvex_runtime_sampling_policy policy,
+    live_sampling_result *out, yvex_error *err)
+{
+    yvex_runtime_sampling_context *context = NULL;
+    yvex_runtime_sampling_source sources[LIVE_LOGITS_ROWS];
+    yvex_runtime_sampling_options options = {
+        .maximum_vocabulary_size = 129280ull,
+        .maximum_rows = LIVE_LOGITS_ROWS};
+    yvex_error cleanup;
+    int rc, close_rc;
+    memset(out, 0, sizeof(*out));
+    rc = yvex_runtime_sampling_policy_seal(&policy, plan->vocabulary_size, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_sampling_context_open(
+            &context, plan, &policy, &options, err);
+    for (unsigned long long index = 0ull; rc == YVEX_OK && index < LIVE_LOGITS_ROWS; ++index)
+        rc = yvex_runtime_sampling_source_from_logits(
+            context, &sources[index], logits + index * plan->vocabulary_size,
+            plan->vocabulary_size, &rows[index], err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_sampling_execute(
+            context, sources, LIVE_LOGITS_ROWS, out->rows, LIVE_LOGITS_ROWS,
+            &out->execution, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_sampling_context_snapshot(context, &out->summary, err);
+    yvex_error_clear(&cleanup);
+    close_rc = yvex_runtime_sampling_context_close(&context, &cleanup);
+    if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; *err = cleanup; }
+    return rc;
+}
+
+/* Purpose: independently compare one policy for CPU- and CUDA-origin logits.
+ * Inputs: plan, both live results, and policy. Effects: publishes bounded CPU selection evidence.
+ * Failure: reference/origin mismatch or warm allocation refuses. Boundary: test reference is independent. */
+static int live_sampling_policy(
+    const yvex_runtime_logits_plan_summary *plan,
+    const live_logits *cpu, const live_logits *cuda,
+    yvex_runtime_sampling_policy policy, live_sampling_result *cpu_out,
+    yvex_error *err)
+{
+    live_sampling_result cuda_out;
+    yvex_test_sampling_rng cpu_rng, cuda_rng;
+    yvex_test_sampling_reference_result cpu_ref, cuda_ref;
+    int rc = live_sample_rows(plan, cpu->rows, cpu->raw_logits,
+                              policy, cpu_out, err);
+    if (rc == YVEX_OK)
+        rc = live_sample_rows(plan, cuda->rows, cuda->raw_logits,
+                              policy, &cuda_out, err);
+    yvex_test_sampling_reference_seed(policy.seed, &cpu_rng);
+    yvex_test_sampling_reference_seed(policy.seed, &cuda_rng);
+    for (unsigned long long index = 0ull; rc == YVEX_OK && index < LIVE_LOGITS_ROWS; ++index) {
+        int cpu_ok = yvex_test_sampling_reference_select(
+            cpu->raw_logits + index * plan->vocabulary_size,
+            plan->vocabulary_size, &policy, &cpu_rng, &cpu_ref);
+        int cuda_ok = yvex_test_sampling_reference_select(
+            cuda->raw_logits + index * plan->vocabulary_size,
+            plan->vocabulary_size, &policy, &cuda_rng, &cuda_ref);
+        if (!cpu_ok || !cuda_ok ||
+            cpu_out->rows[index].selected_token_id != cpu_ref.selected_token_id ||
+            cuda_out.rows[index].selected_token_id != cuda_ref.selected_token_id ||
+            cpu_out->rows[index].final_candidate_count != cpu_ref.candidate_count ||
+            cuda_out.rows[index].final_candidate_count != cuda_ref.candidate_count ||
+            cpu_out->rows[index].selected_token_id != cuda_out.rows[index].selected_token_id ||
+            strcmp(cpu_out->rows[index].candidate_set_identity,
+                   cuda_out.rows[index].candidate_set_identity) != 0 ||
+            strcmp(cpu_out->rows[index].selected_token_identity,
+                   cuda_out.rows[index].selected_token_identity) != 0)
+            rc = YVEX_ERR_FORMAT;
+    }
+    if (rc == YVEX_OK &&
+        (cpu_out->summary.warm_workspace_allocations ||
+         cuda_out.summary.warm_workspace_allocations ||
+         cpu_out->summary.workspace_generation != 1ull ||
+         cuda_out.summary.workspace_generation != 1ull))
+        rc = YVEX_ERR_STATE;
+    if (rc != YVEX_OK && !yvex_error_is_set(err))
+        yvex_error_set(err, rc, "test.sampling.live",
+                       "real-logits sampling/reference agreement failed");
+    return rc;
+}
+
 /* Purpose: seal one test-owned normalized-hidden digest with production canonical field rules. */
 static int live_hidden_digest(const float *hidden, unsigned long long count,
                               char output[YVEX_SHA256_HEX_CAP])
@@ -466,6 +561,21 @@ int main(int argc, char **argv)
     yvex_transformer_input *stream = NULL, *prefill = NULL, *decode = NULL;
     live_logits cpu = {0}, cuda = {0};
     live_comparison cpu_reference, cuda_reference, cpu_cuda;
+    live_sampling_result greedy, categorical, filtered, reproduced;
+    yvex_runtime_sampling_policy greedy_policy = {
+        .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
+        .strategy = YVEX_SAMPLING_STRATEGY_GREEDY,
+        .temperature = 1.0, .top_p = 1.0, .typical_p = 1.0};
+    yvex_runtime_sampling_policy categorical_policy = {
+        .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
+        .strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC,
+        .temperature = 1.0, .top_p = 1.0, .typical_p = 1.0,
+        .seed_present = 1, .seed = 42ull};
+    yvex_runtime_sampling_policy filtered_policy = {
+        .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
+        .strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC,
+        .temperature = 0.8, .top_k = 50ull, .top_p = 0.95,
+        .min_p = 0.05, .typical_p = 0.9, .seed_present = 1, .seed = 42ull};
     const yvex_transformer_plan_summary *plan = NULL;
     const yvex_runtime_logits_plan_summary *logits_plan;
     const unsigned int tokens[] = {1u, 2u, 3u};
@@ -508,6 +618,42 @@ int main(int argc, char **argv)
                        "CUDA full-vocabulary logits exceed the numerical contract");
         rc = YVEX_ERR_FORMAT;
     }
+    if (rc == YVEX_OK) {
+        step = "sampling-greedy";
+        rc = live_sampling_policy(logits_plan, &cpu, &cuda,
+                                  greedy_policy, &greedy, &err);
+    }
+    if (rc == YVEX_OK) {
+        step = "sampling-categorical";
+        rc = live_sampling_policy(logits_plan, &cpu, &cuda,
+                                  categorical_policy, &categorical, &err);
+    }
+    if (rc == YVEX_OK) {
+        step = "sampling-filtered";
+        rc = live_sampling_policy(logits_plan, &cpu, &cuda,
+                                  filtered_policy, &filtered, &err);
+    }
+    for (unsigned long long row = 0ull;
+         rc == YVEX_OK && row < LIVE_LOGITS_ROWS; ++row)
+        if (strcmp(categorical.rows[row].candidate_set_identity,
+                   filtered.rows[row].candidate_set_identity) == 0) {
+            yvex_error_set(&err, YVEX_ERR_FORMAT,
+                           "test.sampling.filter-sensitivity",
+                           "effective filter policy did not change candidate identity");
+            rc = YVEX_ERR_FORMAT;
+        }
+    if (rc == YVEX_OK) {
+        step = "sampling-reproducibility";
+        rc = live_sample_rows(logits_plan, cpu.rows, cpu.raw_logits,
+                              categorical_policy, &reproduced, &err);
+    }
+    if (rc == YVEX_OK &&
+        strcmp(categorical.execution.ordered_selected_token_digest,
+               reproduced.execution.ordered_selected_token_digest) != 0) {
+        yvex_error_set(&err, YVEX_ERR_FORMAT, "test.sampling.reproducibility",
+                       "same seed, policy, and logits did not reproduce");
+        rc = YVEX_ERR_FORMAT;
+    }
     if (rc != YVEX_OK) live_fail(step, rc, &err);
     else
         printf("logits_rows=3 vocabulary=129280 compared_per_lane=%llu "
@@ -517,7 +663,14 @@ int main(int argc, char **argv)
                "residency_identity=%s\n"
                "cpu_logits_digest=%s cuda_logits_digest=%s "
                "prefill_logits_rows=1 decode_logits_rows=2 warm_reuse=pass state_unchanged=pass\n"
-               "logits_ready=1 sampling_ready=0 generation_ready=0\n",
+               "sampling_greedy_tokens=%u,%u,%u sampling_stochastic_tokens=%u,%u,%u "
+               "filtered_candidates=%llu,%llu,%llu sampling_reference=pass reproducibility=pass "
+               "warm_sampling_allocations=0\n"
+               "sampling_policy_identity=%s candidate_identity=%s selected_identity=%s "
+               "aggregate_sampling_identity=%s selected_probability=%.17g "
+               "selected_log_probability=%.17g rng_draws=%llu\n"
+               "logits_ready=1 sampling_ready=1 token_append_ready=0 tokenizer_runtime_ready=0 "
+               "generation_ready=0 cuda_sampling_ready=0\n",
                values, cpu_reference.maximum_absolute,
                cuda_reference.maximum_absolute, cuda_reference.maximum_relative,
                sqrt(cuda_reference.squared / (double)values),
@@ -525,7 +678,22 @@ int main(int argc, char **argv)
                logits_plan->encoded_bytes, logits_plan->output_head_plan_identity,
                cuda.rows[0].output_head_residency_identity,
                cpu.result.aggregate_logits_digest,
-               cuda.result.aggregate_logits_digest);
+               cuda.result.aggregate_logits_digest,
+               greedy.rows[0].selected_token_id, greedy.rows[1].selected_token_id,
+               greedy.rows[2].selected_token_id,
+               categorical.rows[0].selected_token_id,
+               categorical.rows[1].selected_token_id,
+               categorical.rows[2].selected_token_id,
+               filtered.rows[0].final_candidate_count,
+               filtered.rows[1].final_candidate_count,
+               filtered.rows[2].final_candidate_count,
+               categorical.rows[0].policy_identity,
+               categorical.rows[0].candidate_set_identity,
+               categorical.rows[0].selected_token_identity,
+               categorical.execution.aggregate_sampling_identity,
+               categorical.rows[0].selected_probability,
+               categorical.rows[0].selected_log_probability,
+               categorical.execution.completed_samples);
     yvex_transformer_input_close(&decode);
     yvex_transformer_input_close(&prefill);
     yvex_transformer_input_close(&stream);

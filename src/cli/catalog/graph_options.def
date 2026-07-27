@@ -41,3 +41,10 @@
 --audit
 --json
 --output
+--strategy
+--temperature
+--top-k
+--top-p
+--min-p
+--typical-p
+--seed
