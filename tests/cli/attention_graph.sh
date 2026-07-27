@@ -69,6 +69,8 @@ expect_nonzero() {
     2>"$OUT_DIR/moe-help.err"
 "$YVEX_BIN" graph transformer execute --help >"$OUT_DIR/transformer-help.out" \
     2>"$OUT_DIR/transformer-help.err"
+"$YVEX_BIN" graph transformer decode --help >"$OUT_DIR/decode-help.out" \
+    2>"$OUT_DIR/decode-help.err"
 for action in prepare describe capabilities plan execute compare; do
     "$YVEX_BIN" graph attention "$action" --help \
         >"$OUT_DIR/$action-help.out" 2>"$OUT_DIR/$action-help.err"
@@ -134,6 +136,49 @@ contains "$OUT_DIR/moe-help.out" "token IDs are numeric routing input"
 contains "$OUT_DIR/transformer-help.out" "yvex graph transformer execute"
 contains "$OUT_DIR/transformer-help.out" "--input token-ids --input-file FILE"
 contains "$OUT_DIR/transformer-help.out" "do not establish tokenizer, logits, decode, or generation"
+contains "$OUT_DIR/decode-help.out" "yvex graph transformer decode"
+contains "$OUT_DIR/decode-help.out" "--prefill-tokens N --prefill-chunk-tokens N"
+contains "$OUT_DIR/decode-help.out" "do not establish logits, sampling, or generation"
+
+expect_status 2 "$YVEX_BIN" graph transformer decode \
+    >"$OUT_DIR/decode-missing.out" 2>"$OUT_DIR/decode-missing.err"
+contains "$OUT_DIR/decode-missing.err" \
+    "decode requires target, artifact, runtime binding, backend, token input, prefill split, and context capacity"
+
+expect_status 3 "$YVEX_BIN" graph transformer decode --target deepseek4-v4-flash \
+    --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
+    --backend cpu --input token-ids --input-file /tmp/missing.input \
+    --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
+    --progress off --output json \
+    >"$OUT_DIR/decode-refusal.json" 2>"$OUT_DIR/decode-refusal.err"
+python3 - "$OUT_DIR/decode-refusal.json" <<'PY'
+import json
+import sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["command"] == "graph transformer decode"
+assert result["status"] == "refused"
+assert result["phase"] == "decode"
+assert not result["model_decode_ready"] and not result["generation_ready"]
+assert result["steps"] == []
+PY
+contains "$OUT_DIR/decode-refusal.err" "runtime binding open failed"
+
+expect_status 3 "$YVEX_BIN" graph transformer decode --target deepseek4-v4-flash \
+    --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
+    --backend cpu --input token-ids --input-file /tmp/missing.input \
+    --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
+    --progress off --output csv \
+    >"$OUT_DIR/decode-refusal.csv" 2>"$OUT_DIR/decode-refusal-csv.err"
+python3 - "$OUT_DIR/decode-refusal.csv" <<'PY'
+import csv
+import sys
+rows = list(csv.reader(open(sys.argv[1], encoding="utf-8", newline="")))
+assert rows[0] == ["field", "value"]
+assert ["command", "graph transformer decode"] in rows
+assert ["model_decode_ready", "false"] in rows
+assert all(not row[0].startswith("step.") for row in rows[1:])
+PY
+contains "$OUT_DIR/decode-refusal-csv.err" "runtime binding open failed"
 
 expect_status 2 "$YVEX_BIN" graph transformer execute \
     >"$OUT_DIR/transformer-missing.out" 2>"$OUT_DIR/transformer-missing.err"

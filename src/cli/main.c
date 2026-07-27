@@ -98,7 +98,7 @@ static const yvex_cli_command yvex_commands[] = {
                 "report/materialization planning only unless subcommand proves more",yvex_fullmodel_command,
                     yvex_fullmodel_help),
     OWNED_CMD("graph","graph","mixed-transitional","Production attention, MoE, and transformer graph execution.",
-        "yvex graph attention ACTION|moe execute|transformer execute [options]",
+        "yvex graph attention ACTION|moe execute|transformer execute|decode [options]",
             "yvex graph transformer execute --target deepseek4-v4-flash --backend cuda --input token-ids",
                 "selector, path, behavior, diagnostic, json",
                     "production graph components; not transformer composition or generation",

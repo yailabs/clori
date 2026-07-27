@@ -17,6 +17,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include <yvex/internal/decode.h>
+
 static const char *const literal_lines_0[] = {
     "usage: yvex graph attention prepare --target TARGET",
     "       yvex graph attention describe --target TARGET",
@@ -37,6 +39,10 @@ static const char *const literal_lines_0[] = {
     "           --backend cpu|cuda --phase prefill --input token-ids --input-file FILE",
     "           --chunk-tokens N --context-capacity N --progress off",
     "           numeric token IDs do not establish tokenizer, logits, decode, or generation support",
+    "       yvex graph transformer decode --target TARGET --artifact FILE --runtime-binding FILE",
+    "           --backend cpu|cuda --input token-ids --input-file FILE",
+    "           --prefill-tokens N --prefill-chunk-tokens N --context-capacity N --progress off",
+    "           teacher-forced numeric tokens do not establish logits, sampling, or generation",
     "           [--models-root DIR] [--artifact FILE] [--runtime-binding FILE] [--runtime-binding-dir DIR]",
     "           [--backend cpu|cuda] [--phase prefill|decode|mixed|verify]",
     "           [--mode eager|piecewise|full|auto] [--scope quick|full]",
@@ -164,6 +170,7 @@ static const yvex_cli_field_spec transformer_fields[] = {
     TRANSFORMER_FIELD("target", YVEX_CLI_FIELD_TEXT_ARRAY, target),
     TRANSFORMER_FIELD("family", YVEX_CLI_FIELD_TEXT_ARRAY, family),
     TRANSFORMER_FIELD("backend", YVEX_CLI_FIELD_TEXT_ARRAY, backend),
+    TRANSFORMER_FIELD("phase", YVEX_CLI_FIELD_TEXT_ARRAY, phase),
     TRANSFORMER_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY, artifact_identity),
     TRANSFORMER_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
                       runtime_binding_identity),
@@ -207,6 +214,8 @@ static const yvex_cli_field_spec transformer_fields[] = {
                                 kernel_launches),
     TRANSFORMER_EXECUTION_FIELD("embedding_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
                                 embedding_digest),
+    TRANSFORMER_EXECUTION_FIELD("routing_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
+                                routing_digest),
     TRANSFORMER_EXECUTION_FIELD("layer_digest", YVEX_CLI_FIELD_TEXT_ARRAY, layer_digest),
     TRANSFORMER_EXECUTION_FIELD("final_expanded_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
                                 final_expanded_digest),
@@ -246,6 +255,92 @@ static const yvex_cli_field_spec transformer_fields[] = {
                       release_qualification_ready),
     TRANSFORMER_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
     TRANSFORMER_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
+};
+
+#define DECODE_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_decode_operator_result, MEMBER), ""}
+#define DECODE_EXECUTION_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_decode_operator_result, decode) + \
+                    offsetof(yvex_runtime_decode_result, MEMBER), ""}
+
+static const yvex_cli_field_spec decode_fields[] = {
+    DECODE_FIELD("command", YVEX_CLI_FIELD_TEXT_ARRAY, command),
+    DECODE_FIELD("status", YVEX_CLI_FIELD_TEXT_ARRAY, status),
+    DECODE_FIELD("target", YVEX_CLI_FIELD_TEXT_ARRAY, target),
+    DECODE_FIELD("family", YVEX_CLI_FIELD_TEXT_ARRAY, family),
+    DECODE_FIELD("backend", YVEX_CLI_FIELD_TEXT_ARRAY, backend),
+    DECODE_FIELD("phase", YVEX_CLI_FIELD_TEXT_ARRAY, phase),
+    DECODE_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY, artifact_identity),
+    DECODE_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                 runtime_binding_identity),
+    DECODE_FIELD("transformer_plan_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                 transformer_plan_identity),
+    DECODE_FIELD("hidden_width", YVEX_CLI_FIELD_U64, hidden_width),
+    DECODE_FIELD("layers", YVEX_CLI_FIELD_U64, layer_count),
+    DECODE_FIELD("prefill_tokens_committed", YVEX_CLI_FIELD_U64,
+                 prefill_tokens_committed),
+    DECODE_EXECUTION_FIELD("input_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                           input_identity),
+    DECODE_EXECUTION_FIELD("decode_steps_requested", YVEX_CLI_FIELD_U64,
+                           requested_steps),
+    DECODE_EXECUTION_FIELD("decode_steps_completed", YVEX_CLI_FIELD_U64,
+                           completed_steps),
+    DECODE_EXECUTION_FIELD("partial", YVEX_CLI_FIELD_BOOL, partial),
+    DECODE_EXECUTION_FIELD("has_incomplete_step", YVEX_CLI_FIELD_BOOL,
+                           has_incomplete_step),
+    DECODE_EXECUTION_FIELD("first_incomplete_step", YVEX_CLI_FIELD_U64,
+                           first_incomplete_step),
+    DECODE_EXECUTION_FIELD("initial_committed_prefix", YVEX_CLI_FIELD_U64,
+                           initial_committed_prefix),
+    DECODE_EXECUTION_FIELD("final_committed_prefix", YVEX_CLI_FIELD_U64,
+                           final_committed_prefix),
+    DECODE_EXECUTION_FIELD("generation_before", YVEX_CLI_FIELD_U64,
+                           generation_before),
+    DECODE_EXECUTION_FIELD("generation_after", YVEX_CLI_FIELD_U64,
+                           generation_after),
+    DECODE_EXECUTION_FIELD("layers_executed", YVEX_CLI_FIELD_U64, layers_executed),
+    DECODE_EXECUTION_FIELD("swa_layers", YVEX_CLI_FIELD_U64, swa_layers),
+    DECODE_EXECUTION_FIELD("csa_layers", YVEX_CLI_FIELD_U64, csa_layers),
+    DECODE_EXECUTION_FIELD("hca_layers", YVEX_CLI_FIELD_U64, hca_layers),
+    DECODE_EXECUTION_FIELD("hash_router_executions", YVEX_CLI_FIELD_U64,
+                           hash_routers),
+    DECODE_EXECUTION_FIELD("learned_router_executions", YVEX_CLI_FIELD_U64,
+                           learned_routers),
+    DECODE_EXECUTION_FIELD("routed_expert_executions", YVEX_CLI_FIELD_U64,
+                           routed_experts),
+    DECODE_EXECUTION_FIELD("shared_expert_executions", YVEX_CLI_FIELD_U64,
+                           shared_experts),
+    DECODE_EXECUTION_FIELD("h2d_bytes", YVEX_CLI_FIELD_U64, h2d_bytes),
+    DECODE_EXECUTION_FIELD("d2h_bytes", YVEX_CLI_FIELD_U64, d2h_bytes),
+    DECODE_EXECUTION_FIELD("kernel_launches", YVEX_CLI_FIELD_U64, kernel_launches),
+    DECODE_EXECUTION_FIELD("aggregate_hidden_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
+                           aggregate_hidden_digest),
+    DECODE_EXECUTION_FIELD("aggregate_state_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
+                           aggregate_state_digest),
+    DECODE_EXECUTION_FIELD("decode_execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                           decode_execution_identity),
+    DECODE_FIELD("decode_step_ready", YVEX_CLI_FIELD_BOOL, decode_step_ready),
+    DECODE_FIELD("decode_repeat_ready", YVEX_CLI_FIELD_BOOL, decode_repeat_ready),
+    DECODE_FIELD("decode_hidden_state_ready", YVEX_CLI_FIELD_BOOL,
+                 decode_hidden_state_ready),
+    DECODE_FIELD("decode_partial_progress_ready", YVEX_CLI_FIELD_BOOL,
+                 decode_partial_progress_ready),
+    DECODE_FIELD("moe_decode_composed", YVEX_CLI_FIELD_BOOL, moe_decode_composed),
+    DECODE_FIELD("model_decode_ready", YVEX_CLI_FIELD_BOOL, model_decode_ready),
+    DECODE_FIELD("logits_ready", YVEX_CLI_FIELD_BOOL, logits_ready),
+    DECODE_FIELD("output_head_ready", YVEX_CLI_FIELD_BOOL, output_head_ready),
+    DECODE_FIELD("sampling_ready", YVEX_CLI_FIELD_BOOL, sampling_ready),
+    DECODE_FIELD("tokenizer_runtime_ready", YVEX_CLI_FIELD_BOOL,
+                 tokenizer_runtime_ready),
+    DECODE_FIELD("generation_ready", YVEX_CLI_FIELD_BOOL, generation_ready),
+    DECODE_FIELD("model_behavior_evaluation_ready", YVEX_CLI_FIELD_BOOL,
+                 model_behavior_evaluation_ready),
+    DECODE_FIELD("full_model_benchmark_ready", YVEX_CLI_FIELD_BOOL,
+                 full_model_benchmark_ready),
+    DECODE_FIELD("release_qualification_ready", YVEX_CLI_FIELD_BOOL,
+                 release_qualification_ready),
+    DECODE_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
+    DECODE_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
 };
 
 static const yvex_cli_field_spec attention_base_fields[] = {
@@ -999,6 +1094,90 @@ int yvex_graph_transformer_render(FILE *fp, yvex_graph_report_mode mode,
     } else {
         rc = yvex_cli_out_fields(fp, result, transformer_fields,
                                  FIELD_COUNT(transformer_fields));
+    }
+    return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
+}
+
+/* Purpose: render ordered per-step decode evidence after the flat operator summary.
+ * Inputs: typed step directory and output mode. Effects: writes presentation only.
+ * Failure: stream refusal. Boundary: no identity or capability derivation. */
+static int graph_decode_steps_render(FILE *fp, yvex_graph_report_mode mode,
+                                     const yvex_decode_operator_result *result)
+{
+    unsigned long long index;
+    if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
+        if (yvex_cli_out_puts(fp, "  \"steps\": [\n") < 0) return YVEX_ERR_IO;
+        for (index = 0ull; index < result->step_count; ++index) {
+            const yvex_runtime_decode_step_result *step = &result->steps[index];
+            if (yvex_cli_out_writef(
+                    fp,
+                    "    {\"ordinal\":%llu,\"token_id\":%u,\"position_before\":%llu,"
+                    "\"position_after\":%llu,\"generation_before\":%llu,"
+                    "\"generation_after\":%llu,\"hidden_digest\":\"%s\","
+                    "\"state_digest\":\"%s\",\"transformer_execution_identity\":\"%s\","
+                    "\"decode_step_identity\":\"%s\"}%s\n",
+                    step->step_ordinal, step->token_id, step->position_before,
+                    step->position_after, step->generation_before,
+                    step->generation_after, step->normalized_hidden_digest,
+                    step->persistent_state_digest,
+                    step->transformer_execution_identity,
+                    step->decode_step_identity,
+                    index + 1ull < result->step_count ? "," : "") < 0)
+                return YVEX_ERR_IO;
+        }
+        yvex_cli_out_line(fp, "  ]");
+        return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+    }
+    for (index = 0ull; index < result->step_count; ++index) {
+        const yvex_runtime_decode_step_result *step = &result->steps[index];
+        if (mode == YVEX_GRAPH_REPORT_MODE_CSV) {
+            if (yvex_cli_out_writef(
+                    fp, "\"step.%llu\",\"token=%u position=%llu:%llu generation=%llu:%llu "
+                        "hidden=%s state=%s identity=%s\"\n",
+                    index, step->token_id, step->position_before,
+                    step->position_after, step->generation_before,
+                    step->generation_after, step->normalized_hidden_digest,
+                    step->persistent_state_digest, step->decode_step_identity) < 0)
+                return YVEX_ERR_IO;
+        } else if (yvex_cli_out_writef(
+                       fp, "step.%llu: token=%u position=%llu:%llu generation=%llu:%llu "
+                           "hidden=%s state=%s identity=%s\n",
+                       index, step->token_id, step->position_before,
+                       step->position_after, step->generation_before,
+                       step->generation_after, step->normalized_hidden_digest,
+                       step->persistent_state_digest, step->decode_step_identity) < 0)
+            return YVEX_ERR_IO;
+    }
+    return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+}
+
+/* Purpose: render one typed repeated-decode operator result and ordered step directory.
+ * Inputs: output stream, mode, and domain result. Effects: writes through CLI I/O.
+ * Failure: typed I/O refusal. Boundary: never chooses tokens or derives capability. */
+int yvex_graph_decode_render(FILE *fp, yvex_graph_report_mode mode,
+                             const yvex_decode_operator_result *result)
+{
+    size_t index;
+    int rc;
+    if (!fp || !result || (result->step_count && !result->steps))
+        return YVEX_ERR_INVALID_ARG;
+    if (mode == YVEX_GRAPH_REPORT_MODE_CSV) {
+        if (yvex_cli_out_writef(fp, "field,value\n") < 0) return YVEX_ERR_IO;
+        for (index = 0; index < FIELD_COUNT(decode_fields); ++index)
+            if (graph_csv_field(fp, result, &decode_fields[index]) != YVEX_OK)
+                return YVEX_ERR_IO;
+        return graph_decode_steps_render(fp, mode, result);
+    }
+    if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
+        yvex_cli_json_begin(fp);
+        rc = yvex_cli_json_fields(fp, result, decode_fields,
+                                  FIELD_COUNT(decode_fields), 1);
+        if (rc == YVEX_OK) rc = graph_decode_steps_render(fp, mode, result);
+        yvex_cli_json_end(fp);
+    } else {
+        rc = yvex_cli_out_fields(fp, result, decode_fields,
+                                 FIELD_COUNT(decode_fields));
+        if (rc == YVEX_OK) rc = graph_decode_steps_render(fp, mode, result);
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }

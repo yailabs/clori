@@ -220,13 +220,36 @@ already staged inside an active request transaction, executes the admitted MoE
 layer and deferred FFN mHC post, and returns field-wise routing/output/execution
 identities. `yvex_runtime_transformer_execute` owns chunk planning, selected-row
 embedding, 43 ordered blocks, final mHC collapse, final RMSNorm, atomic state
-commit, and normalized-hidden publication. The one-token form is the component
-future decode will reuse; this API does not establish repeated decode.
+commit, and normalized-hidden publication. Its request carries an explicit
+prefill or decode phase; one-token geometry alone never selects decode
+semantics. The repeated-decode owner reuses this exact component.
 
 CPU and CUDA share the typed contracts. The GB10 CUDA path retains inter-layer
 activations on device and has no CPU numerical fallback. The API publishes
 normalized hidden state only; tokenizer text, output-head projection, logits,
 sampling, and generation remain outside it.
+
+### Internal Repeated Decode Boundary
+
+`include/yvex/internal/decode.h` owns the non-installed teacher-forced decode
+coordinator. It borrows one already-open transformer context and its exact
+execution session; it does not reopen the artifact or binding, rebuild plans,
+or allocate a second KV owner. Inputs are bounded one-token views of the
+existing schema-v1 transformer token input.
+
+`yvex_runtime_decode_step` validates the authoritative committed position,
+executes the production transformer in explicit decode phase, and publishes
+one `[1,4096]` normalized hidden row only after that token's KV commit.
+`yvex_runtime_decode_execute` repeats the same operation over ordered external
+token IDs. Each successful step is independently durable; a later refusal
+returns a non-success status with the completed step directory, final committed
+prefix, generation, and first incomplete ordinal intact.
+
+Step and aggregate identities serialize typed fields individually, including
+the phase-bearing transformer identity, token, position, generation, routing,
+hidden, persistent state, and structural counters. They exclude pointers,
+padding, native object layout, timing, and local paths. The coordinator owns no
+token-choice, logits, sampling, tokenizer, or generation policy.
 
 ### Internal DeepSeek Attention Operator Boundary
 
@@ -381,10 +404,10 @@ they are not independent capability authorities.
 
 The current runtime supports production DeepSeek attention, persistent state,
 activation prefill, token-local MoE, and the numeric token-ID complete
-transformer backbone on CPU and the admitted GB10 CUDA path. It does not
-provide prompt text, tokenizer execution, repeated model decode, logits,
-sampling, text generation, evaluation, a full-model benchmark or release
-readiness.
+transformer backbone on CPU and the admitted GB10 CUDA path. Teacher-forced
+repeated decode executes through the same warm context and committed KV. It
+does not provide prompt text, tokenizer execution, logits, sampling, text
+generation, evaluation, a full-model benchmark or release readiness.
 
 ## Extension Rules
 

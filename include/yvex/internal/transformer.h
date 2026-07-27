@@ -160,6 +160,10 @@ int yvex_backend_transformer_cuda_final(
     yvex_device_tensor *output, yvex_error *err);
 
 typedef struct yvex_runtime_transformer_context yvex_runtime_transformer_context;
+typedef enum {
+    YVEX_TRANSFORMER_PHASE_PREFILL = 0,
+    YVEX_TRANSFORMER_PHASE_DECODE
+} yvex_runtime_transformer_phase;
 typedef struct {
     unsigned long long maximum_host_bytes, maximum_device_bytes, context_capacity;
     int (*cancel_requested)(void *context);
@@ -168,6 +172,7 @@ typedef struct {
 typedef struct {
     unsigned long long chunk_tokens;
     yvex_backend_kind backend;
+    yvex_runtime_transformer_phase phase;
 } yvex_runtime_transformer_request;
 typedef struct {
     int completed;
@@ -184,6 +189,7 @@ typedef struct {
 } yvex_runtime_transformer_output;
 typedef struct {
     int completed;
+    yvex_runtime_transformer_phase phase;
     unsigned long long token_start, token_count, chunk_count, committed_prefix;
     unsigned long long position_before, position_after, generation_before, generation_after;
     unsigned long long embedding_rows, embedding_bytes, layers_executed;
@@ -192,6 +198,7 @@ typedef struct {
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
     char input_identity[YVEX_SHA256_HEX_CAP];
     char embedding_digest[YVEX_SHA256_HEX_CAP];
+    char routing_digest[YVEX_SHA256_HEX_CAP];
     char layer_digest[YVEX_SHA256_HEX_CAP];
     char final_expanded_digest[YVEX_SHA256_HEX_CAP];
     char normalized_hidden_digest[YVEX_SHA256_HEX_CAP];
@@ -205,6 +212,11 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
                                           yvex_error *err);
 const yvex_transformer_plan *yvex_runtime_transformer_context_plan(
     const yvex_runtime_transformer_context *context);
+const yvex_runtime_execution_session *yvex_runtime_transformer_context_session(
+    const yvex_runtime_transformer_context *context);
+int yvex_runtime_transformer_context_validate_input(
+    const yvex_runtime_transformer_context *context,
+    const yvex_transformer_input *input, yvex_error *err);
 int yvex_runtime_transformer_execute_block(
     yvex_runtime_transformer_context *context, unsigned long long layer_ordinal,
     const unsigned int *token_ids, unsigned long long token_count,
@@ -231,7 +243,8 @@ typedef struct {
 } yvex_transformer_operator_request;
 typedef struct {
     int completed;
-    char status[32], command[64], target[128], family[32], backend[16], reason[256];
+    char status[32], command[64], target[128], family[32], backend[16], phase[16];
+    char reason[256];
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
     char transformer_plan_identity[YVEX_SHA256_HEX_CAP];

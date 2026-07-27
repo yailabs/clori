@@ -44,11 +44,11 @@
 	test-runtime-residency test-runtime-phases test-runtime-envelope \
 	test-runtime-operator test-runtime-digests test-runtime-family-neutrality \
 	test-runtime-state test-runtime-prefill test-runtime-benchmark test-runtime-benchmark-chart \
-	 test-runtime-moe test-runtime-transformer \
+	test-runtime-moe test-runtime-transformer test-runtime-decode \
 	test-runtime-benchmark-chart-live update-runtime-benchmark-charts \
 	test-runtime-attention-live test-runtime-deepseek-kv-live \
 	test-runtime-deepseek-prefill-live test-runtime-deepseek-moe-live \
-	test-runtime-deepseek-transformer-live \
+	test-runtime-deepseek-transformer-live test-runtime-deepseek-decode-live \
 	test-runtime test-runtime-asan test-runtime-asan-live \
 	test-runtime-ubsan test-runtime-ubsan-live test-runtime-sanitizers \
 	test-runtime-sanitizers-live test-materialize-live-plan \
@@ -181,6 +181,7 @@ CORE_SRCS := \
 	src/runtime/graph.c \
 	src/runtime/benchmark.c \
 	src/runtime/binding.c \
+	src/runtime/decode.c \
 	src/runtime/moe.c \
 	src/runtime/moe_input.c \
 	src/runtime/prefill.c \
@@ -317,6 +318,7 @@ ATTENTION_LIVE_RUNNER := $(TEST_DIR)/attention_deepseek
 PREFILL_LIVE_RUNNER := $(TEST_DIR)/prefill_deepseek
 MOE_LIVE_RUNNER := $(TEST_DIR)/moe_deepseek
 TRANSFORMER_LIVE_RUNNER := $(TEST_DIR)/transformer_deepseek
+DECODE_LIVE_RUNNER := $(TEST_DIR)/decode_deepseek
 OFFICIAL_GGUF_CHECKER := $(TEST_DIR)/ggml_gguf_check
 CUDA_TEST_RUNNER := $(TEST_DIR)/test_cuda
 
@@ -351,12 +353,13 @@ ATTENTION_LIVE_OBJ := $(OBJ_DIR)/tests/live/attention_deepseek.o
 PREFILL_LIVE_OBJ := $(OBJ_DIR)/tests/live/prefill_deepseek.o
 MOE_LIVE_OBJ := $(OBJ_DIR)/tests/live/moe_deepseek.o
 TRANSFORMER_LIVE_OBJ := $(OBJ_DIR)/tests/live/transformer_deepseek.o
+DECODE_LIVE_OBJ := $(OBJ_DIR)/tests/live/decode_deepseek.o
 
 RUNNER_OBJS := $(TEST_MAIN_OBJ) $(QUANT_TEST_RUNNER_OBJ) \
 	$(ARTIFACT_TEST_RUNNER_OBJ) $(CUDA_TEST_MAIN_OBJ) \
 	$(SOURCE_PAYLOAD_LIVE_OBJ) $(QUANT_LIVE_OBJ) $(ARTIFACT_LIVE_OBJ) \
 	$(MATERIALIZE_LIVE_OBJ) $(ATTENTION_LIVE_OBJ) $(PREFILL_LIVE_OBJ) $(MOE_LIVE_OBJ) \
-	$(TRANSFORMER_LIVE_OBJ)
+	$(TRANSFORMER_LIVE_OBJ) $(DECODE_LIVE_OBJ)
 DEPENDENCY_FILES := $(CORE_OBJS:.o=.d) $(CLI_OBJS:.o=.d) \
 	$(DAEMON_OBJ:.o=.d) $(TEST_UNIT_OBJS:.o=.d) \
 	$(TEST_REFERENCE_OBJS:.o=.d) $(QUANT_TEST_UNIT_OBJS:.o=.d) \
@@ -474,6 +477,9 @@ test-runtime-moe: $(TEST_RUNNER)
 test-runtime-transformer: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_transformer $(TEST_RUNNER)
 
+test-runtime-decode: $(TEST_RUNNER)
+	YVEX_TEST_FILTER=runtime_decode $(TEST_RUNNER)
+
 test-runtime-benchmark: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_benchmark $(TEST_RUNNER)
 
@@ -575,6 +581,7 @@ update-runtime-benchmark-charts: test-runtime-benchmark-chart-live
 # Keep focused harness invocations serial even when the outer make uses -j.
 test-runtime: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
+	YVEX_TEST_FILTER=runtime_decode $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_moe $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_transformer $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_prefill $(TEST_RUNNER)
@@ -866,6 +873,38 @@ test-runtime-deepseek-transformer-live: cuda $(TRANSFORMER_LIVE_RUNNER) $(YVEX_B
 	cat "$$tmp_dir/api.out"; \
 	echo "production DeepSeek transformer live: CPU/CUDA token-to-normalized-hidden backbone"
 
+# This serial target proves shared-context prefill and two real CPU/CUDA decode steps.
+test-runtime-deepseek-decode-live: cuda $(DECODE_LIVE_RUNNER) $(YVEX_BIN)
+	@set -eu; \
+	tmp_tag=runtime-deepseek-decode-live; \
+	$(ATTENTION_OWNED_TMP_BEGIN) \
+	binding='$(YVEX_RUNTIME_BINDING)'; \
+	case "$$binding" in /*) ;; *) \
+		echo "YVEX_RUNTIME_BINDING must be an absolute file" >&2; exit 2;; \
+	esac; \
+	test -f "$$binding" && test ! -L "$$binding" || { \
+		echo "runtime binding must be a regular non-symlink file" >&2; exit 2; }; \
+	input="$$tmp_dir/deepseek-decode.yvex-transformer-input"; \
+	$(DECODE_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
+		>"$$tmp_dir/api.out"; \
+	$(YVEX_BIN) graph transformer decode --target deepseek4-v4-flash \
+		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
+		--backend cuda --input token-ids --input-file "$$input" \
+		--prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
+		--progress off --output json >"$$tmp_dir/cuda.json"; \
+	python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); \
+		assert r["status"]=="complete" and r["model_decode_ready"] \
+		and r["decode_steps_requested"]==2 and r["decode_steps_completed"]==2 \
+		and r["initial_committed_prefix"]==1 and r["final_committed_prefix"]==3 \
+		and r["layers_executed"]==86 and r["swa_layers"]==4 \
+		and r["csa_layers"]==42 and r["hca_layers"]==40 \
+		and r["hash_router_executions"]==6 and r["learned_router_executions"]==80 \
+		and r["routed_expert_executions"]==516 and r["shared_expert_executions"]==86 \
+		and len(r["steps"])==2 and not r["logits_ready"] \
+		and not r["sampling_ready"] and not r["generation_ready"]' "$$tmp_dir/cuda.json"; \
+	cat "$$tmp_dir/api.out"; \
+	echo "production DeepSeek decode live: shared-context CPU/CUDA repeated teacher-forced steps"
+
 test-attention-cli-live: $(YVEX_BIN) tests/cli/attention_graph.sh
 	@set -eu; \
 	tmp_tag=attention-cli-live; \
@@ -1061,6 +1100,10 @@ $(MOE_LIVE_RUNNER): $(MOE_LIVE_OBJ) $(LIBYVEX)
 $(TRANSFORMER_LIVE_RUNNER): $(TRANSFORMER_LIVE_OBJ) $(LIBYVEX)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(TRANSFORMER_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(DECODE_LIVE_RUNNER): $(DECODE_LIVE_OBJ) $(LIBYVEX)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(DECODE_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(OFFICIAL_GGUF_CHECKER): tests/external/ggml_gguf_check.cpp
 	@test "$$(git -C "$(PINNED_GGML_ROOT)" rev-parse HEAD)" = af97976c7810cdabb1863172f31c432dab767de7

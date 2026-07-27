@@ -113,7 +113,10 @@ static int live_execute(live_execution *execution, const yvex_transformer_input 
         yvex_runtime_transformer_context_plan(execution->context));
     const yvex_transformer_input_summary *input_summary =
         yvex_transformer_input_summary_get(input);
-    yvex_runtime_transformer_request request = {chunk_tokens, backend};
+    yvex_runtime_transformer_request request = {
+        .chunk_tokens = chunk_tokens,
+        .backend = backend,
+        .phase = YVEX_TRANSFORMER_PHASE_PREFILL};
     yvex_runtime_transformer_output output = {0};
     unsigned long long output_count;
     int rc;

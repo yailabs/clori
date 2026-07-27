@@ -649,9 +649,11 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
                                    yvex_error *err)
 {
     int index;
-    if (argc < 4 || strcmp(argv[3], "execute") != 0)
-        return graph_arg_error(err, "yvex: graph transformer requires the execute action");
+    if (argc < 4 || (strcmp(argv[3], "execute") != 0 && strcmp(argv[3], "decode") != 0))
+        return graph_arg_error(err,
+                               "yvex: graph transformer requires execute or decode");
     out->transformer.active = 1;
+    out->transformer.decode = strcmp(argv[3], "decode") == 0;
     for (index = 4; index < argc; ++index) {
         const char *flag = argv[index];
         const char *value;
@@ -673,6 +675,14 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
         else if (strcmp(flag, "--chunk-tokens") == 0) {
             if (!parse_positive_ull(value, &out->transformer.chunk_tokens))
                 return graph_arg_error(err, "yvex: --chunk-tokens requires a positive integer");
+        } else if (strcmp(flag, "--prefill-tokens") == 0) {
+            if (!parse_positive_ull(value, &out->transformer.prefill_tokens))
+                return graph_arg_error(err,
+                                       "yvex: --prefill-tokens requires a positive integer");
+        } else if (strcmp(flag, "--prefill-chunk-tokens") == 0) {
+            if (!parse_positive_ull(value, &out->transformer.prefill_chunk_tokens))
+                return graph_arg_error(
+                    err, "yvex: --prefill-chunk-tokens requires a positive integer");
         } else if (strcmp(flag, "--context-capacity") == 0) {
             if (!parse_positive_ull(value, &out->transformer.context_capacity))
                 return graph_arg_error(err,
@@ -693,11 +703,14 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
     }
     if (!out->transformer.target || !out->transformer.artifact_path ||
         !out->transformer.runtime_binding_path || !out->transformer.backend ||
-        !out->transformer.input_file || !out->transformer.chunk_tokens ||
+        !out->transformer.input_file ||
         !out->transformer.context_capacity)
         return graph_arg_error(
-            err, "yvex: graph transformer execute requires target, artifact, runtime binding, "
-                 "backend, token input, chunk tokens, and context capacity");
+            err, out->transformer.decode
+                     ? "yvex: graph transformer decode requires target, artifact, runtime binding, "
+                       "backend, token input, prefill split, and context capacity"
+                     : "yvex: graph transformer execute requires target, artifact, runtime binding, "
+                       "backend, token input, chunk tokens, and context capacity");
     if (!cli_backend_name_valid(out->transformer.backend))
         return graph_arg_errorf(err, "yvex: unknown backend kind: %s", out->transformer.backend);
     if (strcmp(out->transformer.phase, "prefill") != 0)
@@ -706,6 +719,14 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
         return graph_arg_error(err, "yvex: graph transformer requires --input token-ids");
     if (strcmp(out->transformer.progress, "off") != 0)
         return graph_arg_error(err, "yvex: graph transformer requires --progress off");
+    if ((!out->transformer.decode && !out->transformer.chunk_tokens) ||
+        (out->transformer.decode &&
+         (!out->transformer.prefill_tokens ||
+          !out->transformer.prefill_chunk_tokens)))
+        return graph_arg_error(
+            err, out->transformer.decode
+                     ? "yvex: graph transformer decode requires prefill tokens and prefill chunk tokens"
+                     : "yvex: graph transformer execute requires chunk tokens");
     if (out->transformer.maximum_device_bytes &&
         strcmp(out->transformer.backend, "cpu") == 0)
         return graph_arg_error(err, "yvex: --max-device-bytes requires backend cuda");

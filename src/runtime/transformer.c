@@ -49,6 +49,7 @@ struct yvex_runtime_transformer_context {
     float *embedding, *expanded_a, *expanded_b, *candidate_hidden;
     float *moe_combined, *moe_post, *moe_combination, *moe_routed, *moe_shared;
     unsigned long long token_capacity, host_bytes, execution_count;
+    char workspace_identity[YVEX_SHA256_HEX_CAP];
     pthread_mutex_t mutex;
     int mutex_ready, busy, invalidated;
 };
@@ -62,7 +63,7 @@ typedef struct {
     unsigned long long token_offset, token_count, token_start, layer_ordinal;
     float *current, *next;
     yvex_device_tensor device_current, device_next, device_attention, device_hidden;
-    yvex_sha256 layer_hash, embedding_hash;
+    yvex_sha256 layer_hash, routing_hash, embedding_hash;
     yvex_backend_kind backend;
     yvex_runtime_transformer_result *result;
 } transformer_chunk_context;
@@ -655,6 +656,9 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
             &chunk->layer_hash, chunk->next, chunk->token_count * s->expanded_width))
         return rc != YVEX_OK ? rc : transformer_runtime_refuse(
             err, YVEX_ERR_STATE, "transformer layer digest update failed");
+    if (!yvex_sha256_update_text(&chunk->routing_hash, block.routing_digest))
+        return transformer_runtime_refuse(err, YVEX_ERR_STATE,
+                                          "transformer routing digest update failed");
     chunk->result->hash_routers += block.hash_routers;
     chunk->result->learned_routers += block.learned_routers;
     chunk->result->routed_experts += block.routed_experts;
@@ -754,9 +758,20 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
 {
     yvex_graph_attention_capacity_plan *capacity = NULL;
     yvex_runtime_model_failure failure;
+    yvex_runtime_session_summary session;
     yvex_attention_failure attention_failure;
-    unsigned long long final, workspace_tokens;
+    unsigned long long final, workspace_tokens, workspace_start;
     int rc;
+    if (request->phase != YVEX_TRANSFORMER_PHASE_PREFILL &&
+        request->phase != YVEX_TRANSFORMER_PHASE_DECODE)
+        return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG,
+                                          "transformer execution phase is invalid");
+    if (request->phase == YVEX_TRANSFORMER_PHASE_DECODE &&
+        (input->token_count != 1ull || request->chunk_tokens != 1ull ||
+         !input->token_start))
+        return transformer_runtime_refuse(
+            err, YVEX_ERR_STATE,
+            "decode phase requires one token over a nonzero committed prefix");
     if (!yvex_core_u64_add(input->token_start, input->token_count, &final) ||
         final > context->options.context_capacity)
         return transformer_runtime_refuse(err, YVEX_ERR_BOUNDS,
@@ -779,9 +794,25 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                           "transformer state position/capacity is incompatible");
     if (request->backend == YVEX_BACKEND_KIND_CPU) return YVEX_OK;
+    rc = yvex_runtime_session_summary_copy(context->session, &session, err);
+    if (rc != YVEX_OK) return rc;
+    if (context->workspace_identity[0])
+        return session.host_workspace_owned && session.host_workspace_pinned &&
+                       session.host_workspace_bytes && session.device_workspace_bytes &&
+                       strcmp(session.workspace_identity,
+                              context->workspace_identity) == 0
+                   ? YVEX_OK
+                   : transformer_runtime_refuse(
+                         err, YVEX_ERR_STATE,
+                         "transformer CUDA workspace identity changed after sealing");
+    if (session.host_workspace_bytes || session.device_workspace_bytes)
+        return transformer_runtime_refuse(
+            err, YVEX_ERR_STATE,
+            "transformer CUDA workspace was sealed by another capacity owner");
     workspace_tokens = request->chunk_tokens < input->token_count
                            ? request->chunk_tokens : input->token_count;
-    rc = transformer_capacity_build(&capacity, context->model_view, input->token_start,
+    workspace_start = context->options.context_capacity - workspace_tokens;
+    rc = transformer_capacity_build(&capacity, context->model_view, workspace_start,
                                     workspace_tokens, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_prepare_attention_workspace(
@@ -789,6 +820,17 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
             YVEX_ATTENTION_EVIDENCE_NONE, capacity, YVEX_MOE_CUDA_WORKSPACE_BYTES,
             &failure, err);
     yvex_graph_attention_capacity_plan_close(&capacity);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_session_summary_copy(context->session, &session, err);
+    if (rc == YVEX_OK && (!session.host_workspace_owned ||
+                          !session.host_workspace_pinned ||
+                          !yvex_sha256_hex_valid(session.workspace_identity)))
+        rc = transformer_runtime_refuse(
+            err, YVEX_ERR_STATE,
+            "transformer CUDA workspace did not publish stable ownership");
+    if (rc == YVEX_OK)
+        yvex_runtime_identity_copy(context->workspace_identity,
+                                   session.workspace_identity);
     return rc;
 }
 
@@ -872,6 +914,29 @@ const yvex_transformer_plan *yvex_runtime_transformer_context_plan(
     return context ? context->plan : NULL;
 }
 
+/* Purpose: borrow the exact execution session paired with one transformer context.
+ * Inputs: live context. Effects: none. Failure: NULL. Boundary: enables lifecycle coordinators
+ * to prove owner pairing without exposing transformer-private resources. */
+const yvex_runtime_execution_session *yvex_runtime_transformer_context_session(
+    const yvex_runtime_transformer_context *context)
+{
+    return context ? context->session : NULL;
+}
+
+/* Purpose: validate one token input against the exact model binding and transformer plan.
+ * Inputs: live context and admitted memory/file input. Effects: checks file drift when applicable.
+ * Failure: propagates typed identity, payload, or snapshot refusal. Boundary: validation only. */
+int yvex_runtime_transformer_context_validate_input(
+    const yvex_runtime_transformer_context *context,
+    const yvex_transformer_input *input, yvex_error *err)
+{
+    if (!context || !input)
+        return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG,
+                                          "transformer input validation owners are required");
+    return yvex_transformer_input_validate(input, context->plan,
+                                           context->model_view->binding, err);
+}
+
 /* Purpose: execute an identity-bound token request as independently committed chunks.
  * Inputs: matching context/input/backend, output capacity, and deterministic chunk size.
  * Effects: commits each complete full-stack chunk and publishes normalized hidden rows after commit.
@@ -912,13 +977,13 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
     }
     context->busy = 1;
     (void)pthread_mutex_unlock(&context->mutex);
-    rc = yvex_transformer_input_validate(input, context->plan,
-                                         context->model_view->binding, err);
+    rc = yvex_runtime_transformer_context_validate_input(context, input, err);
     if (rc == YVEX_OK) rc = transformer_runtime_buffers(context, request->chunk_tokens, err);
     if (rc == YVEX_OK) rc = transformer_state_summary(context->session, &before, err);
     if (rc == YVEX_OK) rc = transformer_prepare(context, input_summary, request, &before, err);
     result->token_start = result->position_before = input_summary->token_start;
     result->token_count = input_summary->token_count;
+    result->phase = request->phase;
     result->generation_before = before.generation;
     yvex_runtime_identity_copy(result->input_identity, input_summary->input_identity);
     memset(&chunk, 0, sizeof(chunk));
@@ -926,8 +991,10 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
     chunk.tokens = tokens;
     chunk.result = result;
     yvex_sha256_init(&chunk.layer_hash);
+    yvex_sha256_init(&chunk.routing_hash);
     yvex_sha256_init(&chunk.embedding_hash);
     (void)yvex_sha256_update_text(&chunk.layer_hash, "yvex.transformer.layer-stack.v1");
+    (void)yvex_sha256_update_text(&chunk.routing_hash, "yvex.transformer.routing-stack.v1");
     (void)yvex_sha256_update_text(&chunk.embedding_hash, "yvex.transformer.embedding.v1");
     while (rc == YVEX_OK && offset < input_summary->token_count) {
         yvex_attention_execution_request execution;
@@ -942,8 +1009,7 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
                                             "transformer execution cancelled between chunks");
             break;
         }
-        rc = yvex_transformer_input_validate(input, context->plan,
-                                             context->model_view->binding, err);
+        rc = yvex_runtime_transformer_context_validate_input(context, input, err);
         memset(&execution, 0, sizeof(execution));
         memset(&attention_result, 0, sizeof(attention_result));
         chunk.token_offset = offset;
@@ -1024,6 +1090,11 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
     else if (rc == YVEX_OK)
         rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                         "transformer layer digest finalization failed");
+    if (rc == YVEX_OK && yvex_sha256_final(&chunk.routing_hash, layer_digest))
+        yvex_sha256_hex(layer_digest, result->routing_digest);
+    else if (rc == YVEX_OK)
+        rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
+                                        "transformer routing digest finalization failed");
     if (rc == YVEX_OK && yvex_sha256_final(&chunk.embedding_hash, layer_digest))
         yvex_sha256_hex(layer_digest, result->embedding_digest);
     else if (rc == YVEX_OK)
@@ -1042,11 +1113,12 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
         yvex_sha256 hash;
         unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
         yvex_sha256_init(&hash);
-        if (!yvex_sha256_update_text(&hash, "yvex.runtime.transformer.execution.v1") ||
+        if (!yvex_sha256_update_text(&hash, "yvex.runtime.transformer.execution.v2") ||
             !yvex_sha256_update_text(&hash, plan->transformer_plan_identity) ||
             !yvex_sha256_update_text(&hash, result->input_identity) ||
             !yvex_sha256_update_text(&hash, result->normalized_hidden_digest) ||
             !yvex_sha256_update_text(&hash, result->persistent_state_digest) ||
+            !yvex_sha256_update_u64(&hash, request->phase) ||
             !yvex_sha256_update_u64(&hash, request->backend) ||
             !yvex_sha256_update_u64(&hash, request->chunk_tokens) ||
             !yvex_sha256_final(&hash, digest))
@@ -1186,6 +1258,7 @@ int yvex_transformer_operator_execute(const yvex_transformer_operator_request *r
     yvex_core_text_copy(result->target, sizeof(result->target), request->target);
     yvex_core_text_copy(result->backend, sizeof(result->backend),
                         request->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu");
+    yvex_core_text_copy(result->phase, sizeof(result->phase), "prefill");
     model_request.artifact_path = request->artifact_path;
     model_request.runtime_binding_path = request->runtime_binding_path;
     model_request.target_id = request->target;
@@ -1230,6 +1303,7 @@ int yvex_transformer_operator_execute(const yvex_transformer_operator_request *r
     }
     execution_request.backend = request->backend;
     execution_request.chunk_tokens = request->chunk_tokens;
+    execution_request.phase = YVEX_TRANSFORMER_PHASE_PREFILL;
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_execute(context, input, &execution_request,
                                               &output, &result->execution, err);

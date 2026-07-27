@@ -174,8 +174,9 @@ typedef struct {
         const char *target, *artifact_path, *runtime_binding_path, *backend;
         const char *phase, *input_class, *input_file, *progress;
         unsigned long long chunk_tokens, context_capacity;
+        unsigned long long prefill_tokens, prefill_chunk_tokens;
         unsigned long long maximum_host_bytes, maximum_device_bytes;
-        int active;
+        int active, decode;
     } transformer;
     int help_requested;
     int help_exit_code;

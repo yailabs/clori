@@ -1174,15 +1174,15 @@ This table records architectural scope, not delivery progress.
 
 | Family | v0.1.0 relation | Runtime class | Current support truth |
 | --- | --- | --- | --- |
-| DeepSeek-V4-Flash | exact release target at `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; canonical target id `deepseek4-v4-flash` | hybrid SWA/CSA/HCA decoder with mHC and MoE | typed architecture, exact 69,187-entry source coverage, sealed Transformation IR, complete quantization, two admitted complete artifacts, bounded materialization, a content-addressed runtime binding, one common runtime model/session, resident attention weights, complete CPU/GB10 attention, persistent state, activation prefill, token-local MoE, and numeric-token complete transformer execution exist; tokenizer-backed prompt input, repeated model decode, logits, and generation remain unsupported |
+| DeepSeek-V4-Flash | exact release target at `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; canonical target id `deepseek4-v4-flash` | hybrid SWA/CSA/HCA decoder with mHC and MoE | typed architecture, exact 69,187-entry source coverage, sealed Transformation IR, complete quantization, two admitted complete artifacts, bounded materialization, a content-addressed runtime binding, one common runtime model/session, resident attention weights, complete CPU/GB10 attention, persistent state, activation prefill, token-local MoE, numeric-token complete transformer execution, and teacher-forced repeated decode exist; tokenizer-backed prompt input, logits, sampling, and generation remain unsupported |
 | Qwen | outside v0.1.0 | target-dependent dense or sparse/MoE | unsupported; existing source/report facts do not enter the release path |
 | Gemma | outside v0.1.0 | dense | unsupported; existing source/report facts do not enter the release path |
 | GLM | outside v0.1.0 source-pressure work | sparse/MoE | unsupported; source evidence is not runtime support |
 | Phi/Llama/Mistral | unscoped architecture examples | target-dependent | unsupported; no current release target |
 
-In this table, unsupported `prefill` means tokenizer-backed full-model prompt
-prefill; unsupported model decode is distinct from the admitted attention-local
-activation-chunk and one-token phases.
+In this table, unsupported prompt input means tokenizer-backed full-model
+prompt processing. Teacher-forced model decode is distinct from both the
+attention-local one-token phase and autoregressive token selection.
 
 Legacy bounded DeepSeek proof code and Qwen/Gemma report surfaces may remain
 until their owning rows remove or absorb them. They do not define family posture

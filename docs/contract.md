@@ -34,8 +34,7 @@ complete external artifact
 DeepSeek-V4-Flash is the first family adapter. It is not the owner of a second
 runtime. The admitted persistent state is session-owned and consumed by the
 numeric token-ID transformer backbone. Tokenizer-backed prompt prefill,
-repeated model decode, logits, sampling and generation remain outside this
-contract.
+logits, sampling and generation remain outside this contract.
 
 The admitted token-local MoE path is:
 
@@ -57,6 +56,19 @@ canonical numeric token IDs
   -> final mHC collapse + final RMSNorm
   -> normalized hidden state + atomically committed persistent state
 ```
+
+The admitted repeated-decode path is:
+
+```text
+committed nonzero prefix + externally supplied numeric token ID
+  -> explicit decode-phase transformer execution over prior KV
+  -> one complete 43-block transaction
+  -> one committed state advance + one normalized hidden row
+  -> next externally supplied token or typed partial completion
+```
+
+Decode is teacher-forced. It does not project logits, select tokens, or form an
+autoregressive generation loop.
 
 ## Command Contract
 
@@ -95,6 +107,12 @@ token-ID backbone. It admits a schema-v1 token file, executes the production
 CPU or CUDA transformer API, and publishes normalized hidden state plus the
 committed state transition. It does not tokenize text, project logits, or run
 an autoregressive loop.
+
+`graph transformer decode` reuses that schema and opens one model, session, and
+transformer context. It commits the first explicit token span as prefill, then
+executes each remaining externally supplied ID as one decode-phase transaction.
+Successful steps remain committed when a later step fails or is cancelled; the
+result publishes the exact completed count and first incomplete ordinal.
 
 The CLI parses typed input, invokes production runtime APIs and renders copied
 results. CUDA Graph lifecycle actions operate on a real registry within the
@@ -371,9 +389,33 @@ CPU and GB10 CUDA consume the same plan and token input. CUDA performs selected
 embedding decode, attention, MoE, residual composition, final collapse, and
 normalization on device without a CPU numerical fallback or inter-layer
 activation roundtrip. The published `[token_count, hidden_width]` tensor is a
-normalized transformer hidden state. Repeated decode, output-head projection,
-vocabulary logits, sampling, tokenizer execution, and generation remain
-separate capabilities.
+normalized transformer hidden state. Repeated decode consumes this boundary;
+output-head projection, vocabulary logits, sampling, tokenizer execution, and
+generation remain separate capabilities.
+
+## Production Repeated Decode Contract
+
+The decode coordinator borrows one admitted transformer context and its paired
+execution session. It consumes bounded one-token views from the existing
+schema-v1 transformer input, requires a nonzero committed prefix and exact
+next position, and records decode as an explicit canonical phase. It does not
+reopen the artifact or runtime binding, rebuild plans, or create another KV
+owner.
+
+Each successful step executes selected embedding, 43 attention/MoE blocks,
+final mHC, and final RMSNorm, then commits one persistent-state advance and
+publishes one `[1,4096]` normalized hidden row. Position and generation come
+from the session state, never from a decode-owned counter. Caller output
+capacity and the complete requested context extent are validated before any
+step mutates state.
+
+Repeated execution is step-atomic. A failing or cancelled step publishes no KV
+or hidden row; earlier successful steps remain committed and the typed result
+identifies the exact completed count and first incomplete ordinal. Step and
+aggregate identities serialize token, position, generation, routing, hidden,
+state, phase-bearing transformer identity, and structural counters field by
+field. Numeric IDs remain externally supplied, so this boundary establishes
+neither tokenizer behavior nor autoregressive token choice.
 
 ## Graph Execution Contract
 
@@ -626,6 +668,7 @@ The current common runtime admits attention semantics, attention core/envelope,
 CPU eager phases, CUDA eager/piecewise/full phases, resident attention weights,
 reusable workspace, session-owned persistent DeepSeek attention state, and
 runtime-local operator evidence. Token-local MoE and the numeric-token complete
-transformer backbone are admitted on CPU and GB10 CUDA. Mixed/speculative
-attention, prompt/tokenizer execution, repeated model decode, logits, sampling,
+transformer backbone are admitted on CPU and GB10 CUDA. Teacher-forced repeated
+decode reuses the same token schema, transformer context, and persistent state.
+Mixed/speculative attention, prompt/tokenizer execution, logits, sampling,
 generation, evaluation, full-model benchmark and release remain unsupported.

@@ -13,8 +13,10 @@ all 43 layers. Versioned activation bundles commit that state atomically per
 chunk. A distinct token-local MoE input executes hash/learned routing, selected
 routed experts, shared experts, and combination across all 43 layers. A
 schema-v1 numeric token input executes selected embedding rows, the complete 43
-block backbone, final mHC collapse, and final RMSNorm. Prompt text, tokenizer
-execution, repeated decode, logits, and text generation remain unsupported.
+block backbone, final mHC collapse, and final RMSNorm. The same input schema
+drives teacher-forced repeated decode over one warm context and committed KV.
+Prompt text, tokenizer execution, logits, sampling, and text generation remain
+unsupported.
 
 There is no supported DeepSeek generation command to run yet.
 
@@ -62,6 +64,20 @@ The file binds canonical U32 token IDs to the exact logical model, runtime
 numeric, descriptor, and transformer-plan identities. The command executes the
 production backbone and commits all 43 attention publications once per chunk.
 Its normalized hidden result is not tokenizer output, logits, or generation.
+
+Split one numeric token stream into a committed prefix and teacher-forced
+decode steps without reopening the model:
+
+```sh
+./yvex graph transformer decode \
+  --target deepseek4-v4-flash --artifact "$ARTIFACT" --runtime-binding "$BINDING" \
+  --backend cuda --input token-ids --input-file "$TOKENS" \
+  --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 8 \
+  --progress off --output json
+```
+
+Every remaining ID commits one complete 43-block step and publishes one
+normalized hidden row. The command does not choose a token or project logits.
 
 The installed namespace also provides `./yvex graph attention qualify` and
 `./yvex graph attention benchmark compare`. The latter accepts
