@@ -1,6 +1,6 @@
 /* Owner: src/backend/cuda
- * Owns: CUDA projection of canonical qtype support/refusal state and the bounded encoded-row-dot Driver API launch,
- *   transfer, rollback, and cleanup path.
+ * Owns: CUDA projection of canonical qtype support/refusal state and direct encoded row-dot/matvec Driver launches,
+ *   transfer, rollback, and cleanup paths.
  * Does not own: GGUF qtype byte geometry, quantization, full transformer graph execution, runtime generation, eval,
  *   benchmark, or release claims.
  * Invariants: qtype compute support must be present in TRACK.QUANT and proven by the dedicated generated-PTX
@@ -18,6 +18,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define CUDA_QTYPE_MATVEC_BLOCK 256u
 
 /* Purpose: Implement the canonical quant fail mechanism owned by the CUDA backend boundary.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
@@ -47,6 +49,92 @@ static int cuda_quant_fail(yvex_quant_failure *failure,
     }
     yvex_error_set(err, (yvex_status)status, "cuda.quant.row_dot", message);
     return status;
+}
+
+/* Purpose: project one resident encoded matrix through the generic CUDA qtype matvec.
+ * Inputs: exact resident span/geometry and stable backend-owned F32 input/output tensors.
+ * Effects: launches every row and marks the complete output written only after status validation.
+ * Failure: capability, residency, geometry, launch, sync, or numeric refusal publishes no output.
+ * Boundary: backend executes encoded arithmetic and never selects model roles or sampling policy. */
+int yvex_backend_cuda_encoded_matvec(
+    yvex_backend *backend, const unsigned char *resident_encoded,
+    unsigned long long encoded_bytes, unsigned int qtype,
+    unsigned long long row_count, unsigned long long row_width,
+    unsigned long long row_bytes, const yvex_device_tensor *input,
+    yvex_device_tensor *output, unsigned long long *kernel_launches,
+    yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_cuda_work work = {0};
+    unsigned long long device_address = 0ull, input_bytes, output_bytes;
+    CUdeviceptr encoded_ptr, input_ptr, output_ptr, status = 0ull;
+    unsigned long long start_row = 0ull;
+    int output_bf16 = 0, host_status = 0, rc, cleanup_rc;
+    yvex_error cleanup;
+    if (kernel_launches) *kernel_launches = 0ull;
+    if (!state || !resident_encoded || !encoded_bytes || !row_count ||
+        !row_width || !row_bytes || row_count > UINT_MAX ||
+        !yvex_core_u64_mul(row_width, sizeof(float), &input_bytes) ||
+        !yvex_core_u64_mul(row_count, sizeof(float), &output_bytes) ||
+        row_count > ULLONG_MAX / row_bytes || row_count * row_bytes != encoded_bytes ||
+        !backend_tensor_owner_is(backend, input) || input->dtype != YVEX_DTYPE_F32 ||
+        input->bytes < input_bytes || !backend_tensor_owner_is(backend, output) ||
+        output->dtype != YVEX_DTYPE_F32 || output->bytes < output_bytes ||
+        yvex_backend_resident_resolve(backend, resident_encoded, encoded_bytes,
+                                      &device_address) != YVEX_BACKEND_RESIDENT_HIT) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.encoded-matvec",
+                       "resident encoded matvec geometry or ownership is incompatible");
+        return YVEX_ERR_FORMAT;
+    }
+    output->is_written = 0;
+    rc = yvex_cuda_require_capability(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                                      "cuda.encoded-matvec", err);
+    if (rc == YVEX_OK) rc = yvex_cuda_set_current(backend, "cuda.encoded-matvec", err);
+    work.backend = backend;
+    work.state = state;
+    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_work_allocate(&work, &status, sizeof(int), NULL, 1,
+                                     "cuda.encoded-matvec.status", NULL, err);
+    encoded_ptr = (CUdeviceptr)device_address;
+    input_ptr = (CUdeviceptr)input->data;
+    output_ptr = (CUdeviceptr)output->data;
+    if (rc == YVEX_OK) {
+        void *params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
+                          &row_count, &qtype, &input_ptr, &output_ptr,
+                          &output_bf16, &status};
+        rc = yvex_cuda_launch(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            state->qtype_matvec_function, (unsigned int)row_count,
+            CUDA_QTYPE_MATVEC_BLOCK,
+            CUDA_QTYPE_MATVEC_BLOCK * (unsigned int)sizeof(double), params,
+            "cuda.encoded-matvec.launch", err);
+        if (rc == YVEX_OK && kernel_launches) *kernel_launches = 1ull;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                                   "cuda.encoded-matvec.sync", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemcpyDtoH_v2(&host_status, status, sizeof(host_status)),
+            "cuda.encoded-matvec.status", err);
+    if (rc == YVEX_OK && host_status) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.encoded-matvec",
+                       "encoded CUDA projection produced invalid numerics");
+        rc = YVEX_ERR_FORMAT;
+    }
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
+    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
+    if (rc == YVEX_OK) {
+        output->is_written = 1;
+        yvex_error_clear(err);
+    }
+    return rc;
 }
 
 /*

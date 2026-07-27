@@ -365,6 +365,10 @@ int yvex_backend_resident_attach(yvex_backend *backend, const unsigned char *hos
 void yvex_backend_resident_detach(yvex_backend *backend);
 int yvex_backend_resident_resolve(const yvex_backend *backend, const unsigned char *host,
                                   unsigned long long bytes, unsigned long long *device_address);
+int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
+    unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
+    unsigned long long row_width, unsigned long long row_bytes, const yvex_device_tensor *input,
+    yvex_device_tensor *output, unsigned long long *kernel_launches, yvex_error *err);
 int yvex_backend_state_residency_attach(
     yvex_backend *backend, const void *context,
     yvex_backend_state_resolve_fn resolve, unsigned long long generation,
@@ -584,14 +588,10 @@ typedef struct {
     char reason[256];
 } yvex_backend_report;
 typedef struct {
-    const char *kind;
-    const char *status;
-    const char *reason;
-    const char *next_row;
+    const char *kind, *status, *reason, *next_row;
 } yvex_backend_report_fact;
 int yvex_backend_report_build(const yvex_backend_report_request *request,
-                              yvex_backend_report *report,
-                              yvex_error *err);
+                              yvex_backend_report *report, yvex_error *err);
 const char *yvex_backend_bundle_admission_name(
     yvex_backend_bundle_admission admission);
 #ifdef __cplusplus

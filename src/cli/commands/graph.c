@@ -29,6 +29,7 @@
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/decode.h>
+#include <yvex/internal/logits.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
@@ -1324,6 +1325,60 @@ static int graph_cli_transformer_decode(
         return graph_cli_print_runtime_error(err, exit_code);
     return 0;
 }
+
+/* Purpose: execute complete-vocabulary logits through the production runtime API.
+ * Inputs: parsed transformer/logits paths, split, backend, and budgets.
+ * Effects: renders typed complete-row evidence and releases its directory.
+ * Failure: typed operator or rendering refusal preserves cleanup ownership.
+ * Boundary: dispatches production logits without token selection or generation. */
+static int graph_cli_transformer_logits(
+    const yvex_graph_args *args, yvex_runtime_cleanup_lease **retained_cleanup,
+    yvex_error *err)
+{
+    yvex_logits_operator_request request = {0};
+    yvex_logits_operator_result result;
+    char artifact[YVEX_PATH_CAP], binding[YVEX_PATH_CAP], input[YVEX_PATH_CAP];
+    int rc, render_rc, exit_code;
+    memset(&result, 0, sizeof(result));
+    rc = expand_operator_path(args->transformer.artifact_path, artifact,
+                              sizeof(artifact), err, "graph_logits_cli");
+    if (rc == YVEX_OK)
+        rc = expand_operator_path(args->transformer.runtime_binding_path, binding,
+                                  sizeof(binding), err, "graph_logits_cli");
+    if (rc == YVEX_OK)
+        rc = expand_operator_path(args->transformer.input_file, input,
+                                  sizeof(input), err, "graph_logits_cli");
+    if (rc == YVEX_OK)
+        rc = yvex_backend_kind_parse(args->transformer.backend,
+                                     &request.backend, err);
+    if (rc != YVEX_OK)
+        return graph_cli_print_runtime_error(err, exit_for_status(rc));
+    request.target = args->transformer.target;
+    request.artifact_path = artifact;
+    request.runtime_binding_path = binding;
+    request.input_path = input;
+    request.prefill_tokens = args->transformer.prefill_tokens;
+    request.prefill_chunk_tokens = args->transformer.prefill_chunk_tokens;
+    request.context_capacity = args->transformer.context_capacity;
+    request.maximum_host_bytes = args->transformer.maximum_host_bytes;
+    request.maximum_device_bytes = args->transformer.maximum_device_bytes;
+    rc = yvex_runtime_logits_operator_execute(
+        &request, &result, retained_cleanup, err);
+    render_rc = yvex_graph_logits_render(yvex_cli_out_stdout(),
+                                         args->render_mode, &result);
+    if (render_rc != YVEX_OK) {
+        yvex_runtime_logits_operator_result_release(&result);
+        yvex_error_set(err, render_rc, "graph_logits_cli",
+                       "logits result rendering failed");
+        return graph_cli_print_runtime_error(err, exit_for_status(render_rc));
+    }
+    exit_code = rc == YVEX_OK ? (result.completed ? 0 : exit_for_status(YVEX_ERR_STATE))
+                              : exit_for_status(rc);
+    yvex_runtime_logits_operator_result_release(&result);
+    if (rc != YVEX_OK || exit_code)
+        return graph_cli_print_runtime_error(err, exit_code);
+    return 0;
+}
 /* Purpose: Dispatch graph.
  * Inputs: argv. Effects: executes and renders a typed request.
  * Failure: nonzero CLI status. Boundary: domain owners retain capability truth. */
@@ -1353,6 +1408,8 @@ int yvex_graph_command(int argc, char **argv,
 
     if (args.moe.active)
         return graph_cli_moe_execute(&args, retained_cleanup, &err);
+    if (args.transformer.active && args.transformer.logits)
+        return graph_cli_transformer_logits(&args, retained_cleanup, &err);
     if (args.transformer.active && args.transformer.decode)
         return graph_cli_transformer_decode(&args, retained_cleanup, &err);
     if (args.transformer.active)

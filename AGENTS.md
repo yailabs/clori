@@ -285,8 +285,8 @@ The following boundaries remain distinct:
 - `TRACK.PREFILL` owns prompt/chunk execution that populates committed model
   state; `TRACK.DECODE` owns repeated model-backed execution consuming it;
 - `TRACK.LOGITS` owns admission of transformer-normalized hidden state and
-  output-head projection to real vocabulary logits; `TRACK.SAMPLING` owns token
-  selection over those logits;
+  immutable output-head residency and projection to real vocabulary logits;
+  `TRACK.SAMPLING` owns token selection over those logits;
 - `TRACK.TOKENIZER` owns exact text/token conversion, templates, special
   tokens, EOS, stop, and detokenization;
 - `TRACK.GENERATION` owns autoregressive composition of these admitted lower

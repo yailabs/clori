@@ -36,7 +36,7 @@
 
 #define TEST_BINDING_HEADER_BYTES 88u
 #define TEST_BINDING_IDENTITY_OFFSET 24u
-#define TEST_BINDING_CAPABILITY_FIELDS 31u
+#define TEST_BINDING_CAPABILITY_FIELDS 41u
 
 typedef struct {
     yvex_artifact *artifact;
@@ -786,8 +786,8 @@ static int test_binding_readdress(const char *path, unsigned char *file, size_t 
 
     if (!slash || count < TEST_BINDING_HEADER_BYTES) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v5") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V5) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v6") ||
+        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V6) ||
         !yvex_sha256_update(&hash, file + TEST_BINDING_HEADER_BYTES,
                             count - TEST_BINDING_HEADER_BYTES) ||
         !yvex_sha256_final(&hash, digest))
@@ -1124,6 +1124,16 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
     request->capabilities.moe_shared_expert_ready = 0;
     request->capabilities.moe_block_ready = 0;
     request->capabilities.transformer_ready = 0;
+    request->capabilities.output_head_binding_ready = 0;
+    request->capabilities.output_head_projection_ready = 0;
+    request->capabilities.logits_cpu_ready = 0;
+    request->capabilities.logits_cuda_ready = 0;
+    request->capabilities.logits_prefill_ready = 0;
+    request->capabilities.logits_decode_ready = 0;
+    request->capabilities.logits_full_vocabulary_ready = 0;
+    request->capabilities.logits_hidden_contract_ready = 0;
+    request->capabilities.logits_partial_progress_ready = 0;
+    request->capabilities.logits_ready = 0;
     return
            yvex_runtime_capabilities_contract_valid(&request->capabilities);
 }
@@ -1238,7 +1248,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     YVEX_TEST_ASSERT(rc == YVEX_OK, "runtime binding reopened");
     YVEX_TEST_ASSERT(strcmp(summary.identity, prepared->summary.identity) == 0,
                      "reopened runtime binding identity");
-    YVEX_TEST_ASSERT(summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V5,
+    YVEX_TEST_ASSERT(summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V6,
                      "reopened runtime binding schema");
     YVEX_TEST_ASSERT(
         yvex_sha256_hex_is_valid(summary.semantic_graph_identity) &&

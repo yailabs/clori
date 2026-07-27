@@ -8,10 +8,8 @@
  * Effects: publishes one external content-addressed file or allocates one independently owned reopened view.
  * Failure: malformed input, short I/O, conflict, or identity drift leaves no partial published binding. */
 #include <yvex/internal/runtime.h>
-
 #include <yvex/internal/core.h>
 #include <yvex/internal/moe.h>
-
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -22,41 +20,34 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
 #ifndef O_NOFOLLOW
 #define O_NOFOLLOW 0
 #endif
-
-#define BINDING_MAGIC "YVRBND5\0"
+#define BINDING_MAGIC "YVRBND6\0"
 #define BINDING_MAGIC_BYTES 8u
 #define BINDING_HEADER_BYTES (BINDING_MAGIC_BYTES + 16u + 64u)
 #define BINDING_MAX_BYTES (64u * 1024u * 1024u)
 #define BINDING_MAX_RECORDS 1048576ull
 #define BINDING_MAX_LAYERS 65536ull
-
 typedef yvex_core_bytes binding_bytes;
-
 typedef struct {
     const unsigned char *data;
     size_t count, offset;
 } binding_cursor;
-
 typedef enum {
     BINDING_PARSE_FORMAT = 0,
     BINDING_PARSE_OK,
     BINDING_PARSE_BOUNDS,
     BINDING_PARSE_ALLOCATION
 } binding_parse_result;
-
 typedef struct {
     yvex_runtime_binding_failure_code code;
     yvex_status status;
     const char *reason;
 } binding_parse_failure;
-
 static const binding_parse_failure binding_parse_failures[] = {
     {YVEX_RUNTIME_BINDING_FAILURE_FORMAT, YVEX_ERR_FORMAT,
      "runtime binding canonical records are malformed"},
@@ -66,7 +57,6 @@ static const binding_parse_failure binding_parse_failures[] = {
     {YVEX_RUNTIME_BINDING_FAILURE_ALLOCATION, YVEX_ERR_NOMEM,
      "runtime binding record allocation failed"},
 };
-
 static const yvex_runtime_binding_failure_code binding_file_codes[] = {
     /* NONE, ARGUMENT */
     YVEX_RUNTIME_BINDING_FAILURE_FORMAT, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -87,7 +77,6 @@ static const yvex_runtime_binding_failure_code binding_file_codes[] = {
     /* VALIDATE */
     YVEX_RUNTIME_BINDING_FAILURE_FORMAT,
 };
-
 struct yvex_runtime_binding {
     yvex_runtime_binding_summary summary;
     yvex_complete_artifact_admission admission;
@@ -98,7 +87,6 @@ struct yvex_runtime_binding {
     yvex_attention_summary attention;
     yvex_attention_layer_plan *layers;
 };
-
 /* Purpose: publish stable typed runtime-binding failure context. */
 static void binding_failure_set(yvex_runtime_binding_failure *failure,
                                 yvex_runtime_binding_failure_code code,
@@ -116,7 +104,6 @@ static void binding_failure_set(yvex_runtime_binding_failure *failure,
     if (field) yvex_core_text_copy(failure->field, sizeof(failure->field), field);
     if (path) yvex_core_text_copy(failure->path, sizeof(failure->path), path);
 }
-
 /* Purpose: reject one binding operation without success-shaped partial output. */
 static int binding_reject(yvex_runtime_binding_failure *failure,
                           yvex_runtime_binding_failure_code code,
@@ -129,7 +116,6 @@ static int binding_reject(yvex_runtime_binding_failure *failure,
     yvex_error_set(err, status, "runtime.binding", reason);
     return status;
 }
-
 /* Purpose: append one unsigned integer in canonical little-endian order. */
 static int bytes_put_u64(binding_bytes *bytes, unsigned long long value)
 {
@@ -138,13 +124,11 @@ static int bytes_put_u64(binding_bytes *bytes, unsigned long long value)
     for (i = 0u; i < 8u; ++i) encoded[i] = (unsigned char)(value >> (i * 8u));
     return yvex_core_bytes_append(bytes, encoded, sizeof(encoded));
 }
-
 /* Purpose: append one signed integer through its exact two's-complement bit pattern. */
 static int bytes_put_i64(binding_bytes *bytes, long long value)
 {
     return bytes_put_u64(bytes, (unsigned long long)value);
 }
-
 /* Purpose: append one double through its exact IEEE-754 bits. */
 static int bytes_put_f64(binding_bytes *bytes, double value)
 {
@@ -153,7 +137,6 @@ static int bytes_put_f64(binding_bytes *bytes, double value)
     memcpy(&bits, &value, sizeof(bits));
     return bytes_put_u64(bytes, bits);
 }
-
 /* Purpose: append one bounded length-prefixed string without native padding. */
 static int bytes_put_text(binding_bytes *bytes, const char *text)
 {
@@ -161,7 +144,6 @@ static int bytes_put_text(binding_bytes *bytes, const char *text)
     return bytes_put_u64(bytes, (unsigned long long)length) &&
            yvex_core_bytes_append(bytes, text, length);
 }
-
 /* Purpose: consume exact bytes from a bounded canonical runtime-binding stream. */
 static int cursor_take(binding_cursor *cursor, void *out, size_t count)
 {
@@ -665,6 +647,16 @@ static const binding_field capability_fields[] = {
     FIELD_U(yvex_runtime_capabilities, moe_shared_expert_ready),
     FIELD_U(yvex_runtime_capabilities, moe_block_ready),
     FIELD_U(yvex_runtime_capabilities, transformer_ready),
+    FIELD_U(yvex_runtime_capabilities, output_head_binding_ready),
+    FIELD_U(yvex_runtime_capabilities, output_head_projection_ready),
+    FIELD_U(yvex_runtime_capabilities, logits_cpu_ready),
+    FIELD_U(yvex_runtime_capabilities, logits_cuda_ready),
+    FIELD_U(yvex_runtime_capabilities, logits_prefill_ready),
+    FIELD_U(yvex_runtime_capabilities, logits_decode_ready),
+    FIELD_U(yvex_runtime_capabilities, logits_full_vocabulary_ready),
+    FIELD_U(yvex_runtime_capabilities, logits_hidden_contract_ready),
+    FIELD_U(yvex_runtime_capabilities, logits_partial_progress_ready),
+    FIELD_U(yvex_runtime_capabilities, logits_ready),
     FIELD_U(yvex_runtime_capabilities, generation_ready),
 };
 
@@ -691,6 +683,18 @@ int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *fa
            (!facts->moe_block_ready ||
             (facts->moe_routed_expert_ready && facts->moe_shared_expert_ready)) &&
            (!facts->transformer_ready || facts->moe_block_ready) &&
+           (!facts->output_head_projection_ready || facts->output_head_binding_ready) &&
+           (!(facts->logits_cpu_ready || facts->logits_cuda_ready ||
+              facts->logits_prefill_ready || facts->logits_decode_ready ||
+              facts->logits_full_vocabulary_ready || facts->logits_hidden_contract_ready ||
+              facts->logits_partial_progress_ready) ||
+            facts->output_head_projection_ready) &&
+           (!facts->logits_ready ||
+            (facts->transformer_ready && facts->output_head_binding_ready &&
+             facts->output_head_projection_ready && facts->logits_cpu_ready &&
+             facts->logits_cuda_ready && facts->logits_prefill_ready &&
+             facts->logits_decode_ready && facts->logits_full_vocabulary_ready &&
+             facts->logits_hidden_contract_ready && facts->logits_partial_progress_ready)) &&
            !facts->generation_ready;
 }
 
@@ -711,9 +715,9 @@ int yvex_runtime_capabilities_identity(
     if (output) output[0] = '\0';
     if (!facts || !output || !yvex_runtime_capabilities_contract_valid(facts)) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.execution-capabilities.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.execution-capabilities.v2") ||
         !yvex_sha256_update_u64(
-            &hash, YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V1))
+            &hash, YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V2))
         return 0;
     for (index = 0u; index < FIELD_COUNT(capability_fields); ++index) {
         const binding_field *field = &capability_fields[index];
@@ -1194,8 +1198,8 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     tensor_count = materialization->tensor_count;
     layer_count = attention->layer_count;
     if (!yvex_runtime_capabilities_identity(capabilities, capability_identity) ||
-        !bytes_put_text(body, "yvex.runtime.binding.payload.v5") ||
-        !bytes_put_u64(body, YVEX_RUNTIME_BINDING_SCHEMA_V5) ||
+        !bytes_put_text(body, "yvex.runtime.binding.payload.v6") ||
+        !bytes_put_u64(body, YVEX_RUNTIME_BINDING_SCHEMA_V6) ||
         !bytes_put_u64(body, adapter_id) || !bytes_put_u64(body, adapter_version) ||
         !bytes_put_text(body, format) || !bytes_put_u64(body, format_version) ||
         !bytes_put_text(body, logical) || !bytes_put_text(body, semantic) ||
@@ -1242,8 +1246,8 @@ static int binding_identity(const unsigned char *body, size_t body_bytes,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v5") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V5) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v6") ||
+        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V6) ||
         !yvex_sha256_update(&hash, body, body_bytes) ||
         !yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, output);
@@ -1261,7 +1265,7 @@ static int build_file(const binding_bytes *body, const char *identity, binding_b
     file->maximum = BINDING_MAX_BYTES;
     file->initial_capacity = 4096u;
     return yvex_core_bytes_append(file, BINDING_MAGIC, BINDING_MAGIC_BYTES) &&
-           bytes_put_u64(file, YVEX_RUNTIME_BINDING_SCHEMA_V5) &&
+           bytes_put_u64(file, YVEX_RUNTIME_BINDING_SCHEMA_V6) &&
            bytes_put_u64(file, (unsigned long long)body->count) &&
            yvex_core_bytes_append(file, identity, 64u) &&
            yvex_core_bytes_append(file, body->data, body->count);
@@ -1285,8 +1289,8 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
     unsigned long long material_count, runtime_count, layer_count, i;
 
     if (!cursor_text(&cursor, domain, sizeof(domain)) ||
-        strcmp(domain, "yvex.runtime.binding.payload.v5") != 0 ||
-        !cursor_u64(&cursor, &schema) || schema != YVEX_RUNTIME_BINDING_SCHEMA_V5 ||
+        strcmp(domain, "yvex.runtime.binding.payload.v6") != 0 ||
+        !cursor_u64(&cursor, &schema) || schema != YVEX_RUNTIME_BINDING_SCHEMA_V6 ||
         !cursor_u64(&cursor, &family_id) || !family_id ||
         !cursor_u64(&cursor, &family_version) || !family_version ||
         !cursor_text(&cursor, format, sizeof(format)) || !format[0] ||
@@ -1533,10 +1537,10 @@ static int binding_file_decode(yvex_runtime_binding **out,
                             "runtime binding file magic is invalid", err);
         goto done;
     }
-    if (!cursor_u64(&header, &schema) || schema != YVEX_RUNTIME_BINDING_SCHEMA_V5) {
+    if (!cursor_u64(&header, &schema) || schema != YVEX_RUNTIME_BINDING_SCHEMA_V6) {
         rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_SCHEMA,
                             "schema-version", path, 0ull,
-                            YVEX_RUNTIME_BINDING_SCHEMA_V5, schema,
+                            YVEX_RUNTIME_BINDING_SCHEMA_V6, schema,
                             YVEX_ERR_FORMAT,
                             "runtime binding schema is unsupported", err);
         goto done;

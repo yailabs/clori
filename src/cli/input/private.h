@@ -176,7 +176,7 @@ typedef struct {
         unsigned long long chunk_tokens, context_capacity;
         unsigned long long prefill_tokens, prefill_chunk_tokens;
         unsigned long long maximum_host_bytes, maximum_device_bytes;
-        int active, decode;
+        int active, decode, logits;
     } transformer;
     int help_requested;
     int help_exit_code;

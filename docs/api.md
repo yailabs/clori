@@ -251,6 +251,27 @@ hidden, persistent state, and structural counters. They exclude pointers,
 padding, native object layout, timing, and local paths. The coordinator owns no
 token-choice, logits, sampling, tokenizer, or generation policy.
 
+### Internal Vocabulary-Logits Boundary
+
+`include/yvex/internal/logits.h` owns the non-installed, family-neutral output-
+head plan, authenticated normalized-hidden source, reusable logits context,
+single-row projection, ordered repeated projection, typed results, and operator
+adapter. The context borrows one runtime model/session and transformer plan. It
+shares immutable output-head residency but owns mutable host/device logits
+workspace and concurrency exclusion.
+
+`yvex_runtime_logits_source_from_transformer` and
+`yvex_runtime_logits_source_from_decode` seal only producer-authenticated final-
+prefill or decode hidden rows. `yvex_runtime_logits_project` computes every
+vocabulary coordinate directly from the resident encoded output head and
+publishes the caller-owned row only after complete success.
+`yvex_runtime_logits_execute` preserves earlier complete rows on a later
+failure and records the exact first incomplete row.
+
+The logits API publishes raw F32 values and field-wise plan, source, residency,
+backend, row, and aggregate identities. It neither repeats final norm nor owns
+persistent state, sampling, tokenizer, or generation policy.
+
 ### Internal DeepSeek Attention Operator Boundary
 
 `yvex_graph_attention_operator_execute` is the non-installed typed adapter used
@@ -403,11 +424,12 @@ benchmark readiness. Compatibility booleans may be derived from that lattice;
 they are not independent capability authorities.
 
 The current runtime supports production DeepSeek attention, persistent state,
-activation prefill, token-local MoE, and the numeric token-ID complete
-transformer backbone on CPU and the admitted GB10 CUDA path. Teacher-forced
-repeated decode executes through the same warm context and committed KV. It
-does not provide prompt text, tokenizer execution, logits, sampling, text
-generation, evaluation, a full-model benchmark or release readiness.
+activation prefill, token-local MoE, the numeric token-ID complete transformer
+backbone, teacher-forced repeated decode, and complete raw vocabulary logits on
+CPU and the admitted GB10 CUDA path. Logits consume transformer-normalized
+hidden rows without repeating final norm. The runtime does not provide prompt
+text, tokenizer execution, sampling, text generation, evaluation, a full-model
+benchmark or release readiness.
 
 ## Extension Rules
 

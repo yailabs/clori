@@ -5,7 +5,7 @@ Status: living engineering control
 Authority: product target, architecture tracks, complete wave ledger, milestone
 state, dependencies, evidence rank, family scope, release gates, and Active Next
 Recovery baseline: pre-refoundation `docs/spine.md` at commit `10ad6c3`
-Current proof stage: teacher-forced numeric DeepSeek token IDs execute repeated one-token CPU/GB10 CUDA decode steps over one warm transformer context and committed persistent state; output-head logits are the active boundary
+Current proof stage: transformer-normalized DeepSeek hidden rows project through the exact model-lifetime output head to complete raw vocabulary logits on CPU and GB10 CUDA; sampling is the active boundary
 
 ## 1. Authority And Update Contract
 
@@ -358,12 +358,12 @@ in a conversation or closure report is not part of the architecture.
 | Qtype | Pinned GGUF identities, removed/outside-baseline refusal, exact scalar/block geometry, and shape-aware storage accounting are canonical. One numeric capability registry owns deterministic codec and CPU/CUDA compute truth. F32, F16, BF16, I32, Q8_0, Q2_K, and MXFP4 codecs, direct encoded row-dot proofs, the selected DeepSeek profile, and the bounded four-operation byte executor are complete; unsupported identities refuse explicitly. |
 | Artifact | One immutable GGUF v3 writer plan consumes canonical lowering, quantization, tokenizer, and provenance owners. It emitted the complete source-faithful and selected DeepSeek artifacts outside the repository: `deepseek-v4-flash-source-faithful-v1.gguf` is 177,680,573,600 bytes with identity `f16e800c0d7383ee76cb2e2fa8bdd674bab29c017cba64eaba85c39016e257ca`; `deepseek-v4-flash-q8_0-q2_k-v1.gguf` is 102,408,545,440 bytes with identity `01b2bed4f070d0a3fdb02e546764b3a49cb69886eebe17b4877d20294725682c`. Each contains 68 metadata entries, exact tokenizer material, and all 1,360 tensors. The selected artifact is consumed by materialization and attention execution; it is not supported-model evidence. |
 | Integrity | Canonical layout admission, full-file SHA-256 identity, exact payload-range verification, native writer-reader equivalence, pinned official ggml reader acceptance, deterministic second serialization, and complete-artifact support admission are closed for both DeepSeek artifacts. Tensor proofs and external or structurally incomplete GGUF files remain outside the complete-artifact path. |
-| Materialization | The admitted selected DeepSeek artifact has a canonical family-neutral materialization plan and committed session over all 1,360 tensors. The live proof walked all 102,396,843,592 encoded payload bytes through bounded file-backed/staged access with 16 MiB peak executor-owned staging and 33,792 expert subviews. Attention, selected MoE expert subviews, token embedding, final mHC weights, and output norm consume those bindings; output-head residency remains unsupported. |
+| Materialization | The admitted selected DeepSeek artifact has a canonical family-neutral materialization plan and committed session over all 1,360 tensors. The live proof walked all 102,396,843,592 encoded payload bytes through bounded file-backed/staged access with 16 MiB peak executor-owned staging and 33,792 expert subviews. Attention, selected MoE expert subviews, token embedding, final mHC weights, output norm, and the exact 1,059,061,760-byte encoded output head consume those bindings. The output head has stable shared model-lifetime CPU/CUDA residency; whole-expert-collection residency remains unsupported. |
 | Runtime descriptor | The common runtime descriptor and DeepSeek specialization project the admitted artifact, materialization plan, canonical qtype facts, all 1,360 tensor bindings, topology, MoE/expert geometry, output/vocabulary geometry, tokenizer availability, and runtime numeric authority into one immutable graph-input descriptor. Logical-model identity `ec22b4bf78811265d1881071919593991f33ab883303f3df16d64c0689a63950`, runtime-numeric identity `33182fd6b75e9263861d5a873550e6d0c5d5010267fb315ec687c693c9572dcd`, and runtime-descriptor identity `68b6b6baf90576c3b03499340a9cd2bbbc488d529cd5b8492be75ef4ebb8a123` are distinct from unchanged artifact and materialization identities. |
-| Runtime | One content-addressed runtime binding opens the admitted artifact into a sealed family-neutral runtime model and process-lifetime execution sessions. DeepSeek enters through typed attention, MoE, and transformer policies. The model authenticates and parses once; each session owns persistent attention state, stable workspace, and independent execution lifecycles. An explicit decode phase repeatedly consumes one-token views from the existing versioned numeric-token input, commits once per successful step, and preserves typed partial progress. Logits and generation remain unsupported. |
-| CUDA | Production C contains no fallback PTX. Context, Driver API memory operations, generated-bundle admission, resolved functions, exact variants, runtime-session CUDA Graph lifecycles, and persistent-state residency are distinct typed facts. A no-`nvcc` build refuses every kernel before dispatch. The GB10 eager backbone executes selected encoded embedding rows, attention, selected routed/shared MoE experts, residual mHC composition, final collapse, and final norm with device-resident inter-layer activations and no CPU numerical fallback. |
-| Transformer | Numeric token IDs execute through selected encoded embedding rows, exact four-stream mHC initialization, 43 canonical attention/MoE blocks, deferred FFN mHC posts, final mHC collapse, and final RMSNorm on CPU and GB10 CUDA. One global state transaction commits all attention publications and advances position only after finite normalized hidden output is ready. Teacher-forced repeated decode reuses this same component; prompt text, logits, sampling, and generation remain unsupported. |
-| Operator | The `yvex graph attention`, `yvex graph moe execute`, `yvex graph transformer execute`, and `yvex graph transformer decode` namespaces invoke production runtime APIs directly over the admitted external artifact and runtime binding. Decode splits one identity-bound numeric token stream into a committed prefix and externally supplied one-token steps over one warm context; it does not tokenize, project logits, select tokens, or claim generation. Exhaustive attention recovery, profiling, and benchmark workflows remain in the operator runbook. |
+| Runtime | One content-addressed runtime binding opens the admitted artifact into a sealed family-neutral runtime model and process-lifetime execution sessions. DeepSeek enters through typed attention, MoE, transformer, and logits policies. The model authenticates and parses once; each session owns persistent attention state, stable workspace, and independent execution lifecycles. Repeated decode preserves step-atomic partial progress. A phase-neutral logits context consumes transformer-authenticated normalized hidden rows and publishes complete 129,280-value F32 rows without changing persistent state. Sampling and generation remain unsupported. |
+| CUDA | Production C contains no fallback PTX. Context, Driver API memory operations, generated-bundle admission, resolved functions, exact variants, runtime-session CUDA Graph lifecycles, and persistent-state residency are distinct typed facts. A no-`nvcc` build refuses every kernel before dispatch. The GB10 eager path executes the backbone and direct encoded BF16 output-head projection over every vocabulary row without CPU numerical fallback. |
+| Transformer | Numeric token IDs execute through selected encoded embedding rows, exact four-stream mHC initialization, 43 canonical attention/MoE blocks, deferred FFN mHC posts, final mHC collapse, and final RMSNorm on CPU and GB10 CUDA. One global state transaction commits all attention publications and advances position only after finite normalized hidden output is ready. Teacher-forced repeated decode reuses this component. The logits owner consumes its normalized hidden output without re-executing final norm; prompt text, sampling, and generation remain unsupported. |
+| Operator | The `yvex graph attention`, `yvex graph moe execute`, `yvex graph transformer execute`, `yvex graph transformer decode`, and `yvex graph transformer logits` namespaces invoke production runtime APIs directly over the admitted external artifact and runtime binding. The logits workflow projects the final prefill hidden row and every teacher-forced decode hidden row while reporting bounded identities instead of dumping the full tensor. It does not tokenize, select tokens, or claim generation. Exhaustive attention recovery, profiling, and benchmark workflows remain in the operator runbook. |
 | Text path | Exact tokenizer-backed autoregressive DeepSeek text generation is unsupported. |
 | Evaluation | Model behavior and model quality evaluation require the complete tokenizer-to-text path. They remain unavailable; attention numerical conformance is not model evaluation. |
 | Benchmark | The runtime owns schema-v5 `attention_component` cold/warm, eager/piecewise/full measurements, identity-bound baseline comparison, JSON/CSV facts, and deterministic external SVG charts. Correctness, structural-runtime, and performance status remain independent. Release-path generation and full-model benchmark evidence remain not measured. |
@@ -425,7 +425,17 @@ decode_repeat_ready=1
 decode_hidden_state_ready=1
 decode_partial_progress_ready=1
 model_decode_ready=1
-logits_ready=0
+output_head_binding_ready=1
+output_head_residency_ready=1
+output_head_projection_ready=1
+logits_cpu_ready=1
+logits_cuda_ready=1
+logits_prefill_ready=1
+logits_decode_ready=1
+logits_full_vocabulary_ready=1
+logits_hidden_contract_ready=1
+logits_partial_progress_ready=1
+logits_ready=1
 sampling_ready=0
 tokenizer_runtime_ready=0
 generation_ready=0
@@ -469,8 +479,9 @@ V010.RUNTIME.DEEPSEEK.PREFILL.0: complete (identity-bound activation chunks exec
 V010.RUNTIME.DEEPSEEK.MOE.0: complete (hash/learned routing, selected routed/shared experts, and token-local combination)
 V010.GRAPH.DEEPSEEK.TRANSFORMER.0: complete (numeric tokens execute embedding, 43 attention/MoE blocks, final mHC/norm, and one atomic KV publication)
 V010.RUNTIME.DEEPSEEK.DECODE.0: complete (teacher-forced one-token steps reuse the warm backbone, consume prior KV, and preserve partial progress)
-V010.RUNTIME.DEEPSEEK.LOGITS.0: active (project one transformer-normalized decode hidden row through the admitted output head)
-Active Next: V010.RUNTIME.DEEPSEEK.LOGITS.0
+V010.RUNTIME.DEEPSEEK.LOGITS.0: complete (project final-prefill and decode normalized hidden rows through the exact complete output head)
+V010.RUNTIME.SAMPLING.0: active (select token IDs from complete real vocabulary logits)
+Active Next: V010.RUNTIME.SAMPLING.0
 ```
 
 Repository compression and C canonicalization preserved every admitted source,
@@ -841,7 +852,7 @@ another supported model.
 
 | Family/scope | Source/profile truth | Tensor/map truth | Artifact/materialization truth | Runtime truth | Project role |
 | --- | --- | --- | --- | --- | --- |
-| DeepSeek-V4-Flash | Exact source metadata/header verification, upstream payload trust, bounded streaming handoff, and typed architecture IR complete | Exact 69,187-entry coverage, artifact-neutral Transformation IR, 1,360-descriptor GGUF lowering, and selected quantization plan complete | Source-faithful and selected complete GGUF artifacts emitted, roundtrip-verified, admitted, fully walked through bounded materialization access, and projected into a DeepSeek runtime descriptor | The common runtime consumes DeepSeek through typed family adapters and executes numeric token IDs through encoded embedding, 43 attention/MoE blocks, final mHC collapse and final RMSNorm on CPU and GB10 CUDA. Teacher-forced repeated decode consumes the same committed session state and publishes one normalized hidden row per successful step; output-head logits, tokenizer text, sampling, and generation remain unsupported | sole v0.1.0 release target |
+| DeepSeek-V4-Flash | Exact source metadata/header verification, upstream payload trust, bounded streaming handoff, and typed architecture IR complete | Exact 69,187-entry coverage, artifact-neutral Transformation IR, 1,360-descriptor GGUF lowering, and selected quantization plan complete | Source-faithful and selected complete GGUF artifacts emitted, roundtrip-verified, admitted, fully walked through bounded materialization access, and projected into a DeepSeek runtime descriptor | The common runtime executes numeric token IDs through encoded embedding, 43 attention/MoE blocks, final mHC collapse and final RMSNorm on CPU and GB10 CUDA. Final-prefill and teacher-forced decode hidden rows project through the exact separate resident BF16 output head to complete 129,280-value raw logits; tokenizer text, sampling, and generation remain unsupported | sole v0.1.0 release target |
 | Qwen | Source target/profile, header inventory, naming-map, and role-coverage work exists | Implemented at bounded source/header/report stages | No complete supported artifact or full materialization claim | generation unsupported | active multi-family/common architecture evidence |
 | Gemma | Source target/profile and header tensor-collection work exists | Dense/common mapping can be reused; exact complete family gate not claimed | No complete supported artifact or full materialization claim | generation unsupported | active dense/common architecture evidence |
 | Dense/common | Common naming, collections, proof artifacts, validators, and primitive evidence exist | Partial reusable capability | Family-neutral admitted-artifact materialization, runtime binding, descriptor projection, sealed runtime model/session, and execution lifecycle are implemented; DeepSeek is the first admitted vertical adapter | no supported full-model runtime or second-family execution adapter | common engine architecture and regression surface |
@@ -866,11 +877,11 @@ calculated from rows rather than protected by a summary hash.
 | Explicit new IDs | 50 |
 | Canonical IDs | 681 |
 | First-class milestones | 44 |
-| State: complete | 374 |
+| State: complete | 385 |
 | State: active | 1 |
 | State: partial | 1 |
-| State: blocked | 6 |
-| State: planned | 263 |
+| State: blocked | 5 |
+| State: planned | 253 |
 | State: reopened | 2 |
 | State: deferred | 22 |
 | State: superseded | 11 |
@@ -887,18 +898,18 @@ calculated from rows rather than protected by a summary hash.
 | `TRACK.INTEGRITY` | Container, metadata, tensor directory, offsets, alignment, qtype-sized ranges, corruption, drift, and artifact admission. | canonical global layout and complete-artifact support admission are complete; tensor proofs remain explicitly separate | A complete artifact passes every pre-payload and pre-runtime integrity gate. |
 | `TRACK.MODEL` | Family architecture profiles, typed architecture IR, layer topology, attention/position/KV/MoE rules, and runtime descriptor projection. | canonical DeepSeek family facts, runtime-numeric schema v2, common/DeepSeek runtime descriptor projection, and complete attention consumption are admitted | A family-correct typed model specification and executable runtime descriptor. |
 | `TRACK.TENSOR` | Canonical tensor collections, role requirements, global/layer/attention/MoE/norm/output/tokenizer coverage, and missing-role truth. | exact DeepSeek source coverage is complete; multi-family evidence remains at its prior rank | No unresolved required tensor collection or runtime role. |
-| `TRACK.RESIDENCY` | Payload streaming, materialization, placement, memory planning, CUDA residency, movement, ownership, cleanup, and release. | bounded materialization, resident attention/state resources, selected-expert MoE subviews, selected embedding rows, and transformer workspaces are complete; whole-expert-collection and output-head residency remain unsupported | Any admitted tensor map can materialize; runtime owners acquire exact immutable and mutable resources without redefining family semantics. |
+| `TRACK.RESIDENCY` | Payload streaming, materialization, placement, memory planning, CUDA residency, movement, ownership, cleanup, and release. | bounded materialization, resident attention/state resources, selected-expert MoE subviews, selected embedding rows, transformer workspaces, and the shared immutable output head are complete; whole-expert-collection residency remains unsupported | Any admitted tensor map can materialize; runtime owners acquire exact immutable and mutable resources without redefining family semantics. |
 | `TRACK.RUNTIME` | Runtime binding consumption, immutable runtime-model sealing, execution-session lifecycle, workload descriptors, phase/mode dispatch, reusable contexts, capability truth, invalidation, timing, and common state-provider boundaries. | common attention, persistent state, activation input, token-local MoE, complete transformer-backbone coordination, and repeated teacher-forced decode are admitted with DeepSeek entering through typed adapters | One admitted binding opens once into a reusable family-neutral runtime model whose isolated sessions execute supported graph work without rebuilding compilation truth. |
-| `TRACK.BACKEND` | Hardware/build profiles, CPU/CUDA capability, qtype operations, reference parity, scratch, fallback, synchronization, refusal, and cleanup. | CUDA is fail-closed; selected-qtype embedding, attention, routed/shared MoE, mHC residual, and final-norm compute have direct GB10 proof with no CPU numerical fallback | Every required DGX Spark backbone operation is real, reference-compared, and fail-closed. |
+| `TRACK.BACKEND` | Hardware/build profiles, CPU/CUDA capability, qtype operations, reference parity, scratch, fallback, synchronization, refusal, and cleanup. | CUDA is fail-closed; selected-qtype backbone operations and direct encoded complete-vocabulary output-head projection have GB10 proof with no CPU numerical fallback | Every required DGX Spark logits-boundary operation is real, reference-compared, and fail-closed. |
 | `TRACK.GRAPH` | Primitive contracts, graph construction/planning, attention, position handling, MoE routing/experts, residuals, layers, scratch, and transformer execution. | Complete DeepSeek attention, token-local MoE, embedding, 43-block composition, final mHC collapse, and final RMSNorm are admitted through CPU and GB10 CUDA paths and consumed unchanged by repeated decode | Normalized hidden states from repeated steps hand off to output-head projection. |
 | `TRACK.PREFILL` | Identity-bound activation input, deterministic chunking, all-layer attention execution, state ownership, position progression, persistent-state write integration, and cleanup. | numeric token chunks execute embedding and all 43 DeepSeek attention/MoE blocks on CPU and GB10 CUDA and commit persistent state atomically per chunk; prompt text remains unsupported | Repeated decode consumes the same transformer, position, cancellation, and state contracts. |
 | `TRACK.KV` | Family-correct KV geometry, allocation, indexing, append/read, capacity, reuse, lifecycle, and cleanup. | session-owned persistent DeepSeek attention state is admitted on CPU and GB10 CUDA with atomic append/read, exact sequence position, clear/reuse, and causal production consumption | Prefill and decode consume the same owned persistent model state. |
 | `TRACK.DECODE` | One-step and repeated model-backed decode over descriptor, positions, KV, transformer state, cancellation, and cleanup. | explicit teacher-forced one-token steps reuse one warm transformer/session, consume every prior commit, publish normalized hidden rows, and preserve exact partial progress on CPU/GB10 CUDA | Output-head projection consumes one transformer-normalized decode hidden row. |
-| `TRACK.LOGITS` | Normalized hidden-state admission, output-head placement/projection, vocabulary logits, numeric checks, and buffer lifecycle. | repeated decode now supplies the exact transformer-normalized hidden input; output-head execution is active | Real vocabulary logits derive from transformer-owned normalized hidden state without re-executing final norm. |
-| `TRACK.SAMPLING` | Deterministic and stochastic token selection over real vocabulary logits, seeding, reproducibility, validation, and refusal. | bounded fixture sampling only | Selected token IDs derive from real output-head logits. |
+| `TRACK.LOGITS` | Normalized hidden-state admission, output-head placement/projection, vocabulary logits, numeric checks, and buffer lifecycle. | final-prefill and decode hidden rows project through the resident separate BF16 output head to complete CPU/CUDA vocabulary logits without re-executing final norm | Real vocabulary logits hand one complete F32 row to sampling. |
+| `TRACK.SAMPLING` | Deterministic and stochastic token selection over real vocabulary logits, seeding, reproducibility, validation, and refusal. | real complete vocabulary logits are available; token selection is active and remains unsupported until this track closes | Selected token IDs derive from real output-head logits. |
 | `TRACK.TOKENIZER` | Exact tokenizer loading, prompt encoding, templates, special/EOS/stop policy, append boundary, detokenization, and failure behavior. | metadata and token-ID contract evidence only | Prompt text and generated IDs traverse the exact tokenizer contract. |
 | `TRACK.GENERATION` | Tokenizer/prefill/KV/decode/logits/sampling composition, append, stop, cancellation, partial output, trace, cleanup, and autoregression. | no admitted generation implementation; retained ledger evidence does not establish runtime composition | Multiple real autoregressive tokens become detokenized text. |
-| `TRACK.OPERATOR` | CLI grammar, command adaptation, typed input, dispatch, rendering, refusal, control-plane integration, topology guards, and operator acceptance. | production attention, persistent state, activation prefill, token-local MoE, numeric-token transformer execution, and teacher-forced repeated decode are reachable through truthful main-binary commands; prompt and release generation remain unsupported | Every executable milestone reaches its accepted production API through a real command or records an owned non-applicability reason. |
+| `TRACK.OPERATOR` | CLI grammar, command adaptation, typed input, dispatch, rendering, refusal, control-plane integration, topology guards, and operator acceptance. | production attention, persistent state, activation prefill, token-local MoE, numeric-token transformer/decode, and complete raw logits are reachable through truthful main-binary commands; prompt and generation remain unsupported | Every executable milestone reaches its accepted production API through a real command or records an owned non-applicability reason. |
 | `TRACK.SERVE` | Runtime-backed daemon generation, streaming, cancellation, observability, and protocol compatibility. | deferred outside v0.1.0 | Defined only after real local generation is stable and separately scoped. |
 | `TRACK.EVAL` | Complete-model behavior, quality, regression, tokenizer, context, and refusal evaluation after real generation exists. | blocked by real generation; attention numerical conformance is not model evaluation | Repeatable evaluation passes over the release path. |
 | `TRACK.BENCH` | Reproducible component and complete-model performance measurements with machine, identity, workload, timing, throughput, memory, regression, and visualization metadata. | schema-v5 attention-component measurements and deterministic SVG evidence are implemented; full-model generation benchmark evidence is not measured | Accepted DGX Spark benchmark evidence over the release path. |
@@ -922,15 +933,15 @@ closure.
 | `TRACK.INTEGRITY` | 14 | 15 | 1/0/0/0/0/0 | 10 | 4 | 0 |
 | `TRACK.MODEL` | 21 | 23 | 3/0/0/0/0/0 | 9 | 11 | 0 |
 | `TRACK.TENSOR` | 27 | 28 | 1/0/0/0/0/0 | 18 | 9 | 0 |
-| `TRACK.RESIDENCY` | 42 | 43 | 2/0/0/0/0/0 | 29 | 12 | 0 |
-| `TRACK.RUNTIME` | 18 | 18 | 1/0/0/0/0/0 | 12 | 5 | 0 |
+| `TRACK.RESIDENCY` | 42 | 43 | 2/0/0/0/0/0 | 30 | 11 | 0 |
+| `TRACK.RUNTIME` | 18 | 18 | 1/0/0/0/0/0 | 13 | 4 | 0 |
 | `TRACK.BACKEND` | 29 | 30 | 1/0/0/0/0/0 | 12 | 15 | 2 |
 | `TRACK.GRAPH` | 71 | 75 | 3/0/0/0/0/0 | 67 | 4 | 1 |
 | `TRACK.PREFILL` | 27 | 28 | 1/0/0/0/0/0 | 24 | 3 | 0 |
 | `TRACK.KV` | 21 | 22 | 1/0/0/0/0/0 | 16 | 5 | 0 |
 | `TRACK.DECODE` | 15 | 16 | 1/0/0/0/0/0 | 14 | 1 | 0 |
-| `TRACK.LOGITS` | 17 | 19 | 0/1/0/0/0/0 | 6 | 11 | 1 |
-| `TRACK.SAMPLING` | 15 | 16 | 0/0/0/0/1/0 | 4 | 11 | 0 |
+| `TRACK.LOGITS` | 17 | 19 | 1/0/0/0/0/0 | 14 | 3 | 1 |
+| `TRACK.SAMPLING` | 15 | 16 | 0/1/0/0/0/0 | 4 | 11 | 0 |
 | `TRACK.TOKENIZER` | 13 | 14 | 0/0/0/0/1/0 | 2 | 11 | 0 |
 | `TRACK.GENERATION` | 35 | 36 | 0/0/0/0/1/0 | 21 | 14 | 0 |
 | `TRACK.OPERATOR` | 81 | 82 | 1/0/0/1/1/0 | 37 | 42 | 0 |
@@ -1006,8 +1017,8 @@ written after inspection of owner code, consumers, tests, and current contracts.
 | 33 | `V010.RUNTIME.DEEPSEEK.MOE.0` | `TRACK.GRAPH` | DeepSeek | `complete` | Execute exact hash/learned routing, deterministic top-k, selected routed experts, shared experts, and token-local combination over admitted weights on CPU/CUDA. | V010.RUNTIME.DEEPSEEK.PREFILL.0 |
 | 34 | `V010.GRAPH.DEEPSEEK.TRANSFORMER.0` | `TRACK.GRAPH` | DeepSeek | `complete` | Execute numeric token IDs through selected embedding rows, 43 ordered attention/MoE blocks, deferred mHC residuals, final mHC collapse, final RMSNorm, and one atomic persistent-state transaction on CPU/GB10 CUDA. | V010.RUNTIME.DEEPSEEK.MOE.0 |
 | 35 | `V010.RUNTIME.DEEPSEEK.DECODE.0` | `TRACK.DECODE` | DeepSeek | `complete` | Run repeated model-backed decode steps that consume prior KV, advance positions once per token, preserve typed partial progress, and produce real normalized hidden state. | V010.GRAPH.DEEPSEEK.TRANSFORMER.0 |
-| 36 | `V010.RUNTIME.DEEPSEEK.LOGITS.0` | `TRACK.LOGITS` | DeepSeek | `active` | Consume transformer-owned normalized hidden state and apply the complete output-head projection to produce vocabulary logits with numeric proof. | V010.RUNTIME.DEEPSEEK.DECODE.0 |
-| 37 | `V010.RUNTIME.SAMPLING.0` | `TRACK.SAMPLING` | common | `blocked` | Select token IDs from real vocabulary logits with deterministic greedy behavior, seeded stochastic policies, validation, and refusal. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
+| 36 | `V010.RUNTIME.DEEPSEEK.LOGITS.0` | `TRACK.LOGITS` | DeepSeek | `complete` | Consume transformer-owned normalized hidden state and apply the complete output-head projection to produce vocabulary logits with numeric proof. | V010.RUNTIME.DEEPSEEK.DECODE.0 |
+| 37 | `V010.RUNTIME.SAMPLING.0` | `TRACK.SAMPLING` | common | `active` | Select token IDs from real vocabulary logits with deterministic greedy behavior, seeded stochastic policies, validation, and refusal. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | 38 | `V010.RUNTIME.DEEPSEEK.TOKENIZER.0` | `TRACK.TOKENIZER` | DeepSeek | `blocked` | Load the exact tokenizer, encode prompts, apply template/special/EOS/stop rules, and detokenize generated IDs. | V010.RUNTIME.SAMPLING.0 |
 | 39 | `V010.RUNTIME.DEEPSEEK.GENERATION.0` | `TRACK.GENERATION` | DeepSeek | `blocked` | Compose tokenizer, prefill, KV, decode, logits, sampling, append, stop, cancellation, partial-output, and cleanup for multiple real tokens. | V010.RUNTIME.DEEPSEEK.TOKENIZER.0 |
 | 40 | `V010.CLI.DEEPSEEK.GENERATE.0` | `TRACK.OPERATOR` | DeepSeek | `blocked` | Expose one operator command that invokes the accepted generation path and reports precise refusal, cancellation, partial output, and cleanup. | V010.RUNTIME.DEEPSEEK.GENERATION.0 |
@@ -1370,7 +1381,7 @@ the row's use.
 
 **Owner:** Payload streaming, materialization, placement, memory planning, CUDA residency, movement, ownership, cleanup, and release.
 
-**Current truth:** common source-side streaming and family-neutral materialization are complete; runtime execution seals attention/state resources, accesses only selected routed/shared expert subviews, gathers selected encoded embedding rows, and reuses bounded CPU/CUDA transformer workspaces. Whole-expert-collection and output-head residency remain unsupported
+**Current truth:** common source-side streaming and family-neutral materialization are complete; runtime execution seals attention/state resources, accesses selected routed/shared expert subviews, gathers selected encoded embedding rows, reuses bounded CPU/CUDA transformer workspaces, and shares the exact encoded output head at model lifetime. Whole-expert-collection residency remains unsupported
 
 **Ledger summary:** 42 recovered IDs; 2 first-class milestones; 29 complete support rows; 12 open support rows; 0 superseded/deferred rows.
 
@@ -1414,7 +1425,7 @@ target or payload snapshot exists.
 | `V010.STORAGE.18` | `evidence` | MoE/common | `complete` | The live map-to-range proof resolves all 67,584 routed-expert contributions plus shared experts under bounded physical-order plans. | V010.SOURCE.PAYLOAD.STREAM.0 |
 | `V010.STORAGE.19` | `evidence` | common | `complete` | The live proof resolves and streams the complete output-head contribution as an indexed bounded range. | V010.SOURCE.PAYLOAD.STREAM.0 |
 | `V010.STORAGE.20` | `evidence` | common | `complete` | The v0.1.0 source-storage gate admits all 46 shards, 69,187 tensors and contributions, and 1,360 descriptors with upstream payload trust and zero drift/read failures. | V010.SOURCE.PAYLOAD.STREAM.0 |
-| `V010.RESIDENCY.0` | `evidence` | common | `complete` | Typed residency facts distinguish stable attention/state/workspace resources, selected embedding/expert access, and unsupported whole-expert/output-head residency. | V010.RUNTIME.1 |
+| `V010.RESIDENCY.0` | `evidence` | common | `complete` | Typed residency facts distinguish stable attention/state/workspace/output-head resources, selected embedding/expert access, and unsupported whole-expert residency. | V010.RUNTIME.1 |
 | `V010.RESIDENCY.1` | `capability` | common | `complete` | The sealed runtime model derives one immutable identity-bound resident tensor plan from the admitted runtime binding before execution. | V010.RUNTIME.1 |
 | `V010.RESIDENCY.2` | `capability` | common | `complete` | CPU sessions reuse one stable host attention-weight pack and perform zero artifact weight reads during warm execution. | V010.RUNTIME.1 |
 | `V010.RESIDENCY.3` | `capability` | CUDA / DGX Spark | `complete` | GB10 sessions upload the complete attention pack once to stable device addresses and perform zero warm weight uploads or allocations. | V010.RUNTIME.1 |
@@ -1429,7 +1440,7 @@ target or payload snapshot exists.
 | `V010.RESIDENCY.12` | `capability` | common | `complete` | Session-owned persistent DeepSeek attention state uses stable reusable CPU storage and two GB10 CUDA device banks with checked layout identity, zero warm resizing, and graph invalidation on generation change. | V010.RUNTIME.DEEPSEEK.KV.0 |
 | `V010.RESIDENCY.13` | `subtask` | dense/common | `planned` | dense MLP residency. | V010.ARTIFACT.MATERIALIZE.DEEPSEEK.0 |
 | `V010.RESIDENCY.14` | `subtask` | MoE/common | `planned` | MoE expert residency. | V010.ARTIFACT.MATERIALIZE.DEEPSEEK.0 |
-| `V010.RESIDENCY.15` | `subtask` | common | `planned` | output-head residency. | V010.ARTIFACT.MATERIALIZE.DEEPSEEK.0 |
+| `V010.RESIDENCY.15` | `capability` | common | `complete` | The exact 1,059,061,760-byte encoded output head has stable shared model-lifetime CPU/CUDA residency and zero warm reads, uploads, or allocations. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.RESIDENCY.16` | `subtask` | common | `planned` | tokenizer/runtime metadata residency. | V010.ARTIFACT.MATERIALIZE.DEEPSEEK.0 |
 | `V010.RESIDENCY.17` | `evidence` | common | `complete` | Cold preparation, warm reuse, stable-address verification, and artifact-drift invalidation prove the complete attention residency transition. | V010.RUNTIME.1 |
 | `V010.RESIDENCY.18` | `evidence` | common | `complete` | Allocation, upload, cancellation, invalidation, repeated release, and cleanup failures preserve typed state and never publish partial residency. | V010.RUNTIME.1 |
@@ -1474,7 +1485,7 @@ runtime spine is introduced.
 | `V010.RUNTIME.9` | `capability` | common | `complete` | Failing transformer chunks publish neither partial KV nor hidden output and preserve prior committed prefixes. | V010.GRAPH.DEEPSEEK.TRANSFORMER.0 |
 | `V010.RUNTIME.10` | `evidence` | common | `complete` | Persistent state cancellation, staged-layer failure, capacity refusal, abort, commit failure, invalidation, and cleanup preserve the prior committed generation and position. | V010.RUNTIME.DEEPSEEK.KV.0 |
 | `V010.RUNTIME.11` | `evidence` | common | `complete` | Failing or cancelled decode steps publish neither KV nor hidden rows; prior successful steps remain committed and the first incomplete ordinal remains exact. | V010.RUNTIME.DEEPSEEK.DECODE.0 |
-| `V010.RUNTIME.12` | `subtask` | common | `planned` | logits failure behavior. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
+| `V010.RUNTIME.12` | `capability` | common | `complete` | Logits failures publish no partial vocabulary row, preserve prior repeated rows, leave persistent position unchanged, and retain the primary causal error through cleanup. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.RUNTIME.13` | `subtask` | common | `planned` | sampling failure behavior. | V010.RUNTIME.SAMPLING.0 |
 | `V010.RUNTIME.14` | `subtask` | common | `planned` | generation append failure behavior. | V010.RUNTIME.DEEPSEEK.GENERATION.0 |
 | `V010.RUNTIME.15` | `evidence` | common | `complete` | cancellation safe points. | V010.RUNTIME.1 |
@@ -1486,7 +1497,7 @@ runtime spine is introduced.
 
 **Owner:** Hardware/build profiles, CPU/CUDA capability, qtype operations, reference parity, scratch, fallback, synchronization, refusal, and cleanup.
 
-**Current truth:** CUDA capability admission is fail-closed; attention retains admitted eager and CUDA Graph modes, while the complete GB10 eager transformer path executes selected embedding rows, attention, MoE, mHC residuals, final collapse, and final norm with device-resident inter-layer activations and no CPU numerical fallback
+**Current truth:** CUDA capability admission is fail-closed; attention retains admitted eager and CUDA Graph modes, the complete GB10 eager transformer path executes with device-resident inter-layer activations, and the logits path projects the complete vocabulary directly from the resident encoded output head without CPU numerical fallback
 
 **Ledger summary:** 29 recovered IDs; 1 first-class milestones; 12 complete support rows; 15 open support rows; 2 superseded/deferred rows.
 
@@ -1535,7 +1546,7 @@ runtime spine is introduced.
 
 **Owner:** Primitive contracts, graph construction/planning, attention, position handling, MoE routing/experts, residuals, layers, scratch, and transformer execution.
 
-**Current truth:** the complete DeepSeek backbone is admitted from numeric token IDs to normalized hidden state through selected embedding rows, four-stream mHC state, 43 ordered attention/MoE blocks, deferred FFN posts, final mHC collapse, and final RMSNorm. CPU and GB10 CUDA repeated decode consume the same immutable plan and one transaction per token; output-head logits, tokenizer text, and generation remain unsupported
+**Current truth:** the complete DeepSeek backbone is admitted from numeric token IDs to normalized hidden state through selected embedding rows, four-stream mHC state, 43 ordered attention/MoE blocks, deferred FFN posts, final mHC collapse, and final RMSNorm. CPU and GB10 CUDA repeated decode consume the same immutable plan and one transaction per token. The separate logits owner consumes the normalized hidden state without duplicating final norm; tokenizer text and generation remain unsupported
 
 **Ledger summary:** 71 recovered IDs; 3 first-class milestones; 3 complete milestones; 67 complete support rows; 4 open support rows; 1 superseded/deferred row.
 
@@ -1752,15 +1763,15 @@ runtime spine is introduced.
 
 **Owner:** Normalized hidden-state admission, output-head placement/projection, vocabulary logits, numeric checks, and buffer lifecycle.
 
-**Current truth:** the active output-head boundary consumes one transformer-owned normalized decode hidden row; output-head residency, projection, and vocabulary logits remain unsupported
+**Current truth:** one immutable family-neutral plan admits the separate unbiased DeepSeek `output.weight` binding, model-lifetime CPU/CUDA residency, and direct encoded BF16 projection. Transformer-authenticated final-prefill and decode hidden rows produce complete ordered 129,280-value F32 logits rows without re-executing final norm or mutating persistent state
 
-**Ledger summary:** 17 recovered IDs; 1 first-class milestones; 6 complete support rows; 11 open support rows; 1 superseded/deferred rows.
+**Ledger summary:** 17 recovered IDs; 1 first-class milestones; 14 complete support rows; 3 open support rows; 1 superseded/deferred rows.
 
 #### First-Class Milestones
 
 | Milestone | Scope | State | Conclusive after-state | Depends on | Origin |
 | --- | --- | --- | --- | --- | --- |
-| `V010.RUNTIME.DEEPSEEK.LOGITS.0` | DeepSeek | `active` | Consume transformer-owned normalized hidden state and apply the complete output-head projection to produce vocabulary logits with numeric proof. | V010.RUNTIME.DEEPSEEK.DECODE.0 | current |
+| `V010.RUNTIME.DEEPSEEK.LOGITS.0` | DeepSeek | `complete` | Consume transformer-owned normalized hidden state and apply the complete output-head projection to produce vocabulary logits with numeric proof. | V010.RUNTIME.DEEPSEEK.DECODE.0 | current |
 
 #### Recovered And Subordinate Rows
 
@@ -1768,21 +1779,21 @@ runtime spine is introduced.
 | --- | --- | --- | --- | --- | --- |
 | `V010.LOGITS.0` | `evidence` | common | `complete` | logits requirement report. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.LOGITS.1` | `evidence` | common | `complete` | Transformer-owned normalized final hidden-state input contract. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
-| `V010.LOGITS.2` | `subtask` | common | `planned` | Admit transformer-normalized hidden input without re-executing final norm. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
+| `V010.LOGITS.2` | `capability` | common | `complete` | Admit transformer-normalized prefill/decode hidden input without re-executing final norm. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.LOGITS.3` | `evidence` | common | `complete` | output-head tensor mapping. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
-| `V010.LOGITS.4` | `subtask` | common | `planned` | output-head residency. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
-| `V010.LOGITS.5` | `subtask` | common | `planned` | output-head projection. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
+| `V010.LOGITS.4` | `capability` | common | `complete` | Exact model-lifetime output-head host/device residency with stable warm reuse. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
+| `V010.LOGITS.5` | `capability` | common | `complete` | Direct encoded CPU/CUDA projection across every vocabulary row. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.LOGITS.6` | `evidence` | common | `complete` | logits buffer allocation. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
-| `V010.LOGITS.7` | `subtask` | common | `planned` | logits dtype/range report. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
+| `V010.LOGITS.7` | `evidence` | common | `complete` | Complete F32 logits rows publish finite counts and exact numeric ranges. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.LOGITS.8` | `evidence` | common | `complete` | logits checksum report. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.LOGITS.9` | `evidence` | common | `complete` | top-k diagnostics. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.LOGITS.10` | `subtask` | common | `planned` | logprob diagnostics. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.LOGITS.11` | `subtask` | common | `planned` | sharded output-head plan. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.LOGITS.12` | `subtask` | common | `planned` | staged/SSD output-head plan. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
-| `V010.LOGITS.13` | `subtask` | common | `planned` | logits cleanup/failure. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
-| `V010.LOGITS.14` | `subtask` | common | `planned` | logits trace. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
-| `V010.LOGITS.15` | `subtask` | common | `planned` | logits regression. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
-| `V010.LOGITS.16` | `subtask` | common | `planned` | v0.1.0 logits gate. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
+| `V010.LOGITS.13` | `capability` | common | `complete` | Transactional row publication, cancellation, failure, cleanup, and partial progress. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
+| `V010.LOGITS.14` | `evidence` | common | `complete` | Field-wise plan, source, residency, row, backend, and aggregate evidence identities. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
+| `V010.LOGITS.15` | `evidence` | common | `complete` | Complete-vocabulary independent reference and CPU/CUDA numerical conformance. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
+| `V010.LOGITS.16` | `capability` | common | `complete` | The v0.1.0 logits gate passes for final-prefill and repeated decode sources. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.RUNTIME.DEEPSEEK.LOGITS.SAMPLING.0` | `migration` | DeepSeek/common | `superseded` | Attempted recovery milestone split so output-head/logits and sampling retain distinct owners. | V010.RUNTIME.DEEPSEEK.LOGITS.0 + V010.RUNTIME.SAMPLING.0 |
 
 
@@ -1790,7 +1801,7 @@ runtime spine is introduced.
 
 **Owner:** Deterministic and stochastic token selection over real vocabulary logits, seeding, reproducibility, validation, and refusal.
 
-**Current truth:** bounded fixture sampling only
+**Current truth:** complete model-backed vocabulary logits are available; deterministic and stochastic token selection remain unsupported and are the active boundary
 
 **Ledger summary:** 15 recovered IDs; 1 first-class milestones; 4 complete support rows; 11 open support rows; 0 superseded/deferred rows.
 
@@ -1798,7 +1809,7 @@ runtime spine is introduced.
 
 | Milestone | Scope | State | Conclusive after-state | Depends on | Origin |
 | --- | --- | --- | --- | --- | --- |
-| `V010.RUNTIME.SAMPLING.0` | common | `blocked` | Select token IDs from real vocabulary logits with deterministic greedy behavior, seeded stochastic policies, validation, and refusal. | V010.RUNTIME.DEEPSEEK.LOGITS.0 | current |
+| `V010.RUNTIME.SAMPLING.0` | common | `active` | Select token IDs from real vocabulary logits with deterministic greedy behavior, seeded stochastic policies, validation, and refusal. | V010.RUNTIME.DEEPSEEK.LOGITS.0 | current |
 
 #### Recovered And Subordinate Rows
 
@@ -1913,7 +1924,7 @@ runtime spine is introduced.
 
 **Owner:** CLI grammar, command adaptation, typed input, dispatch, rendering, refusal, control-plane integration, topology guards, and operator acceptance.
 
-**Current truth:** the `yvex graph attention`, `yvex graph moe execute`, and `yvex graph transformer execute` namespaces directly reach their production runtime APIs. Numeric-token transformer execution publishes normalized hidden/state evidence on CPU/CUDA; prompt text, decode orchestration, logits, and release generation remain unsupported
+**Current truth:** the `yvex graph attention`, `yvex graph moe execute`, `yvex graph transformer execute`, `yvex graph transformer decode`, and `yvex graph transformer logits` namespaces directly reach their production runtime APIs. Numeric-token execution publishes normalized hidden, repeated decode, and complete raw-logits evidence on CPU/CUDA; prompt text, token selection, and release generation remain unsupported
 
 **Ledger summary:** 81 recovered IDs; 3 first-class milestones; 37 complete support rows; 42 open support rows; 0 superseded/deferred rows.
 
@@ -2231,7 +2242,8 @@ limits the claim either class may support.
 | Primitive/selected graph proofs | One operation, transfer, cleanup, tolerance, or bounded composition | not full attention, transformer execution, or generation |
 | Common runtime attention, activation-prefill, and persistent-state plane | Exercise immutable runtime-binding admission, one process-lifetime model/session, resident attention weights, versioned ordered activation input, exact session-owned DeepSeek state, all-layer per-chunk atomic append/read, clear/reuse, CPU/CUDA residency, causal history consumption, whole-chunk/subchunk equivalence, tensor-file operator execution, phase/mode dispatch, eager/CUDA Graph execution, invalidation, cold/warm timing, baseline comparison, and deterministic external charts | does not by itself prove prompt/token embedding, token-local MoE, complete transformer execution, model decode, generation, evaluation, or full-model benchmark behavior |
 | Token-local DeepSeek MoE | Exercise immutable MoE-plan admission, typed activation/token-ID input, hash and learned routing, deterministic top-k, selected routed-expert subviews, distinct shared experts, CPU/CUDA encoded qtype compute, exact combination, cancellation, cleanup, and direct operator execution | not attention/MoE composition, complete transformer execution, model prefill/decode, generation, evaluation, or full-model benchmark proof |
-| Numeric-token transformer and repeated decode | Exercise selected embedding rows, 43 ordered attention/MoE blocks, final mHC/norm, explicit prefill/decode phase identity, one commit per teacher-forced step, causal prior-KV consumption, ordered hidden rows, typed partial progress, CPU/CUDA parity, and direct operator execution | not tokenizer-backed prompt input, output-head logits, token selection, sampling, autoregressive generation, evaluation, or full-model benchmark proof |
+| Numeric-token transformer and repeated decode | Exercise selected embedding rows, 43 ordered attention/MoE blocks, final mHC/norm, explicit prefill/decode phase identity, one commit per teacher-forced step, causal prior-KV consumption, ordered hidden rows, typed partial progress, CPU/CUDA parity, and direct operator execution | not tokenizer-backed prompt input, token selection, sampling, autoregressive generation, evaluation, or full-model benchmark proof |
+| Complete output-head logits | Exercise transformer-authenticated final-prefill and decode hidden admission, exact separate-head binding, shared model-lifetime residency, direct encoded full-vocabulary CPU/CUDA projection, independent numerical conformance, transactional row publication, warm reuse, and direct operator execution | not probabilities, token selection, sampling, tokenizer behavior, autoregressive generation, evaluation, or full-model benchmark proof |
 | Historical diagnostic runtime/generation state | Decommissioned lifecycle, refusal, cancellation, flat F32 KV, fixture logits/sampling, bounded token-loop, and cleanup evidence removed by the `V010.RUNTIME.1` cutover | historical provenance only; not current executable evidence and not model-backed prefill, KV, decode, logits, sampling, or generation |
 | Operator/topology evidence | Discoverability, ownership enforcement, refusal propagation, and transcript regression | cannot create a lower domain capability |
 | Internal fixtures | Deterministic vectors, corrupt files, synthetic tokens/logits, and allocation failures | not model quality, benchmark, or release proof |
@@ -2256,7 +2268,7 @@ installed headers were intentionally removed rather than left available.
 | Selected embedding and segment commands | Remaining compatibility parsing/rendering is confined to `src/cli/input/graph.c`, `src/cli/render/graph.c`, `src/runtime/graph.c`, and `tests/cli/attention_graph.sh`; standalone partial/segment scripts are removed. | Absorb valid backend/reference comparisons into internal proofs; remove any surviving selected product aliases. | `V010.GRAPH.DEEPSEEK.TRANSFORMER.0`: full transformer tests own public graph proof and selected command discovery is gone. |
 | Persistent KV | Diagnostic prefill/report/CLI and flat interchangeable K/V precursors are removed. The session-owned family-correct provider, CPU/CUDA residency, atomic model-state transaction, production read-after-write, clear/reuse, and operator exercise are admitted. Activation prefill, the complete transformer, and repeated decode consume this boundary directly and add no parallel cache. | Preserve this owner as the sole persistent state boundary; token-local MoE does not mutate it and repeated decode reuses the same session position, cancellation, and state contracts. | KV, activation prefill, MoE, transformer, and decode milestones are complete; output-head logits consume decode hidden rows without owning KV. |
 | Diagnostic decode | The former summary-only command, production owner, and CLI tests are removed. | Preserve the replacement teacher-forced decode coordinator over the common runtime, transformer, and persistent KV owners; do not restore a fixture path. | `V010.RUNTIME.DEEPSEEK.DECODE.0`: complete; `yvex graph transformer decode` consumes the executable descriptor and attention-backed KV. |
-| Fixture logits and sampling | Former production fixture owners and public CLI surfaces are removed. | Introduce only final-norm/output-head logits and sampling over the real vocabulary when their milestones activate. | `V010.RUNTIME.DEEPSEEK.LOGITS.0`, `V010.RUNTIME.SAMPLING.0`: sampled IDs derive from full-vocabulary model logits. |
+| Fixture logits and sampling | Former production fixture owners and public CLI surfaces are removed. Real logits consume transformer-normalized hidden state and the exact output head through the runtime owner. | Preserve real logits; introduce sampling only over the complete admitted F32 vocabulary row. | `V010.RUNTIME.DEEPSEEK.LOGITS.0`: complete; `V010.RUNTIME.SAMPLING.0`: sampled IDs derive from full-vocabulary model logits. |
 | Bounded diagnostic generation | Former diagnostic production/CLI owners and token-printing tests are removed; catalog schemas remain inert retained compatibility data until the generation milestone owns their disposition. | Implement only the tokenizer/prefill/KV/decode/logits/sample/append/stop chain. | `V010.RUNTIME.DEEPSEEK.GENERATION.0`: multiple detokenized autoregressive tokens pass release-path tests. |
 | Selected-artifact support levels | `include/yvex/model.h`, `src/model/artifacts/gate.c`, registry/report owners, prepare renderers, model gate/registry tests | Complete-artifact admission now consumes one canonical typed result; retained bounded subsets remain tensor proof artifacts and cannot enter that path. | `V010.ARTIFACT.SUPPORT.CUTOVER.0`: complete; runtime support still requires materialization and every higher gate. |
 | Report-only fullmodel surfaces | `src/cli/model_artifacts/fullmodel.c` and `tests/cli/fullmodel.sh` | Replace useful descriptor/materialization facts with typed full-target APIs; remove reports that only restate missing runtime behavior. | `V010.RUNTIME.DESCRIPTOR.DEEPSEEK.0`: one typed executable descriptor boundary remains and obsolete report commands are gone. |
@@ -2278,10 +2290,10 @@ installed headers were intentionally removed rather than left available.
 | Integrity/admission | Canonical global layout, complete physical identity, payload integrity, role coverage, and complete-artifact admission | complete | `V010.GGUF.LAYOUT.INTEGRITY.1` and `V010.ARTIFACT.SUPPORT.CUTOVER.0` |
 | Materialization | Family-neutral materializer plus selected DeepSeek bounded placement/cleanup | complete for file-backed/staged access and the resident attention pack; complete-model residency not claimed | materialization and runtime milestones |
 | Descriptor | Canonical common descriptor and execution-complete DeepSeek graph-input specialization | complete and consumed by attention, MoE, and the full transformer backbone | descriptor, attention, MoE, and transformer milestones |
-| Runtime | Content-addressed binding, one authenticated immutable model, mutable sessions, persistent state, identity-bound component/token inputs, granular capability truth, invalidation, and reusable execution without compiler reconstruction | complete through numeric-token embedding, 43-block backbone, normalized hidden output, full-model prefill, and teacher-forced repeated decode; logits and generation remain unsupported | runtime, KV, prefill, MoE, transformer, and decode milestones |
-| CUDA | Capability admission is fail-closed; selected embedding, complete DeepSeek attention, routed/shared MoE, residual mHC, final collapse, and final norm have GB10 proof with no CPU numerical fallback | complete eager transformer backbone ready; transformer CUDA Graph and later output-head execution remain unsupported | attention/KV/prefill/MoE/transformer milestones |
-| Transformer | Numeric tokens execute selected embedding, 43 canonical attention/MoE blocks, deferred residuals, final mHC collapse, final RMSNorm, and atomic persistent-state publication | complete CPU/GB10 CUDA backbone and normalized hidden output, consumed by repeated decode; logits remain unsupported | transformer and decode milestones |
-| Text generation | Exact tokenizer, output head, logits, sampling, repeated decode, stop, detokenization | repeated decode complete; tokenizer, logits, sampling, stop composition, detokenization, and autoregressive token choice remain unsupported | logits/sampling/tokenizer/generation milestones |
+| Runtime | Content-addressed binding, one authenticated immutable model, mutable sessions, persistent state, identity-bound component/token inputs, granular capability truth, invalidation, and reusable execution without compiler reconstruction | complete through numeric-token embedding, 43-block backbone, normalized hidden output, teacher-forced repeated decode, and complete raw vocabulary logits; sampling and generation remain unsupported | runtime, KV, prefill, MoE, transformer, decode, and logits milestones |
+| CUDA | Capability admission is fail-closed; selected embedding, complete DeepSeek attention, routed/shared MoE, residual mHC, final collapse/norm, and direct encoded output-head projection have GB10 proof with no CPU numerical fallback | complete eager backbone and full-vocabulary logits ready; transformer/logits CUDA Graph and optimized/fused output-head execution remain unsupported | attention/KV/prefill/MoE/transformer/logits milestones |
+| Transformer | Numeric tokens execute selected embedding, 43 canonical attention/MoE blocks, deferred residuals, final mHC collapse, final RMSNorm, and atomic persistent-state publication | complete CPU/GB10 CUDA backbone and normalized hidden output, consumed by repeated decode and logits without duplicating final norm | transformer, decode, and logits milestones |
+| Text generation | Exact tokenizer, output head, logits, sampling, repeated decode, stop, detokenization | repeated decode and complete raw logits are ready; tokenizer, sampling, stop composition, detokenization, and autoregressive token choice remain unsupported | logits/sampling/tokenizer/generation milestones |
 | Operator | One truthful command invokes the release path | blocked | `V010.CLI.DEEPSEEK.GENERATE.0` |
 | Evaluation | Repeatable release-path quality, regression, context, and refusal cases | blocked | `V010.EVAL.DEEPSEEK.0` |
 | Benchmark | Reproducible release-path prompt/context, full-model prefill/decode/generation throughput, latency, and memory measurements | not measured; bounded attention runtime benchmarks are available but do not satisfy this gate | `V010.BENCH.DEEPSEEK.0` |
@@ -2313,9 +2325,9 @@ YVEX does not currently claim:
 - quantization beyond the fixed DeepSeek profile and four currently admitted Transformation IR operations;
 - automatic optimization, incremental compilation, multi-variant generation, or Pareto selection;
 - an artifact materialization cache or inference-time SSD expert streaming;
-- complete-model or output-head residency; attention/state resources are resident and MoE reads/uploads selected expert subviews only, without whole-collection residency;
+- complete-model or whole-expert-collection residency; the exact output head, attention/state resources, selected embeddings, and bounded selected expert subviews use their admitted residency contracts;
 - paged, spilled, or quantized KV; prompt text, tokenizer-backed prompt processing, or tokenizer execution;
-- output-head vocabulary logits or model-backed sampling;
+- model-backed token selection or sampling; complete raw output-head vocabulary logits are available;
 - autoregressive token choice; teacher-forced repeated decode consumes externally supplied token IDs;
 - exact tokenizer-backed autoregressive DeepSeek text generation;
 - CUDA model generation;

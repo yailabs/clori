@@ -67,11 +67,11 @@ static const yvex_model_target_row_spec output_head_audit_rows[] = {
     OUTPUT_HEAD_STRING(tie, "tie_policy_status: %s"),
     OUTPUT_HEAD_STRING(config_tie, "config_tie_word_embeddings_status: %s"),
     OUTPUT_HEAD_STRING(shape_relation, "shape_relation_status: %s"),
-    OUTPUT_HEAD_LITERAL("output_head_runtime_consumer_status: not-implemented"),
-    OUTPUT_HEAD_LITERAL("output_head_logits_status: not-implemented"),
-    OUTPUT_HEAD_LITERAL("output_head_artifact_contract_status: not-implemented"),
-    OUTPUT_HEAD_LITERAL("output_head_runtime_descriptor_status: not-implemented"),
-    OUTPUT_HEAD_LITERAL("output_head_graph_consumer_status: not-implemented")
+    OUTPUT_HEAD_LITERAL("output_head_runtime_consumer_status: target-runtime-owned"),
+    OUTPUT_HEAD_LITERAL("output_head_logits_status: target-capability-dependent"),
+    OUTPUT_HEAD_LITERAL("output_head_artifact_contract_status: artifact-owner"),
+    OUTPUT_HEAD_LITERAL("output_head_runtime_descriptor_status: runtime-owner"),
+    OUTPUT_HEAD_LITERAL("output_head_graph_consumer_status: runtime-logits-owner")
 };
 
 static const yvex_model_target_row_spec output_head_entry_rows[] = {

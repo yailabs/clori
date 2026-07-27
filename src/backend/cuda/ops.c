@@ -506,7 +506,7 @@ static int attention_matvec(yvex_cuda_work *work,
             (void *)&weight->qtype, &vector, &out, &output_bf16, &status
         };
         return attention_launch(
-            work, work->state->deepseek_qtype_matvec_function,
+            work, work->state->qtype_matvec_function,
             (unsigned int)rows, CUDA_ATTENTION_BLOCK,
             CUDA_ATTENTION_BLOCK * (unsigned int)sizeof(double), params, stage,
             failure, err);

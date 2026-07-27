@@ -8,6 +8,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/graph_state.h>
+#include <yvex/internal/logits.h>
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
@@ -53,9 +54,8 @@ struct yvex_runtime_execution_session {
     pthread_cond_t idle_condition;
     struct yvex_runtime_execution_session *model_previous, *model_next;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
-    int lifecycle_mutex_ready, idle_condition_ready, closing, model_registered;
-    int model_reserved, model_release_pending;
-    int invalidation_pending, host_workspace_cleanup_pending, attention_state_provider_ready;
+    int lifecycle_mutex_ready, idle_condition_ready, closing, model_registered, model_reserved;
+    int model_release_pending, invalidation_pending, host_workspace_cleanup_pending, attention_state_provider_ready;
 };
 /* One exclusive lease keeps cold model and mutable session owners reachable across cleanup faults. */
 struct yvex_runtime_cleanup_lease {
@@ -75,8 +75,7 @@ static void runtime_model_failure_record(yvex_runtime_model_failure *failure,
         failure->expected = expected;
         failure->actual = actual;
         failure->reason = reason;
-        if (field)
-            yvex_core_text_copy(failure->field, sizeof(failure->field), field);
+        if (field) yvex_core_text_copy(failure->field, sizeof(failure->field), field);
     }
 }
 /* Purpose: publish one typed runtime refusal and its canonical public error. */
@@ -111,8 +110,7 @@ typedef enum {
 typedef struct {
     yvex_runtime_model_failure_code code;
     yvex_status status;
-    const char *field;
-    const char *reason;
+    const char *field, *reason;
 } runtime_refusal_spec;
 /* Ordered with runtime_refusal_id so one typed row owns each stable refusal contract. */
 static const runtime_refusal_spec runtime_refusals[] = {
@@ -781,7 +779,8 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
         rc = yvex_runtime_residency_snapshot(
             model->residency, &residency_summary, NULL, NULL, err);
         if (rc != YVEX_OK || !residency_summary.core_complete ||
-            !residency_summary.envelope_complete)
+            !residency_summary.envelope_complete ||
+            !yvex_runtime_logits_residency_admit(&model->summary.capabilities, &residency_summary))
             return runtime_model_open_fail(
                 out, model, failure, REFUSE_OPEN_RESIDENCY_COMPLETE, 1ull, 0ull, err,
                 rc == YVEX_OK ? YVEX_ERR_FORMAT : (yvex_status)rc);
@@ -834,6 +833,7 @@ int yvex_runtime_model_validate(yvex_runtime_model *model,
                                 &model->summary.invalidation_count);
         model->summary.capabilities.attention_weight_residency_ready = 0;
         model->summary.capabilities.attention_envelope_ready = 0;
+        yvex_runtime_logits_capabilities_invalidate(&model->summary.capabilities);
         model->dependent_invalidation_pending = 1;
     }
     if (model->dependent_invalidation_pending) {

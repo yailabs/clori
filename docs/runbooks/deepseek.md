@@ -7,19 +7,15 @@ Canonical source: `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; target:
 
 ## Current Boundary
 
-YVEX admits the selected complete GGUF and executes its attention bindings
-through the common CPU/CUDA runtime. Sessions own exact persistent state for
-all 43 layers. Versioned activation bundles commit that state atomically per
-chunk. A distinct token-local MoE input executes hash/learned routing, selected
-routed experts, shared experts, and combination across all 43 layers. A
-schema-v1 numeric token input executes selected embedding rows, the complete 43
-block backbone, final mHC collapse, and final RMSNorm. The same input schema
-drives teacher-forced repeated decode over one warm context and committed KV.
-Prompt text, tokenizer execution, logits, sampling, and text generation remain
-unsupported.
+YVEX admits the selected complete GGUF through the common CPU/CUDA runtime.
+Sessions own exact 43-layer persistent state. Activation bundles, token-local
+MoE, and schema-v1 numeric token input execute the complete embedding,
+attention/MoE, final mHC, and final RMSNorm backbone. The same schema drives
+teacher-forced decode over one warm context. Final-prefill and decode hidden
+rows project through the separate BF16 output head to complete raw logits.
+Prompt text, tokenizer execution, sampling, and generation remain unsupported.
 
 There is no supported DeepSeek generation command to run yet.
-
 Prepare the immutable runtime binding, then execute the production attention
 path. Raw generated evidence remains outside the repository:
 
@@ -46,38 +42,43 @@ BINDING="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["runt
 The component attention-activation and MoE tensor-file commands remain
 available for focused operator diagnosis; `docs/api.md` owns their schemas and
 `./yvex help` owns their complete flag catalog.
-
-An upstream production consumer or the focused live target may create an
-untracked schema-v1 transformer token input. Execute it with:
+An upstream consumer or live target may create an untracked schema-v1 token input:
 
 ```sh
 TOKENS="/absolute/path/to/input.yvex-transformer-input"
 ./yvex graph transformer execute \
-  --target deepseek4-v4-flash --artifact "$ARTIFACT" \
-  --runtime-binding "$BINDING" --backend cuda --phase prefill \
-  --input token-ids --input-file "$TOKENS" \
+  --target deepseek4-v4-flash --artifact "$ARTIFACT" --runtime-binding "$BINDING" \
+  --backend cuda --phase prefill --input token-ids --input-file "$TOKENS" \
   --chunk-tokens 2 --context-capacity 4096 \
   --progress off --output json
 ```
 
-The file binds canonical U32 token IDs to the exact logical model, runtime
-numeric, descriptor, and transformer-plan identities. The command executes the
-production backbone and commits all 43 attention publications once per chunk.
-Its normalized hidden result is not tokenizer output, logits, or generation.
+The file binds canonical U32 IDs and exact model/runtime/plan identities. Each
+chunk commits all 43 attention publications; it is not tokenizer output.
 
-Split one numeric token stream into a committed prefix and teacher-forced
-decode steps without reopening the model:
+Split one numeric stream into prefix and teacher-forced decode without reopening the model:
 
 ```sh
 ./yvex graph transformer decode \
+  --target deepseek4-v4-flash --artifact "$ARTIFACT" --runtime-binding "$BINDING" \
+  --backend cuda --input token-ids --input-file "$TOKENS" --prefill-tokens 1 \
+  --prefill-chunk-tokens 1 --context-capacity 8 \
+  --progress off --output json
+```
+
+Every remaining ID commits one 43-block step and hidden row; no token is chosen.
+Project final-prefill and decode rows through the complete head without reopening:
+
+```sh
+./yvex graph transformer logits \
   --target deepseek4-v4-flash --artifact "$ARTIFACT" --runtime-binding "$BINDING" \
   --backend cuda --input token-ids --input-file "$TOKENS" \
   --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 8 \
   --progress off --output json
 ```
 
-Every remaining ID commits one complete 43-block step and publishes one
-normalized hidden row. The command does not choose a token or project logits.
+For one prefix and two decode tokens, three bounded records each cover all
+129,280 F32 logits. Output contains digests/ranges, not the tensor or a choice.
 
 The installed namespace also provides `./yvex graph attention qualify` and
 `./yvex graph attention benchmark compare`. The latter accepts

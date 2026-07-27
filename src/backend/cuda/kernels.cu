@@ -659,15 +659,15 @@ extern "C" __global__ void yvex_attention_f32(const float *query,
     }
 }
 
-/* Direct encoded matrix/vector projection used by the admitted DeepSeek
- * attention path. Each block owns one output row and never materializes a
+/* Direct encoded matrix/vector projection used by admitted production paths.
+ * Each block owns one output row and never materializes a
  * decoded weight matrix. */
-/* Purpose: Implement the canonical deepseek qtype matvec mechanism owned by the CUDA backend boundary.
+/* Purpose: Implement the canonical qtype matvec mechanism owned by the CUDA backend boundary.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
  * Failure: Returns a typed CUDA refusal and publishes no partial success state.
  * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
-extern "C" __global__ void yvex_deepseek_qtype_matvec(
+extern "C" __global__ void yvex_qtype_matvec(
     const unsigned char *encoded,
     unsigned long long row_bytes,
     unsigned long long row_width,

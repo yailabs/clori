@@ -34,7 +34,7 @@ static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_C
     if (length) memcpy(destination, source, length);
 }
 #define YVEX_RUNTIME_REASON_CAP 256u
-#define YVEX_RUNTIME_BINDING_SCHEMA_V5 5u
+#define YVEX_RUNTIME_BINDING_SCHEMA_V6 6u
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
 typedef enum {
     YVEX_RUNTIME_BINDING_FAILURE_NONE = 0, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -123,9 +123,13 @@ typedef struct {
     int speculative_attention_ready, persistent_kv_ready;
     int moe_plan_ready, moe_router_ready, moe_routed_expert_ready, moe_shared_expert_ready,
         moe_block_ready;
-    int transformer_ready, generation_ready;
+    int transformer_ready, output_head_binding_ready, output_head_projection_ready;
+    int logits_cpu_ready, logits_cuda_ready, logits_prefill_ready, logits_decode_ready,
+        logits_full_vocabulary_ready, logits_hidden_contract_ready,
+        logits_partial_progress_ready, logits_ready;
+    int generation_ready;
 } yvex_runtime_capabilities;
-#define YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V1 1u
+#define YVEX_RUNTIME_EXECUTION_CAPABILITY_SCHEMA_V2 2u
 int yvex_runtime_capabilities_identity(
     const yvex_runtime_capabilities *facts,
     char output[YVEX_SHA256_HEX_CAP]);
@@ -134,6 +138,7 @@ int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts
 int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *facts);
 struct yvex_model_family_api;
 struct yvex_transformer_family_policy;
+struct yvex_logits_family_policy;
 typedef struct yvex_runtime_family_adapter {
     unsigned int schema_version;
     unsigned long long adapter_id, adapter_version;
@@ -144,6 +149,7 @@ typedef struct yvex_runtime_family_adapter {
     const yvex_graph_family_api *(*graph)(void);
     int (*execution_capabilities)(yvex_runtime_capabilities *out);
     int (*transformer_policy)(struct yvex_transformer_family_policy *out);
+    int (*logits_policy)(struct yvex_logits_family_policy *out);
 } yvex_runtime_family_adapter;
 typedef struct {
     const char *directory;
@@ -247,7 +253,7 @@ typedef struct yvex_runtime_model yvex_runtime_model;
 typedef struct yvex_runtime_execution_session yvex_runtime_execution_session;
 typedef struct yvex_runtime_cleanup_lease yvex_runtime_cleanup_lease;
 /* Resident encoded attention-weight pack shared read-only by execution sessions. */
-#define YVEX_RUNTIME_RESIDENCY_SCHEMA_V1 1u
+#define YVEX_RUNTIME_RESIDENCY_SCHEMA_V2 2u
 typedef enum {
     YVEX_RUNTIME_RESIDENCY_FAILURE_NONE = 0,
     YVEX_RUNTIME_RESIDENCY_FAILURE_INVALID_ARGUMENT,
@@ -274,10 +280,12 @@ typedef struct {
 typedef struct {
     unsigned int schema_version;
     int sealed, attached, host_ready, cuda_ready, invalidated;
-    int core_complete, envelope_complete;
+    int core_complete, envelope_complete, output_head_complete;
     unsigned long long generation;
     unsigned long long expected_core_binding_count, expected_envelope_binding_count;
     unsigned long long core_binding_count, envelope_binding_count, binding_count;
+    unsigned long long expected_output_head_binding_count, output_head_binding_count;
+    unsigned long long output_head_encoded_bytes;
     unsigned long long encoded_bytes, host_resident_bytes, device_resident_bytes;
     unsigned long long cuda_upload_bytes, cuda_upload_count;
     unsigned long long cold_artifact_read_calls, cold_artifact_bytes_read;
@@ -285,6 +293,7 @@ typedef struct {
     unsigned long long qtype_binding_counts[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
     unsigned long long qtype_bytes[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
     char payload_digest[YVEX_SHA256_HEX_CAP];
+    char output_head_residency_identity[YVEX_SHA256_HEX_CAP];
     char residency_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_residency_summary;
 typedef struct yvex_runtime_residency yvex_runtime_residency;
@@ -308,6 +317,9 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
 int yvex_runtime_residency_close(yvex_runtime_residency **residency, yvex_error *err);
 int yvex_runtime_residency_snapshot(const yvex_runtime_residency *residency, yvex_runtime_residency_summary *summary,
     const unsigned char **arena, unsigned long long *arena_bytes, yvex_error *err);
+int yvex_runtime_residency_binding_view(const yvex_runtime_residency *residency,
+    const yvex_materialized_tensor_binding *binding, const unsigned char **data,
+    unsigned long long *bytes, yvex_error *err);
 int yvex_runtime_residency_cuda_session_attach(yvex_runtime_residency *residency, yvex_backend **backend,
     unsigned long long maximum_device_bytes, int *uploaded, yvex_runtime_residency_summary *summary, yvex_error *err);
 int yvex_runtime_residency_invalidate(yvex_runtime_residency *residency, yvex_error *err);

@@ -1,25 +1,22 @@
-/* Owner: DeepSeek graph-family recipe.
- * Owns: schedule, role lowering, compressor recurrence, and CPU/CUDA composition.
+/* Owner: DeepSeek graph-family recipe. Owns: schedule, role lowering, compressor recurrence, and composition.
  * Does not own: generic numerics, state transactions, backend kernels, KV, or generation.
- * Invariants: planning reads no payload; incomplete attention remains unsupported.
- * Boundary: family execution evidence cannot promote KV, transformer, or generation.
+ * Invariants: planning reads no payload; incomplete attention remains unsupported. Boundary: family evidence.
  * Purpose: compose admitted generic graph mechanisms for the DeepSeek-V4 schedule.
- * Inputs: immutable architecture, plan, materialization, descriptor, and history facts.
- * Effects: bounded execution mutates only owned transactions, traces, and results.
+ * Inputs: immutable architecture, plan, materialization, descriptor, and history facts. Effects: bounded execution.
  * Failure: typed refusal unwinds scratch, state, loaded roles, and unpublished output. */
 #include "src/graph/private.h"
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
+#include <yvex/internal/logits.h>
 #include <yvex/internal/transformer.h>
 enum { DEEPSEEK_ATTENTION_CSA_RATIO = 4, DEEPSEEK_ATTENTION_HCA_RATIO = 128 };
 static const yvex_attention_cpu_options cpu_options_template = {
     .token_count = 1ull, .local_history_tokens = 4ull, .compressed_history_tokens = 8ull,
     .max_q_b_rows = 128ull, .max_kv_rows = 512ull,
     .max_compressor_rows = 32ull, .max_indexer_rows = 64ull,
-    .scratch_limit_bytes = 64ull * 1024ull * 1024ull,
-    .evidence_level = YVEX_ATTENTION_EVIDENCE_FULL
+    .scratch_limit_bytes = 64ull * 1024ull * 1024ull, .evidence_level = YVEX_ATTENTION_EVIDENCE_FULL
 };
 /* Purpose: default the bounded CPU probe policy.
  * Inputs: optional caller-owned options; Effects: initializes options; Failure: none; Boundary: no execution. */
@@ -1939,25 +1936,22 @@ static int deepseek_moe_layer(unsigned long long index, const yvex_runtime_descr
     out->activation = YVEX_MOE_ACTIVATION_SILU; out->hidden_width = attention->hidden_dimension;
     out->residual_streams = attention->residual_stream_count; out->expanded_width = attention->residual_expanded_width;
     out->mhc_mixing_rows = attention->mhc_mixing_rows;
-    out->mhc_sinkhorn_iterations = attention->mhc_sinkhorn_iterations; out->rms_epsilon = attention->rms_norm_epsilon;
-    out->mhc_epsilon = attention->mhc_epsilon;
+    out->mhc_sinkhorn_iterations = attention->mhc_sinkhorn_iterations;
+    out->rms_epsilon = attention->rms_norm_epsilon; out->mhc_epsilon = attention->mhc_epsilon;
     out->mhc_post_multiplier = attention->mhc_residual_post_multiplier;
-    out->routed_experts = runtime->routed_experts;
-    out->shared_experts = 1ull;
+    out->routed_experts = runtime->routed_experts; out->shared_experts = 1ull;
     out->experts_per_token = runtime->experts_per_token;
     out->expert_intermediate_width = out->shared_intermediate_width = 2048ull;
-    out->hash_table_rows = runtime->vocabulary_size;
-    out->hash_table_columns = out->experts_per_token;
+    out->hash_table_rows = runtime->vocabulary_size; out->hash_table_columns = out->experts_per_token;
     out->correction_bias_width = out->routed_experts; out->routed_scaling_factor = 1.5;
     out->activation_limit = 10.0;
     out->requires_token_ids = out->router_class == YVEX_MOE_ROUTER_HASH_TOKEN_ID;
-    out->requires_correction_bias = !out->requires_token_ids;
-    out->normalize_topk_probabilities = 1;
+    out->requires_correction_bias = !out->requires_token_ids; out->normalize_topk_probabilities = 1;
     yvex_error_clear(err);
     return YVEX_OK;
 }
 static const yvex_moe_family_api deepseek_moe_api = {
-    .adapter_id = 0x44535634ull, .adapter_version = 4ull, .project_layer = deepseek_moe_layer};
+    .adapter_id = 0x44535634ull, .adapter_version = 5ull, .project_layer = deepseek_moe_layer};
 /* Purpose: lookup MoE. Inputs: index. Effects: none. Failure: NULL outside zero. Boundary: registry only. */
 const yvex_moe_family_api *yvex_graph_moe_family_at(unsigned long long index) {
     return index == 0ull ? &deepseek_moe_api : NULL;
@@ -1966,32 +1960,39 @@ const yvex_moe_family_api *yvex_graph_moe_family_at(unsigned long long index) {
 static int deepseek_transformer_policy(yvex_transformer_family_policy *out) {
     if (!out) return 0;
     *out = (yvex_transformer_family_policy){
-        .schema_version = YVEX_TRANSFORMER_PLAN_SCHEMA_V1,
-        .initial_policy = YVEX_TRANSFORMER_INITIAL_REPEAT_STREAMS,
-        .final_policy = YVEX_TRANSFORMER_FINAL_SIGMOID_MHC_RMS,
-        .residual_streams = 4ull, .hidden_width = 4096ull,
-        .expanded_width = 16384ull, .maximum_context = 1048576ull,
-        .sinkhorn_iterations = 20ull, .mhc_epsilon = 1e-6, .output_norm_epsilon = 1e-5,
-        .attention_then_moe = 1, .deferred_ffn_post = 1, .final_norm_after_head = 1};
+        .schema_version = YVEX_TRANSFORMER_PLAN_SCHEMA_V1, .residual_streams = 4ull,
+        .initial_policy = YVEX_TRANSFORMER_INITIAL_REPEAT_STREAMS, .hidden_width = 4096ull,
+        .final_policy = YVEX_TRANSFORMER_FINAL_SIGMOID_MHC_RMS, .expanded_width = 16384ull,
+        .maximum_context = 1048576ull, .sinkhorn_iterations = 20ull, .mhc_epsilon = 1e-6,
+        .output_norm_epsilon = 1e-5, .attention_then_moe = 1, .deferred_ffn_post = 1, .final_norm_after_head = 1};
     return 1;
 }
-/* Purpose: project immutable execution capabilities. Inputs: caller output. Effects: fills it.
- * Failure: false on invalid lattice. Boundary: no process-resource readiness. */
-static int deepseek_runtime_execution_capabilities(yvex_runtime_capabilities *out) {
-    if (!out || !yvex_runtime_capabilities_contract_valid(&deepseek_runtime_capabilities))
-        return 0;
-    *out = deepseek_runtime_capabilities;
+/* Purpose: project the exact separate, unbiased DeepSeek output-head contract. */
+static int deepseek_logits_policy(yvex_logits_family_policy *out) {
+    if (!out) return 0;
+    *out = (yvex_logits_family_policy){.schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1,
+        .separate_output_head = 1, .tied_output_head = 0, .output_head_bias = 0};
     return 1;
+}
+/* Purpose: project immutable capabilities. Failure: false on invalid lattice. Boundary: no resource readiness. */
+static int deepseek_runtime_execution_capabilities(yvex_runtime_capabilities *out) {
+    if (!out) return 0;
+    *out = deepseek_runtime_capabilities;
+    out->output_head_binding_ready = out->output_head_projection_ready = out->logits_cpu_ready =
+        out->logits_cuda_ready = out->logits_prefill_ready = out->logits_decode_ready =
+        out->logits_full_vocabulary_ready =
+        out->logits_hidden_contract_ready = out->logits_partial_progress_ready = out->logits_ready = 1;
+    return yvex_runtime_capabilities_contract_valid(out);
 }
 static const yvex_runtime_family_adapter deepseek_runtime_adapter = {
     .schema_version = YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V1, .adapter_id = 0x44535634ull,
-    .adapter_version = 4ull, .target_id = "deepseek4-v4-flash",
-    .family_name = "deepseek-v4-flash",
+    .adapter_version = 5ull, .target_id = "deepseek4-v4-flash", .family_name = "deepseek-v4-flash",
     .operator_family_key = "deepseek", .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
     .logical_transform_identity = "cc774dffb6aa3a8e9f507b1dd454fbf7f5c68187138736f9a330ee9eaec07067",
     .mixer_family = YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION,
     .mixer_capability = deepseek_runtime_mixer_capability, .graph = yvex_graph_lower_deepseek_v4,
-    .execution_capabilities = deepseek_runtime_execution_capabilities, .transformer_policy = deepseek_transformer_policy
+    .execution_capabilities = deepseek_runtime_execution_capabilities,
+    .transformer_policy = deepseek_transformer_policy, .logits_policy = deepseek_logits_policy
 };
 /* Purpose: lookup runtime. Inputs: index. Effects: none. Failure: NULL outside zero. Boundary: registry only. */
 const struct yvex_runtime_family_adapter *yvex_graph_runtime_family_at(unsigned long long index) {

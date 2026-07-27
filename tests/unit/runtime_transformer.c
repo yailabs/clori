@@ -86,7 +86,7 @@ static int transformer_test_family(void)
     YVEX_TEST_ASSERT(adapter && adapter->transformer_policy &&
                          adapter->transformer_policy(&policy),
                      "DeepSeek transformer policy is adapter-projected");
-    YVEX_TEST_ASSERT(adapter->adapter_version == 4ull && policy.residual_streams == 4ull &&
+    YVEX_TEST_ASSERT(adapter->adapter_version == 5ull && policy.residual_streams == 4ull &&
                          policy.hidden_width == 4096ull && policy.expanded_width == 16384ull &&
                          policy.attention_then_moe && policy.deferred_ffn_post &&
                          policy.final_norm_after_head,

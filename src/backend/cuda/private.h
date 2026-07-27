@@ -179,7 +179,7 @@ typedef struct {
     CUfunction matmul_function;
     CUfunction qtype_row_dot_function;
     CUfunction attention_bf16_round_function;
-    CUfunction deepseek_qtype_matvec_function;
+    CUfunction qtype_matvec_function;
     CUfunction deepseek_decode_function;
     CUfunction deepseek_weighted_norm_function;
     CUfunction deepseek_unit_norm_function;

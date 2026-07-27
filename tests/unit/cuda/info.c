@@ -84,7 +84,7 @@ int yvex_cuda_test_info(void)
     yvex_error err;
     static const char *attention_symbols[] = {
         "yvex_attention_bf16_round",
-        "yvex_deepseek_qtype_matvec",
+        "yvex_qtype_matvec",
         "yvex_deepseek_decode",
         "yvex_deepseek_weighted_norm",
         "yvex_deepseek_unit_norm",

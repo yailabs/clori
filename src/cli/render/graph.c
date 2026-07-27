@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include <yvex/internal/decode.h>
+#include <yvex/internal/logits.h>
 
 static const char *const literal_lines_0[] = {
     "usage: yvex graph attention prepare --target TARGET",
@@ -43,6 +44,10 @@ static const char *const literal_lines_0[] = {
     "           --backend cpu|cuda --input token-ids --input-file FILE",
     "           --prefill-tokens N --prefill-chunk-tokens N --context-capacity N --progress off",
     "           teacher-forced numeric tokens do not establish logits, sampling, or generation",
+    "       yvex graph transformer logits --target TARGET --artifact FILE --runtime-binding FILE",
+    "           --backend cpu|cuda --input token-ids --input-file FILE",
+    "           --prefill-tokens N --prefill-chunk-tokens N --context-capacity N --progress off",
+    "           complete raw vocabulary logits do not establish sampling or generation",
     "           [--models-root DIR] [--artifact FILE] [--runtime-binding FILE] [--runtime-binding-dir DIR]",
     "           [--backend cpu|cuda] [--phase prefill|decode|mixed|verify]",
     "           [--mode eager|piecewise|full|auto] [--scope quick|full]",
@@ -341,6 +346,86 @@ static const yvex_cli_field_spec decode_fields[] = {
                  release_qualification_ready),
     DECODE_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
     DECODE_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
+};
+
+#define LOGITS_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_logits_operator_result, MEMBER), ""}
+#define LOGITS_PLAN_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_logits_operator_result, plan) + \
+                    offsetof(yvex_runtime_logits_plan_summary, MEMBER), ""}
+#define LOGITS_EXECUTION_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_logits_operator_result, execution) + \
+                    offsetof(yvex_runtime_logits_result, MEMBER), ""}
+static const yvex_cli_field_spec logits_fields[] = {
+    LOGITS_FIELD("command", YVEX_CLI_FIELD_TEXT_ARRAY, command),
+    LOGITS_FIELD("status", YVEX_CLI_FIELD_TEXT_ARRAY, status),
+    LOGITS_FIELD("target", YVEX_CLI_FIELD_TEXT_ARRAY, target),
+    LOGITS_FIELD("family", YVEX_CLI_FIELD_TEXT_ARRAY, family),
+    LOGITS_FIELD("backend", YVEX_CLI_FIELD_TEXT_ARRAY, backend),
+    LOGITS_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY, artifact_identity),
+    LOGITS_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                 runtime_binding_identity),
+    LOGITS_FIELD("transformer_plan_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                 transformer_plan_identity),
+    LOGITS_PLAN_FIELD("output_head_plan_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                      output_head_plan_identity),
+    LOGITS_PLAN_FIELD("output_head_tensor_id", YVEX_CLI_FIELD_U64,
+                      output_head_tensor_id),
+    LOGITS_PLAN_FIELD("output_head_qtype", YVEX_CLI_FIELD_I32, qtype),
+    LOGITS_PLAN_FIELD("hidden_width", YVEX_CLI_FIELD_U64, hidden_width),
+    LOGITS_PLAN_FIELD("vocabulary_size", YVEX_CLI_FIELD_U64, vocabulary_size),
+    LOGITS_PLAN_FIELD("output_head_rows", YVEX_CLI_FIELD_U64, row_count),
+    LOGITS_PLAN_FIELD("output_head_columns", YVEX_CLI_FIELD_U64, row_width),
+    LOGITS_PLAN_FIELD("output_head_row_bytes", YVEX_CLI_FIELD_U64, row_bytes),
+    LOGITS_PLAN_FIELD("output_head_encoded_bytes", YVEX_CLI_FIELD_U64, encoded_bytes),
+    LOGITS_FIELD("output_head_host_resident_bytes", YVEX_CLI_FIELD_U64,
+                 output_head_host_bytes),
+    LOGITS_FIELD("output_head_device_resident_bytes", YVEX_CLI_FIELD_U64,
+                 output_head_device_bytes),
+    LOGITS_FIELD("output_head_upload_bytes", YVEX_CLI_FIELD_U64,
+                 output_head_upload_bytes),
+    LOGITS_FIELD("output_head_upload_count", YVEX_CLI_FIELD_U64,
+                 output_head_upload_count),
+    LOGITS_FIELD("prefill_logits_rows", YVEX_CLI_FIELD_U64, prefill_logits_rows),
+    LOGITS_FIELD("decode_logits_rows", YVEX_CLI_FIELD_U64, decode_logits_rows),
+    LOGITS_EXECUTION_FIELD("logits_rows_requested", YVEX_CLI_FIELD_U64, requested_rows),
+    LOGITS_EXECUTION_FIELD("logits_rows_completed", YVEX_CLI_FIELD_U64, completed_rows),
+    LOGITS_EXECUTION_FIELD("first_incomplete_row", YVEX_CLI_FIELD_U64,
+                           first_incomplete_row),
+    LOGITS_EXECUTION_FIELD("final_source_position", YVEX_CLI_FIELD_U64,
+                           final_source_position),
+    LOGITS_EXECUTION_FIELD("partial", YVEX_CLI_FIELD_BOOL, partial),
+    LOGITS_EXECUTION_FIELD("aggregate_logits_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
+                           aggregate_logits_digest),
+    LOGITS_EXECUTION_FIELD("logits_execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                           execution_identity),
+    LOGITS_FIELD("output_head_binding_ready", YVEX_CLI_FIELD_BOOL,
+                 output_head_binding_ready),
+    LOGITS_FIELD("output_head_residency_ready", YVEX_CLI_FIELD_BOOL,
+                 output_head_residency_ready),
+    LOGITS_FIELD("logits_cpu_ready", YVEX_CLI_FIELD_BOOL, logits_cpu_ready),
+    LOGITS_FIELD("logits_cuda_ready", YVEX_CLI_FIELD_BOOL, logits_cuda_ready),
+    LOGITS_FIELD("logits_prefill_ready", YVEX_CLI_FIELD_BOOL, logits_prefill_ready),
+    LOGITS_FIELD("logits_decode_ready", YVEX_CLI_FIELD_BOOL, logits_decode_ready),
+    LOGITS_FIELD("logits_full_vocabulary_ready", YVEX_CLI_FIELD_BOOL,
+                 logits_full_vocabulary_ready),
+    LOGITS_FIELD("logits_hidden_contract_ready", YVEX_CLI_FIELD_BOOL,
+                 logits_hidden_contract_ready),
+    LOGITS_FIELD("logits_partial_progress_ready", YVEX_CLI_FIELD_BOOL,
+                 logits_partial_progress_ready),
+    LOGITS_FIELD("logits_ready", YVEX_CLI_FIELD_BOOL, logits_ready),
+    LOGITS_FIELD("sampling_ready", YVEX_CLI_FIELD_BOOL, sampling_ready),
+    LOGITS_FIELD("tokenizer_runtime_ready", YVEX_CLI_FIELD_BOOL,
+                 tokenizer_runtime_ready),
+    LOGITS_FIELD("generation_ready", YVEX_CLI_FIELD_BOOL, generation_ready),
+    LOGITS_FIELD("model_behavior_evaluation_ready", YVEX_CLI_FIELD_BOOL,
+                 model_behavior_evaluation_ready),
+    LOGITS_FIELD("full_model_benchmark_ready", YVEX_CLI_FIELD_BOOL,
+                 full_model_benchmark_ready),
+    LOGITS_FIELD("release_qualification_ready", YVEX_CLI_FIELD_BOOL,
+                 release_qualification_ready),
+    LOGITS_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
+    LOGITS_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
 };
 
 static const yvex_cli_field_spec attention_base_fields[] = {
@@ -1178,6 +1263,96 @@ int yvex_graph_decode_render(FILE *fp, yvex_graph_report_mode mode,
         rc = yvex_cli_out_fields(fp, result, decode_fields,
                                  FIELD_COUNT(decode_fields));
         if (rc == YVEX_OK) rc = graph_decode_steps_render(fp, mode, result);
+    }
+    return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
+}
+
+/* Purpose: render bounded per-row logits evidence without dumping raw vocabulary values.
+ * Inputs: output stream, typed mode, and completed operator row directory.
+ * Effects: writes only bounded scalar and identity evidence.
+ * Failure: returns typed I/O refusal on write failure.
+ * Boundary: rendering does not own or interpret logits capability. */
+static int graph_logits_rows_render(FILE *fp, yvex_graph_report_mode mode,
+                                    const yvex_logits_operator_result *result)
+{
+    unsigned long long index;
+    if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
+        if (yvex_cli_out_puts(fp, "  \"rows\": [\n") < 0) return YVEX_ERR_IO;
+        for (index = 0ull; index < result->row_count; ++index) {
+            const yvex_runtime_logits_row_result *row = &result->rows[index];
+            if (yvex_cli_out_writef(
+                    fp,
+                    "    {\"ordinal\":%llu,\"source_phase\":\"%s\","
+                    "\"source_position\":%llu,\"logits_count\":%llu,"
+                    "\"finite_count\":%llu,\"minimum_logit\":%.9g,"
+                    "\"maximum_logit\":%.9g,\"raw_logits_digest\":\"%s\","
+                    "\"output_head_residency_identity\":\"%s\","
+                    "\"backend_execution_identity\":\"%s\","
+                    "\"logits_row_identity\":\"%s\"}%s\n",
+                    index,
+                    row->source_phase == YVEX_LOGITS_SOURCE_PREFILL ? "prefill" : "decode",
+                    row->source_position, row->logits_count, row->finite_count,
+                    row->minimum_logit, row->maximum_logit, row->raw_logits_digest,
+                    row->output_head_residency_identity,
+                    row->backend_execution_identity, row->logits_row_identity,
+                    index + 1ull < result->row_count ? "," : "") < 0)
+                return YVEX_ERR_IO;
+        }
+        yvex_cli_out_line(fp, "  ]");
+        return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+    }
+    for (index = 0ull; index < result->row_count; ++index) {
+        const yvex_runtime_logits_row_result *row = &result->rows[index];
+        if (mode == YVEX_GRAPH_REPORT_MODE_CSV) {
+            if (yvex_cli_out_writef(
+                    fp, "\"row.%llu\",\"phase=%s position=%llu values=%llu finite=%llu "
+                        "digest=%s identity=%s\"\n",
+                    index,
+                    row->source_phase == YVEX_LOGITS_SOURCE_PREFILL ? "prefill" : "decode",
+                    row->source_position, row->logits_count, row->finite_count,
+                    row->raw_logits_digest, row->logits_row_identity) < 0)
+                return YVEX_ERR_IO;
+        } else if (yvex_cli_out_writef(
+                       fp, "row.%llu: phase=%s position=%llu values=%llu finite=%llu "
+                           "digest=%s identity=%s\n",
+                       index,
+                       row->source_phase == YVEX_LOGITS_SOURCE_PREFILL ? "prefill" : "decode",
+                       row->source_position, row->logits_count, row->finite_count,
+                       row->raw_logits_digest, row->logits_row_identity) < 0)
+            return YVEX_ERR_IO;
+    }
+    return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+}
+
+/* Purpose: render typed output-head and logits evidence through the canonical CLI I/O owner.
+ * Inputs: output stream, admitted mode, and typed operator result.
+ * Effects: writes one documented human or machine-readable record.
+ * Failure: refuses invalid row storage and propagates I/O failure.
+ * Boundary: never emits the complete raw logits buffer or selects a token. */
+int yvex_graph_logits_render(FILE *fp, yvex_graph_report_mode mode,
+                             const yvex_logits_operator_result *result)
+{
+    size_t index;
+    int rc;
+    if (!fp || !result || (result->row_count && !result->rows))
+        return YVEX_ERR_INVALID_ARG;
+    if (mode == YVEX_GRAPH_REPORT_MODE_CSV) {
+        if (yvex_cli_out_writef(fp, "field,value\n") < 0) return YVEX_ERR_IO;
+        for (index = 0u; index < FIELD_COUNT(logits_fields); ++index)
+            if (graph_csv_field(fp, result, &logits_fields[index]) != YVEX_OK)
+                return YVEX_ERR_IO;
+        return graph_logits_rows_render(fp, mode, result);
+    }
+    if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
+        yvex_cli_json_begin(fp);
+        rc = yvex_cli_json_fields(fp, result, logits_fields,
+                                  FIELD_COUNT(logits_fields), 1);
+        if (rc == YVEX_OK) rc = graph_logits_rows_render(fp, mode, result);
+        yvex_cli_json_end(fp);
+    } else {
+        rc = yvex_cli_out_fields(fp, result, logits_fields,
+                                 FIELD_COUNT(logits_fields));
+        if (rc == YVEX_OK) rc = graph_logits_rows_render(fp, mode, result);
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }

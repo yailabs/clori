@@ -23,14 +23,15 @@ hash/learned routing, selected routed experts, shared experts, and output
 combination. Numeric token files execute selected embedding rows, all 43
 attention/MoE blocks, final mHC collapse, and final RMSNorm. Teacher-forced
 repeated decode consumes externally supplied numeric IDs over the same warm
-transformer/session context. Prompt text, tokenizer execution, logits, and
-generation remain unsupported.
+transformer/session context. Final-prefill and decode normalized hidden rows
+project through the exact separate output head to complete raw logits. Prompt
+text, tokenizer execution, sampling, and generation remain unsupported.
 
 ## Runbook Index
 
 | Runbook | Current purpose | Capability boundary |
 | --- | --- | --- |
-| `runbooks/deepseek.md` | Exact source trust, admitted artifact, runtime binding, attention diagnostics, activation prefill, token-local MoE, numeric-token transformer/decode, and external benchmark evidence | no prompt, logits, sampling, or generation procedure |
+| `runbooks/deepseek.md` | Exact source trust, admitted artifact, runtime binding, attention diagnostics, activation prefill, token-local MoE, numeric-token transformer/decode/logits, and external benchmark evidence | no prompt, sampling, or generation procedure |
 | `runbooks/common.md` | Build, validation, documentation guards, artifact hygiene, and operator-local cleanup | validation does not create runtime capability |
 
 Model-family architecture is defined in `model-families.md`. Release gates are
@@ -42,10 +43,10 @@ Active Next are defined only in `../PROJECT.md`.
 Use the DeepSeek runbook for source verification, real artifact-backed
 attention execution, tensor-file activation prefill, persistent-state exercise,
 token-local MoE execution, numeric-token transformer execution, and
-teacher-forced repeated decode. Use the common runbook for repository
+teacher-forced repeated decode and logits. Use the common runbook for repository
 validation. Do not misclassify an activation probe, numeric token ID, or
 admitted tensor bundle as tokenizer-backed prompt prefill, token selection,
-logits, sampling, or generation.
+sampling, or generation.
 
 The attention `qualify` surface separates software acceptance, numerical
 conformance and runtime reliability. The attention `benchmark` surface measures
@@ -56,7 +57,8 @@ release qualification.
 Consult `../PROJECT.md` before selecting work. This runbook does not mirror the
 current milestone. The current operator path executes admitted attention, MoE,
 the complete numeric-token backbone, and teacher-forced repeated decode;
-generation requests must still refuse explicitly.
+complete raw logits are also operator-reachable, while generation requests must
+still refuse explicitly.
 
 ## Operator-Local State
 

@@ -18,9 +18,15 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/runtime.h>
 
+typedef enum {
+    RESIDENCY_BINDING_CORE = YVEX_ATTENTION_BINDING_CORE,
+    RESIDENCY_BINDING_ENVELOPE = YVEX_ATTENTION_BINDING_ENVELOPE,
+    RESIDENCY_BINDING_OUTPUT_HEAD = 3
+} residency_binding_class;
+
 typedef struct {
     const yvex_materialized_tensor_binding *binding;
-    yvex_attention_binding_class binding_class;
+    residency_binding_class binding_class;
     unsigned long long arena_offset;
 } residency_record;
 
@@ -537,7 +543,7 @@ static int residency_cuda_release(yvex_runtime_residency *residency, yvex_error 
  * Boundary: selection records metadata only and reads no payload bytes. */
 static int residency_add_record(yvex_runtime_residency *residency,
                                 const yvex_runtime_tensor_binding *runtime,
-                                yvex_attention_binding_class binding_class,
+                                residency_binding_class binding_class,
                                 unsigned long long ordinal,
                                 unsigned long long *core_bytes,
                                 unsigned long long core_qtypes[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP],
@@ -581,7 +587,7 @@ static int residency_add_record(yvex_runtime_residency *residency,
                                 ULLONG_MAX, binding->encoded_bytes,
                                 "resident qtype byte accounting overflowed",
                                 YVEX_ERR_BOUNDS, err);
-    if (binding_class == YVEX_ATTENTION_BINDING_CORE) {
+    if (binding_class == RESIDENCY_BINDING_CORE) {
         residency->summary.core_binding_count++;
         core_qtypes[binding->qtype]++;
         if (!yvex_core_u64_add(*core_bytes, binding->encoded_bytes, core_bytes))
@@ -589,8 +595,18 @@ static int residency_add_record(yvex_runtime_residency *residency,
                                     ULLONG_MAX, binding->encoded_bytes,
                                     "resident core byte accounting overflowed",
                                     YVEX_ERR_BOUNDS, err);
-    } else {
+    } else if (binding_class == RESIDENCY_BINDING_ENVELOPE) {
         residency->summary.envelope_binding_count++;
+    } else {
+        residency->summary.output_head_binding_count++;
+        if (!yvex_core_u64_add(residency->summary.output_head_encoded_bytes,
+                               binding->encoded_bytes,
+                               &residency->summary.output_head_encoded_bytes))
+            return residency_reject(
+                failure, YVEX_RUNTIME_RESIDENCY_FAILURE_GEOMETRY, runtime,
+                ULLONG_MAX, binding->encoded_bytes,
+                "resident output-head byte accounting overflowed",
+                YVEX_ERR_BOUNDS, err);
     }
     residency->summary.binding_count++;
     return YVEX_OK;
@@ -609,7 +625,7 @@ static int residency_load_and_hash(yvex_runtime_residency *residency,
     unsigned long long index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.resident.payload.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.resident.payload.v2") ||
         !yvex_sha256_update_u64(&hash, residency->summary.binding_count))
         return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_LIFECYCLE, NULL,
                                 1ull, 0ull, "resident payload hash initialization failed",
@@ -667,14 +683,15 @@ static int residency_identity_build(yvex_runtime_residency *residency,
     unsigned long long index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.residency.v1") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_RESIDENCY_SCHEMA_V1) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.residency.v2") ||
+        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_RESIDENCY_SCHEMA_V2) ||
         !yvex_sha256_update_text(&hash, model->runtime_model_identity) ||
         !yvex_sha256_update_text(&hash, model->artifact_identity) ||
         !yvex_sha256_update_text(&hash, model->materialization_identity) ||
         !yvex_sha256_update_text(&hash, attention->attention_plan_identity) ||
         !yvex_sha256_update_u64(&hash, residency->summary.core_binding_count) ||
         !yvex_sha256_update_u64(&hash, residency->summary.envelope_binding_count) ||
+        !yvex_sha256_update_u64(&hash, residency->summary.output_head_binding_count) ||
         !yvex_sha256_update_u64(&hash, residency->summary.encoded_bytes))
         goto failed;
     for (index = 0ull; index < residency->summary.binding_count; ++index) {
@@ -690,6 +707,15 @@ static int residency_identity_build(yvex_runtime_residency *residency,
         !yvex_sha256_final(&hash, digest))
         goto failed;
     yvex_sha256_hex(digest, residency->summary.residency_identity);
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.output-head.residency.v1") ||
+        !yvex_sha256_update_text(&hash, model->runtime_model_identity) ||
+        !yvex_sha256_update_u64(&hash, residency->summary.output_head_binding_count) ||
+        !yvex_sha256_update_u64(&hash, residency->summary.output_head_encoded_bytes) ||
+        !yvex_sha256_update_text(&hash, residency->summary.payload_digest) ||
+        !yvex_sha256_final(&hash, digest))
+        goto failed;
+    yvex_sha256_hex(digest, residency->summary.output_head_residency_identity);
     return YVEX_OK;
 failed:
     yvex_error_set(err, YVEX_ERR_STATE, "runtime.residency.identity",
@@ -797,15 +823,31 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
     for (index = 0ull; rc == YVEX_OK && index < descriptor_summary->tensor_count; ++index) {
         const yvex_runtime_tensor_binding *binding =
             yvex_runtime_descriptor_tensor_at(descriptor, index);
-        yvex_attention_binding_class binding_class =
+        yvex_attention_binding_class attention_class =
             yvex_attention_plan_binding_classify(plan, binding);
-        if (binding_class != YVEX_ATTENTION_BINDING_NOT_REQUIRED)
+        residency_binding_class binding_class;
+        int selected = 1;
+        if (attention_class == YVEX_ATTENTION_BINDING_CORE)
+            binding_class = RESIDENCY_BINDING_CORE;
+        else if (attention_class == YVEX_ATTENTION_BINDING_ENVELOPE)
+            binding_class = RESIDENCY_BINDING_ENVELOPE;
+        else if (model_summary.capabilities.output_head_binding_ready && binding &&
+                 binding->role == YVEX_TENSOR_ROLE_OUTPUT_HEAD &&
+                 binding->scope == YVEX_TENSOR_SCOPE_GLOBAL)
+            binding_class = RESIDENCY_BINDING_OUTPUT_HEAD;
+        else
+            selected = 0;
+        if (selected)
             rc = residency_add_record(residency, binding, binding_class, ordinal++,
                                       &core_bytes, core_qtypes, failure, err);
     }
+    residency->summary.expected_output_head_binding_count =
+        model_summary.capabilities.output_head_binding_ready ? 1ull : 0ull;
     if (rc == YVEX_OK &&
         (residency->summary.core_binding_count != attention->required_binding_count ||
          residency->summary.envelope_binding_count != attention->required_envelope_binding_count ||
+         residency->summary.output_head_binding_count !=
+             residency->summary.expected_output_head_binding_count ||
          core_bytes != attention->payload_bytes_bound))
         rc = residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_PLAN, NULL,
                               attention->required_binding_count +
@@ -826,6 +868,9 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
         residency->summary.envelope_complete =
             residency->summary.envelope_binding_count ==
             residency->summary.expected_envelope_binding_count;
+        residency->summary.output_head_complete =
+            residency->summary.output_head_binding_count ==
+            residency->summary.expected_output_head_binding_count;
     }
     if (rc == YVEX_OK && residency->summary.encoded_bytes > (unsigned long long)SIZE_MAX)
         rc = residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_BUDGET, NULL,
@@ -865,7 +910,7 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
         residency_storage_release(&residency);
         return rc;
     }
-    residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V1;
+    residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V2;
     residency->summary.generation = 1ull;
     residency->summary.host_resident_bytes = residency->summary.encoded_bytes;
     residency->summary.sealed = 1;
@@ -1049,6 +1094,40 @@ int yvex_runtime_residency_snapshot(const yvex_runtime_residency *residency,
         *arena_bytes = summary->encoded_bytes;
     }
     (void)pthread_mutex_unlock(&mutable_residency->access_mutex);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Purpose: borrow one exact immutable resident tensor without copying or reopening the artifact.
+ * Inputs: sealed residency and its admitted materialization binding.
+ * Effects: returns one model-lifetime encoded span and changes no counters.
+ * Failure: missing, stale, or invalidated bindings publish no pointer.
+ * Boundary: callers may decode or execute but never mutate the borrowed resident bytes. */
+int yvex_runtime_residency_binding_view(
+    const yvex_runtime_residency *residency,
+    const yvex_materialized_tensor_binding *binding,
+    const unsigned char **data, unsigned long long *bytes,
+    yvex_error *err)
+{
+    int resolved;
+    if (data) *data = NULL;
+    if (bytes) *bytes = 0ull;
+    if (!residency || !binding || !data || !bytes) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.residency.binding",
+                       "residency, binding, and borrowed-span outputs are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    resolved = residency_resolve(residency, binding, data, bytes);
+    if (resolved != YVEX_MATERIALIZATION_READ_HIT) {
+        *data = NULL;
+        *bytes = 0ull;
+        yvex_error_set(err, resolved == YVEX_MATERIALIZATION_READ_INVALID
+                               ? YVEX_ERR_STATE : YVEX_ERR_FORMAT,
+                       "runtime.residency.binding",
+                       "requested tensor is not an available exact resident binding");
+        return resolved == YVEX_MATERIALIZATION_READ_INVALID
+                   ? YVEX_ERR_STATE : YVEX_ERR_FORMAT;
+    }
     yvex_error_clear(err);
     return YVEX_OK;
 }

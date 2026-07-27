@@ -34,7 +34,7 @@ complete external artifact
 DeepSeek-V4-Flash is the first family adapter. It is not the owner of a second
 runtime. The admitted persistent state is session-owned and consumed by the
 numeric token-ID transformer backbone. Tokenizer-backed prompt prefill,
-logits, sampling and generation remain outside this contract.
+sampling and generation remain outside this contract.
 
 The admitted token-local MoE path is:
 
@@ -67,8 +67,20 @@ committed nonzero prefix + externally supplied numeric token ID
   -> next externally supplied token or typed partial completion
 ```
 
-Decode is teacher-forced. It does not project logits, select tokens, or form an
-autoregressive generation loop.
+Decode is teacher-forced. It does not select tokens or form an autoregressive
+generation loop.
+
+The admitted logits path is:
+
+```text
+transformer-authenticated normalized hidden row
+  -> exact separate output-head plan and model-lifetime residency
+  -> direct encoded CPU or GB10 CUDA projection over all vocabulary rows
+  -> one complete F32 raw-logits row + typed identities
+```
+
+Logits projection does not repeat final norm, change persistent state, publish
+probabilities, or select a token.
 
 ## Command Contract
 
@@ -113,6 +125,11 @@ transformer context. It commits the first explicit token span as prefill, then
 executes each remaining externally supplied ID as one decode-phase transaction.
 Successful steps remain committed when a later step fails or is cancelled; the
 result publishes the exact completed count and first incomplete ordinal.
+
+`graph transformer logits` opens the same production model/session/transformer
+plane, projects the final prefill hidden row and every completed teacher-forced
+decode hidden row, and reports bounded complete-row identities. It neither
+dumps the raw vocabulary tensor nor chooses a token.
 
 The CLI parses typed input, invokes production runtime APIs and renders copied
 results. CUDA Graph lifecycle actions operate on a real registry within the
@@ -389,9 +406,9 @@ CPU and GB10 CUDA consume the same plan and token input. CUDA performs selected
 embedding decode, attention, MoE, residual composition, final collapse, and
 normalization on device without a CPU numerical fallback or inter-layer
 activation roundtrip. The published `[token_count, hidden_width]` tensor is a
-normalized transformer hidden state. Repeated decode consumes this boundary;
-output-head projection, vocabulary logits, sampling, tokenizer execution, and
-generation remain separate capabilities.
+normalized transformer hidden state. Repeated decode and logits consume this
+boundary; output-head projection never re-executes final norm. Sampling,
+tokenizer execution, and generation remain separate capabilities.
 
 ## Production Repeated Decode Contract
 
@@ -416,6 +433,28 @@ aggregate identities serialize token, position, generation, routing, hidden,
 state, phase-bearing transformer identity, and structural counters field by
 field. Numeric IDs remain externally supplied, so this boundary establishes
 neither tokenizer behavior nor autoregressive token choice.
+
+## Production Vocabulary-Logits Contract
+
+The schema-v1 logits plan binds one transformer plan to the exact separate,
+unbiased `YVEX_TENSOR_ROLE_OUTPUT_HEAD` tensor. For the admitted DeepSeek
+vertical the binding is BF16 with logical shape `[129280,4096]` and
+1,059,061,760 encoded bytes. The immutable runtime model shares one checked
+host view and one CUDA-resident span across sessions; mutable logits buffers
+remain context-local.
+
+A logits source is admitted only through the producing transformer or decode
+result. Its model, binding, plan, execution, phase, position, hidden width, and
+canonical hidden digest must agree. CPU and CUDA compute each vocabulary row
+directly from the encoded head and publish one complete finite F32 row only
+after every coordinate succeeds. Repeated projection preserves earlier rows,
+publishes no failing row, and reports the exact first incomplete ordinal.
+
+Plan, source, residency, backend evidence, row, and aggregate identities are
+serialized field by field. Logits execution does not advance session position
+or generation. It publishes raw values and bounded diagnostics only; softmax,
+token selection, penalties, EOS/stop policy, and generation belong to later
+owners.
 
 ## Graph Execution Contract
 
@@ -670,5 +709,7 @@ reusable workspace, session-owned persistent DeepSeek attention state, and
 runtime-local operator evidence. Token-local MoE and the numeric-token complete
 transformer backbone are admitted on CPU and GB10 CUDA. Teacher-forced repeated
 decode reuses the same token schema, transformer context, and persistent state.
-Mixed/speculative attention, prompt/tokenizer execution, logits, sampling,
-generation, evaluation, full-model benchmark and release remain unsupported.
+Transformer-normalized prefill/decode hidden rows project through the complete
+resident output head to raw vocabulary logits on CPU and GB10 CUDA.
+Mixed/speculative attention, prompt/tokenizer execution, sampling, generation,
+evaluation, full-model benchmark and release remain unsupported.

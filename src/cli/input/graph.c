@@ -649,11 +649,14 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
                                    yvex_error *err)
 {
     int index;
-    if (argc < 4 || (strcmp(argv[3], "execute") != 0 && strcmp(argv[3], "decode") != 0))
+    if (argc < 4 || (strcmp(argv[3], "execute") != 0 &&
+                     strcmp(argv[3], "decode") != 0 &&
+                     strcmp(argv[3], "logits") != 0))
         return graph_arg_error(err,
-                               "yvex: graph transformer requires execute or decode");
+                               "yvex: graph transformer requires execute, decode, or logits");
     out->transformer.active = 1;
     out->transformer.decode = strcmp(argv[3], "decode") == 0;
+    out->transformer.logits = strcmp(argv[3], "logits") == 0;
     for (index = 4; index < argc; ++index) {
         const char *flag = argv[index];
         const char *value;
@@ -706,8 +709,8 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
         !out->transformer.input_file ||
         !out->transformer.context_capacity)
         return graph_arg_error(
-            err, out->transformer.decode
-                     ? "yvex: graph transformer decode requires target, artifact, runtime binding, "
+            err, (out->transformer.decode || out->transformer.logits)
+                     ? "yvex: graph transformer decode/logits requires target, artifact, runtime binding, "
                        "backend, token input, prefill split, and context capacity"
                      : "yvex: graph transformer execute requires target, artifact, runtime binding, "
                        "backend, token input, chunk tokens, and context capacity");
@@ -719,13 +722,14 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
         return graph_arg_error(err, "yvex: graph transformer requires --input token-ids");
     if (strcmp(out->transformer.progress, "off") != 0)
         return graph_arg_error(err, "yvex: graph transformer requires --progress off");
-    if ((!out->transformer.decode && !out->transformer.chunk_tokens) ||
-        (out->transformer.decode &&
+    if ((!out->transformer.decode && !out->transformer.logits &&
+         !out->transformer.chunk_tokens) ||
+        ((out->transformer.decode || out->transformer.logits) &&
          (!out->transformer.prefill_tokens ||
           !out->transformer.prefill_chunk_tokens)))
         return graph_arg_error(
-            err, out->transformer.decode
-                     ? "yvex: graph transformer decode requires prefill tokens and prefill chunk tokens"
+            err, (out->transformer.decode || out->transformer.logits)
+                     ? "yvex: graph transformer decode/logits requires prefill tokens and prefill chunk tokens"
                      : "yvex: graph transformer execute requires chunk tokens");
     if (out->transformer.maximum_device_bytes &&
         strcmp(out->transformer.backend, "cpu") == 0)

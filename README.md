@@ -229,15 +229,19 @@ The admitted vertical includes:
   transformer blocks, the final mHC collapse, and final RMSNorm on CPU and the
   admitted NVIDIA GB10 CUDA path;
 - teacher-forced repeated decode over one warm transformer/session context,
-  with one persistent-state commit and one normalized hidden row per token.
+  with one persistent-state commit and one normalized hidden row per token;
+- direct complete-vocabulary projection of final-prefill and decode hidden rows
+  through the separate BF16 `output.weight` on CPU and GB10 CUDA.
 
-These results establish a numeric token-ID-to-normalized-hidden backbone over
-the complete artifact. Session-owned persistent DeepSeek attention state is
+These results establish a numeric token-ID-to-complete-raw-logits path over the
+complete artifact. Session-owned persistent DeepSeek attention state is
 admitted on CPU and the GB10 CUDA path, and each successful transformer chunk
-publishes all 43 layer updates atomically. Prompt text, tokenizer execution,
-logits, sampling, text generation, evaluation, full-model benchmark, and
-release admission retain separate gates. Decode token IDs remain externally
-supplied; YVEX does not choose the next token at this boundary.
+publishes all 43 layer updates atomically. The logits boundary does not repeat
+the transformer-owned final norm or mutate persistent state. Prompt text,
+tokenizer execution, sampling, text generation, evaluation, full-model
+benchmark, and release admission retain separate gates. Decode token IDs
+remain externally supplied; YVEX does not choose the next token at this
+boundary.
 
 Detailed family semantics live in
 [`docs/model-families.md`](docs/model-families.md). Artifact terminology and
@@ -265,8 +269,9 @@ dependencies, capability gates, and release admission.
 | Token-local MoE block | All 43 layers execute admitted hash/learned routing, selected Q2_K routed experts, Q8_0 shared experts, and exact combination on CPU and GB10 CUDA |
 | Numeric-token transformer backbone | Selected embedding rows, all 43 attention/MoE blocks, final mHC collapse, final RMSNorm, and atomic persistent-state publication execute on CPU and GB10 CUDA |
 | Teacher-forced repeated model decode | Externally supplied token IDs execute one at a time over prior committed KV on CPU and GB10 CUDA, with ordered hidden rows and typed partial progress |
+| Output-head residency and raw logits | The separate encoded BF16 `[129280,4096]` output head has model-lifetime CPU/CUDA residency; final-prefill and decode hidden rows project directly to complete F32 vocabulary logits |
 | Tokenizer-backed prompt prefill | Unsupported |
-| Logits, sampling, and text generation | Unsupported |
+| Sampling and text generation | Unsupported |
 | Evaluation | Blocked |
 | Benchmark | Attention-local measurement is executable; full-model benchmark is not measured |
 | Release | Blocked |
@@ -282,8 +287,9 @@ The admitted graph commands consume canonical diagnostic activations or
 versioned tensor-file bundles at exact model geometry. Attention, MoE, and
 transformer input schemas are distinct. Numeric token IDs drive the transformer
 backbone without establishing tokenizer support. Teacher-forced decode reuses
-that token schema and supplies no token-choice policy. Prompt text, logits,
-sampling, and generation remain outside this operator surface.
+that token schema and supplies no token-choice policy. The logits command
+projects transformer-authenticated hidden rows without selecting a token.
+Prompt text, sampling, and generation remain outside this operator surface.
 
 Discover the command hierarchy:
 
@@ -293,6 +299,7 @@ Discover the command hierarchy:
 ./yvex graph moe execute --help
 ./yvex graph transformer execute --help
 ./yvex graph transformer decode --help
+./yvex graph transformer logits --help
 ```
 
 Set `MODELS_ROOT` and `ARTIFACT` to the external admitted model locations.
@@ -487,7 +494,29 @@ TOKEN_STREAM="/absolute/path/to/input.yvex-transformer-input"
 The split is explicit: prefix tokens populate persistent state, then each
 remaining numeric ID performs one complete 43-block decode transaction. The
 command reports completed steps and the first incomplete step without choosing
-a token or projecting logits.
+a token.
+
+Project the final prefill hidden row and each completed teacher-forced decode
+row through the exact complete output head:
+
+```sh
+./yvex graph transformer logits \
+  --target deepseek4-v4-flash \
+  --artifact "$ARTIFACT" \
+  --runtime-binding "$BINDING" \
+  --backend cuda \
+  --input token-ids \
+  --input-file "$TOKEN_STREAM" \
+  --prefill-tokens 1 \
+  --prefill-chunk-tokens 1 \
+  --context-capacity 8 \
+  --progress off \
+  --output json
+```
+
+The structured result reports the head identity, qtype, residency, source
+positions, and complete-row digests. Raw logits remain caller-owned API output;
+the command does not print 129,280 values or select a token.
 
 Measure the attention-local CUDA boundary:
 
