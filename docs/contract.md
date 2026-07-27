@@ -485,19 +485,23 @@ never changes caller-owned logits.
 
 Greedy scans the complete row and selects the lowest token ID among equal
 finite maxima without touching RNG state. Stochastic sampling requires an
-explicit seed and applies the versioned order: temperature, stable full-row
-softmax, top-k, min-p, locally typical, top-p, then one categorical draw over
-survivors ordered by token ID. Each filtering stage renormalizes. The private
-PCG-XSH-RR 64/32 state advances exactly once only after a stochastic result is
-fully validated and published; refusal or cancellation leaves it unchanged.
+explicit seed and applies filter-order v2: temperature, stable full-row
+softmax, exact-zero-mass compaction, top-k, min-p, locally typical, top-p,
+final zero-mass defense, then one categorical draw over survivors ordered by
+token ID. Neumaier sums cover input mass and post-normalization verification;
+the acceptance bound derives from `DBL_EPSILON` and reduction depth. The
+private PCG-XSH-RR 64/32 state advances exactly once only after a stochastic
+result and all authoritative evidence fields validate and publish.
 
 One context owns fixed candidate, probability, and sorting workspace plus its
-private RNG and busy lifecycle. Warm calls allocate no workspace. Repeated
-sampling preserves successful earlier rows and reports the first incomplete
-row; a failing row publishes neither token nor RNG transition. Separate
-contexts isolate mutable state. Sampling remains a common host operation even
-when CUDA produced the logits and does not establish CUDA sampling, token
-append, tokenizer execution, stop policy, or autoregressive generation.
+private RNG. An atomic `OPEN`/`ACTIVE`/`CLOSING` gate prevents entry after close
+begins and drains active use before synchronization and workspace destruction;
+successful close publishes `CLOSED` by releasing the owner pointer. Warm calls
+allocate no workspace. Repeated sampling preserves successful earlier rows and
+reports the first incomplete row; a failing row publishes neither token nor
+RNG transition. Separate contexts isolate mutable state. Sampling remains a
+common host operation and does not establish CUDA sampling, token append,
+tokenizer execution, stop policy, or autoregressive generation.
 
 ## Graph Execution Contract
 

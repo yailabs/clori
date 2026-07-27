@@ -552,10 +552,11 @@ row without feeding any selection back into the model:
   --output json
 ```
 
-The sampler scans all 129,280 logits, uses a versioned filter order and
-transactional seeded RNG, and publishes selected token IDs plus bounded
-candidate evidence. It is a common host operation even when CUDA produced the
-logits; it is not CUDA sampling or autoregressive generation.
+The sampler scans all 129,280 logits, uses compensated normalization and
+filter-order v2 zero-mass compaction before entropy, and commits seeded RNG
+state only with authenticated result evidence. Its close gate drains active
+use before release. It remains a common host operation, not CUDA sampling or
+autoregressive generation.
 
 Measure the attention-local CUDA boundary:
 

@@ -132,6 +132,12 @@ int yvex_runtime_logits_row_validate(
     const yvex_runtime_logits_plan_summary *plan, const float *logits,
     unsigned long long logits_capacity,
     const yvex_runtime_logits_row_result *result, yvex_error *err);
+int yvex_runtime_logits_result_validate(
+    const yvex_runtime_logits_plan_summary *plan, const float *logits,
+    unsigned long long logits_capacity,
+    const yvex_runtime_logits_row_result *rows,
+    unsigned long long row_capacity,
+    const yvex_runtime_logits_result *result, yvex_error *err);
 int yvex_runtime_logits_context_close(yvex_runtime_logits_context **context,
                                       yvex_error *err);
 

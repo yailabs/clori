@@ -110,6 +110,21 @@ static int ref_softmax(const float *logits, unsigned long long count,
     return isfinite(total) && total > 0.0 && ref_normalize(candidates, count);
 }
 
+/* Purpose: independently remove exact zero mass before entropy-bearing filters. */
+static unsigned long long ref_compact_positive(ref_candidate *candidates,
+                                               unsigned long long count)
+{
+    unsigned long long read, write = 0ull;
+    for (read = 0ull; read < count; ++read) {
+        if (!isfinite(candidates[read].probability) ||
+            candidates[read].probability < 0.0)
+            return 0ull;
+        if (candidates[read].probability > 0.0)
+            candidates[write++] = candidates[read];
+    }
+    return write && ref_normalize(candidates, write) ? write : 0ull;
+}
+
 /* Purpose: independently retain one cumulative prefix including its crossing candidate. */
 static unsigned long long ref_mass_prefix(ref_candidate *candidates,
                                           unsigned long long count,
@@ -155,6 +170,8 @@ int yvex_test_sampling_reference_select(
         free(candidates);
         return 0;
     }
+    keep = ref_compact_positive(candidates, keep);
+    if (!keep) goto fail;
     if (policy->top_k && policy->top_k < keep) {
         qsort(candidates, (size_t)keep, sizeof(*candidates), ref_probability_compare);
         keep = policy->top_k;
@@ -189,11 +206,8 @@ int yvex_test_sampling_reference_select(
         keep = ref_mass_prefix(candidates, keep, policy->top_p);
         if (!ref_normalize(candidates, keep)) goto fail;
     }
-    for (index = write = 0ull; index < keep; ++index)
-        if (candidates[index].probability > 0.0)
-            candidates[write++] = candidates[index];
-    keep = write;
-    if (!ref_normalize(candidates, keep)) goto fail;
+    keep = ref_compact_positive(candidates, keep);
+    if (!keep) goto fail;
     qsort(candidates, (size_t)keep, sizeof(*candidates), ref_token_compare);
     random_value = ref_pcg_next(&rng->state, rng->increment);
     rng->draws++;

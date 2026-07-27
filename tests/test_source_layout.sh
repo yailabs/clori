@@ -77,4 +77,32 @@ fi
 grep -nF '$(OBJ_DIR)/%.o: %.c' Makefile >/dev/null
 grep -nF '@mkdir -p $(@D)' Makefile >/dev/null
 
+# Every independently focused runtime owner must remain inside the aggregate
+# used by both sanitizer builds. Derive the set so a later owner cannot add a
+# green focused target while silently escaping ASan/UBSan coverage.
+runtime_aggregate=$(awk '
+  /^test-runtime: \$\(TEST_RUNNER\)$/ { body = 1; next }
+  body && /^[^[:space:]#][^=]*:/ { exit }
+  body { print }
+' Makefile)
+focused_runtime_filters=$(awk '
+  /^test-runtime-[[:alnum:]_-]+: \$\(TEST_RUNNER\)$/ { focused = 1; next }
+  focused && /^\tYVEX_TEST_FILTER=runtime_[[:alnum:]_-]+ \$\(TEST_RUNNER\)$/ {
+    line = $0
+    sub(/^\tYVEX_TEST_FILTER=/, "", line)
+    sub(/ \$\(TEST_RUNNER\)$/, "", line)
+    print line
+    focused = 0
+    next
+  }
+  focused { focused = 0 }
+' Makefile | sort -u)
+for filter in $focused_runtime_filters; do
+  printf '%s\n' "$runtime_aggregate" |
+    grep -F "YVEX_TEST_FILTER=$filter \$(TEST_RUNNER)" >/dev/null || {
+      echo "source layout: runtime sanitizer aggregate omits $filter" >&2
+      exit 1
+    }
+done
+
 echo "source layout: ok canonical_owners=19 superseded_owners=0"

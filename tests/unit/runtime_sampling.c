@@ -6,7 +6,10 @@
 #include <yvex/internal/sampling.h>
 
 #include <math.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "tests/reference/sampling.h"
@@ -135,6 +138,39 @@ static yvex_runtime_sampling_policy sampling_test_neutral_stochastic(void)
         .temperature = 1.0, .top_p = 1.0, .typical_p = 1.0,
         .seed_present = 1, .seed = 42ull};
     return policy;
+}
+
+/* Purpose: reproduce target-scale normalization and legitimate softmax underflow. */
+static int sampling_test_numeric_boundaries(void)
+{
+    const unsigned long long vocabulary = 129280ull;
+    const float underflow[4] = {0.0f, -1000.0f, -1001.0f, -1002.0f};
+    yvex_runtime_sampling_policy policy = sampling_test_neutral_stochastic();
+    yvex_runtime_sampling_result result;
+    yvex_test_sampling_rng rng;
+    yvex_test_sampling_reference_result reference;
+    yvex_error err;
+    float *uniform = (float *)calloc((size_t)vocabulary, sizeof(*uniform));
+    YVEX_TEST_ASSERT(uniform != NULL, "uniform full-vocabulary fixture allocates");
+    YVEX_TEST_ASSERT(sampling_test_select_fixture(
+                         uniform, vocabulary, policy, &result, &err) == YVEX_OK &&
+                         result.completed && result.values_considered == vocabulary &&
+                         result.final_candidate_count == vocabulary &&
+                         result.normalization_error >= 0.0,
+                     "129280 equal logits normalize and sample successfully");
+    free(uniform);
+    policy.typical_p = 0.9;
+    yvex_test_sampling_reference_seed(policy.seed, &rng);
+    YVEX_TEST_ASSERT(sampling_test_select_fixture(
+                         underflow, 4ull, policy, &result, &err) == YVEX_OK &&
+                         result.completed && result.selected_token_id == 0u &&
+                         result.final_candidate_count == 1ull && isfinite(result.entropy) &&
+                         yvex_test_sampling_reference_select(
+                             underflow, 4ull, &policy, &rng, &reference) &&
+                         reference.selected_token_id == result.selected_token_id &&
+                         reference.candidate_count == result.final_candidate_count,
+                     "typical-p removes exact zero softmax mass before logarithms");
+    return 0;
 }
 
 /* Purpose: prove explicit strategy validation and canonical identity mutation. */
@@ -377,6 +413,85 @@ static int sampling_test_stochastic(void)
     return 0;
 }
 
+/* Purpose: mutate one valid hexadecimal identity without changing its shape. */
+static void sampling_test_mutate_identity(char identity[YVEX_SHA256_HEX_CAP])
+{
+    identity[0] = identity[0] == 'a' ? 'b' : 'a';
+}
+
+/* Purpose: mutate every authoritative evidence class independently. */
+static void sampling_test_mutate_result(yvex_runtime_sampling_result *result,
+                                        unsigned int mutation)
+{
+    switch (mutation) {
+        case 0u: result->selected_log_probability += 0.125; break;
+        case 1u: result->maximum_logit += 0.25f; break;
+        case 2u: result->candidates_after_top_k--; break;
+        case 3u: result->candidates_after_min_p--; break;
+        case 4u: result->candidates_after_typical_p--; break;
+        case 5u: result->candidates_after_top_p--; break;
+        case 6u: result->normalization_error += 1.0e-16; break;
+        case 7u: result->entropy += 1.0e-6; break;
+        case 8u: result->typical_retained_mass += 1.0e-6; break;
+        case 9u: result->top_p_retained_mass += 1.0e-6; break;
+        case 10u: result->temperature += 1.0e-6; break;
+        case 11u: result->effective_top_k++; break;
+        case 12u: result->effective_top_p -= 1.0e-6; break;
+        case 13u: result->effective_min_p += 1.0e-6; break;
+        case 14u: result->effective_typical_p -= 1.0e-6; break;
+        case 15u: result->min_p_threshold += 1.0e-6; break;
+        case 16u: result->numeric_fallback_used ^= 1; break;
+        case 17u: result->rng_draw_count = 0ull; break;
+        case 18u: result->strategy = YVEX_SAMPLING_STRATEGY_GREEDY; break;
+        case 19u: result->tied_maximum_count++; break;
+        case 20u: result->selected_token_id ^= 1u; break;
+        case 21u: result->source_phase = YVEX_LOGITS_SOURCE_PREFILL; break;
+        case 22u: result->source_position++; break;
+        case 23u: result->vocabulary_size--; break;
+        case 24u: result->values_considered--; break;
+        case 25u: result->candidates_before--; break;
+        case 26u: result->final_candidate_count--; break;
+        case 27u: result->selected_logit -= 0.125f; break;
+        case 28u: result->selected_probability *= 0.5; break;
+        case 29u: result->greedy_tie_policy = 0u; break;
+        case 30u: result->completed = 0; break;
+        case 31u: result->schema_version++; break;
+        case 32u: sampling_test_mutate_identity(result->rng_state_before_identity); break;
+        case 33u: sampling_test_mutate_identity(result->rng_state_after_identity); break;
+        case 34u: sampling_test_mutate_identity(result->policy_identity); break;
+        case 35u: sampling_test_mutate_identity(result->source_identity); break;
+        case 36u: sampling_test_mutate_identity(result->candidate_set_identity); break;
+        case 37u: sampling_test_mutate_identity(result->selected_token_identity); break;
+        default: sampling_test_mutate_identity(result->execution_identity); break;
+    }
+}
+
+/* Purpose: prove every rendered evidence mutation invalidates the sealed result. */
+static int sampling_test_evidence_mutations(void)
+{
+    const float logits[8] = {3.0f, 2.0f, 1.5f, 1.0f, 0.5f, 0.0f, -1.0f, -2.0f};
+    yvex_runtime_sampling_policy policy = {
+        .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
+        .strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC,
+        .temperature = 0.8, .top_k = 6ull, .top_p = 0.9,
+        .min_p = 0.05, .typical_p = 0.95, .seed_present = 1, .seed = 42ull};
+    yvex_runtime_sampling_result canonical, mutated;
+    yvex_error err;
+    unsigned int mutation;
+    YVEX_TEST_ASSERT(sampling_test_select_fixture(
+                         logits, 8ull, policy, &canonical, &err) == YVEX_OK &&
+                         yvex_runtime_sampling_result_validate(&canonical, &err) == YVEX_OK,
+                     "canonical evidence fixture validates before mutation");
+    for (mutation = 0u; mutation <= 38u; ++mutation) {
+        mutated = canonical;
+        sampling_test_mutate_result(&mutated, mutation);
+        YVEX_TEST_ASSERT(yvex_runtime_sampling_result_validate(
+                             &mutated, &err) == YVEX_ERR_FORMAT,
+                         "authoritative sampling evidence mutation refuses");
+    }
+    return 0;
+}
+
 /* Purpose: pin the v1 PCG draw mapping and prove distinct seeds participate causally. */
 static int sampling_test_rng_vectors(void)
 {
@@ -434,6 +549,25 @@ typedef struct {
     int attempted, refusal;
 } sampling_test_reentry;
 
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    int entered, release;
+} sampling_test_thread_gate;
+
+typedef struct {
+    yvex_runtime_sampling_context *context;
+    const yvex_runtime_sampling_source *source;
+    sampling_test_thread_gate *gate;
+    unsigned long long attempts;
+    int rc, closing_refusal;
+} sampling_test_select_thread;
+
+typedef struct {
+    yvex_runtime_sampling_context **context;
+    int rc;
+} sampling_test_close_thread;
+
 /* Purpose: attempt one same-context selection while the outer owner is busy. */
 static int sampling_test_reenter(void *opaque)
 {
@@ -445,6 +579,124 @@ static int sampling_test_reenter(void *opaque)
         state->refusal = yvex_runtime_sampling_select(
             state->context, state->source, &result, &err);
     }
+    return 0;
+}
+
+/* Purpose: hold one admitted selection active until the close-race test releases it. */
+static int sampling_test_hold_active(void *opaque)
+{
+    sampling_test_thread_gate *gate = (sampling_test_thread_gate *)opaque;
+    if (pthread_mutex_lock(&gate->mutex) != 0) return 1;
+    gate->entered = 1;
+    (void)pthread_cond_broadcast(&gate->condition);
+    while (!gate->release)
+        (void)pthread_cond_wait(&gate->condition, &gate->mutex);
+    (void)pthread_mutex_unlock(&gate->mutex);
+    return 0;
+}
+
+/* Purpose: execute one selection from a test-owned thread. */
+static void *sampling_test_select_thread_main(void *opaque)
+{
+    sampling_test_select_thread *thread = (sampling_test_select_thread *)opaque;
+    yvex_runtime_sampling_result result;
+    yvex_error err;
+    thread->rc = yvex_runtime_sampling_select(
+        thread->context, thread->source, &result, &err);
+    return NULL;
+}
+
+/* Purpose: wait until close owns admission and prove the typed closing refusal. */
+static void *sampling_test_contender_thread_main(void *opaque)
+{
+    sampling_test_select_thread *thread = (sampling_test_select_thread *)opaque;
+    yvex_runtime_sampling_result result;
+    yvex_error err;
+    for (thread->attempts = 1ull; thread->attempts <= 1000000ull;
+         ++thread->attempts) {
+        thread->rc = yvex_runtime_sampling_select(
+            thread->context, thread->source, &result, &err);
+        if (thread->rc == YVEX_ERR_STATE &&
+            strcmp(yvex_error_message(&err), "sampling context is closing") == 0) {
+            thread->closing_refusal = 1;
+            break;
+        }
+        (void)sched_yield();
+    }
+    return NULL;
+}
+
+/* Purpose: close one context from a test-owned thread while another call is active. */
+static void *sampling_test_close_thread_main(void *opaque)
+{
+    sampling_test_close_thread *thread = (sampling_test_close_thread *)opaque;
+    yvex_error err;
+    thread->rc = yvex_runtime_sampling_context_close(thread->context, &err);
+    return NULL;
+}
+
+/* Purpose: prove close drains an active call and rejects another concurrent entrant. */
+static int sampling_test_close_entry_race(void)
+{
+    const float logits[4] = {1.0f, 3.0f, 2.0f, 0.0f};
+    yvex_runtime_logits_plan_summary plan;
+    yvex_runtime_logits_row_result row;
+    yvex_runtime_sampling_policy policy = {
+        .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
+        .strategy = YVEX_SAMPLING_STRATEGY_GREEDY,
+        .temperature = 1.0, .top_p = 1.0, .typical_p = 1.0};
+    sampling_test_thread_gate gate;
+    yvex_runtime_sampling_options options = {
+        .maximum_vocabulary_size = 4ull, .maximum_rows = 1ull,
+        .cancel_requested = sampling_test_hold_active, .cancel_context = &gate};
+    yvex_runtime_sampling_context *context = NULL, *borrowed;
+    yvex_runtime_sampling_source source;
+    sampling_test_select_thread selector, contender;
+    sampling_test_close_thread closer;
+    pthread_t selector_id, contender_id, closer_id;
+    yvex_error err;
+    memset(&gate, 0, sizeof(gate));
+    YVEX_TEST_ASSERT(pthread_mutex_init(&gate.mutex, NULL) == 0 &&
+                         pthread_cond_init(&gate.condition, NULL) == 0,
+                     "close-race test synchronization initializes");
+    sampling_test_plan(&plan, 4ull);
+    YVEX_TEST_ASSERT(sampling_test_row(&plan, logits, 4ull, 1ull, &row) &&
+                         yvex_runtime_sampling_policy_seal(&policy, 4ull, &err) == YVEX_OK &&
+                         yvex_runtime_sampling_context_open(
+                             &context, &plan, &policy, &options, &err) == YVEX_OK &&
+                         yvex_runtime_sampling_source_from_logits(
+                             context, &source, logits, 4ull, &row, &err) == YVEX_OK,
+                     "close-race production context opens");
+    borrowed = context;
+    selector = (sampling_test_select_thread){.context = borrowed, .source = &source,
+                                             .gate = &gate, .rc = YVEX_ERR_STATE};
+    contender = selector;
+    closer = (sampling_test_close_thread){.context = &context, .rc = YVEX_ERR_STATE};
+    YVEX_TEST_ASSERT(pthread_create(&selector_id, NULL,
+                                    sampling_test_select_thread_main, &selector) == 0,
+                     "active selector thread starts");
+    (void)pthread_mutex_lock(&gate.mutex);
+    while (!gate.entered) (void)pthread_cond_wait(&gate.condition, &gate.mutex);
+    (void)pthread_mutex_unlock(&gate.mutex);
+    YVEX_TEST_ASSERT(pthread_create(&closer_id, NULL,
+                                    sampling_test_close_thread_main, &closer) == 0 &&
+                         pthread_create(&contender_id, NULL,
+                                        sampling_test_contender_thread_main, &contender) == 0,
+                     "close and contender threads start while selection is active");
+    (void)pthread_join(contender_id, NULL);
+    (void)pthread_mutex_lock(&gate.mutex);
+    gate.release = 1;
+    (void)pthread_cond_broadcast(&gate.condition);
+    (void)pthread_mutex_unlock(&gate.mutex);
+    (void)pthread_join(selector_id, NULL);
+    (void)pthread_join(closer_id, NULL);
+    YVEX_TEST_ASSERT(selector.rc == YVEX_OK && contender.rc == YVEX_ERR_STATE &&
+                         contender.closing_refusal && contender.attempts <= 1000000ull &&
+                         closer.rc == YVEX_OK && context == NULL,
+                     "close drains active selection and typed CLOSING excludes later entry");
+    if (context) (void)yvex_runtime_sampling_context_close(&context, &err);
+    (void)pthread_cond_destroy(&gate.condition);
+    (void)pthread_mutex_destroy(&gate.mutex);
     return 0;
 }
 
@@ -565,14 +817,73 @@ static int sampling_test_partial(void)
     return 0;
 }
 
+/* Purpose: reproduce partial logits publication and downstream prefix admission. */
+static int sampling_test_partial_logits_prefix(void)
+{
+    float logits[8] = {0.0f, 1.0f, 2.0f, 3.0f, 91.0f, 92.0f, 93.0f, 94.0f};
+    yvex_runtime_logits_plan_summary plan;
+    yvex_runtime_logits_row_result rows[2];
+    yvex_logits_operator_result result;
+    yvex_runtime_sampling_policy policy = sampling_test_neutral_stochastic();
+    yvex_runtime_sampling_options options = {
+        .maximum_vocabulary_size = 4ull, .maximum_rows = 1ull};
+    yvex_runtime_sampling_context *context = NULL;
+    yvex_runtime_sampling_source source;
+    yvex_runtime_sampling_result sample;
+    yvex_error err;
+    sampling_test_plan(&plan, 4ull);
+    memset(rows, 0, sizeof(rows));
+    memset(&result, 0, sizeof(result));
+    YVEX_TEST_ASSERT(sampling_test_row(&plan, logits, 4ull, 0ull, &rows[0]),
+                     "partial logits completed prefix seals");
+    result.plan = plan;
+    result.rows = rows;
+    result.raw_logits = logits;
+    result.row_count = 1ull;
+    result.raw_logits_count = 8ull;
+    result.execution.schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1;
+    result.execution.requested_rows = 2ull;
+    result.execution.completed_rows = 1ull;
+    result.execution.first_incomplete_row = 1ull;
+    result.execution.partial = 1;
+    YVEX_TEST_ASSERT(yvex_runtime_logits_result_validate(
+                         &result.plan, result.raw_logits,
+                         result.raw_logits_count, result.rows, 2ull,
+                         &result.execution, &err) == YVEX_ERR_FORMAT,
+                     "partial logits total requested extent is not publishable");
+    result.raw_logits_count = 4ull;
+    YVEX_TEST_ASSERT(yvex_runtime_logits_result_validate(
+                         &result.plan, result.raw_logits,
+                         result.raw_logits_count, result.rows, 2ull,
+                         &result.execution, &err) == YVEX_OK,
+                     "partial logits validator admits only the completed prefix");
+    YVEX_TEST_ASSERT(yvex_runtime_sampling_policy_seal(&policy, 4ull, &err) == YVEX_OK &&
+                         yvex_runtime_sampling_context_open(
+                             &context, &plan, &policy, &options, &err) == YVEX_OK &&
+                         yvex_runtime_sampling_source_from_logits(
+                             context, &source, result.raw_logits,
+                             result.raw_logits_count, &rows[0], &err) == YVEX_OK &&
+                         yvex_runtime_sampling_select(
+                             context, &source, &sample, &err) == YVEX_OK &&
+                         sample.completed,
+                     "sampling consumes exactly the completed logits prefix");
+    YVEX_TEST_ASSERT(yvex_runtime_sampling_context_close(&context, &err) == YVEX_OK,
+                     "partial-prefix sampling context closes");
+    return 0;
+}
+
 int yvex_test_runtime_sampling(void)
 {
     if (sampling_test_policy()) return 1;
+    if (sampling_test_numeric_boundaries()) return 1;
     if (sampling_test_greedy()) return 1;
     if (sampling_test_filter_matrix()) return 1;
     if (sampling_test_stochastic()) return 1;
+    if (sampling_test_evidence_mutations()) return 1;
     if (sampling_test_rng_vectors()) return 1;
     if (sampling_test_lifecycle()) return 1;
+    if (sampling_test_close_entry_race()) return 1;
     if (sampling_test_partial()) return 1;
+    if (sampling_test_partial_logits_prefix()) return 1;
     return 0;
 }

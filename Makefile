@@ -597,6 +597,7 @@ test-runtime: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_binding $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_decode $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_logits $(TEST_RUNNER)
+	YVEX_TEST_FILTER=runtime_sampling $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_moe $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_transformer $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_prefill $(TEST_RUNNER)
@@ -960,7 +961,7 @@ test-runtime-deepseek-logits-live: cuda $(LOGITS_LIVE_RUNNER) $(YVEX_BIN)
 		assert r["status"]=="complete" and r["sampling_real_logits_ready"] \
 		and r["sampling_ready"] and r["samples"]==3 \
 		and r["strategy"]=="stochastic" and r["rng_algorithm"]==1 \
-		and r["rng_version"]==1 and r["filter_order_version"]==1 \
+		and r["rng_version"]==1 and r["filter_order_version"]==2 \
 		and r["sampling_completed_samples"]==3 and not r["sampling_partial"] \
 		and r["prefill_samples"]==1 and r["decode_samples"]==2 \
 		and len(r["selected_tokens"])==3 \

@@ -5,7 +5,7 @@ Status: living engineering control
 Authority: product target, architecture tracks, complete wave ledger, milestone
 state, dependencies, evidence rank, family scope, release gates, and Active Next
 Recovery baseline: pre-refoundation `docs/spine.md` at commit `10ad6c3`
-Current proof stage: the common host sampler selects deterministic or explicitly seeded stochastic token IDs from complete real DeepSeek vocabulary logits; tokenizer semantics are the active boundary
+Current proof stage: independent post-closure review reopened and repaired the common real-logits sampler's numerical, lifecycle, evidence, partial-publication, and sanitizer boundaries; tokenizer semantics are active only after that same sampling milestone reclosed
 
 ## 1. Authority And Update Contract
 
@@ -496,7 +496,7 @@ V010.RUNTIME.DEEPSEEK.MOE.0: complete (hash/learned routing, selected routed/sha
 V010.GRAPH.DEEPSEEK.TRANSFORMER.0: complete (numeric tokens execute embedding, 43 attention/MoE blocks, final mHC/norm, and one atomic KV publication)
 V010.RUNTIME.DEEPSEEK.DECODE.0: complete (teacher-forced one-token steps reuse the warm backbone, consume prior KV, and preserve partial progress)
 V010.RUNTIME.DEEPSEEK.LOGITS.0: complete (project final-prefill and decode normalized hidden rows through the exact complete output head)
-V010.RUNTIME.SAMPLING.0: complete (canonical greedy and seeded stochastic selection over complete real logits)
+V010.RUNTIME.SAMPLING.0: complete (post-closure repair revalidated canonical real-logits selection, lifecycle, evidence, and sanitizer coverage)
 V010.RUNTIME.DEEPSEEK.TOKENIZER.0: active (exact text/token, template, special-token, stop, and detokenization semantics)
 Active Next: V010.RUNTIME.DEEPSEEK.TOKENIZER.0
 ```
@@ -923,7 +923,7 @@ calculated from rows rather than protected by a summary hash.
 | `TRACK.KV` | Family-correct KV geometry, allocation, indexing, append/read, capacity, reuse, lifecycle, and cleanup. | session-owned persistent DeepSeek attention state is admitted on CPU and GB10 CUDA with atomic append/read, exact sequence position, clear/reuse, and causal production consumption | Prefill and decode consume the same owned persistent model state. |
 | `TRACK.DECODE` | One-step and repeated model-backed decode over descriptor, positions, KV, transformer state, cancellation, and cleanup. | explicit teacher-forced one-token steps reuse one warm transformer/session, consume every prior commit, publish normalized hidden rows, and preserve exact partial progress on CPU/GB10 CUDA | Output-head projection consumes one transformer-normalized decode hidden row. |
 | `TRACK.LOGITS` | Normalized hidden-state admission, output-head placement/projection, vocabulary logits, numeric checks, and buffer lifecycle. | final-prefill and decode hidden rows project through the resident separate BF16 output head to complete CPU/CUDA vocabulary logits without re-executing final norm | Real vocabulary logits hand one complete F32 row to sampling. |
-| `TRACK.SAMPLING` | Deterministic and stochastic token selection over real vocabulary logits, seeding, reproducibility, validation, and refusal. | complete real logits admit canonical full-vocabulary greedy, temperature, top-k, min-p, typical-p, top-p, and seeded PCG categorical selection with transactional RNG progress | Selected token IDs and their identities hand off to tokenizer/generation composition without implying append or decode. |
+| `TRACK.SAMPLING` | Deterministic and stochastic token selection over real vocabulary logits, seeding, reproducibility, validation, and refusal. | repaired full-vocabulary greedy and filter-order-v2 stochastic selection use compensated normalization, positive-mass entropy, atomic close/drain, authenticated evidence, and transactional PCG progress | Selected token IDs and their identities hand off to tokenizer/generation composition without implying append or decode. |
 | `TRACK.TOKENIZER` | Exact tokenizer loading, prompt encoding, templates, special/EOS/stop policy, append boundary, detokenization, and failure behavior. | metadata and token-ID contract evidence only | Prompt text and generated IDs traverse the exact tokenizer contract. |
 | `TRACK.GENERATION` | Tokenizer/prefill/KV/decode/logits/sampling composition, append, stop, cancellation, partial output, trace, cleanup, and autoregression. | no admitted generation implementation; retained ledger evidence does not establish runtime composition | Multiple real autoregressive tokens become detokenized text. |
 | `TRACK.OPERATOR` | CLI grammar, command adaptation, typed input, dispatch, rendering, refusal, control-plane integration, topology guards, and operator acceptance. | production attention, persistent state, activation prefill, MoE, transformer/decode, complete raw logits, and real-logits sampling are reachable through truthful main-binary commands; prompt and generation remain unsupported | Every executable milestone reaches its accepted production API through a real command or records an owned non-applicability reason. |
@@ -1035,7 +1035,7 @@ written after inspection of owner code, consumers, tests, and current contracts.
 | 34 | `V010.GRAPH.DEEPSEEK.TRANSFORMER.0` | `TRACK.GRAPH` | DeepSeek | `complete` | Execute numeric token IDs through selected embedding rows, 43 ordered attention/MoE blocks, deferred mHC residuals, final mHC collapse, final RMSNorm, and one atomic persistent-state transaction on CPU/GB10 CUDA. | V010.RUNTIME.DEEPSEEK.MOE.0 |
 | 35 | `V010.RUNTIME.DEEPSEEK.DECODE.0` | `TRACK.DECODE` | DeepSeek | `complete` | Run repeated model-backed decode steps that consume prior KV, advance positions once per token, preserve typed partial progress, and produce real normalized hidden state. | V010.GRAPH.DEEPSEEK.TRANSFORMER.0 |
 | 36 | `V010.RUNTIME.DEEPSEEK.LOGITS.0` | `TRACK.LOGITS` | DeepSeek | `complete` | Consume transformer-owned normalized hidden state and apply the complete output-head projection to produce vocabulary logits with numeric proof. | V010.RUNTIME.DEEPSEEK.DECODE.0 |
-| 37 | `V010.RUNTIME.SAMPLING.0` | `TRACK.SAMPLING` | common | `complete` | Select token IDs from complete real vocabulary logits through canonical greedy and explicitly seeded stochastic policies with transactional RNG publication. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
+| 37 | `V010.RUNTIME.SAMPLING.0` | `TRACK.SAMPLING` | common | `complete` | Select token IDs from complete real vocabulary logits through repaired canonical greedy and filter-order-v2 stochastic policies with transactional RNG, lifecycle, and evidence publication. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | 38 | `V010.RUNTIME.DEEPSEEK.TOKENIZER.0` | `TRACK.TOKENIZER` | DeepSeek | `active` | Load the exact tokenizer, encode prompts, apply template/special/EOS/stop rules, and detokenize generated IDs. | V010.RUNTIME.SAMPLING.0 |
 | 39 | `V010.RUNTIME.DEEPSEEK.GENERATION.0` | `TRACK.GENERATION` | DeepSeek | `blocked` | Compose tokenizer, prefill, KV, decode, logits, sampling, append, stop, cancellation, partial-output, and cleanup for multiple real tokens. | V010.RUNTIME.DEEPSEEK.TOKENIZER.0 |
 | 40 | `V010.CLI.DEEPSEEK.GENERATE.0` | `TRACK.OPERATOR` | DeepSeek | `blocked` | Expose one operator command that invokes the accepted generation path and reports precise refusal, cancellation, partial output, and cleanup. | V010.RUNTIME.DEEPSEEK.GENERATION.0 |
@@ -1780,7 +1780,7 @@ runtime spine is introduced.
 
 **Owner:** Normalized hidden-state admission, output-head placement/projection, vocabulary logits, numeric checks, and buffer lifecycle.
 
-**Current truth:** one immutable family-neutral plan admits the separate unbiased DeepSeek `output.weight` binding, model-lifetime CPU/CUDA residency, and direct encoded BF16 projection. Transformer-authenticated final-prefill and decode hidden rows produce complete ordered 129,280-value F32 logits rows without re-executing final norm or mutating persistent state
+**Current truth:** one immutable family-neutral plan admits the separate unbiased DeepSeek `output.weight` binding, model-lifetime CPU/CUDA residency, and direct encoded BF16 projection. Transformer-authenticated final-prefill and decode hidden rows produce complete ordered 129,280-value F32 logits rows without re-executing final norm or mutating persistent state; partial execution publishes only its completed row prefix
 
 **Ledger summary:** 17 recovered IDs; 1 first-class milestones; 14 complete support rows; 3 open support rows; 1 superseded/deferred rows.
 
@@ -1818,7 +1818,7 @@ runtime spine is introduced.
 
 **Owner:** Deterministic and stochastic token selection over real vocabulary logits, seeding, reproducibility, validation, and refusal.
 
-**Current truth:** complete real vocabulary logits feed one family-neutral fixed-workspace host sampler with canonical greedy, temperature, top-k, min-p, typical-p, top-p, seeded PCG selection, transactional RNG progress, and bounded evidence
+**Current truth:** complete real vocabulary logits feed one family-neutral fixed-workspace host sampler with canonical greedy and filter-order-v2 stochastic selection. Independent post-closure review reopened this same milestone; compensated normalization, pre-entropy zero-mass compaction, atomic close/drain, complete evidence authentication, valid-prefix logits admission, and sanitizer aggregate coverage reclosed all six findings before tokenizer activation
 
 **Ledger summary:** 15 recovered IDs; 1 first-class milestones; 15 complete support rows; 0 open support rows; 0 superseded/deferred rows.
 
@@ -1826,7 +1826,7 @@ runtime spine is introduced.
 
 | Milestone | Scope | State | Conclusive after-state | Depends on | Origin |
 | --- | --- | --- | --- | --- | --- |
-| `V010.RUNTIME.SAMPLING.0` | common | `complete` | Select token IDs from complete real vocabulary logits through canonical greedy and explicitly seeded stochastic policies with transactional RNG publication. | V010.RUNTIME.DEEPSEEK.LOGITS.0 | current |
+| `V010.RUNTIME.SAMPLING.0` | common | `complete` | Select token IDs from complete real vocabulary logits through numerically robust canonical greedy and explicitly seeded stochastic policies with transactional RNG, lifecycle, and evidence publication. | V010.RUNTIME.DEEPSEEK.LOGITS.0 | current |
 
 #### Recovered And Subordinate Rows
 
@@ -1834,19 +1834,19 @@ runtime spine is introduced.
 | --- | --- | --- | --- | --- | --- |
 | `V010.SAMPLE.0` | `evidence` | common | `complete` | sampling requirement report. | V010.RUNTIME.SAMPLING.0 |
 | `V010.SAMPLE.1` | `capability` | common | `complete` | Greedy scans the complete logits row and resolves exact maximum ties to the lowest token ID. | V010.RUNTIME.SAMPLING.0 |
-| `V010.SAMPLE.2` | `evidence` | common | `complete` | Selected-token evidence binds the admitted real-logits source, policy, probability, token ID, and RNG transition. | V010.RUNTIME.SAMPLING.0 |
+| `V010.SAMPLE.2` | `evidence` | common | `complete` | Selected-token and execution identity v2 bind every authoritative result field, source, policy, probability, token ID, and RNG transition. | V010.RUNTIME.SAMPLING.0 |
 | `V010.SAMPLE.3` | `evidence` | common | `complete` | Candidate-set evidence binds the raw-logits digest, policy, filter order, and final ordered survivors. | V010.RUNTIME.SAMPLING.0 |
-| `V010.SAMPLE.4` | `evidence` | common | `complete` | Finite positive temperature scales logits before stable double-precision softmax. | V010.RUNTIME.SAMPLING.0 |
+| `V010.SAMPLE.4` | `evidence` | common | `complete` | Finite positive temperature and Neumaier-compensated double-precision normalization admit full-vocabulary uniform and extreme distributions. | V010.RUNTIME.SAMPLING.0 |
 | `V010.SAMPLE.5` | `capability` | common | `complete` | Deterministic probability-descending/token-ascending top-k filters and renormalizes. | V010.RUNTIME.SAMPLING.0 |
 | `V010.SAMPLE.6` | `capability` | common | `complete` | Deterministic nucleus top-p retains the threshold-crossing candidate and renormalizes. | V010.RUNTIME.SAMPLING.0 |
 | `V010.SAMPLE.7` | `capability` | common | `complete` | Inclusive relative-to-maximum min-p filtering preserves at least one candidate. | V010.RUNTIME.SAMPLING.0 |
-| `V010.SAMPLE.8` | `capability` | common | `complete` | Locally typical filtering uses entropy-deviation order, includes the threshold crossing, and renormalizes. | V010.RUNTIME.SAMPLING.0 |
+| `V010.SAMPLE.8` | `capability` | common | `complete` | Locally typical filtering consumes only positive mass after canonical underflow compaction, includes the threshold crossing, and renormalizes. | V010.RUNTIME.SAMPLING.0 |
 | `V010.SAMPLE.9` | `capability` | common | `complete` | Explicitly seeded PCG-XSH-RR 64/32 advances once per published stochastic sample. | V010.RUNTIME.SAMPLING.0 |
 | `V010.SAMPLE.10` | `evidence` | common | `complete` | Fixed seed, policy, logits, and call order reproduce the same selected-token sequence. | V010.RUNTIME.SAMPLING.0 |
-| `V010.SAMPLE.11` | `evidence` | common | `complete` | Failure, cancellation, concurrency refusal, and cleanup preserve logits and uncommitted RNG state. | V010.RUNTIME.SAMPLING.0 |
-| `V010.SAMPLE.12` | `evidence` | common | `complete` | Bounded source, candidate, selected-token, RNG, per-row, and aggregate identities provide sampling trace evidence. | V010.RUNTIME.SAMPLING.0 |
-| `V010.SAMPLE.13` | `evidence` | common | `complete` | Independent reference, real CPU/CUDA-origin rows, mutation sensitivity, and repeatability close regression evidence. | V010.RUNTIME.SAMPLING.0 |
-| `V010.SAMPLE.14` | `capability` | common | `complete` | The v0.1.0 sampling gate consumes all 129,280 real logits without appending or decoding its selections. | V010.RUNTIME.SAMPLING.0 |
+| `V010.SAMPLE.11` | `evidence` | common | `complete` | Atomic close admission drains active use; failure, cancellation, concurrency refusal, and cleanup preserve logits and uncommitted RNG state. | V010.RUNTIME.SAMPLING.0 |
+| `V010.SAMPLE.12` | `evidence` | common | `complete` | Bounded source, candidate, selected-token, RNG, per-row, and aggregate identity v2 authenticates every authoritative sampling field. | V010.RUNTIME.SAMPLING.0 |
+| `V010.SAMPLE.13` | `evidence` | common | `complete` | Independent reference, CPU/CUDA-origin rows, complete mutation sensitivity, lifecycle stress, and ASan/UBSan aggregate execution close regression evidence. | V010.RUNTIME.SAMPLING.0 |
+| `V010.SAMPLE.14` | `capability` | common | `complete` | The repaired v0.1.0 gate consumes all 129,280 real logits, including uniform and underflow cases, without appending or decoding selections. | V010.RUNTIME.SAMPLING.0 |
 
 
 ### 9.19 TRACK.TOKENIZER
@@ -2261,7 +2261,7 @@ limits the claim either class may support.
 | Token-local DeepSeek MoE | Exercise immutable MoE-plan admission, typed activation/token-ID input, hash and learned routing, deterministic top-k, selected routed-expert subviews, distinct shared experts, CPU/CUDA encoded qtype compute, exact combination, cancellation, cleanup, and direct operator execution | not attention/MoE composition, complete transformer execution, model prefill/decode, generation, evaluation, or full-model benchmark proof |
 | Numeric-token transformer and repeated decode | Exercise selected embedding rows, 43 ordered attention/MoE blocks, final mHC/norm, explicit prefill/decode phase identity, one commit per teacher-forced step, causal prior-KV consumption, ordered hidden rows, typed partial progress, CPU/CUDA parity, and direct operator execution | not tokenizer-backed prompt input, token selection, sampling, autoregressive generation, evaluation, or full-model benchmark proof |
 | Complete output-head logits | Exercise transformer-authenticated final-prefill and decode hidden admission, exact separate-head binding, shared model-lifetime residency, direct encoded full-vocabulary CPU/CUDA projection, independent numerical conformance, transactional row publication, warm reuse, and direct operator execution | not probabilities, token selection, sampling, tokenizer behavior, autoregressive generation, evaluation, or full-model benchmark proof |
-| Real-logits sampling | Exercise complete-row admission, greedy ties, stable softmax, canonical top-k/min-p/typical-p/top-p order, seeded PCG selection, transactional RNG, independent reference, warm reuse, and direct operator execution | not token append, tokenizer semantics, EOS/stop policy, CUDA sampling, autoregressive feedback, generation, evaluation, or benchmark proof |
+| Real-logits sampling | Exercise completed-prefix admission, compensated softmax normalization, pre-entropy zero compaction, canonical filters, seeded transactional PCG, authenticated evidence, atomic close/drain, sanitizer coverage, independent reference, warm reuse, and direct operator execution | not token append, tokenizer semantics, EOS/stop policy, CUDA sampling, autoregressive feedback, generation, evaluation, or benchmark proof |
 | Historical diagnostic runtime/generation state | Decommissioned lifecycle, refusal, cancellation, flat F32 KV, fixture logits/sampling, bounded token-loop, and cleanup evidence removed by the `V010.RUNTIME.1` cutover | historical provenance only; not current executable evidence and not model-backed prefill, KV, decode, logits, sampling, or generation |
 | Operator/topology evidence | Discoverability, ownership enforcement, refusal propagation, and transcript regression | cannot create a lower domain capability |
 | Internal fixtures | Deterministic vectors, corrupt files, synthetic tokens/logits, and allocation failures | not model quality, benchmark, or release proof |

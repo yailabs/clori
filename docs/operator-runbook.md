@@ -26,7 +26,9 @@ repeated decode consumes externally supplied numeric IDs over the same warm
 transformer/session context. Final-prefill and decode normalized hidden rows
 project through the exact separate output head to complete raw logits. The
 common host sampler performs deterministic greedy or explicitly seeded
-stochastic selection over every value in those rows. Prompt text, tokenizer
+stochastic selection over every value in those rows. Its admitted contract
+uses compensated full-row normalization, pre-entropy zero-mass compaction,
+authenticated evidence, and a draining close gate. Prompt text, tokenizer
 execution, token append, EOS/stop behavior, and generation remain unsupported.
 
 ## Runbook Index

@@ -738,6 +738,47 @@ int yvex_runtime_logits_row_validate(
     return YVEX_OK;
 }
 
+/* Purpose: re-admit the complete raw-logits prefix from one repeated execution.
+ * Inputs: plan, caller values/rows and capacities, execution directory, and error output.
+ * Effects: validates every completed row without changing the result or its storage.
+ * Failure: malformed completion, row evidence, or a non-canonical visible prefix extent refuses.
+ * Boundary: the supplied capacity is the exact caller-visible prefix, never private tail storage. */
+int yvex_runtime_logits_result_validate(
+    const yvex_runtime_logits_plan_summary *plan, const float *logits,
+    unsigned long long logits_capacity,
+    const yvex_runtime_logits_row_result *rows,
+    unsigned long long row_capacity,
+    const yvex_runtime_logits_result *result, yvex_error *err)
+{
+    unsigned long long valid_count, index;
+    if (!plan || !logits || !rows || !result ||
+        result->schema_version != YVEX_RUNTIME_LOGITS_SCHEMA_V1 ||
+        !plan->vocabulary_size || !result->completed_rows ||
+        result->completed_rows > result->requested_rows ||
+        row_capacity < result->completed_rows ||
+        !yvex_core_u64_mul(result->completed_rows,
+                           plan->vocabulary_size, &valid_count) ||
+        logits_capacity != valid_count)
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "repeated logits prefix extent is not canonical");
+    if ((result->completed &&
+         (result->partial || result->completed_rows != result->requested_rows ||
+          result->first_incomplete_row != result->requested_rows)) ||
+        (result->partial &&
+         (result->completed || result->completed_rows >= result->requested_rows ||
+          result->first_incomplete_row != result->completed_rows)) ||
+        (!result->completed && !result->partial))
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "repeated logits completion directory is inconsistent");
+    for (index = 0ull; index < result->completed_rows; ++index)
+        if (yvex_runtime_logits_row_validate(
+                plan, logits + index * plan->vocabulary_size,
+                plan->vocabulary_size, &rows[index], err) != YVEX_OK)
+            return yvex_error_code(err);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 /* Purpose: enter one logits context exclusively. */
 static int logits_enter(yvex_runtime_logits_context *context, yvex_error *err)
 {
@@ -1043,6 +1084,48 @@ static int logits_operator_finish(yvex_logits_operator_result *result, int rc,
     return rc;
 }
 
+/* Purpose: publish only the completed raw-logits prefix after repeated execution.
+ * Inputs: operator result, owned raw buffer, immutable plan, and current status.
+ * Effects: transfers the buffer only when at least one complete row exists.
+ * Failure: extent overflow preserves caller ownership and returns typed refusal.
+ * Boundary: zero initialization never promotes an incomplete row. */
+static int logits_operator_publish_raw(
+    yvex_logits_operator_result *result, float **raw_logits,
+    unsigned long long raw_capacity, unsigned long long row_capacity,
+    const yvex_runtime_logits_plan_summary *plan, int rc, yvex_error *err)
+{
+    unsigned long long valid_logits_count;
+    yvex_error validation_error;
+    int validation_rc;
+    if (!*raw_logits || !result->execution.completed_rows)
+        return rc;
+    if (!plan || !yvex_core_u64_mul(result->execution.completed_rows,
+                                    plan->vocabulary_size,
+                                    &valid_logits_count) ||
+        valid_logits_count > raw_capacity) {
+        if (rc != YVEX_OK) return rc;
+        return logits_refuse(err, YVEX_ERR_BOUNDS,
+                             "completed raw logits prefix overflowed");
+    }
+    result->raw_logits = *raw_logits;
+    result->raw_logits_count = valid_logits_count;
+    *raw_logits = NULL;
+    yvex_error_clear(&validation_error);
+    validation_rc = yvex_runtime_logits_result_validate(
+        plan, result->raw_logits, result->raw_logits_count,
+        result->rows, row_capacity, &result->execution, &validation_error);
+    if (validation_rc != YVEX_OK) {
+        free(result->raw_logits);
+        result->raw_logits = NULL;
+        result->raw_logits_count = 0ull;
+        if (rc == YVEX_OK) {
+            if (err) *err = validation_error;
+            return validation_rc;
+        }
+    }
+    return rc;
+}
+
 /* Purpose: execute one shared-context prefill/decode/logits operator workflow.
  * Inputs: exact artifact/binding/token stream, split, backend, and budgets.
  * Effects: opens once, retains model residency, projects final prefill and every decode row.
@@ -1177,7 +1260,7 @@ int yvex_runtime_logits_operator_execute(
         rc = logits_refuse(err, YVEX_ERR_BOUNDS,
                            "raw logits output extent overflowed");
     if (rc == YVEX_OK) {
-        raw_logits = (float *)malloc((size_t)logits_count * sizeof(float));
+        raw_logits = (float *)calloc((size_t)logits_count, sizeof(float));
         if (!raw_logits) rc = logits_refuse(err, YVEX_ERR_NOMEM,
                                             "raw logits output allocation failed");
     }
@@ -1221,11 +1304,9 @@ int yvex_runtime_logits_operator_execute(
             logits_context, sources, row_count, request->backend,
             raw_logits, logits_count, result->rows, row_count,
             &result->execution, err);
-    if (raw_logits && result->execution.completed_rows) {
-        result->raw_logits = raw_logits;
-        result->raw_logits_count = logits_count;
-        raw_logits = NULL;
-    }
+    rc = logits_operator_publish_raw(
+        result, &raw_logits, logits_count, row_count,
+        yvex_runtime_logits_plan_summary_get(logits_context), rc, err);
     logits_operator_publish_facts(result, plan, model_view, logits_context,
                                   request->backend, rc == YVEX_OK);
     primary = err ? *err : (yvex_error){0};

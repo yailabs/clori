@@ -286,8 +286,11 @@ model, session, artifact, KV, transformer, decode, or tokenizer ownership.
 identity, full vocabulary extent, canonical raw digest, finite values, source
 phase and position, hidden digest, and output-head plan. Greedy selection scans
 the complete row and resolves exact ties to the lowest token ID without RNG.
-Stochastic selection applies the schema-v1 temperature/filter order and
-commits one PCG-XSH-RR 64/32 transition only after token publication.
+Stochastic selection uses the schema-v1 API with filter-order v2: compensated
+normalization removes exact zero mass before entropy-bearing filters, then one
+PCG-XSH-RR 64/32 transition commits only after complete token/evidence
+publication. Result validation authenticates every authoritative evidence
+field. Atomic close admission drains active use before workspace release.
 `yvex_runtime_sampling_execute` preserves completed earlier rows and the exact
 committed RNG state when a later row refuses or is cancelled.
 
