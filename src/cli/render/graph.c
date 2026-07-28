@@ -1,8 +1,7 @@
 /* Owner: src/cli/render
  * Owns: normal, table, audit, and help text rendering for graph reports.
  * Does not own: graph construction, report building, input parsing, command dispatch, backend primitive execution,
- *   reference comparison, stdout/stderr writer primitives, generation, eval, benchmark, or release
- *   decisions.
+ *   reference comparison, stdout/stderr writing, generation, evaluation, benchmark, or release decisions.
  * Invariants: all output goes through src/cli/io writer helpers.
  * Boundary: graph rendering is not graph runtime or generation readiness.
  * Purpose: provide normal, table, audit, and help text rendering for graph reports.
@@ -15,6 +14,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <yvex/internal/decode.h>
+#include <yvex/internal/generation.h>
 #include <yvex/internal/logits.h>
 #include <yvex/internal/sampling.h>
 static const char *const literal_lines_0[] = {
@@ -48,6 +48,8 @@ static const char *const literal_lines_0[] = {
     "       yvex graph transformer sample --target TARGET --artifact FILE --runtime-binding FILE",
     "           --strategy greedy | --strategy stochastic --seed N [sampling filters]",
     "           selected token IDs are not appended, decoded, detokenized, or generated",
+    "       yvex graph transformer generate --target TARGET --artifact FILE --runtime-binding FILE",
+    "           --backend cpu|cuda --user TEXT --max-new-tokens N --prefill-chunk-tokens N",
     "           [--models-root DIR] [--artifact FILE] [--runtime-binding FILE] [--runtime-binding-dir DIR]",
     "           [--backend cpu|cuda] [--phase prefill|decode|mixed|verify]",
     "           [--mode eager|piecewise|full|auto] [--scope quick|full]",
@@ -1293,7 +1295,6 @@ int yvex_graph_decode_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-
 /* Purpose: render bounded per-row logits evidence without dumping raw vocabulary values.
  * Inputs: output stream, typed mode, and completed operator row directory.
  * Effects: writes only bounded scalar and identity evidence.
@@ -1350,7 +1351,6 @@ static int graph_logits_rows_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
-
 /* Purpose: render typed output-head and logits evidence through the canonical CLI I/O owner.
  * Inputs: output stream, admitted mode, and typed operator result.
  * Effects: writes one documented human or machine-readable record.
@@ -1457,18 +1457,85 @@ int yvex_graph_sampling_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-/* Purpose: Render graph help.
- * Inputs: stream. Effects: writes CLI text.
- * Failure: stream state. Boundary: CLI presentation. */
+/* Purpose: render bounded generation progress. Inputs: stream/mode/result. Effects: writes typed fields.
+ * Failure: invalid storage/I/O refuses. Boundary: never executes or promotes generation. */
+int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
+                                 const yvex_generation_operator_result *result)
+{
+    const yvex_runtime_generation_result *run; unsigned long long index;
+    if (!fp || !result || (result->token_count && !result->tokens)) return YVEX_ERR_INVALID_ARG;
+    run = &result->execution;
+    if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
+        yvex_cli_json_begin(fp);
+        yvex_cli_json_field_str(fp, "command", result->command, 1);
+        yvex_cli_json_field_str(fp, "status", result->status, 1);
+        yvex_cli_json_field_str(fp, "target", result->target, 1);
+        yvex_cli_json_field_str(fp, "family", result->family, 1);
+        yvex_cli_json_field_str(fp, "backend", result->backend, 1);
+        yvex_cli_json_field_str(fp, "generation_plan_identity", result->plan.generation_plan_identity, 1);
+        yvex_cli_json_field_str(fp, "generation_execution_identity", run->generation_execution_identity, 1);
+        yvex_cli_json_field_str(fp, "prompt_identity", run->prompt_identity, 1);
+        if (yvex_cli_out_writef(fp,
+                "  \"prompt_tokens\": %llu,\n  \"prefill_chunks\": %llu,\n"
+                "  \"sampled_tokens\": %llu,\n  \"model_committed_tokens\": %llu,\n"
+                "  \"decode_steps\": %llu,\n  \"logits_projections\": %llu,\n"
+                "  \"sampling_draws\": %llu,\n  \"generated_text_bytes\": %llu,\n"
+                "  \"final_position\": %llu,\n  \"final_generation\": %llu,\n",
+                run->prompt_token_count, run->prefill_chunk_count, run->sampled_token_count,
+                run->model_committed_token_count, run->decode_step_count,
+                run->logits_projection_count, run->sampling_draw_count,
+                run->generated_text_bytes, run->final_position,
+                run->final_persistent_generation) < 0) return YVEX_ERR_IO;
+        yvex_cli_json_field_str(fp, "generated_text_digest", run->generated_text_digest, 1);
+        yvex_cli_json_field_str(fp, "persistent_state_digest", run->final_persistent_state_digest, 1);
+        yvex_cli_json_field_str(fp, "stop_reason",
+                                yvex_runtime_generation_stop_reason_name(run->stop_reason), 1);
+        yvex_cli_json_field_bool(fp, "generation_ready", result->generation_ready, 1);
+        yvex_cli_json_field_bool(fp, "cli_generate_ready", result->cli_generate_ready, 1);
+        yvex_cli_out_puts(fp, "  \"generated_tokens\": [\n");
+        for (index = 0ull; index < result->token_count; ++index) {
+            const yvex_runtime_generation_token_result *token = &result->tokens[index];
+            if (yvex_cli_out_writef(fp,
+                    "    {\"ordinal\":%llu,\"token_id\":%u,\"decode_input_id\":%u,"
+                    "\"decode_submitted\":%s,\"model_committed\":%s,"
+                    "\"terminal\":%s,\"suppressed\":%s,\"position_before\":%llu,"
+                    "\"position_after\":%llu,\"text_bytes\":%llu,\"identity\":\"%s\"}%s\n",
+                    token->ordinal, token->sampled_token_id, token->decode_input_token_id,
+                    token->decode_submitted ? "true" : "false",
+                    token->model_committed ? "true" : "false", token->terminal ? "true" : "false",
+                    token->suppressed ? "true" : "false", token->position_before,
+                    token->position_after, token->text_byte_count, token->token_step_identity,
+                    index + 1ull < result->token_count ? "," : "") < 0) return YVEX_ERR_IO;
+        }
+        yvex_cli_out_line(fp, "  ]");
+        yvex_cli_json_end(fp);
+    } else {
+        if (yvex_cli_out_writef(fp,
+                "status: %s\nprompt_tokens: %llu\nsampled_tokens: %llu\n"
+                "model_committed_tokens: %llu\ngenerated_text_bytes: %llu\n"
+                "generated_text_digest: %s\nstop_reason: %s\n",
+                result->status, run->prompt_token_count, run->sampled_token_count,
+                run->model_committed_token_count, run->generated_text_bytes, run->generated_text_digest,
+                yvex_runtime_generation_stop_reason_name(run->stop_reason)) < 0)
+            return YVEX_ERR_IO;
+        for (index = 0ull; index < result->token_count; ++index)
+            if (yvex_cli_out_writef(fp, "token.%llu: id=%u committed=%s terminal=%s text_bytes=%llu\n",
+                    index, result->tokens[index].sampled_token_id,
+                    result->tokens[index].model_committed ? "true" : "false",
+                    result->tokens[index].terminal ? "true" : "false",
+                    result->tokens[index].text_byte_count) < 0) return YVEX_ERR_IO;
+    }
+    return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
+}
+/* Purpose: render immutable graph help text. Inputs: output stream. Effects: writes static lines.
+ * Failure: writer status propagates. Boundary: help text owns no runtime capability. */
 int yvex_graph_render_help(FILE *fp)
 {
     yvex_cli_out_lines(fp, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
     return YVEX_OK;
 }
-
 static const char *const literal_lines_2[] = {
     "generation_ready: false", "generation: unsupported-full-model", "benchmark_status: not-measured"};
-
 static const char *const literal_lines_3[] = {
     "prefill_descriptor: unsupported-full-transformer-prefill", "prefill.requires_embedding: true",
     "prefill.requires_attention_qkv: true", "prefill.requires_real_kv_writes: true",
@@ -1480,7 +1547,6 @@ static const char *const literal_lines_3[] = {
     "logits_descriptor: unsupported-real-output-head-logits",
     "sampling_descriptor: unsupported-real-vocabulary-sampling", "residency_requirements_status: planned",
     "residency_plan: descriptor-only-no-allocation"};
-
 static const char *const literal_lines_4[] = {
     "ssd_staged_required_bytes: planned", "kv_required_bytes: planned", "scratch_required_bytes: planned",
     "context_requirements_status: planned", "max_context: metadata-or-unknown", "requested_context: not-requested",
@@ -1489,33 +1555,25 @@ static const char *const literal_lines_4[] = {
     "kv_heads: unknown", "kv_head_dim: unknown", "kv_capacity_status: unsupported-full-transformer-kv",
     "kv.required: true", "kv.real_attention_writes: false", "kv.runtime_status: unsupported",
     "kv_write_ready: false", "kv_read_ready: false", "logits_requirements_status: unsupported"};
-
 static const char *const literal_lines_5[] = {
     "logits_buffer_required: true", "real_output_head_logits: false", "logits_ready: false",
     "logits.blocker: real output-head logits runtime unsupported"};
-
 static const char *const literal_lines_6[] = {
     "special_token_policy: planned", "eos_backed_stop: unsupported", "stop_token_text_matching: unsupported",
     "tokenizer_quality_generation: unsupported"};
-
 static const char *const literal_lines_7[] = {
     "backend.primitive_rope: implemented-fixture", "backend.primitive_attention: implemented-fixture",
     "backend.primitive_matmul: implemented-fixture", "backend.primitive_mlp: implemented-fixture",
     "backend.full_transformer_integration: unsupported", "backend_allocation_attempted: false"};
-
 static const char *const literal_lines_8[] = {
     "prefill_ready: false", "decode_ready: false", "sampling_ready: false", "cleanup_attempted: false",
     "cleanup_status: not-needed"};
-
 static const char *const literal_pair_15[] = { "full_runtime_model: false", "full_model_execution: unsupported"};
-
 static const char *const literal_pair_16[] = { "fullmodel: descriptor", "status: fullmodel-descriptor"};
-
 typedef struct {
     const char *role;
     const char *collection;
 } descriptor_role_collection;
-
 static const descriptor_role_collection descriptor_role_collections[] = {
     {"token_embedding", "embedding"}, {"attention_norm", "normalization"},
 {"post_attention_norm", "normalization"}, {"final_norm", "normalization"},
@@ -1531,7 +1589,6 @@ static const descriptor_role_collection descriptor_role_collections[] = {
 static const char *fullmodel_descriptor_role_collection(const char *role)
 {
     size_t index;
-
     if (!role) return "unknown";
     for (index = 0; index < sizeof(descriptor_role_collections) /
                                   sizeof(descriptor_role_collections[0]); ++index) {
@@ -1561,7 +1618,6 @@ static void fullmodel_print_descriptor_role(yvex_model_context *ctx,
     const yvex_tensor_info *tensor = NULL;
     char dims[128];
     int present = 0;
-
     if (role && strcmp(role, "tokenizer_metadata") == 0) {
         present = collections && collections->has_tokenizer_metadata;
     } else {
@@ -1618,88 +1674,17 @@ static void fullmodel_print_descriptor_collection(const char *name,
         runtime_consumer ? runtime_consumer : "planned");
     yvex_cli_out_writef(stdout, "collection.%s.blocker: %s\n", name, blocker && blocker[0] ? blocker : "none");
 }
-
-typedef enum {
-    DESCRIPTOR_PHASE_PASS,
-    DESCRIPTOR_PHASE_ROLE,
-    DESCRIPTOR_PHASE_COLLECTION,
-    DESCRIPTOR_PHASE_PLANNED,
-    DESCRIPTOR_PHASE_BLOCKED,
-    DESCRIPTOR_PHASE_FAILURE_MARKER
-} descriptor_phase_kind;
-
-typedef struct {
-    const char *name;
-    descriptor_phase_kind kind;
-} descriptor_phase_spec;
-
-static const descriptor_phase_spec descriptor_phases[] = {
-    {"preflight", DESCRIPTOR_PHASE_PASS}, {"resolve-model", DESCRIPTOR_PHASE_PASS},
-{"artifact-identity", DESCRIPTOR_PHASE_PASS}, {"tensor-inventory", DESCRIPTOR_PHASE_PASS},
-    {"role-map", DESCRIPTOR_PHASE_ROLE}, {"collection-map", DESCRIPTOR_PHASE_COLLECTION},
-{"shape-requirements", DESCRIPTOR_PHASE_PASS},
-    {"residency-requirements", DESCRIPTOR_PHASE_PLANNED}, {"graph-requirements", DESCRIPTOR_PHASE_PLANNED},
-{"prefill-requirements", DESCRIPTOR_PHASE_BLOCKED}, {"kv-requirements", DESCRIPTOR_PHASE_BLOCKED},
-    {"decode-requirements", DESCRIPTOR_PHASE_BLOCKED}, {"logits-requirements", DESCRIPTOR_PHASE_BLOCKED},
-{"sampling-requirements", DESCRIPTOR_PHASE_BLOCKED}, {"tokenizer-requirements", DESCRIPTOR_PHASE_PASS},
-    {"backend-requirements", DESCRIPTOR_PHASE_PLANNED},
-{"blocker-report", DESCRIPTOR_PHASE_PASS}, {"descriptor-build", DESCRIPTOR_PHASE_PASS},
-    {"complete", DESCRIPTOR_PHASE_PASS}, {"failed", DESCRIPTOR_PHASE_FAILURE_MARKER},
-{"cleanup", DESCRIPTOR_PHASE_PASS},
-};
-/* Purpose: select one phase status from immutable phase kind and caller-owned outcomes. */
-static const char *descriptor_phase_status(descriptor_phase_kind kind,
-                                           const char *role_status,
-                                           const char *collection_status,
-                                           int failed_seen,
-                                           int failure_here,
-                                           int has_failure)
-{
-    if (failure_here) return "fail";
-    if (failed_seen) return "skipped";
-    if (kind == DESCRIPTOR_PHASE_ROLE) return role_status ? role_status : "partial";
-    if (kind == DESCRIPTOR_PHASE_COLLECTION)
-        return collection_status ? collection_status : "partial";
-    if (kind == DESCRIPTOR_PHASE_PLANNED) return "planned";
-    if (kind == DESCRIPTOR_PHASE_BLOCKED) return "blocked";
-    if (kind == DESCRIPTOR_PHASE_FAILURE_MARKER && !has_failure) return "skipped";
-    return "pass";
-}
-/* Purpose: render the declared descriptor lifecycle with exact failure cutover.
- * Inputs: role and collection status plus optional failing phase name.
- * Effects: writes ordered phase facts through CLI I/O.
- * Failure: unknown failure names leave the ordinary phase sequence intact.
- * Boundary: rendering never changes descriptor admission. */
-void fullmodel_print_descriptor_phases(const char *role_status,
-                                       const char *collection_status,
-                                       const char *failure_phase)
-{
-    size_t index;
-    int failed_seen = 0;
-
-    for (index = 0; index < sizeof(descriptor_phases) / sizeof(descriptor_phases[0]); ++index) {
-        const descriptor_phase_spec *phase = &descriptor_phases[index];
-        int failure_here = failure_phase && strcmp(failure_phase, phase->name) == 0;
-        const char *status = descriptor_phase_status(phase->kind, role_status, collection_status,
-                                                     failed_seen, failure_here, failure_phase != NULL);
-        model_phase_print("descriptor_phase", (unsigned int)index, phase->name, status, "planned");
-        failed_seen |= failure_here;
-    }
-}
-
 typedef struct {
     const char *key;
     size_t flag_offset;
     const char *available;
     const char *unavailable;
 } graph_requirement_spec;
-
 #define GRAPH_FIXED ((size_t)-1)
 #define GRAPH_ATTENTION ((size_t)-2)
 #define GRAPH_MLP ((size_t)-3)
 #define GRAPH_NORMALIZATION ((size_t)-4)
 #define GRAPH_FLAG(member_) offsetof(yvex_fullmodel_collections, member_)
-
 static const graph_requirement_spec graph_requirements[] = {
     {"graph_requirements_status", GRAPH_FIXED, "blocked", NULL}, {"required_graph_ops", GRAPH_FIXED,
      "embedding-lookup,rmsnorm,q-projection,k-projection,v-projection,rope-position,attention-score,"
@@ -1728,7 +1713,6 @@ static const graph_requirement_spec graph_requirements[] = {
 {"graph.expert_dispatch", GRAPH_FLAG(has_moe_expert), "planned", "missing-tensor"},
     {"graph.output_head_projection", GRAPH_FLAG(has_output_head), "planned", "missing-tensor"},
 };
-
 #undef GRAPH_FLAG
 #undef GRAPH_NORMALIZATION
 #undef GRAPH_MLP
@@ -1740,7 +1724,6 @@ static const graph_requirement_spec graph_requirements[] = {
 static void fullmodel_print_descriptor_graph_requirements(const yvex_fullmodel_collections *collections)
 {
     size_t index;
-
     for (index = 0; index < sizeof(graph_requirements) / sizeof(graph_requirements[0]); ++index) {
         const graph_requirement_spec *spec = &graph_requirements[index];
         int available = spec->flag_offset == (size_t)-1;
@@ -1754,7 +1737,6 @@ static void fullmodel_print_descriptor_graph_requirements(const yvex_fullmodel_c
                             available ? spec->available : spec->unavailable);
     }
 }
-
 typedef enum descriptor_blocker_rule {
     DESCRIPTOR_BLOCKER_COUNT,
     DESCRIPTOR_BLOCKER_ATTENTION,
@@ -1763,7 +1745,6 @@ typedef enum descriptor_blocker_rule {
     DESCRIPTOR_BLOCKER_UNKNOWN,
     DESCRIPTOR_BLOCKER_FIXED
 } descriptor_blocker_rule;
-
 typedef struct descriptor_collection_spec {
     const char *name;
     const char *descriptor_name;
@@ -1775,18 +1756,15 @@ typedef struct descriptor_collection_spec {
     const char *missing_blocker;
     const char *runtime_consumer;
 } descriptor_collection_spec;
-
 #define COLLECTION_OFF(member_) offsetof(yvex_fullmodel_collections, member_)
 #define REQUIRED_MASK(prefill_, decode_, logits_, generation_) \
     ((unsigned int)(prefill_) | ((unsigned int)(decode_) << 1u) | \
      ((unsigned int)(logits_) << 2u) | ((unsigned int)(generation_) << 3u))
-
 static const char *const descriptor_roles[] = {
     "token_embedding", "attention_norm", "post_attention_norm", "final_norm",
     "q_projection", "k_projection", "v_projection", "o_projection",
     "mlp_gate", "mlp_up", "mlp_down", "moe_router", "moe_expert_gate",
     "moe_expert_up", "moe_expert_down", "output_head", "tokenizer_metadata", "unknown"};
-
 static const descriptor_collection_spec descriptor_collections[] = {
     {"embedding", "embedding", "missing", COLLECTION_OFF(embedding), COLLECTION_OFF(embedding_bytes),
 REQUIRED_MASK(1, 1, 0, 1), DESCRIPTOR_BLOCKER_COUNT,
@@ -1813,10 +1791,8 @@ REQUIRED_MASK(1, 1, 0, 1),
     {"unknown", NULL, NULL, COLLECTION_OFF(unknown), COLLECTION_OFF(unknown_bytes),
 REQUIRED_MASK(0, 0, 0, 0), DESCRIPTOR_BLOCKER_UNKNOWN, "unknown tensor role", "unsupported"},
 };
-
 #undef REQUIRED_MASK
 #undef COLLECTION_OFF
-
 /* Resolve whether a descriptor collection satisfies its exact role contract. */
 /* Purpose: Resolve collection readiness.
  * Inputs: schema, collections, count. Effects: none.
@@ -1845,11 +1821,9 @@ static void fullmodel_print_descriptor_inventory(
     const char *backend)
 {
     size_t i;
-
     for (i = 0; i < sizeof(descriptor_roles) / sizeof(descriptor_roles[0]); ++i) {
         fullmodel_print_descriptor_role(ctx, collections, descriptor_roles[i], backend);
     }
-
     for (i = 0; i < sizeof(descriptor_collections) / sizeof(descriptor_collections[0]); ++i) {
         const descriptor_collection_spec *spec = &descriptor_collections[i];
         unsigned long long count = cli_collection_value(collections, spec->count_offset);
@@ -1858,13 +1832,11 @@ static void fullmodel_print_descriptor_inventory(
                                 descriptor_collection_ready(spec, collections, count)
                                     ? "present" : spec->descriptor_missing_status);
     }
-
     for (i = 0; i < sizeof(descriptor_collections) / sizeof(descriptor_collections[0]); ++i) {
         const descriptor_collection_spec *spec = &descriptor_collections[i];
         unsigned long long count = cli_collection_value(collections, spec->count_offset);
         unsigned long long bytes = cli_collection_value(collections, spec->bytes_offset);
         int ready = descriptor_collection_ready(spec, collections, count);
-
         fullmodel_print_descriptor_collection(
             spec->name, count, bytes, (spec->required_mask & 1u) != 0u,
             (spec->required_mask & 2u) != 0u, (spec->required_mask & 4u) != 0u,
@@ -1908,9 +1880,7 @@ void fullmodel_print_descriptor_report(const yvex_cli_fullmodel_options *options
                                            : "planned");
     unsigned long long cuda_bytes = strcmp(backend, "cuda") == 0 ? total_tensor_bytes : 0ull;
     unsigned long long cpu_bytes = strcmp(backend, "cuda") == 0 ? 0ull : total_tensor_bytes;
-
     fullmodel_probe_backend_fit(backend, total_tensor_bytes, &fit);
-
     yvex_cli_out_lines(stdout, literal_pair_16, sizeof(literal_pair_16) / sizeof(literal_pair_16[0]));
     yvex_cli_out_writef(stdout, "model: %s\n", options && options->model ? options->model : "");
     yvex_cli_out_writef(stdout, "model_resolved_path: %s\n", ref && ref->path ? ref->path : "");
@@ -1941,11 +1911,8 @@ void fullmodel_print_descriptor_report(const yvex_cli_fullmodel_options *options
     yvex_cli_out_writef(stdout, "missing_required_roles: %s\n", missing_roles ? missing_roles : "unknown");
     yvex_cli_out_writef(stdout, "unsupported_required_roles: %s\n", unsupported_roles ? unsupported_roles : "unknown");
     yvex_cli_out_writef(stdout, "unknown_role_count: %llu\n", collections ? collections->unknown : 0ull);
-
     fullmodel_print_descriptor_inventory(ctx, collections, backend);
-
     fullmodel_print_descriptor_graph_requirements(collections);
-
     yvex_cli_out_lines(stdout, literal_lines_3, sizeof(literal_lines_3) / sizeof(literal_lines_3[0]));
     yvex_cli_out_writef(stdout, "cpu_resident_required_bytes: %llu\n", cpu_bytes);
     yvex_cli_out_writef(stdout, "cuda_resident_required_bytes: %llu\n", cuda_bytes);
@@ -1965,13 +1932,11 @@ void fullmodel_print_descriptor_report(const yvex_cli_fullmodel_options *options
     yvex_cli_out_writef(stdout, "vocab_size: %s\n",
         collections && collections->has_output_head ? "from-output-head-shape" : "unknown");
     yvex_cli_out_lines(stdout, literal_lines_5, sizeof(literal_lines_5) / sizeof(literal_lines_5[0]));
-
     yvex_cli_out_writef(stdout, "tokenizer_requirements_status: %s\n",
            collections && collections->has_tokenizer_metadata ? "partial" : "blocked");
     yvex_cli_out_writef(stdout, "tokenizer_metadata_present: %s\n",
            collections && collections->has_tokenizer_metadata ? "true" : "false");
     yvex_cli_out_lines(stdout, literal_lines_6, sizeof(literal_lines_6) / sizeof(literal_lines_6[0]));
-
     yvex_cli_out_writef(stdout, "backend_requirements_status: %s\n", fit.available ? "planned" : "unsupported");
     yvex_cli_out_writef(stdout, "backend.cpu.available: true\n");
     yvex_cli_out_writef(stdout, "backend.cuda.context_available: %s\n",
@@ -1981,7 +1946,6 @@ void fullmodel_print_descriptor_report(const yvex_cli_fullmodel_options *options
     yvex_cli_out_writef(stdout, "backend.fit_status: %s\n", fit.fit_status);
     yvex_cli_out_writef(stdout, "backend.fit_reason: %s\n", fit.fit_reason);
     yvex_cli_out_lines(stdout, literal_lines_7, sizeof(literal_lines_7) / sizeof(literal_lines_7[0]));
-
     yvex_cli_out_writef(stdout, "runtime_blockers: %s\n",
            selected_target
                ? "full runtime tensor set incomplete; attention Q/K/V/O tensors missing; MLP/MoE tensors "

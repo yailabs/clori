@@ -29,6 +29,7 @@
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/decode.h>
+#include <yvex/internal/generation.h>
 #include <yvex/internal/logits.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/moe.h>
@@ -1446,6 +1447,110 @@ static int graph_cli_transformer_sample(
         return graph_cli_print_runtime_error(err, exit_code);
     return 0;
 }
+
+/* Purpose: execute real autoregressive composition through one production generation context.
+ * Inputs: validated text/messages, sampling policy, artifact paths, backend, and budgets.
+ * Effects: renders bounded generated token/text evidence and preserves retry cleanup ownership.
+ * Failure: typed runtime status retains exact partial progress. Boundary: no generation logic lives in CLI. */
+static int graph_cli_transformer_generate(
+    const yvex_graph_args *args, yvex_runtime_cleanup_lease **retained_cleanup,
+    yvex_error *err)
+{
+    yvex_generation_operator_request request = {0};
+    yvex_generation_operator_result result;
+    yvex_prompt_message messages[2];
+    struct sigaction old_interrupt, old_terminate;
+    yvex_error restore_error;
+    char artifact[YVEX_PATH_CAP], binding[YVEX_PATH_CAP];
+    unsigned long long message_count = 0ull;
+    int rc, render_rc, restore_rc, cancellation_seen, exit_code;
+    memset(&result, 0, sizeof(result));
+    memset(messages, 0, sizeof(messages));
+    rc = expand_operator_path(args->transformer.artifact_path, artifact,
+                              sizeof(artifact), err, "graph_generation_cli");
+    if (rc == YVEX_OK)
+        rc = expand_operator_path(args->transformer.runtime_binding_path, binding,
+                                  sizeof(binding), err, "graph_generation_cli");
+    if (rc == YVEX_OK)
+        rc = yvex_backend_kind_parse(args->transformer.backend,
+                                     &request.backend, err);
+    if (rc != YVEX_OK)
+        return graph_cli_print_runtime_error(err, exit_for_status(rc));
+    request.target = args->transformer.target;
+    request.artifact_path = artifact;
+    request.runtime_binding_path = binding;
+    if (args->transformer.text) {
+        request.input_kind = YVEX_GENERATION_INPUT_TEXT;
+        request.text = (const unsigned char *)args->transformer.text;
+        request.text_bytes = strlen(args->transformer.text);
+    } else {
+        request.input_kind = YVEX_GENERATION_INPUT_MESSAGES;
+        if (args->transformer.system) {
+            messages[message_count].role = YVEX_PROMPT_ROLE_SYSTEM;
+            messages[message_count].content = args->transformer.system;
+            messages[message_count++].content_len = strlen(args->transformer.system);
+        }
+        messages[message_count].role = YVEX_PROMPT_ROLE_USER;
+        messages[message_count].content = args->transformer.user;
+        messages[message_count++].content_len = strlen(args->transformer.user);
+        request.messages = messages;
+        request.message_count = message_count;
+        request.prompt_options.mode = YVEX_PROMPT_MODE_CHAT;
+        request.prompt_options.add_generation_prompt = 1;
+        request.prompt_options.drop_thinking = 1;
+    }
+    request.encode_options.allow_special_tokens = 1;
+    request.encode_options.maximum_tokens = args->transformer.context_capacity;
+    request.context_capacity = args->transformer.context_capacity;
+    request.prefill_chunk_tokens = args->transformer.prefill_chunk_tokens;
+    request.maximum_new_tokens = args->transformer.maximum_new_tokens;
+    request.maximum_output_bytes = args->transformer.maximum_output_bytes;
+    request.maximum_host_bytes = args->transformer.maximum_host_bytes;
+    request.maximum_device_bytes = args->transformer.maximum_device_bytes;
+    request.sampling_policy.schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1;
+    request.sampling_policy.strategy = strcmp(args->transformer.strategy, "stochastic") == 0
+                                           ? YVEX_SAMPLING_STRATEGY_STOCHASTIC
+                                           : YVEX_SAMPLING_STRATEGY_GREEDY;
+    request.sampling_policy.temperature = args->transformer.temperature;
+    request.sampling_policy.top_k = args->transformer.top_k;
+    request.sampling_policy.top_p = args->transformer.top_p;
+    request.sampling_policy.min_p = args->transformer.min_p;
+    request.sampling_policy.typical_p = args->transformer.typical_p;
+    request.sampling_policy.seed_present = args->transformer.seed_seen;
+    request.sampling_policy.seed = args->transformer.seed;
+    rc = graph_attention_signals_install(&old_interrupt, &old_terminate, err);
+    if (rc != YVEX_OK)
+        return graph_cli_print_runtime_error(err, exit_for_status(rc));
+    request.cancel_requested = graph_attention_cancel_requested;
+    rc = yvex_runtime_generation_operator_execute(
+        &request, &result, retained_cleanup, err);
+    yvex_error_clear(&restore_error);
+    restore_rc = graph_attention_signals_restore(&old_interrupt, &old_terminate,
+                                                 &restore_error);
+    cancellation_seen = graph_attention_signal_seen != 0;
+    graph_attention_signal_seen = 0;
+    if (restore_rc != YVEX_OK) {
+        *err = restore_error;
+        rc = restore_rc;
+    } else if (cancellation_seen && rc == YVEX_OK) {
+        yvex_error_set(err, YVEX_ERR_CANCELLED, "graph_generation_cli",
+                       "generation cancelled before command publication");
+        rc = YVEX_ERR_CANCELLED;
+    }
+    render_rc = yvex_graph_generation_render(yvex_cli_out_stdout(),
+                                              args->render_mode, &result);
+    exit_code = rc == YVEX_OK ? (result.completed ? 0 : exit_for_status(YVEX_ERR_STATE))
+                              : exit_for_status(rc);
+    yvex_runtime_generation_operator_result_release(&result);
+    if (render_rc != YVEX_OK) {
+        yvex_error_set(err, render_rc, "graph_generation_cli",
+                       "generation result rendering failed");
+        return graph_cli_print_runtime_error(err, exit_for_status(render_rc));
+    }
+    if (rc != YVEX_OK || exit_code)
+        return graph_cli_print_runtime_error(err, exit_code);
+    return 0;
+}
 /* Purpose: Dispatch graph.
  * Inputs: argv. Effects: executes and renders a typed request.
  * Failure: nonzero CLI status. Boundary: domain owners retain capability truth. */
@@ -1475,6 +1580,8 @@ int yvex_graph_command(int argc, char **argv,
 
     if (args.moe.active)
         return graph_cli_moe_execute(&args, retained_cleanup, &err);
+    if (args.transformer.active && args.transformer.generate)
+        return graph_cli_transformer_generate(&args, retained_cleanup, &err);
     if (args.transformer.active && args.transformer.sample)
         return graph_cli_transformer_sample(&args, retained_cleanup, &err);
     if (args.transformer.active && args.transformer.logits)

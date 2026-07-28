@@ -1352,6 +1352,76 @@ int print_fullmodel_source_only_report(const char *target,
     return 0;
 }
 
+typedef enum {
+    DESCRIPTOR_PHASE_PASS,
+    DESCRIPTOR_PHASE_ROLE,
+    DESCRIPTOR_PHASE_COLLECTION,
+    DESCRIPTOR_PHASE_PLANNED,
+    DESCRIPTOR_PHASE_BLOCKED,
+    DESCRIPTOR_PHASE_FAILURE_MARKER
+} descriptor_phase_kind;
+
+typedef struct {
+    const char *name;
+    descriptor_phase_kind kind;
+} descriptor_phase_spec;
+
+static const descriptor_phase_spec descriptor_phases[] = {
+    {"preflight", DESCRIPTOR_PHASE_PASS}, {"resolve-model", DESCRIPTOR_PHASE_PASS},
+{"artifact-identity", DESCRIPTOR_PHASE_PASS}, {"tensor-inventory", DESCRIPTOR_PHASE_PASS},
+    {"role-map", DESCRIPTOR_PHASE_ROLE}, {"collection-map", DESCRIPTOR_PHASE_COLLECTION},
+{"shape-requirements", DESCRIPTOR_PHASE_PASS},
+    {"residency-requirements", DESCRIPTOR_PHASE_PLANNED}, {"graph-requirements", DESCRIPTOR_PHASE_PLANNED},
+{"prefill-requirements", DESCRIPTOR_PHASE_BLOCKED}, {"kv-requirements", DESCRIPTOR_PHASE_BLOCKED},
+    {"decode-requirements", DESCRIPTOR_PHASE_BLOCKED}, {"logits-requirements", DESCRIPTOR_PHASE_BLOCKED},
+{"sampling-requirements", DESCRIPTOR_PHASE_BLOCKED}, {"tokenizer-requirements", DESCRIPTOR_PHASE_PASS},
+    {"backend-requirements", DESCRIPTOR_PHASE_PLANNED},
+{"blocker-report", DESCRIPTOR_PHASE_PASS}, {"descriptor-build", DESCRIPTOR_PHASE_PASS},
+    {"complete", DESCRIPTOR_PHASE_PASS}, {"failed", DESCRIPTOR_PHASE_FAILURE_MARKER},
+{"cleanup", DESCRIPTOR_PHASE_PASS},
+};
+
+/* Purpose: select one phase status from immutable phase kind and caller-owned outcomes. */
+static const char *descriptor_phase_status(descriptor_phase_kind kind,
+                                           const char *role_status,
+                                           const char *collection_status,
+                                           int failed_seen,
+                                           int failure_here,
+                                           int has_failure)
+{
+    if (failure_here) return "fail";
+    if (failed_seen) return "skipped";
+    if (kind == DESCRIPTOR_PHASE_ROLE) return role_status ? role_status : "partial";
+    if (kind == DESCRIPTOR_PHASE_COLLECTION)
+        return collection_status ? collection_status : "partial";
+    if (kind == DESCRIPTOR_PHASE_PLANNED) return "planned";
+    if (kind == DESCRIPTOR_PHASE_BLOCKED) return "blocked";
+    if (kind == DESCRIPTOR_PHASE_FAILURE_MARKER && !has_failure) return "skipped";
+    return "pass";
+}
+
+/* Purpose: render the declared descriptor lifecycle with exact failure cutover.
+ * Inputs: role and collection status plus optional failing phase name.
+ * Effects: writes ordered phase facts through CLI I/O.
+ * Failure: unknown failure names leave the ordinary phase sequence intact.
+ * Boundary: rendering never changes descriptor admission. */
+void fullmodel_print_descriptor_phases(const char *role_status,
+                                       const char *collection_status,
+                                       const char *failure_phase)
+{
+    size_t index;
+    int failed_seen = 0;
+
+    for (index = 0; index < sizeof(descriptor_phases) / sizeof(descriptor_phases[0]); ++index) {
+        const descriptor_phase_spec *phase = &descriptor_phases[index];
+        int failure_here = failure_phase && strcmp(failure_phase, phase->name) == 0;
+        const char *status = descriptor_phase_status(phase->kind, role_status, collection_status,
+                                                     failed_seen, failure_here, failure_phase != NULL);
+        model_phase_print("descriptor_phase", (unsigned int)index, phase->name, status, "planned");
+        failed_seen |= failure_here;
+    }
+}
+
 /* Purpose: Render print fullmodel source only plan from typed facts (`print_fullmodel_source_only_plan`).
  * Inputs: Borrowed typed facts.
  * Effects: Writes through CLI I/O only.

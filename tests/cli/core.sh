@@ -69,7 +69,7 @@ done
 
 run_ok help_graph "$YVEX_BIN" help graph
 contains "$OUT_DIR/help_graph.out" "yvex graph attention"
-contains "$OUT_DIR/help_graph.out" "Production attention, MoE, and transformer graph execution."
+contains "$OUT_DIR/help_graph.out" "Production graph and generation execution."
 run_ok help_input "$YVEX_BIN" help input
 contains "$OUT_DIR/help_input.out" "yvex input tokens"
 run_ok help_paths "$YVEX_BIN" help paths

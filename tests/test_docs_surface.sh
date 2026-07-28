@@ -327,6 +327,7 @@ for command in \
   './yvex graph transformer decode --help' \
   './yvex graph transformer logits --help' \
   './yvex graph transformer sample --help' \
+  './yvex graph transformer generate --help' \
   './yvex graph attention prepare' \
   './yvex graph attention describe' \
   './yvex graph attention execute' \
@@ -336,7 +337,8 @@ for command in \
   './yvex graph transformer execute' \
   './yvex graph transformer decode' \
   './yvex graph transformer logits' \
-  './yvex graph transformer sample'
+  './yvex graph transformer sample' \
+  './yvex graph transformer generate'
 do
   require_text README.md "$command"
 done
@@ -357,6 +359,7 @@ while IFS= read -r command; do
     './yvex graph transformer decode --help' | \
     './yvex graph transformer logits --help' | \
     './yvex graph transformer sample --help' | \
+    './yvex graph transformer generate --help' | \
     './yvex tokenizer --help' | \
     './yvex tokenize --help' | \
     './yvex detokenize --help' | \
@@ -371,7 +374,8 @@ while IFS= read -r command; do
     './yvex graph transformer execute \' | \
     './yvex graph transformer decode \' | \
     './yvex graph transformer logits \' | \
-    './yvex graph transformer sample \') ;;
+    './yvex graph transformer sample \' | \
+    './yvex graph transformer generate \') ;;
     *) fail "README contains an unregistered operator command: $command" ;;
   esac
 done <<EOF
@@ -594,7 +598,7 @@ require_text "$project" '`attention_execution_supported=1`, `attention_cuda_exec
 require_text "$project" 'Complete DeepSeek attention, token-local MoE, embedding, 43-block composition, final mHC collapse, and final RMSNorm are admitted through CPU and GB10 CUDA paths'
 require_text "$project" 'a supported DeepSeek-V4-Flash model artifact; the admitted artifact is consumed by the transformer backbone but has not passed generation, evaluation, benchmark, and release gates;'
 require_text "$project" 'complete-model or whole-expert-collection residency; the exact output head, attention/state resources'
-require_text "$project" 'autoregressive token choice; teacher-forced repeated decode still consumes externally supplied token IDs;'
+require_text "$project" 'a polished top-level generation CLI, interactive REPL, retained multi-turn chat policy, or server/API generation;'
 require_text "$project" 'persistent_kv_ready=1'
 reject_text "$project" 'complete GGUF writer, complete-model emission, writer-reader roundtrip, or artifact support admission;'
 require_text "$project" '| Recovered IDs | 631 |'

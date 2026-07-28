@@ -75,6 +75,7 @@ int yvex_test_runtime_binding(void);
 int yvex_test_runtime_decode(void);
 int yvex_test_runtime_logits(void);
 int yvex_test_runtime_sampling(void);
+int yvex_test_runtime_generation(void);
 int yvex_test_runtime_tokenizer(void);
 int yvex_test_runtime_moe(void);
 int yvex_test_runtime_transformer(void);

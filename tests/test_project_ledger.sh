@@ -400,8 +400,10 @@ grep -F '| `V010.RUNTIME.SAMPLING.0` | common | `complete` |' "$project" >/dev/n
   fail "real-logits sampling is not complete"
 grep -F '| `V010.RUNTIME.DEEPSEEK.TOKENIZER.0` | DeepSeek | `complete` |' "$project" >/dev/null ||
   fail "DeepSeek artifact-bound tokenizer is not complete"
-grep -F '| `V010.RUNTIME.DEEPSEEK.GENERATION.0` | DeepSeek | `active` |' "$project" >/dev/null ||
-  fail "DeepSeek generation composition is not active after tokenizer closure"
+grep -F '| `V010.RUNTIME.DEEPSEEK.GENERATION.0` | DeepSeek | `complete` |' "$project" >/dev/null ||
+  fail "DeepSeek generation composition is not complete"
+grep -F '| `V010.CLI.DEEPSEEK.GENERATE.0` | DeepSeek | `active` |' "$project" >/dev/null ||
+  fail "the canonical generation CLI is not active after runtime generation closure"
 grep -F '| V010.MODEL.TRANSFORM.IR.0 | recovered/promoted |' "$project" >/dev/null ||
   fail "quantization does not depend on the transformation IR"
 

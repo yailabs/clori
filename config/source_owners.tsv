@@ -11,6 +11,7 @@ include/yvex/internal/benchmark.h	runtime	runtime.benchmark	generic	private	inte
 include/yvex/internal/compilation.h	model.compilation	model.compilation.internal	generic	private	internal-abi	model.family,quant	interface	none
 include/yvex/internal/core.h	core	core.internal	generic	private	internal-abi	repository	interface	none
 include/yvex/internal/decode.h	runtime	runtime.decode	generic	private	internal-abi	runtime,cli,tests	interface	none
+include/yvex/internal/generation.h	runtime	runtime.generation	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/logits.h	runtime	runtime.logits	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/sampling.h	runtime	runtime.sampling	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/graph.h	graph	graph.internal	generic	private	internal-abi	runtime,backend,cli	interface	none
@@ -139,6 +140,7 @@ src/model/families/deepseek_v4.c	model.family	model.family.deepseek_v4	family	pr
 src/runtime/descriptor.c	runtime	runtime.descriptor	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
 src/runtime/binding.c	runtime	runtime.binding	generic	private	file-serialization	artifact,graph,runtime,cli	implementation	none
 src/runtime/decode.c	runtime	runtime.decode	generic	private	transactional-execution	runtime,cli,tests	implementation	none
+src/runtime/generation.c	runtime	runtime.generation	generic	private	transactional-execution	runtime,cli,tests	implementation	none
 src/runtime/logits.c	runtime	runtime.logits	generic	private	transactional-execution	runtime,backend,cli,tests	implementation	none
 src/runtime/sampling.c	runtime	runtime.sampling	generic	private	transactional-execution	runtime,cli,tests	implementation	none
 src/runtime/moe.c	runtime	runtime.moe	generic	private	transactional-execution	runtime,graph,backend,cli,tests	implementation	none

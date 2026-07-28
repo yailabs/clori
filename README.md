@@ -236,18 +236,24 @@ The admitted vertical includes:
   value in those complete logits rows, including canonical temperature, top-k,
   min-p, locally typical, and top-p filtering;
 - artifact-bound DeepSeek ByteLevel-BPE text encoding, bounded message prompt
-  rendering, special/EOS classification, and batch/incremental detokenization.
+  rendering, special/EOS classification, and batch/incremental detokenization;
+- bounded autoregressive composition that feeds each real sampled token into
+  one decode commit and incrementally publishes its tokenizer-owned text.
 
-These results establish a numeric token-ID-to-selected-token path over the
+These results establish a text-to-text runtime path over the
 complete artifact. Session-owned persistent DeepSeek attention state is
 admitted on CPU and the GB10 CUDA path, and each successful transformer chunk
 publishes all 43 layer updates atomically. The logits boundary does not repeat
 the transformer-owned final norm or mutate persistent state. Sampling runs in
 the common host runtime, validates the complete logits identity, and changes
 neither logits nor session state. The tokenizer operates only on admitted GGUF
-metadata and likewise leaves model state unchanged. Tokenizer-backed prefill,
-sampled-token feedback, stop-loop composition, text generation, evaluation,
-full-model benchmark, and release admission retain separate gates.
+metadata; the generation owner composes it with prefill, logits, sampling,
+decode, stop, and partial progress without duplicating their semantics. The
+polished top-level generation CLI, evaluation, full-model benchmark, and
+release admission retain separate gates.
+
+Prior gates: sampled-token feedback, stop-loop composition, text generation, evaluation.
+This runtime milestone closes the first three while evaluation remains independently gated.
 
 Detailed family semantics live in
 [`docs/model-families.md`](docs/model-families.md). Artifact terminology and
@@ -296,8 +302,9 @@ versioned tensor-file bundles at exact model geometry. Attention, MoE, and
 transformer input schemas are distinct. The logits command projects
 transformer-authenticated hidden rows; sampling selects bounded evidence and
 does not append it. Separate tokenizer commands encode text/rendered messages
-and decode IDs through the same artifact-bound tokenizer. Generation remains
-outside these operator surfaces.
+and decode IDs through the same artifact-bound tokenizer. The internal graph
+generation command proves the production runtime composition; the canonical
+top-level end-user generation command remains the next milestone.
 
 Discover the command hierarchy:
 
@@ -309,6 +316,7 @@ Discover the command hierarchy:
 ./yvex graph transformer decode --help
 ./yvex graph transformer logits --help
 ./yvex graph transformer sample --help
+./yvex graph transformer generate --help
 ./yvex tokenizer --help
 ./yvex tokenize --help
 ./yvex detokenize --help
@@ -560,7 +568,30 @@ The sampler scans all 129,280 logits, uses compensated normalization and
 filter-order v2 zero-mass compaction before entropy, and commits seeded RNG
 state only with authenticated result evidence. Its close gate drains active
 use before release. It remains a common host operation, not CUDA sampling or
-autoregressive generation.
+autoregressive generation by itself.
+
+Execute the bounded production generation composition from exact prompt text:
+
+```sh
+./yvex graph transformer generate \
+  --target deepseek4-v4-flash \
+  --artifact "$ARTIFACT" \
+  --runtime-binding "$BINDING" \
+  --backend cuda \
+  --text "Explain attention briefly." \
+  --max-new-tokens 4 \
+  --max-output-bytes 256 \
+  --context-capacity 128 \
+  --prefill-chunk-tokens 16 \
+  --strategy greedy \
+  --progress off \
+  --output json
+```
+
+Every ordinary sampled token is submitted unchanged to one model decode step;
+terminal EOS/stop tokens remain explicit and do not falsely advance KV. This
+is the internal operator proof, not the final top-level `yvex generate` UX,
+REPL, model-quality evaluation, or release qualification.
 
 Measure the attention-local CUDA boundary:
 

@@ -75,6 +75,8 @@ expect_nonzero() {
     2>"$OUT_DIR/logits-help.err"
 "$YVEX_BIN" graph transformer sample --help >"$OUT_DIR/sample-help.out" \
     2>"$OUT_DIR/sample-help.err"
+"$YVEX_BIN" graph transformer generate --help >"$OUT_DIR/generate-help.out" \
+    2>"$OUT_DIR/generate-help.err"
 for action in prepare describe capabilities plan execute compare; do
     "$YVEX_BIN" graph attention "$action" --help \
         >"$OUT_DIR/$action-help.out" 2>"$OUT_DIR/$action-help.err"
@@ -91,7 +93,7 @@ for action in "state inspect" "state validate" "state exercise" \
     contains "$OUT_DIR/action-help.out" "graph attention"
 done
 "$YVEX_BIN" commands >"$OUT_DIR/catalog.out" 2>"$OUT_DIR/catalog.err"
-contains "$OUT_DIR/catalog.out" "Production attention, MoE, and transformer graph execution."
+contains "$OUT_DIR/catalog.out" "Production graph and generation execution."
 contains "$OUT_DIR/help.out" "yvex graph attention execute --target deepseek4-v4-flash"
 contains "$OUT_DIR/help.out" "--backend cpu|cuda"
 contains "$OUT_DIR/help.out" "--compare-backends"
@@ -146,6 +148,36 @@ contains "$OUT_DIR/logits-help.out" "yvex graph transformer logits"
 contains "$OUT_DIR/logits-help.out" "complete raw vocabulary logits do not establish sampling or generation"
 contains "$OUT_DIR/sample-help.out" "yvex graph transformer sample"
 contains "$OUT_DIR/sample-help.out" "selected token IDs are not appended"
+contains "$OUT_DIR/generate-help.out" "yvex graph transformer generate"
+contains "$OUT_DIR/generate-help.out" "--max-new-tokens N"
+
+expect_status 2 "$YVEX_BIN" graph transformer generate \
+    >"$OUT_DIR/generate-missing.out" 2>"$OUT_DIR/generate-missing.err"
+contains "$OUT_DIR/generate-missing.err" \
+    "graph transformer generate requires target, artifact, runtime binding, backend, prompt, and context capacity"
+
+expect_status 2 "$YVEX_BIN" graph transformer generate --target deepseek4-v4-flash \
+    --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
+    --backend cpu --text hi --max-new-tokens 1 --context-capacity 3 \
+    --prefill-chunk-tokens 1 --strategy stochastic --progress off --output json \
+    >"$OUT_DIR/generate-seed.out" 2>"$OUT_DIR/generate-seed.err"
+contains "$OUT_DIR/generate-seed.err" "stochastic strategy parameters are invalid"
+
+expect_status 3 "$YVEX_BIN" graph transformer generate --target deepseek4-v4-flash \
+    --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
+    --backend cpu --text hi --max-new-tokens 1 --context-capacity 3 \
+    --prefill-chunk-tokens 1 --strategy greedy --progress off --output json \
+    >"$OUT_DIR/generate-refusal.json" 2>"$OUT_DIR/generate-refusal.err"
+python3 - "$OUT_DIR/generate-refusal.json" <<'PY'
+import json
+import sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["command"] == "graph transformer generate"
+assert result["status"] == "refused"
+assert not result["generation_ready"] and not result["cli_generate_ready"]
+assert result["generated_tokens"] == []
+PY
+contains "$OUT_DIR/generate-refusal.err" "runtime binding open failed"
 
 expect_status 2 "$YVEX_BIN" graph transformer sample \
     >"$OUT_DIR/sample-missing.out" 2>"$OUT_DIR/sample-missing.err"

@@ -98,11 +98,11 @@ static const yvex_cli_command yvex_commands[] = {
             "selector, path, behavior, diagnostic, transitional-layout",
                 "report/materialization planning only unless subcommand proves more",yvex_fullmodel_command,
                     yvex_fullmodel_help),
-    OWNED_CMD("graph","graph","mixed-transitional","Production attention, MoE, and transformer graph execution.",
-        "yvex graph attention ACTION|moe execute|transformer execute|decode|logits|sample [options]",
+    OWNED_CMD("graph","graph","mixed-transitional","Production graph and generation execution.",
+        "yvex graph attention ACTION|moe execute|transformer execute|decode|logits|sample|generate [options]",
             "yvex graph transformer execute --target deepseek4-v4-flash --backend cuda --input token-ids",
                 "selector, path, behavior, diagnostic, json",
-                    "production graph components and sampling; not tokenizer or generation",
+                    "production graph components and internal generation; not the top-level generation UX",
                         yvex_graph_command,yvex_graph_help),
     CMD("gguf-template","artifact","diagnostic","Template validation.","yvex gguf-template validate FILE",
         "yvex gguf-template inspect FILE","path, diagnostic","template validation only",
@@ -274,7 +274,7 @@ static void print_top_level_help(FILE *fp)
     render_section(&out, "yvex - local-first inference engine");
     yvex_cli_out_lines(fp, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
     render_boundary(&out,
-        "full model generation remains unsupported unless a specific command proves otherwise");
+        "graph transformer generate proves runtime composition; the top-level generation UX remains pending");
     yvex_cli_out_writef(fp, "\nUse 'yvex commands' for the grouped command catalog.\n");
 }
 

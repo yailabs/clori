@@ -174,13 +174,14 @@ typedef struct {
     struct {
         const char *target, *artifact_path, *runtime_binding_path, *backend;
         const char *phase, *input_class, *input_file, *progress;
-        const char *strategy;
+        const char *strategy, *system, *user, *text;
         unsigned long long chunk_tokens, context_capacity;
         unsigned long long prefill_tokens, prefill_chunk_tokens;
+        unsigned long long maximum_new_tokens, maximum_output_bytes;
         unsigned long long maximum_host_bytes, maximum_device_bytes;
         unsigned long long top_k, seed;
         double temperature, top_p, min_p, typical_p;
-        int active, decode, logits, sample, seed_seen;
+        int active, decode, logits, sample, generate, seed_seen;
     } transformer;
     int help_requested;
     int help_exit_code;

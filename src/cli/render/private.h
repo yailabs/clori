@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/decode.h>
+#include <yvex/internal/generation.h>
 #include <yvex/internal/logits.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/model_artifact.h>
@@ -145,6 +146,8 @@ int yvex_graph_logits_render(FILE *fp, yvex_graph_report_mode mode,
                              const yvex_logits_operator_result *result);
 int yvex_graph_sampling_render(FILE *fp, yvex_graph_report_mode mode,
                                const yvex_sampling_operator_result *result);
+int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
+                                 const yvex_generation_operator_result *result);
 int yvex_graph_render_help(FILE *fp);
 
 /* Model Target contract. */

@@ -48,3 +48,8 @@
 --min-p
 --typical-p
 --seed
+--system
+--user
+--text
+--max-new-tokens
+--max-output-bytes
