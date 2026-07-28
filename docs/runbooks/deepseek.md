@@ -13,9 +13,10 @@ MoE, and schema-v1 numeric token input execute the complete embedding,
 attention/MoE, final mHC, and final RMSNorm backbone. The same schema drives
 teacher-forced decode over one warm context. Final-prefill and decode hidden
 rows project through the separate BF16 output head to complete raw logits. The
-common host sampler selects tokens from every complete row. Prompt text,
-tokenizer execution, token append, EOS/stop behavior, and generation remain
-unsupported.
+common host sampler selects tokens from every complete row. The admitted GGUF
+also drives exact ByteLevel-BPE encoding, bounded prompt rendering,
+special/EOS classification, and incremental detokenization. Sampled-token
+feedback, stop-loop composition, and generation remain unsupported.
 
 There is no supported DeepSeek generation command to run yet. Sampling output
 is evidence and is not appended to the model sequence.

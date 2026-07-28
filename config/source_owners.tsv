@@ -184,4 +184,8 @@ src/source/scan.c	source	source.scan	generic	private	bounded-parser	model,compil
 src/source/verify.c	source	source.verify	generic	private	reusable-algorithm	model,compilation	implementation	none
 src/source/write.c	source	source.write	generic	private	transactional-io	model,compilation	implementation	none
 src/tokenizer/core.c	tokenizer	tokenizer.core	generic	private	resource-lifecycle	runtime,cli	implementation	none
+src/tokenizer/decode.c	tokenizer	tokenizer.decode	generic	private	resource-lifecycle	runtime,generation	implementation	none
+src/tokenizer/execution.c	tokenizer	tokenizer.execution	generic	private	reusable-algorithm	runtime,cli,generation	implementation	none
+src/tokenizer/private.h	tokenizer	tokenizer.shared	generic	private	source-local-interface	tokenizer.core,tokenizer.execution,tokenizer.decode	interface	none
 src/tokenizer/token_input.c	tokenizer	tokenizer.token_input	generic	private	reusable-algorithm	runtime,cli	implementation	none
+src/tokenizer/unicode.c	tokenizer	tokenizer.unicode	generic	private	reusable-algorithm	tokenizer.execution,tokenizer.decode	implementation	none

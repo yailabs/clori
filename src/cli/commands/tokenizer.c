@@ -75,8 +75,7 @@ static int command_tokenizer(int arg_count, char **args)
 {
     yvex_model_context ctx;
     yvex_error err;
-    const char *chat_template;
-    unsigned long long chat_template_len;
+    const yvex_tokenizer_plan_summary *plan;
     int rc;
 
     yvex_error_clear(&err);
@@ -103,16 +102,28 @@ static int command_tokenizer(int arg_count, char **args)
         yvex_tokenizer_kind_name(yvex_tokenizer_kind_of(ctx.tokenizer)));
     yvex_cli_out_writef(stdout, "support: %s\n", yvex_tokenizer_support_name(yvex_tokenizer_support_of(ctx.tokenizer)));
     yvex_cli_out_writef(stdout, "vocab_size: %llu\n", yvex_tokenizer_vocab_size(ctx.tokenizer));
-    (void)print_special_id_line("bos_token_id", yvex_tokenizer_bos_id, ctx.tokenizer);
-    (void)print_special_id_line("eos_token_id", yvex_tokenizer_eos_id, ctx.tokenizer);
-    (void)print_special_id_line("unk_token_id", yvex_tokenizer_unk_id, ctx.tokenizer);
-    if (yvex_tokenizer_chat_template(ctx.tokenizer, &chat_template, &chat_template_len) == YVEX_OK) {
-        (void)chat_template;
-        yvex_cli_out_writef(stdout, "chat_template: present-unsupported\n");
+    plan = yvex_tokenizer_plan_summary_get(ctx.tokenizer);
+    if (plan) {
+        yvex_cli_out_writef(stdout, "runtime_support: exact-artifact-bpe\n");
+        yvex_cli_out_writef(stdout, "base_vocab_size: %llu\n", plan->base_vocabulary_size);
+        yvex_cli_out_writef(stdout, "merge_count: %llu\n", plan->merge_count);
+        yvex_cli_out_writef(stdout, "added_token_count: %llu\n", plan->added_token_count);
+        yvex_cli_out_writef(stdout, "special_token_count: %llu\n", plan->special_token_count);
+        yvex_cli_out_writef(stdout, "tokenizer_json_identity: %s\n", plan->tokenizer_json_identity);
+        yvex_cli_out_writef(stdout, "tokenizer_config_identity: %s\n", plan->tokenizer_config_identity);
+        yvex_cli_out_writef(stdout, "tokenizer_plan_identity: %s\n", plan->tokenizer_plan_identity);
+        yvex_cli_out_writef(stdout, "chat_template: deepseek-v4-family-policy\n");
     } else {
+        yvex_cli_out_writef(stdout, "runtime_support: unavailable\n");
         yvex_cli_out_writef(stdout, "chat_template: absent\n");
     }
-    yvex_cli_out_writef(stdout, "status: tokenizer-descriptor\n");
+    (void)print_special_id_line("bos_token_id", yvex_tokenizer_bos_id, ctx.tokenizer);
+    (void)print_special_id_line("eos_token_id", yvex_tokenizer_eos_id, ctx.tokenizer);
+    (void)print_special_id_line("pad_token_id", yvex_tokenizer_pad_id, ctx.tokenizer);
+    (void)print_special_id_line("unk_token_id", yvex_tokenizer_unk_id, ctx.tokenizer);
+    yvex_cli_out_writef(stdout, "tokenizer_runtime_ready: %s\n", plan ? "true" : "false");
+    yvex_cli_out_writef(stdout, "generation_ready: false\n");
+    yvex_cli_out_writef(stdout, "status: %s\n", plan ? "tokenizer-ready" : "tokenizer-descriptor");
 
     yvex_model_context_close(&ctx);
     return 0;
@@ -126,9 +137,13 @@ static int command_tokenizer(int arg_count, char **args)
 static int command_tokenize(int arg_count, char **args)
 {
     yvex_model_context ctx;
-    yvex_tokens tokens;
+    yvex_tokenizer_encode_result encoded;
+    yvex_tokens fixture_tokens;
+    const yvex_tokens *tokens;
+    yvex_tokenizer_encode_options options = {0, 0, 1, ULLONG_MAX};
     yvex_error err;
     const char *text = NULL;
+    int want_pieces = 0;
     int i;
     int rc;
 
@@ -146,9 +161,14 @@ static int command_tokenize(int arg_count, char **args)
                 return 2;
             }
             text = args[++i];
-        } else if (strcmp(args[i], "--pieces") == 0 || strcmp(args[i], "--no-bos") == 0 || strcmp(args[i],
-            "--eos") == 0) {
-            /* Accepted for tokenizer layer CLI shape; fixture tokenization has no implicit BOS/EOS. */
+        } else if (strcmp(args[i], "--pieces") == 0) {
+            want_pieces = 1;
+        } else if (strcmp(args[i], "--bos") == 0) {
+            options.add_bos = 1;
+        } else if (strcmp(args[i], "--no-bos") == 0) {
+            options.add_bos = 0;
+        } else if (strcmp(args[i], "--eos") == 0) {
+            options.add_eos = 1;
         } else {
             yvex_cli_out_writef(stderr, "yvex: unknown tokenize option: %s\n", args[i]);
             yvex_cli_out_writef(stderr, "Try 'yvex help tokenize' for usage.\n");
@@ -165,24 +185,47 @@ static int command_tokenize(int arg_count, char **args)
         return print_yvex_error(&err, exit_for_status(rc));
     }
 
-    rc = yvex_tokenize_text(ctx.tokenizer, text, &tokens, &err);
+    memset(&encoded, 0, sizeof(encoded));
+    memset(&fixture_tokens, 0, sizeof(fixture_tokens));
+    if (yvex_tokenizer_plan_summary_get(ctx.tokenizer)) {
+        rc = yvex_tokenizer_encode(ctx.tokenizer, (const unsigned char *)text,
+                                   (unsigned long long)strlen(text), &options, &encoded, &err);
+        tokens = &encoded.tokens;
+    } else {
+        if (options.add_bos || options.add_eos) {
+            yvex_error_set(&err, YVEX_ERR_UNSUPPORTED, "cli.tokenize.special-policy",
+                           "fixture tokenizers do not admit explicit BOS/EOS insertion");
+            rc = YVEX_ERR_UNSUPPORTED;
+        } else {
+            rc = yvex_tokenize_text(ctx.tokenizer, text, &fixture_tokens, &err);
+        }
+        tokens = &fixture_tokens;
+    }
     if (rc != YVEX_OK) {
         yvex_model_context_close(&ctx);
         return print_yvex_error(&err, exit_for_status(rc));
     }
 
-    yvex_cli_out_writef(stdout, "tokens: %llu\n", tokens.len);
-    print_token_ids(&tokens);
-    yvex_cli_out_writef(stdout, "pieces:\n");
-    for (i = 0; (unsigned long long)i < tokens.len; ++i) {
-        const yvex_token_info *token = yvex_tokenizer_token_at(ctx.tokenizer, tokens.ids[i]);
-        yvex_cli_out_writef(stdout, "  %u ", tokens.ids[i]);
-        print_quoted_bytes(token ? token->text : "", token ? token->text_len : 0);
-        yvex_cli_out_writef(stdout, "\n");
+    yvex_cli_out_writef(stdout, "tokens: %llu\n", tokens->len);
+    print_token_ids(tokens);
+    if (want_pieces) {
+        yvex_cli_out_writef(stdout, "pieces:\n");
+        for (i = 0; (unsigned long long)i < tokens->len; ++i) {
+            const yvex_token_info *token = yvex_tokenizer_token_at(ctx.tokenizer, tokens->ids[i]);
+            yvex_cli_out_writef(stdout, "  %u ", tokens->ids[i]);
+            print_quoted_bytes(token ? token->text : "", token ? token->text_len : 0);
+            yvex_cli_out_writef(stdout, "\n");
+        }
     }
+    yvex_cli_out_writef(stdout, "encoding_identity: %s\n",
+                        encoded.completed ? encoded.encoding_identity : "unavailable");
+    yvex_cli_out_writef(stdout, "tokenizer_runtime_ready: %s\n",
+                        encoded.completed ? "true" : "false");
+    yvex_cli_out_writef(stdout, "generation_ready: false\n");
     yvex_cli_out_writef(stdout, "status: tokenized\n");
 
-    yvex_tokens_free(&tokens);
+    yvex_tokenizer_encode_result_clear(&encoded);
+    yvex_tokens_clear(&fixture_tokens);
     yvex_model_context_close(&ctx);
     return 0;
 }
@@ -199,7 +242,9 @@ static int command_detokenize(int arg_count, char **args)
     const char *ids_text = NULL;
     unsigned int *ids = NULL;
     unsigned long long ids_len = 0;
-    char out[4096];
+    yvex_tokenizer_decode_result decoded;
+    yvex_tokenizer_decode_options options = {0};
+    const yvex_tokenizer_plan_summary *plan;
     int i;
     int rc;
 
@@ -233,7 +278,40 @@ static int command_detokenize(int arg_count, char **args)
         return print_yvex_error(&err, exit_for_status(rc));
     }
 
-    rc = yvex_detokenize_ids(ctx.tokenizer, ids, ids_len, out, sizeof(out), &err);
+    memset(&decoded, 0, sizeof(decoded));
+    plan = yvex_tokenizer_plan_summary_get(ctx.tokenizer);
+    if (plan) {
+        rc = yvex_tokenizer_decode(ctx.tokenizer, ids, ids_len, &options, &decoded, &err);
+    } else {
+        unsigned long long byte_capacity = 1u, index;
+        for (index = 0u; index < ids_len; ++index) {
+            const yvex_token_info *token = yvex_tokenizer_token_at(ctx.tokenizer, ids[index]);
+            if (!token || token->text_len > ULLONG_MAX - byte_capacity) {
+                yvex_error_set(&err, token ? YVEX_ERR_BOUNDS : YVEX_ERR_INVALID_ARG,
+                               "tokenizer.cli.detokenize", "fixture decode extent is invalid");
+                rc = token ? YVEX_ERR_BOUNDS : YVEX_ERR_INVALID_ARG;
+                break;
+            }
+            byte_capacity += token->text_len;
+        }
+        if (rc == YVEX_OK && byte_capacity <= SIZE_MAX) {
+            decoded.bytes = malloc((size_t)byte_capacity);
+            if (!decoded.bytes) {
+                yvex_error_set(&err, YVEX_ERR_NOMEM, "tokenizer.cli.detokenize",
+                               "fixture decode allocation failed");
+                rc = YVEX_ERR_NOMEM;
+            } else {
+                rc = yvex_detokenize_ids(ctx.tokenizer, ids, ids_len,
+                                         (char *)decoded.bytes, byte_capacity, &err);
+                if (rc == YVEX_OK)
+                    decoded.byte_count = (unsigned long long)strlen((char *)decoded.bytes);
+            }
+        } else if (rc == YVEX_OK) {
+            yvex_error_set(&err, YVEX_ERR_BOUNDS, "tokenizer.cli.detokenize",
+                           "fixture decode exceeds host address space");
+            rc = YVEX_ERR_BOUNDS;
+        }
+    }
     free(ids);
     if (rc != YVEX_OK) {
         yvex_model_context_close(&ctx);
@@ -241,9 +319,14 @@ static int command_detokenize(int arg_count, char **args)
     }
 
     yvex_cli_out_writef(stdout, "text: ");
-    print_quoted_bytes(out, (unsigned long long)strlen(out));
+    print_quoted_bytes((const char *)decoded.bytes, decoded.byte_count);
     yvex_cli_out_lines(stdout, literal_pair_3, sizeof(literal_pair_3) / sizeof(literal_pair_3[0]));
+    yvex_cli_out_writef(stdout, "decoder_identity: %s\n",
+                        plan ? decoded.decoder_identity : "unavailable");
+    yvex_cli_out_writef(stdout, "detokenization_ready: %s\n", plan ? "true" : "false");
+    yvex_cli_out_writef(stdout, "generation_ready: false\n");
 
+    yvex_tokenizer_decode_result_clear(&decoded);
     yvex_model_context_close(&ctx);
     return 0;
 }
@@ -260,19 +343,19 @@ static int command_prompt(int arg_count, char **args)
     unsigned long long message_count = 0;
     yvex_prompt_options options;
     yvex_rendered_prompt rendered;
-    yvex_tokens tokens;
+    yvex_tokenizer_encode_result encoded;
     yvex_error err;
-    const char *chat_template = NULL;
-    unsigned long long chat_template_len = 0;
     int want_tokens = 0;
     int i;
     int rc;
 
     yvex_error_clear(&err);
     memset(&rendered, 0, sizeof(rendered));
-    options.add_bos = 0;
+    options.add_bos = 1;
     options.add_eos = 0;
     options.add_generation_prompt = 1;
+    options.drop_thinking = 1;
+    options.mode = YVEX_PROMPT_MODE_CHAT;
 
     if (arg_count < 3 || strcmp(args[2], "--help") == 0 || strcmp(args[2], "-h") == 0) {
         yvex_prompt_help(stdout);
@@ -287,6 +370,11 @@ static int command_prompt(int arg_count, char **args)
             role = YVEX_PROMPT_ROLE_USER;
         } else if (strcmp(args[i], "--assistant") == 0) {
             role = YVEX_PROMPT_ROLE_ASSISTANT;
+        } else if (strcmp(args[i], "--tool") == 0) {
+            role = YVEX_PROMPT_ROLE_TOOL;
+        } else if (strcmp(args[i], "--thinking") == 0) {
+            options.mode = YVEX_PROMPT_MODE_THINKING;
+            continue;
         } else if (strcmp(args[i], "--no-generation-prompt") == 0) {
             options.add_generation_prompt = 0;
             continue;
@@ -308,6 +396,8 @@ static int command_prompt(int arg_count, char **args)
         }
         messages[message_count].role = role;
         messages[message_count].content = args[++i];
+        messages[message_count].content_len =
+            (unsigned long long)strlen(messages[message_count].content);
         message_count += 1;
     }
 
@@ -327,25 +417,28 @@ static int command_prompt(int arg_count, char **args)
         return print_yvex_error(&err, exit_for_status(rc));
     }
 
-    yvex_cli_out_writef(stdout, "template: yvex-default\n");
-    yvex_cli_out_writef(stdout, "chat_template_metadata: %s\n",
-           yvex_tokenizer_chat_template(ctx.tokenizer, &chat_template, &chat_template_len) == YVEX_OK
-               ? "present-unsupported"
-               : "absent");
+    yvex_cli_out_writef(stdout, "template: deepseek-v4-family-policy\n");
     yvex_cli_out_writef(stdout, "rendered_bytes: %llu\n", rendered.len);
-    yvex_cli_out_writef(stdout, "rendered:\n%s", rendered.text);
+    yvex_cli_out_writef(stdout, "rendered:\n%s\n", rendered.text);
 
     if (want_tokens) {
-        rc = yvex_tokenize_text(ctx.tokenizer, rendered.text, &tokens, &err);
+        yvex_tokenizer_encode_options encode_options = {0, 0, 1, ULLONG_MAX};
+        memset(&encoded, 0, sizeof(encoded));
+        rc = yvex_tokenizer_encode(ctx.tokenizer, (const unsigned char *)rendered.text,
+                                   rendered.len, &encode_options, &encoded, &err);
         if (rc != YVEX_OK) {
             yvex_rendered_prompt_free(&rendered);
             yvex_model_context_close(&ctx);
             return print_yvex_error(&err, exit_for_status(rc));
         }
-        yvex_cli_out_writef(stdout, "tokens: %llu\n", tokens.len);
-        print_token_ids(&tokens);
-        yvex_tokens_free(&tokens);
+        yvex_cli_out_writef(stdout, "tokens: %llu\n", encoded.tokens.len);
+        print_token_ids(&encoded.tokens);
+        yvex_cli_out_writef(stdout, "encoding_identity: %s\n", encoded.encoding_identity);
+        yvex_tokenizer_encode_result_clear(&encoded);
     }
+    yvex_cli_out_writef(stdout, "prompt_identity: %s\n", rendered.prompt_identity);
+    yvex_cli_out_writef(stdout, "tokenizer_runtime_ready: true\n");
+    yvex_cli_out_writef(stdout, "generation_ready: false\n");
     yvex_cli_out_writef(stdout, "status: rendered\n");
 
     yvex_rendered_prompt_free(&rendered);
@@ -666,8 +759,7 @@ int yvex_tokenizer_command(int arg_count, char **args)
 void yvex_detokenize_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex detokenize <path> --ids IDS\n\nDecodes comma-separated token IDs with the implemented "
-            "tokenizer path.\n");
+        "usage: yvex detokenize <path> --ids IDS\n\nDecodes IDs through the exact artifact tokenizer.\n");
 }
 
 /* Purpose: Render input help from typed facts (`yvex_input_help`).
@@ -688,8 +780,8 @@ void yvex_input_help(FILE *fp)
 void yvex_prompt_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex prompt <path> [--system TEXT] --user TEXT [--assistant TEXT] [--tokens]\n\nPrompt "
-            "renders the YVEX default prompt format. Arbitrary Jinja chat templates are not executed.\n");
+        "usage: yvex prompt <path> [--system TEXT] --user TEXT [--assistant TEXT] "
+        "[--tool TEXT] [--thinking] [--tokens]\n\nRenders the exact bounded DeepSeek prompt policy.\n");
 }
 
 /* Purpose: Render tokenize help from typed facts (`yvex_tokenize_help`).
@@ -700,7 +792,8 @@ void yvex_prompt_help(FILE *fp)
 void yvex_tokenize_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex tokenize <path> --text TEXT\n\nEncodes text with the implemented tokenizer path.\n");
+        "usage: yvex tokenize <path> --text TEXT [--bos] [--eos] [--pieces]\n\n"
+        "Encodes an explicit byte span through the exact artifact tokenizer.\n");
 }
 
 /* Purpose: Render tokenizer help from typed facts (`yvex_tokenizer_help`).

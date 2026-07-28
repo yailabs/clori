@@ -1,6 +1,6 @@
 /* Owner: runtime engine and session lifecycle
  * Owns: runtime coordination, model/session state, summaries, and typed refusal.
- * Does not own: graph math, mapping, tokenizers, rendering, artifact emission, or generation.
+ * Does not own: graph math, tokenizer policy, rendering, artifact emission, or generation.
  * Invariants: ownership is explicit. Boundary: runtime evidence cannot promote generation.
  * Purpose: bind admitted artifacts and requests. Inputs: typed identities and resources.
  * Effects: owns sessions and invalidation. Failure: returns typed lifecycle failures. */
@@ -31,6 +31,7 @@ struct yvex_runtime_model {
     yvex_materialization_session *materialization;
     yvex_runtime_descriptor *descriptor;
     yvex_attention_plan *attention;
+    yvex_tokenizer *tokenizer;
     yvex_runtime_residency *residency;
     yvex_runtime_model_summary summary;
     yvex_runtime_model_view view;
@@ -104,7 +105,8 @@ typedef enum {
     REFUSE_SESSION_OPEN_CLEANUP, REFUSE_DEVICE_WORKSPACE_BUDGET, REFUSE_CLEANUP_LEASE,
     REFUSE_CLEANUP_LEASE_ALLOCATION, REFUSE_CLEANUP_LEASE_SESSION, REFUSE_OPEN_BINDING, REFUSE_OPEN_ADAPTER,
     REFUSE_OPEN_LOGICAL_TRANSFORM, REFUSE_OPEN_ARTIFACT, REFUSE_OPEN_MATERIALIZATION, REFUSE_OPEN_IMPORT,
-    REFUSE_OPEN_IMPORTED_IDENTITY, REFUSE_OPEN_SEAL, REFUSE_OPEN_BUILD, REFUSE_OPEN_CAPABILITIES,
+    REFUSE_OPEN_IMPORTED_IDENTITY, REFUSE_OPEN_TOKENIZER, REFUSE_OPEN_SEAL, REFUSE_OPEN_BUILD,
+    REFUSE_OPEN_CAPABILITIES,
     REFUSE_OPEN_RESIDENCY, REFUSE_OPEN_RESIDENCY_COMPLETE, REFUSE_OPEN_DRIFT, REFUSE_COUNT
 } runtime_refusal_id;
 typedef struct {
@@ -176,6 +178,8 @@ static const runtime_refusal_spec runtime_refusals[] = {
     {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-import",
      "runtime binding import did not reconstruct sealed runtime facts"},
     {YVEX_RUNTIME_MODEL_FAILURE_IDENTITY, YVEX_ERR_FORMAT, "imported-identity", "import identity is invalid"},
+    {YVEX_RUNTIME_MODEL_FAILURE_DESCRIPTOR, YVEX_ERR_FORMAT, "tokenizer-plan",
+     "artifact tokenizer could not be admitted and bound to the runtime model"},
     {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-model-seal", "model seal was cancelled"},
     {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-model-build",
      "runtime model construction was not observed exactly once"},
@@ -220,8 +224,7 @@ static int runtime_attention_state_provider_valid(const yvex_attention_state_pro
            provider->identity && provider->begin && provider->stage && provider->commit && provider->abort &&
            provider->reset && provider->invalidate && provider->release;
 }
-/* Purpose: record one observed cold construction event exactly once.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: record a cold build once. Inputs: counter. Effects: increments. Failure: state. Boundary: model. */
 static int runtime_model_once(unsigned long long *counter, const char *phase, yvex_error *err) {
     unsigned long long next;
     if (!counter || !phase || *counter != 0ull ||
@@ -244,8 +247,7 @@ static int runtime_model_progress(const yvex_runtime_model_open_request *request
                    "runtime model preparation was cancelled");
     return YVEX_ERR_CANCELLED;
 }
-/* Purpose: adapt artifact hash bytes to the runtime lifecycle observer.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: adapt hash progress. Inputs: byte counts. Effects: callback. Failure: cancel. Boundary: model. */
 static int runtime_model_hash_progress(void *opaque, unsigned long long completed,
                                        unsigned long long total) {
     const yvex_runtime_model_open_request *request =
@@ -261,8 +263,7 @@ static void runtime_model_timing(yvex_runtime_model *model, yvex_runtime_lifecyc
     if (ended >= started)
         model->summary.lifecycle_seconds[phase] += (double)(ended - started) / 1000000000.0;
 }
-/* Purpose: derive runtime-model identity from immutable compatibility facts.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: seal model identity. Inputs: binding/adapter. Effects: digest. Failure: hash. Boundary: model. */
 static int runtime_model_identity_build(const yvex_runtime_binding_summary *binding,
                                         const yvex_runtime_family_adapter *adapter,
                                         char output[YVEX_SHA256_HEX_CAP]) {
@@ -287,8 +288,7 @@ static int runtime_model_identity_build(const yvex_runtime_binding_summary *bind
     yvex_sha256_hex(digest, output);
     return 1;
 }
-/* Purpose: resolve an exact target through registered typed adapters.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: resolve target adapter. Inputs: target ID. Effects: none. Failure: null. Boundary: runtime. */
 const yvex_runtime_family_adapter *yvex_runtime_family_adapter_find(const char *target_id) {
     unsigned long long index;
     if (!target_id)
@@ -326,8 +326,7 @@ static void runtime_model_session_register_locked(
     model->sessions = session;
     session->model_registered = 1;
 }
-/* Purpose: remove one drained session from model-wide invalidation traversal.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: unlink a drained session. Inputs: model/session. Effects: list update. Failure: lock. Boundary: model. */
 static int runtime_model_session_unregister(yvex_runtime_model *model,
     yvex_runtime_execution_session *session, yvex_error *err) {
     if (!model || !session || !model->lifecycle_mutex_ready ||
@@ -350,8 +349,7 @@ static int runtime_model_session_unregister(yvex_runtime_model *model,
     (void)pthread_mutex_unlock(&model->lifecycle_mutex);
     return runtime_success(err);
 }
-/* Purpose: invalidate quiescent attention state and CUDA graphs as one resource set.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: invalidate state and graphs. Inputs: session. Effects: poison. Failure: cleanup. Boundary: session. */
 static int runtime_session_invalidate(yvex_runtime_execution_session *session,
                                       int include_state, yvex_error *err) {
     unsigned long long affected;
@@ -380,8 +378,7 @@ static int runtime_session_invalidate(yvex_runtime_execution_session *session,
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-/* Purpose: poison resources derived from one drifted model.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: poison drifted dependents. Inputs: model. Effects: invalidates. Failure: cleanup. Boundary: model. */
 static int runtime_model_dependents_invalidate_locked(yvex_runtime_model *model, yvex_error *err) {
     yvex_runtime_execution_session *session;
     yvex_error first_error, cleanup;
@@ -413,8 +410,7 @@ static int runtime_model_dependents_invalidate_locked(yvex_runtime_model *model,
     else if (err) *err = first_error;
     return first_rc;
 }
-/* Purpose: release a common runtime model in dependency order.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: release model resources. Inputs: model. Effects: frees. Failure: retryable. Boundary: model. */
 static int runtime_model_release(yvex_runtime_model *model, yvex_error *err) {
     int rc;
     if (!model)
@@ -426,6 +422,8 @@ static int runtime_model_release(yvex_runtime_model *model, yvex_error *err) {
     }
     rc = yvex_runtime_residency_close(&model->residency, err);
     if (rc != YVEX_OK) return rc;
+    yvex_tokenizer_close(model->tokenizer);
+    model->tokenizer = NULL;
     yvex_materialization_session_close(model->materialization);
     model->materialization = NULL;
     if (model->adapter && model->adapter->graph && model->adapter->graph() &&
@@ -445,8 +443,7 @@ static int runtime_model_release(yvex_runtime_model *model, yvex_error *err) {
     free(model);
     return runtime_success(err);
 }
-/* Purpose: discharge one session reservation and deferred model release.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: discharge model lease. Inputs: session. Effects: unreserves. Failure: retryable. Boundary: session. */
 static int runtime_session_model_discharge(yvex_runtime_execution_session *session,
                                            yvex_error *err) {
     yvex_runtime_model *model = session ? session->model : NULL;
@@ -488,8 +485,7 @@ static int runtime_session_model_discharge(yvex_runtime_execution_session *sessi
     session->model = NULL;
     return runtime_success(err);
 }
-/* Purpose: reject one failed model-open candidate after partial cleanup.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: reject model candidate. Inputs: failure. Effects: cleans. Failure: retained lease. Boundary: model. */
 static int runtime_model_open_fail(yvex_runtime_model **out, yvex_runtime_model *model,
                                    yvex_runtime_model_failure *failure,
                                    runtime_refusal_id refusal,
@@ -512,8 +508,7 @@ static int runtime_model_open_fail(yvex_runtime_model **out, yvex_runtime_model 
     if (err) *err = primary;
     return status;
 }
-/* Purpose: open and authenticate one artifact through exact runtime phases.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: admit artifact. Inputs: binding/request. Effects: opens GGUF. Failure: typed. Boundary: model. */
 static int runtime_model_artifact_open(
     yvex_runtime_model *model, const yvex_runtime_model_open_request *request,
     const yvex_runtime_binding_summary *binding, yvex_runtime_model_failure *failure,
@@ -570,8 +565,7 @@ static int runtime_model_artifact_open(
     runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_ARTIFACT_ADMISSION, started);
     return rc;
 }
-/* Purpose: intersect one family execution contract with admitted graph semantics.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: bind capabilities. Inputs: model/binding. Effects: seals flags. Failure: mismatch. Boundary: model. */
 static int runtime_model_capabilities_bind(
     yvex_runtime_model *model, const yvex_runtime_binding_summary *binding,
     const yvex_attention_summary *attention,
@@ -623,8 +617,7 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     int rc;
     if (out) *out = NULL;
     if (failure) memset(failure, 0, sizeof(*failure));
-    if (!out || !request || !request->artifact_path || !request->runtime_binding_path ||
-        !request->target_id)
+    if (!out || !request || !request->artifact_path || !request->runtime_binding_path || !request->target_id)
         return runtime_refuse(failure, REFUSE_MODEL_OPEN_REQUEST, 1ull, 0ull, err);
     adapter = yvex_runtime_family_adapter_find(request->target_id);
     if (!adapter || adapter->schema_version != YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V1 || !adapter->adapter_id ||
@@ -716,6 +709,16 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
             out, model, failure, REFUSE_OPEN_IMPORTED_IDENTITY, 1ull, 0ull, err,
             YVEX_ERR_FORMAT);
     }
+    rc = yvex_tokenizer_from_gguf(&model->tokenizer, model->gguf, NULL, err);
+    if (rc == YVEX_OK && yvex_tokenizer_plan_summary_get(model->tokenizer))
+        rc = yvex_tokenizer_bind_runtime(
+            model->tokenizer, model->binding_summary.artifact_identity,
+            model->binding_summary.logical_model_identity,
+            model->binding_summary.runtime_descriptor_identity, err);
+    if (rc != YVEX_OK)
+        return runtime_model_open_fail(
+            out, model, failure, REFUSE_OPEN_TOKENIZER, 1ull, 0ull, err,
+            (yvex_status)rc);
     runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_MODEL_SEAL, phase_started);
     rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_MODEL_SEAL, 1ull, 1ull, err);
     if (rc != YVEX_OK)
@@ -755,6 +758,7 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     model->view.adapter = model->adapter;
     model->view.attention = model->attention;
     model->view.descriptor = model->descriptor;
+    model->view.tokenizer = model->tokenizer;
     model->view.materialization = model->materialization;
     if (attention_summary->required_binding_count) {
         phase_started = yvex_core_monotonic_ns();
@@ -793,14 +797,12 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
             out, model, failure, REFUSE_OPEN_DRIFT, 1ull, 0ull, err, (yvex_status)rc);
-    model->summary.total_seconds =
-        (double)(yvex_core_monotonic_ns() - total_started) / 1000000000.0;
+    model->summary.total_seconds = (double)(yvex_core_monotonic_ns() - total_started) / 1000000000.0;
     *out = model;
     if (failure) memset(failure, 0, sizeof(*failure));
     return runtime_success(err);
 }
-/* Purpose: revalidate the retained artifact snapshot around execution.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: detect artifact drift. Inputs: model. Effects: invalidates. Failure: typed. Boundary: model. */
 int yvex_runtime_model_validate(yvex_runtime_model *model,
                                 yvex_runtime_model_failure *failure, yvex_error *err) {
     yvex_error cleanup;
@@ -856,8 +858,7 @@ cleanup_failed:
     if (err) *err = cleanup;
     return cleanup_rc;
 }
-/* Purpose: copy one lifecycle-protected runtime summary through its shared mutex.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: snapshot owned facts. Inputs: owner/output. Effects: copies. Failure: lock. Boundary: runtime. */
 static int runtime_summary_copy(const void *owner, const void *summary, void *out,
                                 size_t size, int mutex_ready, pthread_mutex_t *mutex,
                                 const char *where, const char *argument_reason,
@@ -874,8 +875,7 @@ static int runtime_summary_copy(const void *owner, const void *summary, void *ou
     (void)pthread_mutex_unlock(mutex);
     return runtime_success(err);
 }
-/* Purpose: copy synchronized model trust, build, and invalidation counters.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: snapshot model facts. Inputs: model/output. Effects: copies. Failure: lock. Boundary: model. */
 int yvex_runtime_model_summary_copy(const yvex_runtime_model *model,
                                     yvex_runtime_model_summary *out,
                                     yvex_error *err) {
@@ -887,8 +887,7 @@ int yvex_runtime_model_summary_copy(const yvex_runtime_model *model,
         "runtime model and summary output are required",
         "runtime model synchronization is unavailable", err);
 }
-/* Purpose: close one runtime model without leaving a dangling handle.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: close model handle. Inputs: owned pointer. Effects: drains/frees. Failure: retained. Boundary: model. */
 void yvex_runtime_model_close(yvex_runtime_model **model_ptr) {
     yvex_runtime_model *model;
     int release;
@@ -904,13 +903,11 @@ void yvex_runtime_model_close(yvex_runtime_model **model_ptr) {
     if (!release || runtime_model_release(model, NULL) == YVEX_OK)
         *model_ptr = NULL;
 }
-/* Purpose: borrow sealed runtime-model components through one immutable view.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: borrow model view. Inputs: sealed model. Effects: none. Failure: null. Boundary: model lifetime. */
 const yvex_runtime_model_view *yvex_runtime_model_view_get(const yvex_runtime_model *model) {
     return model ? &model->view : NULL;
 }
-/* Purpose: acquire one isolated CUDA backend over model-owned resident weights.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: attach CUDA residency. Inputs: session/model. Effects: backend. Failure: typed. Boundary: session. */
 static int runtime_session_attach_cuda_residency(
     yvex_runtime_execution_session *session, int *uploaded,
     yvex_runtime_model_failure *failure, yvex_error *err) {
@@ -1023,8 +1020,7 @@ static int runtime_session_capabilities_bind(
     session->summary.capabilities = capabilities;
     return YVEX_OK;
 }
-/* Purpose: discharge one session-owned host/device workspace candidate exactly once.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: discard workspace. Inputs: session. Effects: releases. Failure: retryable. Boundary: session. */
 static int runtime_session_workspace_discard(yvex_runtime_execution_session *session,
                                              yvex_error *err) {
     yvex_backend_host_workspace_summary remaining;
@@ -1120,8 +1116,7 @@ static int runtime_session_resources_release(yvex_runtime_execution_session *ses
     session->host_workspace_cleanup_pending = 0;
     return runtime_success(err);
 }
-/* Purpose: destroy one discharged session's synchronization and host wrapper.
- * Inputs: typed facts. Effects: updates owned state. Failure: typed refusal. Boundary: common runtime. */
+/* Purpose: free session shell. Inputs: drained session. Effects: frees. Failure: sync. Boundary: session. */
 static int runtime_session_storage_release(yvex_runtime_execution_session *session,
                                            yvex_error *err) {
     if (!session) {

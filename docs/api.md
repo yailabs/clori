@@ -343,6 +343,17 @@ byte-equality facts. Its state lane covers raw KV, compressed/indexer emissions
 and positions, and both rolling-state components. Evidence digests remain
 backend and execution-mode specific.
 
+## Artifact-Bound Tokenizer Runtime
+
+`<yvex/tokenizer.h>` exposes the exact admitted tokenizer plan, explicit-length
+UTF-8 encoding, bounded DeepSeek message rendering, batch and incremental
+ByteLevel decoding, special/EOS classification, and a generation-local token
+append directory. Immutable vocabulary/merge/added-token indexes follow model
+lifetime; incremental decoder and append contexts are isolated mutable owners.
+Every owned result publishes only after complete success and carries field-wise
+identities. These operations do not read weights, mutate KV, append sampled
+tokens to decode, or compose generation.
+
 ## Runtime Binding And Operator Actions
 
 The main CLI provides the production consumer for the internal ABI:
@@ -456,9 +467,11 @@ backbone, teacher-forced repeated decode, and complete raw vocabulary logits on
 CPU and the admitted GB10 CUDA path. Logits consume transformer-normalized
 hidden rows without repeating final norm. The common host sampler consumes
 complete real logits and supports deterministic greedy plus explicitly seeded
-canonical stochastic token selection. The runtime does not append selected
-tokens or provide prompt text, tokenizer execution, EOS/stop behavior, text
-generation, evaluation, a full-model benchmark or release readiness.
+canonical stochastic token selection. The artifact-bound tokenizer provides
+exact encoding, bounded prompt rendering, EOS/stop facts, and batch/incremental
+detokenization. The runtime does not feed selected tokens into decode, compose
+the stop loop, publish generated text, evaluate model behavior, benchmark the
+full model, or establish release readiness.
 
 ## Extension Rules
 

@@ -55,7 +55,6 @@ typedef struct {
     char field[64], path[YVEX_PATH_CAP];
     const char *reason;
 } yvex_runtime_binding_failure;
-/* Common runtime-model and execution-session contract. */
 #define YVEX_RUNTIME_MODEL_SCHEMA_V1 1u
 #define YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V1 1u
 #define YVEX_RUNTIME_EXECUTION_DESCRIPTOR_SCHEMA_V2 2u
@@ -310,6 +309,7 @@ typedef struct {
     const yvex_runtime_family_adapter *adapter;
     const yvex_attention_plan *attention;
     const yvex_runtime_descriptor *descriptor;
+    const yvex_tokenizer *tokenizer;
     yvex_materialization_session *materialization;
 } yvex_runtime_model_view;
 int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_model *model,

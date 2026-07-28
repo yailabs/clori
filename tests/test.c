@@ -168,6 +168,7 @@ static int run_runtime_console(void)
     if (run_test("runtime_decode", yvex_test_runtime_decode) != 0) return 1;
     if (run_test("runtime_logits", yvex_test_runtime_logits) != 0) return 1;
     if (run_test("runtime_sampling", yvex_test_runtime_sampling) != 0) return 1;
+    if (run_test("runtime_tokenizer", yvex_test_runtime_tokenizer) != 0) return 1;
     if (run_test("runtime_moe", yvex_test_runtime_moe) != 0) return 1;
     if (run_test("runtime_transformer", yvex_test_runtime_transformer) != 0) return 1;
     if (run_test("runtime_prefill", yvex_test_runtime_prefill) != 0) return 1;

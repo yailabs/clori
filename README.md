@@ -234,7 +234,9 @@ The admitted vertical includes:
   through the separate BF16 `output.weight` on CPU and GB10 CUDA;
 - deterministic greedy and explicitly seeded stochastic selection over every
   value in those complete logits rows, including canonical temperature, top-k,
-  min-p, locally typical, and top-p filtering.
+  min-p, locally typical, and top-p filtering;
+- artifact-bound DeepSeek ByteLevel-BPE text encoding, bounded message prompt
+  rendering, special/EOS classification, and batch/incremental detokenization.
 
 These results establish a numeric token-ID-to-selected-token path over the
 complete artifact. Session-owned persistent DeepSeek attention state is
@@ -242,11 +244,10 @@ admitted on CPU and the GB10 CUDA path, and each successful transformer chunk
 publishes all 43 layer updates atomically. The logits boundary does not repeat
 the transformer-owned final norm or mutate persistent state. Sampling runs in
 the common host runtime, validates the complete logits identity, and changes
-neither logits nor session state. Prompt text, tokenizer execution, token
-append, EOS/stop policy, text generation, evaluation, full-model benchmark,
-and release admission retain separate gates. Teacher-forced decode token IDs
-remain externally supplied; selected samples are not fed back at this
-boundary.
+neither logits nor session state. The tokenizer operates only on admitted GGUF
+metadata and likewise leaves model state unchanged. Tokenizer-backed prefill,
+sampled-token feedback, stop-loop composition, text generation, evaluation,
+full-model benchmark, and release admission retain separate gates.
 
 Detailed family semantics live in
 [`docs/model-families.md`](docs/model-families.md). Artifact terminology and
@@ -256,7 +257,7 @@ operator procedures live in
 
 ## Verified implementation snapshot
 
-Snapshot: 27 July 2026.
+Snapshot: 28 July 2026.
 [`PROJECT.md`](PROJECT.md) is the sole live authority for implementation state,
 dependencies, capability gates, and release admission.
 
@@ -276,6 +277,7 @@ dependencies, capability gates, and release admission.
 | Teacher-forced repeated model decode | Externally supplied token IDs execute one at a time over prior committed KV on CPU and GB10 CUDA, with ordered hidden rows and typed partial progress |
 | Output-head residency and raw logits | The separate encoded BF16 `[129280,4096]` output head has model-lifetime CPU/CUDA residency; final-prefill and decode hidden rows project directly to complete F32 vocabulary logits |
 | Real-logits sampling | The common host sampler validates every value and identity in each complete logits row, then performs deterministic greedy or explicitly seeded stochastic selection with canonical filters and transactional RNG state |
+| Artifact-bound tokenizer | Exact 129,280-token ByteLevel-BPE encoding, bounded DeepSeek prompt policy, special/EOS facts, and batch/incremental decoding execute from admitted GGUF metadata |
 | Tokenizer-backed prompt prefill | Unsupported |
 | Token append and text generation | Unsupported |
 | Evaluation | Blocked |
@@ -291,13 +293,11 @@ evaluation, benchmark, and release gates described in
 
 The admitted graph commands consume canonical diagnostic activations or
 versioned tensor-file bundles at exact model geometry. Attention, MoE, and
-transformer input schemas are distinct. Numeric token IDs drive the transformer
-backbone without establishing tokenizer support. Teacher-forced decode reuses
-that token schema and supplies no token-choice policy. The logits command
-projects transformer-authenticated hidden rows. The sample command consumes
-those real rows, selects tokens as bounded evidence, and does not append them.
-Prompt text, tokenizer execution, and generation remain outside this operator
-surface.
+transformer input schemas are distinct. The logits command projects
+transformer-authenticated hidden rows; sampling selects bounded evidence and
+does not append it. Separate tokenizer commands encode text/rendered messages
+and decode IDs through the same artifact-bound tokenizer. Generation remains
+outside these operator surfaces.
 
 Discover the command hierarchy:
 
@@ -309,6 +309,10 @@ Discover the command hierarchy:
 ./yvex graph transformer decode --help
 ./yvex graph transformer logits --help
 ./yvex graph transformer sample --help
+./yvex tokenizer --help
+./yvex tokenize --help
+./yvex detokenize --help
+./yvex prompt --help
 ```
 
 Set `MODELS_ROOT` and `ARTIFACT` to the external admitted model locations.

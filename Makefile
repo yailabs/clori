@@ -48,11 +48,13 @@
 	test-runtime-state test-runtime-prefill test-runtime-benchmark test-runtime-benchmark-chart \
 	test-runtime-moe test-runtime-transformer test-runtime-decode test-runtime-logits \
 	test-runtime-sampling \
+	test-runtime-tokenizer \
 	test-runtime-benchmark-chart-live update-runtime-benchmark-charts \
 	test-runtime-attention-live test-runtime-deepseek-kv-live \
 	test-runtime-deepseek-prefill-live test-runtime-deepseek-moe-live \
 	test-runtime-deepseek-transformer-live test-runtime-deepseek-decode-live \
 	test-runtime-deepseek-logits-live test-runtime-deepseek-sampling-live \
+	test-runtime-deepseek-tokenizer-live \
 	test-runtime test-runtime-asan test-runtime-asan-live \
 	test-runtime-ubsan test-runtime-ubsan-live test-runtime-sanitizers \
 	test-runtime-sanitizers-live test-materialize-live-plan \
@@ -119,6 +121,7 @@ DEEPSEEK_OPERATOR_MODELS_ROOT ?= $(HOME)/lab/models
 DEEPSEEK_SELECTED_ARTIFACT ?= $(DEEPSEEK_MODELS_ROOT)/deepseek/deepseek-v4-flash-q8_0-q2_k-v1.gguf
 YVEX_RUNTIME_BENCHMARK_DIR ?=
 YVEX_RUNTIME_BINDING ?=
+YVEX_TOKENIZER_REFERENCE_PYTHON ?= /tmp/yvex-tokenizer-oracle/bin/python
 PINNED_GGML_ROOT ?= /tmp/yvex-ggml-af97976
 PINNED_GGML_BUILD ?= $(PINNED_GGML_ROOT)/build-yvex
 
@@ -264,7 +267,10 @@ CORE_SRCS := \
 	src/source/scan.c \
 	src/source/verify.c \
 	src/source/write.c \
+	src/tokenizer/decode.c \
+	src/tokenizer/execution.c \
 	src/tokenizer/token_input.c \
+	src/tokenizer/unicode.c \
 	src/tokenizer/core.c \
 	src/server/core.c
 
@@ -326,6 +332,7 @@ MOE_LIVE_RUNNER := $(TEST_DIR)/moe_deepseek
 TRANSFORMER_LIVE_RUNNER := $(TEST_DIR)/transformer_deepseek
 DECODE_LIVE_RUNNER := $(TEST_DIR)/decode_deepseek
 LOGITS_LIVE_RUNNER := $(TEST_DIR)/logits_deepseek
+TOKENIZER_LIVE_RUNNER := $(TEST_DIR)/tokenizer_deepseek
 OFFICIAL_GGUF_CHECKER := $(TEST_DIR)/ggml_gguf_check
 CUDA_TEST_RUNNER := $(TEST_DIR)/test_cuda
 
@@ -362,12 +369,13 @@ MOE_LIVE_OBJ := $(OBJ_DIR)/tests/live/moe_deepseek.o
 TRANSFORMER_LIVE_OBJ := $(OBJ_DIR)/tests/live/transformer_deepseek.o
 DECODE_LIVE_OBJ := $(OBJ_DIR)/tests/live/decode_deepseek.o
 LOGITS_LIVE_OBJ := $(OBJ_DIR)/tests/live/logits_deepseek.o
+TOKENIZER_LIVE_OBJ := $(OBJ_DIR)/tests/live/tokenizer_deepseek.o
 
 RUNNER_OBJS := $(TEST_MAIN_OBJ) $(QUANT_TEST_RUNNER_OBJ) \
 	$(ARTIFACT_TEST_RUNNER_OBJ) $(CUDA_TEST_MAIN_OBJ) \
 	$(SOURCE_PAYLOAD_LIVE_OBJ) $(QUANT_LIVE_OBJ) $(ARTIFACT_LIVE_OBJ) \
 	$(MATERIALIZE_LIVE_OBJ) $(ATTENTION_LIVE_OBJ) $(PREFILL_LIVE_OBJ) $(MOE_LIVE_OBJ) \
-	$(TRANSFORMER_LIVE_OBJ) $(DECODE_LIVE_OBJ) $(LOGITS_LIVE_OBJ)
+	$(TRANSFORMER_LIVE_OBJ) $(DECODE_LIVE_OBJ) $(LOGITS_LIVE_OBJ) $(TOKENIZER_LIVE_OBJ)
 DEPENDENCY_FILES := $(CORE_OBJS:.o=.d) $(CLI_OBJS:.o=.d) \
 	$(DAEMON_OBJ:.o=.d) $(TEST_UNIT_OBJS:.o=.d) \
 	$(TEST_REFERENCE_OBJS:.o=.d) $(QUANT_TEST_UNIT_OBJS:.o=.d) \
@@ -494,6 +502,12 @@ test-runtime-logits: $(TEST_RUNNER)
 test-runtime-sampling: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_sampling $(TEST_RUNNER)
 
+test-tokenizer: $(TEST_RUNNER)
+	YVEX_TEST_FILTER=tokenizer,runtime_tokenizer,prompt $(TEST_RUNNER)
+
+test-runtime-tokenizer: $(TEST_RUNNER)
+	YVEX_TEST_FILTER=runtime_tokenizer $(TEST_RUNNER)
+
 test-runtime-benchmark: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_benchmark $(TEST_RUNNER)
 
@@ -598,6 +612,7 @@ test-runtime: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_decode $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_logits $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_sampling $(TEST_RUNNER)
+	YVEX_TEST_FILTER=runtime_tokenizer $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_moe $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_transformer $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_prefill $(TEST_RUNNER)
@@ -976,6 +991,46 @@ test-runtime-deepseek-logits-live: cuda $(LOGITS_LIVE_RUNNER) $(YVEX_BIN)
 
 test-runtime-deepseek-sampling-live: test-runtime-deepseek-logits-live
 
+# This serial target reuses the real-logits live workflow to hand actual sampled IDs
+# into the metadata-only artifact tokenizer proof after all model resources close.
+test-runtime-deepseek-tokenizer-live: cuda $(TOKENIZER_LIVE_RUNNER) $(LOGITS_LIVE_RUNNER) $(YVEX_BIN)
+	@set -eu; \
+	tmp_tag=runtime-deepseek-tokenizer-live; \
+	$(ATTENTION_OWNED_TMP_BEGIN) \
+	binding='$(YVEX_RUNTIME_BINDING)'; \
+	case "$$binding" in /*) ;; *) \
+		echo "YVEX_RUNTIME_BINDING must be an absolute file" >&2; exit 2;; \
+	esac; \
+	test -f "$$binding" && test ! -L "$$binding" || { \
+		echo "runtime binding must be a regular non-symlink file" >&2; exit 2; }; \
+	reference_python='$(YVEX_TOKENIZER_REFERENCE_PYTHON)'; \
+	case "$$reference_python" in /*) ;; *) \
+		echo "YVEX_TOKENIZER_REFERENCE_PYTHON must be absolute" >&2; exit 2;; \
+	esac; \
+	test -x "$$reference_python" || { echo "tokenizer reference Python is unavailable" >&2; exit 2; }; \
+	$(LOGITS_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
+		"$$tmp_dir/tokenizer-sampling-input" >"$$tmp_dir/sampling.out"; \
+	sampled=$$(sed -n 's/.*sampling_greedy_tokens=\([^ ]*\).*/\1/p' "$$tmp_dir/sampling.out"); \
+	test -n "$$sampled" || { echo "real sampled token IDs are absent" >&2; exit 1; }; \
+	$(TOKENIZER_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$sampled" \
+		>"$$tmp_dir/tokenizer.out"; \
+	PYTHONDONTWRITEBYTECODE=1 "$$reference_python" tests/reference/tokenizer.py "$(DEEPSEEK_SOURCE)" \
+		"$(abspath $(YVEX_BIN))" "$(DEEPSEEK_SELECTED_ARTIFACT)" >"$$tmp_dir/reference.out"; \
+	$(YVEX_BIN) tokenizer "$(DEEPSEEK_SELECTED_ARTIFACT)" >"$$tmp_dir/inspect.out"; \
+	$(YVEX_BIN) tokenize "$(DEEPSEEK_SELECTED_ARTIFACT)" --text 'hello world' --pieces \
+		>"$$tmp_dir/tokenize.out"; \
+	$(YVEX_BIN) detokenize "$(DEEPSEEK_SELECTED_ARTIFACT)" --ids 33310,2058 \
+		>"$$tmp_dir/detokenize.out"; \
+	$(YVEX_BIN) prompt "$(DEEPSEEK_SELECTED_ARTIFACT)" --system policy --user hi \
+		--assistant ok --user next --tokens >"$$tmp_dir/prompt.out"; \
+	grep -q '^tokenizer_runtime_ready: true$$' "$$tmp_dir/inspect.out"; \
+	grep -q '^ids: 33310 2058$$' "$$tmp_dir/tokenize.out"; \
+	grep -q '^text: "hello world"$$' "$$tmp_dir/detokenize.out"; \
+	grep -q '^template: deepseek-v4-family-policy$$' "$$tmp_dir/prompt.out"; \
+	cat "$$tmp_dir/tokenizer.out"; \
+	cat "$$tmp_dir/reference.out"; \
+	echo "production DeepSeek tokenizer live: artifact BPE, exact prompt, and incremental decode"
+
 test-attention-cli-live: $(YVEX_BIN) tests/cli/attention_graph.sh
 	@set -eu; \
 	tmp_tag=attention-cli-live; \
@@ -1179,6 +1234,10 @@ $(DECODE_LIVE_RUNNER): $(DECODE_LIVE_OBJ) $(LIBYVEX)
 $(LOGITS_LIVE_RUNNER): $(LOGITS_LIVE_OBJ) $(TEST_REFERENCE_OBJS) $(LIBYVEX)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(LOGITS_LIVE_OBJ) $(TEST_REFERENCE_OBJS) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(TOKENIZER_LIVE_RUNNER): $(TOKENIZER_LIVE_OBJ) $(LIBYVEX)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(TOKENIZER_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(OFFICIAL_GGUF_CHECKER): tests/external/ggml_gguf_check.cpp
 	@test "$$(git -C "$(PINNED_GGML_ROOT)" rev-parse HEAD)" = af97976c7810cdabb1863172f31c432dab767de7

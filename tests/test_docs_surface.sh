@@ -343,7 +343,7 @@ done
 require_text README.md 'canonical diagnostic activation'
 require_text README.md 'versioned tensor-file bundles'
 require_text README.md '--input tensor-file'
-require_text README.md 'Prompt text, tokenizer execution, and generation remain'
+require_text README.md 'sampled-token feedback, stop-loop composition, text generation, evaluation'
 
 readme_commands=$(grep -E '^[[:space:]]*\./yvex([[:space:]]|$)' README.md |
   sed 's/^[[:space:]]*//')
@@ -357,6 +357,10 @@ while IFS= read -r command; do
     './yvex graph transformer decode --help' | \
     './yvex graph transformer logits --help' | \
     './yvex graph transformer sample --help' | \
+    './yvex tokenizer --help' | \
+    './yvex tokenize --help' | \
+    './yvex detokenize --help' | \
+    './yvex prompt --help' | \
     './yvex graph attention prepare \' | \
     './yvex graph attention describe \' | \
     './yvex graph attention execute \' | \

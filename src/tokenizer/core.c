@@ -1,6 +1,6 @@
 /* Owner: tokenizer.core.
- * Owns: tokenizer metadata, vocabulary lifecycle, token transforms, and prompt rendering.
- * Does not own: GGUF parsing, model policy, generation loops, or CLI presentation.
+ * Owns: tokenizer metadata, vocabulary lifecycle, and retained fixture transforms.
+ * Does not own: exact BPE execution, incremental decoding, prompt policy, generation loops, or CLI presentation.
  * Invariants: vocabulary views remain bound to admitted metadata and token buffers own storage.
  * Boundary: tokenizer ABI over GGUF facts; text generation remains downstream.
  * Purpose: construct tokenizer state and perform bounded text, token, and prompt transforms.
@@ -8,33 +8,12 @@
  * Effects: allocates tokenizer, vocabulary, token, and rendered-prompt storage explicitly.
  * Failure: rejects malformed metadata, bounds, allocation, and unsupported tokenizer behavior. */
 
-#include <yvex/tokenizer.h>
+#include "src/tokenizer/private.h"
 #include <yvex/gguf.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
-
-typedef struct {
-    int present;
-    unsigned int id;
-} yvex_tokenizer_special_id;
-
-struct yvex_tokenizer {
-    yvex_tokenizer_kind kind;
-    yvex_tokenizer_support support;
-    char *model_name;
-    yvex_token_info *tokens;
-    unsigned long long vocab_size;
-    yvex_tokenizer_special_id bos;
-    yvex_tokenizer_special_id eos;
-    yvex_tokenizer_special_id unk;
-    yvex_tokenizer_special_id pad;
-    yvex_tokenizer_special_id sep;
-    char *chat_template;
-    unsigned long long chat_template_len;
-    int has_huggingface_json;
-};
 
 static int tokenizer_load_vocab(yvex_tokenizer *tokenizer,
                                 const yvex_gguf *gguf,
@@ -127,8 +106,6 @@ int yvex_tokenizer_from_gguf(yvex_tokenizer **out,
     const yvex_gguf_value *value;
     int rc;
 
-    (void)model;
-
     if (!out) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "yvex_tokenizer_from_gguf", "out is required");
         return YVEX_ERR_INVALID_ARG;
@@ -169,6 +146,15 @@ int yvex_tokenizer_from_gguf(yvex_tokenizer **out,
         return rc;
     }
 
+    rc = yvex_tokenizer_execution_seal(tokenizer, gguf, model, err);
+    if (rc != YVEX_OK && rc != YVEX_ERR_UNSUPPORTED) {
+        yvex_tokenizer_close(tokenizer);
+        return rc;
+    }
+    if (rc == YVEX_ERR_UNSUPPORTED) {
+        yvex_error_clear(err);
+    }
+
     *out = tokenizer;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -184,6 +170,7 @@ void yvex_tokenizer_close(yvex_tokenizer *tokenizer)
     if (!tokenizer) {
         return;
     }
+    yvex_tokenizer_execution_release(tokenizer);
     tokenizer_free_vocab(tokenizer);
     tokenizer_free_metadata(tokenizer);
     free(tokenizer);
@@ -239,6 +226,7 @@ const char *yvex_tokenizer_support_name(yvex_tokenizer_support support)
     case YVEX_TOKENIZER_SUPPORT_METADATA_ONLY: return "metadata-only";
     case YVEX_TOKENIZER_SUPPORT_VOCAB_ONLY: return "vocab-only";
     case YVEX_TOKENIZER_SUPPORT_FIXTURE_ENCODE_DECODE: return "fixture-encode-decode";
+    case YVEX_TOKENIZER_SUPPORT_ARTIFACT_BPE: return "artifact-bpe";
     case YVEX_TOKENIZER_SUPPORT_UNSUPPORTED: return "unsupported";
     }
     return "unsupported";
@@ -318,8 +306,11 @@ int yvex_detokenize_ids(const yvex_tokenizer *tokenizer,
                         unsigned long long cap,
                         yvex_error *err)
 {
+    yvex_tokenizer_decode_result decoded;
+    yvex_tokenizer_decode_options options;
     unsigned long long i;
     unsigned long long used = 0;
+    int rc;
 
     if (!tokenizer || (!ids && len > 0) || !out || cap == 0) {
         yvex_error_set(err,
@@ -330,6 +321,27 @@ int yvex_detokenize_ids(const yvex_tokenizer *tokenizer,
     }
     out[0] = '\0';
 
+    if (tokenizer->support == YVEX_TOKENIZER_SUPPORT_ARTIFACT_BPE) {
+        memset(&decoded, 0, sizeof(decoded));
+        memset(&options, 0, sizeof(options));
+        rc = yvex_tokenizer_decode(tokenizer, ids, len, &options, &decoded, err);
+        if (rc != YVEX_OK) {
+            return rc;
+        }
+        if (decoded.byte_count >= cap) {
+            yvex_tokenizer_decode_result_clear(&decoded);
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "yvex_detokenize_ids",
+                           "output buffer too small");
+            return YVEX_ERR_BOUNDS;
+        }
+        if (decoded.byte_count) {
+            memcpy(out, decoded.bytes, (size_t)decoded.byte_count);
+        }
+        out[decoded.byte_count] = '\0';
+        yvex_tokenizer_decode_result_clear(&decoded);
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
     if (tokenizer->support != YVEX_TOKENIZER_SUPPORT_FIXTURE_ENCODE_DECODE) {
         yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "yvex_detokenize_ids",
                         "tokenizer kind %s is not executable in tokenizer layer",
@@ -445,6 +457,8 @@ int yvex_tokenize_text(const yvex_tokenizer *tokenizer,
                        yvex_tokens *out,
                        yvex_error *err)
 {
+    yvex_tokenizer_encode_result encoded;
+    yvex_tokenizer_encode_options options;
     unsigned long long len;
     unsigned long long offset = 0;
     unsigned int unk_id;
@@ -457,6 +471,22 @@ int yvex_tokenize_text(const yvex_tokenizer *tokenizer,
     }
 
     yvex_tokens_clear(out);
+
+    if (tokenizer->support == YVEX_TOKENIZER_SUPPORT_ARTIFACT_BPE) {
+        memset(&encoded, 0, sizeof(encoded));
+        memset(&options, 0, sizeof(options));
+        options.allow_special_tokens = 1;
+        options.maximum_tokens = ULLONG_MAX;
+        rc = yvex_tokenizer_encode(tokenizer, (const unsigned char *)text,
+                                   (unsigned long long)strlen(text), &options,
+                                   &encoded, err);
+        if (rc != YVEX_OK) {
+            return rc;
+        }
+        *out = encoded.tokens;
+        yvex_tokens_clear(&encoded.tokens);
+        return YVEX_OK;
+    }
 
     if (tokenizer->support != YVEX_TOKENIZER_SUPPORT_FIXTURE_ENCODE_DECODE) {
         yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "yvex_tokenize_text",
@@ -505,7 +535,7 @@ int yvex_tokenize_text(const yvex_tokenizer *tokenizer,
  * Boundary: tokenizer special-token admission. */
 static int load_special(const yvex_gguf *gguf,
                         const char *key,
-                        yvex_tokenizer_special_id *slot,
+                        tokenizer_special_id *slot,
                         unsigned long long vocab_size,
                         yvex_error *err)
 {
@@ -560,7 +590,7 @@ static int tokenizer_load_specials(yvex_tokenizer *tokenizer,
 
 /* Purpose: project one optional special-ID slot through the public sentinel convention. */
 static int special_id_get(const yvex_tokenizer *tokenizer,
-                          const yvex_tokenizer_special_id *slot,
+                          const tokenizer_special_id *slot,
                           unsigned int *out)
 {
     if (!tokenizer || !slot || !out) {
@@ -830,175 +860,4 @@ const yvex_token_info *yvex_tokenizer_token_at(const yvex_tokenizer *tokenizer,
         return NULL;
     }
     return &tokenizer->tokens[id];
-}
-
-typedef struct {
-    char *data;
-    unsigned long long len;
-    unsigned long long cap;
-} prompt_builder;
-
-/* Purpose: map prompt role to its stable textual label.
- * Inputs: typed prompt-role enumeration.
- * Effects: none; returned storage is static.
- * Failure: unknown roles map to "unknown".
- * Boundary: prompt rendering label only. */
-const char *yvex_prompt_role_name(yvex_prompt_role role)
-{
-    switch (role) {
-    case YVEX_PROMPT_ROLE_SYSTEM: return "system";
-    case YVEX_PROMPT_ROLE_USER: return "user";
-    case YVEX_PROMPT_ROLE_ASSISTANT: return "assistant";
-    case YVEX_PROMPT_ROLE_TOOL: return "tool";
-    }
-    return "unknown";
-}
-
-/* Purpose: reserve checked capacity for additional rendered prompt bytes.
- * Inputs: mutable builder, requested growth, and error output.
- * Effects: may reallocate while preserving existing content.
- * Failure: integer overflow or allocation failure preserves valid prior state.
- * Boundary: prompt-buffer memory lifecycle. */
-static int builder_reserve(prompt_builder *builder, unsigned long long add, yvex_error *err)
-{
-    char *next;
-    unsigned long long need;
-    unsigned long long cap;
-
-    if (builder->len > ULLONG_MAX - add - 1u) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, "yvex_prompt_render", "prompt length overflow");
-        return YVEX_ERR_BOUNDS;
-    }
-    need = builder->len + add + 1u;
-    if (need <= builder->cap) {
-        return YVEX_OK;
-    }
-
-    cap = builder->cap == 0 ? 128 : builder->cap;
-    while (cap < need) {
-        if (cap > ULLONG_MAX / 2u) {
-            yvex_error_set(err, YVEX_ERR_BOUNDS, "yvex_prompt_render", "prompt capacity overflow");
-            return YVEX_ERR_BOUNDS;
-        }
-        cap *= 2u;
-    }
-    if (cap > (unsigned long long)SIZE_MAX) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "yvex_prompt_render", "prompt too large to allocate");
-        return YVEX_ERR_NOMEM;
-    }
-
-    next = (char *)realloc(builder->data, (size_t)cap);
-    if (!next) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "yvex_prompt_render", "failed to grow prompt buffer");
-        return YVEX_ERR_NOMEM;
-    }
-    builder->data = next;
-    builder->cap = cap;
-    return YVEX_OK;
-}
-
-/* Purpose: append one immutable string to the rendered prompt buffer.
- * Inputs: mutable builder, non-null text, and error output.
- * Effects: grows storage and advances length after exact copy.
- * Failure: reserve failure prevents partial append.
- * Boundary: prompt assembly primitive. */
-static int builder_append(prompt_builder *builder, const char *text, yvex_error *err)
-{
-    unsigned long long len;
-    int rc;
-
-    if (!text) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "yvex_prompt_render", "message content is null");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    len = (unsigned long long)strlen(text);
-    rc = builder_reserve(builder, len, err);
-    if (rc != YVEX_OK) {
-        return rc;
-    }
-    if (len > 0) {
-        memcpy(builder->data + builder->len, text, (size_t)len);
-    }
-    builder->len += len;
-    builder->data[builder->len] = '\0';
-    return YVEX_OK;
-}
-
-/* Purpose: render typed chat messages through the admitted template contract.
- * Inputs: output, tokenizer, immutable messages/count, options, and error output.
- * Effects: allocates and publishes one terminated rendered prompt.
- * Failure: invalid roles, unsupported template, overflow, or allocation aborts output.
- * Boundary: deterministic prompt construction; it does not tokenize or generate. */
-int yvex_prompt_render(yvex_rendered_prompt *out,
-                       const yvex_tokenizer *tokenizer,
-                       const yvex_prompt_message *messages,
-                       unsigned long long message_count,
-                       const yvex_prompt_options *options,
-                       yvex_error *err)
-{
-    yvex_prompt_options defaults;
-    prompt_builder builder;
-    unsigned long long i;
-    int rc;
-
-    (void)tokenizer;
-
-    if (!out || !messages || message_count == 0) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "yvex_prompt_render", "messages are required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-
-    out->text = NULL;
-    out->len = 0;
-    defaults.add_bos = 0;
-    defaults.add_eos = 0;
-    defaults.add_generation_prompt = 1;
-    if (!options) {
-        options = &defaults;
-    }
-
-    memset(&builder, 0, sizeof(builder));
-
-    for (i = 0; i < message_count; ++i) {
-        const char *role = yvex_prompt_role_name(messages[i].role);
-        rc = builder_append(&builder, "<", err);
-        if (rc == YVEX_OK) rc = builder_append(&builder, role, err);
-        if (rc == YVEX_OK) rc = builder_append(&builder, ">\n", err);
-        if (rc == YVEX_OK) rc = builder_append(&builder, messages[i].content, err);
-        if (rc == YVEX_OK) rc = builder_append(&builder, "\n</", err);
-        if (rc == YVEX_OK) rc = builder_append(&builder, role, err);
-        if (rc == YVEX_OK) rc = builder_append(&builder, ">\n", err);
-        if (rc != YVEX_OK) {
-            free(builder.data);
-            return rc;
-        }
-    }
-
-    if (options->add_generation_prompt) {
-        rc = builder_append(&builder, "<assistant>\n", err);
-        if (rc != YVEX_OK) {
-            free(builder.data);
-            return rc;
-        }
-    }
-
-    out->text = builder.data;
-    out->len = builder.len;
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
-/* Purpose: release an owned rendered prompt.
- * Inputs: nullable mutable prompt result.
- * Effects: frees text storage and clears length.
- * Failure: none; empty state is accepted.
- * Boundary: prompt-result lifecycle. */
-void yvex_rendered_prompt_free(yvex_rendered_prompt *prompt)
-{
-    if (!prompt) {
-        return;
-    }
-    free(prompt->text);
-    prompt->text = NULL;
-    prompt->len = 0;
 }
