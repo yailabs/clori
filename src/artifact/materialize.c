@@ -16,6 +16,7 @@
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/quant_numeric.h>
 
 #define MATERIALIZE_DEFAULT_CHUNK (8ull * 1024ull * 1024ull)
 
@@ -171,8 +172,6 @@ static yvex_materialization_placement
 materialize_select_placement(const yvex_tensor_info *tensor,
                              const yvex_materialization_options *options,
                              const yvex_deepseek_gguf_descriptor *descriptor) {
-    if (tensor && tensor->ggml_type == YVEX_GGUF_QTYPE_Q2_K)
-        return YVEX_MATERIALIZATION_PLACEMENT_STAGED_CACHE;
     if (descriptor && descriptor->expert_count > 1ull)
         return YVEX_MATERIALIZATION_PLACEMENT_STAGED_CACHE;
     if (options && options->backend_resident_budget_bytes && tensor &&
@@ -323,6 +322,7 @@ static int materialize_plan_add_tensor(yvex_materialization_plan *plan,
     const yvex_tensor_info *tensor = yvex_tensor_table_at(tensors, index);
     const yvex_deepseek_gguf_descriptor *descriptor = NULL;
     const yvex_gguf_qtype_geometry *geometry;
+    const yvex_quant_numeric_capability *capability;
     yvex_gguf_qtype_storage_result storage;
     yvex_materialized_tensor_binding *binding = &plan->bindings[index];
     unsigned int dimension;
@@ -355,6 +355,7 @@ static int materialize_plan_add_tensor(yvex_materialization_plan *plan,
                                   tensor->absolute_offset, err, YVEX_ERR_BOUNDS,
                                   "tensor range exceeds admitted artifact file");
     geometry = yvex_gguf_qtype_geometry_find(tensor->ggml_type);
+    capability = yvex_quant_numeric_capability_at(tensor->ggml_type);
     binding->tensor_id = index;
     binding->descriptor_index =
         descriptor
@@ -389,9 +390,9 @@ static int materialize_plan_add_tensor(yvex_materialization_plan *plan,
     binding->placement = materialize_select_placement(tensor, options, descriptor);
     binding->access_mode = materialize_access_for_placement(binding->placement);
     binding->backend_compatible =
-        binding->qtype == YVEX_GGUF_QTYPE_F32 || binding->qtype == YVEX_GGUF_QTYPE_F16 ||
-        binding->qtype == YVEX_GGUF_QTYPE_BF16 || binding->qtype == YVEX_GGUF_QTYPE_I32 ||
-        binding->qtype == YVEX_GGUF_QTYPE_Q8_0 || binding->qtype == YVEX_GGUF_QTYPE_Q2_K;
+        capability && capability->storage_admitted &&
+        capability->dedicated_cpu_compute_available &&
+        capability->dedicated_cuda_compute_available;
     if (!materialize_index_insert(plan, binding->name, index))
         return materialize_reject(failure, YVEX_MATERIALIZATION_FAILURE_DUPLICATE_TENSOR,
                                   tensor->name, index, 1ull, 2ull, tensor->absolute_offset, err,

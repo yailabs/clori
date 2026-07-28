@@ -91,6 +91,63 @@ typedef struct {
 
 typedef struct yvex_imatrix_manifest yvex_imatrix_manifest;
 
+#define YVEX_IMATRIX_DATA_SCHEMA_VERSION 1u
+#define YVEX_IMATRIX_IDENTITY_CAP 65u
+
+typedef struct {
+    const char *path;
+    const char *source_model_identity;
+    const char *calibration_dataset_identity;
+    const char *producer;
+    unsigned int producer_version;
+    size_t maximum_mapped_bytes;
+} yvex_imatrix_data_options;
+
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long entry_count;
+    unsigned long long value_count;
+    unsigned long long mapped_bytes;
+    unsigned long long calibration_chunk_count;
+    const char *dataset_name;
+    const char *source_model_identity;
+    const char *calibration_dataset_identity;
+    const char *producer;
+    unsigned int producer_version;
+    char file_digest[YVEX_IMATRIX_IDENTITY_CAP];
+    char imatrix_identity[YVEX_IMATRIX_IDENTITY_CAP];
+    int snapshot_stable;
+    int complete;
+} yvex_imatrix_data_summary;
+
+typedef struct {
+    const char *name;
+    unsigned long long call_count;
+    unsigned long long value_count;
+    unsigned long long ordinal;
+} yvex_imatrix_entry_summary;
+
+typedef struct yvex_imatrix_data yvex_imatrix_data;
+
+int yvex_imatrix_data_open(yvex_imatrix_data **out,
+                           const yvex_imatrix_data_options *options,
+                           yvex_error *err);
+void yvex_imatrix_data_close(yvex_imatrix_data *data);
+int yvex_imatrix_data_validate(const yvex_imatrix_data *data, yvex_error *err);
+int yvex_imatrix_data_get_summary(const yvex_imatrix_data *data,
+                                  yvex_imatrix_data_summary *out,
+                                  yvex_error *err);
+int yvex_imatrix_data_find(const yvex_imatrix_data *data,
+                           const char *name,
+                           yvex_imatrix_entry_summary *out,
+                           yvex_error *err);
+int yvex_imatrix_data_read(const yvex_imatrix_data *data,
+                           unsigned long long entry_ordinal,
+                           unsigned long long value_offset,
+                           float *out,
+                           size_t value_count,
+                           yvex_error *err);
+
 int yvex_imatrix_manifest_create(yvex_imatrix_manifest **out,
                                  const yvex_imatrix_manifest_options *options,
                                  yvex_error *err);
@@ -203,6 +260,8 @@ typedef enum {
     YVEX_QUANT_QTYPE_IQ2_XS,
     YVEX_QUANT_QTYPE_IQ3_XXS,
     YVEX_QUANT_QTYPE_IQ4_NL,
+    YVEX_QUANT_QTYPE_I32,
+    YVEX_QUANT_QTYPE_SOURCE,
     YVEX_QUANT_QTYPE_OTHER
 } yvex_quant_qtype;
 
@@ -235,20 +294,72 @@ typedef enum {
     YVEX_QUANT_POLICY_ISSUE_FORMAT
 } yvex_quant_policy_issue_kind;
 
+#define YVEX_QUANT_POLICY_SCHEMA_VERSION 2u
+#define YVEX_QUANT_POLICY_IDENTITY_CAP 65u
+enum {
+    YVEX_QUANT_MATCH_ROLE = 1ull << 0,
+    YVEX_QUANT_MATCH_COLLECTION = 1ull << 1,
+    YVEX_QUANT_MATCH_SCOPE = 1ull << 2,
+    YVEX_QUANT_MATCH_TENSOR_NAME = 1ull << 3,
+    YVEX_QUANT_MATCH_TENSOR_PATTERN = 1ull << 4,
+    YVEX_QUANT_MATCH_LAYER_RANGE = 1ull << 5,
+    YVEX_QUANT_MATCH_EXPERT_GROUP = 1ull << 6,
+    YVEX_QUANT_MATCH_OPERATION = 1ull << 7,
+    YVEX_QUANT_MATCH_PHYSICAL_CLASS = 1ull << 8,
+    YVEX_QUANT_MATCH_DEFAULT = 1ull << 9
+};
+
+typedef enum {
+    YVEX_QUANT_POLICY_OPERATION_ANY = 0,
+    YVEX_QUANT_POLICY_OPERATION_IDENTITY,
+    YVEX_QUANT_POLICY_OPERATION_DECODE_SCALE_PAIR,
+    YVEX_QUANT_POLICY_OPERATION_CHECKED_CAST,
+    YVEX_QUANT_POLICY_OPERATION_RESHAPE,
+    YVEX_QUANT_POLICY_OPERATION_TRANSPOSE,
+    YVEX_QUANT_POLICY_OPERATION_CONCATENATE,
+    YVEX_QUANT_POLICY_OPERATION_STACK,
+    YVEX_QUANT_POLICY_OPERATION_AGGREGATE,
+    YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE
+} yvex_quant_policy_operation;
+
+typedef enum {
+    YVEX_QUANT_POLICY_PHYSICAL_ANY = 0,
+    YVEX_QUANT_POLICY_PHYSICAL_EXACT,
+    YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE
+} yvex_quant_policy_physical_class;
+
 typedef struct {
+    unsigned int schema_version;
     yvex_quant_selector_kind selector_kind;
     const char *selector;
     yvex_tensor_role role;
+    unsigned long long match_mask;
+    yvex_tensor_collection collection;
+    yvex_tensor_scope scope;
+    const char *tensor_name;
+    const char *tensor_pattern;
+    unsigned long long layer_first;
+    unsigned long long layer_last;
+    unsigned long long expert_group;
+    yvex_quant_policy_operation operation;
+    yvex_quant_policy_physical_class physical_class;
     yvex_quant_qtype qtype;
     int requires_imatrix;
+    int requires_cpu_compute;
+    int requires_cuda_compute;
+    unsigned int priority;
+    const char *label;
     int storage_supported;
     int compute_supported;
 } yvex_quant_policy_rule;
 
 typedef struct {
+    unsigned int schema_version;
     yvex_quant_policy_status status;
     const char *architecture;
     const char *name;
+    const char *preset_name;
+    char policy_identity[YVEX_QUANT_POLICY_IDENTITY_CAP];
     unsigned long long rule_count;
     unsigned long long issue_count;
     unsigned long long requires_imatrix_count;
@@ -286,8 +397,19 @@ unsigned long long yvex_quant_policy_rule_count(const yvex_quant_policy *policy)
 const yvex_quant_policy_rule *yvex_quant_policy_rule_at(const yvex_quant_policy *policy,
                                                         unsigned long long index);
 
+int yvex_quant_policy_preset_open(yvex_quant_policy **out,
+                                  const char *name,
+                                  yvex_error *err);
+unsigned long long yvex_quant_policy_preset_count(void);
+const char *yvex_quant_policy_preset_name(unsigned long long index);
+int yvex_quant_policy_identity_validate(const yvex_quant_policy *policy,
+                                        yvex_error *err);
+
 const char *yvex_quant_qtype_name(yvex_quant_qtype qtype);
 const char *yvex_quant_selector_kind_name(yvex_quant_selector_kind kind);
+const char *yvex_quant_policy_operation_name(yvex_quant_policy_operation operation);
+const char *yvex_quant_policy_physical_class_name(
+    yvex_quant_policy_physical_class physical_class);
 const char *yvex_quant_policy_status_name(yvex_quant_policy_status status);
 const char *yvex_quant_policy_issue_kind_name(yvex_quant_policy_issue_kind issue);
 

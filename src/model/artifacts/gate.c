@@ -1046,6 +1046,8 @@ typedef struct {
     yvex_deepseek_v4_ir *architecture;
     yvex_runtime_descriptor *descriptor;
     yvex_attention_plan *attention;
+    yvex_quant_policy *quant_policy;
+    yvex_imatrix_data *imatrix;
     yvex_quant_plan *quant;
     yvex_gguf_writer_plan *writer;
     yvex_artifact_physical_compatibility compatibility;
@@ -1072,6 +1074,8 @@ static void runtime_binding_compiler_close(runtime_binding_compiler *compiler)
     if (!compiler) return;
     yvex_gguf_writer_plan_release(&compiler->writer);
     yvex_quant_plan_release(&compiler->quant);
+    yvex_imatrix_data_close(compiler->imatrix);
+    yvex_quant_policy_close(compiler->quant_policy);
     if (compiler->graph) compiler->graph->plan_close(compiler->attention);
     yvex_runtime_descriptor_close(compiler->descriptor);
     if (compiler->model) compiler->model->ir.close(compiler->architecture);
@@ -1131,8 +1135,13 @@ static int runtime_binding_compiler_open(
  * Failure: caller releases partial plans and no binding becomes visible.
  * Boundary: runtime execution consumes the result and never invokes this composition. */
 static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
+                                         const yvex_compilation_runtime_binding_request *request,
                                          yvex_error *err)
 {
+    const yvex_transform_ir_summary *transform = yvex_transform_ir_summary_get(
+        compiler->model->payload.transform_ir(compiler->handoff));
+    yvex_imatrix_data_options imatrix_options = {0};
+    yvex_imatrix_data_summary imatrix_summary = {0};
     yvex_gguf_writer_plan_options writer_options;
     yvex_gguf_writer_plan_request writer_request;
     int rc;
@@ -1170,15 +1179,67 @@ static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
         rc = compiler->graph->plan_build(
             &compiler->attention, compiler->architecture, compiler->materialization,
             compiler->descriptor, &compiler->attention_failure, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK && request->physical_variant_plan_path) {
+        if (!transform) {
+            yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
+                           "variant preparation requires the sealed transform identity");
+            rc = YVEX_ERR_STATE;
+        } else if ((request->quant_policy_path != NULL) ==
+            (request->quant_preset_name != NULL)) {
+            yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph_attention_prepare",
+                           "variant preparation requires exactly one quant policy or preset");
+            rc = YVEX_ERR_INVALID_ARG;
+        } else if (request->quant_policy_path) {
+            rc = yvex_quant_policy_open(&compiler->quant_policy,
+                                        request->quant_policy_path, err);
+        } else {
+            rc = yvex_quant_policy_preset_open(&compiler->quant_policy,
+                                               request->quant_preset_name, err);
+        }
+        if (rc == YVEX_OK && request->imatrix_path) {
+            imatrix_options.path = request->imatrix_path;
+            imatrix_options.source_model_identity =
+                transform ? transform->transform_identity : NULL;
+            imatrix_options.calibration_dataset_identity =
+                "deepseek-v4-flash-chat-v2-rendered-prompts-v1";
+            imatrix_options.producer = "llama.cpp-imatrix";
+            imatrix_options.producer_version = 1u;
+            imatrix_options.maximum_mapped_bytes = 1024u * 1024u * 1024u;
+            rc = yvex_imatrix_data_open(&compiler->imatrix, &imatrix_options, err);
+            if (rc == YVEX_OK)
+                rc = yvex_imatrix_data_get_summary(compiler->imatrix,
+                                                   &imatrix_summary, err);
+        }
+        if (rc == YVEX_OK)
+            rc = yvex_quant_plan_build_deepseek_policy(
+                &compiler->quant,
+                compiler->model->payload.transform_ir(compiler->handoff),
+                compiler->model->payload.binding(compiler->handoff),
+                compiler->model->payload.map(compiler->handoff),
+                compiler->quant_policy,
+                imatrix_summary.complete ? imatrix_summary.imatrix_identity : NULL,
+                NULL,
+                &compiler->quant_failure, err);
+        if (rc == YVEX_OK)
+            rc = yvex_quant_plan_file_validate(request->physical_variant_plan_path,
+                                               compiler->quant, err);
+    } else if (rc == YVEX_OK &&
+               (request->quant_policy_path || request->quant_preset_name ||
+                request->imatrix_path)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph_attention_prepare",
+                       "policy, preset, and imatrix require a sealed physical variant plan");
+        rc = YVEX_ERR_INVALID_ARG;
+    } else if (rc == YVEX_OK) {
         rc = yvex_quant_plan_build_deepseek_profile(
             &compiler->quant, compiler->model->payload.transform_ir(compiler->handoff),
             compiler->model->payload.binding(compiler->handoff),
             compiler->model->payload.map(compiler->handoff),
             YVEX_QUANT_PROFILE_RELEASE_Q8_Q2, NULL, &compiler->quant_failure, err);
+    }
     if (rc != YVEX_OK) return rc;
     yvex_gguf_writer_plan_options_default(&writer_options);
-    writer_options.required_execution_identity = YVEX_SELECTED_DEEPSEEK_EXECUTION_IDENTITY;
+    writer_options.required_execution_identity =
+        request->physical_variant_plan_path ? NULL : compiler->admission.quant_execution_identity;
     memset(&writer_request, 0, sizeof(writer_request));
     writer_request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
     writer_request.quant_plan = compiler->quant;
@@ -1251,7 +1312,7 @@ static int prepare_deepseek_runtime_binding(
     } else {
         rc = runtime_binding_compiler_open(&compiler, request, err);
     }
-    if (rc == YVEX_OK) rc = runtime_binding_compiler_plan(&compiler, err);
+    if (rc == YVEX_OK) rc = runtime_binding_compiler_plan(&compiler, request, err);
     if (rc == YVEX_OK)
         rc = yvex_artifact_physical_compatibility_validate(
             compiler.writer, &compiler.admission, compiler.artifact, compiler.gguf,

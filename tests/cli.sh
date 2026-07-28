@@ -46,6 +46,7 @@ run_section model-gate tests/cli/model_gate.sh
 run_section models tests/cli/models.sh
 run_section quant-job tests/cli/quant_job.sh
 run_section quant-policy tests/cli/quant_policy.sh
+run_section physical-variant tests/cli/physical_variant.sh
 run_section imatrix tests/cli/imatrix.sh
 
 printf 'cli smoke: ok\n'

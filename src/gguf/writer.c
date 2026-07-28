@@ -915,6 +915,11 @@ static int writer_deepseek_add_provenance_metadata(writer_deepseek_context *cont
                             context->quant->profile_name) &&
            writer_meta_text(metadata, count, "yvex.quant.profile.identity",
                             context->quant->profile_identity) &&
+           (!context->quant->policy_identity[0] ||
+            (writer_meta_text(metadata, count, "yvex.quant.policy.identity",
+                              context->quant->policy_identity) &&
+             writer_meta_text(metadata, count, "yvex.quant.imatrix.identity",
+                              context->quant->imatrix_identity))) &&
            writer_meta_u32(metadata, count, "yvex.quant.numeric_contract",
                            YVEX_QUANT_NUMERIC_CONTRACT_VERSION);
 }

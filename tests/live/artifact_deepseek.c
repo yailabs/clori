@@ -13,7 +13,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/gguf_writer.h>
+#include <yvex/internal/graph.h>
 #include <yvex/internal/quant_numeric.h>
+#include <yvex/internal/runtime.h>
 #include <yvex/internal/model_artifact.h>
 #include <yvex/internal/families/deepseek_v4.h>
 
@@ -559,13 +561,16 @@ cleanup:
 static int artifact_execute_one(
     yvex_deepseek_payload_handoff *handoff,
     yvex_quant_profile_kind profile,
+    const yvex_quant_plan *provided_quant,
+    const yvex_imatrix_data *imatrix,
     const char *required_execution_identity,
     const char *destination,
     const char *checker,
     int publish,
     artifact_live_result *result)
 {
-    yvex_quant_plan *quant = NULL;
+    yvex_quant_plan *owned_quant = NULL;
+    const yvex_quant_plan *quant = provided_quant;
     yvex_gguf_writer_plan *writer = NULL;
     yvex_gguf_file_sink *file_sink = NULL;
     yvex_quant_output_sink output_sink;
@@ -596,11 +601,12 @@ static int artifact_execute_one(
 
     memset(result, 0, sizeof(*result));
     yvex_error_clear(&error);
-    rc = yvex_quant_plan_build_deepseek_profile(
-        &quant, yvex_model_register_deepseek_v4()->payload.transform_ir(handoff),
+    rc = quant ? YVEX_OK : yvex_quant_plan_build_deepseek_profile(
+        &owned_quant, yvex_model_register_deepseek_v4()->payload.transform_ir(handoff),
         yvex_model_register_deepseek_v4()->payload.binding(handoff),
         yvex_model_register_deepseek_v4()->payload.map(handoff), profile, NULL,
         &quant_failure, &error);
+    if (!quant) quant = owned_quant;
     if (rc != YVEX_OK) {
         artifact_print_quant_failure("quant-plan", &quant_failure, &error);
         goto cleanup;
@@ -650,6 +656,7 @@ static int artifact_execute_one(
     yvex_quant_executor_options_default(&executor_options);
     executor_options.worker_count = ARTIFACT_WORKERS;
     executor_options.maximum_owned_bytes = ARTIFACT_EXECUTOR_BUDGET;
+    executor_options.imatrix = imatrix;
     memset(&progress, 0, sizeof(progress));
     progress.sink = file_sink;
     progress.total_bytes = writer_summary->tensor_payload_bytes;
@@ -847,8 +854,155 @@ cleanup:
     }
     yvex_gguf_file_sink_release(&file_sink);
     yvex_gguf_writer_plan_release(&writer);
-    yvex_quant_plan_release(&quant);
+    yvex_quant_plan_release(&owned_quant);
     return rc == YVEX_OK && result->complete ? 0 : 1;
+}
+
+/* Builds variant-adaptive materialization and publishes its exact runtime binding. */
+static int artifact_variant_bind(
+    const yvex_deepseek_payload_handoff *handoff, const yvex_quant_plan *quant,
+    const artifact_live_result *emitted, const char *binding_directory,
+    char binding_path[YVEX_PATH_CAP])
+{
+    const yvex_model_family_api *model = yvex_model_register_deepseek_v4();
+    const yvex_graph_family_api *graph = yvex_graph_lower_deepseek_v4();
+    const yvex_runtime_family_adapter *adapter =
+        yvex_runtime_family_adapter_find("deepseek4-v4-flash");
+    yvex_artifact *artifact = NULL;
+    yvex_gguf *gguf = NULL;
+    yvex_tensor_table *tensors = NULL;
+    yvex_materialization_plan *materialization_plan = NULL;
+    yvex_materialization_session *materialization = NULL;
+    yvex_deepseek_v4_ir *architecture = NULL;
+    yvex_runtime_descriptor *descriptor = NULL;
+    yvex_attention_plan *attention = NULL;
+    yvex_gguf_writer_plan *writer = NULL;
+    yvex_artifact_options artifact_options = {0};
+    yvex_materialization_options materialization_options;
+    yvex_materialization_failure materialization_failure = {0};
+    yvex_runtime_descriptor_failure descriptor_failure = {0};
+    yvex_deepseek_v4_ir_failure architecture_failure = {0};
+    yvex_attention_failure attention_failure = {0};
+    yvex_gguf_writer_failure writer_failure = {0};
+    yvex_artifact_compatibility_failure compatibility_failure = {0};
+    yvex_artifact_physical_compatibility compatibility;
+    yvex_gguf_writer_plan_options writer_options;
+    yvex_gguf_writer_plan_request writer_request = {0};
+    yvex_runtime_binding_prepare_request prepare = {0};
+    yvex_runtime_binding_prepare_result prepared = {0};
+    yvex_runtime_binding_failure binding_failure = {0};
+    const yvex_transform_ir_summary *transform = yvex_transform_ir_summary_get(
+        model->payload.transform_ir(handoff));
+    const yvex_gguf_writer_plan_summary *writer_summary;
+    const yvex_materialization_summary *materialization_summary;
+    yvex_error error;
+    int rc;
+
+    yvex_error_clear(&error);
+    if (!binding_directory || !binding_directory[0] || !transform || !adapter ||
+        !adapter->execution_capabilities) {
+        fprintf(stderr, "variant_binding_preflight=refused\n");
+        return 1;
+    }
+    artifact_options.path = emitted->path;
+    artifact_options.readonly = 1;
+    rc = yvex_artifact_open(&artifact, &artifact_options, &error);
+    if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &error);
+    if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &error);
+    yvex_materialization_options_default(&materialization_options);
+    materialization_options.require_deepseek_map = 1;
+    materialization_options.max_chunk_bytes = 16ull * 1024ull * 1024ull;
+    materialization_options.cache_budget_bytes = 256ull * 1024ull * 1024ull;
+    materialization_options.future_graph_scratch_reserve_bytes =
+        2ull * 1024ull * 1024ull * 1024ull;
+    materialization_options.future_kv_reserve_bytes =
+        2ull * 1024ull * 1024ull * 1024ull;
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_plan_build(
+            &materialization_plan, &emitted->admission, artifact, gguf, tensors,
+            model->payload.map(handoff), &materialization_options,
+            &materialization_failure, &error);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_session_open(
+            &materialization, materialization_plan, artifact, &materialization_options,
+            &materialization_failure, &error);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_session_commit(
+            materialization, &materialization_failure, &error);
+    if (rc == YVEX_OK)
+        rc = model->ir.build(
+            &architecture, model->payload.verification(handoff),
+            &architecture_failure, &error);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_descriptor_build_deepseek(
+            &descriptor, &emitted->admission, materialization, model->payload.map(handoff),
+            architecture, &descriptor_failure, &error);
+    if (rc == YVEX_OK)
+        rc = graph->plan_build(
+            &attention, architecture, materialization, descriptor,
+            &attention_failure, &error);
+    yvex_gguf_writer_plan_options_default(&writer_options);
+    writer_request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
+    writer_request.quant_plan = quant;
+    writer_request.options = &writer_options;
+    writer_request.input.complete.family_adapter = model;
+    writer_request.input.complete.lowering = model->payload.map(handoff);
+    writer_request.input.complete.verification = model->payload.verification(handoff);
+    if (rc == YVEX_OK)
+        rc = yvex_gguf_writer_plan_build(
+            &writer, &writer_request, &writer_failure, &error);
+    if (rc == YVEX_OK)
+        rc = yvex_artifact_physical_compatibility_validate(
+            writer, &emitted->admission, artifact, gguf, &compatibility,
+            &compatibility_failure, &error);
+    writer_summary = yvex_gguf_writer_plan_summary_get(writer);
+    if (rc == YVEX_OK && (!writer_summary || !compatibility.physical_payload_compatible ||
+                          !adapter->execution_capabilities(&prepare.capabilities) ||
+                          !yvex_runtime_capabilities_contract_valid(&prepare.capabilities)))
+        rc = YVEX_ERR_STATE;
+    if (rc == YVEX_OK) {
+        prepare.directory = binding_directory;
+        prepare.admission = &emitted->admission;
+        prepare.physical_compatibility = &compatibility;
+        prepare.materialization = materialization;
+        prepare.runtime_descriptor = descriptor;
+        prepare.attention_plan = attention;
+        prepare.family_adapter_id = adapter->adapter_id;
+        prepare.family_adapter_version = adapter->adapter_version;
+        prepare.artifact_format = "gguf";
+        prepare.artifact_format_version = writer_summary->gguf_version;
+        prepare.logical_transform_identity = transform->transform_identity;
+        rc = yvex_runtime_binding_prepare(
+            &prepare, &prepared, &binding_failure, &error);
+    }
+    materialization_summary = yvex_materialization_session_summary(materialization);
+    if (rc == YVEX_OK) {
+        (void)snprintf(binding_path, YVEX_PATH_CAP, "%s", prepared.path);
+        printf("variant_materialization_identity=%s\n", materialization_summary->plan_identity);
+        printf("variant_materialization_tensors=%llu\n", materialization_summary->tensor_count);
+        printf("variant_materialization_payload_bytes=%llu\n",
+               materialization_summary->payload_bytes);
+        printf("variant_iq2_xxs_bytes=%llu\n",
+               materialization_summary->qtype_bytes[YVEX_GGUF_QTYPE_IQ2_XXS]);
+        printf("variant_runtime_binding_path=%s\n", prepared.path);
+        printf("variant_runtime_binding_identity=%s\n", prepared.summary.identity);
+        printf("variant_runtime_binding_schema=%u\n", prepared.summary.schema_version);
+        printf("variant_materialization_ready=1\nvariant_runtime_binding_ready=1\n");
+    } else {
+        fprintf(stderr, "variant_binding_failure status=%s where=%s message=%s\n",
+                yvex_status_name(yvex_error_code(&error)), yvex_error_where(&error),
+                yvex_error_message(&error));
+    }
+    yvex_gguf_writer_plan_release(&writer);
+    if (graph) graph->plan_close(attention);
+    yvex_runtime_descriptor_close(descriptor);
+    if (model) model->ir.close(architecture);
+    yvex_materialization_session_close(materialization);
+    yvex_materialization_plan_close(materialization_plan);
+    yvex_tensor_table_close(tensors);
+    yvex_gguf_close(gguf);
+    yvex_artifact_close(artifact);
+    return rc == YVEX_OK ? 0 : 1;
 }
 
 int main(int argc, char **argv)
@@ -860,6 +1014,12 @@ int main(int argc, char **argv)
     artifact_live_result reference;
     artifact_live_result selected;
     artifact_live_result deterministic;
+    artifact_live_result variant;
+    yvex_quant_policy *variant_policy = NULL;
+    yvex_imatrix_data *variant_imatrix = NULL;
+    yvex_quant_plan *variant_quant = NULL;
+    yvex_imatrix_data_summary variant_imatrix_summary;
+    yvex_quant_failure quant_failure;
     char reference_path[YVEX_ARTIFACT_PATH_CAP];
     char selected_path[YVEX_ARTIFACT_PATH_CAP];
     char deterministic_path[YVEX_ARTIFACT_PATH_CAP];
@@ -867,6 +1027,8 @@ int main(int argc, char **argv)
     int argument = 1;
     int plan_only = 0;
     int structure_only = 0;
+    int variant_only = 0;
+    const char *variant_destination = NULL;
     int rc;
 
     if (argc > 1 && strcmp(argv[1], "--plan-only") == 0) {
@@ -875,13 +1037,20 @@ int main(int argc, char **argv)
     } else if (argc > 1 && strcmp(argv[1], "--structure-only") == 0) {
         structure_only = 1;
         argument++;
+    } else if (argc > 1 && strcmp(argv[1], "--variant") == 0) {
+        variant_only = 1;
+        argument++;
     }
-    if (argc - argument != 3) {
+    if ((!variant_only && argc - argument != 3) ||
+        (variant_only && argc - argument != 4)) {
         fprintf(stderr,
-                "usage: %s [--plan-only|--structure-only] SOURCE MODELS_ROOT MANIFEST\n",
+                "usage: %s [--plan-only|--structure-only] SOURCE MODELS_ROOT MANIFEST\n"
+                "       %s --variant SOURCE MODELS_ROOT MANIFEST DESTINATION\n",
+                argv[0],
                 argv[0]);
         return 2;
     }
+    if (variant_only) variant_destination = argv[argument + 3];
     memset(&options, 0, sizeof(options));
     options.source_path = argv[argument];
     options.models_root = argv[argument + 1];
@@ -901,6 +1070,67 @@ int main(int argc, char **argv)
                 yvex_model_register_deepseek_v4()->payload.failure_name(failure.code),
                 yvex_error_where(&error), yvex_error_message(&error));
         return 1;
+    }
+    if (variant_only) {
+        yvex_imatrix_data_options imatrix_options;
+        const yvex_transform_ir_summary *transform = yvex_transform_ir_summary_get(
+            yvex_model_register_deepseek_v4()->payload.transform_ir(handoff));
+        const char *preset = getenv("YVEX_QUANT_PRESET");
+        const char *imatrix_path = getenv("YVEX_IMATRIX_PATH");
+        const char *binding_directory = getenv("YVEX_VARIANT_BINDING_DIR");
+        char binding_path[YVEX_PATH_CAP];
+
+        if (!preset || !preset[0]) preset = YVEX_QUANT_DS4_PROFILE_NAME;
+        memset(&variant_imatrix_summary, 0, sizeof(variant_imatrix_summary));
+        memset(&imatrix_options, 0, sizeof(imatrix_options));
+        imatrix_options.path = imatrix_path;
+        imatrix_options.source_model_identity = transform ? transform->transform_identity : NULL;
+        imatrix_options.calibration_dataset_identity =
+            "deepseek-v4-flash-chat-v2-rendered-prompts-v1";
+        imatrix_options.producer = "llama.cpp-imatrix";
+        imatrix_options.producer_version = 1u;
+        imatrix_options.maximum_mapped_bytes = 1024u * 1024u * 1024u;
+        rc = imatrix_path && imatrix_path[0]
+                 ? yvex_quant_policy_preset_open(&variant_policy, preset, &error)
+                 : YVEX_ERR_INVALID_ARG;
+        if (rc == YVEX_OK)
+            rc = yvex_imatrix_data_open(&variant_imatrix, &imatrix_options, &error);
+        if (rc == YVEX_OK)
+            rc = yvex_imatrix_data_get_summary(
+                variant_imatrix, &variant_imatrix_summary, &error);
+        if (rc == YVEX_OK)
+            rc = yvex_quant_plan_build_deepseek_policy(
+                &variant_quant,
+                yvex_model_register_deepseek_v4()->payload.transform_ir(handoff),
+                yvex_model_register_deepseek_v4()->payload.binding(handoff),
+                yvex_model_register_deepseek_v4()->payload.map(handoff), variant_policy,
+                variant_imatrix_summary.imatrix_identity, NULL, &quant_failure, &error);
+        checker = getenv("YVEX_GGML_CHECKER");
+        if (!checker || !checker[0]) checker = "build/tests/ggml_gguf_check";
+        if (rc == YVEX_OK) {
+            printf("mode=complete-physical-variant-emission\n");
+            rc = artifact_execute_one(
+                handoff, YVEX_QUANT_PROFILE_RELEASE_Q8_Q2, variant_quant, variant_imatrix,
+                NULL, variant_destination, checker, 1, &variant);
+        }
+        if (rc == YVEX_OK)
+            rc = artifact_variant_bind(
+                handoff, variant_quant, &variant, binding_directory, binding_path);
+        if (rc == YVEX_OK) {
+            printf("variant_policy_identity=%s\n",
+                   yvex_quant_plan_summary_get(variant_quant)->policy_identity);
+            printf("variant_imatrix_identity=%s\n", variant_imatrix_summary.imatrix_identity);
+            printf("variant_artifact_identity=%s\n", variant.artifact_identity);
+            printf("variant_materialization_input_ready=1\n");
+        } else {
+            fprintf(stderr, "variant_emission_failure where=%s message=%s\n",
+                    yvex_error_where(&error), yvex_error_message(&error));
+        }
+        yvex_quant_plan_release(&variant_quant);
+        yvex_imatrix_data_close(variant_imatrix);
+        yvex_quant_policy_close(variant_policy);
+        yvex_model_register_deepseek_v4()->payload.close(handoff);
+        return rc == YVEX_OK ? 0 : 1;
     }
     if (plan_only) {
         printf("mode=plan-only\n");
@@ -945,17 +1175,17 @@ int main(int argc, char **argv)
     }
     printf("mode=complete-artifact-emission\n");
     rc = artifact_execute_one(
-        handoff, YVEX_QUANT_PROFILE_SOURCE_FAITHFUL, NULL,
+        handoff, YVEX_QUANT_PROFILE_SOURCE_FAITHFUL, NULL, NULL, NULL,
         reference_path, checker, 1, &reference);
     if (rc == 0)
         rc = artifact_execute_one(
             handoff, YVEX_QUANT_PROFILE_RELEASE_Q8_Q2,
-            SELECTED_EXECUTION_IDENTITY, selected_path, checker, 1,
+            NULL, NULL, SELECTED_EXECUTION_IDENTITY, selected_path, checker, 1,
             &selected);
     if (rc == 0)
         rc = artifact_execute_one(
             handoff, YVEX_QUANT_PROFILE_RELEASE_Q8_Q2,
-            SELECTED_EXECUTION_IDENTITY, deterministic_path, checker, 0,
+            NULL, NULL, SELECTED_EXECUTION_IDENTITY, deterministic_path, checker, 0,
             &deterministic);
     if (rc == 0 &&
         (strcmp(selected.artifact_identity,

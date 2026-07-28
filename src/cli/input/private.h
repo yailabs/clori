@@ -91,6 +91,8 @@ int yvex_quant_job_command(int arg_count, char **args);
 void yvex_quant_job_help(FILE *fp);
 int yvex_quant_policy_command(int arg_count, char **args);
 void yvex_quant_policy_help(FILE *fp);
+int yvex_quant_command(int arg_count, char **args);
+void yvex_quant_help(FILE *fp);
 int yvex_qtype_support_command(int arg_count, char **args);
 void yvex_qtype_support_help(FILE *fp);
 int yvex_source_manifest_command(int arg_count, char **args);
@@ -148,6 +150,9 @@ typedef struct {
     struct {
         yvex_graph_attention_action action;
         const char *target, *artifact_path, *runtime_binding_path, *runtime_binding_dir;
+        const char *source_path, *source_manifest_path;
+        const char *quant_policy_path, *quant_preset_name, *imatrix_path;
+        const char *physical_variant_plan_path;
         const char *models_root, *backend, *probe, *coverage, *phase, *mode;
         const char *operation_scope, *trace_level, *progress, *input_class, *input_file;
         const char *attention_class;

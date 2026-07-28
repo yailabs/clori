@@ -1,21 +1,452 @@
 /* Owner: gguf.imatrix
- * Owns: immutable calibration-manifest documents, coverage, validation, and JSON IO.
+ * Owns: immutable calibration manifests, admitted llama.cpp imatrix snapshots, coverage, and IO.
  * Does not own: quantization policy, quantization jobs, numeric codecs, or artifacts.
- * Invariants: parsed and constructed manifests own all strings and publish only complete state.
- * Boundary: calibration evidence informs policy; it does not execute or admit quantization.
- * Purpose: own the imatrix document lifecycle as one independently testable resource boundary.
- * Inputs: typed manifest options or bounded JSON bytes admitted by the shared core parser.
- * Effects: allocates manifest state and performs explicit manifest file IO.
+ * Invariants: documents own their strings; data views retain one stable regular-file mapping.
+ * Boundary: calibration evidence informs numeric policy but never selects artifact qtypes.
+ * Purpose: own calibration metadata and numeric weight lifecycles as one resource boundary.
+ * Inputs: typed manifest options, bounded JSON, or a sealed imatrix data snapshot.
+ * Effects: allocates metadata/index state, maps one immutable data file, and performs explicit IO.
  * Failure: typed errors publish no partial manifest and cleanup releases every owned allocation. */
+#include <fcntl.h>
+#include <math.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/gguf.h>
 #include <yvex/internal/io.h>
 #include <yvex/quant.h>
+
+#ifndef O_NOFOLLOW
+#define O_NOFOLLOW 0
+#endif
+
+typedef struct {
+    char *name;
+    size_t values_offset;
+    unsigned long long call_count;
+    unsigned long long value_count;
+} imatrix_data_entry;
+
+struct yvex_imatrix_data {
+    int fd;
+    unsigned char *mapping;
+    size_t mapping_size;
+    char *path;
+    char *source_model_identity;
+    char *calibration_dataset_identity;
+    char *producer;
+    char *dataset_name;
+    unsigned int producer_version;
+    struct stat snapshot;
+    imatrix_data_entry *entries;
+    yvex_imatrix_data_summary summary;
+};
+
+/* Purpose: read one canonical little-endian U32 without depending on host alignment. */
+static unsigned int imatrix_data_u32(const unsigned char *bytes) {
+    return (unsigned int)bytes[0] | ((unsigned int)bytes[1] << 8) |
+           ((unsigned int)bytes[2] << 16) | ((unsigned int)bytes[3] << 24);
+}
+
+/* Purpose: reserve one bounded interval while parsing an immutable mapped snapshot. */
+static int imatrix_data_take(size_t *offset, size_t count, size_t limit, yvex_error *err) {
+    if (!offset || count > limit || *offset > limit - count) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "imatrix.data", "imatrix interval is truncated");
+        return YVEX_ERR_FORMAT;
+    }
+    *offset += count;
+    return YVEX_OK;
+}
+
+/* Purpose: allocate one terminated copy of an admitted non-NUL byte span.
+ * Inputs: bounded immutable bytes, explicit length, and error sink.
+ * Effects: returns one caller-owned text allocation.
+ * Failure: invalid text or allocation failure returns null with typed error.
+ * Boundary: copies metadata text only and never calibration values. */
+static char *imatrix_data_text(const unsigned char *bytes, size_t length, yvex_error *err) {
+    char *text;
+
+    if (!bytes || length == 0u || length > 4096u || memchr(bytes, '\0', length)) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "imatrix.data", "imatrix text span is invalid");
+        return NULL;
+    }
+    text = (char *)malloc(length + 1u);
+    if (!text) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "imatrix.data", "imatrix text allocation failed");
+        return NULL;
+    }
+    memcpy(text, bytes, length);
+    text[length] = '\0';
+    return text;
+}
+
+/* Purpose: validate all calibration scalars in one entry and count them exactly.
+ * Inputs: canonical little-endian value bytes and exact scalar count.
+ * Effects: reads the supplied span without retaining or modifying it.
+ * Failure: negative or non-finite values return a format refusal.
+ * Boundary: validates numeric admissibility without interpreting tensor coverage. */
+static int imatrix_data_values_validate(const unsigned char *bytes, unsigned long long count,
+                                        yvex_error *err) {
+    unsigned long long index;
+
+    for (index = 0u; index < count; ++index) {
+        unsigned int bits = imatrix_data_u32(bytes + index * 4u);
+        float value;
+        memcpy(&value, &bits, sizeof(value));
+        if (!isfinite(value) || value < 0.0f) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "imatrix.data",
+                           "imatrix calibration value is negative or non-finite");
+            return YVEX_ERR_FORMAT;
+        }
+    }
+    return YVEX_OK;
+}
+
+/* Purpose: parse the pinned llama.cpp imatrix layout into a bounded immutable index.
+ * Inputs: mapped regular-file snapshot and zeroed data owner.
+ * Effects: allocates entry names/index and dataset name; retains values in the mapping.
+ * Failure: malformed geometry or values publish no complete data summary.
+ * Boundary: parsing authenticates calibration bytes but does not select qtypes. */
+static int imatrix_data_parse(yvex_imatrix_data *data, yvex_error *err) {
+    size_t offset = 0u;
+    unsigned long long entry_count;
+    unsigned long long entry;
+    unsigned long long value_total = 0u;
+
+    if (data->mapping_size < 12u) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "imatrix.data", "imatrix file is too short");
+        return YVEX_ERR_FORMAT;
+    }
+    entry_count = imatrix_data_u32(data->mapping);
+    offset = 4u;
+    if (entry_count == 0u || entry_count > 65536u ||
+        entry_count > SIZE_MAX / sizeof(data->entries[0])) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "imatrix.data", "imatrix entry count is invalid");
+        return YVEX_ERR_BOUNDS;
+    }
+    data->entries = (imatrix_data_entry *)calloc((size_t)entry_count, sizeof(data->entries[0]));
+    if (!data->entries) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "imatrix.data", "imatrix index allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    data->summary.entry_count = entry_count;
+    for (entry = 0u; entry < entry_count; ++entry) {
+        unsigned long long name_length;
+        unsigned long long value_count;
+        unsigned long long value_bytes;
+        size_t name_offset;
+        size_t value_offset;
+
+        if (imatrix_data_take(&offset, 4u, data->mapping_size, err) != YVEX_OK)
+            return YVEX_ERR_FORMAT;
+        name_length = imatrix_data_u32(data->mapping + offset - 4u);
+        name_offset = offset;
+        if (name_length == 0u || name_length > 4096u ||
+            imatrix_data_take(&offset, (size_t)name_length, data->mapping_size, err) != YVEX_OK)
+            return YVEX_ERR_FORMAT;
+        data->entries[entry].name =
+            imatrix_data_text(data->mapping + name_offset, (size_t)name_length, err);
+        if (!data->entries[entry].name)
+            return yvex_error_code(err);
+        {
+            unsigned long long prior;
+            for (prior = 0u; prior < entry; ++prior) {
+                if (strcmp(data->entries[prior].name, data->entries[entry].name) == 0) {
+                    yvex_error_set(err, YVEX_ERR_FORMAT, "imatrix.data",
+                                   "duplicate imatrix entry name is ambiguous");
+                    return YVEX_ERR_FORMAT;
+                }
+            }
+        }
+        if (imatrix_data_take(&offset, 8u, data->mapping_size, err) != YVEX_OK)
+            return YVEX_ERR_FORMAT;
+        data->entries[entry].call_count = imatrix_data_u32(data->mapping + offset - 8u);
+        value_count = imatrix_data_u32(data->mapping + offset - 4u);
+        if (data->entries[entry].call_count == 0u || value_count == 0u ||
+            !yvex_core_u64_mul(value_count, 4u, &value_bytes) || value_bytes > SIZE_MAX) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "imatrix.data",
+                           "imatrix entry geometry is invalid");
+            return YVEX_ERR_BOUNDS;
+        }
+        value_offset = offset;
+        if (imatrix_data_take(&offset, (size_t)value_bytes, data->mapping_size, err) != YVEX_OK)
+            return YVEX_ERR_FORMAT;
+        if (imatrix_data_values_validate(data->mapping + value_offset, value_count, err) != YVEX_OK)
+            return yvex_error_code(err);
+        if (!yvex_core_u64_add(value_total, value_count, &value_total)) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "imatrix.data", "imatrix value count overflowed");
+            return YVEX_ERR_BOUNDS;
+        }
+        data->entries[entry].values_offset = value_offset;
+        data->entries[entry].value_count = value_count;
+    }
+    if (imatrix_data_take(&offset, 8u, data->mapping_size, err) != YVEX_OK)
+        return YVEX_ERR_FORMAT;
+    data->summary.calibration_chunk_count = imatrix_data_u32(data->mapping + offset - 8u);
+    {
+        unsigned long long dataset_length = imatrix_data_u32(data->mapping + offset - 4u);
+        size_t dataset_offset = offset;
+        if (dataset_length == 0u || dataset_length > 4096u ||
+            imatrix_data_take(&offset, (size_t)dataset_length, data->mapping_size, err) != YVEX_OK ||
+            offset != data->mapping_size) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "imatrix.data",
+                           "imatrix dataset trailer is malformed");
+            return YVEX_ERR_FORMAT;
+        }
+        data->dataset_name =
+            imatrix_data_text(data->mapping + dataset_offset, (size_t)dataset_length, err);
+        if (!data->dataset_name)
+            return yvex_error_code(err);
+    }
+    data->summary.value_count = value_total;
+    return YVEX_OK;
+}
+
+/* Purpose: derive file and semantic calibration identities field by field.
+ * Inputs: parsed immutable mapped data and caller error sink.
+ * Effects: writes only canonical digests in the data summary.
+ * Failure: hash failure returns state refusal without publishing completion.
+ * Boundary: identities exclude paths, mappings, pointers, and native layouts. */
+static int imatrix_data_identity(yvex_imatrix_data *data, yvex_error *err) {
+    yvex_sha256 file_hash;
+    yvex_sha256 semantic_hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+
+    yvex_sha256_init(&file_hash);
+    if (!yvex_sha256_update(&file_hash, data->mapping, data->mapping_size) ||
+        !yvex_sha256_final(&file_hash, digest)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "imatrix.data", "imatrix file digest failed");
+        return YVEX_ERR_STATE;
+    }
+    yvex_sha256_hex(digest, data->summary.file_digest);
+    yvex_sha256_init(&semantic_hash);
+    if (!yvex_sha256_update_text(&semantic_hash, "yvex.imatrix.data.v1") ||
+        !yvex_sha256_update_text(&semantic_hash, data->source_model_identity) ||
+        !yvex_sha256_update_text(&semantic_hash, data->calibration_dataset_identity) ||
+        !yvex_sha256_update_text(&semantic_hash, data->producer) ||
+        !yvex_sha256_update_u64(&semantic_hash, data->producer_version) ||
+        !yvex_sha256_update_text(&semantic_hash, data->summary.file_digest) ||
+        !yvex_sha256_update_u64(&semantic_hash, data->summary.entry_count) ||
+        !yvex_sha256_update_u64(&semantic_hash, data->summary.value_count) ||
+        !yvex_sha256_update_u64(&semantic_hash, data->summary.calibration_chunk_count) ||
+        !yvex_sha256_update_text(&semantic_hash, data->dataset_name) ||
+        !yvex_sha256_final(&semantic_hash, digest)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "imatrix.data", "imatrix identity failed");
+        return YVEX_ERR_STATE;
+    }
+    yvex_sha256_hex(digest, data->summary.imatrix_identity);
+    return YVEX_OK;
+}
+
+/* Purpose: open one stable regular-file calibration snapshot and its immutable entry index.
+ * Inputs: explicit path, identity provenance, producer facts, and mapping budget.
+ * Effects: retains one file descriptor, read-only mapping, and bounded metadata index.
+ * Failure: unsafe path, drift, malformed bytes, or resource refusal leaves output null.
+ * Boundary: data admission authenticates calibration; quant-plan policy remains separate. */
+int yvex_imatrix_data_open(yvex_imatrix_data **out, const yvex_imatrix_data_options *options,
+                           yvex_error *err) {
+    yvex_imatrix_data *data;
+    int rc;
+
+    if (!out || !options || !options->path || !options->source_model_identity ||
+        !options->source_model_identity[0] || !options->calibration_dataset_identity ||
+        !options->calibration_dataset_identity[0] || !options->producer ||
+        !options->producer[0] || options->maximum_mapped_bytes == 0u) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "imatrix.data",
+                       "complete imatrix options and provenance are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    *out = NULL;
+    data = (yvex_imatrix_data *)calloc(1, sizeof(*data));
+    if (!data) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "imatrix.data", "imatrix owner allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    data->fd = -1;
+    data->path = yvex_core_strdup(options->path);
+    data->source_model_identity = yvex_core_strdup(options->source_model_identity);
+    data->calibration_dataset_identity =
+        yvex_core_strdup(options->calibration_dataset_identity);
+    data->producer = yvex_core_strdup(options->producer);
+    data->producer_version = options->producer_version;
+    if (!data->path || !data->source_model_identity || !data->calibration_dataset_identity ||
+        !data->producer) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "imatrix.data", "imatrix provenance allocation failed");
+        yvex_imatrix_data_close(data);
+        return YVEX_ERR_NOMEM;
+    }
+    data->fd = open(options->path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (data->fd < 0 || fstat(data->fd, &data->snapshot) != 0 ||
+        !S_ISREG(data->snapshot.st_mode) || data->snapshot.st_size <= 0 ||
+        (unsigned long long)data->snapshot.st_size > options->maximum_mapped_bytes ||
+        (unsigned long long)data->snapshot.st_size > SIZE_MAX) {
+        yvex_error_set(err, YVEX_ERR_IO, "imatrix.data",
+                       "imatrix path is unavailable, unsafe, or exceeds its mapping budget");
+        yvex_imatrix_data_close(data);
+        return YVEX_ERR_IO;
+    }
+    data->mapping_size = (size_t)data->snapshot.st_size;
+    data->mapping = mmap(NULL, data->mapping_size, PROT_READ, MAP_PRIVATE, data->fd, 0);
+    if (data->mapping == MAP_FAILED) {
+        data->mapping = NULL;
+        yvex_error_set(err, YVEX_ERR_IO, "imatrix.data", "imatrix mapping failed");
+        yvex_imatrix_data_close(data);
+        return YVEX_ERR_IO;
+    }
+    rc = imatrix_data_parse(data, err);
+    if (rc == YVEX_OK)
+        rc = imatrix_data_identity(data, err);
+    if (rc != YVEX_OK) {
+        yvex_imatrix_data_close(data);
+        return rc;
+    }
+    data->summary.schema_version = YVEX_IMATRIX_DATA_SCHEMA_VERSION;
+    data->summary.mapped_bytes = data->mapping_size;
+    data->summary.dataset_name = data->dataset_name;
+    data->summary.source_model_identity = data->source_model_identity;
+    data->summary.calibration_dataset_identity = data->calibration_dataset_identity;
+    data->summary.producer = data->producer;
+    data->summary.producer_version = data->producer_version;
+    data->summary.snapshot_stable = 1;
+    data->summary.complete = 1;
+    rc = yvex_imatrix_data_validate(data, err);
+    if (rc != YVEX_OK) {
+        yvex_imatrix_data_close(data);
+        return rc;
+    }
+    *out = data;
+    return YVEX_OK;
+}
+
+/* Purpose: release the mapped calibration snapshot and every bounded index allocation.
+ * Inputs: nullable data owner.
+ * Effects: unmaps, closes, frees, and invalidates the handle.
+ * Failure: cleanup is infallible and null is accepted.
+ * Boundary: no source model or policy ownership is released. */
+void yvex_imatrix_data_close(yvex_imatrix_data *data) {
+    unsigned long long index;
+
+    if (!data)
+        return;
+    for (index = 0u; index < data->summary.entry_count; ++index)
+        free(data->entries[index].name);
+    free(data->entries);
+    free(data->dataset_name);
+    if (data->mapping)
+        munmap(data->mapping, data->mapping_size);
+    if (data->fd >= 0)
+        close(data->fd);
+    free(data->path);
+    free(data->source_model_identity);
+    free(data->calibration_dataset_identity);
+    free(data->producer);
+    free(data);
+}
+
+/* Purpose: revalidate path identity and immutable file metadata after admission.
+ * Inputs: complete admitted data and error sink.
+ * Effects: observes current filesystem metadata only.
+ * Failure: incomplete identity or snapshot drift returns typed refusal.
+ * Boundary: validation does not remap or reread calibration values. */
+int yvex_imatrix_data_validate(const yvex_imatrix_data *data, yvex_error *err) {
+    struct stat current;
+
+    if (!data || !data->summary.complete || !yvex_sha256_hex_valid(data->summary.file_digest) ||
+        !yvex_sha256_hex_valid(data->summary.imatrix_identity)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "imatrix.data",
+                       "complete identity-bound imatrix data is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (lstat(data->path, &current) != 0 || !S_ISREG(current.st_mode) ||
+        current.st_dev != data->snapshot.st_dev || current.st_ino != data->snapshot.st_ino ||
+        current.st_size != data->snapshot.st_size ||
+        current.st_mtim.tv_sec != data->snapshot.st_mtim.tv_sec ||
+        current.st_mtim.tv_nsec != data->snapshot.st_mtim.tv_nsec ||
+        current.st_ctim.tv_sec != data->snapshot.st_ctim.tv_sec ||
+        current.st_ctim.tv_nsec != data->snapshot.st_ctim.tv_nsec) {
+        yvex_error_set(err, YVEX_ERR_IO, "imatrix.data", "imatrix snapshot drifted after admission");
+        return YVEX_ERR_IO;
+    }
+    return YVEX_OK;
+}
+
+/* Purpose: copy immutable calibration summary facts without exposing owner internals.
+ * Inputs: admitted data and caller-owned summary output.
+ * Effects: copies one value-only summary with borrowed immutable text fields.
+ * Failure: absent inputs return invalid-argument refusal.
+ * Boundary: mapped values and entry index remain private. */
+int yvex_imatrix_data_get_summary(const yvex_imatrix_data *data,
+                                  yvex_imatrix_data_summary *out, yvex_error *err) {
+    if (!data || !out) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "imatrix.data",
+                       "imatrix data and summary output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    *out = data->summary;
+    return YVEX_OK;
+}
+
+/* Purpose: find one exact calibration entry without scanning numeric payload values.
+ * Inputs: admitted data, exact physical tensor name, and output record.
+ * Effects: publishes one borrowed-name entry summary on exact match.
+ * Failure: missing inputs or name return typed refusal.
+ * Boundary: lookup reads only the immutable bounded name index. */
+int yvex_imatrix_data_find(const yvex_imatrix_data *data, const char *name,
+                           yvex_imatrix_entry_summary *out, yvex_error *err) {
+    unsigned long long index;
+
+    if (!data || !name || !out) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "imatrix.data",
+                       "imatrix data, name, and output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    for (index = 0u; index < data->summary.entry_count; ++index) {
+        if (strcmp(data->entries[index].name, name) == 0) {
+            out->name = data->entries[index].name;
+            out->call_count = data->entries[index].call_count;
+            out->value_count = data->entries[index].value_count;
+            out->ordinal = index;
+            return YVEX_OK;
+        }
+    }
+    yvex_error_set(err, YVEX_ERR_FORMAT, "imatrix.data", "imatrix entry is absent");
+    return YVEX_ERR_FORMAT;
+}
+
+/* Purpose: decode one bounded calibration interval from canonical little-endian F32 bytes.
+ * Inputs: admitted entry ordinal, value interval, and caller-owned F32 output.
+ * Effects: copies only the requested complete interval.
+ * Failure: invalid entry or bounds publish no out-of-range values.
+ * Boundary: range access does not cache or reinterpret calibration policy. */
+int yvex_imatrix_data_read(const yvex_imatrix_data *data, unsigned long long entry_ordinal,
+                           unsigned long long value_offset, float *out, size_t value_count,
+                           yvex_error *err) {
+    const imatrix_data_entry *entry;
+    size_t index;
+
+    if (!data || !out || entry_ordinal >= data->summary.entry_count) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "imatrix.data",
+                       "bounded imatrix entry and output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    entry = &data->entries[entry_ordinal];
+    if (value_offset > entry->value_count || value_count > entry->value_count - value_offset) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "imatrix.data", "imatrix value interval is out of range");
+        return YVEX_ERR_BOUNDS;
+    }
+    for (index = 0u; index < value_count; ++index) {
+        unsigned int bits = imatrix_data_u32(data->mapping + entry->values_offset +
+                                             (value_offset + index) * 4u);
+        memcpy(&out[index], &bits, sizeof(out[index]));
+    }
+    return YVEX_OK;
+}
 
 typedef struct {
     yvex_imatrix_coverage_kind kind;

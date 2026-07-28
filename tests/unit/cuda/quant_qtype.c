@@ -45,12 +45,22 @@ static int quant_cuda_encode_row(unsigned int qtype,
     *encoded = (unsigned char *)malloc((size_t)storage.total_bytes);
     if (!*encoded) return 0;
     for (block = 0u; block < elements / geometry->block_size; ++block) {
+        float calibration[YVEX_QUANT_IQ2_XXS_ELEMENTS];
         size_t wrote = 0u;
-        int rc = yvex_quant_encode_block(
-            qtype, source + block * geometry->block_size,
-            geometry->block_size,
-            *encoded + (size_t)block * geometry->bytes_per_block,
-            geometry->bytes_per_block, &wrote, &failure, &err);
+        unsigned int index;
+        int rc;
+        for (index = 0u; index < geometry->block_size; ++index)
+            calibration[index] = 0.5f + (float)((block + index) % 17u) * 0.125f;
+        rc = qtype == YVEX_GGUF_QTYPE_IQ2_XXS
+                 ? yvex_quant_encode_block_weighted(
+                       qtype, source + block * geometry->block_size, calibration,
+                       geometry->block_size,
+                       *encoded + (size_t)block * geometry->bytes_per_block,
+                       geometry->bytes_per_block, &wrote, &failure, &err)
+                 : yvex_quant_encode_block(
+                       qtype, source + block * geometry->block_size, geometry->block_size,
+                       *encoded + (size_t)block * geometry->bytes_per_block,
+                       geometry->bytes_per_block, &wrote, &failure, &err);
         if (rc != YVEX_OK || wrote != geometry->bytes_per_block) {
             free(*encoded);
             *encoded = NULL;
@@ -277,6 +287,7 @@ int yvex_cuda_test_quant_qtype(void)
         {YVEX_GGUF_QTYPE_I32, 64u},
         {YVEX_GGUF_QTYPE_Q8_0, 64u},
         {YVEX_GGUF_QTYPE_Q2_K, 512u},
+        {YVEX_GGUF_QTYPE_IQ2_XXS, 512u},
         {YVEX_GGUF_QTYPE_MXFP4, 64u}
     };
     yvex_backend *backend = NULL;

@@ -45,7 +45,7 @@ static const char *const policy_suffix_rows[] = {
 };
 
 static const char *const policy_downstream_rows[] = {
-    "refusal_reasons: Q4_K:encoder-unavailable IQ2_XXS:encoder-unavailable",
+    "refusal_reasons: Q4_K:encoder-unavailable IQ2_XXS:calibration-required",
     "artifact_identity_status: missing",
     "runtime_descriptor_status: missing",
     "graph_consumer_status: missing",

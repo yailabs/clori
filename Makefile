@@ -60,7 +60,11 @@
 	test-runtime-sanitizers-live test-materialize-live-plan \
 	test-materialize-live test-attention test-attention-fixture-isolation \
 	test-attention-live-plan test-attention-live test-attention-cli-live \
-	test-attention-cuda test-quant test-quant-live-plan test-quant-live \
+	test-attention-cuda test-quant test-quant-asan test-quant-ubsan \
+	test-quant-sanitizers test-quant-live-plan test-quant-live \
+	test-physical-variant-plan-deepseek-live test-quant-iq2-xxs-deepseek-live \
+	test-artifact-emit-deepseek-variant-live test-materialize-deepseek-variant-live \
+	test-runtime-deepseek-variant-generation-live \
 	test-artifact-writer test-artifact-writer-fault test-artifact-live-plan \
 	test-artifact-live-structure test-artifact-live test-transform-ir-live-plan \
 	test-source-payload-live-plan test-source-payload-live test-gguf-artifact-abi \
@@ -119,6 +123,9 @@ DEEPSEEK_MODELS_ROOT ?= $(HOME)/lab/models/gguf
 DEEPSEEK_SOURCE_MANIFEST ?= $(DEEPSEEK_MODELS_ROOT)/deepseek/deepseek-source-manifest.json
 DEEPSEEK_OPERATOR_MODELS_ROOT ?= $(HOME)/lab/models
 DEEPSEEK_SELECTED_ARTIFACT ?= $(DEEPSEEK_MODELS_ROOT)/deepseek/deepseek-v4-flash-q8_0-q2_k-v1.gguf
+YVEX_QUANT_DS4_PRESET ?= deepseek-v4-flash-ds4-like-q2-v1
+YVEX_VARIANT_ARTIFACT ?=
+YVEX_VARIANT_BINDING_DIR ?=
 YVEX_RUNTIME_BENCHMARK_DIR ?=
 YVEX_RUNTIME_BINDING ?=
 YVEX_TOKENIZER_REFERENCE_PYTHON ?= /tmp/yvex-tokenizer-oracle/bin/python
@@ -213,6 +220,7 @@ CORE_SRCS := \
 	src/gguf/tokenizer_metadata.c \
 	src/gguf/writer.c \
 	src/gguf/quant_registry.c \
+	src/gguf/variant.c \
 	src/gguf/quant_scalar.c \
 	src/gguf/quant_block.c \
 	src/gguf/quant_compute.c \
@@ -352,7 +360,8 @@ QUANT_TEST_UNIT_SRCS := \
 	tests/unit/quant_numeric.c \
 	tests/unit/quant_execute.c \
 	tests/unit/qtype_support.c \
-	tests/unit/quant_policy.c
+	tests/unit/quant_policy.c \
+	tests/unit/imatrix.c
 QUANT_TEST_UNIT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(QUANT_TEST_UNIT_SRCS))
 QUANT_TEST_RUNNER_OBJ := $(OBJ_DIR)/tests/unit/quant_runner.o
 ARTIFACT_TEST_RUNNER_OBJ := $(OBJ_DIR)/tests/unit/artifact_writer_runner.o
@@ -1109,6 +1118,33 @@ test-transform-ir-live-plan: $(SOURCE_PAYLOAD_LIVE_RUNNER)
 test-quant: $(QUANT_TEST_RUNNER)
 	$(QUANT_TEST_RUNNER)
 
+test-quant-asan:
+	@set -eu; \
+	tmp_tag=quant-asan; \
+	$(ATTENTION_OWNED_TMP_BEGIN) \
+	build_dir="$$tmp_dir/build"; \
+	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1 \
+	$(MAKE) BUILD_DIR="$$build_dir" \
+		NVCC=__yvex_nvcc_unavailable__ \
+		CFLAGS='$(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,leak' \
+		LDFLAGS='$(LDFLAGS) -fsanitize=address,leak' test-quant
+
+test-quant-ubsan:
+	@set -eu; \
+	tmp_tag=quant-ubsan; \
+	$(ATTENTION_OWNED_TMP_BEGIN) \
+	build_dir="$$tmp_dir/build"; \
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+	$(MAKE) BUILD_DIR="$$build_dir" \
+		NVCC=__yvex_nvcc_unavailable__ \
+		CFLAGS='$(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=undefined \
+			-fno-sanitize-recover=undefined' \
+		LDFLAGS='$(LDFLAGS) -fsanitize=undefined' test-quant
+
+test-quant-sanitizers:
+	$(MAKE) test-quant-asan
+	$(MAKE) test-quant-ubsan
+
 test-artifact-writer: $(ARTIFACT_TEST_RUNNER)
 	$(ARTIFACT_TEST_RUNNER)
 
@@ -1121,6 +1157,71 @@ test-quant-live-plan: $(QUANT_LIVE_RUNNER)
 
 test-quant-live: $(QUANT_LIVE_RUNNER)
 	$(QUANT_LIVE_RUNNER) "$(DEEPSEEK_SOURCE)" "$(DEEPSEEK_MODELS_ROOT)" "$(DEEPSEEK_SOURCE_MANIFEST)" "$(DEEPSEEK_SELECTED_ARTIFACT)"
+
+test-physical-variant-plan-deepseek-live: $(QUANT_LIVE_RUNNER) $(YVEX_BIN)
+	@test -n "$(YVEX_IMATRIX)" || { echo "YVEX_IMATRIX is required" >&2; exit 2; }
+	YVEX_QUANT_PRESET="deepseek-v4-flash-q8_0-q2_k-v1" \
+		$(QUANT_LIVE_RUNNER) --plan-only "$(DEEPSEEK_SOURCE)" "$(DEEPSEEK_MODELS_ROOT)" "$(DEEPSEEK_SOURCE_MANIFEST)"
+	YVEX_QUANT_PRESET="$(YVEX_QUANT_DS4_PRESET)" YVEX_IMATRIX_PATH="$(YVEX_IMATRIX)" \
+		$(QUANT_LIVE_RUNNER) --plan-only "$(DEEPSEEK_SOURCE)" "$(DEEPSEEK_MODELS_ROOT)" "$(DEEPSEEK_SOURCE_MANIFEST)"
+	YVEX_BIN="$(YVEX_BIN)" YVEX_TEST_OUT_DIR="$(BUILD_DIR)/tests/physical-variant-refusal" \
+		YVEX_DEEPSEEK_SOURCE="$(DEEPSEEK_SOURCE)" \
+		YVEX_DEEPSEEK_MODELS_ROOT="$(DEEPSEEK_MODELS_ROOT)" \
+		YVEX_DEEPSEEK_SOURCE_MANIFEST="$(DEEPSEEK_SOURCE_MANIFEST)" \
+		YVEX_IMATRIX_PATH="$(YVEX_IMATRIX)" \
+		sh tests/live/physical_variant.sh
+
+test-quant-iq2-xxs-deepseek-live: test-physical-variant-plan-deepseek-live test-cuda
+
+test-artifact-emit-deepseek-variant-live: $(ARTIFACT_LIVE_RUNNER) $(OFFICIAL_GGUF_CHECKER)
+	@test -n "$(YVEX_IMATRIX)" || { echo "YVEX_IMATRIX is required" >&2; exit 2; }
+	@test -n "$(YVEX_VARIANT_ARTIFACT)" || { echo "YVEX_VARIANT_ARTIFACT is required" >&2; exit 2; }
+	@test -n "$(YVEX_VARIANT_BINDING_DIR)" || { echo "YVEX_VARIANT_BINDING_DIR is required" >&2; exit 2; }
+	@mkdir -p "$(YVEX_VARIANT_BINDING_DIR)"
+	YVEX_GGML_CHECKER="$(OFFICIAL_GGUF_CHECKER)" \
+		YVEX_QUANT_PRESET="$(YVEX_QUANT_DS4_PRESET)" YVEX_IMATRIX_PATH="$(YVEX_IMATRIX)" \
+		YVEX_VARIANT_BINDING_DIR="$(YVEX_VARIANT_BINDING_DIR)" \
+		$(ARTIFACT_LIVE_RUNNER) --variant "$(DEEPSEEK_SOURCE)" "$(DEEPSEEK_MODELS_ROOT)" \
+			"$(DEEPSEEK_SOURCE_MANIFEST)" "$(YVEX_VARIANT_ARTIFACT)"
+
+test-materialize-deepseek-variant-live: $(YVEX_BIN)
+	@test -n "$(YVEX_IMATRIX)" || { echo "YVEX_IMATRIX is required" >&2; exit 2; }
+	@test -f "$(YVEX_VARIANT_ARTIFACT)" || { echo "emitted YVEX_VARIANT_ARTIFACT is required" >&2; exit 2; }
+	@set -eu; \
+	root=$$(mktemp -d "$(BUILD_DIR)/tests/variant-materialize.XXXXXX"); \
+	cleanup() { status=$$?; trap - 0 HUP INT TERM; \
+		find "$$root" -xdev -mindepth 1 -delete; rmdir "$$root"; exit $$status; }; \
+	trap cleanup 0 HUP INT TERM; \
+	mkdir -p "$$root/bindings"; \
+	$(YVEX_BIN) quant plan --target deepseek4-v4-flash \
+		--source "$(DEEPSEEK_SOURCE)" --models-root "$(DEEPSEEK_MODELS_ROOT)" \
+		--source-manifest "$(DEEPSEEK_SOURCE_MANIFEST)" \
+		--preset "$(YVEX_QUANT_DS4_PRESET)" --imatrix-manifest "$(YVEX_IMATRIX)" \
+		--out-plan "$$root/variant.plan" >/dev/null; \
+	$(YVEX_BIN) graph attention prepare --target deepseek4-v4-flash \
+		--source "$(DEEPSEEK_SOURCE)" --source-manifest "$(DEEPSEEK_SOURCE_MANIFEST)" \
+		--models-root "$(DEEPSEEK_MODELS_ROOT)" --artifact "$(YVEX_VARIANT_ARTIFACT)" \
+		--runtime-binding-dir "$$root/bindings" \
+		--physical-variant-plan "$$root/variant.plan" \
+		--quant-preset "$(YVEX_QUANT_DS4_PRESET)" \
+		--imatrix-manifest "$(YVEX_IMATRIX)" --output json; \
+	echo "variant materialization live: canonical operator binding accepted"
+
+test-runtime-deepseek-variant-generation-live: cuda $(YVEX_BIN)
+	@test -f "$(YVEX_VARIANT_ARTIFACT)" || { echo "emitted YVEX_VARIANT_ARTIFACT is required" >&2; exit 2; }
+	@binding=$$(find "$(YVEX_VARIANT_BINDING_DIR)" -maxdepth 1 -type f \
+		-name '*.yvex-runtime-binding' -print | sort | tail -1); \
+	test -n "$$binding" || { echo "variant runtime binding is required" >&2; exit 2; }; \
+	$(YVEX_BIN) graph transformer generate --target deepseek4-v4-flash \
+		--artifact "$(YVEX_VARIANT_ARTIFACT)" --runtime-binding "$$binding" \
+		--backend cpu --text Hi --max-new-tokens 1 --max-output-bytes 64 \
+		--context-capacity 8 --prefill-chunk-tokens 8 --strategy greedy \
+		--progress off --output json; \
+	$(YVEX_BIN) graph transformer generate --target deepseek4-v4-flash \
+		--artifact "$(YVEX_VARIANT_ARTIFACT)" --runtime-binding "$$binding" \
+		--backend cuda --text Hi --max-new-tokens 1 --max-output-bytes 64 \
+		--context-capacity 8 --prefill-chunk-tokens 8 --strategy greedy \
+		--progress off --output json
 
 test-artifact-live-plan: $(ARTIFACT_LIVE_RUNNER)
 	$(ARTIFACT_LIVE_RUNNER) --plan-only "$(DEEPSEEK_SOURCE)" "$(DEEPSEEK_MODELS_ROOT)" "$(DEEPSEEK_SOURCE_MANIFEST)"

@@ -59,6 +59,7 @@ src/cli/commands/artifact.c	cli.commands	cli.commands.artifact	generic	private	r
 src/cli/commands/backend.c	cli.commands	cli.commands.backend	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/gguf.c	cli.commands	cli.commands.gguf	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/graph.c	cli.commands	cli.commands.graph	generic	private	reusable-algorithm	cli	implementation	none
+src/cli/commands/quant.c	cli.commands	cli.commands.quant	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/model_artifacts.c	cli.commands	cli.commands.model_artifacts	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/model_target.c	cli.commands	cli.commands.model_target	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/paths.c	cli.commands	cli.commands.paths	generic	private	reusable-algorithm	cli	implementation	none
@@ -109,6 +110,7 @@ src/gguf/quant_job.c	gguf	gguf.quant_job	generic	private	file-serialization	arti
 src/gguf/quant_plan.c	gguf	gguf.quant_plan	generic	private	immutable-planning	artifact,model,quant	implementation	none
 src/gguf/quant_policy.c	gguf	gguf.quant_policy	generic	private	file-serialization	artifact,model,quant	implementation	none
 src/gguf/quant_registry.c	gguf	gguf.quant_registry	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
+src/gguf/variant.c	gguf	gguf.physical_variant	generic	private	file-serialization	quant_plan,quant_execute,gguf_writer,operator	implementation	none
 src/gguf/quant_scalar.c	gguf	gguf.quant_scalar	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
 src/gguf/quant_sink.c	gguf	gguf.quant_sink	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
 src/gguf/reader.c	gguf	gguf.reader	generic	private	bounded-parser	artifact,model,quant	implementation	none

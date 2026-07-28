@@ -32,6 +32,8 @@ extern "C" {
 #define YVEX_QUANT_MXFP4_BYTES 17u
 #define YVEX_QUANT_Q2_K_ELEMENTS 256u
 #define YVEX_QUANT_Q2_K_BYTES 84u
+#define YVEX_QUANT_IQ2_XXS_ELEMENTS 256u
+#define YVEX_QUANT_IQ2_XXS_BYTES 66u
 typedef enum {
     YVEX_QUANT_FAILURE_NONE = 0,
     YVEX_QUANT_FAILURE_INVALID_ARGUMENT,
@@ -68,6 +70,7 @@ typedef enum {
     YVEX_QUANT_FAILURE_MXFP4_BLOCK,
     YVEX_QUANT_FAILURE_Q8_0_BLOCK,
     YVEX_QUANT_FAILURE_Q2_K_BLOCK,
+    YVEX_QUANT_FAILURE_IQ2_XXS_BLOCK,
     YVEX_QUANT_FAILURE_CAST_RANGE,
     YVEX_QUANT_FAILURE_NONFINITE,
     YVEX_QUANT_FAILURE_SOURCE_SHORT_READ,
@@ -182,6 +185,15 @@ int yvex_quant_encode_block(unsigned int qtype,
                             size_t *encoded_bytes,
                             yvex_quant_failure *failure,
                             yvex_error *err);
+int yvex_quant_encode_block_weighted(unsigned int qtype,
+                                     const float *source,
+                                     const float *calibration_weights,
+                                     unsigned long long elements,
+                                     unsigned char *encoded,
+                                     size_t encoded_capacity,
+                                     size_t *encoded_bytes,
+                                     yvex_quant_failure *failure,
+                                     yvex_error *err);
 int yvex_quant_decode_block(unsigned int qtype,
                             const unsigned char *encoded,
                             size_t encoded_bytes,
@@ -212,6 +224,8 @@ int yvex_quant_cpu_dot(unsigned int qtype,
     "deepseek-v4-flash-q8_0-q2_k-v1"
 #define YVEX_QUANT_REFERENCE_PROFILE_NAME \
     "deepseek-v4-flash-source-faithful-v1"
+#define YVEX_QUANT_DS4_PROFILE_NAME \
+    "deepseek-v4-flash-ds4-like-q2-v1"
 typedef enum {
     YVEX_QUANT_PLAN_BUILDING = 0,
     YVEX_QUANT_PLAN_SEALED,
@@ -227,6 +241,7 @@ typedef struct {
     unsigned long long terminal_value_id;
     unsigned long long node_id;
     yvex_tensor_role role;
+    yvex_tensor_collection collection;
     yvex_transform_scope scope;
     yvex_transform_operation_kind operation;
     yvex_quant_physical_class physical_class;
@@ -244,6 +259,14 @@ typedef struct {
     int cpu_compute_available;
     int cuda_compute_available;
     unsigned int numeric_contract_version;
+    int policy_bound;
+    unsigned long long policy_rule_ordinal;
+    unsigned int policy_priority;
+    int policy_requires_imatrix;
+    char policy_label[64];
+    char physical_tensor_name[192];
+    unsigned long long physical_expert_count;
+    char policy_rule_identity[YVEX_QUANT_PLAN_IDENTITY_CAP];
     char decision_identity[YVEX_QUANT_PLAN_IDENTITY_CAP];
 } yvex_quant_decision;
 typedef struct {
@@ -254,6 +277,7 @@ typedef struct {
     unsigned long long exact_scalar_bytes;
     unsigned long long q8_0_bytes;
     unsigned long long q2_k_bytes;
+    unsigned long long iq2_xxs_bytes;
     unsigned long long mxfp4_bytes;
     unsigned long long qtype_tensor_counts[
         YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID + 1u];
@@ -273,6 +297,9 @@ typedef struct {
     unsigned long long mapping_identity;
     char backend_compute_contract[64];
     char calibration_identity[YVEX_QUANT_PLAN_IDENTITY_CAP];
+    char policy_identity[YVEX_QUANT_PLAN_IDENTITY_CAP];
+    char imatrix_identity[YVEX_QUANT_PLAN_IDENTITY_CAP];
+    char physical_variant_identity[YVEX_QUANT_PLAN_IDENTITY_CAP];
     unsigned long long terminal_count;
     unsigned long long decision_count;
     unsigned long long source_value_count;
@@ -280,8 +307,11 @@ typedef struct {
     unsigned long long exact_scalar_bytes;
     unsigned long long q8_0_bytes;
     unsigned long long q2_k_bytes;
+    unsigned long long iq2_xxs_bytes;
     unsigned long long mxfp4_bytes;
     unsigned long long qtype_tensor_counts[
+        YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID + 1u];
+    unsigned long long qtype_encoded_bytes[
         YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID + 1u];
     unsigned long long role_tensor_counts[YVEX_TENSOR_ROLE_COUNT];
     unsigned long long index_capacity;
@@ -331,6 +361,13 @@ const yvex_transform_ir *yvex_quant_plan_transform_ir(
     const yvex_quant_plan *plan);
 const yvex_transform_binding *yvex_quant_plan_binding(
     const yvex_quant_plan *plan);
+
+/* Physical-variant plan file contract. */
+#define YVEX_PHYSICAL_VARIANT_FILE_SCHEMA_VERSION 1u
+int yvex_quant_plan_file_write(const char *path, const yvex_quant_plan *plan,
+                               yvex_error *err);
+int yvex_quant_plan_file_validate(const char *path, const yvex_quant_plan *plan,
+                                  yvex_error *err);
 
 /* Quant Sink contract. */
 typedef struct {
@@ -421,6 +458,7 @@ typedef struct {
     size_t output_chunk_bytes;
     size_t maximum_owned_bytes;
     yvex_quant_cancellation *cancellation;
+    const yvex_imatrix_data *imatrix;
     yvex_quant_executor_allocate_fn allocate;
     yvex_quant_executor_release_fn release;
     int (*thread_create)(pthread_t *thread,

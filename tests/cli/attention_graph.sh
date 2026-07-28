@@ -110,6 +110,10 @@ contains "$OUT_DIR/help.out" "graph attention trace|profile|benchmark|qualify"
 contains "$OUT_DIR/help.out" "graph attention benchmark compare"
 contains "$OUT_DIR/help.out" "--runtime-binding FILE"
 contains "$OUT_DIR/help.out" "--runtime-binding-dir DIR"
+contains "$OUT_DIR/help.out" "--source DIR --source-manifest FILE"
+contains "$OUT_DIR/help.out" "--physical-variant-plan FILE"
+contains "$OUT_DIR/help.out" "--quant-preset NAME|--quant-policy FILE"
+contains "$OUT_DIR/help.out" "--imatrix-manifest FILE"
 contains "$OUT_DIR/help.out" "--models-root DIR"
 contains "$OUT_DIR/help.out" "--phase prefill|decode|mixed|verify"
 contains "$OUT_DIR/help.out" "--mode eager|piecewise|full|auto"
@@ -150,6 +154,24 @@ contains "$OUT_DIR/sample-help.out" "yvex graph transformer sample"
 contains "$OUT_DIR/sample-help.out" "selected token IDs are not appended"
 contains "$OUT_DIR/generate-help.out" "yvex graph transformer generate"
 contains "$OUT_DIR/generate-help.out" "--max-new-tokens N"
+
+expect_status 2 "$YVEX_BIN" graph attention prepare --target deepseek4-v4-flash \
+    --quant-preset deepseek-v4-flash-ds4-like-q2-v1 \
+    >"$OUT_DIR/variant-missing-plan.out" 2>"$OUT_DIR/variant-missing-plan.err"
+contains "$OUT_DIR/variant-missing-plan.err" \
+    "variant policy and imatrix require --physical-variant-plan"
+
+expect_status 2 "$YVEX_BIN" graph attention prepare --target deepseek4-v4-flash \
+    --physical-variant-plan /tmp/missing.plan \
+    >"$OUT_DIR/variant-missing-policy.out" 2>"$OUT_DIR/variant-missing-policy.err"
+contains "$OUT_DIR/variant-missing-policy.err" \
+    "--physical-variant-plan requires a quant policy or preset"
+
+expect_status 2 "$YVEX_BIN" graph attention describe --target deepseek4-v4-flash \
+    --physical-variant-plan /tmp/missing.plan --quant-preset source-faithful \
+    >"$OUT_DIR/variant-wrong-action.out" 2>"$OUT_DIR/variant-wrong-action.err"
+contains "$OUT_DIR/variant-wrong-action.err" \
+    "physical-variant options require graph attention prepare"
 
 expect_status 2 "$YVEX_BIN" graph transformer generate \
     >"$OUT_DIR/generate-missing.out" 2>"$OUT_DIR/generate-missing.err"

@@ -247,7 +247,7 @@ for boundary in \
   'Verified source snapshot' \
   'Family semantics + logical model' \
   'Exact tensor roles + Transformation IR' \
-  'Physical profile + lowering' \
+  'Sealed quant policy + physical-variant plan' \
   'Quantization + encoding' \
   'Artifact construction + identity' \
   'Admission + materialization' \
@@ -292,7 +292,7 @@ require_text README.md 'is the sole v0.1.0 release target.'
 for evidence in \
   '46 verified source shards and 69,187 exact source contributions' \
   '1,360 emitted terminal tensors' \
-  'selected complete GGUF of approximately 102.4 GB' \
+  'verified 102.4 GB Q8_0/Q2_K baseline' \
   '43 main attention layers and 634 core attention bindings' \
   'complete attention core and envelope execution on CPU' \
   'NVIDIA GB10 CUDA path'
@@ -308,8 +308,8 @@ for snapshot in \
   '| Teacher-forced repeated model decode | Externally supplied token IDs execute one at a time' \
   '| Output-head residency and raw logits | The separate encoded BF16' \
   '| Real-logits sampling | The common host sampler validates every value and identity' \
-  '| Tokenizer-backed prompt prefill | Unsupported |' \
-  '| Token append and text generation | Unsupported |' \
+  '| Tokenizer-backed prompt prefill | Exact raw-text/message encoding' \
+  '| Token append and text generation | Bounded autoregressive generation' \
   '| Evaluation | Blocked |' \
   'full-model benchmark is not measured' \
   '| Release | Blocked |'
@@ -321,6 +321,7 @@ require_text README.md 'supported model artifact'
 
 for command in \
   './yvex commands' \
+  './yvex quant --help' \
   './yvex graph attention --help' \
   './yvex graph moe execute --help' \
   './yvex graph transformer execute --help' \
@@ -353,6 +354,11 @@ while IFS= read -r command; do
   test -n "$command" || continue
   case "$command" in
     './yvex commands' | \
+    './yvex quant --help' | \
+    './yvex quant preset list' | \
+    './yvex quant preset show deepseek-v4-flash-ds4-like-q2-v1' | \
+    './yvex quant plan \' | \
+    './yvex quant summarize \' | \
     './yvex graph attention --help' | \
     './yvex graph moe execute --help' | \
     './yvex graph transformer execute --help' | \
@@ -447,8 +453,8 @@ for evidence in \
   '46/46 safetensors headers, 69,187 unique tensor records' \
   '177,680,573,600 bytes with identity `f16e800c0d7383ee76cb2e2fa8bdd674bab29c017cba64eaba85c39016e257ca`' \
   '102,408,545,440 bytes with identity `01b2bed4f070d0a3fdb02e546764b3a49cb69886eebe17b4877d20294725682c`' \
-  '68 metadata entries, exact tokenizer material, and all 1,360 tensors' \
-  '102,396,843,592 encoded payload bytes through bounded file-backed/staged access' \
+  'the DS4-like IQ2_XXS/Q2_K candidate is 94,154,155,392 bytes' \
+  'Candidate materialization identity `04efd6362926cc009d9096b16f583993425dca91cd644ee369a5446c823ef263`' \
   '33,792 expert subviews'
 do
   require_text PROJECT.md "$evidence"
@@ -602,9 +608,9 @@ require_text "$project" 'a polished top-level generation CLI, interactive REPL, 
 require_text "$project" 'persistent_kv_ready=1'
 reject_text "$project" 'complete GGUF writer, complete-model emission, writer-reader roundtrip, or artifact support admission;'
 require_text "$project" '| Recovered IDs | 631 |'
-require_text "$project" '| Explicit new IDs | 50 |'
-require_text "$project" '| Canonical IDs | 681 |'
-require_text "$project" '| First-class milestones | 44 |'
+require_text "$project" '| Explicit new IDs | 52 |'
+require_text "$project" '| Canonical IDs | 683 |'
+require_text "$project" '| First-class milestones | 45 |'
 require_text "$project" '### 3.5 Model Compilation Boundaries'
 require_text "$project" '| `TRACK.COMPILATION` | Artifact-neutral transformation IR'
 require_text "$project" 'verified source facts'

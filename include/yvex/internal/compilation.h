@@ -467,6 +467,10 @@ typedef struct yvex_compilation_runtime_binding_request {
     const char *source_manifest_path;
     const char *artifact_path;
     const char *directory;
+    const char *quant_policy_path;
+    const char *quant_preset_name;
+    const char *imatrix_path;
+    const char *physical_variant_plan_path;
     unsigned long long family_adapter_id;
     unsigned long long family_adapter_version;
 } yvex_compilation_runtime_binding_request;

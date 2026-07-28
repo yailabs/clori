@@ -80,7 +80,7 @@ function uncode(value) {
 ' "$project" > "$rows"
 
 row_count=$(wc -l < "$rows" | tr -d ' ')
-test "$row_count" -eq 681 || fail "expected 681 canonical IDs, found $row_count"
+test "$row_count" -eq 683 || fail "expected 683 canonical IDs, found $row_count"
 
 cut -f 2 "$rows" | LC_ALL=C sort > "$all_ids"
 unique_count=$(uniq "$all_ids" | wc -l | tr -d ' ')
@@ -91,7 +91,7 @@ duplicate=$(uniq -d "$all_ids" | head -n 1 || true)
 test -z "$duplicate" || fail "duplicate canonical ID: $duplicate"
 
 id_hash=$(sha256sum "$all_ids" | awk '{ print $1 }')
-expected_id_hash=d11967228789599029f1c428c0e8f8a2b94b58ce65d84c61850a827101739af7
+expected_id_hash=b5fa3caa8c77b512aa36f784dc3ea781984691e0b6d64baa4af23121dabd498a
 test "$id_hash" = "$expected_id_hash" ||
   fail "canonical ID set changed without an explicit migration: $id_hash"
 
@@ -130,6 +130,8 @@ V010.RUNTIME.DEEPSEEK.LOGITS.0
 V010.RUNTIME.SAMPLING.0
 V010.RUNTIME.DEEPSEEK.TOKENIZER.0
 V010.RUNTIME.DEEPSEEK.GENERATION.0
+V010.COMPILATION.PHYSICAL.VARIANT.1
+V010.ARTIFACT.MATERIALIZE.1
 V010.CLI.DEEPSEEK.GENERATE.0
 V010.EVAL.DEEPSEEK.0
 V010.BENCH.DEEPSEEK.0
@@ -150,7 +152,7 @@ EOF
 
 LC_ALL=C sort -u "$new_ids" -o "$new_ids"
 new_count=$(wc -l < "$new_ids" | tr -d ' ')
-test "$new_count" -eq 50 || fail "expected 50 explicit new IDs, found $new_count"
+test "$new_count" -eq 52 || fail "expected 52 explicit new IDs, found $new_count"
 
 missing_new=$(comm -23 "$new_ids" "$all_ids" | head -n 1 || true)
 test -z "$missing_new" || fail "explicit new ID is absent: $missing_new"

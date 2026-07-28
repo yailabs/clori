@@ -17,6 +17,29 @@
 #include <stdint.h>
 #include <string.h>
 
+static const uint16_t quant_reference_iq2_grid[256] = {
+    0, 2, 5, 8, 10, 17, 20, 32, 34, 40, 42, 65, 68, 80, 88, 97,
+    100, 128, 130, 138, 162, 257, 260, 272, 277, 320, 388, 408, 512, 514, 546, 642,
+    1025, 1028, 1040, 1057, 1060, 1088, 1090, 1096, 1120, 1153, 1156, 1168, 1188, 1280,
+    1282, 1288, 1312, 1350, 1385, 1408, 1425, 1545, 1552, 1600, 1668, 1700, 2048, 2053,
+    2056, 2068, 2088, 2113, 2116, 2128, 2130, 2184, 2308, 2368, 2562, 2580, 4097, 4100,
+    4112, 4129, 4160, 4192, 4228, 4240, 4245, 4352, 4360, 4384, 4432, 4442, 4480, 4644,
+    4677, 5120, 5128, 5152, 5157, 5193, 5248, 5400, 5474, 5632, 5654, 6145, 6148, 6160,
+    6208, 6273, 6400, 6405, 6560, 6737, 8192, 8194, 8202, 8260, 8289, 8320, 8322, 8489,
+    8520, 8704, 8706, 9217, 9220, 9232, 9280, 9302, 9472, 9537, 9572, 9872, 10248, 10272,
+    10388, 10820, 16385, 16388, 16400, 16408, 16417, 16420, 16448, 16456, 16470, 16480,
+    16513, 16516, 16528, 16640, 16672, 16737, 16768, 16773, 16897, 16912, 16968, 16982,
+    17000, 17408, 17416, 17440, 17536, 17561, 17682, 17700, 17920, 18433, 18436, 18448,
+    18496, 18501, 18688, 18776, 18785, 18818, 19013, 19088, 20480, 20488, 20497, 20505,
+    20512, 20608, 20616, 20740, 20802, 20900, 21137, 21648, 21650, 21770, 22017, 22100,
+    22528, 22545, 22553, 22628, 22848, 23048, 24580, 24592, 24640, 24680, 24832, 24917,
+    25112, 25184, 25600, 25605, 25872, 25874, 25988, 26690, 32768, 32770, 32778, 32833,
+    32898, 33028, 33048, 33088, 33297, 33793, 33796, 33808, 33813, 33856, 33888, 34048,
+    34118, 34196, 34313, 34368, 34400, 34818, 35076, 35345, 36868, 36880, 36900, 36928,
+    37025, 37142, 37248, 37445, 37888, 37922, 37956, 38225, 39041, 39200, 40962, 41040,
+    41093, 41225, 41472, 42008, 43088, 43268,
+};
+
 static int quant_float_bits_equal(float left, float right)
 {
     uint32_t left_bits;
@@ -43,6 +66,17 @@ static float quant_reference_f16(const unsigned char *encoded)
     else
         value = ldexpf((float)(1024u + mantissa), (int)exponent - 25);
     return sign ? -value : value;
+}
+
+static unsigned int quant_reference_parity_sign(unsigned int low)
+{
+    unsigned int parity = 0u;
+    unsigned int value = low;
+    while (value) {
+        parity ^= value & 1u;
+        value >>= 1u;
+    }
+    return low | (parity << 7u);
 }
 
 /* Independently unpacks one canonical block without calling production decode. */
@@ -121,6 +155,37 @@ static int quant_reference_block(unsigned int qtype,
             float minimum = global_minimum *
                 (float)(encoded[subblock] >> 4);
             out[index] = scale * (float)code - minimum;
+        }
+        return 1;
+    }
+    if (qtype == YVEX_GGUF_QTYPE_IQ2_XXS) {
+        float global_scale = quant_reference_f16(encoded);
+        unsigned int group;
+        for (group = 0u; group < 8u; ++group) {
+            unsigned int word_offset = 2u + group * 8u;
+            unsigned int grids = (unsigned int)encoded[word_offset] |
+                                 ((unsigned int)encoded[word_offset + 1u] << 8) |
+                                 ((unsigned int)encoded[word_offset + 2u] << 16) |
+                                 ((unsigned int)encoded[word_offset + 3u] << 24);
+            unsigned int signs_and_scale = (unsigned int)encoded[word_offset + 4u] |
+                                           ((unsigned int)encoded[word_offset + 5u] << 8) |
+                                           ((unsigned int)encoded[word_offset + 6u] << 16) |
+                                           ((unsigned int)encoded[word_offset + 7u] << 24);
+            unsigned int group_scale = signs_and_scale >> 28;
+            unsigned int lane;
+            for (lane = 0u; lane < 4u; ++lane) {
+                unsigned int grid = quant_reference_iq2_grid[(grids >> (8u * lane)) & 0xffu];
+                unsigned int signs = quant_reference_parity_sign(
+                    (signs_and_scale >> (7u * lane)) & 127u);
+                unsigned int bit;
+                for (bit = 0u; bit < 8u; ++bit) {
+                    unsigned int digit = (grid >> (2u * bit)) & 3u;
+                    float magnitude = digit == 0u ? 8.0f : digit == 1u ? 25.0f : 43.0f;
+                    unsigned int output = group * 32u + lane * 8u + bit;
+                    out[output] = global_scale * (0.5f + (float)group_scale) * 0.25f *
+                                  ((signs >> bit) & 1u ? -magnitude : magnitude);
+                }
+            }
         }
         return 1;
     }
@@ -555,6 +620,89 @@ static int quant_test_golden_blocks(void)
     return 0;
 }
 
+static int quant_test_weighted_blocks(void)
+{
+    float source[YVEX_QUANT_IQ2_XXS_ELEMENTS];
+    float weights[YVEX_QUANT_IQ2_XXS_ELEMENTS];
+    float changed_weights[YVEX_QUANT_IQ2_XXS_ELEMENTS];
+    float decoded[YVEX_QUANT_IQ2_XXS_ELEMENTS];
+    float reference[YVEX_QUANT_IQ2_XXS_ELEMENTS];
+    float vector[YVEX_QUANT_IQ2_XXS_ELEMENTS];
+    unsigned char encoded[YVEX_QUANT_Q2_K_BYTES];
+    unsigned char repeated[YVEX_QUANT_Q2_K_BYTES];
+    size_t encoded_bytes = 0u;
+    size_t repeated_bytes = 0u;
+    yvex_quant_failure failure;
+    yvex_error error;
+    float cpu_dot = 0.0f;
+    double reference_dot = 0.0;
+    unsigned int index;
+
+    quant_fill(source, YVEX_QUANT_IQ2_XXS_ELEMENTS, 0.04125f);
+    for (index = 0u; index < YVEX_QUANT_IQ2_XXS_ELEMENTS; ++index) {
+        weights[index] = 0.5f + (float)(index % 17u) * 0.125f;
+        changed_weights[index] = weights[index];
+        vector[index] = (float)((int)(index % 19u) - 9) / 11.0f;
+    }
+    changed_weights[7] = 1000.0f;
+    yvex_error_clear(&error);
+    YVEX_TEST_ASSERT(yvex_quant_encode_block_weighted(
+                         YVEX_GGUF_QTYPE_IQ2_XXS, source, weights,
+                         YVEX_QUANT_IQ2_XXS_ELEMENTS, encoded, sizeof(encoded), &encoded_bytes,
+                         &failure, &error) == YVEX_OK &&
+                         encoded_bytes == YVEX_QUANT_IQ2_XXS_BYTES,
+                     "IQ2_XXS weighted block must encode");
+    YVEX_TEST_ASSERT(yvex_quant_encode_block_weighted(
+                         YVEX_GGUF_QTYPE_IQ2_XXS, source, weights,
+                         YVEX_QUANT_IQ2_XXS_ELEMENTS, repeated, sizeof(repeated), &repeated_bytes,
+                         &failure, &error) == YVEX_OK &&
+                         repeated_bytes == encoded_bytes &&
+                         memcmp(encoded, repeated, encoded_bytes) == 0,
+                     "IQ2_XXS weighted encoding must be deterministic");
+    YVEX_TEST_ASSERT(yvex_quant_decode_block(
+                         YVEX_GGUF_QTYPE_IQ2_XXS, encoded, encoded_bytes, decoded,
+                         YVEX_QUANT_IQ2_XXS_ELEMENTS, &failure, &error) == YVEX_OK &&
+                         quant_reference_block(YVEX_GGUF_QTYPE_IQ2_XXS, encoded, reference),
+                     "IQ2_XXS production and independent decoders must execute");
+    for (index = 0u; index < YVEX_QUANT_IQ2_XXS_ELEMENTS; ++index)
+        YVEX_TEST_ASSERT(quant_float_bits_equal(decoded[index], reference[index]),
+                         "IQ2_XXS decoder must match independent reference");
+    YVEX_TEST_ASSERT(yvex_quant_cpu_dot(
+                         YVEX_GGUF_QTYPE_IQ2_XXS, encoded, encoded_bytes, vector,
+                         YVEX_QUANT_IQ2_XXS_ELEMENTS, &cpu_dot, &failure, &error) == YVEX_OK,
+                     "IQ2_XXS direct encoded CPU dot must execute");
+    for (index = 0u; index < YVEX_QUANT_IQ2_XXS_ELEMENTS; ++index)
+        reference_dot += (double)reference[index] * vector[index];
+    YVEX_TEST_ASSERT(fabs((double)cpu_dot - reference_dot) < 1e-3,
+                     "IQ2_XXS CPU dot must match independent decode");
+    YVEX_TEST_ASSERT(yvex_quant_encode_block_weighted(
+                         YVEX_GGUF_QTYPE_IQ2_XXS, source, changed_weights,
+                         YVEX_QUANT_IQ2_XXS_ELEMENTS, repeated, sizeof(repeated), &repeated_bytes,
+                         &failure, &error) == YVEX_OK &&
+                         memcmp(encoded, repeated, encoded_bytes) != 0,
+                     "imatrix mutation must influence IQ2_XXS bytes");
+    YVEX_TEST_ASSERT(yvex_quant_encode_block(
+                         YVEX_GGUF_QTYPE_IQ2_XXS, source, YVEX_QUANT_IQ2_XXS_ELEMENTS,
+                         encoded, sizeof(encoded), &encoded_bytes, &failure, &error) ==
+                         YVEX_ERR_INVALID_ARG &&
+                         failure.code == YVEX_QUANT_FAILURE_CALIBRATION_REQUIRED,
+                     "IQ2_XXS uncalibrated encoding must refuse");
+    weights[3] = -1.0f;
+    YVEX_TEST_ASSERT(yvex_quant_encode_block_weighted(
+                         YVEX_GGUF_QTYPE_Q2_K, source, weights,
+                         YVEX_QUANT_Q2_K_ELEMENTS, encoded, sizeof(encoded), &encoded_bytes,
+                         &failure, &error) == YVEX_ERR_FORMAT &&
+                         failure.code == YVEX_QUANT_FAILURE_CALIBRATION_IDENTITY,
+                     "weighted Q2_K must refuse negative calibration");
+    weights[3] = 1.0f;
+    YVEX_TEST_ASSERT(yvex_quant_encode_block_weighted(
+                         YVEX_GGUF_QTYPE_Q2_K, source, weights,
+                         YVEX_QUANT_Q2_K_ELEMENTS, encoded, sizeof(encoded), &encoded_bytes,
+                         &failure, &error) == YVEX_OK && encoded_bytes == YVEX_QUANT_Q2_K_BYTES,
+                     "weighted Q2_K must encode");
+    return 0;
+}
+
 int yvex_test_quant_numeric(void)
 {
     float zero_q8[YVEX_QUANT_Q8_0_ELEMENTS] = {0};
@@ -568,6 +716,7 @@ int yvex_test_quant_numeric(void)
     if (quant_test_f16() != 0 || quant_test_bf16() != 0 ||
         quant_test_source_formats() != 0 || quant_test_registry() != 0 ||
         quant_test_golden_blocks() != 0 ||
+        quant_test_weighted_blocks() != 0 ||
         quant_test_exact_scalar_blocks() != 0 ||
         quant_test_block(YVEX_GGUF_QTYPE_Q8_0,
                          YVEX_QUANT_Q8_0_ELEMENTS,

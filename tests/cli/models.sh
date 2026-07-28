@@ -2556,8 +2556,8 @@ grep 'family: qwen  mapping_gate: passed-for-artifact-planning' "$ROOT/qtype-pol
 grep 'source_dtype: F32=12 F16=0 BF16=0 other=0' "$ROOT/qtype-policy-qwen.out"
 grep 'policy: artifact-planning-storage-policy' "$ROOT/qtype-policy-qwen.out"
 grep 'preferred: F16' "$ROOT/qtype-policy-qwen.out"
-grep 'candidates: F16,BF16,F32,Q8_0,Q2_K' "$ROOT/qtype-policy-qwen.out"
-grep 'refused: Q4_K,IQ2_XXS' "$ROOT/qtype-policy-qwen.out"
+grep 'candidates: F16,BF16,F32,Q8_0,Q2_K,IQ2_XXS' "$ROOT/qtype-policy-qwen.out"
+grep 'refused: Q4_K' "$ROOT/qtype-policy-qwen.out"
 grep 'top_blocker: family-quantization-plan-unimplemented' "$ROOT/qtype-policy-qwen.out"
 grep 'next: not-scheduled' "$ROOT/qtype-policy-qwen.out"
 grep 'boundary: report-only; no quantization/artifact/runtime' "$ROOT/qtype-policy-qwen.out"
@@ -2568,7 +2568,7 @@ grep 'boundary: report-only; no quantization/artifact/runtime' "$ROOT/qtype-poli
 "$YVEX_BIN" model-target quant-policy qwen3-8b --source "$MODEL_TARGET_QTYPE_SOURCE" --output table > "$ROOT/qtype-policy-qwen-table.out"
 grep 'QTYPE POLICY' "$ROOT/qtype-policy-qwen-table.out"
 matches "$ROOT/qtype-policy-qwen-table.out" '^TARGET[[:space:]]{2,}FAMILY[[:space:]]{2,}SOURCE_DTYPE[[:space:]]{2,}POLICY[[:space:]]{2,}PREFERRED[[:space:]]{2,}CANDIDATES[[:space:]]{2,}REFUSED[[:space:]]{2,}STATUS[[:space:]]{2,}NEXT$'
-matches "$ROOT/qtype-policy-qwen-table.out" '^qwen3-8b[[:space:]]{2,}qwen[[:space:]]{2,}F32=12 F16=0 BF16=0 other=0[[:space:]]{2,}artifact-planning-storage-policy[[:space:]]{2,}F16[[:space:]]{2,}F16,BF16,F32,Q8_0,Q2_K[[:space:]]{2,}Q4_K,IQ2_XXS[[:space:]]{2,}policy-reported[[:space:]]{2,}not-scheduled$'
+matches "$ROOT/qtype-policy-qwen-table.out" '^qwen3-8b[[:space:]]{2,}qwen[[:space:]]{2,}F32=12 F16=0 BF16=0 other=0[[:space:]]{2,}artifact-planning-storage-policy[[:space:]]{2,}F16[[:space:]]{2,}F16,BF16,F32,Q8_0,Q2_K,IQ2_XXS[[:space:]]{2,}Q4_K[[:space:]]{2,}policy-reported[[:space:]]{2,}not-scheduled$'
 ! grep 'CALIBRATION' "$ROOT/qtype-policy-qwen-table.out"
 ! grep 'calibration_status:' "$ROOT/qtype-policy-qwen-table.out"
 ! grep 'runtime_claim:' "$ROOT/qtype-policy-qwen-table.out"
@@ -2586,7 +2586,7 @@ grep 'qtype_policy_basis: header-only-source-metadata+canonical-numeric-registry
 grep 'qtype_policy_status: reported' "$ROOT/qtype-policy-qwen-audit.out"
 grep 'numeric_capability.Q8_0: encoder=available decoder=available cpu=available cuda=available calibration=none' "$ROOT/qtype-policy-qwen-audit.out"
 grep 'numeric_capability.Q2_K: encoder=available decoder=available cpu=available cuda=available calibration=optional' "$ROOT/qtype-policy-qwen-audit.out"
-grep 'refusal_reasons: Q4_K:encoder-unavailable IQ2_XXS:encoder-unavailable' "$ROOT/qtype-policy-qwen-audit.out"
+grep 'refusal_reasons: Q4_K:encoder-unavailable IQ2_XXS:calibration-required' "$ROOT/qtype-policy-qwen-audit.out"
 grep 'artifact_identity_status: missing' "$ROOT/qtype-policy-qwen-audit.out"
 grep 'runtime_descriptor_status: missing' "$ROOT/qtype-policy-qwen-audit.out"
 grep 'graph_consumer_status: missing' "$ROOT/qtype-policy-qwen-audit.out"
@@ -2608,7 +2608,7 @@ grep 'source_dtype: F32=12 F16=0 BF16=0 other=0' "$ROOT/qtype-policy-gemma.out"
 grep 'preferred: F16' "$ROOT/qtype-policy-gemma.out"
 grep 'next: not-scheduled' "$ROOT/qtype-policy-gemma.out"
 "$YVEX_BIN" model-target quant-policy gemma-4-12b-it --source "$MODEL_TARGET_QTYPE_SOURCE" --output table > "$ROOT/qtype-policy-gemma-table.out"
-matches "$ROOT/qtype-policy-gemma-table.out" '^gemma-4-12b-it[[:space:]]{2,}gemma[[:space:]]{2,}F32=12 F16=0 BF16=0 other=0[[:space:]]{2,}artifact-planning-storage-policy[[:space:]]{2,}F16[[:space:]]{2,}F16,BF16,F32,Q8_0,Q2_K[[:space:]]{2,}Q4_K,IQ2_XXS[[:space:]]{2,}policy-reported[[:space:]]{2,}not-scheduled$'
+matches "$ROOT/qtype-policy-gemma-table.out" '^gemma-4-12b-it[[:space:]]{2,}gemma[[:space:]]{2,}F32=12 F16=0 BF16=0 other=0[[:space:]]{2,}artifact-planning-storage-policy[[:space:]]{2,}F16[[:space:]]{2,}F16,BF16,F32,Q8_0,Q2_K,IQ2_XXS[[:space:]]{2,}Q4_K[[:space:]]{2,}policy-reported[[:space:]]{2,}not-scheduled$'
 "$YVEX_BIN" model-target quant-policy gemma-4-12b-it --source "$MODEL_TARGET_QTYPE_SOURCE" --audit > "$ROOT/qtype-policy-gemma-audit.out"
 grep 'mapping_gate_status: passed-for-artifact-planning' "$ROOT/qtype-policy-gemma-audit.out"
 grep 'qtype_policy_status: reported' "$ROOT/qtype-policy-gemma-audit.out"

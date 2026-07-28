@@ -33,6 +33,7 @@
 
 #include <yvex/artifact.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/families/deepseek_v4.h>
 
 #include "tests/test.h"
 
@@ -115,6 +116,46 @@ static int test_artifact_symlink_refusal(void)
     return 0;
 }
 
+/* Purpose: prove the admitted physical catalog projects the DS4 candidate without reading payload bytes. */
+static int test_deepseek_variant_admission_catalog(void)
+{
+    char root[] = "/tmp/yvex-artifact-variant-XXXXXX";
+    char path[YVEX_ARTIFACT_PATH_CAP];
+    yvex_artifact_options options = {0};
+    yvex_artifact *artifact = NULL;
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure failure;
+    yvex_error err;
+    int fd;
+
+    YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "variant catalog root created");
+    YVEX_TEST_ASSERT(snprintf(path, sizeof(path), "%s/candidate.gguf", root) < (int)sizeof(path),
+                     "variant catalog path fits");
+    fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    YVEX_TEST_ASSERT(fd >= 0 && ftruncate(fd, (off_t)YVEX_DEEPSEEK_DS4_FILE_BYTES) == 0 &&
+                         close(fd) == 0,
+                     "variant sparse extent created");
+    options.path = path;
+    options.readonly = 1;
+    YVEX_TEST_ASSERT(yvex_artifact_open(&artifact, &options, &err) == YVEX_OK,
+                     "variant sparse artifact opened");
+    YVEX_TEST_ASSERT(yvex_artifact_admit_deepseek(artifact, &admission, &failure, &err) == YVEX_OK,
+                     "variant catalog admission reconstructed");
+    YVEX_TEST_ASSERT(admission.file_bytes == YVEX_DEEPSEEK_DS4_FILE_BYTES &&
+                         admission.payload_bytes == YVEX_DEEPSEEK_DS4_PAYLOAD_BYTES &&
+                         strcmp(admission.profile_identity, YVEX_DEEPSEEK_DS4_PROFILE_IDENTITY) == 0 &&
+                         strcmp(admission.artifact_identity, YVEX_DEEPSEEK_DS4_ARTIFACT_IDENTITY) == 0 &&
+                         strcmp(admission.admission_identity,
+                                "df847745fa62e99bf2f9682af9b1fd72260365a0f69cc93a1b0c39ac034a3a51") == 0,
+                     "variant catalog binds exact admitted identities");
+    YVEX_TEST_ASSERT(!admission.artifact_identity_verified && admission.artifact_bytes_hashed == 0u,
+                     "catalog reconstruction does not fabricate byte verification");
+    yvex_artifact_close(artifact);
+    YVEX_TEST_ASSERT(unlink(path) == 0 && rmdir(root) == 0,
+                     "variant sparse artifact cleaned");
+    return 0;
+}
+
 int yvex_test_artifact(void)
 {
     const char *fixture = "tests/fixtures/gguf/valid-minimal.gguf";
@@ -125,6 +166,8 @@ int yvex_test_artifact(void)
 
     YVEX_TEST_ASSERT(test_artifact_symlink_refusal() == 0,
                      "artifact symlink lifecycle refuses unsafe paths");
+    YVEX_TEST_ASSERT(test_deepseek_variant_admission_catalog() == 0,
+                     "DeepSeek physical catalog admits the exact candidate");
 
     memset(&options, 0, sizeof(options));
     options.path = fixture;

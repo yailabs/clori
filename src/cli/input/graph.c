@@ -123,6 +123,19 @@ static const graph_option_spec graph_options[] = {
 GRAPH_PARSE_ATTENTION, 0, "yvex: graph attention option requires a value"},
     {"--runtime-binding-dir", GRAPH_OPTION_TEXT, GRAPH_ATTN(runtime_binding_dir), NO_FIELD, 0,
 GRAPH_PARSE_ATTENTION, 0, "yvex: graph attention option requires a value"},
+    {"--source", GRAPH_OPTION_TEXT, GRAPH_ATTN(source_path), NO_FIELD, 0,
+GRAPH_PARSE_ATTENTION, 0, "yvex: --source requires a directory path"},
+    {"--source-manifest", GRAPH_OPTION_TEXT, GRAPH_ATTN(source_manifest_path), NO_FIELD, 0,
+GRAPH_PARSE_ATTENTION, 0, "yvex: --source-manifest requires a file path"},
+    {"--quant-policy", GRAPH_OPTION_TEXT, GRAPH_ATTN(quant_policy_path), NO_FIELD, 0,
+GRAPH_PARSE_ATTENTION, 0, "yvex: --quant-policy requires a file path"},
+    {"--quant-preset", GRAPH_OPTION_TEXT, GRAPH_ATTN(quant_preset_name), NO_FIELD, 0,
+GRAPH_PARSE_ATTENTION, 0, "yvex: --quant-preset requires a preset name"},
+    {"--imatrix-manifest", GRAPH_OPTION_TEXT, GRAPH_ATTN(imatrix_path), NO_FIELD, 0,
+GRAPH_PARSE_ATTENTION, 0, "yvex: --imatrix-manifest requires a file path"},
+    {"--physical-variant-plan", GRAPH_OPTION_TEXT,
+GRAPH_ATTN(physical_variant_plan_path), NO_FIELD, 0, GRAPH_PARSE_ATTENTION, 0,
+     "yvex: --physical-variant-plan requires a file path"},
     {"--models-root", GRAPH_OPTION_TEXT, GRAPH_ATTN(models_root), NO_FIELD, 0,
 GRAPH_PARSE_ATTENTION, 0, "yvex: graph attention option requires a value"},
     {"--backend", GRAPH_OPTION_TEXT, GRAPH_ATTN(backend), NO_FIELD, 0, GRAPH_PARSE_ATTENTION, 0,
@@ -607,6 +620,26 @@ static int graph_parse_attention(int argc, char **argv, yvex_graph_args *out,
     if (out->attention.runtime_binding_path && out->attention.runtime_binding_dir)
         return graph_arg_error(err,
                                "yvex: --runtime-binding conflicts with --runtime-binding-dir");
+    if (out->attention.quant_policy_path && out->attention.quant_preset_name)
+        return graph_arg_error(err,
+                               "yvex: --quant-policy conflicts with --quant-preset");
+    if ((out->attention.quant_policy_path || out->attention.quant_preset_name ||
+         out->attention.imatrix_path || out->attention.physical_variant_plan_path) &&
+        out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_PREPARE)
+        return graph_arg_error(err,
+                               "yvex: physical-variant options require graph attention prepare");
+    if ((out->attention.source_path || out->attention.source_manifest_path) &&
+        out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_PREPARE)
+        return graph_arg_error(err,
+                               "yvex: source authority options require graph attention prepare");
+    if (out->attention.physical_variant_plan_path &&
+        !out->attention.quant_policy_path && !out->attention.quant_preset_name)
+        return graph_arg_error(err,
+                               "yvex: --physical-variant-plan requires a quant policy or preset");
+    if ((out->attention.quant_policy_path || out->attention.quant_preset_name ||
+         out->attention.imatrix_path) && !out->attention.physical_variant_plan_path)
+        return graph_arg_error(err,
+                               "yvex: variant policy and imatrix require --physical-variant-plan");
     if (graph_attention_controls_validate(out, err) != YVEX_OK)
         return yvex_error_code(err);
     yvex_error_clear(err);

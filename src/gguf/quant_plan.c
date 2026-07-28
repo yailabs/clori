@@ -413,8 +413,20 @@ static int quant_decision_identity(yvex_quant_decision *decision) {
         !yvex_sha256_update_u64(&hash, decision->encoded_bytes) ||
         !yvex_sha256_update_u64(&hash, decision->approximation) ||
         !yvex_sha256_update_u64(&hash, decision->calibration) ||
-        !yvex_sha256_update_u64(&hash, decision->numeric_contract_version) ||
-        !yvex_sha256_final(&hash, digest))
+        !yvex_sha256_update_u64(&hash, decision->numeric_contract_version))
+        return 0;
+    if (decision->policy_bound &&
+        (!yvex_sha256_update_text(&hash, "yvex.quant.decision.policy.v2") ||
+         !yvex_sha256_update_u64(&hash, decision->collection) ||
+         !yvex_sha256_update_u64(&hash, decision->policy_rule_ordinal) ||
+         !yvex_sha256_update_u64(&hash, decision->policy_priority) ||
+         !yvex_sha256_update_u64(&hash, (unsigned int)decision->policy_requires_imatrix) ||
+         !yvex_sha256_update_text(&hash, decision->policy_label) ||
+         !yvex_sha256_update_text(&hash, decision->physical_tensor_name) ||
+         !yvex_sha256_update_u64(&hash, decision->physical_expert_count) ||
+         !yvex_sha256_update_text(&hash, decision->policy_rule_identity)))
+        return 0;
+    if (!yvex_sha256_final(&hash, digest))
         return 0;
     yvex_sha256_hex(digest, decision->decision_identity);
     return 1;
@@ -438,6 +450,8 @@ static int quant_summary_add(yvex_quant_candidate_summary *summary,
         class_bytes = &summary->q8_0_bytes;
     else if (decision->qtype == YVEX_GGUF_QTYPE_Q2_K)
         class_bytes = &summary->q2_k_bytes;
+    else if (decision->qtype == YVEX_GGUF_QTYPE_IQ2_XXS)
+        class_bytes = &summary->iq2_xxs_bytes;
     else if (decision->qtype == YVEX_GGUF_QTYPE_MXFP4)
         class_bytes = &summary->mxfp4_bytes;
     else
@@ -460,7 +474,7 @@ static int quant_summary_add(yvex_quant_candidate_summary *summary,
  * Effects: fills decision geometry, constraints, compute facts, and identity.
  * Failure: typed refusal covers precision, codec, binding, geometry, or identity.
  * Boundary: plans physical bytes but performs no conversion or payload read. */
-static int quant_build_candidate_decision(yvex_quant_profile_kind profile,
+static int quant_build_qtype_decision(unsigned int qtype,
                                           const yvex_transform_binding *binding,
                                           const yvex_transform_value *terminal,
                                           const yvex_transform_node *node,
@@ -471,8 +485,6 @@ static int quant_build_candidate_decision(yvex_quant_profile_kind profile,
     yvex_transform_physical_decision binding_decision;
     yvex_transform_failure transform_failure;
     int rc;
-    unsigned int qtype = quant_candidate_qtype(profile, terminal, node);
-
     if (qtype == UINT_MAX)
         return quant_plan_fail(failure, YVEX_QUANT_FAILURE_PRECISION_CONSTRAINT, ordinal,
                                ULLONG_MAX, 1u, 0u, qtype, node->kind, err, YVEX_ERR_UNSUPPORTED,
@@ -483,12 +495,20 @@ static int quant_build_candidate_decision(yvex_quant_profile_kind profile,
                                1u, 0u, qtype, node->kind, err, YVEX_ERR_UNSUPPORTED,
                                "selected profile requires an unavailable codec");
     }
+    if ((unsigned int)node->kind >= sizeof(capability->transform_kind_mask) * CHAR_BIT ||
+        !(capability->transform_kind_mask & (1u << (unsigned int)node->kind)))
+        return quant_plan_fail(failure, YVEX_QUANT_FAILURE_PRECISION_CONSTRAINT, ordinal,
+                               ULLONG_MAX, capability->transform_kind_mask,
+                               (unsigned long long)node->kind, qtype, node->kind, err,
+                               YVEX_ERR_UNSUPPORTED,
+                               "selected qtype does not admit the terminal operation");
     memset(decision, 0, sizeof(*decision));
     decision->logical_key = terminal->logical_key;
     decision->terminal_ordinal = ordinal;
     decision->terminal_value_id = terminal->id;
     decision->node_id = node->id;
     decision->role = terminal->logical_key.role;
+    decision->collection = descriptor->collection;
     decision->scope = terminal->logical_key.scope;
     decision->operation = node->kind;
     decision->qtype = qtype;
@@ -497,6 +517,7 @@ static int quant_build_candidate_decision(yvex_quant_profile_kind profile,
                                    ? YVEX_QUANT_PHYSICAL_EXACT_SCALAR
                                    : YVEX_QUANT_PHYSICAL_BLOCK_QUANTIZED;
     decision->approximation = qtype == YVEX_GGUF_QTYPE_Q8_0 || qtype == YVEX_GGUF_QTYPE_Q2_K ||
+                              qtype == YVEX_GGUF_QTYPE_IQ2_XXS ||
                               qtype == YVEX_GGUF_QTYPE_MXFP4;
     if (decision->approximation && !terminal->precision.approximation_allowed)
         return quant_plan_fail(failure, YVEX_QUANT_FAILURE_APPROXIMATION_FORBIDDEN, ordinal,
@@ -527,6 +548,22 @@ static int quant_build_candidate_decision(yvex_quant_profile_kind profile,
                                0u, qtype, node->kind, err, YVEX_ERR_BOUNDS,
                                "decision identity encoding failed");
     return YVEX_OK;
+}
+
+/* Purpose: project one fixed compatibility profile into the common qtype decision builder.
+ * Inputs: profile, sealed terminal/lowering facts, ordinal, and diagnostic outputs.
+ * Effects: writes one complete caller-owned candidate decision.
+ * Failure: propagates geometry, capability, or precision refusal.
+ * Boundary: compatibility presets use the same physical decision mechanism as policy plans. */
+static int quant_build_candidate_decision(yvex_quant_profile_kind profile,
+                                          const yvex_transform_binding *binding,
+                                          const yvex_transform_value *terminal,
+                                          const yvex_transform_node *node,
+                                          const yvex_deepseek_gguf_descriptor *descriptor,
+                                          unsigned long long ordinal, yvex_quant_decision *decision,
+                                          yvex_quant_failure *failure, yvex_error *err) {
+    return quant_build_qtype_decision(quant_candidate_qtype(profile, terminal, node), binding,
+                                      terminal, node, descriptor, ordinal, decision, failure, err);
 }
 
 /* Purpose: encode one payload scalar.
@@ -687,6 +724,11 @@ static int quant_plan_identity(yvex_quant_plan *plan) {
         !yvex_sha256_update_text(&hash, plan->summary.backend_compute_contract) ||
         !yvex_sha256_update_u64(&hash, plan->summary.decision_count))
         return 0;
+    if (plan->summary.policy_identity[0] &&
+        (!yvex_sha256_update_text(&hash, "yvex.quant.physical.variant.v1") ||
+         !yvex_sha256_update_text(&hash, plan->summary.policy_identity) ||
+         !yvex_sha256_update_text(&hash, plan->summary.imatrix_identity)))
+        return 0;
     for (ordinal = 0u; ordinal < plan->summary.decision_count; ++ordinal) {
         if (!yvex_sha256_update_text(&hash, plan->decisions[ordinal].decision_identity))
             return 0;
@@ -694,6 +736,9 @@ static int quant_plan_identity(yvex_quant_plan *plan) {
     if (!yvex_sha256_final(&hash, digest))
         return 0;
     yvex_sha256_hex(digest, plan->summary.profile_identity);
+    yvex_core_text_copy(plan->summary.physical_variant_identity,
+                        sizeof(plan->summary.physical_variant_identity),
+                        plan->summary.profile_identity);
     return quant_payload_plan_identity(plan);
 }
 
@@ -866,10 +911,17 @@ static int quant_index_add(quant_build_context *context, yvex_quant_decision *de
             context->failure, YVEX_QUANT_FAILURE_RESOURCE_BUDGET, ordinal, ULLONG_MAX,
             context->plan->summary.index_capacity, context->plan->summary.index_capacity,
             decision->qtype, decision->operation, context->err, YVEX_ERR_BOUNDS, exhausted_message);
+    if (ULLONG_MAX - context->plan->summary.qtype_encoded_bytes[decision->qtype] <
+        decision->encoded_bytes)
+        return quant_plan_fail(
+            context->failure, YVEX_QUANT_FAILURE_RESOURCE_BUDGET, ordinal, ULLONG_MAX,
+            ULLONG_MAX, decision->encoded_bytes, decision->qtype, decision->operation,
+            context->err, YVEX_ERR_BOUNDS, "qtype byte accounting overflowed");
     context->plan->index[slot].hash = hash;
     context->plan->index[slot].ordinal_plus_one = ordinal + 1u;
     context->plan->summary.decision_count++;
     context->plan->summary.qtype_tensor_counts[decision->qtype]++;
+    context->plan->summary.qtype_encoded_bytes[decision->qtype] += decision->encoded_bytes;
     if ((unsigned int)decision->role < YVEX_TENSOR_ROLE_COUNT)
         context->plan->summary.role_tensor_counts[decision->role]++;
     return YVEX_OK;
@@ -993,6 +1045,7 @@ static void quant_summary_select(yvex_quant_plan_summary *summary,
     summary->exact_scalar_bytes = candidate->exact_scalar_bytes;
     summary->q8_0_bytes = candidate->q8_0_bytes;
     summary->q2_k_bytes = candidate->q2_k_bytes;
+    summary->iq2_xxs_bytes = candidate->iq2_xxs_bytes;
     summary->mxfp4_bytes = candidate->mxfp4_bytes;
     summary->calibration_required = candidate->calibration_required;
 }
@@ -1163,6 +1216,391 @@ static int quant_deepseek_plan_seal(quant_build_context *context, yvex_quant_pro
     context->plan->summary.state = YVEX_QUANT_PLAN_SEALED;
     context->plan->summary.complete = 1;
     context->plan->summary.payload_bytes_read = 0u;
+    return YVEX_OK;
+}
+
+/* Purpose: match the policy-v2 bounded wildcard form against one emitted tensor name. */
+static int quant_policy_pattern_matches(const char *pattern, const char *name) {
+    const char *star;
+    size_t prefix;
+    size_t suffix;
+    size_t length;
+
+    if (!pattern || !name)
+        return 0;
+    star = strchr(pattern, '*');
+    if (!star)
+        return strcmp(pattern, name) == 0;
+    if (strchr(star + 1, '*'))
+        return 0;
+    prefix = (size_t)(star - pattern);
+    suffix = strlen(star + 1);
+    length = strlen(name);
+    return length >= prefix + suffix && strncmp(pattern, name, prefix) == 0 &&
+           strcmp(name + length - suffix, star + 1) == 0;
+}
+
+/* Purpose: map one public policy qtype action to the canonical GGUF numeric identity. */
+static unsigned int quant_policy_qtype(yvex_quant_qtype qtype) {
+    switch (qtype) {
+    case YVEX_QUANT_QTYPE_F32: return YVEX_GGUF_QTYPE_F32;
+    case YVEX_QUANT_QTYPE_F16: return YVEX_GGUF_QTYPE_F16;
+    case YVEX_QUANT_QTYPE_BF16: return YVEX_GGUF_QTYPE_BF16;
+    case YVEX_QUANT_QTYPE_Q8_0: return YVEX_GGUF_QTYPE_Q8_0;
+    case YVEX_QUANT_QTYPE_Q4_0: return YVEX_GGUF_QTYPE_Q4_0;
+    case YVEX_QUANT_QTYPE_Q4_K: return YVEX_GGUF_QTYPE_Q4_K;
+    case YVEX_QUANT_QTYPE_Q5_K: return YVEX_GGUF_QTYPE_Q5_K;
+    case YVEX_QUANT_QTYPE_Q6_K: return YVEX_GGUF_QTYPE_Q6_K;
+    case YVEX_QUANT_QTYPE_Q2_K: return YVEX_GGUF_QTYPE_Q2_K;
+    case YVEX_QUANT_QTYPE_IQ2_XXS: return YVEX_GGUF_QTYPE_IQ2_XXS;
+    case YVEX_QUANT_QTYPE_IQ2_XS: return YVEX_GGUF_QTYPE_IQ2_XS;
+    case YVEX_QUANT_QTYPE_IQ3_XXS: return YVEX_GGUF_QTYPE_IQ3_XXS;
+    case YVEX_QUANT_QTYPE_IQ4_NL: return YVEX_GGUF_QTYPE_IQ4_NL;
+    case YVEX_QUANT_QTYPE_I32: return YVEX_GGUF_QTYPE_I32;
+    default: return UINT_MAX;
+    }
+}
+
+/* Purpose: test every conjunctive matcher field against one canonical terminal descriptor.
+ * Inputs: immutable rule, terminal, producer operation, and lowering descriptor.
+ * Effects: returns a Boolean without mutation.
+ * Failure: malformed policies are rejected earlier; non-matches return false.
+ * Boundary: matching selects no qtype and reads no payload bytes. */
+static int quant_policy_rule_matches(const yvex_quant_policy_rule *rule,
+                                     const yvex_transform_value *terminal,
+                                     const yvex_transform_node *node,
+                                     const yvex_deepseek_gguf_descriptor *descriptor) {
+    unsigned long long mask = rule->match_mask;
+    yvex_quant_policy_physical_class physical =
+        terminal->precision.flags & YVEX_TRANSFORM_PRECISION_QUANTIZABLE_WEIGHT
+            ? YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE
+            : YVEX_QUANT_POLICY_PHYSICAL_EXACT;
+
+    if ((mask & YVEX_QUANT_MATCH_ROLE) && rule->role != terminal->logical_key.role)
+        return 0;
+    if ((mask & YVEX_QUANT_MATCH_COLLECTION) && rule->collection != descriptor->collection)
+        return 0;
+    if ((mask & YVEX_QUANT_MATCH_SCOPE) && rule->scope != descriptor->scope)
+        return 0;
+    if ((mask & YVEX_QUANT_MATCH_TENSOR_NAME) &&
+        strcmp(rule->tensor_name, descriptor->emitted_name) != 0)
+        return 0;
+    if ((mask & YVEX_QUANT_MATCH_TENSOR_PATTERN) &&
+        !quant_policy_pattern_matches(rule->tensor_pattern, descriptor->emitted_name))
+        return 0;
+    if ((mask & YVEX_QUANT_MATCH_LAYER_RANGE) &&
+        (descriptor->layer_index == YVEX_DEEPSEEK_GGUF_NO_INDEX ||
+         descriptor->layer_index < rule->layer_first || descriptor->layer_index > rule->layer_last))
+        return 0;
+    if ((mask & YVEX_QUANT_MATCH_EXPERT_GROUP) &&
+        terminal->logical_key.group_index != rule->expert_group)
+        return 0;
+    if ((mask & YVEX_QUANT_MATCH_OPERATION) &&
+        (unsigned int)rule->operation != (unsigned int)node->kind + 1u)
+        return 0;
+    if ((mask & YVEX_QUANT_MATCH_PHYSICAL_CLASS) && rule->physical_class != physical)
+        return 0;
+    return 1;
+}
+
+/* Purpose: compare equal-priority actions for deterministic coalescing. */
+static int quant_policy_actions_equal(const yvex_quant_policy_rule *left,
+                                      const yvex_quant_policy_rule *right) {
+    return left->qtype == right->qtype &&
+           left->requires_imatrix == right->requires_imatrix &&
+           left->requires_cpu_compute == right->requires_cpu_compute &&
+           left->requires_cuda_compute == right->requires_cuda_compute;
+}
+
+/* Purpose: resolve one highest-priority non-conflicting policy action.
+ * Inputs: sealed policy and one canonical terminal/lowering tuple.
+ * Effects: publishes one borrowed rule and its ordinal.
+ * Failure: missing coverage or conflicting equal-priority actions refuse.
+ * Boundary: resolution is deterministic and independent of payload bytes and rule allocation. */
+static int quant_policy_resolve(const yvex_quant_policy *policy,
+                                const yvex_transform_value *terminal,
+                                const yvex_transform_node *node,
+                                const yvex_deepseek_gguf_descriptor *descriptor,
+                                const yvex_quant_policy_rule **selected,
+                                unsigned long long *selected_ordinal,
+                                yvex_quant_failure *failure, yvex_error *err) {
+    unsigned long long index;
+
+    *selected = NULL;
+    *selected_ordinal = ULLONG_MAX;
+    for (index = 0u; index < yvex_quant_policy_rule_count(policy); ++index) {
+        const yvex_quant_policy_rule *rule = yvex_quant_policy_rule_at(policy, index);
+        if (!rule || !quant_policy_rule_matches(rule, terminal, node, descriptor))
+            continue;
+        if (!*selected || rule->priority > (*selected)->priority) {
+            *selected = rule;
+            *selected_ordinal = index;
+        } else if (rule->priority == (*selected)->priority &&
+                   !quant_policy_actions_equal(rule, *selected)) {
+            return quant_plan_fail(failure, YVEX_QUANT_FAILURE_PRECISION_CONSTRAINT,
+                                   terminal->canonical_ordinal, ULLONG_MAX, (*selected)->priority,
+                                   rule->priority, UINT_MAX, node->kind, err, YVEX_ERR_FORMAT,
+                                   "equal-priority policy actions conflict");
+        }
+    }
+    if (!*selected)
+        return quant_plan_fail(failure, YVEX_QUANT_FAILURE_MISSING_DECISION,
+                               terminal->canonical_ordinal, ULLONG_MAX, 1u, 0u, UINT_MAX,
+                               node->kind, err, YVEX_ERR_FORMAT,
+                               "quantizable terminal has no matching policy rule or default");
+    return YVEX_OK;
+}
+
+/* Purpose: bind the selected rule and policy identity into one physical decision.
+ * Inputs: populated decision, immutable policy summary, selected rule, and ordinal.
+ * Effects: writes rule evidence and reseals the decision identity.
+ * Failure: canonical identity failure returns false.
+ * Boundary: no rule is re-resolved and no qtype arithmetic executes. */
+static int quant_policy_bind_decision(yvex_quant_decision *decision,
+                                      const yvex_quant_policy_summary *policy_summary,
+                                      const yvex_quant_policy_rule *rule,
+                                      unsigned long long rule_ordinal) {
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+
+    decision->policy_bound = 1;
+    decision->policy_rule_ordinal = rule_ordinal;
+    decision->policy_priority = rule ? rule->priority : UINT_MAX;
+    decision->policy_requires_imatrix = rule ? rule->requires_imatrix : 0;
+    yvex_core_text_copy(decision->policy_label, sizeof(decision->policy_label),
+                        rule && rule->label ? rule->label : "family exact physical constraint");
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.quant.policy.rule.decision.v1") ||
+        !yvex_sha256_update_text(&hash, policy_summary->policy_identity) ||
+        !yvex_sha256_update_u64(&hash, rule_ordinal) ||
+        !yvex_sha256_update_u64(&hash, decision->qtype) ||
+        !yvex_sha256_update_u64(&hash, decision->terminal_ordinal) ||
+        !yvex_sha256_final(&hash, digest))
+        return 0;
+    yvex_sha256_hex(digest, decision->policy_rule_identity);
+    return quant_decision_identity(decision);
+}
+
+/* Purpose: build baseline comparisons plus one policy-selected terminal decision.
+ * Inputs: active build context, sealed policy, policy summary, and terminal ordinal.
+ * Effects: accounts both baselines and writes one indexed selected decision.
+ * Failure: incomplete lowering, policy conflict, unsupported qtype, or identity failure refuses.
+ * Boundary: complete policy resolution performs zero source payload reads. */
+static int quant_deepseek_policy_decision_build(
+    quant_build_context *context, const yvex_quant_policy *policy,
+    const yvex_quant_policy_summary *policy_summary, unsigned long long ordinal,
+    yvex_quant_candidate_summary *selected_summary) {
+    const yvex_transform_value *terminal = yvex_transform_ir_terminal_at(context->ir, ordinal);
+    const yvex_transform_node *node =
+        terminal ? yvex_transform_ir_node_at(context->ir, terminal->producer_node_id) : NULL;
+    const yvex_deepseek_gguf_descriptor *descriptor =
+        yvex_model_register_deepseek_v4()->lowering.at(context->map, ordinal);
+    const yvex_quant_policy_rule *rule = NULL;
+    unsigned long long rule_ordinal = ULLONG_MAX;
+    yvex_quant_decision baseline;
+    yvex_quant_decision *decision = &context->plan->decisions[ordinal];
+    unsigned int qtype;
+    int exact;
+    int rc;
+
+    if (!terminal || !node || !descriptor || terminal->canonical_ordinal != ordinal)
+        return quant_plan_fail(context->failure, YVEX_QUANT_FAILURE_MISSING_DECISION, ordinal,
+                               ULLONG_MAX, ordinal,
+                               terminal ? terminal->canonical_ordinal : ULLONG_MAX, UINT_MAX,
+                               node ? node->kind : YVEX_TRANSFORM_OP_COUNT, context->err,
+                               YVEX_ERR_FORMAT, "policy plan terminal is incomplete");
+    rc = quant_descriptor_matches(context->ir, terminal, node, context->map, descriptor, ordinal,
+                                  context->failure, context->err);
+    if (rc != YVEX_OK)
+        return rc;
+    rc = quant_build_candidate_decision(YVEX_QUANT_PROFILE_SOURCE_FAITHFUL, context->binding,
+                                        terminal, node, descriptor, ordinal, &baseline,
+                                        context->failure, context->err);
+    if (rc == YVEX_OK &&
+        !quant_summary_add(&context->plan->summary.candidates[0], &baseline))
+        rc = YVEX_ERR_BOUNDS;
+    if (rc != YVEX_OK)
+        return rc;
+    rc = quant_build_candidate_decision(YVEX_QUANT_PROFILE_RELEASE_Q8_Q2, context->binding,
+                                        terminal, node, descriptor, ordinal, &baseline,
+                                        context->failure, context->err);
+    if (rc == YVEX_OK &&
+        !quant_summary_add(&context->plan->summary.candidates[1], &baseline))
+        rc = YVEX_ERR_BOUNDS;
+    if (rc != YVEX_OK)
+        return rc;
+    exact = !(terminal->precision.flags & YVEX_TRANSFORM_PRECISION_QUANTIZABLE_WEIGHT);
+    rc = quant_policy_resolve(policy, terminal, node, descriptor, &rule, &rule_ordinal,
+                              context->failure, context->err);
+    if (exact && rc != YVEX_OK) {
+        yvex_error_clear(context->err);
+        if (context->failure)
+            memset(context->failure, 0, sizeof(*context->failure));
+        rc = YVEX_OK;
+    } else if (rc != YVEX_OK) {
+        return rc;
+    }
+    if (exact) {
+        if (rule && rule->qtype != YVEX_QUANT_QTYPE_SOURCE &&
+            quant_policy_qtype(rule->qtype) != quant_exact_qtype(terminal->dtype))
+            return quant_plan_fail(context->failure, YVEX_QUANT_FAILURE_APPROXIMATION_FORBIDDEN,
+                                   ordinal, ULLONG_MAX, quant_exact_qtype(terminal->dtype),
+                                   quant_policy_qtype(rule->qtype), UINT_MAX, node->kind,
+                                   context->err, YVEX_ERR_FORMAT,
+                                   "policy attempted to override an exact-only terminal");
+        qtype = quant_exact_qtype(terminal->dtype);
+        rule = NULL;
+        rule_ordinal = ULLONG_MAX;
+    } else if (rule->qtype == YVEX_QUANT_QTYPE_SOURCE) {
+        qtype = quant_candidate_qtype(YVEX_QUANT_PROFILE_SOURCE_FAITHFUL, terminal, node);
+    } else {
+        qtype = quant_policy_qtype(rule->qtype);
+    }
+    rc = quant_build_qtype_decision(qtype, context->binding, terminal, node, descriptor, ordinal,
+                                    decision, context->failure, context->err);
+    if (rc != YVEX_OK)
+        return rc;
+    if (rule && rule->requires_imatrix)
+        decision->calibration = YVEX_QUANT_CALIBRATION_REQUIRED;
+    if (rule && rule->requires_cpu_compute && !decision->cpu_compute_available)
+        return quant_plan_fail(context->failure, YVEX_QUANT_FAILURE_CPU_COMPUTE_UNAVAILABLE,
+                               ordinal, ULLONG_MAX, 1u, 0u, qtype, node->kind, context->err,
+                               YVEX_ERR_UNSUPPORTED,
+                               "policy requires CPU compute that is absent");
+    if (rule && rule->requires_cuda_compute && !decision->cuda_compute_available)
+        return quant_plan_fail(context->failure, YVEX_QUANT_FAILURE_CUDA_COMPUTE_UNAVAILABLE,
+                               ordinal, ULLONG_MAX, 1u, 0u, qtype, node->kind, context->err,
+                               YVEX_ERR_UNSUPPORTED,
+                               "policy requires CUDA compute that is absent");
+    if (decision->calibration == YVEX_QUANT_CALIBRATION_REQUIRED &&
+        (!rule || !rule->requires_imatrix))
+        return quant_plan_fail(context->failure, YVEX_QUANT_FAILURE_CALIBRATION_REQUIRED,
+                               ordinal, ULLONG_MAX, 1u, 0u, qtype, node->kind, context->err,
+                               YVEX_ERR_FORMAT,
+                               "selected qtype requires explicit imatrix policy admission");
+    yvex_core_text_copy(decision->physical_tensor_name,
+                        sizeof(decision->physical_tensor_name), descriptor->emitted_name);
+    decision->physical_expert_count = descriptor->expert_count;
+    if (!quant_policy_bind_decision(decision, policy_summary, rule, rule_ordinal) ||
+        !quant_summary_add(selected_summary, decision))
+        return quant_plan_fail(context->failure, YVEX_QUANT_FAILURE_BYTE_OVERFLOW, ordinal,
+                               ULLONG_MAX, 1u, 0u, qtype, node->kind, context->err,
+                               YVEX_ERR_BOUNDS, "policy decision identity or accounting failed");
+    return quant_index_add(context, decision, ordinal, "duplicate policy decision refused",
+                           "policy decision index exhausted");
+}
+
+/* Purpose: resolve one sealed policy over every canonical DeepSeek terminal without payload reads.
+ * Inputs: complete IR/binding/lowering, sealed policy, optional imatrix identity, and budget.
+ * Effects: returns one immutable identity-bound physical-variant plan.
+ * Failure: missing/conflicting rules, unavailable compute, calibration, or geometry release all state.
+ * Boundary: policy resolution chooses physical bytes but performs no source or imatrix payload IO. */
+int yvex_quant_plan_build_deepseek_policy(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_deepseek_gguf_map *map,
+    const yvex_quant_policy *policy, const char *imatrix_identity,
+    const yvex_quant_plan_options *options, yvex_quant_failure *failure, yvex_error *err) {
+    quant_build_context context;
+    yvex_quant_policy_summary policy_summary;
+    yvex_quant_candidate_summary selected;
+    const yvex_deepseek_gguf_map_summary *map_summary =
+        yvex_model_register_deepseek_v4()->lowering.summary(map);
+    unsigned long long ordinal;
+    int rc;
+
+    memset(&context, 0, sizeof(context));
+    memset(&selected, 0, sizeof(selected));
+    if (out)
+        *out = NULL;
+    if (!out || !ir || !binding || !map || !policy || !map_summary ||
+        yvex_quant_policy_get_summary(policy, &policy_summary, err) != YVEX_OK ||
+        policy_summary.schema_version != YVEX_QUANT_POLICY_SCHEMA_VERSION ||
+        policy_summary.status != YVEX_QUANT_POLICY_STATUS_VALID ||
+        !yvex_sha256_hex_valid(policy_summary.policy_identity) ||
+        strlen(policy_summary.name) >= sizeof(((yvex_quant_plan_summary *)0)->profile_name))
+        return quant_plan_fail(failure, YVEX_QUANT_FAILURE_INVALID_ARGUMENT, ULLONG_MAX,
+                               ULLONG_MAX, 1u, 0u, UINT_MAX, YVEX_TRANSFORM_OP_COUNT, err,
+                               YVEX_ERR_INVALID_ARG,
+                               "complete DeepSeek inputs and one valid policy-v2 are required");
+    rc = yvex_quant_policy_identity_validate(policy, err);
+    if (rc != YVEX_OK)
+        return rc;
+    context.ir = ir;
+    context.binding = binding;
+    context.map = map;
+    context.ir_summary = yvex_transform_ir_summary_get(ir);
+    context.binding_summary = yvex_transform_binding_summary_get(binding);
+    context.profile_name = policy_summary.name;
+    context.mapping_identity = map_summary->mapping_identity;
+    context.failure = failure;
+    context.err = err;
+    if (!context.ir_summary || !context.binding_summary || !context.ir_summary->complete ||
+        !context.binding_summary->complete || !map_summary->complete ||
+        yvex_transform_binding_ir(binding) != ir ||
+        context.ir_summary->terminal_count != YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT)
+        return quant_plan_fail(failure, YVEX_QUANT_FAILURE_INVALID_ARGUMENT, ULLONG_MAX,
+                               ULLONG_MAX, YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT,
+                               context.ir_summary ? context.ir_summary->terminal_count : 0u,
+                               UINT_MAX, YVEX_TRANSFORM_OP_COUNT, err, YVEX_ERR_FORMAT,
+                               "policy resolution requires the complete canonical DeepSeek graph");
+    rc = quant_binding_identity_validate(&context);
+    if (rc == YVEX_OK)
+        rc = quant_build_allocate(&context, options);
+    if (rc != YVEX_OK) {
+        yvex_quant_plan_release(&context.plan);
+        return rc;
+    }
+    context.plan->summary.schema_version = 2u;
+    yvex_core_text_copy(context.plan->summary.policy_identity,
+                        sizeof(context.plan->summary.policy_identity),
+                        policy_summary.policy_identity);
+    yvex_core_text_copy(context.plan->summary.imatrix_identity,
+                        sizeof(context.plan->summary.imatrix_identity),
+                        imatrix_identity && imatrix_identity[0] ? imatrix_identity : "none");
+    context.plan->summary.candidates[0].kind = YVEX_QUANT_PROFILE_SOURCE_FAITHFUL;
+    context.plan->summary.candidates[0].name = YVEX_QUANT_REFERENCE_PROFILE_NAME;
+    context.plan->summary.candidates[0].compute_admissible = 1;
+    context.plan->summary.candidates[1].kind = YVEX_QUANT_PROFILE_RELEASE_Q8_Q2;
+    context.plan->summary.candidates[1].name = YVEX_QUANT_RELEASE_PROFILE_NAME;
+    context.plan->summary.candidates[1].compute_admissible = 1;
+    selected.name = context.plan->summary.profile_name;
+    selected.compute_admissible = 1;
+    for (ordinal = 0u; ordinal < context.ir_summary->terminal_count; ++ordinal) {
+        rc = quant_deepseek_policy_decision_build(&context, policy, &policy_summary, ordinal,
+                                                  &selected);
+        if (rc != YVEX_OK) {
+            yvex_quant_plan_release(&context.plan);
+            return rc;
+        }
+    }
+    if (selected.calibration_required &&
+        (!imatrix_identity || !yvex_sha256_hex_valid(imatrix_identity))) {
+        yvex_quant_plan_release(&context.plan);
+        return quant_plan_fail(failure, YVEX_QUANT_FAILURE_CALIBRATION_IDENTITY, ULLONG_MAX,
+                               ULLONG_MAX, 1u, 0u, UINT_MAX, YVEX_TRANSFORM_OP_COUNT, err,
+                               YVEX_ERR_FORMAT,
+                               "calibrated physical variant requires one canonical imatrix identity");
+    }
+    if (selected.calibration_required)
+        yvex_core_text_copy(context.plan->summary.calibration_identity,
+                            sizeof(context.plan->summary.calibration_identity), imatrix_identity);
+    quant_summary_select(&context.plan->summary, &selected);
+    if (context.plan->summary.decision_count != context.ir_summary->terminal_count ||
+        !selected.compute_admissible || !quant_plan_identity(context.plan)) {
+        yvex_quant_plan_release(&context.plan);
+        return quant_plan_fail(failure, YVEX_QUANT_FAILURE_INCOMPLETE, ULLONG_MAX, ULLONG_MAX,
+                               context.ir_summary->terminal_count,
+                               context.plan ? context.plan->summary.decision_count : 0u, UINT_MAX,
+                               YVEX_TRANSFORM_OP_COUNT, err, YVEX_ERR_FORMAT,
+                               "policy-driven physical variant did not seal completely");
+    }
+    context.plan->summary.state = YVEX_QUANT_PLAN_SEALED;
+    context.plan->summary.complete = 1;
+    context.plan->summary.payload_bytes_read = 0u;
+    *out = context.plan;
+    if (failure)
+        memset(failure, 0, sizeof(*failure));
+    yvex_error_clear(err);
     return YVEX_OK;
 }
 

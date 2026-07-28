@@ -19,6 +19,9 @@
 #include <yvex/internal/sampling.h>
 static const char *const literal_lines_0[] = {
     "usage: yvex graph attention prepare --target TARGET",
+    "           [--source DIR --source-manifest FILE]",
+    "           [--physical-variant-plan FILE --quant-preset NAME|--quant-policy FILE]",
+    "           [--imatrix-manifest FILE]",
     "       yvex graph attention describe --target TARGET",
     "       yvex graph attention capabilities --target TARGET --backend cpu|cuda",
     "       yvex graph attention plan --target TARGET --backend cpu|cuda",
@@ -139,6 +142,7 @@ static const yvex_cli_field_spec moe_fields[] = {
     MOE_QTYPE_FIELD("qtype_f32_weight_accesses", YVEX_GGUF_QTYPE_F32),
     MOE_QTYPE_FIELD("qtype_q8_0_weight_accesses", YVEX_GGUF_QTYPE_Q8_0),
     MOE_QTYPE_FIELD("qtype_q2_k_weight_accesses", YVEX_GGUF_QTYPE_Q2_K),
+    MOE_QTYPE_FIELD("qtype_iq2_xxs_weight_accesses", YVEX_GGUF_QTYPE_IQ2_XXS),
     MOE_QTYPE_FIELD("qtype_bf16_weight_accesses", YVEX_GGUF_QTYPE_BF16),
     MOE_QTYPE_FIELD("qtype_i32_weight_accesses", YVEX_GGUF_QTYPE_I32),
     MOE_EXECUTION_FIELD("input_identity", YVEX_CLI_FIELD_TEXT_ARRAY, input_identity),

@@ -43,6 +43,16 @@ int yvex_test_qtype_support(void)
     capability = yvex_quant_numeric_capability_by_name("Q2_K");
     YVEX_TEST_ASSERT(capability && capability->dedicated_cuda_compute_available,
                      "canonical Q2_K row admits dedicated CUDA compute");
+    row = yvex_qtype_support_by_name("IQ2_XXS");
+    YVEX_TEST_ASSERT(row && row->policy_supported && row->emit_supported &&
+                         row->quantize_supported && row->compute_supported,
+                     "IQ2_XXS projects its calibrated full vertical");
+    capability = yvex_quant_numeric_capability_by_name("IQ2_XXS");
+    YVEX_TEST_ASSERT(capability && capability->calibration ==
+                                           YVEX_QUANT_CALIBRATION_REQUIRED &&
+                         capability->dedicated_cpu_compute_available &&
+                         capability->dedicated_cuda_compute_available,
+                     "IQ2_XXS requires calibration and admits CPU/CUDA compute");
     capability = yvex_quant_numeric_capability_by_name("Q4_K");
     YVEX_TEST_ASSERT(capability && !capability->dedicated_cpu_compute_available,
                      "canonical Q4_K row preserves CPU compute refusal");

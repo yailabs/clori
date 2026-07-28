@@ -86,6 +86,24 @@ int yvex_artifact_payload_identity_compute(const yvex_artifact *artifact, const 
 #define YVEX_SELECTED_DEEPSEEK_METADATA_COUNT 68ull
 #define YVEX_SELECTED_DEEPSEEK_SOURCE_IDENTITY 0x818f3e5c5eaf9ffcull
 #define YVEX_SELECTED_DEEPSEEK_MAPPING_IDENTITY 0x1aecbbe25b04de0dull
+#define YVEX_DEEPSEEK_DS4_PROFILE_NAME "deepseek-v4-flash-ds4-like-q2-v1"
+#define YVEX_DEEPSEEK_DS4_PROFILE_IDENTITY                                                     \
+    "f0ba4b56e57842e4ca82fa4fc60d0a79c32061b5715b541d896a52ea76289ba4"
+#define YVEX_DEEPSEEK_DS4_EXECUTION_IDENTITY                                                   \
+    "b1446e5caf1d4768488c7daaf42784c6050e56d1422e759a34971520905206c4"
+#define YVEX_DEEPSEEK_DS4_PAYLOAD_PLAN_IDENTITY                                                \
+    "7c63416b88a182c2949805ed3d7c0a8bf5853c88219d6338e679b92c8f690949"
+#define YVEX_DEEPSEEK_DS4_PAYLOAD_BYTE_IDENTITY                                                \
+    "def97e67996ce6eb5902c33e8446c03561f2e8ec6d582439311bad5b5df80037"
+#define YVEX_DEEPSEEK_DS4_TRANSFORM_IDENTITY                                                   \
+    "cc774dffb6aa3a8e9f507b1dd454fbf7f5c68187138736f9a330ee9eaec07067"
+#define YVEX_DEEPSEEK_DS4_WRITER_PLAN_IDENTITY                                                 \
+    "8aa949e9a3e3b77211176a3a6dfed99ea0e63f210c7d80a3aedfb9b57527360d"
+#define YVEX_DEEPSEEK_DS4_ARTIFACT_IDENTITY                                                    \
+    "bdc6b442cf03f86f9d9a5cfe2a2f46a6ed7e3268b3ee6f3124725c999ca75a53"
+#define YVEX_DEEPSEEK_DS4_FILE_BYTES 94154155392ull
+#define YVEX_DEEPSEEK_DS4_PAYLOAD_BYTES 94142453320ull
+#define YVEX_DEEPSEEK_DS4_METADATA_COUNT 70ull
 typedef enum {
     YVEX_ARTIFACT_CLASS_REFUSED = 0,
     YVEX_ARTIFACT_CLASS_TENSOR_PROOF,

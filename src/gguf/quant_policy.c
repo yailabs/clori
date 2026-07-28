@@ -7,6 +7,8 @@
  * Inputs: typed policy requests, admitted template descriptors, or bounded shared-parser JSON.
  * Effects: allocates policy state and performs explicit policy file IO and template reads.
  * Failure: typed errors publish no partial policy and cleanup closes every borrowed owner. */
+#include <limits.h>
+#include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,8 +24,10 @@
 #include <yvex/quant.h>
 
 struct yvex_quant_policy {
+    unsigned int schema_version;
     char *name;
     char *architecture;
+    char *preset_name;
     char *source_kind;
     char *template_path;
     yvex_quant_policy_rule *rules;
@@ -76,6 +80,23 @@ static const qtype_dtype qtype_dtypes[] = {
     {YVEX_QUANT_QTYPE_IQ2_XS, YVEX_DTYPE_IQ2_XS},
     {YVEX_QUANT_QTYPE_IQ3_XXS, YVEX_DTYPE_IQ3_XXS},
     {YVEX_QUANT_QTYPE_IQ4_NL, YVEX_DTYPE_IQ4_NL},
+    {YVEX_QUANT_QTYPE_I32, YVEX_DTYPE_I32},
+};
+
+static const char *const operation_names[] = {
+    "any", "identity", "decode_scale_pair", "checked_cast", "reshape", "transpose",
+    "concatenate", "stack", "aggregate", "expert_aggregate",
+};
+static const char *const physical_class_names[] = {"any", "exact", "quantizable"};
+static const char *const collection_names[] = {
+    "global", "attention", "compressor", "indexer", "norm", "mhc", "router",
+    "routed_expert", "shared_expert", "auxiliary",
+};
+static const char *const scope_names[] = {"global", "main_layer", "mtp"};
+static const char *const preset_names[] = {
+    "source-faithful",
+    YVEX_QUANT_RELEASE_PROFILE_NAME,
+    YVEX_QUANT_DS4_PROFILE_NAME,
 };
 
 /* Purpose: resolve one exact policy name-table value without accepting prefixes. */
@@ -92,6 +113,9 @@ static int policy_name_value(const policy_name *rows, size_t count, const char *
 static int policy_add_rule(yvex_quant_policy *policy, yvex_quant_selector_kind selector_kind,
                            const char *selector, yvex_tensor_role role, yvex_quant_qtype qtype,
                            int requires_imatrix, yvex_error *err);
+static int policy_add_rule_v2(yvex_quant_policy *policy,
+                              const yvex_quant_policy_rule *source,
+                              yvex_error *err);
 
 static int policy_parse_json(yvex_quant_policy **out, const char *path, yvex_error *err);
 
@@ -122,6 +146,8 @@ static int policy_json_bool(yvex_gguf_json *json, int *out) {
 const char *yvex_quant_qtype_name(yvex_quant_qtype qtype) {
     yvex_dtype dtype;
 
+    if (qtype == YVEX_QUANT_QTYPE_SOURCE)
+        return "SOURCE";
     if (qtype == YVEX_QUANT_QTYPE_OTHER)
         return "OTHER";
     dtype = qtype_to_dtype(qtype);
@@ -136,12 +162,76 @@ static yvex_quant_qtype qtype_from_name(const char *name) {
         return YVEX_QUANT_QTYPE_UNKNOWN;
     if (strcmp(name, "OTHER") == 0)
         return YVEX_QUANT_QTYPE_OTHER;
+    if (strcmp(name, "SOURCE") == 0)
+        return YVEX_QUANT_QTYPE_SOURCE;
     for (qtype = YVEX_QUANT_QTYPE_F32; qtype < YVEX_QUANT_QTYPE_OTHER;
          qtype = (yvex_quant_qtype)(qtype + 1)) {
         if (strcmp(name, yvex_quant_qtype_name(qtype)) == 0)
             return qtype;
     }
     return YVEX_QUANT_QTYPE_UNKNOWN;
+}
+
+/* Purpose: render one policy operation selector without importing internal IR declarations.
+ * Inputs: typed public operation value.
+ * Effects: returns borrowed process-lifetime text.
+ * Failure: out-of-range values return "unknown".
+ * Boundary: naming exposes no compiler implementation dependency. */
+const char *yvex_quant_policy_operation_name(yvex_quant_policy_operation operation) {
+    return operation <= YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE
+               ? operation_names[operation]
+               : "unknown";
+}
+
+/* Purpose: render one source/terminal physical-class selector.
+ * Inputs: typed public physical-class value.
+ * Effects: returns borrowed process-lifetime text.
+ * Failure: out-of-range values return "unknown".
+ * Boundary: naming does not decide tensor representation. */
+const char *yvex_quant_policy_physical_class_name(
+    yvex_quant_policy_physical_class physical_class) {
+    return physical_class <= YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE
+               ? physical_class_names[physical_class]
+               : "unknown";
+}
+
+/* Purpose: parse one exact stable name from a bounded string table. */
+static int policy_table_index(const char *const *names, size_t count, const char *name,
+                              int fallback) {
+    size_t index;
+    if (name)
+        for (index = 0u; index < count; ++index)
+            if (strcmp(names[index], name) == 0)
+                return (int)index;
+    return fallback;
+}
+
+/* Purpose: parse a policy operation selector through its versioned spelling table. */
+static yvex_quant_policy_operation operation_from_name(const char *name) {
+    return (yvex_quant_policy_operation)policy_table_index(
+        operation_names, sizeof(operation_names) / sizeof(operation_names[0]), name,
+        YVEX_QUANT_POLICY_OPERATION_ANY);
+}
+
+/* Purpose: parse a physical-class selector through its versioned spelling table. */
+static yvex_quant_policy_physical_class physical_class_from_name(const char *name) {
+    return (yvex_quant_policy_physical_class)policy_table_index(
+        physical_class_names, sizeof(physical_class_names) / sizeof(physical_class_names[0]), name,
+        YVEX_QUANT_POLICY_PHYSICAL_ANY);
+}
+
+/* Purpose: parse a tensor-collection selector through model-owned enum order. */
+static yvex_tensor_collection collection_from_name(const char *name) {
+    return (yvex_tensor_collection)policy_table_index(
+        collection_names, sizeof(collection_names) / sizeof(collection_names[0]), name,
+        YVEX_TENSOR_COLLECTION_COUNT);
+}
+
+/* Purpose: parse a tensor-scope selector through model-owned enum order. */
+static yvex_tensor_scope scope_from_name(const char *name) {
+    return (yvex_tensor_scope)policy_table_index(
+        scope_names, sizeof(scope_names) / sizeof(scope_names[0]), name,
+        YVEX_TENSOR_SCOPE_MTP + 1);
 }
 
 /* Purpose: render one typed policy selector kind.
@@ -210,14 +300,15 @@ static yvex_dtype qtype_to_dtype(yvex_quant_qtype qtype) {
 static int qtype_storage_supported(yvex_quant_qtype qtype) {
     const yvex_quant_numeric_capability *capability =
         yvex_quant_numeric_capability_by_name(yvex_quant_qtype_name(qtype));
-    return capability && capability->storage_admitted;
+    return qtype == YVEX_QUANT_QTYPE_SOURCE || (capability && capability->storage_admitted);
 }
 
 /* Purpose: query dedicated CPU compute admission from the canonical numeric registry. */
 static int qtype_compute_supported(yvex_quant_qtype qtype) {
     const yvex_quant_numeric_capability *capability =
         yvex_quant_numeric_capability_by_name(yvex_quant_qtype_name(qtype));
-    return capability && capability->dedicated_cpu_compute_available;
+    return qtype == YVEX_QUANT_QTYPE_SOURCE ||
+           (capability && capability->dedicated_cpu_compute_available);
 }
 
 /* Purpose: resolve one exact canonical tensor-role spelling. */
@@ -226,12 +317,60 @@ static yvex_tensor_role role_from_name(const char *name) {
 
     if (!name)
         return YVEX_TENSOR_ROLE_UNKNOWN;
-    for (i = 0; i <= (unsigned int)YVEX_TENSOR_ROLE_MOE_EXPERT_DOWN; ++i) {
+    for (i = 0; i < (unsigned int)YVEX_TENSOR_ROLE_COUNT; ++i) {
         yvex_tensor_role role = (yvex_tensor_role)i;
         if (strcmp(name, yvex_tensor_role_name(role)) == 0)
             return role;
     }
     return YVEX_TENSOR_ROLE_UNKNOWN;
+}
+
+/* Purpose: hash every policy-v2 field without native structure representation.
+ * Inputs: complete owned policy fields and ordered rules.
+ * Effects: writes the canonical policy identity into its summary.
+ * Failure: absent required fields or hash failure return false.
+ * Boundary: excludes pointers, paths, padding, allocation order, and process state. */
+static int policy_identity_compute(yvex_quant_policy *policy) {
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+
+    if (!policy || !policy->name || !policy->architecture)
+        return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.quant_policy.identity.v2") ||
+        !yvex_sha256_update_u64(&hash, policy->schema_version) ||
+        !yvex_sha256_update_text(&hash, policy->name) ||
+        !yvex_sha256_update_text(&hash, policy->architecture) ||
+        !yvex_sha256_update_text(&hash, policy->preset_name ? policy->preset_name : "custom") ||
+        !yvex_sha256_update_u64(&hash, policy->rule_count))
+        return 0;
+    for (index = 0u; index < policy->rule_count; ++index) {
+        const yvex_quant_policy_rule *rule = &policy->rules[index];
+        if (!yvex_sha256_update_u64(&hash, rule->schema_version) ||
+            !yvex_sha256_update_u64(&hash, rule->match_mask) ||
+            !yvex_sha256_update_u64(&hash, rule->role) ||
+            !yvex_sha256_update_u64(&hash, rule->collection) ||
+            !yvex_sha256_update_u64(&hash, rule->scope) ||
+            !yvex_sha256_update_text(&hash, rule->tensor_name ? rule->tensor_name : "") ||
+            !yvex_sha256_update_text(&hash, rule->tensor_pattern ? rule->tensor_pattern : "") ||
+            !yvex_sha256_update_u64(&hash, rule->layer_first) ||
+            !yvex_sha256_update_u64(&hash, rule->layer_last) ||
+            !yvex_sha256_update_u64(&hash, rule->expert_group) ||
+            !yvex_sha256_update_u64(&hash, rule->operation) ||
+            !yvex_sha256_update_u64(&hash, rule->physical_class) ||
+            !yvex_sha256_update_u64(&hash, rule->qtype) ||
+            !yvex_sha256_update_u64(&hash, (unsigned int)rule->requires_imatrix) ||
+            !yvex_sha256_update_u64(&hash, (unsigned int)rule->requires_cpu_compute) ||
+            !yvex_sha256_update_u64(&hash, (unsigned int)rule->requires_cuda_compute) ||
+            !yvex_sha256_update_u64(&hash, rule->priority) ||
+            !yvex_sha256_update_text(&hash, rule->label ? rule->label : ""))
+            return 0;
+    }
+    if (!yvex_sha256_final(&hash, digest))
+        return 0;
+    yvex_sha256_hex(digest, policy->summary.policy_identity);
+    return 1;
 }
 
 /* Purpose: recompute policy status and counters from the complete owned rule set.
@@ -243,8 +382,10 @@ static void qp_refresh_summary(yvex_quant_policy *policy) {
     unsigned long long i;
 
     memset(&policy->summary, 0, sizeof(policy->summary));
+    policy->summary.schema_version = policy->schema_version;
     policy->summary.name = policy->name;
     policy->summary.architecture = policy->architecture;
+    policy->summary.preset_name = policy->preset_name;
     policy->summary.rule_count = policy->rule_count;
     policy->summary.status =
         policy->rule_count > 0 ? YVEX_QUANT_POLICY_STATUS_VALID : YVEX_QUANT_POLICY_STATUS_INVALID;
@@ -262,13 +403,14 @@ static void qp_refresh_summary(yvex_quant_policy *policy) {
              rule->role == YVEX_TENSOR_ROLE_UNKNOWN)) {
             policy->summary.issue_count++;
             policy->summary.status = YVEX_QUANT_POLICY_STATUS_INVALID;
-        } else if (!rule->storage_supported || !rule->compute_supported || rule->requires_imatrix) {
+        } else if (!rule->storage_supported || !rule->compute_supported) {
             policy->summary.issue_count++;
             if (policy->summary.status == YVEX_QUANT_POLICY_STATUS_VALID) {
                 policy->summary.status = YVEX_QUANT_POLICY_STATUS_PARTIAL;
             }
         }
     }
+    (void)policy_identity_compute(policy);
 }
 
 /* Purpose: append one owned physical-encoding rule to a mutable policy.
@@ -279,38 +421,87 @@ static void qp_refresh_summary(yvex_quant_policy *policy) {
 static int policy_add_rule(yvex_quant_policy *policy, yvex_quant_selector_kind selector_kind,
                            const char *selector, yvex_tensor_role role, yvex_quant_qtype qtype,
                            int requires_imatrix, yvex_error *err) {
-    yvex_quant_policy_rule *next;
-    yvex_quant_policy_rule *rule;
+    yvex_quant_policy_rule rule;
 
     if (!policy || !selector) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "quant_policy_add",
                        "policy and selector are required");
         return YVEX_ERR_INVALID_ARG;
     }
+    memset(&rule, 0, sizeof(rule));
+    rule.schema_version = policy->schema_version;
+    rule.selector_kind = selector_kind;
+    rule.selector = selector;
+    rule.role = role;
+    rule.qtype = qtype;
+    rule.requires_imatrix = requires_imatrix ? 1 : 0;
+    rule.requires_cpu_compute = 1;
+    rule.requires_cuda_compute = 0;
+    rule.priority = 0u;
+    if (selector_kind == YVEX_QUANT_SELECTOR_ROLE)
+        rule.match_mask = YVEX_QUANT_MATCH_ROLE;
+    else if (selector_kind == YVEX_QUANT_SELECTOR_TENSOR_NAME) {
+        rule.match_mask = YVEX_QUANT_MATCH_TENSOR_NAME;
+        rule.tensor_name = selector;
+    } else if (selector_kind == YVEX_QUANT_SELECTOR_TENSOR_PATTERN) {
+        rule.match_mask = YVEX_QUANT_MATCH_TENSOR_PATTERN;
+        rule.tensor_pattern = selector;
+    } else if (selector_kind == YVEX_QUANT_SELECTOR_DEFAULT)
+        rule.match_mask = YVEX_QUANT_MATCH_DEFAULT;
+    return policy_add_rule_v2(policy, &rule, err);
+}
+
+/* Purpose: append one fully typed conjunctive rule with independent owned strings.
+ * Inputs: mutable policy owner, complete source rule, and error sink.
+ * Effects: grows bounded rule storage and copies every executable string.
+ * Failure: malformed rule, overflow, or allocation failure leaves prior rules valid.
+ * Boundary: append does not seal identity or resolve any tensor. */
+static int policy_add_rule_v2(yvex_quant_policy *policy,
+                              const yvex_quant_policy_rule *source,
+                              yvex_error *err) {
+    yvex_quant_policy_rule *next;
+    yvex_quant_policy_rule *rule;
+    unsigned long long cap;
+
+    if (!policy || !source || !source->match_mask) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "quant_policy_add_v2",
+                       "policy and a nonempty typed matcher are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
     if (policy->rule_count == policy->rule_cap) {
-        unsigned long long cap = policy->rule_cap == 0 ? 8u : policy->rule_cap * 2u;
+        cap = policy->rule_cap == 0 ? 8u : policy->rule_cap * 2u;
+        if (cap < policy->rule_cap || cap > SIZE_MAX / sizeof(policy->rules[0])) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "quant_policy_add_v2", "rule capacity overflowed");
+            return YVEX_ERR_BOUNDS;
+        }
         next = (yvex_quant_policy_rule *)realloc(policy->rules,
                                                  (size_t)cap * sizeof(policy->rules[0]));
         if (!next) {
-            yvex_error_set(err, YVEX_ERR_NOMEM, "quant_policy_add", "rule allocation failed");
+            yvex_error_set(err, YVEX_ERR_NOMEM, "quant_policy_add_v2", "rule allocation failed");
             return YVEX_ERR_NOMEM;
         }
         policy->rules = next;
         policy->rule_cap = cap;
     }
     rule = &policy->rules[policy->rule_count];
-    memset(rule, 0, sizeof(*rule));
-    rule->selector_kind = selector_kind;
-    rule->selector = yvex_core_strdup(selector);
-    if (!rule->selector) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "quant_policy_add", "selector allocation failed");
+    *rule = *source;
+    rule->schema_version = policy->schema_version;
+    rule->selector = source->selector ? yvex_core_strdup(source->selector) : NULL;
+    rule->tensor_name = source->tensor_name ? yvex_core_strdup(source->tensor_name) : NULL;
+    rule->tensor_pattern = source->tensor_pattern ? yvex_core_strdup(source->tensor_pattern) : NULL;
+    rule->label = source->label ? yvex_core_strdup(source->label) : NULL;
+    if ((source->selector && !rule->selector) || (source->tensor_name && !rule->tensor_name) ||
+        (source->tensor_pattern && !rule->tensor_pattern) || (source->label && !rule->label)) {
+        free((char *)rule->selector);
+        free((char *)rule->tensor_name);
+        free((char *)rule->tensor_pattern);
+        free((char *)rule->label);
+        memset(rule, 0, sizeof(*rule));
+        yvex_error_set(err, YVEX_ERR_NOMEM, "quant_policy_add_v2", "rule string allocation failed");
         return YVEX_ERR_NOMEM;
     }
-    rule->role = role;
-    rule->qtype = qtype;
-    rule->requires_imatrix = requires_imatrix ? 1 : 0;
-    rule->storage_supported = qtype_storage_supported(qtype);
-    rule->compute_supported = qtype_compute_supported(qtype);
+    rule->storage_supported = qtype_storage_supported(rule->qtype);
+    rule->compute_supported = qtype_compute_supported(rule->qtype);
     policy->rule_count++;
     qp_refresh_summary(policy);
     return YVEX_OK;
@@ -341,10 +532,14 @@ void yvex_quant_policy_close(yvex_quant_policy *policy) {
         return;
     free(policy->name);
     free(policy->architecture);
+    free(policy->preset_name);
     free(policy->source_kind);
     free(policy->template_path);
     for (i = 0; i < policy->rule_count; ++i) {
         free((char *)policy->rules[i].selector);
+        free((char *)policy->rules[i].tensor_name);
+        free((char *)policy->rules[i].tensor_pattern);
+        free((char *)policy->rules[i].label);
     }
     free(policy->rules);
     free(policy);
@@ -374,6 +569,176 @@ int yvex_quant_policy_get_summary(const yvex_quant_policy *policy, yvex_quant_po
     }
     *out = policy->summary;
     return YVEX_OK;
+}
+
+/* Purpose: rederive and compare the complete policy identity after admission.
+ * Inputs: sealed immutable policy and error sink.
+ * Effects: hashes a value-only shallow copy without modifying the policy.
+ * Failure: absent, malformed, or stale identity returns typed refusal.
+ * Boundary: validation excludes native object bytes and external files. */
+int yvex_quant_policy_identity_validate(const yvex_quant_policy *policy, yvex_error *err) {
+    yvex_quant_policy copy;
+    char expected[YVEX_QUANT_POLICY_IDENTITY_CAP];
+
+    if (!policy || !yvex_sha256_hex_is_valid(policy->summary.policy_identity)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "quant_policy_identity",
+                       "sealed policy identity is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    copy = *policy;
+    memcpy(expected, policy->summary.policy_identity, sizeof(expected));
+    memset(copy.summary.policy_identity, 0, sizeof(copy.summary.policy_identity));
+    if (!policy_identity_compute(&copy) || strcmp(expected, copy.summary.policy_identity) != 0) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "quant_policy_identity",
+                       "policy identity does not match canonical fields");
+        return YVEX_ERR_FORMAT;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Purpose: expose the closed built-in policy catalog cardinality.
+ * Inputs: none.
+ * Effects: returns one stable scalar.
+ * Failure: closed static catalog access is infallible.
+ * Boundary: count does not construct or select a preset. */
+unsigned long long yvex_quant_policy_preset_count(void) {
+    return sizeof(preset_names) / sizeof(preset_names[0]);
+}
+
+/* Purpose: borrow one stable preset spelling from the closed catalog.
+ * Inputs: catalog ordinal.
+ * Effects: returns borrowed process-lifetime text.
+ * Failure: out-of-range ordinal returns null.
+ * Boundary: lookup does not allocate or open a policy. */
+const char *yvex_quant_policy_preset_name(unsigned long long index) {
+    return index < yvex_quant_policy_preset_count() ? preset_names[index] : NULL;
+}
+
+/* Purpose: append one preset rule expressed through the same typed policy-v2 representation.
+ * Inputs: preset matcher/action facts, priority, label, and error sink.
+ * Effects: appends one independently owned policy-v2 rule.
+ * Failure: allocation or validation failure preserves prior policy state.
+ * Boundary: built-ins receive no privileged resolution behavior. */
+static int policy_preset_add(yvex_quant_policy *policy, unsigned long long match_mask,
+                             yvex_tensor_role role, yvex_quant_policy_operation operation,
+                             yvex_tensor_scope scope,
+                             yvex_quant_policy_physical_class physical_class,
+                             yvex_quant_qtype qtype, int imatrix, unsigned int priority,
+                             const char *label, yvex_error *err) {
+    yvex_quant_policy_rule rule;
+
+    memset(&rule, 0, sizeof(rule));
+    rule.schema_version = YVEX_QUANT_POLICY_SCHEMA_VERSION;
+    rule.match_mask = match_mask;
+    rule.role = role;
+    rule.operation = operation;
+    rule.scope = scope;
+    rule.physical_class = physical_class;
+    rule.qtype = qtype;
+    rule.requires_imatrix = imatrix;
+    rule.requires_cpu_compute = 1;
+    rule.requires_cuda_compute = 1;
+    rule.priority = priority;
+    rule.label = label;
+    return policy_add_rule_v2(policy, &rule, err);
+}
+
+/* Purpose: construct one immutable built-in profile through normal policy-v2 rules.
+ * Inputs: output slot, exact preset name, and typed error sink.
+ * Effects: allocates one independently owned sealed policy.
+ * Failure: unknown preset or allocation failure publishes no partial policy.
+ * Boundary: preset construction chooses representation policy but reads no model payload. */
+int yvex_quant_policy_preset_open(yvex_quant_policy **out, const char *name, yvex_error *err) {
+    yvex_quant_policy *policy;
+    int rc = YVEX_OK;
+
+    if (!out || !name) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "quant_policy_preset",
+                       "out and preset name are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    *out = NULL;
+    if (policy_table_index(preset_names, sizeof(preset_names) / sizeof(preset_names[0]), name, -1) <
+        0) {
+        yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "quant_policy_preset",
+                        "unknown quantization preset: %s", name);
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    policy = (yvex_quant_policy *)calloc(1, sizeof(*policy));
+    if (!policy) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "quant_policy_preset", "policy allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    policy->schema_version = YVEX_QUANT_POLICY_SCHEMA_VERSION;
+    policy->name = yvex_core_strdup(name);
+    policy->architecture = yvex_core_strdup("deepseek4-v4-flash");
+    policy->preset_name = yvex_core_strdup(name);
+    policy->source_kind = yvex_core_strdup("built-in-preset");
+    if (!policy->name || !policy->architecture || !policy->preset_name || !policy->source_kind) {
+        rc = YVEX_ERR_NOMEM;
+        yvex_error_set(err, rc, "quant_policy_preset", "preset string allocation failed");
+        goto done;
+    }
+    if (strcmp(name, "source-faithful") == 0) {
+        rc = policy_preset_add(policy, YVEX_QUANT_MATCH_PHYSICAL_CLASS,
+                               YVEX_TENSOR_ROLE_UNKNOWN, YVEX_QUANT_POLICY_OPERATION_ANY,
+                               YVEX_TENSOR_SCOPE_GLOBAL,
+                               YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE,
+                               YVEX_QUANT_QTYPE_SOURCE, 0, 10u,
+                               "preserve the admitted source physical representation", err);
+    } else {
+        rc = policy_preset_add(policy, YVEX_QUANT_MATCH_PHYSICAL_CLASS,
+                               YVEX_TENSOR_ROLE_UNKNOWN, YVEX_QUANT_POLICY_OPERATION_ANY,
+                               YVEX_TENSOR_SCOPE_GLOBAL,
+                               YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE,
+                               YVEX_QUANT_QTYPE_Q8_0, 0, 10u,
+                               "default approximable terminal representation", err);
+        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_RELEASE_PROFILE_NAME) == 0)
+            rc = policy_preset_add(policy, YVEX_QUANT_MATCH_OPERATION,
+                                   YVEX_TENSOR_ROLE_UNKNOWN,
+                                   YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE,
+                                   YVEX_TENSOR_SCOPE_GLOBAL,
+                                   YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_Q2_K, 0, 100u,
+                                   "verified release routed-expert aggregate", err);
+        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DS4_PROFILE_NAME) == 0)
+            rc = policy_preset_add(policy,
+                                   YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE |
+                                       YVEX_QUANT_MATCH_OPERATION,
+                                   YVEX_TENSOR_ROLE_MOE_EXPERT_GATE,
+                                   YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE,
+                                   YVEX_TENSOR_SCOPE_MAIN_LAYER,
+                                   YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_IQ2_XXS, 1,
+                                   200u, "imatrix-weighted routed expert gate", err);
+        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DS4_PROFILE_NAME) == 0)
+            rc = policy_preset_add(policy,
+                                   YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE |
+                                       YVEX_QUANT_MATCH_OPERATION,
+                                   YVEX_TENSOR_ROLE_MOE_EXPERT_UP,
+                                   YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE,
+                                   YVEX_TENSOR_SCOPE_MAIN_LAYER,
+                                   YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_IQ2_XXS, 1,
+                                   200u, "imatrix-weighted routed expert up", err);
+        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DS4_PROFILE_NAME) == 0)
+            rc = policy_preset_add(policy,
+                                   YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE |
+                                       YVEX_QUANT_MATCH_OPERATION,
+                                   YVEX_TENSOR_ROLE_MOE_EXPERT_DOWN,
+                                   YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE,
+                                   YVEX_TENSOR_SCOPE_MAIN_LAYER,
+                                   YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_Q2_K, 1, 200u,
+                                   "imatrix-covered routed expert down", err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_quant_policy_validate(policy, NULL, err);
+    if (rc == YVEX_OK) {
+        *out = policy;
+        policy = NULL;
+    }
+
+done:
+    yvex_quant_policy_close(policy);
+    return rc;
 }
 
 /* Purpose: return the number of immutable rules in one policy.
@@ -451,6 +816,7 @@ int yvex_quant_policy_create_from_template(yvex_quant_policy **out, const char *
         yvex_error_set(err, YVEX_ERR_NOMEM, "quant_policy_derive", "policy allocation failed");
         return YVEX_ERR_NOMEM;
     }
+    policy->schema_version = 1u;
     policy->name = yvex_core_strdup("template-derived-policy");
     policy->architecture = yvex_core_strdup(architecture);
     policy->source_kind = yvex_core_strdup("template-derived");
@@ -541,6 +907,162 @@ static int qj_parse_source(yvex_gguf_json *j, yvex_quant_policy *policy) {
     return yvex_gguf_json_fail(j, "unterminated source object");
 }
 
+/* Purpose: parse one bounded unsigned policy integer without floating coercion. */
+static int policy_json_u64(yvex_gguf_json *json, unsigned long long *out) {
+    return yvex_json_u64(&json->cursor, out) ? YVEX_OK
+                                             : yvex_gguf_json_fail(json, "expected unsigned integer");
+}
+
+/* Purpose: parse the complete conjunctive matcher of one policy-v2 rule.
+ * Inputs: bounded JSON cursor and zeroed mutable rule.
+ * Effects: owns parsed matcher strings and writes typed matcher fields.
+ * Failure: unknown executable fields or malformed ranges refuse.
+ * Boundary: parsing does not resolve terminals or infer defaults. */
+static int policy_parse_match(yvex_gguf_json *json, yvex_quant_policy_rule *rule) {
+    int rc = yvex_gguf_json_expect(json, '{');
+    int have_first = 0;
+    int have_last = 0;
+    int complete = 0;
+
+    while (rc == YVEX_OK && json->cursor.cursor < json->cursor.end) {
+        char *key = NULL;
+        int member_complete = 0;
+        rc = yvex_gguf_json_member(json, &key, &member_complete);
+        if (rc != YVEX_OK || member_complete) {
+            complete = member_complete;
+            free(key);
+            break;
+        }
+        if (strcmp(key, "role") == 0) {
+            char *value = yvex_gguf_json_string(json);
+            rule->role = role_from_name(value);
+            rule->match_mask |= YVEX_QUANT_MATCH_ROLE;
+            if (!value || rule->role == YVEX_TENSOR_ROLE_UNKNOWN)
+                rc = yvex_gguf_json_fail(json, "unknown role matcher");
+            free(value);
+        } else if (strcmp(key, "collection") == 0) {
+            char *value = yvex_gguf_json_string(json);
+            rule->collection = collection_from_name(value);
+            rule->match_mask |= YVEX_QUANT_MATCH_COLLECTION;
+            if (!value || rule->collection >= YVEX_TENSOR_COLLECTION_COUNT)
+                rc = yvex_gguf_json_fail(json, "unknown collection matcher");
+            free(value);
+        } else if (strcmp(key, "scope") == 0) {
+            char *value = yvex_gguf_json_string(json);
+            rule->scope = scope_from_name(value);
+            rule->match_mask |= YVEX_QUANT_MATCH_SCOPE;
+            if (!value || rule->scope > YVEX_TENSOR_SCOPE_MTP)
+                rc = yvex_gguf_json_fail(json, "unknown scope matcher");
+            free(value);
+        } else if (strcmp(key, "tensor_name") == 0) {
+            free((char *)rule->tensor_name);
+            rule->tensor_name = yvex_gguf_json_string(json);
+            rule->match_mask |= YVEX_QUANT_MATCH_TENSOR_NAME;
+            if (!rule->tensor_name) rc = yvex_error_code(json->err);
+        } else if (strcmp(key, "tensor_pattern") == 0) {
+            free((char *)rule->tensor_pattern);
+            rule->tensor_pattern = yvex_gguf_json_string(json);
+            rule->match_mask |= YVEX_QUANT_MATCH_TENSOR_PATTERN;
+            if (!rule->tensor_pattern) rc = yvex_error_code(json->err);
+        } else if (strcmp(key, "layer_first") == 0) {
+            rc = policy_json_u64(json, &rule->layer_first);
+            rule->match_mask |= YVEX_QUANT_MATCH_LAYER_RANGE;
+            have_first = rc == YVEX_OK;
+        } else if (strcmp(key, "layer_last") == 0) {
+            rc = policy_json_u64(json, &rule->layer_last);
+            rule->match_mask |= YVEX_QUANT_MATCH_LAYER_RANGE;
+            have_last = rc == YVEX_OK;
+        } else if (strcmp(key, "expert_group") == 0) {
+            rc = policy_json_u64(json, &rule->expert_group);
+            rule->match_mask |= YVEX_QUANT_MATCH_EXPERT_GROUP;
+        } else if (strcmp(key, "operation") == 0) {
+            char *value = yvex_gguf_json_string(json);
+            rule->operation = operation_from_name(value);
+            rule->match_mask |= YVEX_QUANT_MATCH_OPERATION;
+            if (!value || (rule->operation == YVEX_QUANT_POLICY_OPERATION_ANY &&
+                           strcmp(value, "any") != 0))
+                rc = yvex_gguf_json_fail(json, "unknown operation matcher");
+            free(value);
+        } else if (strcmp(key, "physical_class") == 0) {
+            char *value = yvex_gguf_json_string(json);
+            rule->physical_class = physical_class_from_name(value);
+            rule->match_mask |= YVEX_QUANT_MATCH_PHYSICAL_CLASS;
+            if (!value || (rule->physical_class == YVEX_QUANT_POLICY_PHYSICAL_ANY &&
+                           strcmp(value, "any") != 0))
+                rc = yvex_gguf_json_fail(json, "unknown physical class matcher");
+            free(value);
+        } else if (strcmp(key, "default") == 0) {
+            int value = 0;
+            rc = policy_json_bool(json, &value);
+            if (rc == YVEX_OK && !value)
+                rc = yvex_gguf_json_fail(json, "default matcher must be true");
+            rule->match_mask |= YVEX_QUANT_MATCH_DEFAULT;
+        } else {
+            rc = yvex_gguf_json_fail(json, "unknown executable policy matcher");
+        }
+        free(key);
+        if (rc == YVEX_OK) yvex_gguf_json_optional_comma(json);
+    }
+    if (rc == YVEX_OK && !complete)
+        rc = yvex_gguf_json_fail(json, "unterminated policy matcher");
+    if (rc == YVEX_OK && (have_first != have_last ||
+                          (have_first && rule->layer_first > rule->layer_last)))
+        rc = yvex_gguf_json_fail(json, "layer matcher requires an ordered closed range");
+    if (rc == YVEX_OK && !rule->match_mask)
+        rc = yvex_gguf_json_fail(json, "empty policy matcher is forbidden");
+    return rc;
+}
+
+/* Purpose: parse the complete physical action of one policy-v2 rule.
+ * Inputs: bounded JSON cursor, mutable rule, and qtype-presence output.
+ * Effects: writes typed qtype, calibration, and backend requirements.
+ * Failure: unknown executable action or invalid value refuses.
+ * Boundary: parsing records requested capability without claiming support. */
+static int policy_parse_action(yvex_gguf_json *json, yvex_quant_policy_rule *rule,
+                               int *have_qtype) {
+    int rc = yvex_gguf_json_expect(json, '{');
+    int complete = 0;
+
+    while (rc == YVEX_OK && json->cursor.cursor < json->cursor.end) {
+        char *key = NULL;
+        int member_complete = 0;
+        rc = yvex_gguf_json_member(json, &key, &member_complete);
+        if (rc != YVEX_OK || member_complete) {
+            complete = member_complete;
+            free(key);
+            break;
+        }
+        if (strcmp(key, "qtype") == 0) {
+            char *value = yvex_gguf_json_string(json);
+            rule->qtype = qtype_from_name(value);
+            *have_qtype = value && rule->qtype != YVEX_QUANT_QTYPE_UNKNOWN;
+            if (!*have_qtype) rc = yvex_gguf_json_fail(json, "unknown action qtype");
+            free(value);
+        } else if (strcmp(key, "calibration") == 0) {
+            char *value = yvex_gguf_json_string(json);
+            if (!value || (strcmp(value, "none") != 0 && strcmp(value, "optional") != 0 &&
+                           strcmp(value, "required") != 0))
+                rc = yvex_gguf_json_fail(json, "unknown calibration action");
+            else
+                rule->requires_imatrix = strcmp(value, "required") == 0;
+            free(value);
+        } else if (strcmp(key, "requires_imatrix") == 0) {
+            rc = policy_json_bool(json, &rule->requires_imatrix);
+        } else if (strcmp(key, "requires_cpu_compute") == 0) {
+            rc = policy_json_bool(json, &rule->requires_cpu_compute);
+        } else if (strcmp(key, "requires_cuda_compute") == 0) {
+            rc = policy_json_bool(json, &rule->requires_cuda_compute);
+        } else {
+            rc = yvex_gguf_json_fail(json, "unknown executable policy action");
+        }
+        free(key);
+        if (rc == YVEX_OK) yvex_gguf_json_optional_comma(json);
+    }
+    if (rc == YVEX_OK && !complete)
+        rc = yvex_gguf_json_fail(json, "unterminated policy action");
+    return rc;
+}
+
 /* Purpose: parse and append one complete typed policy rule.
  * Inputs: bounded cursor and policy under construction.
  * Effects: allocates temporary tokens and one owned rule on success.
@@ -548,15 +1070,24 @@ static int qj_parse_source(yvex_gguf_json *j, yvex_quant_policy *policy) {
  * Boundary: parsing a qtype choice does not claim its numeric implementation. */
 static int qj_parse_rule(yvex_gguf_json *j, void *context) {
     yvex_quant_policy *policy = context;
+    yvex_quant_policy_rule rule;
     char *selector_kind = NULL;
     char *selector = NULL;
     char *qtype = NULL;
+    char *label = NULL;
     int requires_imatrix = 0;
+    int have_match = 0;
+    int have_action = 0;
+    int have_qtype = 0;
     yvex_quant_selector_kind kind;
     yvex_quant_qtype qt;
     yvex_tensor_role role = YVEX_TENSOR_ROLE_UNKNOWN;
     int rc = yvex_gguf_json_expect(j, '{');
 
+    memset(&rule, 0, sizeof(rule));
+    rule.schema_version = policy->schema_version;
+    rule.requires_cpu_compute = 1;
+    rule.requires_cuda_compute = 1;
     if (rc != YVEX_OK)
         return rc;
     while (j->cursor.cursor < j->cursor.end) {
@@ -583,28 +1114,56 @@ static int qj_parse_rule(yvex_gguf_json *j, void *context) {
                 rc = yvex_error_code(j->err);
         } else if (strcmp(key, "requires_imatrix") == 0) {
             rc = policy_json_bool(j, &requires_imatrix);
+        } else if (strcmp(key, "match") == 0) {
+            rc = policy_parse_match(j, &rule);
+            have_match = rc == YVEX_OK;
+        } else if (strcmp(key, "action") == 0) {
+            rc = policy_parse_action(j, &rule, &have_qtype);
+            have_action = rc == YVEX_OK;
+        } else if (strcmp(key, "priority") == 0) {
+            unsigned long long priority = 0u;
+            rc = policy_json_u64(j, &priority);
+            if (rc == YVEX_OK && priority > UINT_MAX)
+                rc = yvex_gguf_json_fail(j, "policy priority exceeds U32");
+            rule.priority = (unsigned int)priority;
+        } else if (strcmp(key, "label") == 0) {
+            free(label);
+            label = yvex_gguf_json_string(j);
+            if (!label) rc = yvex_error_code(j->err);
         } else {
-            rc = yvex_gguf_json_skip(j);
+            rc = yvex_gguf_json_fail(j, "unknown executable policy rule field");
         }
         free(key);
         if (rc != YVEX_OK)
             goto done;
         yvex_gguf_json_optional_comma(j);
     }
-    if (!selector_kind || !selector || !qtype) {
-        rc = yvex_gguf_json_fail(j, "policy rule missing selector_kind, selector, or qtype");
-        goto done;
+    if (have_match || have_action) {
+        if (!have_match || !have_action || !have_qtype) {
+            rc = yvex_gguf_json_fail(j, "policy-v2 rule requires match and action objects");
+            goto done;
+        }
+        rule.label = label;
+        rc = policy_add_rule_v2(policy, &rule, j->err);
+    } else {
+        if (!selector_kind || !selector || !qtype) {
+            rc = yvex_gguf_json_fail(j, "policy rule missing selector_kind, selector, or qtype");
+            goto done;
+        }
+        kind = selector_from_name(selector_kind);
+        qt = qtype_from_name(qtype);
+        if (kind == YVEX_QUANT_SELECTOR_ROLE)
+            role = role_from_name(selector);
+        rc = policy_add_rule(policy, kind, selector, role, qt, requires_imatrix, j->err);
     }
-    kind = selector_from_name(selector_kind);
-    qt = qtype_from_name(qtype);
-    if (kind == YVEX_QUANT_SELECTOR_ROLE)
-        role = role_from_name(selector);
-    rc = policy_add_rule(policy, kind, selector, role, qt, requires_imatrix, j->err);
 
 done:
     free(selector_kind);
     free(selector);
     free(qtype);
+    free(label);
+    free((char *)rule.tensor_name);
+    free((char *)rule.tensor_pattern);
     return rc;
 }
 
@@ -632,6 +1191,7 @@ static int policy_parse_json(yvex_quant_policy **out, const char *path, yvex_err
         yvex_error_set(err, YVEX_ERR_NOMEM, "quant_policy_json", "policy allocation failed");
         return YVEX_ERR_NOMEM;
     }
+    policy->schema_version = 1u;
     rc = yvex_gguf_json_expect(&j, '{');
     if (rc != YVEX_OK)
         goto fail;
@@ -649,7 +1209,11 @@ static int policy_parse_json(yvex_quant_policy **out, const char *path, yvex_err
                 rc = yvex_error_code(err);
                 goto fail;
             }
-            if (strcmp(schema, "yvex.quant_policy.v1") != 0) {
+            if (strcmp(schema, "yvex.quant_policy.v1") == 0)
+                policy->schema_version = 1u;
+            else if (strcmp(schema, "yvex.quant_policy.v2") == 0)
+                policy->schema_version = YVEX_QUANT_POLICY_SCHEMA_VERSION;
+            else {
                 free(schema);
                 free(key);
                 rc = yvex_gguf_json_fail(&j, "unsupported quant policy schema");
@@ -668,11 +1232,18 @@ static int policy_parse_json(yvex_quant_policy **out, const char *path, yvex_err
                 rc = yvex_error_code(err);
         } else if (strcmp(key, "source") == 0) {
             rc = qj_parse_source(&j, policy);
+        } else if (strcmp(key, "preset") == 0) {
+            free(policy->preset_name);
+            policy->preset_name = yvex_gguf_json_string(&j);
+            if (!policy->preset_name)
+                rc = yvex_error_code(err);
         } else if (strcmp(key, "rules") == 0) {
             rc = yvex_gguf_json_array(&j, qj_parse_rule, policy,
                                       "malformed rules array", "unterminated rules array");
-        } else {
+        } else if (policy->schema_version == 1u) {
             rc = yvex_gguf_json_skip(&j);
+        } else {
+            rc = yvex_gguf_json_fail(&j, "unknown policy-v2 root field");
         }
         free(key);
         if (rc != YVEX_OK)
@@ -720,12 +1291,17 @@ static int policy_write_json_file(const char *out_path, const yvex_quant_policy 
         return YVEX_ERR_IO;
     }
     fprintf(fp, "{\n");
-    fprintf(fp, "  \"schema\": \"yvex.quant_policy.v1\",\n");
+    fprintf(fp, "  \"schema\": \"yvex.quant_policy.v%u\",\n", policy->schema_version);
     fprintf(fp, "  \"name\": ");
     yvex_file_json_write_string(fp, policy->name);
     fprintf(fp, ",\n  \"architecture\": ");
     yvex_file_json_write_string(fp, policy->architecture);
     fprintf(fp, ",\n");
+    if (policy->preset_name) {
+        fprintf(fp, "  \"preset\": ");
+        yvex_file_json_write_string(fp, policy->preset_name);
+        fprintf(fp, ",\n");
+    }
     if (policy->source_kind || policy->template_path) {
         fprintf(fp, "  \"source\": {\n");
         fprintf(fp, "    \"kind\": ");
@@ -738,14 +1314,73 @@ static int policy_write_json_file(const char *out_path, const yvex_quant_policy 
     fprintf(fp, "  \"rules\": [\n");
     for (i = 0; i < policy->rule_count; ++i) {
         const yvex_quant_policy_rule *rule = &policy->rules[i];
-        fprintf(fp, "    {\"selector_kind\": ");
-        yvex_file_json_write_string(fp, yvex_quant_selector_kind_name(rule->selector_kind));
-        fprintf(fp, ", \"selector\": ");
-        yvex_file_json_write_string(fp, rule->selector);
-        fprintf(fp, ", \"qtype\": ");
-        yvex_file_json_write_string(fp, yvex_quant_qtype_name(rule->qtype));
-        fprintf(fp, ", \"requires_imatrix\": %s}%s\n", rule->requires_imatrix ? "true" : "false",
-                i + 1u == policy->rule_count ? "" : ",");
+        if (policy->schema_version == 1u) {
+            fprintf(fp, "    {\"selector_kind\": ");
+            yvex_file_json_write_string(fp, yvex_quant_selector_kind_name(rule->selector_kind));
+            fprintf(fp, ", \"selector\": ");
+            yvex_file_json_write_string(fp, rule->selector);
+            fprintf(fp, ", \"qtype\": ");
+            yvex_file_json_write_string(fp, yvex_quant_qtype_name(rule->qtype));
+            fprintf(fp, ", \"requires_imatrix\": %s}",
+                    rule->requires_imatrix ? "true" : "false");
+        } else {
+            fprintf(fp, "    {\"match\": {");
+            {
+                int comma = 0;
+#define WRITE_MATCH_TEXT(bit, key, value)                                                         \
+    do {                                                                                           \
+        if (rule->match_mask & (bit)) {                                                            \
+            fprintf(fp, "%s\"%s\": ", comma ? ", " : "", (key));                            \
+            yvex_file_json_write_string(fp, (value));                                              \
+            comma = 1;                                                                             \
+        }                                                                                          \
+    } while (0)
+                if (rule->match_mask & YVEX_QUANT_MATCH_ROLE)
+                    WRITE_MATCH_TEXT(YVEX_QUANT_MATCH_ROLE, "role",
+                                     yvex_tensor_role_name(rule->role));
+                if (rule->match_mask & YVEX_QUANT_MATCH_COLLECTION)
+                    WRITE_MATCH_TEXT(YVEX_QUANT_MATCH_COLLECTION, "collection",
+                                     collection_names[rule->collection]);
+                if (rule->match_mask & YVEX_QUANT_MATCH_SCOPE)
+                    WRITE_MATCH_TEXT(YVEX_QUANT_MATCH_SCOPE, "scope", scope_names[rule->scope]);
+                WRITE_MATCH_TEXT(YVEX_QUANT_MATCH_TENSOR_NAME, "tensor_name", rule->tensor_name);
+                WRITE_MATCH_TEXT(YVEX_QUANT_MATCH_TENSOR_PATTERN, "tensor_pattern",
+                                 rule->tensor_pattern);
+                if (rule->match_mask & YVEX_QUANT_MATCH_LAYER_RANGE) {
+                    fprintf(fp, "%s\"layer_first\": %llu, \"layer_last\": %llu",
+                            comma ? ", " : "", rule->layer_first, rule->layer_last);
+                    comma = 1;
+                }
+                if (rule->match_mask & YVEX_QUANT_MATCH_EXPERT_GROUP) {
+                    fprintf(fp, "%s\"expert_group\": %llu", comma ? ", " : "",
+                            rule->expert_group);
+                    comma = 1;
+                }
+                if (rule->match_mask & YVEX_QUANT_MATCH_OPERATION)
+                    WRITE_MATCH_TEXT(YVEX_QUANT_MATCH_OPERATION, "operation",
+                                     yvex_quant_policy_operation_name(rule->operation));
+                if (rule->match_mask & YVEX_QUANT_MATCH_PHYSICAL_CLASS)
+                    WRITE_MATCH_TEXT(YVEX_QUANT_MATCH_PHYSICAL_CLASS, "physical_class",
+                                     yvex_quant_policy_physical_class_name(rule->physical_class));
+                if (rule->match_mask & YVEX_QUANT_MATCH_DEFAULT)
+                    fprintf(fp, "%s\"default\": true", comma ? ", " : "");
+#undef WRITE_MATCH_TEXT
+            }
+            fprintf(fp, "}, \"action\": {\"qtype\": ");
+            yvex_file_json_write_string(fp, yvex_quant_qtype_name(rule->qtype));
+            fprintf(fp,
+                    ", \"calibration\": \"%s\", \"requires_cpu_compute\": %s, "
+                    "\"requires_cuda_compute\": %s}, \"priority\": %u",
+                    rule->requires_imatrix ? "required" : "none",
+                    rule->requires_cpu_compute ? "true" : "false",
+                    rule->requires_cuda_compute ? "true" : "false", rule->priority);
+            if (rule->label) {
+                fprintf(fp, ", \"label\": ");
+                yvex_file_json_write_string(fp, rule->label);
+            }
+            fprintf(fp, "}");
+        }
+        fprintf(fp, "%s\n", i + 1u == policy->rule_count ? "" : ",");
     }
     fprintf(fp, "  ]\n}\n");
     if (fclose(fp) != 0) {
@@ -774,8 +1409,10 @@ static void qp_set_summary(yvex_quant_policy *policy, unsigned long long extra_i
     unsigned long long i;
 
     memset(&policy->summary, 0, sizeof(policy->summary));
+    policy->summary.schema_version = policy->schema_version;
     policy->summary.name = policy->name;
     policy->summary.architecture = policy->architecture;
+    policy->summary.preset_name = policy->preset_name;
     policy->summary.rule_count = policy->rule_count;
     policy->summary.status =
         policy->rule_count > 0 ? YVEX_QUANT_POLICY_STATUS_VALID : YVEX_QUANT_POLICY_STATUS_INVALID;
@@ -791,10 +1428,6 @@ static void qp_set_summary(yvex_quant_policy *policy, unsigned long long extra_i
         rule->compute_supported = qtype_compute_supported(rule->qtype);
         if (rule->requires_imatrix) {
             policy->summary.requires_imatrix_count++;
-            policy->summary.issue_count++;
-            if (policy->summary.status == YVEX_QUANT_POLICY_STATUS_VALID) {
-                policy->summary.status = YVEX_QUANT_POLICY_STATUS_PARTIAL;
-            }
         }
         if (rule->storage_supported)
             policy->summary.storage_supported_count++;
@@ -813,13 +1446,16 @@ static void qp_set_summary(yvex_quant_policy *policy, unsigned long long extra_i
             }
         }
         if (rule->qtype == YVEX_QUANT_QTYPE_UNKNOWN ||
-            rule->selector_kind == YVEX_QUANT_SELECTOR_UNKNOWN ||
-            (rule->selector_kind == YVEX_QUANT_SELECTOR_ROLE &&
-             rule->role == YVEX_TENSOR_ROLE_UNKNOWN)) {
+            (policy->schema_version == 1u &&
+             (rule->selector_kind == YVEX_QUANT_SELECTOR_UNKNOWN ||
+              (rule->selector_kind == YVEX_QUANT_SELECTOR_ROLE &&
+               rule->role == YVEX_TENSOR_ROLE_UNKNOWN))) ||
+            (policy->schema_version == YVEX_QUANT_POLICY_SCHEMA_VERSION && !rule->match_mask)) {
             policy->summary.issue_count++;
             policy->summary.status = YVEX_QUANT_POLICY_STATUS_INVALID;
         }
     }
+    (void)policy_identity_compute(policy);
 }
 
 /* Purpose: match a policy selector containing at most one wildcard against one tensor name.
@@ -930,6 +1566,12 @@ int yvex_quant_policy_validate(yvex_quant_policy *policy, const char *template_p
     if (!policy) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "quant_policy_validate", "policy is required");
         return YVEX_ERR_INVALID_ARG;
+    }
+    if (policy->schema_version != 1u &&
+        policy->schema_version != YVEX_QUANT_POLICY_SCHEMA_VERSION) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "quant_policy_validate",
+                       "unsupported quant policy schema");
+        return YVEX_ERR_UNSUPPORTED;
     }
     if (!policy->name)
         policy->name = yvex_core_strdup("unnamed-policy");

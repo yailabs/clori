@@ -41,6 +41,8 @@ typedef struct {
     unsigned int block_used;
     unsigned long long element_index;
     unsigned long long row_element;
+    unsigned long long calibration_entry_ordinal;
+    int calibration_bound;
     yvex_quant_metrics metrics;
     unsigned long long output_chunks;
 } quant_emitter;
@@ -190,6 +192,56 @@ static int quant_execute_fail(yvex_quant_failure *failure, yvex_quant_failure_co
     }
     yvex_error_set(err, (yvex_status)status, "quant.execute", message);
     return status;
+}
+
+/* Purpose: prove complete imatrix identity and per-terminal coverage before any payload read.
+ * Inputs: sealed policy plan, optional admitted imatrix, and typed diagnostics.
+ * Effects: reads only immutable metadata and file snapshot facts.
+ * Failure: identity, name, expert geometry, or coverage mismatch refuses the executor.
+ * Boundary: calibration validation never opens or reads model-weight payload ranges. */
+static int quant_imatrix_plan_validate(const yvex_quant_plan *plan,
+                                       const yvex_quant_plan_summary *plan_summary,
+                                       const yvex_imatrix_data *imatrix,
+                                       yvex_quant_failure *failure, yvex_error *err) {
+    yvex_imatrix_data_summary data_summary;
+    unsigned long long ordinal;
+    int rc;
+
+    if (!plan_summary->calibration_required)
+        return YVEX_OK;
+    if (!imatrix)
+        return quant_execute_fail(failure, YVEX_QUANT_FAILURE_CALIBRATION_REQUIRED, NULL,
+                                  ULLONG_MAX, ULLONG_MAX, ULLONG_MAX, 1u, 0u, err,
+                                  YVEX_ERR_INVALID_ARG,
+                                  "calibrated physical plan requires admitted imatrix data");
+    rc = yvex_imatrix_data_validate(imatrix, err);
+    if (rc == YVEX_OK)
+        rc = yvex_imatrix_data_get_summary(imatrix, &data_summary, err);
+    if (rc != YVEX_OK || !data_summary.complete ||
+        strcmp(data_summary.imatrix_identity, plan_summary->imatrix_identity) != 0)
+        return quant_execute_fail(failure, YVEX_QUANT_FAILURE_CALIBRATION_IDENTITY, NULL,
+                                  ULLONG_MAX, ULLONG_MAX, ULLONG_MAX, 1u, 0u, err,
+                                  YVEX_ERR_FORMAT,
+                                  "imatrix identity does not match the sealed physical plan");
+    for (ordinal = 0u; ordinal < plan_summary->decision_count; ++ordinal) {
+        const yvex_quant_decision *decision = yvex_quant_plan_decision_at(plan, ordinal);
+        yvex_imatrix_entry_summary entry = {0};
+        unsigned long long expected = 0u;
+
+        if (!decision || !decision->policy_requires_imatrix)
+            continue;
+        if (!decision->physical_tensor_name[0] || decision->physical_expert_count == 0u ||
+            decision->row_count % decision->physical_expert_count != 0u ||
+            !yvex_core_u64_mul(decision->physical_expert_count, decision->row_width, &expected) ||
+            yvex_imatrix_data_find(imatrix, decision->physical_tensor_name, &entry, err) !=
+                YVEX_OK ||
+            entry.value_count != expected)
+            return quant_execute_fail(
+                failure, YVEX_QUANT_FAILURE_CALIBRATION_IDENTITY, decision, ULLONG_MAX,
+                ULLONG_MAX, ULLONG_MAX, expected, entry.value_count, err, YVEX_ERR_FORMAT,
+                "imatrix entry does not cover the physical expert-row geometry");
+    }
+    return YVEX_OK;
 }
 
 /* Purpose: sample an optional cancellation token with acquire ordering. */
@@ -693,11 +745,36 @@ static int quant_emitter_encode(quant_emitter *emitter, yvex_quant_failure *fail
                                 yvex_error *err) {
     unsigned char encoded[YVEX_QUANT_Q2_K_BYTES];
     float reconstructed[YVEX_QUANT_Q2_K_ELEMENTS];
+    float calibration[YVEX_QUANT_Q2_K_ELEMENTS];
+    const float *weights = NULL;
     size_t encoded_bytes = 0u;
     int rc;
 
-    rc = yvex_quant_encode_block(emitter->decision->qtype, emitter->block, emitter->block_elements,
-                                 encoded, sizeof(encoded), &encoded_bytes, failure, err);
+    if (emitter->calibration_bound) {
+        unsigned long long block_start = emitter->element_index - emitter->block_elements;
+        unsigned long long row = block_start / emitter->decision->row_width;
+        unsigned long long rows_per_expert =
+            emitter->decision->row_count / emitter->decision->physical_expert_count;
+        unsigned long long expert = row / rows_per_expert;
+        unsigned long long value_offset = expert * emitter->decision->row_width +
+                                          block_start % emitter->decision->row_width;
+        rc = yvex_imatrix_data_read(emitter->executor->options.imatrix,
+                                    emitter->calibration_entry_ordinal, value_offset,
+                                    calibration, emitter->block_elements, err);
+        if (rc != YVEX_OK)
+            return quant_execute_fail(failure, YVEX_QUANT_FAILURE_CALIBRATION_IDENTITY,
+                                      emitter->decision, ULLONG_MAX, row,
+                                      block_start / emitter->block_elements, value_offset, 0u,
+                                      err, rc, "imatrix block read violated sealed coverage");
+        weights = calibration;
+    }
+    rc = weights ? yvex_quant_encode_block_weighted(
+                       emitter->decision->qtype, emitter->block, weights,
+                       emitter->block_elements, encoded, sizeof(encoded), &encoded_bytes,
+                       failure, err)
+                 : yvex_quant_encode_block(emitter->decision->qtype, emitter->block,
+                                           emitter->block_elements, encoded, sizeof(encoded),
+                                           &encoded_bytes, failure, err);
     if (rc != YVEX_OK)
         return rc;
     rc = yvex_quant_decode_block(emitter->decision->qtype, encoded, encoded_bytes, reconstructed,
@@ -707,7 +784,7 @@ static int quant_emitter_encode(quant_emitter *emitter, yvex_quant_failure *fail
     rc = quant_emitter_bound(emitter, emitter->block, reconstructed, encoded, failure, err);
     if (rc != YVEX_OK)
         return rc;
-    if (!yvex_quant_metrics_update(&emitter->metrics, emitter->block, reconstructed, NULL,
+    if (!yvex_quant_metrics_update(&emitter->metrics, emitter->block, reconstructed, weights,
                                    emitter->block_elements))
         return quant_execute_fail(failure, YVEX_QUANT_FAILURE_ELEMENT_OVERFLOW, emitter->decision,
                                   ULLONG_MAX, ULLONG_MAX, ULLONG_MAX, ULLONG_MAX,
@@ -779,6 +856,17 @@ static int quant_emitter_open(quant_emitter *emitter, quant_executor *executor,
                                   geometry ? geometry->block_size : 0u, err, YVEX_ERR_UNSUPPORTED,
                                   "selected qtype has no executable block geometry");
     emitter->block_elements = geometry->block_size;
+    if (decision->policy_requires_imatrix) {
+        yvex_imatrix_entry_summary entry;
+        int rc = yvex_imatrix_data_find(executor->options.imatrix,
+                                        decision->physical_tensor_name, &entry, err);
+        if (rc != YVEX_OK)
+            return quant_execute_fail(failure, YVEX_QUANT_FAILURE_CALIBRATION_IDENTITY,
+                                      decision, ULLONG_MAX, ULLONG_MAX, ULLONG_MAX, 1u, 0u,
+                                      err, rc, "sealed imatrix entry disappeared before execution");
+        emitter->calibration_entry_ordinal = entry.ordinal;
+        emitter->calibration_bound = 1;
+    }
     emitter->output_capacity = executor->options.output_chunk_bytes;
     emitter->output = (unsigned char *)quant_executor_allocate(executor, emitter->output_capacity,
                                                                &budget_exceeded);
@@ -1758,6 +1846,9 @@ int yvex_quant_execute(const yvex_quant_plan *plan, const yvex_quant_output_sink
             failure, YVEX_QUANT_FAILURE_RESOURCE_BUDGET, NULL, ULLONG_MAX, ULLONG_MAX, ULLONG_MAX,
             required_output_bytes ? required_output_bytes : SIZE_MAX, options.maximum_owned_bytes,
             err, YVEX_ERR_BOUNDS, "executor worker, chunk, or memory budget is invalid");
+    rc = quant_imatrix_plan_validate(plan, plan_summary, options.imatrix, failure, err);
+    if (rc != YVEX_OK)
+        return rc;
     rc = yvex_transform_binding_readable_validate(binding, &transform_failure, err);
     if (rc != YVEX_OK)
         return quant_execute_fail(failure,

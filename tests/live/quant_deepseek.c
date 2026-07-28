@@ -16,6 +16,7 @@
 
 #include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -31,11 +32,14 @@ static unsigned long long quant_elapsed_ns(const struct timespec *begin,
            (unsigned long long)(begin->tv_nsec - end->tv_nsec);
 }
 
-static int quant_plan_invariants(const yvex_quant_plan_summary *summary)
+static int quant_plan_invariants(const yvex_quant_plan_summary *summary, int policy_plan,
+                                 int ds4_plan)
 {
     return summary && summary->complete &&
            summary->state == YVEX_QUANT_PLAN_SEALED &&
-           summary->schema_version == YVEX_QUANT_PROFILE_SCHEMA_VERSION &&
+           summary->schema_version ==
+               (policy_plan ? YVEX_QUANT_POLICY_SCHEMA_VERSION
+                            : YVEX_QUANT_PROFILE_SCHEMA_VERSION) &&
            summary->terminal_count == 1360u &&
            summary->decision_count == 1360u &&
            summary->source_value_count == 69187u &&
@@ -43,8 +47,40 @@ static int quant_plan_invariants(const yvex_quant_plan_summary *summary)
                YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY &&
            summary->payload_bytes_read == 0u &&
            summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q8_0] != 0u &&
-           summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K] == 132u &&
-           summary->calibration_required == 0;
+           (ds4_plan
+                ? summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K] == 43u &&
+                      summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_IQ2_XXS] == 86u &&
+                      summary->calibration_required
+                : summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K] == 132u &&
+                      summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_IQ2_XXS] == 0u &&
+                      !summary->calibration_required);
+}
+
+static int quant_plan_physical_equal(const yvex_quant_plan *left,
+                                     const yvex_quant_plan *right)
+{
+    const yvex_quant_plan_summary *left_summary = yvex_quant_plan_summary_get(left);
+    const yvex_quant_plan_summary *right_summary = yvex_quant_plan_summary_get(right);
+    unsigned long long ordinal;
+
+    if (!left_summary || !right_summary ||
+        left_summary->decision_count != right_summary->decision_count ||
+        left_summary->encoded_bytes != right_summary->encoded_bytes)
+        return 0;
+    for (ordinal = 0u; ordinal < left_summary->decision_count; ++ordinal) {
+        const yvex_quant_decision *left_decision =
+            yvex_quant_plan_decision_at(left, ordinal);
+        const yvex_quant_decision *right_decision =
+            yvex_quant_plan_decision_at(right, ordinal);
+        if (!left_decision || !right_decision ||
+            left_decision->terminal_value_id != right_decision->terminal_value_id ||
+            left_decision->qtype != right_decision->qtype ||
+            left_decision->row_width != right_decision->row_width ||
+            left_decision->row_count != right_decision->row_count ||
+            left_decision->encoded_bytes != right_decision->encoded_bytes)
+            return 0;
+    }
+    return 1;
 }
 
 /* Prints typed terminal/lowering facts for a live refusal without payload data. */
@@ -83,6 +119,9 @@ int main(int argc, char **argv)
     yvex_deepseek_payload_handoff *handoff = NULL;
     yvex_deepseek_payload_failure handoff_failure;
     yvex_quant_plan *plan = NULL;
+    yvex_quant_policy *policy = NULL;
+    yvex_imatrix_data *imatrix = NULL;
+    yvex_imatrix_data_summary imatrix_summary;
     yvex_quant_digest_sink *digest_sink = NULL;
     yvex_quant_output_sink output_sink;
     yvex_quant_digest_summary digest_summary;
@@ -108,6 +147,11 @@ int main(int argc, char **argv)
     int argument = 1;
     int plan_only = 0;
     const char *artifact_path = NULL;
+    const char *preset_name = getenv("YVEX_QUANT_PRESET");
+    const char *imatrix_path = getenv("YVEX_IMATRIX_PATH");
+    int policy_plan = preset_name && preset_name[0];
+    int ds4_plan = policy_plan && strcmp(preset_name, YVEX_QUANT_DS4_PROFILE_NAME) == 0;
+    int compatibility_profile_equal = 0;
     int rc;
 
     if (argc > 1 && strcmp(argv[1], "--plan-only") == 0) {
@@ -143,11 +187,40 @@ int main(int argc, char **argv)
                 yvex_error_where(&error));
         return 1;
     }
-    rc = yvex_quant_plan_build_deepseek_profile(
-        &plan, yvex_model_register_deepseek_v4()->payload.transform_ir(handoff),
-        yvex_model_register_deepseek_v4()->payload.binding(handoff),
-        yvex_model_register_deepseek_v4()->payload.map(handoff),
-        YVEX_QUANT_PROFILE_RELEASE_Q8_Q2, NULL, &failure, &error);
+    transform_summary = yvex_transform_ir_summary_get(
+        yvex_model_register_deepseek_v4()->payload.transform_ir(handoff));
+    memset(&imatrix_summary, 0, sizeof(imatrix_summary));
+    if (policy_plan) {
+        yvex_imatrix_data_options imatrix_options;
+        rc = yvex_quant_policy_preset_open(&policy, preset_name, &error);
+        if (rc == YVEX_OK && imatrix_path && imatrix_path[0]) {
+            memset(&imatrix_options, 0, sizeof(imatrix_options));
+            imatrix_options.path = imatrix_path;
+            imatrix_options.source_model_identity =
+                transform_summary ? transform_summary->transform_identity : "missing";
+            imatrix_options.calibration_dataset_identity =
+                "deepseek-v4-flash-chat-v2-rendered-prompts-v1";
+            imatrix_options.producer = "llama.cpp-imatrix";
+            imatrix_options.producer_version = 1u;
+            imatrix_options.maximum_mapped_bytes = 1024u * 1024u * 1024u;
+            rc = yvex_imatrix_data_open(&imatrix, &imatrix_options, &error);
+            if (rc == YVEX_OK)
+                rc = yvex_imatrix_data_get_summary(imatrix, &imatrix_summary, &error);
+        }
+        if (rc == YVEX_OK)
+            rc = yvex_quant_plan_build_deepseek_policy(
+                &plan, yvex_model_register_deepseek_v4()->payload.transform_ir(handoff),
+                yvex_model_register_deepseek_v4()->payload.binding(handoff),
+                yvex_model_register_deepseek_v4()->payload.map(handoff), policy,
+                imatrix_summary.complete ? imatrix_summary.imatrix_identity : NULL,
+                NULL, &failure, &error);
+    } else {
+        rc = yvex_quant_plan_build_deepseek_profile(
+            &plan, yvex_model_register_deepseek_v4()->payload.transform_ir(handoff),
+            yvex_model_register_deepseek_v4()->payload.binding(handoff),
+            yvex_model_register_deepseek_v4()->payload.map(handoff),
+            YVEX_QUANT_PROFILE_RELEASE_Q8_Q2, NULL, &failure, &error);
+    }
     if (rc != YVEX_OK) {
         quant_print_terminal_context(handoff, failure.terminal_ordinal);
         fprintf(stderr,
@@ -158,21 +231,50 @@ int main(int argc, char **argv)
                 failure.actual,
                 yvex_status_name(yvex_error_code(&error)),
                 yvex_error_where(&error));
+        yvex_imatrix_data_close(imatrix);
+        yvex_quant_policy_close(policy);
         yvex_model_register_deepseek_v4()->payload.close(handoff);
         return 1;
     }
     summary = yvex_quant_plan_summary_get(plan);
-    transform_summary = yvex_transform_ir_summary_get(
-        yvex_model_register_deepseek_v4()->payload.transform_ir(handoff));
+    if (policy_plan && !ds4_plan) {
+        yvex_quant_plan *compatibility = NULL;
+        rc = yvex_quant_plan_build_deepseek_profile(
+            &compatibility,
+            yvex_model_register_deepseek_v4()->payload.transform_ir(handoff),
+            yvex_model_register_deepseek_v4()->payload.binding(handoff),
+            yvex_model_register_deepseek_v4()->payload.map(handoff),
+            YVEX_QUANT_PROFILE_RELEASE_Q8_Q2, NULL, &failure, &error);
+        compatibility_profile_equal =
+            rc == YVEX_OK && quant_plan_physical_equal(plan, compatibility);
+        yvex_quant_plan_release(&compatibility);
+        if (!compatibility_profile_equal) {
+            fprintf(stderr, "policy_preset_compatibility=failed\n");
+            yvex_quant_plan_release(&plan);
+            yvex_imatrix_data_close(imatrix);
+            yvex_quant_policy_close(policy);
+            yvex_model_register_deepseek_v4()->payload.close(handoff);
+            return 1;
+        }
+    }
     verification = yvex_model_register_deepseek_v4()->payload.verification(handoff);
-    if (!quant_plan_invariants(summary) || !transform_summary ||
+    if (!quant_plan_invariants(summary, policy_plan, ds4_plan) || !transform_summary ||
         !verification ||
         strcmp(summary->transform_identity,
                transform_summary->transform_identity) != 0 ||
         strcmp(summary->required_payload_identity,
                transform_summary->required_payload_identity) != 0) {
-        fprintf(stderr, "quant_plan_invariant=failed\n");
+        fprintf(stderr,
+                "quant_plan_invariant=failed terminals=%llu decisions=%llu q8=%llu q2=%llu iq2=%llu calibrated=%d\n",
+                summary ? summary->terminal_count : 0u,
+                summary ? summary->decision_count : 0u,
+                summary ? summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q8_0] : 0u,
+                summary ? summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K] : 0u,
+                summary ? summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_IQ2_XXS] : 0u,
+                summary ? summary->calibration_required : 0);
         yvex_quant_plan_release(&plan);
+        yvex_imatrix_data_close(imatrix);
+        yvex_quant_policy_close(policy);
         yvex_model_register_deepseek_v4()->payload.close(handoff);
         return 1;
     }
@@ -193,6 +295,7 @@ int main(int argc, char **argv)
         }
         yvex_quant_digest_sink_adapter(digest_sink, &output_sink);
         yvex_quant_executor_options_default(&executor_options);
+        executor_options.imatrix = imatrix;
         executor_options.worker_count = options.budget.maximum_streams;
         executor_options.maximum_owned_bytes = 64u * 1024u * 1024u;
         clock_gettime(CLOCK_MONOTONIC, &begin);
@@ -282,6 +385,12 @@ int main(int argc, char **argv)
     printf("profile_name=%s\n", summary->profile_name);
     printf("profile_schema=%u\n", summary->schema_version);
     printf("profile_identity=%s\n", summary->profile_identity);
+    printf("policy_identity=%s\n", summary->policy_identity);
+    printf("imatrix_identity=%s\n", summary->imatrix_identity);
+    printf("physical_variant_identity=%s\n", summary->physical_variant_identity);
+    printf("imatrix_entries=%llu\n", imatrix_summary.entry_count);
+    printf("imatrix_values=%llu\n", imatrix_summary.value_count);
+    printf("imatrix_mapped_bytes=%llu\n", imatrix_summary.mapped_bytes);
     printf("payload_plan_identity=%s\n", summary->payload_plan_identity);
     printf("terminal_decisions=%llu\n", summary->decision_count);
     printf("source_values=%llu\n", summary->source_value_count);
@@ -300,6 +409,7 @@ int main(int argc, char **argv)
     printf("exact_scalar_bytes=%llu\n", summary->exact_scalar_bytes);
     printf("q8_0_bytes=%llu\n", summary->q8_0_bytes);
     printf("q2_k_bytes=%llu\n", summary->q2_k_bytes);
+    printf("iq2_xxs_bytes=%llu\n", summary->iq2_xxs_bytes);
     printf("mxfp4_bytes=%llu\n", summary->mxfp4_bytes);
     printf("f32_tensors=%llu\n",
            summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_F32]);
@@ -313,6 +423,8 @@ int main(int argc, char **argv)
            summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q8_0]);
     printf("q2_k_tensors=%llu\n",
            summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K]);
+    printf("iq2_xxs_tensors=%llu\n",
+           summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_IQ2_XXS]);
     printf("reference_profile_bytes=%llu\n",
            summary->candidates[0].encoded_bytes);
     printf("release_profile_bytes=%llu\n",
@@ -333,6 +445,8 @@ int main(int argc, char **argv)
     printf("peak_builder_bytes=%zu\n", summary->peak_builder_bytes);
     printf("header_scans=%llu\n", verification->header_scan_count);
     printf("payload_bytes_read=%llu\n", summary->payload_bytes_read);
+    if (policy_plan && !ds4_plan)
+        printf("fixed_profile_physical_decisions_equal=%d\n", compatibility_profile_equal);
     printf("terminal_lowering_bijection=complete\n");
     printf("aggregate_execution_identity=%s\n",
            digest_summary.complete ? digest_summary.execution_identity
@@ -435,6 +549,8 @@ int main(int argc, char **argv)
                          (double)elapsed : 0.0);
     yvex_quant_digest_sink_release(&digest_sink);
     yvex_quant_plan_release(&plan);
+    yvex_imatrix_data_close(imatrix);
+    yvex_quant_policy_close(policy);
     yvex_model_register_deepseek_v4()->payload.close(handoff);
     return 0;
 }

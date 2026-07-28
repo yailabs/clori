@@ -60,7 +60,7 @@ parts are admitted.
 flowchart TD
     S["Verified source snapshot"] --> L["Family semantics + logical model"]
     L --> T["Exact tensor roles + Transformation IR"]
-    T --> P["Physical profile + lowering"]
+    T --> P["Sealed quant policy + physical-variant plan"]
     P --> Q["Quantization + encoding"]
     Q --> A["Artifact construction + identity"]
     A --> I["Admission + materialization"]
@@ -112,9 +112,11 @@ Transformation IR defines how verified source contributions become logical
 terminal tensors through typed, deterministic operations. Planning establishes
 meaning, shapes, axes, identities, and dependencies before payload execution.
 
-A physical profile then selects dtypes, qtypes, layouts, alignment, encoding,
-placement constraints, and numerical policy. Changing physical representation
-does not redefine the logical model.
+A sealed policy resolves role, collection, scope, tensor, layer, expert,
+operation, and physical-class constraints into one decision per terminal. The
+resulting physical-variant plan selects dtypes, qtypes, layouts, alignment,
+encoding, calibration, and backend requirements before any source payload is
+read. Changing physical representation does not redefine the logical model.
 
 ### Artifact construction and admission
 
@@ -219,7 +221,8 @@ The admitted vertical includes:
 
 - 46 verified source shards and 69,187 exact source contributions;
 - 1,360 emitted terminal tensors;
-- a selected complete GGUF of approximately 102.4 GB;
+- the verified 102.4 GB Q8_0/Q2_K baseline and a complete approximately
+  94.2 GB DS4-like IQ2_XXS/Q2_K candidate, both emitted by YVEX;
 - 43 main attention layers and 634 core attention bindings;
 - complete attention core and envelope execution on CPU and the admitted
   NVIDIA GB10 CUDA path;
@@ -271,21 +274,21 @@ dependencies, capability gates, and release admission.
 | --- | --- |
 | Source repository, headers, and payload | Verified against the pinned DeepSeek snapshot |
 | Logical model, tensor coverage, and Transformation IR | Complete for the release vertical |
-| Physical profiles and complete artifacts | Source-faithful and selected GGUF artifacts emitted and admitted outside the repository |
-| Artifact materialization | All 1,360 selected-artifact tensors materialized through bounded access |
+| Physical profiles and complete artifacts | Source-faithful, verified Q8_0/Q2_K baseline, and policy-driven DS4-like IQ2_XXS/Q2_K candidate plans are complete; both quantized GGUF variants are emitted and admitted outside the repository |
+| Artifact materialization | All 1,360 tensors materialize through artifact-qtype-driven bounded access; mixed expert qtypes require no preset-name branch |
 | Runtime binding, model, and session | Implemented and consumed by the attention operator |
 | Attention residency | Core and envelope weights prepared for reusable CPU and CUDA execution |
 | Attention core and envelope | All 43 layers and 634 core bindings execute on CPU eager and admitted GB10 CUDA eager, piecewise, and full graph modes |
 | Persistent attention state | Admitted for all 43 DeepSeek attention layers through isolated CPU/GB10 CUDA sessions, atomic append/read, capacity, clear/reuse, and causal production consumption |
 | Activation-driven attention prefill | Versioned 43-layer activation bundles execute on CPU/GB10 CUDA eager and commit persistent state atomically per chunk |
-| Token-local MoE block | All 43 layers execute admitted hash/learned routing, selected Q2_K routed experts, Q8_0 shared experts, and exact combination on CPU and GB10 CUDA |
+| Token-local MoE block | All 43 layers execute admitted hash/learned routing and selected routed/shared experts on CPU and GB10 CUDA; the baseline uses Q2_K/Q8_0 and the candidate uses IQ2_XXS gate/up, Q2_K down, and Q8_0 shared experts |
 | Numeric-token transformer backbone | Selected embedding rows, all 43 attention/MoE blocks, final mHC collapse, final RMSNorm, and atomic persistent-state publication execute on CPU and GB10 CUDA |
 | Teacher-forced repeated model decode | Externally supplied token IDs execute one at a time over prior committed KV on CPU and GB10 CUDA, with ordered hidden rows and typed partial progress |
 | Output-head residency and raw logits | The separate encoded BF16 `[129280,4096]` output head has model-lifetime CPU/CUDA residency; final-prefill and decode hidden rows project directly to complete F32 vocabulary logits |
 | Real-logits sampling | The common host sampler validates every value and identity in each complete logits row, then performs deterministic greedy or explicitly seeded stochastic selection with canonical filters and transactional RNG state |
 | Artifact-bound tokenizer | Exact 129,280-token ByteLevel-BPE encoding, bounded DeepSeek prompt policy, special/EOS facts, and batch/incremental decoding execute from admitted GGUF metadata |
-| Tokenizer-backed prompt prefill | Unsupported |
-| Token append and text generation | Unsupported |
+| Tokenizer-backed prompt prefill | Exact raw-text/message encoding feeds the admitted full-model prefill path |
+| Token append and text generation | Bounded autoregressive generation feeds each sampled token into decode and publishes incremental text; the polished top-level CLI remains pending |
 | Evaluation | Blocked |
 | Benchmark | Attention-local measurement is executable; full-model benchmark is not measured |
 | Release | Blocked |
@@ -310,6 +313,7 @@ Discover the command hierarchy:
 
 ```sh
 ./yvex commands
+./yvex quant --help
 ./yvex graph attention --help
 ./yvex graph moe execute --help
 ./yvex graph transformer execute --help
@@ -322,6 +326,36 @@ Discover the command hierarchy:
 ./yvex detokenize --help
 ./yvex prompt --help
 ```
+
+List and inspect the normal sealed physical policies, then derive one complete
+zero-payload-read plan. Custom policy-v2 files enter through `--policy FILE`
+instead of `--preset`:
+
+```sh
+./yvex quant preset list
+./yvex quant preset show deepseek-v4-flash-ds4-like-q2-v1
+./yvex quant plan \
+  --target deepseek4-v4-flash \
+  --source "$SOURCE" \
+  --models-root "$MODELS_ROOT" \
+  --source-manifest "$SOURCE_MANIFEST" \
+  --preset deepseek-v4-flash-ds4-like-q2-v1 \
+  --imatrix-manifest "$IMATRIX" \
+  --backend cuda \
+  --out-plan "$VARIANT_PLAN"
+./yvex quant summarize \
+  --target deepseek4-v4-flash \
+  --source "$SOURCE" \
+  --models-root "$MODELS_ROOT" \
+  --source-manifest "$SOURCE_MANIFEST" \
+  --preset deepseek-v4-flash-ds4-like-q2-v1 \
+  --imatrix-manifest "$IMATRIX" \
+  --plan "$VARIANT_PLAN"
+```
+
+`quant emit` consumes the same rederived and byte-validated plan. The resulting
+GGUF is then passed to materialization; `materialize` never accepts qtype
+selection flags.
 
 Set `MODELS_ROOT` and `ARTIFACT` to the external admitted model locations.
 Create an empty external directory named by `BINDING_DIR`, then prepare the

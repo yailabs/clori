@@ -185,6 +185,10 @@ typedef struct {
     char artifact_path[YVEX_PATH_CAP];
     char runtime_binding_path[YVEX_PATH_CAP];
     char runtime_binding_dir[YVEX_PATH_CAP];
+    char quant_policy_path[YVEX_PATH_CAP];
+    char quant_preset_name[128];
+    char imatrix_path[YVEX_PATH_CAP];
+    char physical_variant_plan_path[YVEX_PATH_CAP];
 } graph_attention_request;
 
 static const yvex_graph_attention_operator_result benchmark_comparison_result_default = {
@@ -366,6 +370,67 @@ static const yvex_graph_family_preparation *graph_family_preparation_find(const 
         if (entry->target_id && target && strcmp(entry->target_id, target) == 0) return entry;
     }
 }
+/* Purpose: resolve source and physical-variant authority for cold binding preparation.
+ * Inputs: parsed preparation options, resolved operator roots, adapter, and GGUF directory.
+ * Effects: fills only bounded preparation-path and preset fields in the request.
+ * Failure: missing family facts, path expansion, or name bounds leave runtime unopened.
+ * Boundary: this CLI adapter never opens or interprets policy, imatrix, or plan bytes. */
+static int graph_attention_prepare_paths(const yvex_graph_args *args,
+                                         graph_attention_request *out,
+                                         const yvex_runtime_family_adapter *adapter,
+                                         const char *gguf_dir, yvex_error *err)
+{
+    const yvex_graph_family_preparation *preparation =
+        graph_family_preparation_find(args->attention.target);
+    int exists = 0;
+    int rc;
+
+    if (!preparation || !preparation->source_manifest_filename ||
+        !preparation->source_manifest_filename[0] ||
+        !preparation->prepare_runtime_binding) {
+        yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_cli",
+                       "runtime family adapter lacks operator preparation facts");
+        return YVEX_ERR_STATE;
+    }
+    if (args->attention.source_path)
+        rc = expand_operator_path(args->attention.source_path, out->source_path,
+                                  sizeof(out->source_path), err, "graph_attention_cli");
+    else
+        rc = yvex_operator_paths_resolve_target(
+            &out->operator_paths, adapter->operator_family_key, "source",
+            out->source_path, sizeof(out->source_path), &exists, err);
+    if (rc == YVEX_OK && args->attention.source_manifest_path)
+        rc = expand_operator_path(args->attention.source_manifest_path,
+                                  out->source_manifest_path,
+                                  sizeof(out->source_manifest_path), err,
+                                  "graph_attention_cli");
+    else if (rc == YVEX_OK)
+        rc = path_join2(out->source_manifest_path, sizeof(out->source_manifest_path),
+                        gguf_dir, preparation->source_manifest_filename, err,
+                        "graph_attention_cli");
+    if (rc == YVEX_OK && args->attention.quant_policy_path)
+        rc = expand_operator_path(args->attention.quant_policy_path,
+                                  out->quant_policy_path, sizeof(out->quant_policy_path),
+                                  err, "graph_attention_cli");
+    if (rc == YVEX_OK && args->attention.quant_preset_name &&
+        strlen(args->attention.quant_preset_name) >= sizeof(out->quant_preset_name)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "graph_attention_cli",
+                       "quant preset name exceeds the bounded operator contract");
+        rc = YVEX_ERR_BOUNDS;
+    }
+    if (rc == YVEX_OK && args->attention.quant_preset_name)
+        yvex_core_text_copy(out->quant_preset_name, sizeof(out->quant_preset_name),
+                            args->attention.quant_preset_name);
+    if (rc == YVEX_OK && args->attention.imatrix_path)
+        rc = expand_operator_path(args->attention.imatrix_path, out->imatrix_path,
+                                  sizeof(out->imatrix_path), err, "graph_attention_cli");
+    if (rc == YVEX_OK && args->attention.physical_variant_plan_path)
+        rc = expand_operator_path(args->attention.physical_variant_plan_path,
+                                  out->physical_variant_plan_path,
+                                  sizeof(out->physical_variant_plan_path), err,
+                                  "graph_attention_cli");
+    return rc;
+}
 /* Purpose: Resolve attention paths.
  * Inputs: CLI args and output. Effects: builds a request.
  * Failure: typed path refusal. Boundary: no source, artifact, or runtime open. */
@@ -374,7 +439,6 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
     yvex_paths paths = {0};
     const yvex_runtime_family_adapter *adapter;
     const yvex_graph_family_api *graph;
-    const yvex_graph_family_preparation *preparation = NULL;
     char gguf_dir[YVEX_PATH_CAP];
     char registry_runtime_dir[YVEX_PATH_CAP];
     int exists = 0;
@@ -498,23 +562,8 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
         return rc;
 
     if (args->attention.action == YVEX_GRAPH_ATTENTION_ACTION_PREPARE) {
-        preparation = graph_family_preparation_find(args->attention.target);
-        if (!preparation || !preparation->source_manifest_filename ||
-            !preparation->source_manifest_filename[0] ||
-            !preparation->prepare_runtime_binding) {
-            yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_cli",
-                           "runtime family adapter lacks operator preparation facts");
-            return YVEX_ERR_STATE;
-        }
-        rc = yvex_operator_paths_resolve_target(
-            &out->operator_paths, adapter->operator_family_key, "source", out->source_path,
-            sizeof(out->source_path), &exists, err);
-        if (rc == YVEX_OK)
-            rc = path_join2(out->source_manifest_path, sizeof(out->source_manifest_path),
-                            gguf_dir, preparation->source_manifest_filename, err,
-                            "graph_attention_cli");
-        if (rc != YVEX_OK)
-            return rc;
+        rc = graph_attention_prepare_paths(args, out, adapter, gguf_dir, err);
+        if (rc != YVEX_OK) return rc;
     } else if (args->attention.runtime_binding_path) {
         rc = expand_operator_path(args->attention.runtime_binding_path,
                                   out->runtime_binding_path,
@@ -570,6 +619,13 @@ static int graph_attention_binding_prepare(
     prepare.source_manifest_path = request->source_manifest_path;
     prepare.artifact_path = request->artifact_path;
     prepare.directory = request->runtime_binding_dir;
+    prepare.quant_policy_path = request->quant_policy_path[0]
+                                    ? request->quant_policy_path : NULL;
+    prepare.quant_preset_name = request->quant_preset_name[0]
+                                    ? request->quant_preset_name : NULL;
+    prepare.imatrix_path = request->imatrix_path[0] ? request->imatrix_path : NULL;
+    prepare.physical_variant_plan_path = request->physical_variant_plan_path[0]
+                                             ? request->physical_variant_plan_path : NULL;
     prepare.family_adapter_id = adapter->adapter_id;
     prepare.family_adapter_version = adapter->adapter_version;
     return preparation->prepare_runtime_binding(&prepare, result, err);

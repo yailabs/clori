@@ -49,5 +49,6 @@ int main(void)
                  yvex_test_gguf_writer_artifact) != 0) return 1;
     if (run_test("qtype_support", yvex_test_qtype_support) != 0) return 1;
     if (run_test("quant_policy", yvex_test_quant_policy) != 0) return 1;
+    if (run_test("imatrix", yvex_test_imatrix) != 0) return 1;
     return 0;
 }

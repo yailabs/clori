@@ -37,11 +37,33 @@ static const yvex_complete_artifact_admission selected_deepseek_admission = {
     .tokenizer_complete = 1, .native_reader_accepted = 1, .official_reader_accepted = 1,
     .payload_integrity_accepted = 1, .materialization_input_ready = 1,
 };
-static const char *const selected_deepseek_identities[] = {
-    YVEX_SELECTED_DEEPSEEK_ARTIFACT_IDENTITY, YVEX_SELECTED_DEEPSEEK_PROFILE_IDENTITY,
-    YVEX_SELECTED_DEEPSEEK_EXECUTION_IDENTITY, YVEX_SELECTED_DEEPSEEK_PAYLOAD_PLAN_IDENTITY,
-    YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTE_IDENTITY, YVEX_SELECTED_DEEPSEEK_PAYLOAD_IDENTITY,
-    YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY, YVEX_SELECTED_DEEPSEEK_WRITER_PLAN_IDENTITY,
+static const yvex_complete_artifact_admission deepseek_ds4_admission = {
+    .artifact_class = YVEX_ARTIFACT_CLASS_COMPLETE_YVEX,
+    .metadata_count = YVEX_DEEPSEEK_DS4_METADATA_COUNT,
+    .tensor_count = YVEX_SELECTED_DEEPSEEK_TENSOR_COUNT,
+    .payload_bytes = YVEX_DEEPSEEK_DS4_PAYLOAD_BYTES,
+    .file_bytes = YVEX_DEEPSEEK_DS4_FILE_BYTES,
+    .source_snapshot_identity = YVEX_SELECTED_DEEPSEEK_SOURCE_IDENTITY,
+    .mapping_identity = YVEX_SELECTED_DEEPSEEK_MAPPING_IDENTITY,
+    .payload_identity = YVEX_SELECTED_DEEPSEEK_PAYLOAD_IDENTITY,
+    .transform_identity = YVEX_DEEPSEEK_DS4_TRANSFORM_IDENTITY,
+    .profile_identity = YVEX_DEEPSEEK_DS4_PROFILE_IDENTITY,
+    .profile_name = YVEX_DEEPSEEK_DS4_PROFILE_NAME,
+    .quant_execution_identity = YVEX_DEEPSEEK_DS4_EXECUTION_IDENTITY,
+    .payload_plan_identity = YVEX_DEEPSEEK_DS4_PAYLOAD_PLAN_IDENTITY,
+    .payload_byte_identity = YVEX_DEEPSEEK_DS4_PAYLOAD_BYTE_IDENTITY,
+    .writer_plan_identity = YVEX_DEEPSEEK_DS4_WRITER_PLAN_IDENTITY,
+    .artifact_identity = YVEX_DEEPSEEK_DS4_ARTIFACT_IDENTITY,
+    .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
+    .tokenizer_complete = 1,
+    .native_reader_accepted = 1,
+    .official_reader_accepted = 1,
+    .payload_integrity_accepted = 1,
+    .materialization_input_ready = 1,
+};
+static const yvex_complete_artifact_admission *const admitted_deepseek_artifacts[] = {
+    &selected_deepseek_admission,
+    &deepseek_ds4_admission,
 };
 static const char *const artifact_admission_names[] = {
     [YVEX_ARTIFACT_ADMISSION_OK] = "ok", [YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT] = "invalid-argument",
@@ -157,17 +179,32 @@ static int admission_identity_encode(const yvex_complete_artifact_admission *adm
     return 1;
 }
 
-/* Purpose: validate every pinned digest before reconstructing selected admission. */
-static int admission_deepseek_identities_valid(void)
+/* Purpose: validate every pinned digest in one admitted DeepSeek physical variant. */
+static int admission_deepseek_identities_valid(
+    const yvex_complete_artifact_admission *admission)
+{
+    return admission && yvex_sha256_hex_is_valid(admission->artifact_identity) &&
+           yvex_sha256_hex_is_valid(admission->profile_identity) &&
+           yvex_sha256_hex_is_valid(admission->quant_execution_identity) &&
+           yvex_sha256_hex_is_valid(admission->payload_plan_identity) &&
+           yvex_sha256_hex_is_valid(admission->payload_byte_identity) &&
+           yvex_sha256_hex_is_valid(admission->payload_identity) &&
+           yvex_sha256_hex_is_valid(admission->transform_identity) &&
+           yvex_sha256_hex_is_valid(admission->writer_plan_identity);
+}
+
+/* Purpose: select one accepted physical artifact by immutable extent before exact hash proof. */
+static const yvex_complete_artifact_admission *admission_deepseek_for_size(
+    unsigned long long file_bytes)
 {
     size_t index;
 
     for (index = 0u;
-         index < sizeof(selected_deepseek_identities) / sizeof(selected_deepseek_identities[0]);
+         index < sizeof(admitted_deepseek_artifacts) / sizeof(admitted_deepseek_artifacts[0]);
          ++index)
-        if (!yvex_sha256_hex_is_valid(selected_deepseek_identities[index]))
-            return 0;
-    return 1;
+        if (admitted_deepseek_artifacts[index]->file_bytes == file_bytes)
+            return admitted_deepseek_artifacts[index];
+    return NULL;
 }
 
 /* Purpose: admit a published artifact when every independent proof agrees.
@@ -320,6 +357,7 @@ int yvex_complete_artifact_admit(const yvex_artifact_admission_request *request,
 int yvex_artifact_admit_deepseek(const yvex_artifact *artifact,
                                  yvex_complete_artifact_admission *out,
                                  yvex_artifact_admission_failure *failure, yvex_error *err) {
+    const yvex_complete_artifact_admission *admitted;
     yvex_artifact_snapshot snapshot;
     int rc;
 
@@ -329,24 +367,24 @@ int yvex_artifact_admit_deepseek(const yvex_artifact *artifact,
         return admission_fail(failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT, "artifact", 1u, 0u,
                               err, YVEX_ERR_INVALID_ARG,
                               "opened selected artifact handle and output are required");
-    if (!admission_deepseek_identities_valid())
+    admitted = admission_deepseek_for_size(yvex_artifact_size(artifact));
+    if (!admitted)
+        return admission_fail(failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH, "file-bytes",
+                              0u, yvex_artifact_size(artifact), err, YVEX_ERR_FORMAT,
+                              "DeepSeek artifact extent is not in the admitted physical catalog");
+    if (!admission_deepseek_identities_valid(admitted))
         return admission_fail(failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
                               "pinned-identities", 1u, 0u, err, YVEX_ERR_FORMAT,
-                              "selected DeepSeek admission identities are invalid");
-    if (yvex_artifact_size(artifact) != YVEX_SELECTED_DEEPSEEK_FILE_BYTES)
-        return admission_fail(failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH, "file-bytes",
-                              YVEX_SELECTED_DEEPSEEK_FILE_BYTES, yvex_artifact_size(artifact), err,
-                              YVEX_ERR_FORMAT,
-                              "selected DeepSeek artifact size is not the admitted size");
+                              "admitted DeepSeek physical identities are invalid");
     rc = yvex_artifact_snapshot_get(artifact, &snapshot, err);
     if (rc == YVEX_OK)
         rc = yvex_artifact_snapshot_validate(artifact, NULL, err);
     if (rc != YVEX_OK)
         return admission_fail(failure, YVEX_ARTIFACT_ADMISSION_FILE_DRIFT, "file-snapshot",
-                              YVEX_SELECTED_DEEPSEEK_FILE_BYTES, 0u, err, (yvex_status)rc,
-                              "selected DeepSeek artifact snapshot is not stable");
+                              admitted->file_bytes, 0u, err, (yvex_status)rc,
+                              "admitted DeepSeek artifact snapshot is not stable");
 
-    *out = selected_deepseek_admission;
+    *out = *admitted;
     out->file_snapshot = snapshot;
     yvex_core_text_copy(out->artifact_path, sizeof(out->artifact_path), yvex_artifact_path(artifact));
     if (!admission_identity_encode(out, out->admission_identity))

@@ -557,6 +557,12 @@ int yvex_quant_plan_build_deepseek_profile(
     const yvex_transform_binding *binding, const yvex_deepseek_gguf_map *map,
     yvex_quant_profile_kind profile, const yvex_quant_plan_options *options,
     yvex_quant_failure *failure, yvex_error *err);
+int yvex_quant_plan_build_deepseek_policy(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const yvex_deepseek_gguf_map *map,
+    const yvex_quant_policy *policy, const char *imatrix_identity,
+    const yvex_quant_plan_options *options,
+    yvex_quant_failure *failure, yvex_error *err);
 const yvex_deepseek_gguf_map *yvex_quant_plan_lowering(
     const yvex_quant_plan *plan);
 int yvex_artifact_admit_deepseek(

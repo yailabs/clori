@@ -1,5 +1,5 @@
 /* Owner: gguf.quant block codecs (TRACK.QUANT).
- * Owns: deterministic F32/F16/BF16/I32, Q8_0, Q2_K, and MXFP4 bytes.
+ * Owns: deterministic F32/F16/BF16/I32, Q8_0, Q2_K, IQ2_XXS, and MXFP4 bytes.
  * Does not own: qtype IDs/geometry, source IO, profile selection, CUDA kernels, artifact layout, writing,
  *   materialization, or rendering.
  * Invariants: block layouts match the pinned GGUF ABI; every conversion checks arity, capacity, non-finite policy,
@@ -12,6 +12,7 @@
 #include <float.h>
 #include <limits.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <string.h>
 #include <yvex/internal/gguf.h>
@@ -21,6 +22,62 @@
 static const float quant_mxfp4_values[16] = {0.0f,  1.0f,  2.0f,  3.0f,  4.0f,  6.0f,
                                              8.0f,  12.0f, -0.0f, -1.0f, -2.0f, -3.0f,
                                              -4.0f, -6.0f, -8.0f, -12.0f};
+
+/* Pinned IQ2_XXS magnitude-grid identities, represented as eight 2-bit digits. */
+static const uint16_t quant_iq2_grid[256] = {
+    0, 2, 5, 8, 10, 17, 20, 32, 34, 40, 42, 65, 68, 80, 88, 97,
+    100, 128, 130, 138, 162, 257, 260, 272, 277, 320, 388, 408, 512, 514, 546, 642,
+    1025, 1028, 1040, 1057, 1060, 1088, 1090, 1096, 1120, 1153, 1156, 1168, 1188, 1280,
+    1282, 1288, 1312, 1350, 1385, 1408, 1425, 1545, 1552, 1600, 1668, 1700, 2048, 2053,
+    2056, 2068, 2088, 2113, 2116, 2128, 2130, 2184, 2308, 2368, 2562, 2580, 4097, 4100,
+    4112, 4129, 4160, 4192, 4228, 4240, 4245, 4352, 4360, 4384, 4432, 4442, 4480, 4644,
+    4677, 5120, 5128, 5152, 5157, 5193, 5248, 5400, 5474, 5632, 5654, 6145, 6148, 6160,
+    6208, 6273, 6400, 6405, 6560, 6737, 8192, 8194, 8202, 8260, 8289, 8320, 8322, 8489,
+    8520, 8704, 8706, 9217, 9220, 9232, 9280, 9302, 9472, 9537, 9572, 9872, 10248, 10272,
+    10388, 10820, 16385, 16388, 16400, 16408, 16417, 16420, 16448, 16456, 16470, 16480,
+    16513, 16516, 16528, 16640, 16672, 16737, 16768, 16773, 16897, 16912, 16968, 16982,
+    17000, 17408, 17416, 17440, 17536, 17561, 17682, 17700, 17920, 18433, 18436, 18448,
+    18496, 18501, 18688, 18776, 18785, 18818, 19013, 19088, 20480, 20488, 20497, 20505,
+    20512, 20608, 20616, 20740, 20802, 20900, 21137, 21648, 21650, 21770, 22017, 22100,
+    22528, 22545, 22553, 22628, 22848, 23048, 24580, 24592, 24640, 24680, 24832, 24917,
+    25112, 25184, 25600, 25605, 25872, 25874, 25988, 26690, 32768, 32770, 32778, 32833,
+    32898, 33028, 33048, 33088, 33297, 33793, 33796, 33808, 33813, 33856, 33888, 34048,
+    34118, 34196, 34313, 34368, 34400, 34818, 35076, 35345, 36868, 36880, 36900, 36928,
+    37025, 37142, 37248, 37445, 37888, 37922, 37956, 38225, 39041, 39200, 40962, 41040,
+    41093, 41225, 41472, 42008, 43088, 43268,
+};
+static unsigned char quant_iq2_nearest[43691];
+static pthread_once_t quant_iq2_once = PTHREAD_ONCE_INIT;
+
+/* Purpose: build the immutable nearest-grid projection once with lowest-index tie breaking.
+ * Inputs: pinned compact IQ2 grid table.
+ * Effects: initializes one process-lifetime lookup table under pthread_once.
+ * Failure: exhaustive bounded construction has no fallible operation.
+ * Boundary: lookup construction does not encode model data or select policy. */
+static void quant_iq2_initialize(void) {
+    unsigned int packed;
+
+    for (packed = 0u; packed < sizeof(quant_iq2_nearest); ++packed) {
+        unsigned int best = 0u;
+        unsigned int best_distance = UINT_MAX;
+        unsigned int grid;
+        for (grid = 0u; grid < 256u; ++grid) {
+            unsigned int distance = 0u;
+            unsigned int lane;
+            for (lane = 0u; lane < 8u; ++lane) {
+                int left = (int)((packed >> (2u * lane)) & 3u);
+                int right = (int)((quant_iq2_grid[grid] >> (2u * lane)) & 3u);
+                int delta = left - right;
+                distance += (unsigned int)(delta * delta);
+            }
+            if (distance < best_distance) {
+                best = grid;
+                best_distance = distance;
+            }
+        }
+        quant_iq2_nearest[packed] = (unsigned char)best;
+    }
+}
 
 /* Purpose: publish one typed block-codec refusal with exact qtype and size facts.
  * Inputs: optional diagnostics, code, qtype, expected/actual values, status, and message.
@@ -161,11 +218,12 @@ static int quant_encode_q8_0(const float *source, unsigned char *encoded) {
  * Effects: writes temporary two-bit codes and the nonnegative minimum magnitude.
  * Failure: degenerate constant blocks return zero scale with valid zero codes.
  * Boundary: global F16 scale requantization occurs in the complete block encoder. */
-static float quant_q2_subblock(const float *source, unsigned char *codes, float *minimum_out) {
+static float quant_q2_subblock(const float *source, const float *calibration,
+                               unsigned char *codes, float *minimum_out) {
     unsigned char candidate[16];
     float minimum = source[0];
     float maximum = source[0];
-    float weight_sum = fabsf(source[0]);
+    float weight_sum = calibration ? calibration[0] : fabsf(source[0]);
     float weighted_source_sum = weight_sum * source[0];
     float scale;
     float inverse;
@@ -174,7 +232,7 @@ static float quant_q2_subblock(const float *source, unsigned char *codes, float 
     unsigned int step;
 
     for (index = 1u; index < 16u; ++index) {
-        float weight = fabsf(source[index]);
+        float weight = calibration ? calibration[index] : fabsf(source[index]);
         if (source[index] < minimum)
             minimum = source[index];
         if (source[index] > maximum)
@@ -213,7 +271,7 @@ static float quant_q2_subblock(const float *source, unsigned char *codes, float 
 
         inverse = (-0.5f + 0.1f * (float)step + 3.0f) / (maximum - minimum);
         for (index = 0u; index < 16u; ++index) {
-            float weight = fabsf(source[index]);
+            float weight = calibration ? calibration[index] : fabsf(source[index]);
             int code = quant_nearest_even(inverse * (source[index] - minimum));
             if (code < 0)
                 code = 0;
@@ -238,7 +296,8 @@ static float quant_q2_subblock(const float *source, unsigned char *codes, float 
         for (index = 0u; index < 16u; ++index) {
             float difference =
                 fabsf(candidate_scale * candidate[index] + candidate_minimum - source[index]);
-            candidate_error += fabsf(source[index]) * difference;
+            candidate_error += (calibration ? calibration[index] : fabsf(source[index])) *
+                               difference;
         }
         if (candidate_error < best_error) {
             memcpy(codes, candidate, 16u);
@@ -283,7 +342,8 @@ static int quant_encode_mxfp4(const float *source, unsigned char *encoded) {
  * Effects: writes scale/min nibbles, packed two-bit lanes, and global F16 scales.
  * Failure: returns false when global affine scales cannot be represented as finite F16.
  * Boundary: no calibration or tensor-level policy is inferred here. */
-static int quant_encode_q2_k(const float *source, unsigned char *encoded) {
+static int quant_encode_q2_k(const float *source, const float *calibration,
+                             unsigned char *encoded) {
     float scales[16];
     float minima[16];
     unsigned char quants[256];
@@ -296,8 +356,10 @@ static int quant_encode_q2_k(const float *source, unsigned char *encoded) {
 
     memset(encoded, 0, YVEX_QUANT_Q2_K_BYTES);
     for (subblock = 0u; subblock < 16u; ++subblock) {
-        scales[subblock] =
-            quant_q2_subblock(source + subblock * 16u, quants + subblock * 16u, &minima[subblock]);
+        scales[subblock] = quant_q2_subblock(
+            source + subblock * 16u,
+            calibration ? calibration + subblock * 16u : NULL,
+            quants + subblock * 16u, &minima[subblock]);
         if (scales[subblock] > maximum_scale)
             maximum_scale = scales[subblock];
         if (minima[subblock] > maximum_minimum)
@@ -352,6 +414,153 @@ static int quant_encode_q2_k(const float *source, unsigned char *encoded) {
                                 (quants[index + lane + 96u] << 6));
         }
     }
+    return 1;
+}
+
+/* Purpose: reconstruct the implicit even-parity eighth IQ2 sign bit. */
+static unsigned int quant_iq2_sign_mask(unsigned int low) {
+    unsigned int value = low;
+    unsigned int parity = 0u;
+    while (value) {
+        parity ^= value & 1u;
+        value >>= 1u;
+    }
+    return low | (parity << 7u);
+}
+
+/* Purpose: choose one compatible IQ2 magnitude grid for eight scaled magnitudes. */
+static unsigned int quant_iq2_select_grid(const float *magnitudes, float inverse_scale) {
+    unsigned int packed = 0u;
+    unsigned int lane;
+
+    for (lane = 0u; lane < 8u; ++lane) {
+        int digit = quant_nearest_even(0.5f * (inverse_scale * magnitudes[lane] - 1.0f));
+        if (digit < 0)
+            digit = 0;
+        if (digit > 2)
+            digit = 2;
+        packed |= (unsigned int)digit << (2u * lane);
+    }
+    return quant_iq2_nearest[packed];
+}
+
+/* Purpose: encode one imatrix-weighted compatible IQ2_XXS block.
+ * Inputs: 256 finite source values and nonnegative finite per-column calibration weights.
+ * Effects: writes one canonical 66-byte GGUF block after deterministic grid search.
+ * Failure: false represents invalid weights or an unrepresentable finite scale.
+ * Boundary: calibration selects codec error weighting, never tensor policy. */
+static int quant_encode_iq2_xxs(const float *source, const float *calibration,
+                                unsigned char *encoded) {
+    float group_scales[8] = {0.0f};
+    unsigned int group_words[16] = {0u};
+    double square_sum = 0.0;
+    float maximum_scale = 0.0f;
+    unsigned int group;
+
+    if (!calibration)
+        return 0;
+    pthread_once(&quant_iq2_once, quant_iq2_initialize);
+    for (group = 0u; group < 256u; ++group) {
+        if (!isfinite(calibration[group]) || calibration[group] < 0.0f)
+            return 0;
+        square_sum += (double)source[group] * (double)source[group];
+    }
+    memset(encoded, 0, YVEX_QUANT_IQ2_XXS_BYTES);
+    for (group = 0u; group < 8u; ++group) {
+        float magnitude[32];
+        float weight[32];
+        unsigned int signs[4];
+        unsigned int grids[4] = {0u};
+        float maximum = 0.0f;
+        float scale;
+        unsigned int lane;
+        unsigned int iteration;
+
+        for (lane = 0u; lane < 32u; ++lane) {
+            unsigned int index = group * 32u + lane;
+            float value = source[index];
+            magnitude[lane] = fabsf(value);
+            weight[lane] = calibration[index] *
+                           sqrtf((float)(square_sum / 256.0) + value * value);
+            if (!isfinite(weight[lane]))
+                return 0;
+            if (magnitude[lane] > maximum)
+                maximum = magnitude[lane];
+        }
+        for (lane = 0u; lane < 4u; ++lane) {
+            unsigned int bit;
+            unsigned int mask = 0u;
+            unsigned int negative_count = 0u;
+            for (bit = 0u; bit < 8u; ++bit) {
+                unsigned int index = lane * 8u + bit;
+                if (source[group * 32u + index] < 0.0f) {
+                    mask |= 1u << bit;
+                    negative_count++;
+                }
+            }
+            if (negative_count & 1u) {
+                unsigned int least = 0u;
+                float least_loss = weight[lane * 8u] * magnitude[lane * 8u] *
+                                   magnitude[lane * 8u];
+                for (bit = 1u; bit < 8u; ++bit) {
+                    unsigned int index = lane * 8u + bit;
+                    float loss = weight[index] * magnitude[index] * magnitude[index];
+                    if (loss < least_loss) {
+                        least = bit;
+                        least_loss = loss;
+                    }
+                }
+                magnitude[lane * 8u + least] = -magnitude[lane * 8u + least];
+                mask ^= 1u << least;
+            }
+            signs[lane] = mask & 127u;
+        }
+        scale = maximum > 0.0f ? maximum / 5.0f : 0.0f;
+        for (iteration = 0u; iteration < 3u && scale > 0.0f; ++iteration) {
+            double numerator = 0.0;
+            double denominator = 0.0;
+            for (lane = 0u; lane < 4u; ++lane)
+                grids[lane] = quant_iq2_select_grid(magnitude + lane * 8u, 1.0f / scale);
+            for (lane = 0u; lane < 32u; ++lane) {
+                unsigned int digit =
+                    (quant_iq2_grid[grids[lane / 8u]] >> (2u * (lane & 7u))) & 3u;
+                double level = (double)(2u * digit + 1u);
+                numerator += (double)weight[lane] * (double)magnitude[lane] * level;
+                denominator += (double)weight[lane] * level * level;
+            }
+            scale = denominator > 0.0 ? (float)(numerator / denominator) : 0.0f;
+            if (scale < 0.0f) {
+                scale = -scale;
+                for (lane = 0u; lane < 4u; ++lane)
+                    signs[lane] = (~signs[lane]) & 127u;
+            }
+        }
+        for (lane = 0u; lane < 4u; ++lane) {
+            group_words[2u * group] |= grids[lane] << (8u * lane);
+            group_words[2u * group + 1u] |= signs[lane] << (7u * lane);
+        }
+        group_scales[group] = scale;
+        if (scale > maximum_scale)
+            maximum_scale = scale;
+    }
+    if (maximum_scale > 0.0f) {
+        float scale = maximum_scale / 31.0f;
+        unsigned short encoded_scale = yvex_quant_f16_encode(scale);
+        float admitted_scale = yvex_quant_f16_decode(encoded_scale);
+        if (!isfinite(admitted_scale) || !(admitted_scale > 0.0f))
+            return 0;
+        quant_store_u16(encoded, encoded_scale);
+        for (group = 0u; group < 8u; ++group) {
+            int code = quant_nearest_even(0.5f * (group_scales[group] / admitted_scale - 1.0f));
+            if (code < 0)
+                code = 0;
+            if (code > 15)
+                code = 15;
+            group_words[2u * group + 1u] |= (unsigned int)code << 28u;
+        }
+    }
+    for (group = 0u; group < 16u; ++group)
+        quant_store_u32(encoded + 2u + 4u * group, group_words[group]);
     return 1;
 }
 
@@ -450,16 +659,96 @@ int yvex_quant_encode_block(unsigned int qtype, const float *source, unsigned lo
         }
         break;
     case YVEX_GGUF_QTYPE_Q2_K:
-        if (!quant_encode_q2_k(source, encoded)) {
+        if (!quant_encode_q2_k(source, NULL, encoded)) {
             quant_block_fail(failure, YVEX_QUANT_FAILURE_Q2_K_BLOCK, qtype, 0u, 1u, err,
                              YVEX_ERR_BOUNDS, "Q2_K affine scales are not finite F16 values");
             return YVEX_ERR_BOUNDS;
         }
         break;
+    case YVEX_GGUF_QTYPE_IQ2_XXS:
+        quant_block_fail(failure, YVEX_QUANT_FAILURE_CALIBRATION_REQUIRED, qtype,
+                         YVEX_QUANT_IQ2_XXS_ELEMENTS, 0u, err, YVEX_ERR_INVALID_ARG,
+                         "IQ2_XXS encoding requires explicit imatrix weights");
+        return YVEX_ERR_INVALID_ARG;
     default:
         return YVEX_ERR_UNSUPPORTED;
     }
     *encoded_bytes = required_bytes;
+    if (failure)
+        memset(failure, 0, sizeof(*failure));
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Purpose: encode one admitted block with explicit per-column calibration weights.
+ * Inputs: qtype, exact source/calibration block, exact destination, and diagnostics.
+ * Effects: publishes one complete block and byte count only after weighted encoding succeeds.
+ * Failure: invalid calibration, geometry, finite policy, or codec state publishes zero bytes.
+ * Boundary: this operation consumes calibration selected by a sealed plan; it does not resolve policy. */
+int yvex_quant_encode_block_weighted(unsigned int qtype, const float *source,
+                                     const float *calibration_weights,
+                                     unsigned long long elements, unsigned char *encoded,
+                                     size_t encoded_capacity, size_t *encoded_bytes,
+                                     yvex_quant_failure *failure, yvex_error *err) {
+    unsigned long long bad = ULLONG_MAX;
+
+    if (qtype != YVEX_GGUF_QTYPE_IQ2_XXS && qtype != YVEX_GGUF_QTYPE_Q2_K)
+        return yvex_quant_encode_block(qtype, source, elements, encoded, encoded_capacity,
+                                       encoded_bytes, failure, err);
+    if (encoded_bytes)
+        *encoded_bytes = 0u;
+    if (!source || !calibration_weights || !encoded || !encoded_bytes) {
+        quant_block_fail(failure, YVEX_QUANT_FAILURE_INVALID_ARGUMENT, qtype, 1u, 0u, err,
+                         YVEX_ERR_INVALID_ARG,
+                         "source, calibration, destination, and byte output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (elements != YVEX_QUANT_IQ2_XXS_ELEMENTS ||
+        encoded_capacity < (qtype == YVEX_GGUF_QTYPE_IQ2_XXS
+                                ? YVEX_QUANT_IQ2_XXS_BYTES
+                                : YVEX_QUANT_Q2_K_BYTES)) {
+        quant_block_fail(failure,
+                         qtype == YVEX_GGUF_QTYPE_IQ2_XXS
+                             ? YVEX_QUANT_FAILURE_IQ2_XXS_BLOCK
+                             : YVEX_QUANT_FAILURE_Q2_K_BLOCK,
+                         qtype, YVEX_QUANT_IQ2_XXS_ELEMENTS, elements, err,
+                         YVEX_ERR_BOUNDS, "weighted block arity or encoded capacity mismatch");
+        return YVEX_ERR_BOUNDS;
+    }
+    if (!quant_values_finite(source, elements, &bad) ||
+        !quant_values_finite(calibration_weights, elements, &bad)) {
+        quant_block_fail(failure, YVEX_QUANT_FAILURE_NONFINITE, qtype, 0u, bad, err,
+                         YVEX_ERR_FORMAT, "IQ2_XXS source and imatrix weights must be finite");
+        return YVEX_ERR_FORMAT;
+    }
+    for (bad = 0u; bad < elements; ++bad) {
+        if (calibration_weights[bad] < 0.0f) {
+            quant_block_fail(failure, YVEX_QUANT_FAILURE_CALIBRATION_IDENTITY, qtype, 0u,
+                             bad, err, YVEX_ERR_FORMAT,
+                             "imatrix weights must be nonnegative");
+            return YVEX_ERR_FORMAT;
+        }
+    }
+    if (qtype == YVEX_GGUF_QTYPE_Q2_K) {
+        if (!quant_encode_q2_k(source, calibration_weights, encoded)) {
+            quant_block_fail(failure, YVEX_QUANT_FAILURE_Q2_K_BLOCK, qtype, 1u, 0u, err,
+                             YVEX_ERR_FORMAT,
+                             "weighted Q2_K affine scales violate the codec contract");
+            return YVEX_ERR_FORMAT;
+        }
+        *encoded_bytes = YVEX_QUANT_Q2_K_BYTES;
+        if (failure)
+            memset(failure, 0, sizeof(*failure));
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (!quant_encode_iq2_xxs(source, calibration_weights, encoded)) {
+        quant_block_fail(failure, YVEX_QUANT_FAILURE_IQ2_XXS_BLOCK, qtype, 1u, 0u, err,
+                         YVEX_ERR_FORMAT,
+                         "IQ2_XXS weights or derived scale violate the codec contract");
+        return YVEX_ERR_FORMAT;
+    }
+    *encoded_bytes = YVEX_QUANT_IQ2_XXS_BYTES;
     if (failure)
         memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
@@ -501,6 +790,35 @@ static void quant_decode_q2_k(const unsigned char *encoded, float *out) {
     }
 }
 
+/* Purpose: reconstruct one compatible IQ2_XXS block from grid, sign, and scale state.
+ * Inputs: exact admitted 66-byte block and 256-element caller output.
+ * Effects: writes the complete reconstructed F32 block.
+ * Failure: caller validates geometry and scale before this infallible helper.
+ * Boundary: direct reconstruction does not select qtype or allocate storage. */
+static void quant_decode_iq2_xxs(const unsigned char *encoded, float *out) {
+    float block_scale = yvex_quant_f16_decode(gguf_u16le_load(encoded));
+    unsigned int group;
+
+    for (group = 0u; group < 8u; ++group) {
+        unsigned int grids = gguf_u32le_load(encoded + 2u + group * 8u);
+        unsigned int signs_and_scale = gguf_u32le_load(encoded + 6u + group * 8u);
+        float group_scale = block_scale * (0.5f + (float)(signs_and_scale >> 28u)) * 0.25f;
+        unsigned int subgroup;
+        for (subgroup = 0u; subgroup < 4u; ++subgroup) {
+            unsigned int grid = (grids >> (8u * subgroup)) & 0xffu;
+            unsigned int signs =
+                quant_iq2_sign_mask((signs_and_scale >> (7u * subgroup)) & 127u);
+            unsigned int lane;
+            for (lane = 0u; lane < 8u; ++lane) {
+                unsigned int digit = (quant_iq2_grid[grid] >> (2u * lane)) & 3u;
+                float level = digit == 0u ? 8.0f : digit == 1u ? 25.0f : 43.0f;
+                out[group * 32u + subgroup * 8u + lane] =
+                    group_scale * level * ((signs & (1u << lane)) ? -1.0f : 1.0f);
+            }
+        }
+    }
+}
+
 /* Purpose: reference-decode one exact admitted scalar or qtype block.
  * Inputs: qtype, exact encoded bytes, exact output arity, and diagnostics.
  * Effects: publishes the complete reconstructed block after size and codec admission.
@@ -533,6 +851,8 @@ int yvex_quant_decode_block(unsigned int qtype, const unsigned char *encoded, si
         quant_block_fail(failure,
                          qtype == YVEX_GGUF_QTYPE_Q8_0    ? YVEX_QUANT_FAILURE_Q8_0_BLOCK
                          : qtype == YVEX_GGUF_QTYPE_Q2_K  ? YVEX_QUANT_FAILURE_Q2_K_BLOCK
+                         : qtype == YVEX_GGUF_QTYPE_IQ2_XXS
+                             ? YVEX_QUANT_FAILURE_IQ2_XXS_BLOCK
                          : qtype == YVEX_GGUF_QTYPE_MXFP4 ? YVEX_QUANT_FAILURE_MXFP4_BLOCK
                                                           : YVEX_QUANT_FAILURE_BYTE_OVERFLOW,
                          qtype, required_bytes, encoded_bytes, err, YVEX_ERR_FORMAT,
@@ -596,6 +916,17 @@ int yvex_quant_decode_block(unsigned int qtype, const unsigned char *encoded, si
             return YVEX_ERR_FORMAT;
         }
         quant_decode_q2_k(encoded, out);
+        break;
+    }
+    case YVEX_GGUF_QTYPE_IQ2_XXS: {
+        float scale = yvex_quant_f16_decode(gguf_u16le_load(encoded));
+        if (!isfinite(scale) || scale < 0.0f) {
+            quant_block_fail(failure, YVEX_QUANT_FAILURE_IQ2_XXS_BLOCK, qtype, 0u,
+                             gguf_u16le_load(encoded), err, YVEX_ERR_FORMAT,
+                             "IQ2_XXS encoded scale is negative or non-finite");
+            return YVEX_ERR_FORMAT;
+        }
+        quant_decode_iq2_xxs(encoded, out);
         break;
     }
     default:
