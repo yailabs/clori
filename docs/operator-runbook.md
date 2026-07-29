@@ -1,110 +1,95 @@
 # YVEX Operator Runbook — Local Runtime
 
-This runbook owns installed local host and client operation. It is not a
-capability ledger; consult [`PROJECT.md`](../PROJECT.md) for current gates.
+This runbook owns first startup and routine operation of the installed local
+runtime host and clients. It begins with explicit artifact and binding inputs;
+configured model defaults are an optional convenience after that path works.
+It is not a capability ledger: consult [`PROJECT.md`](../PROJECT.md) for current
+gates.
 
-## Local paths
+## Prerequisites
 
-- `$XDG_RUNTIME_DIR/yvex/yvexd.sock` is the private mode-0600 local protocol
-  endpoint; its directory and singleton lock are private to the owning UID.
-- `$XDG_CONFIG_HOME/yvex/model.conf` stores the selected model alias and inert
-  start options at mode 0600.
-- `$XDG_STATE_HOME/yvex/` is reserved for explicit opt-in history/log/trace
-  sinks. The current client does not persist prompts, answers, tokens, or KV.
+Builds provide three distinct products:
 
-When the XDG variables are absent, the client uses the documented HOME-based
-configuration fallback and the protocol owner uses its private runtime fallback.
+- `yvexd` hosts one process-resident runtime model;
+- `yvex` connects as the product client;
+- `yvex-dev` retains direct engineering and conformance operations.
 
-## Start
-
-Select a reusable local default when desired:
+The first startup requires one admitted complete GGUF and its exact runtime
+binding. Keep both outside the repository and assign their absolute paths:
 
 ```sh
-./yvex model use deepseek \
-  --artifact /absolute/model.gguf \
-  --runtime-binding /absolute/model.yvex-runtime-binding \
-  --backend cuda \
-  --context 4096
-./yvex model show
-./yvex runtime start
+export YVEX_MODEL_ARTIFACT=/absolute/model.gguf
+export YVEX_RUNTIME_BINDING=/absolute/model.yvex-runtime-binding
+test -r "$YVEX_MODEL_ARTIFACT" && test -r "$YVEX_RUNTIME_BINDING"
 ```
 
-The selection file is private XDG configuration. It contains inert paths and
-options; `yvexd` still authenticates the exact artifact and binding on every
-process start. Applying another selection requires a daemon restart.
+Use `--backend cpu` when the admitted build or device does not support CUDA.
+Backend selection never falls back silently.
 
-An explicit foreground start remains available:
+## First verified startup
+
+Start the host directly in the first terminal:
 
 ```sh
-./yvex runtime start \
-  --model /absolute/model.gguf \
-  --runtime-binding /absolute/model.yvex-runtime-binding \
-  --backend cuda \
-  --context 4096
+./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages
 ```
 
-Foreground operation is the default. The daemon authenticates the artifact and
-binding, builds immutable residency once, publishes its private local socket,
-then reports `READY`. It does not load the complete GGUF into anonymous RAM;
-artifact mappings and admitted resident packs have separate counters.
+Foreground operation is intentional. Keep this terminal open and wait for the
+`runtime.ready` JSONL event before connecting a client. The daemon authenticates
+the artifact and binding, builds immutable residency once, publishes its private
+local socket, and reports one model-open lifecycle.
+
+The host maps the admitted artifact and builds the required resident resources.
+It does not load the complete GGUF into anonymous RAM; mapped bytes, host
+residency, and device or unified residency remain separate metrics.
 
 ## Three-terminal operation
 
-Run these commands in three separate terminals. They connect to one daemon and
-one resident runtime model; they do not open three model copies.
+All three terminals attach to the same daemon and model. They do not create
+three model copies.
 
-Terminal 1 owns the daemon and the complete structured event stream:
+Terminal 1 owns the host and raw typed events:
 
 ```sh
-./yvexd \
-  --model "$ARTIFACT" \
-  --runtime-binding "$RUNTIME_BINDING" \
-  --backend cuda \
-  --context 4096 \
-  --console raw \
-  --trace-level tokens
+./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages
 ```
 
-Terminal 2 projects the same event authority as a compact engine view:
+Terminal 2 renders the operational engine view:
 
 ```sh
 ./yvex runtime watch
 ```
 
-Terminal 3 is the interactive conversation client:
+Terminal 3 owns the interactive conversation:
 
 ```sh
 ./yvex chat --session main
 ```
 
-Start Terminal 1 first and wait for `runtime.ready`; Terminals 2 and 3 may then
-attach in either order. Default telemetry excludes prompt and answer content.
+Start Terminal 1 first. Terminals 2 and 3 may attach in either order after
+`runtime.ready`. Raw and operational views derive from the same typed event
+sequence. Default telemetry excludes prompt and answer content.
 
-## Observe
+## One-shot requests
 
-```sh
-./yvex runtime status
-./yvex runtime status --json
-./yvex runtime watch
-./yvex runtime trace
-```
-
-Raw daemon JSONL is selected at host startup with `--console raw`. Default
-telemetry never contains prompt or answer content.
-
-## Use
+An ephemeral one-shot session streams one answer and closes while leaving the
+daemon and model alive:
 
 ```sh
-./yvex chat --session main
 ./yvex run "Explain attention in one sentence."
+```
+
+Reuse an existing named session only when conversational continuation is
+intended:
+
+```sh
 ./yvex run --session main "Continue more briefly."
 ```
 
-The first form is interactive. The second uses an ephemeral session and leaves
-the daemon alive. An explicit named session retains exact KV and transcript
-state across detach and reconnect.
+## Session lifecycle
 
-## Sessions
+Named sessions retain their own transcript, committed token ledger, sampling
+state, and persistent KV while sharing immutable model resources:
 
 ```sh
 ./yvex session new main
@@ -116,31 +101,90 @@ state across detach and reconnect.
 ./yvex session close main
 ```
 
-A partial or cancelled turn can retain model-committed state. It is never
-silently marked complete. Reset clears KV, tokens, transcript, decoder, and RNG
-policy through the session authority without closing the model.
+Client disconnect and detach do not close the model. A partial or cancelled
+turn can retain model-committed state and is never silently marked complete.
+Reset clears the session KV, tokens, transcript, decoder, and RNG policy without
+closing the host.
 
-## Stop
+## Status, metrics, and trace
+
+Use compact status for normal operation:
+
+```sh
+./yvex runtime status
+./yvex runtime status --json
+```
+
+Subscribe to compact engine activity or the typed trace independently of the
+daemon console:
+
+```sh
+./yvex runtime watch
+./yvex runtime trace
+```
+
+Raw daemon JSONL is selected at host startup with `--console raw`. Increase
+`--trace-level` from `summary` to `stages`, `tokens`, or `full` only when the
+additional volume is required. Text content remains excluded unless the host is
+started with the explicit `--trace-content` opt-in.
+
+## Graceful shutdown
+
+Request shutdown through the local protocol:
 
 ```sh
 ./yvex runtime stop
 ```
 
-Shutdown refuses new work, cancels/drains queued and active requests according
-to their typed state, closes sessions, closes the model exactly once, emits the
-terminal shutdown event, and removes the socket and singleton lock.
+The host refuses new work, drains or cancels queued and active requests under
+their typed state, closes sessions, closes the model exactly once, emits the
+terminal shutdown event, and removes its socket and singleton lock.
+
+## Optional configured defaults
+
+After the explicit startup path succeeds, a private XDG configuration can store
+an inert model selection for shorter future starts:
+
+```sh
+./yvex model use deepseek --artifact "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096
+./yvex model show
+./yvex runtime start
+```
+
+`model use` does not admit an artifact, open a model, or change a running host.
+`yvexd` still authenticates the selected artifact and binding on every process
+start. Applying another selection requires a daemon restart.
+
+## Local paths
+
+- `$XDG_RUNTIME_DIR/yvex/yvexd.sock` is the private mode-0600 local protocol
+  endpoint; its directory and singleton lock are private to the owning UID.
+- `$XDG_CONFIG_HOME/yvex/model.conf` stores the optional selected model alias
+  and inert startup options at mode 0600.
+- `$XDG_STATE_HOME/yvex/` is reserved for explicit opt-in history, log, and
+  trace sinks. The current client does not persist prompts, answers, tokens, or
+  KV.
+
+When XDG variables are absent, the client uses the documented HOME-based
+configuration fallback and the protocol owner uses its private runtime
+fallback.
 
 ## Recovery
 
-- Missing socket: start the runtime with an explicit model and binding.
-- Stale or unsafe socket: verify UID, mode, runtime directory ownership, and
-  that no daemon instance owns the lock; never delete another user's socket.
-- Binding/artifact mismatch: generate or select the binding for that exact
-  artifact identity; do not bypass admission.
-- Partial session: inspect it, then explicitly reset or close it before a new
-  ordinary turn.
-- Unsupported CUDA: use an admitted CUDA build/device or explicitly start a CPU
-  host; no CUDA request falls back silently.
+- Missing socket: repeat the explicit first startup and wait for
+  `runtime.ready`.
+- Stale or unsafe socket: verify UID, mode, runtime-directory ownership, and
+  singleton-lock ownership; never delete another user's socket.
+- Binding or artifact mismatch: select the binding for that exact artifact
+  identity; never bypass admission.
+- Partial session: inspect it, then explicitly reset or close it before an
+  ordinary new turn.
+- Unsupported CUDA: start an admitted CPU host or repair CUDA admission; no
+  CUDA request falls back silently.
+- Queue refusal: wait for current work or reduce client concurrency; do not
+  launch another daemon against the same socket.
 
-Deep direct diagnostics and physical compilation are documented in
-[`runbooks/deepseek.md`](runbooks/deepseek.md) and run through `yvex-dev`.
+DeepSeek-specific operation is documented in
+[`runbooks/deepseek.md`](runbooks/deepseek.md). Direct graph, tokenizer,
+artifact, and physical-compilation diagnostics belong to `yvex-dev`, not the
+product startup path.

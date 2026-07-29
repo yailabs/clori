@@ -62,6 +62,7 @@ require_text README.md '## What YVEX guarantees'
 require_text README.md '## Current vertical'
 require_text README.md '## Build'
 require_text README.md '## Documentation'
+require_text README.md '### Operate YVEX'
 require_text README.md '## Current limits'
 require_text README.md 'docs/diagrams/system_overview.svg'
 require_text README.md 'docs/diagrams/system_overview.mmd'
@@ -119,6 +120,28 @@ require_text docs/api.md '`<yvex/server.h>` | local protocol, runtime host, sess
 require_text docs/operator-runbook.md './yvex runtime start'
 require_text docs/operator-runbook.md './yvex session reset main'
 require_text docs/operator-runbook.md 'It does not load the complete GGUF into anonymous RAM'
+require_text docs/operator-runbook.md '## Prerequisites'
+require_text docs/operator-runbook.md '## First verified startup'
+require_text docs/operator-runbook.md '## Three-terminal operation'
+require_text docs/operator-runbook.md '## Optional configured defaults'
+require_text docs/operator-runbook.md './yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages'
+reject_text README.md '### Use YVEX'
+
+first_operator_command=$(grep -nE '^\./yvex(d|-dev)? ' docs/operator-runbook.md | head -n 1 || true)
+case "$first_operator_command" in
+  *:./yvexd\ --model\ *) ;;
+  *) fail 'operator runbook does not begin product operation with explicit yvexd startup' ;;
+esac
+
+defaults_line=$(grep -nF '## Optional configured defaults' docs/operator-runbook.md | cut -d: -f1)
+model_use_line=$(grep -nF './yvex model use ' docs/operator-runbook.md | cut -d: -f1)
+test "$model_use_line" -gt "$defaults_line" ||
+  fail 'operator runbook promotes model use before optional configured defaults'
+
+if grep -nE '\\[[:space:]]*$' docs/operator-runbook.md; then
+  fail 'operator runbook contains a multiline shell continuation'
+fi
+
 require_text docs/runbooks/deepseek.md './yvex-dev graph transformer generate --help'
 require_text docs/runbooks/deepseek.md 'On turn two'
 require_text docs/reference-architecture.md '### 10.4 Hosted Runtime And Conversation Sessions'

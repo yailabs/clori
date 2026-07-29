@@ -51,13 +51,7 @@ three copies of the model.
 Start the long-lived host and select the structured runtime-event stream:
 
 ```sh
-./yvexd \
-  --model "$YVEX_MODEL_ARTIFACT" \
-  --runtime-binding "$YVEX_RUNTIME_BINDING" \
-  --backend cuda \
-  --context 4096 \
-  --console raw \
-  --trace-level stages
+./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages
 ```
 
 Wait for the `runtime.ready` JSONL event. The daemon authenticates the artifact
@@ -272,10 +266,10 @@ and hygiene workflow is in the [common runbook](docs/runbooks/common.md).
 
 ## Documentation
 
-### Use YVEX
+### Operate YVEX
 
-- [Operator runbook](docs/operator-runbook.md): local host, three-terminal
-  operation, sessions, status, shutdown, and recovery.
+- [Operator runbook](docs/operator-runbook.md): explicit first startup, the
+  three-terminal workflow, sessions, status, shutdown, and recovery.
 - [DeepSeek runbook](docs/runbooks/deepseek.md): exact model-specific product
   and developer workflows.
 

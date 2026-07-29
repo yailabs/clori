@@ -5,19 +5,13 @@ identities, variants, and gates live in [`PROJECT.md`](../../PROJECT.md).
 
 ## Product path
 
-Start one long-lived CUDA host:
+Export the admitted DeepSeek artifact and binding, then follow the explicit
+first-start procedure in the [operator runbook](../operator-runbook.md). That
+procedure starts `yvexd` directly; configured model defaults are optional and
+are not artifact admission.
 
-```sh
-./yvexd \
-  --model "$ARTIFACT" \
-  --runtime-binding "$RUNTIME_BINDING" \
-  --backend cuda \
-  --context 4096 \
-  --console raw \
-  --trace-level tokens
-```
-
-Observe and use it from two additional terminals:
+After `runtime.ready`, observe and use the same host from two additional
+terminals:
 
 ```sh
 ./yvex runtime watch
@@ -35,15 +29,7 @@ the new suffix. An incompatible prefix refuses; reset is explicit.
 ## One-shot path
 
 ```sh
-./yvex run \
-  --strategy stochastic \
-  --temperature 0.8 \
-  --top-k 50 \
-  --top-p 0.95 \
-  --min-p 0.05 \
-  --typical-p 1.0 \
-  --seed 42 \
-  "Explain attention in one sentence."
+./yvex run --strategy stochastic --temperature 0.8 --top-k 50 --top-p 0.95 --min-p 0.05 --typical-p 1.0 --seed 42 "Explain attention in one sentence."
 ```
 
 Sampling remains common-host even when Transformer, MoE, persistent state, and
