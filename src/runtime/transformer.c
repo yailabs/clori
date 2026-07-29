@@ -372,6 +372,23 @@ static int transformer_runtime_buffers(yvex_runtime_transformer_context *context
     return transformer_device_buffers(context, hidden, expanded, err);
 }
 
+/* Purpose: borrow an exact leading byte span from one backend-owned encoded tensor.
+ * Inputs: parent device tensor, requested bytes, and output view. Effects: publishes a borrowed subview.
+ * Failure: returns false for absent or out-of-bounds storage. Boundary: never allocates or transfers. */
+static int transformer_encoded_subview(const yvex_device_tensor *source,
+                                       unsigned long long bytes,
+                                       yvex_device_tensor *view)
+{
+    if (!source || !view || source->dtype != YVEX_DTYPE_I8 || !bytes ||
+        bytes > source->bytes)
+        return 0;
+    *view = *source;
+    view->rank = 1u;
+    view->dims[0] = bytes;
+    view->bytes = bytes;
+    return 1;
+}
+
 /* Purpose: prepare selected embedding rows and exact initial expanded state.
  * Inputs: token chunk and admitted embedding binding. Effects: reads selected rows and fills scratch.
  * Failure: typed range/qtype/numeric refusal. Boundary: never reads the complete vocabulary matrix. */
@@ -421,12 +438,19 @@ static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_
                                           "transformer embedding digest update failed");
     if (chunk->backend == YVEX_BACKEND_KIND_CUDA) {
         unsigned long long bytes = chunk->token_count * context->embedding_row_bytes;
-        int rc = yvex_backend_tensor_write(context->session_view->backend,
-                                           context->device_embedding_encoded,
-                                           context->embedding_encoded, bytes, err);
+        yvex_device_tensor encoded_view;
+        int rc;
+        if (!transformer_encoded_subview(context->device_embedding_encoded,
+                                         bytes, &encoded_view))
+            return transformer_runtime_refuse(
+                err, YVEX_ERR_BOUNDS,
+                "transformer CUDA embedding upload view is invalid");
+        rc = yvex_backend_tensor_write(context->session_view->backend,
+                                       &encoded_view,
+                                       context->embedding_encoded, bytes, err);
         if (rc == YVEX_OK)
             rc = yvex_backend_transformer_cuda_initial(
-                context->session_view->backend, context->device_embedding_encoded,
+                context->session_view->backend, &encoded_view,
                 binding->qtype, chunk->token_count, s->hidden_width,
                 s->residual_streams, context->device_embedding,
                 context->device_residual[0], err);
@@ -805,10 +829,6 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                    : transformer_runtime_refuse(
                          err, YVEX_ERR_STATE,
                          "transformer CUDA workspace identity changed after sealing");
-    if (session.host_workspace_bytes || session.device_workspace_bytes)
-        return transformer_runtime_refuse(
-            err, YVEX_ERR_STATE,
-            "transformer CUDA workspace was sealed by another capacity owner");
     workspace_tokens = request->chunk_tokens < input->token_count
                            ? request->chunk_tokens : input->token_count;
     workspace_start = context->options.context_capacity - workspace_tokens;
@@ -864,7 +884,8 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
     const yvex_moe_plan *moe_plan;
     int rc;
     if (out) *out = NULL;
-    if (!out || !model || !session || !options || !options->context_capacity)
+    if (!out || !model || !session || !options || !options->context_capacity ||
+        options->workspace_token_capacity > options->context_capacity)
         return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG,
                                           "transformer context owners/options are required");
     context = (yvex_runtime_transformer_context *)calloc(1u, sizeof(*context));
@@ -897,6 +918,9 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
         rc = yvex_transformer_plan_build(&context->plan, &facts,
                                          context->model_view->attention, moe_plan, err);
     if (rc == YVEX_OK) rc = transformer_runtime_globals(context, err);
+    if (rc == YVEX_OK && options->workspace_token_capacity)
+        rc = transformer_runtime_buffers(
+            context, options->workspace_token_capacity, err);
     if (rc != YVEX_OK) goto failure;
     *out = context;
     yvex_error_clear(err);

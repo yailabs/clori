@@ -1454,10 +1454,7 @@ static int runtime_session_workspace_requirements(
 int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_session *session,
     yvex_runtime_execution_mode mode, yvex_runtime_execution_scope scope,
     yvex_attention_evidence_level evidence_level, const yvex_graph_attention_capacity_plan *capacity,
-    unsigned long long minimum_bytes,
-    yvex_runtime_model_failure *failure,
-    yvex_error *err) {
-    const yvex_graph_attention_capacity_summary *capacity_summary;
+    unsigned long long minimum_bytes, yvex_runtime_model_failure *failure, yvex_error *err) {
     yvex_backend_tensor_desc device_descriptor;
     yvex_backend_host_workspace_summary workspace;
     yvex_graph_attention_state_summary state;
@@ -1467,10 +1464,8 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
     yvex_error primary_error;
     char workspace_identity[YVEX_SHA256_HEX_CAP];
     int rc = YVEX_OK;
-    capacity_summary = yvex_graph_attention_capacity_plan_summary(capacity);
-    if (!session || !capacity_summary ||
-        (unsigned int)mode > (unsigned int)YVEX_RUNTIME_MODE_FULL ||
-        evidence_level > YVEX_ATTENTION_EVIDENCE_FULL ||
+    if (!session || !yvex_graph_attention_capacity_plan_summary(capacity) ||
+        (unsigned int)mode > (unsigned int)YVEX_RUNTIME_MODE_FULL || evidence_level > YVEX_ATTENTION_EVIDENCE_FULL ||
         session->summary.backend != YVEX_BACKEND_KIND_CUDA || !session->backend)
         return runtime_refuse(failure, REFUSE_WORKSPACE_REQUEST, 1ull, 0ull, err);
     if (pthread_mutex_lock(&session->lifecycle_mutex) != 0)
@@ -1505,25 +1500,41 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
             goto done;
         }
     }
+    rc = runtime_session_workspace_requirements(session, mode, scope, evidence_level,
+        capacity, &state, minimum_bytes, &requirements, failure, err);
+    if (rc != YVEX_OK) goto done;
+    rc = yvex_runtime_workspace_identity_compute(
+        session->model->summary.runtime_model_identity, session->summary.backend,
+        session->maximum_host_bytes, session->maximum_device_bytes,
+        session->summary.workspace_bytes, requirements.required,
+        yvex_graph_attention_capacity_plan_summary(capacity)->identity, workspace_identity, err);
+    if (rc != YVEX_OK) goto done;
     if (session->summary.host_workspace_bytes || session->summary.device_workspace_bytes) {
-        rc = runtime_refuse(failure, REFUSE_WORKSPACE_ALREADY_SEALED,
-                            0ull, session->summary.host_workspace_bytes, err);
+        if (!session->workspace || !session->summary.host_workspace_owned ||
+            !session->summary.host_workspace_pinned ||
+            session->summary.host_workspace_bytes != requirements.required ||
+            session->summary.device_workspace_bytes != requirements.required ||
+            strcmp(session->summary.workspace_identity, workspace_identity) != 0 ||
+            !yvex_backend_host_workspace_summary_get(session->backend, &workspace) ||
+            !workspace.attached || !workspace.owned || !workspace.pinned ||
+            workspace.capacity != requirements.required) {
+            rc = runtime_refuse(failure, REFUSE_WORKSPACE_ALREADY_SEALED,
+                requirements.required, session->summary.host_workspace_bytes, err);
+            goto done;
+        }
+        rc = runtime_session_capabilities_bind(session, failure, 1, err);
         goto done;
     }
-    rc = runtime_session_workspace_requirements(
-        session, mode, scope, evidence_level, capacity, &state, minimum_bytes,
-        &requirements, failure, err);
-    if (rc != YVEX_OK) goto done;
     memset(&device_descriptor, 0, sizeof(device_descriptor));
     device_descriptor.name = "runtime-attention-workspace";
     device_descriptor.dtype = YVEX_DTYPE_I8;
     device_descriptor.rank = 1u;
     device_descriptor.dims[0] = device_descriptor.bytes = requirements.required;
-    rc = yvex_backend_tensor_alloc(
-        session->backend, &device_descriptor, &session->workspace, err);
+    rc = yvex_backend_tensor_alloc(session->backend, &device_descriptor,
+                                   &session->workspace, err);
     if (rc == YVEX_OK)
-        rc = yvex_backend_workspace_attach(
-            session->backend, session->workspace, requirements.generation, err);
+        rc = yvex_backend_workspace_attach(session->backend, session->workspace,
+                                           requirements.generation, err);
     if (rc != YVEX_OK) {
         runtime_model_failure_record(
             failure, YVEX_RUNTIME_MODEL_FAILURE_BACKEND, "device-workspace",
@@ -1546,12 +1557,6 @@ int yvex_runtime_session_prepare_attention_workspace(yvex_runtime_execution_sess
                        "prepared CUDA pinned workspace did not match its plan");
         goto rollback;
     }
-    rc = yvex_runtime_workspace_identity_compute(
-            session->model->summary.runtime_model_identity, session->summary.backend,
-            session->maximum_host_bytes, session->maximum_device_bytes,
-            session->summary.workspace_bytes, requirements.required,
-            capacity_summary->identity, workspace_identity, err);
-    if (rc != YVEX_OK) goto rollback;
     session->summary.host_workspace_bytes = workspace.capacity;
     session->summary.host_workspace_peak_bytes = workspace.peak;
     session->summary.host_workspace_owned = workspace.owned;

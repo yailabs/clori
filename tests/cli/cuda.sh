@@ -20,7 +20,7 @@ contains() {
     grep -F -- "$value" "$file" >/dev/null || fail "$file missing: $value"
 }
 
-"$YVEX_BIN" cuda-info >"$OUT_DIR/cuda_info.out" 2>"$OUT_DIR/cuda_info.err"
+"$YVEX_BIN" evidence cuda >"$OUT_DIR/cuda_info.out" 2>"$OUT_DIR/cuda_info.err"
 rc=$?
 if [ "$rc" -eq 5 ]; then
     contains "$OUT_DIR/cuda_info.out" "cuda: unavailable"
@@ -33,7 +33,7 @@ contains "$OUT_DIR/cuda_info.out" "cuda: available"
 contains "$OUT_DIR/cuda_info.out" "kernel_bundle: admitted"
 contains "$OUT_DIR/cuda_info.out" "status: cuda-info"
 
-"$YVEX_BIN" backend cuda >"$OUT_DIR/backend.out" 2>"$OUT_DIR/backend.err"
+"$YVEX_BIN" evidence backend cuda >"$OUT_DIR/backend.out" 2>"$OUT_DIR/backend.err"
 rc=$?
 [ "$rc" -eq 0 ] || fail "backend cuda exit code was $rc"
 contains "$OUT_DIR/backend.out" "backend: cuda"
@@ -41,7 +41,7 @@ contains "$OUT_DIR/backend.out" "status: ready"
 contains "$OUT_DIR/backend.out" "kernel_bundle: admitted"
 contains "$OUT_DIR/backend.out" "status: backend-capabilities"
 
-"$YVEX_BIN" materialize --model "$FIXTURE" --backend cuda \
+"$YVEX_BIN" artifact materialize --model "$FIXTURE" --backend cuda \
     >"$OUT_DIR/materialize.out" 2>"$OUT_DIR/materialize.err"
 rc=$?
 [ "$rc" -eq 0 ] || fail "materialize cuda exit code was $rc"
@@ -49,9 +49,9 @@ contains "$OUT_DIR/materialize.out" "materialization status: materialized"
 contains "$OUT_DIR/materialize.out" "backend: cuda"
 contains "$OUT_DIR/materialize.out" "status: weights-materialized"
 
-"$YVEX_BIN" help cuda-info >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
+"$YVEX_BIN" help >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
 rc=$?
 [ "$rc" -eq 0 ] || fail "help cuda-info exit code was $rc"
-contains "$OUT_DIR/help.out" "usage: yvex cuda-info"
+contains "$OUT_DIR/help.out" "yvex-dev evidence target|model|moe|backend|cuda"
 
 printf 'cli cuda smoke: ok\n'

@@ -134,7 +134,7 @@ static void *live_execute_main(void *opaque)
     yvex_runtime_generation_result result;
     unsigned char text[LIVE_GENERATION_TEXT_BYTES];
     yvex_runtime_generation_request request = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
         .text_bytes = sizeof(prompt) - 1ull,
         .encode_options = {.maximum_tokens = 8ull}};
@@ -190,12 +190,12 @@ static int live_production(yvex_runtime_model *model, yvex_backend_kind backend,
     static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
         .context_capacity = 8ull, .prefill_chunk_tokens = 8ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
         .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
     yvex_runtime_generation_request request = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
         .text_bytes = sizeof(prompt) - 1ull,
         .encode_options = {.maximum_tokens = 8ull}};
@@ -245,13 +245,13 @@ static int live_boundary_execute(
     static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
         .context_capacity = context_capacity, .prefill_chunk_tokens = 1ull,
         .maximum_new_tokens = 1ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
         .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
     yvex_runtime_generation_request request = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
         .text_bytes = sizeof(prompt) - 1ull,
         .encode_options = {.maximum_tokens = 8ull}};
@@ -341,12 +341,12 @@ static int live_partial_execute(
     static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
         .context_capacity = 8ull, .prefill_chunk_tokens = 1ull,
         .maximum_new_tokens = 2ull,
         .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
     yvex_runtime_generation_request request = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
         .text_bytes = sizeof(prompt) - 1ull,
         .encode_options = {.maximum_tokens = 8ull}};
@@ -471,13 +471,13 @@ static int live_lifecycle_proof(yvex_runtime_model *model,
     static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
         .context_capacity = 8ull, .prefill_chunk_tokens = 8ull,
         .maximum_new_tokens = 1ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
         .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
     yvex_runtime_generation_request request = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
         .text_bytes = sizeof(prompt) - 1ull,
         .encode_options = {.maximum_tokens = 8ull}};

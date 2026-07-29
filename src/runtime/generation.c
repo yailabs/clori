@@ -43,7 +43,7 @@ struct yvex_runtime_generation_context {
     pthread_mutex_t drain_mutex;
     pthread_cond_t drain_condition;
     unsigned long long execution_count, failure_count, cancellation_count;
-    int drain_mutex_ready, drain_condition_ready;
+    int drain_mutex_ready, drain_condition_ready, continuation_allowed;
 };
 
 /* Purpose: publish one stable generation refusal without mutating lower owners. */
@@ -76,6 +76,26 @@ static int generation_bytes_digest(const char *domain, const unsigned char *byte
     if (!yvex_sha256_update_text(&hash, domain) ||
         !yvex_sha256_update_u64(&hash, count) ||
         (count && !yvex_sha256_update(&hash, bytes, (size_t)count))) return 0;
+    return generation_hash_finish(&hash, output);
+}
+
+/* Purpose: derive the exact ordered committed-token prefix supplied by the session authority. */
+static int generation_prefix_identity(
+    const unsigned int *tokens, unsigned long long count,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned long long index;
+
+    if ((!tokens && count) || !output)
+        return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.generation.prefix.v1") ||
+        !yvex_sha256_update_u64(&hash, count))
+        return 0;
+    for (index = 0u; index < count; ++index)
+        if (!yvex_sha256_update_u64(&hash, tokens[index]))
+            return 0;
     return generation_hash_finish(&hash, output);
 }
 
@@ -124,7 +144,7 @@ static int generation_plan_identity(
     yvex_sha256 hash;
     if (!plan || !output) return 0;
     yvex_sha256_init(&hash);
-    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.plan.v1") &&
+    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.plan.v2") &&
            yvex_sha256_update_u64(&hash, plan->schema_version) &&
            yvex_sha256_update_u64(&hash, plan->backend) &&
            yvex_sha256_update_u64(&hash, plan->context_capacity) &&
@@ -205,7 +225,7 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
         return generation_refuse(err, YVEX_ERR_STATE,
                                  "generation lower-owner plans are incompatible");
     memset(&plan, 0, sizeof(plan));
-    plan.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1;
+    plan.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2;
     plan.backend = context->options.backend;
     plan.context_capacity = context->options.context_capacity;
     plan.prefill_chunk_tokens = context->options.prefill_chunk_tokens;
@@ -319,7 +339,7 @@ int yvex_runtime_generation_context_open(
     int rc = YVEX_OK;
     if (out) *out = NULL;
     if (!out || !model || !session || !options ||
-        options->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V1 ||
+        options->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V2 ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
         !options->context_capacity || !options->prefill_chunk_tokens ||
@@ -355,6 +375,7 @@ int yvex_runtime_generation_context_open(
     transformer_options.maximum_host_bytes = options->maximum_host_bytes;
     transformer_options.maximum_device_bytes = options->maximum_device_bytes;
     transformer_options.context_capacity = options->context_capacity;
+    transformer_options.workspace_token_capacity = options->prefill_chunk_tokens;
     transformer_options.cancel_requested = options->cancel_requested;
     transformer_options.cancel_context = options->cancel_context;
     rc = yvex_runtime_transformer_context_open(
@@ -429,6 +450,7 @@ int yvex_runtime_generation_context_open(
         goto failure;
     }
     context->drain_condition_ready = 1;
+    context->continuation_allowed = 1;
     *out = context;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -492,7 +514,7 @@ static int generation_encode_prompt(
     int rc;
     memset(rendered, 0, sizeof(*rendered));
     memset(encoded, 0, sizeof(*encoded));
-    if (!request || request->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V1 ||
+    if (!request || request->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V2 ||
         request->kind > YVEX_GENERATION_INPUT_MESSAGES)
         return generation_refuse(err, YVEX_ERR_INVALID_ARG,
                                  "typed text or message input is required");
@@ -533,22 +555,29 @@ static int generation_encode_prompt(
  * Boundary: returns final Transformer evidence, not logits or sampled tokens. */
 static int generation_prefill(
     yvex_runtime_generation_context *context,
-    const yvex_tokenizer_encode_result *encoded, float **final_hidden,
+    const yvex_tokenizer_encode_result *encoded,
+    unsigned long long reusable_prefix, float **final_hidden,
     unsigned long long *final_hidden_count,
     yvex_runtime_transformer_result *final_result,
     unsigned long long *completed_chunks, yvex_error *err)
 {
     const yvex_transformer_plan_summary *plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(context->transformer));
-    unsigned long long offset = 0ull, maximum_chunk, maximum_values;
+    unsigned long long offset = 0ull, suffix_count, maximum_chunk, maximum_values;
     float *buffer = NULL;
     int rc = YVEX_OK;
     *final_hidden = NULL;
     *final_hidden_count = 0ull;
     *completed_chunks = 0ull;
     memset(final_result, 0, sizeof(*final_result));
+    if (reusable_prefix >= encoded->tokens.len)
+        return generation_refuse(err, YVEX_ERR_STATE,
+                                 "generation turn requires one exact new prompt suffix token");
+    suffix_count = encoded->tokens.len - reusable_prefix;
     maximum_chunk = context->options.prefill_chunk_tokens;
-    if (maximum_chunk > encoded->tokens.len) maximum_chunk = encoded->tokens.len;
+    if (reusable_prefix && context->options.backend == YVEX_BACKEND_KIND_CUDA)
+        maximum_chunk = 1ull;
+    if (maximum_chunk > suffix_count) maximum_chunk = suffix_count;
     if (!plan || !yvex_core_u64_mul(maximum_chunk, plan->hidden_width,
                                     &maximum_values) ||
         maximum_values > SIZE_MAX / sizeof(float))
@@ -558,17 +587,17 @@ static int generation_prefill(
     if (!buffer)
         return generation_refuse(err, YVEX_ERR_NOMEM,
                                  "prompt prefill hidden allocation failed");
-    while (offset < encoded->tokens.len && rc == YVEX_OK) {
+    while (offset < suffix_count && rc == YVEX_OK) {
         yvex_transformer_input_summary summary;
         yvex_transformer_input *input = NULL;
         yvex_runtime_transformer_request request = {0};
         yvex_runtime_transformer_output output = {0};
         yvex_runtime_transformer_result result;
-        unsigned long long count = encoded->tokens.len - offset, values;
+        unsigned long long count = suffix_count - offset, values;
         if (count > maximum_chunk) count = maximum_chunk;
         memset(&summary, 0, sizeof(summary));
         summary.schema_version = YVEX_TRANSFORMER_INPUT_SCHEMA_V1;
-        summary.token_start = offset;
+        summary.token_start = reusable_prefix + offset;
         summary.token_count = count;
         summary.vocabulary_size = plan->vocabulary_size;
         yvex_runtime_identity_copy(summary.logical_model_identity,
@@ -580,10 +609,10 @@ static int generation_prefill(
         yvex_runtime_identity_copy(summary.transformer_plan_identity,
                                    plan->transformer_plan_identity);
         rc = yvex_transformer_input_seal(&summary,
-                                         encoded->tokens.ids + offset, err);
+                                         encoded->tokens.ids + reusable_prefix + offset, err);
         if (rc == YVEX_OK)
             rc = yvex_transformer_input_open_memory(
-                &input, &summary, encoded->tokens.ids + offset, err);
+                &input, &summary, encoded->tokens.ids + reusable_prefix + offset, err);
         request.chunk_tokens = count;
         request.backend = context->options.backend;
         request.phase = YVEX_TRANSFORMER_PHASE_PREFILL;
@@ -619,11 +648,11 @@ static int generation_token_identity(
 {
     yvex_sha256 hash;
     if (!token || !output ||
-        token->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V1 ||
+        token->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V2 ||
         !token->sampled || token->sampled_token_id != token->classification.token_id)
         return 0;
     yvex_sha256_init(&hash);
-    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.token.v1") &&
+    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.token.v2") &&
            yvex_sha256_update_u64(&hash, token->schema_version) &&
            yvex_sha256_update_u64(&hash, token->ordinal) &&
            yvex_sha256_update_u64(&hash, token->sampled_token_id) &&
@@ -665,7 +694,7 @@ static int generation_tokens_identity(
     unsigned long long index;
     if ((!tokens && count) || !output) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.generation.tokens.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.generation.tokens.v2") ||
         !yvex_sha256_update_u64(&hash, count)) return 0;
     for (index = 0ull; index < count; ++index)
         if (!yvex_sha256_update_u64(&hash, tokens[index].sampled_token_id) ||
@@ -686,7 +715,7 @@ static int generation_execution_identity(
     unsigned long long index;
     if (!result || (!tokens && result->sampled_token_count) || !output) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.generation.execution.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.generation.execution.v2") ||
         !yvex_sha256_update_u64(&hash, result->schema_version) ||
         !yvex_sha256_update_u64(&hash, result->status) ||
         !yvex_sha256_update_u64(&hash, result->stop_reason) ||
@@ -708,11 +737,15 @@ static int generation_execution_identity(
         !yvex_sha256_update_u64(&hash, result->logits_projection_count) ||
         !yvex_sha256_update_u64(&hash, result->sampling_draw_count) ||
         !yvex_sha256_update_u64(&hash, result->decode_step_count) ||
+        !yvex_sha256_update_u64(&hash, result->initial_position) ||
+        !yvex_sha256_update_u64(&hash, result->reusable_prefix_token_count) ||
+        !yvex_sha256_update_u64(&hash, result->new_prefill_token_count) ||
         !yvex_sha256_update_u64(&hash, result->final_position) ||
         !yvex_sha256_update_u64(&hash, result->final_persistent_generation) ||
         !yvex_sha256_update_u64(&hash, result->generated_text_bytes) ||
         !yvex_sha256_update_text(&hash, result->prompt_identity) ||
         !yvex_sha256_update_text(&hash, result->prompt_token_identity) ||
+        !yvex_sha256_update_text(&hash, result->reusable_prefix_identity) ||
         !yvex_sha256_update_text(&hash, result->initial_rng_identity) ||
         !yvex_sha256_update_text(&hash, result->final_rng_identity) ||
         !yvex_sha256_update_text(&hash, result->generated_token_identity) ||
@@ -738,6 +771,7 @@ static int generation_project_sample(
 {
     yvex_runtime_logits_source logits_source;
     yvex_runtime_sampling_source sampling_source;
+    const char *stage = "normalized hidden admission";
     int rc;
     memset(logits_result, 0, sizeof(*logits_result));
     memset(sampling_result, 0, sizeof(*sampling_result));
@@ -749,17 +783,25 @@ static int generation_project_sample(
         rc = yvex_runtime_logits_source_from_decode(
             context->logits, &logits_source, decode, context->hidden,
             context->hidden_count, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK) {
+        stage = "complete vocabulary projection";
         rc = yvex_runtime_logits_project(
             context->logits, &logits_source, context->options.backend,
             context->logits_row, context->logits_count, logits_result, err);
-    if (rc == YVEX_OK)
+    }
+    if (rc == YVEX_OK) {
+        stage = "sampling source admission";
         rc = yvex_runtime_sampling_source_from_logits(
             context->sampling, &sampling_source, context->logits_row,
             context->logits_count, logits_result, err);
-    if (rc == YVEX_OK)
+    }
+    if (rc == YVEX_OK) {
+        stage = "token selection";
         rc = yvex_runtime_sampling_select(context->sampling, &sampling_source,
                                           sampling_result, err);
+    }
+    if (rc != YVEX_OK && !yvex_error_is_set(err))
+        yvex_error_set(err, (yvex_status)rc, "runtime.generation.sample", stage);
     return rc;
 }
 
@@ -1007,55 +1049,48 @@ static int generation_result_finish(
     return rc;
 }
 
-/* Purpose: execute one fresh-session autoregressive request over admitted lower owners.
- * Inputs: explicit text/messages and prevalidated caller-owned token/text directories.
- * Effects: encodes once, commits bounded prefill, then samples/decodes/detokenizes in exact order.
- * Failure: returns the primary lower-owner status with a sealed partial result where progress exists.
- * Boundary: no teacher-forced post-prompt token source exists in this API. */
-int yvex_runtime_generation_execute(
+/* Purpose: admit one continuation prefix and encode the exact next prompt before prefill.
+ * Inputs: active context, turn contract, mutable tokenizer outputs, summary output, and result.
+ * Effects: resets turn-local lower state, snapshots RNG/KV, encodes prompt, and copies admitted IDs.
+ * Failure: refuses stale KV, incompatible prefix, capacity, cancellation, or tokenizer error.
+ * Boundary: performs no Transformer execution and commits no prompt token. */
+static int generation_turn_prepare(
     yvex_runtime_generation_context *context,
-    const yvex_runtime_generation_request *request,
-    yvex_runtime_generation_token_result *tokens,
-    unsigned long long token_capacity, unsigned char *text,
-    unsigned long long text_capacity, yvex_runtime_generation_result *result,
-    yvex_error *err)
+    const yvex_runtime_generation_turn_request *turn,
+    yvex_tokenizer_encode_result *encoded, yvex_rendered_prompt *rendered,
+    const yvex_transformer_plan_summary **transformer,
+    yvex_runtime_generation_result *result, yvex_error *err)
 {
-    const yvex_transformer_plan_summary *transformer;
-    yvex_tokenizer_encode_result encoded;
-    yvex_rendered_prompt rendered;
-    yvex_runtime_transformer_result prefill;
-    yvex_runtime_decode_step_result last_decode;
+    const yvex_runtime_generation_request *request = turn->prompt;
     yvex_runtime_sampling_context_summary initial_sampling;
-    yvex_graph_attention_state_summary initial_state, before;
-    float *prefill_hidden = NULL;
-    unsigned long long prefill_values = 0ull, prefill_chunks = 0ull;
-    int rc, prompt_stage = 1, use_prefill = 1;
-    if (result) memset(result, 0, sizeof(*result));
-    if (!context || !request || !tokens || !text || !result ||
-        token_capacity < context->options.maximum_new_tokens ||
-        text_capacity < context->options.maximum_output_bytes)
-        return generation_refuse(err, YVEX_ERR_INVALID_ARG,
-                                 "generation outputs do not satisfy sealed capacities");
-    rc = generation_enter(context, err);
-    if (rc != YVEX_OK) return rc;
-    memset(tokens, 0, (size_t)context->options.maximum_new_tokens * sizeof(*tokens));
-    memset(text, 0, (size_t)context->options.maximum_output_bytes);
-    memset(&encoded, 0, sizeof(encoded));
-    memset(&rendered, 0, sizeof(rendered));
-    memset(&last_decode, 0, sizeof(last_decode));
-    result->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1;
-    result->requested_new_tokens = context->options.maximum_new_tokens;
-    yvex_runtime_identity_copy(result->generation_plan_identity,
-                               context->plan.generation_plan_identity);
-    if (context->execution_count)
-        rc = generation_refuse(err, YVEX_ERR_STATE,
-                               "one fresh generation context executes exactly once");
-    if (rc == YVEX_OK) rc = generation_state_summary(context->session, &initial_state, err);
+    yvex_graph_attention_state_summary initial_state;
+    unsigned long long index;
+    int rc;
+    if (!context->continuation_allowed)
+        return generation_refuse(
+            err, YVEX_ERR_STATE,
+            "generation context requires reset after an incomplete turn");
+    rc = generation_state_summary(context->session, &initial_state, err);
     if (rc == YVEX_OK &&
-        (initial_state.next_position || initial_state.committed_sequence_length ||
+        (initial_state.next_position != turn->committed_prefix_token_count ||
+         initial_state.committed_sequence_length !=
+             turn->committed_prefix_token_count ||
          initial_state.transaction_active))
-        rc = generation_refuse(err, YVEX_ERR_STATE,
-                               "generation requires one fresh empty session");
+        rc = generation_refuse(
+            err, YVEX_ERR_STATE,
+            "committed token prefix does not match persistent session extent");
+    if (rc == YVEX_OK) {
+        result->initial_position = initial_state.next_position;
+        result->reusable_prefix_token_count =
+            turn->committed_prefix_token_count;
+        if (!generation_prefix_identity(turn->committed_prefix_token_ids,
+                                        turn->committed_prefix_token_count,
+                                        result->reusable_prefix_identity))
+            rc = generation_refuse(err, YVEX_ERR_STATE,
+                                   "committed prefix identity derivation failed");
+    }
+    if (rc == YVEX_OK) rc = yvex_tokenizer_decoder_reset(context->decoder, err);
+    if (rc == YVEX_OK) rc = yvex_token_sequence_reset(context->sequence, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_sampling_context_snapshot(
             context->sampling, &initial_sampling, err);
@@ -1064,34 +1099,117 @@ int yvex_runtime_generation_execute(
                                    initial_sampling.rng_state_identity);
     if (rc == YVEX_OK) rc = generation_cancelled(context, err);
     if (rc == YVEX_OK)
-        rc = generation_encode_prompt(context, request, &rendered, &encoded,
+        rc = generation_encode_prompt(context, request, rendered, encoded,
                                       result->prompt_identity, err);
     if (rc == YVEX_OK) {
         result->prompt_bytes = request->kind == YVEX_GENERATION_INPUT_TEXT
                                    ? request->text_bytes
-                                   : rendered.len;
-        result->prompt_token_count = encoded.tokens.len;
+                                   : rendered->len;
+        result->prompt_token_count = encoded->tokens.len;
         yvex_runtime_identity_copy(result->prompt_token_identity,
-                                   encoded.token_ids_identity);
+                                   encoded->token_ids_identity);
     }
-    transformer = yvex_transformer_plan_summary_get(
+    *transformer = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(context->transformer));
-    if (rc == YVEX_OK && (!transformer ||
-                          encoded.tokens.len > context->options.context_capacity))
-        rc = generation_refuse(err, YVEX_ERR_BOUNDS,
-                               "prompt token extent is incompatible with Transformer plan");
-    if (rc == YVEX_OK) prompt_stage = 0;
+    if (rc == YVEX_OK &&
+        (!*transformer ||
+         encoded->tokens.len > context->options.context_capacity ||
+         encoded->tokens.len <= turn->committed_prefix_token_count ||
+         turn->prompt_token_capacity < encoded->tokens.len))
+        rc = generation_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "prompt suffix or caller token capacity is incompatible");
+    for (index = 0ull;
+         rc == YVEX_OK && index < turn->committed_prefix_token_count; ++index)
+        if (encoded->tokens.ids[index] !=
+            turn->committed_prefix_token_ids[index])
+            rc = generation_refuse(
+                err, YVEX_ERR_STATE,
+                "committed model tokens are not an exact prompt prefix");
     if (rc == YVEX_OK)
-        rc = generation_prefill(context, &encoded, &prefill_hidden,
+        memcpy(turn->prompt_token_ids, encoded->tokens.ids,
+               (size_t)encoded->tokens.len * sizeof(*turn->prompt_token_ids));
+    if (rc == YVEX_OK)
+        result->new_prefill_token_count =
+            encoded->tokens.len - turn->committed_prefix_token_count;
+    if (rc == YVEX_OK && turn->progress_sink)
+        rc = turn->progress_sink(
+            turn->progress_context, YVEX_GENERATION_PROGRESS_PROMPT_ACCEPTED,
+            encoded->tokens.len, turn->committed_prefix_token_count, err);
+    return rc;
+}
+
+/* Purpose: execute one exact reusable generation turn over admitted lower owners.
+ * Inputs: complete expected prompt, exact committed token prefix, and bounded output directories.
+ * Effects: verifies/reuses existing KV, commits only the new prompt suffix, then generates in order.
+ * Failure: returns the primary lower-owner status with a sealed partial result where progress exists.
+ * Boundary: no teacher-forced post-prompt token source exists in this API. */
+int yvex_runtime_generation_turn_execute(
+    yvex_runtime_generation_context *context,
+    const yvex_runtime_generation_turn_request *turn,
+    yvex_runtime_generation_token_result *tokens,
+    unsigned long long token_capacity, unsigned char *text,
+    unsigned long long text_capacity, yvex_runtime_generation_result *result,
+    yvex_error *err)
+{
+    const yvex_runtime_generation_request *request = turn ? turn->prompt : NULL;
+    const yvex_transformer_plan_summary *transformer;
+    yvex_tokenizer_encode_result encoded;
+    yvex_rendered_prompt rendered;
+    yvex_runtime_transformer_result prefill;
+    yvex_runtime_decode_step_result last_decode;
+    yvex_graph_attention_state_summary before;
+    float *prefill_hidden = NULL;
+    unsigned long long prefill_values = 0ull, prefill_chunks = 0ull;
+    unsigned long long turn_maximum = turn ? turn->maximum_new_tokens : 0ull;
+    int rc, prompt_stage = 1, use_prefill = 1;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!context || !turn ||
+        turn->schema_version != YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 ||
+        !request || !tokens || !text || !result || !turn_maximum ||
+        turn_maximum > context->options.maximum_new_tokens ||
+        token_capacity < turn_maximum ||
+        (!turn->committed_prefix_token_ids &&
+         turn->committed_prefix_token_count) ||
+        (!turn->prompt_token_ids && turn->prompt_token_capacity) ||
+        text_capacity < context->options.maximum_output_bytes)
+        return generation_refuse(err, YVEX_ERR_INVALID_ARG,
+                                 "generation outputs do not satisfy sealed capacities");
+    rc = generation_enter(context, err);
+    if (rc != YVEX_OK) return rc;
+    memset(tokens, 0, (size_t)turn_maximum * sizeof(*tokens));
+    memset(text, 0, (size_t)context->options.maximum_output_bytes);
+    memset(&encoded, 0, sizeof(encoded));
+    memset(&rendered, 0, sizeof(rendered));
+    memset(&last_decode, 0, sizeof(last_decode));
+    result->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2;
+    result->requested_new_tokens = turn_maximum;
+    yvex_runtime_identity_copy(result->generation_plan_identity,
+                               context->plan.generation_plan_identity);
+    rc = generation_turn_prepare(context, turn, &encoded, &rendered,
+                                 &transformer, result, err);
+    if (rc == YVEX_OK) prompt_stage = 0;
+    if (rc == YVEX_OK && turn->progress_sink)
+        rc = turn->progress_sink(
+            turn->progress_context, YVEX_GENERATION_PROGRESS_PREFILL_STARTED,
+            result->new_prefill_token_count, context->options.prefill_chunk_tokens,
+            err);
+    if (rc == YVEX_OK)
+        rc = generation_prefill(context, &encoded,
+                                turn->committed_prefix_token_count, &prefill_hidden,
                                 &prefill_values, &prefill, &prefill_chunks, err);
     result->prefill_chunk_count = prefill_chunks;
+    if (rc == YVEX_OK && turn->progress_sink)
+        rc = turn->progress_sink(
+            turn->progress_context, YVEX_GENERATION_PROGRESS_PREFILL_COMPLETED,
+            result->new_prefill_token_count, prefill_chunks, err);
     while (rc == YVEX_OK && result->stop_reason == YVEX_GENERATION_STOP_NONE) {
-        yvex_runtime_logits_row_result logits_result;
-        yvex_runtime_sampling_result sample;
+        yvex_runtime_logits_row_result logits_result = {0};
+        yvex_runtime_sampling_result sample = {0};
         yvex_runtime_generation_token_result *token;
         unsigned long long sequence_ordinal;
         int additional_stop = 0;
-        if (result->model_committed_token_count == context->options.maximum_new_tokens) {
+        if (result->model_committed_token_count == turn_maximum) {
             result->stop_reason = YVEX_GENERATION_STOP_MAX_NEW_TOKENS;
             break;
         }
@@ -1110,7 +1228,7 @@ int yvex_runtime_generation_execute(
         if (logits_result.completed) result->logits_projection_count++;
         if (rc != YVEX_OK) break;
         token = &tokens[result->sampled_token_count];
-        token->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1;
+        token->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2;
         token->ordinal = result->sampled_token_count;
         token->sampled = 1;
         token->sampled_token_id = sample.selected_token_id;
@@ -1141,6 +1259,13 @@ int yvex_runtime_generation_execute(
             rc = generation_commit_ordinary(
                 context, token, sequence_ordinal, text, text_capacity,
                 result, &last_decode, err);
+        if (rc == YVEX_OK && turn->fragment_sink && token->text_published) {
+            rc = turn->fragment_sink(
+                turn->fragment_context, token,
+                text + token->text_byte_offset, token->text_byte_count, err);
+            if (rc != YVEX_OK)
+                result->stop_reason = YVEX_GENERATION_STOP_OUTPUT_FAILURE;
+        }
         use_prefill = 0;
     }
     if (rc == YVEX_OK) {
@@ -1161,8 +1286,44 @@ int yvex_runtime_generation_execute(
     yvex_core_free(prefill_hidden);
     yvex_tokenizer_encode_result_clear(&encoded);
     yvex_rendered_prompt_free(&rendered);
+    context->continuation_allowed = rc == YVEX_OK;
     generation_leave(context, rc, 1);
     if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
+}
+
+
+/* Purpose: preserve the fresh one-shot entrypoint as a strict wrapper over reusable turn execution.
+ * Inputs: one request on an empty session. Effects: delegates all generation semantics to the turn
+ * owner. Failure: exact turn refusal. Boundary: this wrapper provides no parallel generation loop. */
+int yvex_runtime_generation_execute(
+    yvex_runtime_generation_context *context,
+    const yvex_runtime_generation_request *request,
+    yvex_runtime_generation_token_result *tokens,
+    unsigned long long token_capacity, unsigned char *text,
+    unsigned long long text_capacity, yvex_runtime_generation_result *result,
+    yvex_error *err)
+{
+    yvex_runtime_generation_turn_request turn;
+    unsigned int *prompt_tokens;
+    int rc;
+
+    if (!context || context->options.context_capacity > SIZE_MAX / sizeof(unsigned int))
+        return generation_refuse(err, YVEX_ERR_INVALID_ARG,
+                                 "generation context is required");
+    prompt_tokens = yvex_core_calloc((size_t)context->options.context_capacity,
+                                     sizeof(*prompt_tokens));
+    if (!prompt_tokens)
+        return generation_refuse(err, YVEX_ERR_NOMEM,
+                                 "fresh generation prompt directory allocation failed");
+    memset(&turn, 0, sizeof(turn));
+    turn.schema_version = YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1;
+    turn.prompt = request;
+    turn.prompt_token_ids = prompt_tokens;
+    turn.prompt_token_capacity = context->options.context_capacity;
+    rc = yvex_runtime_generation_turn_execute(
+        context, &turn, tokens, token_capacity, text, text_capacity, result, err);
+    yvex_core_free(prompt_tokens);
     return rc;
 }
 
@@ -1182,14 +1343,20 @@ int yvex_runtime_generation_result_validate(
     unsigned long long published = 0ull, terminal = 0ull, suppressed = 0ull;
     if (!plan || !result || (!tokens && result->sampled_token_count) ||
         (!text && result->generated_text_bytes) ||
-        plan->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V1 ||
-        result->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V1 ||
+        plan->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V2 ||
+        result->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V2 ||
         result->sampled_token_count > token_capacity ||
         result->generated_text_bytes > text_capacity ||
-        result->requested_new_tokens != plan->maximum_new_tokens ||
+        !result->requested_new_tokens ||
+        result->requested_new_tokens > plan->maximum_new_tokens ||
         result->sampled_token_count > result->requested_new_tokens ||
         result->model_committed_token_count + result->terminal_token_count >
             result->sampled_token_count ||
+        result->reusable_prefix_token_count != result->initial_position ||
+        result->reusable_prefix_token_count > result->prompt_token_count ||
+        result->new_prefill_token_count !=
+            result->prompt_token_count - result->reusable_prefix_token_count ||
+        !yvex_sha256_hex_valid(result->reusable_prefix_identity) ||
         strcmp(result->generation_plan_identity,
                plan->generation_plan_identity) != 0 ||
         !generation_plan_identity(plan, identity) ||
@@ -1267,7 +1434,8 @@ int yvex_runtime_generation_result_validate(
     if (result->completed &&
         (result->status != YVEX_GENERATION_STATUS_COMPLETE || result->partial ||
          result->cancelled || result->failed ||
-         result->final_position != result->prompt_token_count + committed))
+         result->final_position != result->initial_position +
+             result->new_prefill_token_count + committed))
         return generation_refuse(err, YVEX_ERR_FORMAT,
                                  "complete generation state is inconsistent");
     if (!generation_tokens_identity(tokens, result->sampled_token_count, identity) ||
@@ -1307,7 +1475,7 @@ static int generation_context_snapshot(
         rc = yvex_token_sequence_summary_get(context->sequence, &sequence, err);
     lifecycle = atomic_load_explicit(&context->lifecycle, memory_order_acquire);
     if (rc == YVEX_OK) {
-        summary->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1;
+        summary->schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2;
         summary->open = !(lifecycle & GENERATION_LIFECYCLE_CLOSING);
         summary->busy = 0;
         summary->closing = (lifecycle & GENERATION_LIFECYCLE_CLOSING) != 0u;
@@ -1501,7 +1669,7 @@ int yvex_runtime_generation_operator_execute(
     rc = yvex_runtime_cleanup_lease_acquire(
         &cleanup, &model_request, &session_request, &model, &session,
         &failure, err);
-    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1;
+    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2;
     options.backend = request->backend;
     options.context_capacity = request->context_capacity;
     options.prefill_chunk_tokens = request->prefill_chunk_tokens;
@@ -1536,7 +1704,7 @@ int yvex_runtime_generation_operator_execute(
             rc = generation_refuse(err, YVEX_ERR_NOMEM,
                                    "generation operator output allocation failed");
     }
-    execution_request.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V1;
+    execution_request.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2;
     execution_request.kind = request->input_kind;
     execution_request.text = request->text;
     execution_request.text_bytes = request->text_bytes;
@@ -1551,7 +1719,7 @@ int yvex_runtime_generation_operator_execute(
             &result->execution, err);
     if (rc == YVEX_OK)
         rc = generation_context_snapshot(context, &result->context, err);
-    if (result->execution.schema_version == YVEX_RUNTIME_GENERATION_SCHEMA_V1) {
+    if (result->execution.schema_version == YVEX_RUNTIME_GENERATION_SCHEMA_V2) {
         result->token_count = result->execution.sampled_token_count;
         result->text_bytes = result->execution.generated_text_bytes;
     }

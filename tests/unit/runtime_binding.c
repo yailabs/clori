@@ -2920,6 +2920,20 @@ static int test_runtime_cuda_workspace_transaction(
             after.host_workspace_owned && after.host_workspace_pinned &&
             after.host_workspace_bytes > 0ull && after.device_workspace_bytes > 0ull,
         "real resident binding admits CUDA workspace after complete rollback");
+    before = after;
+    rc = yvex_runtime_session_prepare_attention_workspace(
+        session, YVEX_RUNTIME_MODE_EAGER,
+        YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
+        YVEX_ATTENTION_EVIDENCE_NONE, capacity, 0ull, &failure, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK &&
+            yvex_runtime_session_summary_copy(session, &after, &err) == YVEX_OK &&
+            after.workspace_generation == before.workspace_generation &&
+            after.workspace_allocation_count == before.workspace_allocation_count &&
+            after.host_workspace_bytes == before.host_workspace_bytes &&
+            after.device_workspace_bytes == before.device_workspace_bytes &&
+            strcmp(after.workspace_identity, before.workspace_identity) == 0,
+        "an exact second capacity owner adopts the sealed CUDA workspace without allocation");
     yvex_graph_attention_capacity_plan_close(&capacity);
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
                      "transactional workspace session closes cleanly");

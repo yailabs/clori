@@ -20,6 +20,8 @@ extern "C" {
 #endif
 
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V1 1u
+#define YVEX_RUNTIME_GENERATION_SCHEMA_V2 2u
+#define YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 1u
 
 typedef enum {
     YVEX_GENERATION_INPUT_TEXT = 0,
@@ -121,8 +123,11 @@ typedef struct {
     unsigned long long logits_projection_count, sampling_draw_count, decode_step_count;
     unsigned long long final_position, final_persistent_generation;
     unsigned long long generated_text_bytes;
+    unsigned long long initial_position, reusable_prefix_token_count;
+    unsigned long long new_prefill_token_count;
     char prompt_identity[YVEX_SHA256_HEX_CAP];
     char prompt_token_identity[YVEX_SHA256_HEX_CAP];
+    char reusable_prefix_identity[YVEX_SHA256_HEX_CAP];
     char initial_rng_identity[YVEX_SHA256_HEX_CAP];
     char final_rng_identity[YVEX_SHA256_HEX_CAP];
     char generated_token_identity[YVEX_SHA256_HEX_CAP];
@@ -131,6 +136,36 @@ typedef struct {
     char generation_plan_identity[YVEX_SHA256_HEX_CAP];
     char generation_execution_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_result;
+
+typedef int (*yvex_runtime_generation_fragment_sink)(
+    void *context, const yvex_runtime_generation_token_result *token,
+    const unsigned char *bytes, unsigned long long byte_count,
+    yvex_error *err);
+
+typedef enum {
+    YVEX_GENERATION_PROGRESS_PROMPT_ACCEPTED = 0,
+    YVEX_GENERATION_PROGRESS_PREFILL_STARTED,
+    YVEX_GENERATION_PROGRESS_PREFILL_COMPLETED
+} yvex_runtime_generation_progress_kind;
+
+typedef int (*yvex_runtime_generation_progress_sink)(
+    void *context, yvex_runtime_generation_progress_kind kind,
+    unsigned long long value_a, unsigned long long value_b,
+    yvex_error *err);
+
+typedef struct {
+    unsigned int schema_version;
+    const yvex_runtime_generation_request *prompt;
+    const unsigned int *committed_prefix_token_ids;
+    unsigned long long committed_prefix_token_count;
+    unsigned long long maximum_new_tokens;
+    unsigned int *prompt_token_ids;
+    unsigned long long prompt_token_capacity;
+    yvex_runtime_generation_fragment_sink fragment_sink;
+    void *fragment_context;
+    yvex_runtime_generation_progress_sink progress_sink;
+    void *progress_context;
+} yvex_runtime_generation_turn_request;
 
 typedef struct {
     unsigned int schema_version;
@@ -154,6 +189,13 @@ const yvex_runtime_generation_plan_summary *yvex_runtime_generation_plan_summary
 int yvex_runtime_generation_execute(
     yvex_runtime_generation_context *context,
     const yvex_runtime_generation_request *request,
+    yvex_runtime_generation_token_result *tokens,
+    unsigned long long token_capacity, unsigned char *text,
+    unsigned long long text_capacity, yvex_runtime_generation_result *result,
+    yvex_error *err);
+int yvex_runtime_generation_turn_execute(
+    yvex_runtime_generation_context *context,
+    const yvex_runtime_generation_turn_request *turn,
     yvex_runtime_generation_token_result *tokens,
     unsigned long long token_capacity, unsigned char *text,
     unsigned long long text_capacity, yvex_runtime_generation_result *result,

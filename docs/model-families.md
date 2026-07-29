@@ -181,35 +181,14 @@ The source tensor boundary is read-only. It does not imply conversion, artifact
 production, materialization, graph execution, or runtime support. Its purpose is
 to prevent later runtime claims from floating above unexamined model bytes.
 
-Current source/model-family commands include:
+Source and family evidence is a developer surface:
 
 ```sh
-./yvex model-target inspect qwen3-8b
-./yvex model-target class-profile qwen3-8b --audit
-./yvex model-target tensor-collection qwen3-8b --audit
-./yvex model-target tensor-map qwen3-8b --audit
-./yvex model-target quant-policy qwen3-8b --audit
-./yvex model-target quant-policy qwen3-6-35b-a3b --models-root "$HOME/lab/models" --role-support --audit
-./yvex model-target tensor-map qwen3-8b --check-output-contract normal
-./yvex model-target inspect gemma-4-12b-it
-./yvex model-target class-profile gemma-4-12b-it --audit
-./yvex model-target tensor-collection gemma-4-12b-it --audit
-./yvex model-target tensor-map gemma-4-12b-it --audit
-./yvex model-target quant-policy gemma-4-12b-it --audit
-./yvex model-target quant-policy gemma-4-31b-it --models-root "$HOME/lab/models" --role-support --audit
-./yvex model-target quant-policy --gate v0.1.0 --models-root "$HOME/lab/models" --output table
-./yvex model-target quant-policy gemma-4-12b-it --check-output-contract normal
-./yvex source-manifest report --family qwen --release v0.1.0 --audit
-./yvex source-manifest report --family gemma --release v0.1.0 --audit
-./yvex models download qwen3-8b --models-root "$HOME/lab/models" --auth auto --audit
-./yvex models download gemma-4-12b-it --models-root "$HOME/lab/models" --auth auto --audit
-./yvex models download --repo Qwen/Qwen3.6-35B-A3B --family qwen --name qwen3-6-35b-a3b --models-root "$HOME/lab/models" --auth auto --audit
-./yvex models download status qwen3-6-35b-a3b --models-root "$HOME/lab/models" --audit
-./yvex source-manifest report --family qwen --release v0.1.0 --source "$HOME/lab/models/hf/qwen/qwen3-6-35b-a3b" --models-root "$HOME/lab/models" --audit
-./yvex model-target tokenizer-map qwen3-6-35b-a3b --models-root "$HOME/lab/models" --audit
-./yvex model-target missing-roles qwen3-6-35b-a3b --models-root "$HOME/lab/models"
-./yvex model-target missing-roles qwen3-6-35b-a3b --models-root "$HOME/lab/models" --audit
-./yvex models prepare qwen3-6-35b-a3b --models-root "$HOME/lab/models" --dry-run --audit
+./yvex-dev evidence target inspect qwen3-8b
+./yvex-dev evidence target tensor-map qwen3-8b --audit
+./yvex-dev evidence target inspect gemma-4-12b-it
+./yvex-dev source manifest report --family qwen --release v0.1.0 --audit
+./yvex-dev evidence models download qwen3-8b --models-root "$HOME/lab/models"
 ```
 
 Detailed operator flow belongs in runbooks. Model Families owns architecture.
@@ -1174,7 +1153,7 @@ This table records architectural scope, not delivery progress.
 
 | Family | v0.1.0 relation | Runtime class | Current support truth |
 | --- | --- | --- | --- |
-| DeepSeek-V4-Flash | exact release target at `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; canonical target id `deepseek4-v4-flash` | hybrid SWA/CSA/HCA decoder with mHC and MoE | typed architecture, exact 69,187-entry source coverage, sealed Transformation IR, complete quantization, two admitted complete artifacts, bounded materialization, a content-addressed runtime binding, one common runtime model/session, resident attention weights and output head, complete CPU/GB10 attention, persistent state, activation prefill, token-local MoE, numeric-token complete transformer execution, teacher-forced repeated decode, complete raw vocabulary logits, and common-host real-logits sampling exist; tokenizer-backed prompt input, token append, stop behavior, and generation remain unsupported |
+| DeepSeek-V4-Flash | exact release target at `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; canonical target id `deepseek4-v4-flash` | hybrid SWA/CSA/HCA decoder with mHC and MoE | typed architecture, exact source coverage, sealed Transformation IR, policy-driven complete artifacts, materialization, binding, CPU/GB10 execution, persistent state, tokenizer, logits, sampling and generation exist; the local host/session/client refoundation is the current product boundary, while evaluation and release remain gated |
 | Qwen | outside v0.1.0 | target-dependent dense or sparse/MoE | unsupported; existing source/report facts do not enter the release path |
 | Gemma | outside v0.1.0 | dense | unsupported; existing source/report facts do not enter the release path |
 | GLM | outside v0.1.0 source-pressure work | sparse/MoE | unsupported; source evidence is not runtime support |

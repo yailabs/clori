@@ -14,7 +14,10 @@ claim.
 Current core areas:
 
 ```text
-src/cli/                 CLI dispatch, input, surfaces, render, IO
+src/client/              thin product client, REPL, protocol projections
+src/daemon/              long-lived runtime-host entrypoint
+src/server/              protocol, worker, sessions, telemetry and host lifecycle
+src/cli/                 optional nested developer tooling, render and IO
 src/source/              source manifests, provenance, inventory, payload trust/streaming
 src/model/target/        generic target catalogs, gates and qtype reports
 src/model/families/      family architecture, coverage and lowering recipes
@@ -30,7 +33,8 @@ src/runtime/             common immutable model, binding, execution sessions, st
 ## Target Tree Summary
 
 ```text
-input -> command -> surface router -> report/domain -> render -> cli/io
+product argv -> local protocol -> yvexd worker/session -> typed events/results -> client render
+developer argv -> nested owner route -> report/domain -> developer render -> cli/io
 
 file writer -> explicit local files only
 source facts -> architecture IR -> coverage -> contribution map -> transformation IR
@@ -184,6 +188,10 @@ domain algorithms. No writer owns command output.
 | `src/runtime/residency.c` | read-only resident attention-weight packs and generation-bound invalidation |
 | `src/runtime/graph.c` | execution descriptors, phase/mode dispatch, reusable workspace, and transactional publication |
 | `src/runtime/benchmark.c` | identity-bound runtime timing, baseline, CSV, and deterministic SVG serialization |
+| `src/server/core.c` | one-model host, private listener, bounded queue, worker and shutdown |
+| `src/server/session.c` | exact conversation sessions, KV continuation, turns and partial state |
+| `src/server/protocol.c` | bounded versioned local framing and thin protocol client |
+| `src/server/telemetry.c` | one typed event sequence, subscribers and metrics accumulation |
 
 ## Model Architecture Target Map
 
@@ -215,16 +223,16 @@ domain algorithms. No writer owns command output.
 | `src/backend/cuda/kernels.cu` | canonical bounded device kernels; generated bundle remains build output |
 | `src/backend/cuda/qtype.c` | CUDA qtype capability/refusal facts |
 
-## CLI Target Map
+## Client And Developer Target Map
 
 | Layer | Owner |
 | --- | --- |
-| Entry | `src/cli/main.c` |
-| Input | `src/cli/input/<surface>.c` |
-| Command | `src/cli/commands/<surface>.c` |
-| Family workflow | `src/cli/model_artifacts/<surface>.c` where required |
-| Render | `src/cli/render/<surface>.c` for typed domain projections |
-| Operator IO | `src/cli/io/*` |
+| Product entry, REPL and compact render | `src/cli/io/client.c` |
+| Runtime-host entry | `src/daemon/yvexd.c` |
+| Local protocol and host | `src/server/*` |
+| Developer entry and nested dispatch | `src/cli/main.c` |
+| Developer input/commands/render | `src/cli/input`, `src/cli/commands`, `src/cli/render` |
+| Developer terminal IO | `src/cli/io/*` |
 
 ## GGUF Structural Reader Boundary
 

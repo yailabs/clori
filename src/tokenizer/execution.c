@@ -1672,6 +1672,33 @@ int yvex_token_sequence_summary_get(const yvex_token_sequence *sequence,
     return YVEX_OK;
 }
 
+/* Purpose: reuse one generation-local token directory for a later turn without reallocating it.
+ * Inputs: exclusively owned directory. Effects: clears prior rows and advances the directory
+ * generation once. Failure: generation overflow preserves prior rows. Boundary: tokenizer,
+ * sampling, runtime-session, and persistent-KV state are untouched. */
+int yvex_token_sequence_reset(yvex_token_sequence *sequence,
+                              yvex_error *err)
+{
+    unsigned long long next_generation;
+
+    if (!sequence) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "tokenizer.append.reset",
+                       "token directory is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (!yvex_core_u64_add(sequence->generation, 1u, &next_generation)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "tokenizer.append.reset",
+                       "token directory generation overflow");
+        return YVEX_ERR_BOUNDS;
+    }
+    memset(sequence->rows, 0,
+           (size_t)sequence->capacity * sizeof(*sequence->rows));
+    sequence->count = 0u;
+    sequence->generation = next_generation;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 /* Purpose: release one token directory deterministically and clear caller ownership.
  * Inputs: unique handle. Effects: destroys/frees. Failure: retained. Boundary: token sequence lifecycle. */
 void yvex_token_sequence_close(yvex_token_sequence **sequence)

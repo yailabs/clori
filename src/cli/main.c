@@ -1,398 +1,172 @@
-/* Owner: src/cli
- * Owns: top-level command lookup, short help, grouped command catalog, command metadata, and argv dispatch.
- * Does not own: domain behavior, long command help, model/artifact/runtime logic, report building, generation,
- *   eval, benchmark, or release decisions.
- * Invariants: top-level metadata remains short and dispatch-only; detailed usage and behavior stay in the owner
- *   module for each command; unknown commands return parser-style failures.
- * Boundary: top-level CLI dispatch cannot imply lower-level capability, model support, generation, eval, benchmark,
- *   throughput, or release readiness.
- * Purpose: provide top-level command lookup, short help, grouped command catalog, command metadata, and argv
- *   dispatch.
- * Inputs: process arguments and the immutable command registry.
- * Effects: dispatches exactly one admitted command through its typed adapter.
- * Failure: invalid grammar or command refusal returns a stable process status. */
+/* Owner: client.yvex_dev.
+ * Owns: nested developer/plumbing grammar and dispatch into retained typed CLI adapters.
+ * Does not own: product-client grammar, domain capability, runtime hosting, or compatibility aliases.
+ * Invariants: every admitted command has a namespace and no retired flat public command is accepted.
+ * Boundary: optional developer entrypoint over existing domain/report adapters.
+ * Purpose: retain engineering reachability after the incompatible product-client cutover.
+ * Inputs: one namespace, one action, and owner-specific remaining arguments.
+ * Effects: dispatches exactly one existing typed adapter and closes any retained runtime lease.
+ * Failure: unknown namespace/action returns parser status without fallback to the retired registry. */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include "src/cli/io/private.h"
 
 #include "src/cli/input/private.h"
-#include "src/cli/render/private.h"
+#include "src/cli/io/private.h"
+
 #include <yvex/core.h>
 
-static const char *const literal_lines_0[] = {
-    "\nusage:\n  yvex <command> [args]\n  yvex help <command>\n  yvex commands",
-    "\ncommand shape:\n  yvex <family> <action> [object] [selectors] [behavior flags] [diagnostic flags]",
-    "\ncommon:\n  yvex paths\n  yvex models list\n  yvex models prepare TARGET\n  yvex models check TARGET\n"
-        "  yvex model-target inspect TARGET\n  yvex graph attention describe --target deepseek4-v4-flash\n"
-        "  yvex graph attention execute --target deepseek4-v4-flash --backend cpu --scope quick",
-    "\ncommand groups:\n  core: help, commands, version\n  operator: paths, models, accounts\n  "
-        "model/source: model-target, fullmodel, source-manifest, native-weights, tensor-map\n  artifact: "
-        "inspect, metadata, tensors, integrity, materialize, gguf-template, gguf-emit\n  graph: graph\n  "
-        "runtime: input and graph attention\n  diagnostics: "
-        "backend, cuda-info, tokenizer, tokenize, detokenize, prompt\n  server: yvexd daemon status "
-        "surface\n  research/future: documented future lanes only",
-    "\noption classes:\n  selector: --model, --backend, --role, --gate\n  path: --models-root, --source, --"
-        "out, --out-dir, --registry\n  behavior: --dry-run, --overwrite, --no-register, --no-use\n  diagnostic:"
-        " --audit, --trace-level, --include-*\n  plumbing: --json where implemented\n  transitional layout: --"
-        "output normal|table|audit where implemented",
-    "\nraw/evidence:\n  --audit shows evidence where implemented\n  --json is the target plumbing surface "
-        "where implemented\n"
-};
-
-typedef int (*yvex_cli_handler_fn)(int argc, char **argv);
-typedef int (*yvex_cli_owned_handler_fn)(int argc, char **argv,
-                                         yvex_runtime_cleanup_lease **retained_cleanup);
-typedef void (*yvex_cli_help_fn)(FILE *fp);
+typedef int (*developer_handler)(int argc, char **argv);
+typedef int (*developer_owned_handler)(
+    int argc, char **argv, yvex_runtime_cleanup_lease **retained_cleanup);
 
 typedef struct {
-    const char *name;
-    const char *group;
-    const char *surface;
-    const char *purpose;
-    const char *usage;
-    const char *example;
-    const char *option_classes;
-    const char *boundary;
-    yvex_cli_handler_fn handler;
-    yvex_cli_owned_handler_fn owned_handler;
-    yvex_cli_help_fn help;
-} yvex_cli_command;
+    const char *name_space;
+    const char *action;
+    const char *adapter_name;
+    developer_handler handler;
+    developer_owned_handler owned_handler;
+} developer_route;
 
-static int command_commands(int argc, char **argv);
-static int command_help(int argc, char **argv);
-static int command_version(int argc, char **argv);
-static void command_commands_help(FILE *fp);
-static void command_help_help(FILE *fp);
-static void command_version_help(FILE *fp);
-
-/* Purpose: Build one declarative command-catalog row without dispatch side effects. */
-#define CMD(N, G, S, P, U, E, O, B, H, HF) {N, G, S, P, U, E, O, B, H, NULL, HF}
-#define OWNED_CMD(N, G, S, P, U, E, O, B, H, HF) \
-    {N, G, S, P, U, E, O, B, NULL, H, HF}
-
-static const yvex_cli_command yvex_commands[] = {
-    CMD("accounts","operator","mixed-transitional","Provider account status.",
-        "yvex accounts status [provider]","yvex accounts status","selector, diagnostic, transitional-layout",
-            "local provider observation only",yvex_accounts_command,yvex_accounts_help),
-    CMD("backend","diagnostic","diagnostic","Backend availability reports.","yvex backend cpu|cuda",
-        "yvex backend cuda","selector","backend status is not model support",yvex_backend_command,yvex_backend_help),
-    CMD("commands","core","porcelain","Grouped command catalog.","yvex commands","yvex commands","none",
-        "catalog only; no domain execution",command_commands,command_commands_help),
-    CMD("context","runtime","diagnostic","Context class and boundary reports.",
-        "yvex context report --model TARGET","yvex context report --model TARGET",
-            "selector, path, diagnostic, transitional-layout","report-only; no long-context runtime",
-                yvex_context_command,yvex_context_help),
-    CMD("convert","source","mixed-transitional","Selected conversion planning.",
-        "yvex convert plan|emit [options]","yvex convert plan --arch qwen",
-            "selector, path, behavior, diagnostic","conversion tooling only; no runtime claim",
-                yvex_convert_command,yvex_convert_help),
-    CMD("cuda-info","diagnostic","diagnostic","CUDA device facts.","yvex cuda-info","yvex cuda-info","none",
-        "device probe only; not CUDA model runtime",yvex_cuda_info_command,yvex_cuda_info_help),
-    CMD("detokenize","runtime","production","Decode token IDs.","yvex detokenize FILE --ids IDS",
-        "yvex detokenize FILE --ids 1,2","selector","artifact-bound tokenizer; not generation",
-            yvex_detokenize_command,
-            yvex_detokenize_help),
-    CMD("fullmodel","model","mixed-transitional","Fullmodel inventory and plan reports.",
-        "yvex fullmodel report --model TARGET","yvex fullmodel report --model TARGET",
-            "selector, path, behavior, diagnostic, transitional-layout",
-                "report/materialization planning only unless subcommand proves more",yvex_fullmodel_command,
-                    yvex_fullmodel_help),
-    OWNED_CMD("graph","graph","mixed-transitional","Production graph and generation execution.",
-        "yvex graph attention ACTION|moe execute|transformer execute|decode|logits|sample|generate [options]",
-            "yvex graph transformer execute --target deepseek4-v4-flash --backend cuda --input token-ids",
-                "selector, path, behavior, diagnostic, json",
-                    "production graph components and internal generation; not the top-level generation UX",
-                        yvex_graph_command,yvex_graph_help),
-    CMD("gguf-template","artifact","diagnostic","Template validation.","yvex gguf-template validate FILE",
-        "yvex gguf-template inspect FILE","path, diagnostic","template validation only",
-            yvex_gguf_template_command,yvex_gguf_template_help),
-    CMD("gguf-emit","artifact","mixed-transitional","Controlled artifact emission.",
-        "yvex gguf-emit [options]","yvex gguf-emit --help","path, behavior, diagnostic",
-            "controlled artifact tooling; no inference",yvex_gguf_emit_command,yvex_gguf_emit_help),
-    CMD("help","core","porcelain","Command help.","yvex help [command]","yvex help models","none",
-        "help only; no domain execution",command_help,command_help_help),
-    CMD("imatrix","source","diagnostic","Imatrix manifest diagnostics.",
-        "yvex imatrix create|inspect|validate [options]","yvex imatrix validate FILE",
-            "path, behavior, diagnostic","manifest tooling only",yvex_imatrix_command,yvex_imatrix_help),
-    CMD("inspect","artifact","diagnostic","Artifact descriptor inspection.","yvex inspect FILE",
-        "yvex inspect FILE","path, diagnostic","descriptor only; no materialization",yvex_inspect_command,
-            yvex_inspect_help),
-    CMD("input","runtime","diagnostic","Token input validation.",
-        "yvex input tokens --model TARGET --tokens IDS","yvex input tokens --model TARGET --tokens 0,1",
-            "selector, behavior, diagnostic","input validation only",yvex_input_command,yvex_input_help),
-    CMD("integrity","artifact","mixed-transitional","Artifact integrity reports.",
-        "yvex integrity check|report --model TARGET","yvex integrity report --model TARGET --backend cpu",
-            "selector, path, diagnostic, transitional-layout","integrity evidence is not execution",
-                yvex_integrity_command,yvex_integrity_help),
-    CMD("materialize","artifact","mixed-transitional","Materialize selected weights.",
-        "yvex materialize --model TARGET --backend cpu|cuda","yvex materialize --model TARGET --backend cpu",
-            "selector, path, behavior, diagnostic","materialization is not execution",
-                yvex_materialize_command,yvex_materialize_help),
-    CMD("materialize-gate","artifact","diagnostic","Materialization hardening gate.",
-        "yvex materialize-gate check --model TARGET",
-            "yvex materialize-gate check --model TARGET --label LABEL",
-                "selector, path, behavior, diagnostic","gate evidence only",yvex_materialize_gate_command,
-                    yvex_materialize_gate_help),
-    CMD("metadata","artifact","diagnostic","Parsed metadata entries.","yvex metadata FILE",
-        "yvex metadata FILE","path, diagnostic","metadata inspection only",yvex_metadata_command,yvex_metadata_help),
-    CMD("model-gate","artifact","diagnostic","Selected artifact gate.",
-        "yvex model-gate check --model TARGET","yvex model-gate check --model TARGET --label LABEL",
-            "selector, path, behavior, diagnostic","gate evidence only",yvex_model_gate_command,yvex_model_gate_help),
-    CMD("model-target","model","mixed-transitional","Model pressure target reports.",
-        "yvex model-target <action> [TARGET]","yvex model-target inspect qwen3-8b",
-            "selector, path, diagnostic, transitional-layout","target reports are not capability claims",
-                yvex_model_target_command,yvex_model_target_help),
-    CMD("moe","model","diagnostic","MoE model-class reports.","yvex moe report --model TARGET",
-        "yvex moe report --model TARGET","selector, path, diagnostic, transitional-layout",
-            "report-only; no MoE runtime",yvex_moe_command,yvex_moe_help),
-    CMD("models","operator","mixed-transitional","Local model registry and source lanes.",
-        "yvex models <action> [TARGET]","yvex models list",
-            "selector, path, behavior, diagnostic, transitional-layout",
-                "operator registry/source UX; no runtime claim",yvex_models_command,yvex_models_help),
-    CMD("native-weights","source","diagnostic","Safetensors header inventory.",
-        "yvex native-weights --source DIR","yvex native-weights --source DIR --limit 20",
-            "path, behavior, diagnostic","header-only inventory; no payload loading",
-                yvex_native_weights_command,yvex_native_weights_help),
-    CMD("paths","operator","porcelain","Operator filesystem paths.","yvex paths [--create]","yvex paths",
-        "path, behavior, diagnostic, transitional-layout","path reporting only",yvex_paths_command,yvex_paths_help),
-    CMD("prompt","runtime","production","Exact prompt rendering.","yvex prompt FILE --user TEXT",
-        "yvex prompt FILE --user hello","path, behavior, diagnostic","exact prompt; not model execution",
-            yvex_prompt_command,yvex_prompt_help),
-    CMD("quant-job","source","diagnostic","Quantization job manifest.",
-        "yvex quant-job create|inspect|validate [options]","yvex quant-job validate FILE",
-            "path, behavior, diagnostic","job manifest only; no quantization",yvex_quant_job_command,
-                yvex_quant_job_help),
-    CMD("quant-policy","source","diagnostic","Quantization policy manifest.",
-        "yvex quant-policy inspect|validate|derive [options]","yvex quant-policy validate FILE",
-            "path, behavior, diagnostic","policy/report only; no quantization",yvex_quant_policy_command,
-                yvex_quant_policy_help),
-    CMD("quant","source","production","Full-model physical variant compilation.",
-        "yvex quant preset|plan|emit|summarize|explain [options]", "yvex quant preset list",
-            "selector, path, behavior, diagnostic",
-                "policy-driven complete artifact compilation; not evaluation or release selection",
-                    yvex_quant_command, yvex_quant_help),
-    CMD("qtype-support","source","diagnostic","Qtype support policy.","yvex qtype-support",
-        "yvex qtype-support","diagnostic","support policy only; no per-role qtype completion",
-            yvex_qtype_support_command,yvex_qtype_support_help),
-    CMD("source-manifest","source","mixed-transitional","Source provenance reports.",
-        "yvex source-manifest create|report [options]",
-            "yvex source-manifest report --family qwen --release v0.1.0",
-                "selector, path, behavior, diagnostic, transitional-layout",
-                    "source evidence only; no artifact/runtime",yvex_source_manifest_command,yvex_source_manifest_help),
-    CMD("tensor-collection","model","diagnostic","Tensor collection reports.",
-        "yvex tensor-collection report --model TARGET",
-            "yvex tensor-collection report --model TARGET --collection moe",
-                "selector, path, diagnostic, transitional-layout","report-only; no graph consumer",
-                    yvex_tensor_collection_command,yvex_tensor_collection_help),
-    CMD("tensor-map","source","diagnostic","Native tensor role mapping.","yvex tensor-map [options]",
-        "yvex tensor-map --arch qwen","selector, path, behavior, diagnostic",
-            "mapping report/tooling only; no runtime descriptor",yvex_tensor_map_command,yvex_tensor_map_help),
-    CMD("tokenize","runtime","production","Encode text with tokenizer.","yvex tokenize FILE --text TEXT",
-        "yvex tokenize FILE --text hello","path, behavior","artifact-bound tokenizer; not prefill",
-            yvex_tokenize_command,
-            yvex_tokenize_help),
-    CMD("tokenizer","runtime","production","Tokenizer runtime inspection.","yvex tokenizer FILE",
-        "yvex tokenizer FILE","path, diagnostic","runtime tokenizer facts; not generation",
-            yvex_tokenizer_command,yvex_tokenizer_help),
-    CMD("tensors","artifact","diagnostic","Tensor table rows.","yvex tensors FILE","yvex tensors FILE",
-        "path, diagnostic","tensor directory inspection only",yvex_tensors_command,yvex_tensors_help),
-    CMD("version","core","porcelain","Print the YVEX version.","yvex version","yvex version","none",
-        "version only",command_version,command_version_help),
+static const developer_route routes[] = {
+    {"artifact", "show", "inspect", yvex_inspect_command, NULL},
+    {"artifact", "verify", "integrity", yvex_integrity_command, NULL},
+    {"artifact", "metadata", "metadata", yvex_metadata_command, NULL},
+    {"artifact", "tensors", "tensors", yvex_tensors_command, NULL},
+    {"artifact", "materialize", "materialize", yvex_materialize_command, NULL},
+    {"artifact", "materialize-gate", "materialize-gate", yvex_materialize_gate_command, NULL},
+    {"artifact", "model-gate", "model-gate", yvex_model_gate_command, NULL},
+    {"artifact", "template", "gguf-template", yvex_gguf_template_command, NULL},
+    {"artifact", "emit", "gguf-emit", yvex_gguf_emit_command, NULL},
+    {"graph", NULL, "graph", NULL, yvex_graph_command},
+    {"quant", "preset", "quant", yvex_quant_command, NULL},
+    {"quant", "plan", "quant", yvex_quant_command, NULL},
+    {"quant", "emit", "quant", yvex_quant_command, NULL},
+    {"quant", "summarize", "quant", yvex_quant_command, NULL},
+    {"quant", "explain", "quant", yvex_quant_command, NULL},
+    {"quant", "policy", "quant-policy", yvex_quant_policy_command, NULL},
+    {"quant", "imatrix", "imatrix", yvex_imatrix_command, NULL},
+    {"quant", "job", "quant-job", yvex_quant_job_command, NULL},
+    {"quant", "qtype", "qtype-support", yvex_qtype_support_command, NULL},
+    {"quant", "convert", "convert", yvex_convert_command, NULL},
+    {"runtime", "input", "input", yvex_input_command, NULL},
+    {"runtime", "context", "context", yvex_context_command, NULL},
+    {"tokenizer", "show", "tokenizer", yvex_tokenizer_command, NULL},
+    {"tokenizer", "encode", "tokenize", yvex_tokenize_command, NULL},
+    {"tokenizer", "decode", "detokenize", yvex_detokenize_command, NULL},
+    {"tokenizer", "prompt", "prompt", yvex_prompt_command, NULL},
+    {"source", "manifest", "source-manifest", yvex_source_manifest_command, NULL},
+    {"source", "native", "native-weights", yvex_native_weights_command, NULL},
+    {"tensor", "map", "tensor-map", yvex_tensor_map_command, NULL},
+    {"tensor", "collection", "tensor-collection", yvex_tensor_collection_command, NULL},
+    {"evidence", "target", "model-target", yvex_model_target_command, NULL},
+    {"evidence", "model", "fullmodel", yvex_fullmodel_command, NULL},
+    {"evidence", "moe", "moe", yvex_moe_command, NULL},
+    {"evidence", "backend", "backend", yvex_backend_command, NULL},
+    {"evidence", "cuda", "cuda-info", yvex_cuda_info_command, NULL},
+    {"evidence", "accounts", "accounts", yvex_accounts_command, NULL},
+    {"evidence", "paths", "paths", yvex_paths_command, NULL},
+    {"evidence", "models", "models", yvex_models_command, NULL},
 };
 
-#undef CMD
-#undef OWNED_CMD
-
-static const unsigned long yvex_command_count = sizeof(yvex_commands) / sizeof(yvex_commands[0]);
-static const char *yvex_command_groups[] = {
-    "core", "operator", "model", "source", "artifact",
-    "graph", "runtime", "diagnostic", "server", "research/future"
-};
-static const unsigned long yvex_command_group_count =
-    sizeof(yvex_command_groups) / sizeof(yvex_command_groups[0]);
-
-/* Purpose: Orchestrate the typed find command request (`find_command`). */
-static const yvex_cli_command *find_command(const char *name)
+/* Purpose: render the complete bounded developer namespace without old flat catalog metadata. */
+static void print_help(FILE *output)
 {
-    unsigned long i;
+    yvex_cli_out_writef(
+        output,
+        "YVEX developer tools\n\n"
+        "  yvex-dev graph ...\n"
+        "  yvex-dev artifact show|verify|metadata|tensors|materialize|emit ...\n"
+        "  yvex-dev quant preset|plan|emit|summarize|explain|policy|imatrix ...\n"
+        "  yvex-dev tokenizer show|encode|decode|prompt ...\n"
+        "  yvex-dev source manifest|native ...\n"
+        "  yvex-dev tensor map|collection ...\n"
+        "  yvex-dev runtime input|context ...\n"
+        "  yvex-dev evidence target|model|moe|backend|cuda ...\n"
+        "  yvex-dev help | version\n");
+}
 
-    if (!name) return NULL;
-    for (i = 0; i < yvex_command_count; ++i) {
-        if (strcmp(yvex_commands[i].name, name) == 0) return &yvex_commands[i];
+/* Purpose: choose one exact nested route; graph retains its already nested graph grammar. */
+static const developer_route *route_find(int argc, char **argv, int *skip)
+{
+    size_t index;
+    if (argc < 2) return NULL;
+    for (index = 0u; index < sizeof(routes) / sizeof(routes[0]); ++index) {
+        if (strcmp(routes[index].name_space, argv[1]) != 0) continue;
+        if (!routes[index].action) {
+            *skip = 2;
+            return &routes[index];
+        }
+        if (argc >= 3 && strcmp(routes[index].action, argv[2]) == 0) {
+            *skip = 3;
+            return &routes[index];
+        }
     }
     return NULL;
 }
 
-/* Purpose: Orchestrate the typed command group has entries request (`command_group_has_entries`). */
-static int command_group_has_entries(const char *group)
+/* Purpose: reconstruct one nested developer argv vector for a retained typed adapter.
+ * Inputs: admitted route, source argv, and first remaining argument. Effects: allocates argv.
+ * Failure: returns NULL on allocation failure. Boundary: never dispatches or restores flat aliases. */
+static char **adapter_argv(const developer_route *route, int argc,
+                           char **argv, int skip, int *adapter_argc)
 {
-    unsigned long i;
-
-    for (i = 0; i < yvex_command_count; ++i) {
-        if (strcmp(yvex_commands[i].group, group) == 0) return 1;
-    }
-    return 0;
+    int source, output = 0;
+    char **adapted = calloc((size_t)(argc - skip + 3), sizeof(*adapted));
+    if (!adapted) return NULL;
+    adapted[output++] = argv[0];
+    adapted[output++] = (char *)route->adapter_name;
+    if (!strcmp(route->name_space, "quant") &&
+        !strcmp(route->adapter_name, "quant"))
+        adapted[output++] = argv[2];
+    for (source = skip; source < argc; ++source)
+        adapted[output++] = argv[source];
+    adapted[output] = NULL;
+    *adapter_argc = output;
+    return adapted;
 }
 
-/* Purpose: render the grouped top-level command catalog.
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
-static void print_command_catalog(FILE *fp)
-{
-    yvex_render_out out;
-    unsigned long g;
-    unsigned long i;
-
-    render_out_init(&out, fp, YVEX_RENDER_MODE_TABLE);
-    render_section(&out, "YVEX COMMAND CATALOG");
-    for (g = 0; g < yvex_command_group_count; ++g) {
-        const char *group = yvex_command_groups[g];
-        if (!command_group_has_entries(group)) continue;
-        yvex_cli_out_writef(fp, "\n");
-        render_kv(&out, "group", group);
-        render_table_header(&out,
-            "  COMMAND            GROUP            SURFACE              PURPOSE");
-        for (i = 0; i < yvex_command_count; ++i) {
-            char row[512];
-            if (strcmp(yvex_commands[i].group, group) != 0) continue;
-            snprintf(row, sizeof(row), "  %-18s %-16s %-20s %s",
-                     yvex_commands[i].name, yvex_commands[i].group,
-                     yvex_commands[i].surface, yvex_commands[i].purpose);
-            render_table_row(&out, row);
-        }
-    }
-}
-
-/* Purpose: render compact top-level help and common command shapes.
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
-static void print_top_level_help(FILE *fp)
-{
-    yvex_render_out out;
-
-    render_out_init(&out, fp, YVEX_RENDER_MODE_PORCELAIN);
-    render_section(&out, "yvex - local-first inference engine");
-    yvex_cli_out_lines(fp, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
-    render_boundary(&out,
-        "graph transformer generate proves runtime composition; the top-level generation UX remains pending");
-    yvex_cli_out_writef(fp, "\nUse 'yvex commands' for the grouped command catalog.\n");
-}
-
-/* Purpose: Orchestrate the typed command commands request (`command_commands`). */
-static int command_commands(int argc, char **argv)
-{
-    (void)argc;
-    (void)argv;
-    print_command_catalog(stdout);
-    return 0;
-}
-
-/* Purpose: route top-level help requests to short metadata and domain-owned help.
- * Inputs: Borrowed typed facts.
- * Effects: CLI-local effects only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
-static int command_help(int argc, char **argv)
-{
-    const yvex_cli_command *command;
-    yvex_render_out out;
-
-    if (argc <= 2) {
-        print_top_level_help(stdout);
-        return 0;
-    }
-    command = find_command(argv[2]);
-    if (!command) {
-        yvex_cli_out_writef(stderr, "yvex: unknown help topic: %s\n", argv[2]);
-        yvex_cli_out_writef(stderr, "Try 'yvex commands' for the grouped command catalog.\n");
-        return 2;
-    }
-    render_out_init(&out, stdout, YVEX_RENDER_MODE_PORCELAIN);
-    render_report_title(&out, "command", command->name, command->surface);
-    render_kv(&out, "group", command->group);
-    render_kv(&out, "purpose", command->purpose);
-    render_kv(&out, "usage", command->usage);
-    render_kv(&out, "example", command->example);
-    render_kv(&out, "option_classes", command->option_classes);
-    render_boundary(&out, command->boundary);
-    yvex_cli_out_writef(stdout, "\ndomain help:\n");
-    command->help(stdout);
-    return 0;
-}
-
-/* Purpose: Orchestrate the typed command version request (`command_version`). */
-static int command_version(int argc, char **argv)
-{
-    (void)argc;
-    (void)argv;
-    yvex_cli_out_writef(stdout, "yvex %s\n", yvex_version_string());
-    return 0;
-}
-
-/* Purpose: Render command commands help from typed facts (`command_commands_help`). */
-static void command_commands_help(FILE *fp)
-{
-    yvex_cli_out_writef(fp,
-        "usage: yvex commands\n\nPrints the grouped command catalog with command, group, surface class, "
-            "and purpose.\n");
-}
-
-/* Purpose: Render command help help from typed facts (`command_help_help`). */
-static void command_help_help(FILE *fp)
-{
-    yvex_cli_out_writef(fp,
-        "usage: yvex help [command]\n\nPrints top-level help or grammar-first help for one implemented command.\n");
-}
-
-/* Purpose: Render command version help from typed facts (`command_version_help`). */
-static void command_version_help(FILE *fp)
-{
-    yvex_cli_out_writef(fp, "usage: yvex version\n\nPrints the same version string as yvex --version.\n");
-}
-
-/* Purpose: dispatch argv to the selected top-level command handler.
- * Inputs: Borrowed typed facts.
- * Effects: CLI-local effects only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+/* Purpose: dispatch exactly one nested developer command and preserve cleanup as secondary evidence.
+ * Inputs: process argv in the redesigned developer grammar. Effects: invokes one retained adapter.
+ * Failure: returns stable parse, adapter, or cleanup status. Boundary: no product-client fallback. */
 int main(int argc, char **argv)
 {
-    const yvex_cli_command *command;
+    const developer_route *route;
     yvex_runtime_cleanup_lease *cleanup = NULL;
     yvex_error cleanup_error;
-    int status, cleanup_status;
-
-    if (argc == 1) {
-        print_top_level_help(stdout);
+    char **adapted;
+    int skip = 0, adapted_count = 0, status, close_status;
+    if (argc == 1 || !strcmp(argv[1], "help") || !strcmp(argv[1], "--help") ||
+        !strcmp(argv[1], "-h")) {
+        print_help(stdout);
         return 0;
     }
-    if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
-        print_top_level_help(stdout);
+    if (!strcmp(argv[1], "version") || !strcmp(argv[1], "--version")) {
+        yvex_cli_out_writef(stdout, "yvex-dev %s\n", yvex_version_string());
         return 0;
     }
-    if (strcmp(argv[1], "--version") == 0) {
-        return command_version(argc, argv);
+    route = route_find(argc, argv, &skip);
+    if (!route) {
+        yvex_cli_out_writef(stderr, "yvex-dev: unknown developer command\n");
+        yvex_cli_out_writef(stderr, "hint: use `yvex-dev help`\n");
+        return 2;
     }
-    command = find_command(argv[1]);
-    if (command) {
-        status = command->owned_handler
-                     ? command->owned_handler(argc, argv, &cleanup)
-                     : command->handler(argc, argv);
-        yvex_error_clear(&cleanup_error);
-        cleanup_status = yvex_runtime_cleanup_lease_close(&cleanup, &cleanup_error);
-        if (cleanup_status != YVEX_OK) {
-            yvex_cli_out_writef(stderr, "yvex: runtime cleanup failed: %s\n",
-                                yvex_error_message(&cleanup_error));
-            return status ? status : 1;
-        }
-        return status;
+    adapted = adapter_argv(route, argc, argv, skip, &adapted_count);
+    if (!adapted) {
+        yvex_cli_out_writef(stderr, "yvex-dev: argument allocation failed\n");
+        return 1;
     }
-    yvex_cli_out_writef(stderr, "yvex: unknown command: %s\n", argv[1]);
-    yvex_cli_out_writef(stderr, "Try 'yvex help' for usage.\n");
-    return 2;
+    status = route->owned_handler
+                 ? route->owned_handler(adapted_count, adapted, &cleanup)
+                 : route->handler(adapted_count, adapted);
+    free(adapted);
+    yvex_error_clear(&cleanup_error);
+    close_status = yvex_runtime_cleanup_lease_close(&cleanup, &cleanup_error);
+    if (close_status != YVEX_OK) {
+        yvex_cli_out_writef(stderr, "yvex-dev: cleanup failed: %s\n",
+                            yvex_error_message(&cleanup_error));
+        return status ? status : 1;
+    }
+    return status;
 }

@@ -29,8 +29,9 @@ Canonical full target:
 deepseek4-v4-flash
 ```
 
-The target is currently unsupported. v0.1.0 does not include another model
-family or backend.
+The target is not yet a supported release artifact because evaluation,
+full-model benchmark and release qualification remain open. v0.1.0 does not
+include another model family or backend.
 
 ## Generation Contract
 
@@ -129,18 +130,13 @@ transformer, generation, evaluation, benchmark, or release capability.
 
 YVEX does not currently claim:
 
-- DeepSeek-V4-Flash supported-model status or text generation;
+- DeepSeek-V4-Flash supported-model or release-qualified status;
 - that complete GGUF emission, materialization or admitted attention execution
   alone closes the supported-artifact contract;
-- persistent attention-backed KV, a complete transformer, MoE, model decode,
-  logits or sampling;
-- CUDA model generation;
+- public or remote serving, authentication, TLS, compatibility APIs,
+  multi-model hosting, continuous batching, or session persistence over restart;
 - evaluation readiness, a full-model release benchmark or release readiness;
 - v0.1.0 support for Qwen, Gemma, GLM, Metal, ROCm, or another target.
-
-The selected aliases are legacy bounded proof surfaces until an owning row
-removes or absorbs them. They are not release targets and are not named
-artifacts in the v0.1.0 release transcript.
 
 ## Change Control
 

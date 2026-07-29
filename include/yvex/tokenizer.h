@@ -271,6 +271,8 @@ int yvex_tokenizer_decoder_push(yvex_tokenizer_decoder *decoder,
 int yvex_tokenizer_decoder_finish(yvex_tokenizer_decoder *decoder,
                                   yvex_tokenizer_fragment *fragment,
                                   yvex_error *err);
+int yvex_tokenizer_decoder_reset(yvex_tokenizer_decoder *decoder,
+                                 yvex_error *err);
 void yvex_tokenizer_fragment_clear(yvex_tokenizer_fragment *fragment);
 void yvex_tokenizer_decoder_close(yvex_tokenizer_decoder **decoder);
 int yvex_tokenizer_token_classify(
@@ -293,6 +295,8 @@ int yvex_token_sequence_transition(yvex_token_sequence *sequence,
 int yvex_token_sequence_summary_get(const yvex_token_sequence *sequence,
                                     yvex_token_sequence_summary *summary,
                                     yvex_error *err);
+int yvex_token_sequence_reset(yvex_token_sequence *sequence,
+                              yvex_error *err);
 void yvex_token_sequence_close(yvex_token_sequence **sequence);
 
 void yvex_tokens_clear(yvex_tokens *tokens);

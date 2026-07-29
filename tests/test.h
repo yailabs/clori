@@ -51,7 +51,7 @@ int yvex_test_gguf_qtype_abi(void);
 int yvex_test_gguf_template(void);
 int yvex_test_gguf_writer_artifact(void);
 int yvex_test_graph(void);
-int yvex_test_http(void);
+int yvex_test_protocol(void);
 int yvex_test_imatrix(void);
 int yvex_test_log(void);
 int yvex_test_materialization_runtime(void);

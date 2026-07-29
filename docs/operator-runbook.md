@@ -1,85 +1,146 @@
-# YVEX Operator Runbook
+# YVEX Operator Runbook — Local Runtime
 
-Date: 2026-07-25
-Status: runbook index and repository operation boundary
+This runbook owns installed local host and client operation. It is not a
+capability ledger; consult [`PROJECT.md`](../PROJECT.md) for current gates.
 
-## Purpose
+## Local paths
 
-This document routes operators to current executable procedures. It is not a
-command catalogue, delivery ledger, capability dashboard, or substitute for
-`./yvex help`.
+- `$XDG_RUNTIME_DIR/yvex/yvexd.sock` is the private mode-0600 local protocol
+  endpoint; its directory and singleton lock are private to the owning UID.
+- `$XDG_CONFIG_HOME/yvex/model.conf` stores the selected model alias and inert
+  start options at mode 0600.
+- `$XDG_STATE_HOME/yvex/` is reserved for explicit opt-in history/log/trace
+  sinks. The current client does not persist prompts, answers, tokens, or KV.
 
-The v0.1.0 product target is DeepSeek-V4-Flash from:
+When the XDG variables are absent, the client uses the documented HOME-based
+configuration fallback and the protocol owner uses its private runtime fallback.
 
-```text
-$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash
+## Start
+
+Select a reusable local default when desired:
+
+```sh
+./yvex model use deepseek \
+  --artifact /absolute/model.gguf \
+  --runtime-binding /absolute/model.yvex-runtime-binding \
+  --backend cuda \
+  --context 4096
+./yvex model show
+./yvex runtime start
 ```
 
-The canonical full target is `deepseek4-v4-flash`. Its selected GGUF and
-common attention runtime, including session-owned persistent attention state,
-are admitted. Identity-bound activation chunks can populate that state across
-all 43 attention layers. The separate token-local MoE command executes admitted
-hash/learned routing, selected routed experts, shared experts, and output
-combination. Numeric token files execute selected embedding rows, all 43
-attention/MoE blocks, final mHC collapse, and final RMSNorm. Teacher-forced
-repeated decode consumes externally supplied numeric IDs over the same warm
-transformer/session context. Final-prefill and decode normalized hidden rows
-project through the exact separate output head to complete raw logits. The
-common host sampler performs deterministic greedy or explicitly seeded
-stochastic selection over every value in those rows. Its admitted contract
-uses compensated full-row normalization, pre-entropy zero-mass compaction,
-authenticated evidence, and a draining close gate. Prompt text, tokenizer
-execution, token append, EOS/stop behavior, and generation remain unsupported.
+The selection file is private XDG configuration. It contains inert paths and
+options; `yvexd` still authenticates the exact artifact and binding on every
+process start. Applying another selection requires a daemon restart.
 
-## Runbook Index
+An explicit foreground start remains available:
 
-| Runbook | Current purpose | Capability boundary |
-| --- | --- | --- |
-| `runbooks/deepseek.md` | Exact source trust, admitted artifact, runtime binding, attention diagnostics, activation prefill, token-local MoE, numeric-token transformer/decode/logits/sampling, and external benchmark evidence | no prompt, token append, or generation procedure |
-| `runbooks/common.md` | Build, validation, documentation guards, artifact hygiene, and operator-local cleanup | validation does not create runtime capability |
+```sh
+./yvex runtime start \
+  --model /absolute/model.gguf \
+  --runtime-binding /absolute/model.yvex-runtime-binding \
+  --backend cuda \
+  --context 4096
+```
 
-Model-family architecture is defined in `model-families.md`. Release gates are
-defined in `v010-release-doctrine.md`. Current project state, dependencies, and
-Active Next are defined only in `../PROJECT.md`.
+Foreground operation is the default. The daemon authenticates the artifact and
+binding, builds immutable residency once, publishes its private local socket,
+then reports `READY`. It does not load the complete GGUF into anonymous RAM;
+artifact mappings and admitted resident packs have separate counters.
 
-## Current Entry
+## Three-terminal operation
 
-Use the DeepSeek runbook for source verification, real artifact-backed
-attention execution, tensor-file activation prefill, persistent-state exercise,
-token-local MoE execution, numeric-token transformer execution, and
-teacher-forced repeated decode and logits. Use the common runbook for repository
-validation. Do not misclassify an activation probe, numeric token ID, or
-admitted tensor bundle as tokenizer-backed prompt prefill, token selection,
-token append, or generation.
+Run these commands in three separate terminals. They connect to one daemon and
+one resident runtime model; they do not open three model copies.
 
-The attention `qualify` surface separates software acceptance, numerical
-conformance and runtime reliability. The attention `benchmark` surface measures
-one admitted component configuration. Neither surface is model behavior or
-quality evaluation, an agent-runtime evaluation, a full-model benchmark, or
-release qualification.
+Terminal 1 owns the daemon and the complete structured event stream:
 
-Consult `../PROJECT.md` before selecting work. This runbook does not mirror the
-current milestone. The current operator path executes admitted attention, MoE,
-the complete numeric-token backbone, and teacher-forced repeated decode;
-complete raw logits and common host token selection are also operator-reachable,
-while tokenizer and generation requests must still refuse explicitly.
+```sh
+./yvexd \
+  --model "$ARTIFACT" \
+  --runtime-binding "$RUNTIME_BINDING" \
+  --backend cuda \
+  --context 4096 \
+  --console raw \
+  --trace-level tokens
+```
 
-## Operator-Local State
+Terminal 2 projects the same event authority as a compact engine view:
 
-The following remain outside git:
+```sh
+./yvex runtime watch
+```
 
-- model sources, emitted GGUF files, and runtime bindings;
-- local registries and artifact identities;
-- benchmark baselines, JSON/CSV reports, generated SVG charts, logs, pid files,
-  caches, and partial downloads;
-- generated backend outputs and build products.
+Terminal 3 is the interactive conversation client:
 
-Repository guardrails are listed in `runbooks/common.md` and
-`MODEL_ARTIFACTS.md` at the repository root.
+```sh
+./yvex chat --session main
+```
 
-Attention component benchmark comparisons accept an optional
-`--max-regression-bps N` caller policy. Without it, compatible records report
-measured deltas. With it, latency, inverse throughput, memory, transfer,
-allocation, and launch regressions share the explicit basis-point ceiling and
-produce a nonzero status when breached. Runtime qualification failures remain
-independent and cannot be waived by performance policy.
+Start Terminal 1 first and wait for `runtime.ready`; Terminals 2 and 3 may then
+attach in either order. Default telemetry excludes prompt and answer content.
+
+## Observe
+
+```sh
+./yvex runtime status
+./yvex runtime status --json
+./yvex runtime watch
+./yvex runtime trace
+```
+
+Raw daemon JSONL is selected at host startup with `--console raw`. Default
+telemetry never contains prompt or answer content.
+
+## Use
+
+```sh
+./yvex chat --session main
+./yvex run "Explain attention in one sentence."
+./yvex run --session main "Continue more briefly."
+```
+
+The first form is interactive. The second uses an ephemeral session and leaves
+the daemon alive. An explicit named session retains exact KV and transcript
+state across detach and reconnect.
+
+## Sessions
+
+```sh
+./yvex session new main
+./yvex session list
+./yvex session show main
+./yvex session attach main
+./yvex session detach main
+./yvex session reset main
+./yvex session close main
+```
+
+A partial or cancelled turn can retain model-committed state. It is never
+silently marked complete. Reset clears KV, tokens, transcript, decoder, and RNG
+policy through the session authority without closing the model.
+
+## Stop
+
+```sh
+./yvex runtime stop
+```
+
+Shutdown refuses new work, cancels/drains queued and active requests according
+to their typed state, closes sessions, closes the model exactly once, emits the
+terminal shutdown event, and removes the socket and singleton lock.
+
+## Recovery
+
+- Missing socket: start the runtime with an explicit model and binding.
+- Stale or unsafe socket: verify UID, mode, runtime directory ownership, and
+  that no daemon instance owns the lock; never delete another user's socket.
+- Binding/artifact mismatch: generate or select the binding for that exact
+  artifact identity; do not bypass admission.
+- Partial session: inspect it, then explicitly reset or close it before a new
+  ordinary turn.
+- Unsupported CUDA: use an admitted CUDA build/device or explicitly start a CPU
+  host; no CUDA request falls back silently.
+
+Deep direct diagnostics and physical compilation are documented in
+[`runbooks/deepseek.md`](runbooks/deepseek.md) and run through `yvex-dev`.

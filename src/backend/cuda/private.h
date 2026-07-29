@@ -289,6 +289,7 @@ typedef struct {
     void *staged;
     unsigned long long count, used;
     size_t width;
+    int generated;
     const char *stage;
 } yvex_cuda_attention_upload;
 int yvex_cuda_work_allocate(yvex_cuda_work *work,

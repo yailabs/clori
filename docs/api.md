@@ -31,7 +31,7 @@ contains these twelve installed domain headers:
 | `<yvex/backend.h>` | backend admission, device tensors and primitive dispatch |
 | `<yvex/tokenizer.h>` | tokenizer views, tokenization and prompt rendering |
 | `<yvex/registry.h>` | local model registry and typed reference resolution |
-| `<yvex/server.h>` | bounded HTTP parsing and server lifecycle |
+| `<yvex/server.h>` | local protocol, runtime host, sessions, telemetry and thin client lifecycle |
 
 Headers below `include/yvex/internal/` are non-installed cross-subsystem ABI.
 They are available to repository production owners and focused tests only;
@@ -302,7 +302,7 @@ decode, tokenize, stop, detokenize, or generate.
 ### Internal DeepSeek Attention Operator Boundary
 
 `yvex_graph_attention_operator_execute` is the non-installed typed adapter used
-by `yvex graph attention ...`. It consumes a runtime binding, common runtime
+by `yvex-dev graph attention ...`. It consumes a runtime binding, common runtime
 model/session, admitted external artifact, and either a canonical diagnostic
 probe or admitted tensor-file activation input. It never calls Make, a test
 executable, another process or the test-only oracle.
@@ -356,23 +356,23 @@ tokens to decode, or compose generation.
 
 ## Runtime Binding And Operator Actions
 
-The main CLI provides the production consumer for the internal ABI:
+The developer CLI provides the direct production consumer for the internal ABI:
 
 ```text
-yvex graph attention prepare
-yvex graph attention describe
-yvex graph attention capabilities
-yvex graph attention plan
-yvex graph attention execute
-yvex graph attention compare
-yvex graph attention state inspect|validate|exercise
-yvex graph attention residency inspect
-yvex graph attention capture|replay
-yvex graph attention cuda-graph list|inspect|warmup|update|invalidate|release
-yvex graph attention trace|profile|benchmark|qualify
-yvex graph attention benchmark compare
-yvex graph moe execute
-yvex graph transformer execute
+yvex-dev graph attention prepare
+yvex-dev graph attention describe
+yvex-dev graph attention capabilities
+yvex-dev graph attention plan
+yvex-dev graph attention execute
+yvex-dev graph attention compare
+yvex-dev graph attention state inspect|validate|exercise
+yvex-dev graph attention residency inspect
+yvex-dev graph attention capture|replay
+yvex-dev graph attention cuda-graph list|inspect|warmup|update|invalidate|release
+yvex-dev graph attention trace|profile|benchmark|qualify
+yvex-dev graph attention benchmark compare
+yvex-dev graph moe execute
+yvex-dev graph transformer execute
 ```
 
 `prepare` is the compiler-side producer for an external runtime binding.

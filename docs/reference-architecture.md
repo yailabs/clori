@@ -492,6 +492,24 @@ in-flight execution
 Destruction must either wait for, cancel, or reject concurrent use according to
 a typed lifecycle contract.
 
+### 10.4 Hosted Runtime And Conversation Sessions
+
+A local runtime host may retain one immutable runtime model across many client
+connections and requests. It owns listener, queue, worker, session registry,
+telemetry and graceful shutdown. Transport threads submit typed work; one
+initial worker serializes graph-mutating execution without implying continuous
+batching.
+
+A conversation session is longer-lived than a request and distinct from both a
+client connection and the underlying execution session. It owns the exact
+message transcript, committed token ledger, continuation policy, RNG state and
+turn records that correspond to its KV. Client detach preserves it. Reset must
+clear every mutable representation through one authority.
+
+Multi-turn reuse is admitted only when the newly rendered and encoded prompt
+has the committed token ledger as an exact prefix. The host prefills only the
+remaining suffix. String similarity or silent replay cannot establish KV reuse.
+
 ## 11. Transactional State
 
 Persistent state is any information required to continue inference without
@@ -736,6 +754,11 @@ Generation exists only when all phases execute through the same admitted model,
 artifact, runtime, state, and backend path. A component kernel, fixture loop, or
 diagnostic output cannot substitute for this composition.
 
+Hosted generation adds request queueing, exact reusable-prefix admission,
+committed-fragment streaming, partial-turn state and disconnect/cancellation
+semantics around the same generation owner. It does not create another model
+loop.
+
 ## 16. Failure and Publication Model
 
 Every boundary must fail closed. Failure classes should distinguish:
@@ -772,6 +795,9 @@ A concurrency contract must specify:
 - cancellation visibility;
 - in-flight destruction behavior;
 - sharing rules for resident weights, prefixes, or expert caches.
+- transport-to-worker handoff and bounded queue behavior;
+- session attach/detach and active-turn serialization;
+- subscriber backpressure and shutdown drain.
 
 Sharing immutable weights is generally safe and desirable. Implicitly sharing
 workspace, KV, random state, or candidate deltas is non-conforming.

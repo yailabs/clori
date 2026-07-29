@@ -180,7 +180,7 @@ static int run_runtime_console(void)
 /* Server */
 static int run_server(void)
 {
-    if (run_test("http", yvex_test_http) != 0) return 1;
+    if (run_test("protocol", yvex_test_protocol) != 0) return 1;
     if (run_test("server", yvex_test_server) != 0) return 1;
     return 0;
 }

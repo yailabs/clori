@@ -1,147 +1,223 @@
-/* Owner: daemon.yvexd (daemon).
- * Owns: daemon argument admission and the process-level server lifecycle.
- * Does not own: HTTP routing, model admission, backend policy, or generation.
- * Invariants: one invocation creates at most one server and closes it before exit.
- * Boundary: entrypoint orchestration; server APIs retain domain authority.
- * Purpose: parse daemon options and run the admitted local server shell.
- * Inputs: process arguments and operating-system resources used by the server.
- * Effects: writes operator output and may bind one listening socket.
- * Failure: rejects malformed options and returns nonzero after typed server failures. */
+/* Owner: daemon.yvexd.
+ * Owns: daemon argument admission, signals, raw-console projection, and host lifecycle.
+ * Does not own: model admission, session semantics, protocol framing, event identity, or client UX.
+ * Invariants: one invocation creates one host and writes raw stdout only from typed event records.
+ * Boundary: process entrypoint for the long-lived local runtime host.
+ * Purpose: configure, start, observe, serve, and gracefully close yvexd.
+ * Inputs: explicit artifact/binding/backend/budgets and operating-system signals.
+ * Effects: owns process threads and delegates all runtime/socket/session resources to yvex_server.
+ * Failure: concise stderr diagnostics preserve nonzero process status and close the host once. */
+#define _POSIX_C_SOURCE 200809L
 
+#include <yvex/server.h>
+
+#include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <yvex/core.h>
-#include <yvex/registry.h>
-#include <yvex/server.h>
 
-/* Purpose: render the bounded daemon command-line contract to the selected stream. */
-static void print_help(FILE *fp)
+typedef struct {
+    yvex_server *server;
+} daemon_thread_state;
+
+/* Purpose: render the incompatible daemon product contract. */
+static void print_help(FILE *output)
 {
-    fprintf(fp,
-            "usage: yvexd [--host HOST] [--port PORT] [--model FILE_OR_ALIAS] "
-            "[--backend cpu|cuda] [--one-request]\n");
-    fprintf(fp, "\n");
-    fprintf(fp, "Starts the local server shell. Endpoints: /health, /metrics, /v1/models.\n");
-    fprintf(fp, "--model accepts an existing GGUF path or a registered local alias.\n");
-    fprintf(fp, "Generation endpoints are not implemented in server shell.\n");
+    fprintf(output,
+            "usage: yvexd --model ARTIFACT --runtime-binding FILE "
+            "[--target ID] [--backend cpu|cuda] [--socket PATH]\n"
+            "             [--context TOKENS] [--prefill-chunk TOKENS] "
+            "[--max-new-tokens N] [--console off|raw]\n"
+            "             [--trace-level summary|stages|tokens|full] "
+            "[--trace-content]\n\n"
+            "Hosts one process-resident model on a private local Unix socket.\n");
 }
 
-/* Purpose: parse one decimal TCP port without truncation.
- * Inputs: immutable text and required output storage.
- * Effects: writes the validated port only on success.
- * Failure: returns false for syntax, range, or trailing-byte errors.
- * Boundary: entrypoint parsing; it does not open a socket. */
-static int parse_port(const char *text, unsigned int *out)
+/* Purpose: parse one positive unsigned daemon option without trailing bytes.
+ * Inputs: terminated text and output. Effects: writes output only on success.
+ * Failure: returns false for zero or malformed text. Boundary: owner-specific range checks follow. */
+static int parse_u64(const char *text, unsigned long long *value)
 {
     char *end = NULL;
-    unsigned long value;
-
-    if (!text || !out) {
-        return 0;
-    }
-    value = strtoul(text, &end, 10);
-    if (!end || *end != '\0' || value == 0 || value > 65535ul) {
-        return 0;
-    }
-    *out = (unsigned int)value;
+    unsigned long long parsed;
+    if (!text || !value) return 0;
+    parsed = strtoull(text, &end, 10);
+    if (!end || *end || !parsed) return 0;
+    *value = parsed;
     return 1;
 }
 
-/* Purpose: render one typed daemon failure and preserve the requested process status. */
-static int print_error(const yvex_error *err, int exit_code)
+/* Purpose: render one typed process failure. */
+static int print_error(const yvex_error *err, int status)
 {
-    fprintf(stderr, "yvexd: %s: %s\n", yvex_error_where(err), yvex_error_message(err));
-    return exit_code;
+    fprintf(stderr, "yvexd: %s: %s\n", yvex_error_where(err),
+            yvex_error_message(err));
+    return status;
 }
 
-/* Purpose: own daemon execution from argument parsing through deterministic shutdown.
- * Inputs: conventional process argument count and vector.
- * Effects: may print diagnostics and create, serve, stop, and close one server.
- * Failure: returns nonzero for argument, allocation, bind, load, or serve failures.
- * Boundary: process owner; it never promotes server or generation capability. */
-int main(int arg_count, char **args)
+/* Purpose: synchronously own SIGINT/SIGTERM outside async-signal context. */
+static void *signal_main(void *opaque)
 {
-    yvex_server *server = NULL;
-    yvex_server_options options;
-    yvex_server_summary summary;
-    yvex_model_ref model_ref;
+    daemon_thread_state *state = opaque;
+    sigset_t set;
+    int signal_number;
     yvex_error err;
-    int i;
-    int rc;
+    (void)sigemptyset(&set);
+    (void)sigaddset(&set, SIGINT);
+    (void)sigaddset(&set, SIGTERM);
+    if (sigwait(&set, &signal_number) == 0)
+        (void)yvex_server_stop(state->server, &err);
+    return NULL;
+}
 
+/* Purpose: project the canonical typed event stream to parseable JSONL stdout. */
+static void *raw_console_main(void *opaque)
+{
+    daemon_thread_state *state = opaque;
+    unsigned long long cursor = 0u;
+    char line[2048];
+    for (;;) {
+        yvex_server_event event;
+        yvex_error err;
+        if (yvex_server_event_next(state->server, cursor, 1, &event, &err) != YVEX_OK)
+            continue;
+        cursor = event.sequence;
+        if (yvex_server_event_json(&event, line, sizeof(line), &err) == YVEX_OK) {
+            (void)fwrite(line, 1u, strlen(line), stdout);
+            (void)fflush(stdout);
+        }
+        if (event.kind == YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE) break;
+    }
+    return NULL;
+}
+
+/* Purpose: own daemon startup through deterministic model, session, and socket shutdown.
+ * Inputs: admitted process argv and process signals. Effects: starts, serves, stops, and closes one host.
+ * Failure: prints one fatal diagnostic and returns nonzero after cleanup. Boundary: runtime work is delegated. */
+int main(int argument_count, char **arguments)
+{
+    yvex_server_options options;
+    yvex_server *server = NULL;
+    daemon_thread_state thread_state;
+    pthread_t signal_thread, console_thread;
+    sigset_t signals;
+    yvex_error err;
+    int index, rc, signal_ready = 0, console_ready = 0;
     memset(&options, 0, sizeof(options));
-    memset(&model_ref, 0, sizeof(model_ref));
-    options.host = "127.0.0.1";
-    options.port = 8080;
-    options.backend_name = "cpu";
-
-    yvex_error_clear(&err);
-
-    for (i = 1; i < arg_count; ++i) {
-        if (strcmp(args[i], "--help") == 0 || strcmp(args[i], "-h") == 0) {
+    options.target_id = "deepseek4-v4-flash";
+    options.backend = YVEX_BACKEND_KIND_CPU;
+    options.context_capacity = 4096u;
+    options.prefill_chunk_tokens = 64u;
+    options.maximum_new_tokens = 256u;
+    options.maximum_output_bytes = 1048576u;
+    options.maximum_sessions = 8u;
+    options.request_queue_capacity = 16u;
+    options.trace_level = YVEX_SERVER_TRACE_STAGES;
+    for (index = 1; index < argument_count; ++index) {
+        const char *argument = arguments[index];
+        if (!strcmp(argument, "--help") || !strcmp(argument, "-h")) {
             print_help(stdout);
             return 0;
-        } else if (strcmp(args[i], "--version") == 0) {
-            fprintf(stdout, "%s\n", yvex_version_string());
+        } else if (!strcmp(argument, "--version")) {
+            fprintf(stdout, "%s protocol=%u\n", yvex_version_string(),
+                    YVEX_LOCAL_PROTOCOL_VERSION);
             return 0;
-        } else if (strcmp(args[i], "--host") == 0) {
-            if (i + 1 >= arg_count) {
-                fprintf(stderr, "yvexd: --host requires a value\n");
+        } else if ((!strcmp(argument, "--model") ||
+                    !strcmp(argument, "--runtime-binding") ||
+                    !strcmp(argument, "--target") ||
+                    !strcmp(argument, "--backend") ||
+                    !strcmp(argument, "--socket") ||
+                    !strcmp(argument, "--context") ||
+                    !strcmp(argument, "--prefill-chunk") ||
+                    !strcmp(argument, "--max-new-tokens") ||
+                    !strcmp(argument, "--console") ||
+                    !strcmp(argument, "--trace-level")) &&
+                   index + 1 >= argument_count) {
+            fprintf(stderr, "yvexd: %s requires a value\n", argument);
+            return 2;
+        } else if (!strcmp(argument, "--model")) {
+            options.artifact_path = arguments[++index];
+        } else if (!strcmp(argument, "--runtime-binding")) {
+            options.runtime_binding_path = arguments[++index];
+        } else if (!strcmp(argument, "--target")) {
+            options.target_id = arguments[++index];
+        } else if (!strcmp(argument, "--socket")) {
+            options.socket_path = arguments[++index];
+        } else if (!strcmp(argument, "--backend")) {
+            const char *backend = arguments[++index];
+            if (!strcmp(backend, "cpu")) options.backend = YVEX_BACKEND_KIND_CPU;
+            else if (!strcmp(backend, "cuda")) options.backend = YVEX_BACKEND_KIND_CUDA;
+            else {
+                fprintf(stderr, "yvexd: --backend requires cpu or cuda\n");
                 return 2;
             }
-            options.host = args[++i];
-        } else if (strcmp(args[i], "--port") == 0) {
-            if (i + 1 >= arg_count || !parse_port(args[i + 1], &options.port)) {
-                fprintf(stderr, "yvexd: --port must be in range 1..65535\n");
-                return 2;
-            }
-            i += 1;
-        } else if (strcmp(args[i], "--model") == 0) {
-            if (i + 1 >= arg_count) {
-                fprintf(stderr, "yvexd: --model requires a value\n");
-                return 2;
-            }
-            options.model_path = args[++i];
-            options.load_engine = 1;
-        } else if (strcmp(args[i], "--backend") == 0) {
-            if (i + 1 >= arg_count) {
-                fprintf(stderr, "yvexd: --backend requires a value\n");
-                return 2;
-            }
-            options.backend_name = args[++i];
-        } else if (strcmp(args[i], "--one-request") == 0) {
-            options.one_request = 1;
+        } else if (!strcmp(argument, "--context")) {
+            if (!parse_u64(arguments[++index], &options.context_capacity)) return 2;
+        } else if (!strcmp(argument, "--prefill-chunk")) {
+            if (!parse_u64(arguments[++index], &options.prefill_chunk_tokens)) return 2;
+        } else if (!strcmp(argument, "--max-new-tokens")) {
+            if (!parse_u64(arguments[++index], &options.maximum_new_tokens)) return 2;
+        } else if (!strcmp(argument, "--console")) {
+            const char *console = arguments[++index];
+            if (!strcmp(console, "off")) options.console = YVEX_SERVER_CONSOLE_OFF;
+            else if (!strcmp(console, "raw")) options.console = YVEX_SERVER_CONSOLE_RAW;
+            else return 2;
+        } else if (!strcmp(argument, "--trace-level")) {
+            const char *level = arguments[++index];
+            if (!strcmp(level, "summary")) options.trace_level = YVEX_SERVER_TRACE_SUMMARY;
+            else if (!strcmp(level, "stages")) options.trace_level = YVEX_SERVER_TRACE_STAGES;
+            else if (!strcmp(level, "tokens")) options.trace_level = YVEX_SERVER_TRACE_TOKENS;
+            else if (!strcmp(level, "full")) options.trace_level = YVEX_SERVER_TRACE_FULL;
+            else return 2;
+        } else if (!strcmp(argument, "--trace-content")) {
+            options.trace_content = 1;
         } else {
-            fprintf(stderr, "yvexd: unknown option: %s\n", args[i]);
+            fprintf(stderr, "yvexd: unknown option: %s\n", argument);
             return 2;
         }
     }
-
-    if (options.model_path) {
-        rc = yvex_model_ref_resolve(&model_ref, options.model_path, NULL, &err);
-        if (rc != YVEX_OK) {
-            return print_error(&err, rc == YVEX_ERR_INVALID_ARG ? 2 : 5);
-        }
-        options.model_path = model_ref.path;
+    if (!options.artifact_path || !options.runtime_binding_path) {
+        fprintf(stderr, "yvexd: --model and --runtime-binding are required\n");
+        return 2;
     }
-
+    (void)sigemptyset(&signals);
+    (void)sigaddset(&signals, SIGINT);
+    (void)sigaddset(&signals, SIGTERM);
+    (void)pthread_sigmask(SIG_BLOCK, &signals, NULL);
     rc = yvex_server_create(&server, &options, &err);
+    if (rc == YVEX_OK) rc = yvex_server_start(server, &err);
     if (rc != YVEX_OK) {
-        yvex_model_ref_clear(&model_ref);
-        return print_error(&err, rc == YVEX_ERR_INVALID_ARG ? 2 : 5);
-    }
-
-    if (yvex_server_get_summary(server, &summary, &err) == YVEX_OK) {
-        fprintf(stderr, "yvexd listening on %s:%u\n", summary.host, summary.port);
-        fprintf(stderr, "generation_available: false\n");
-    }
-
-    rc = yvex_server_serve(server, &err);
-    yvex_server_close(server);
-    yvex_model_ref_clear(&model_ref);
-    if (rc != YVEX_OK) {
+        yvex_server_close(&server);
         return print_error(&err, 1);
     }
-    return 0;
+    memset(&thread_state, 0, sizeof(thread_state));
+    thread_state.server = server;
+    if (pthread_create(&signal_thread, NULL, signal_main, &thread_state) == 0)
+        signal_ready = 1;
+    else {
+        yvex_server_close(&server);
+        fprintf(stderr, "yvexd: signal coordinator creation failed\n");
+        return 1;
+    }
+    if (options.console == YVEX_SERVER_CONSOLE_RAW) {
+        if (pthread_create(&console_thread, NULL, raw_console_main,
+                           &thread_state) == 0)
+            console_ready = 1;
+        else {
+            (void)yvex_server_stop(server, &err);
+            rc = YVEX_ERR_STATE;
+        }
+    }
+    if (rc == YVEX_OK) rc = yvex_server_serve(server, &err);
+    (void)yvex_server_stop(server, &err);
+    if (signal_ready) {
+        (void)pthread_kill(signal_thread, SIGTERM);
+        (void)pthread_join(signal_thread, NULL);
+    }
+    if (yvex_server_finish(server, &err) != YVEX_OK && rc == YVEX_OK)
+        rc = yvex_error_code(&err);
+    if (console_ready) (void)pthread_join(console_thread, NULL);
+    yvex_server_close(&server);
+    return rc == YVEX_OK ? 0 : print_error(&err, 1);
 }

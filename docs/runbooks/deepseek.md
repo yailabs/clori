@@ -1,99 +1,95 @@
-# DeepSeek Operator Runbook
+# DeepSeek-V4-Flash Local Runtime
 
-## Current Target
+DeepSeek-V4-Flash is the first complete hosted YVEX vertical. Exact current
+identities, variants, and gates live in [`PROJECT.md`](../../PROJECT.md).
 
-Canonical source: `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; target:
-`deepseek4-v4-flash` on DGX Spark CUDA at snapshot `60d8d70770c6776ff598c94bb586a859a38244f1`.
+## Product path
 
-## Current Boundary
-
-YVEX admits the selected complete GGUF through the common CPU/CUDA runtime.
-Sessions own exact 43-layer persistent state. Activation bundles, token-local
-MoE, and schema-v1 numeric token input execute the complete embedding,
-attention/MoE, final mHC, and final RMSNorm backbone. The same schema drives
-teacher-forced decode over one warm context. Final-prefill and decode hidden
-rows project through the separate BF16 output head to complete raw logits. The
-common host sampler selects tokens from every complete row. The admitted GGUF
-also drives exact ByteLevel-BPE encoding, bounded prompt rendering,
-special/EOS classification, and incremental detokenization. Sampled-token
-feedback, stop-loop composition, and generation remain unsupported.
-
-There is no supported DeepSeek generation command to run yet. Sampling output
-is evidence and is not appended to the model sequence.
-Prepare the immutable runtime binding, then execute the production attention
-path. Raw generated evidence remains outside the repository:
+Start one long-lived CUDA host:
 
 ```sh
-MODELS_ROOT="$HOME/lab/models"
-ARTIFACT="$MODELS_ROOT/gguf/deepseek/deepseek-v4-flash-q8_0-q2_k-v1.gguf"
-EVIDENCE="$(mktemp -d /tmp/yvex-runtime-evidence.XXXXXX)"; mkdir "$EVIDENCE/bindings"
-./yvex graph attention prepare \
-  --target deepseek4-v4-flash --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
-  --runtime-binding-dir "$EVIDENCE/bindings" --output json \
-  >"$EVIDENCE/prepare.json"
-BINDING="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["runtime_binding_path"])' \
-  "$EVIDENCE/prepare.json")"
-./yvex graph attention execute \
-  --target deepseek4-v4-flash --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
-  --runtime-binding "$BINDING" --backend cuda --phase decode --mode full \
-  --operation-scope release-attention-set --probe canonical --scope full --output json
-./yvex graph attention qualify \
-  --target deepseek4-v4-flash --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
-  --runtime-binding "$BINDING" --backend cuda --phase decode --mode full \
-  --operation-scope release-attention-set --probe canonical --scope full --output json
+./yvexd \
+  --model "$ARTIFACT" \
+  --runtime-binding "$RUNTIME_BINDING" \
+  --backend cuda \
+  --context 4096 \
+  --console raw \
+  --trace-level tokens
 ```
 
-Component tensor-file commands remain available for focused diagnosis;
-`docs/api.md` owns their schemas and `./yvex help` owns the flag catalog. Set
-`TOKENS` to an untracked schema-v1 canonical U32 token input.
-
-Split one numeric stream into prefix and teacher-forced decode without reopening the model:
+Observe and use it from two additional terminals:
 
 ```sh
-./yvex graph transformer decode \
-  --target deepseek4-v4-flash --artifact "$ARTIFACT" --runtime-binding "$BINDING" \
-  --backend cuda --input token-ids --input-file "$TOKENS" --prefill-tokens 1 \
-  --prefill-chunk-tokens 1 --context-capacity 8 \
-  --progress off --output json
+./yvex runtime watch
+./yvex chat --session main
 ```
 
-Every remaining ID commits one 43-block step and hidden row; no token is chosen.
-Project final-prefill and decode rows through the complete head without reopening:
+The daemon opens one model and retains immutable tokenizer, attention,
+materialization, residency, output-head, and plan resources. Each named session
+owns independent DeepSeek persistent state and exact prompt/token continuation.
+
+On turn two, the host renders and encodes the complete expected conversation,
+proves that the committed token ledger is its exact prefix, and prefills only
+the new suffix. An incompatible prefix refuses; reset is explicit.
+
+## One-shot path
 
 ```sh
-./yvex graph transformer logits \
-  --target deepseek4-v4-flash --artifact "$ARTIFACT" --runtime-binding "$BINDING" \
-  --backend cuda --input token-ids --input-file "$TOKENS" \
-  --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 8 \
-  --progress off --output json
+./yvex run \
+  --strategy stochastic \
+  --temperature 0.8 \
+  --top-k 50 \
+  --top-p 0.95 \
+  --min-p 0.05 \
+  --typical-p 1.0 \
+  --seed 42 \
+  "Explain attention in one sentence."
 ```
 
-For one prefix and two decode tokens, three bounded records each cover all
-129,280 F32 logits. Output contains digests/ranges, not the tensor or a choice.
+Sampling remains common-host even when Transformer, MoE, persistent state, and
+output-head projection execute on CUDA. Streamed fragments are sent only after
+sampled-token decode commit and incremental detokenization commit.
 
-Select bounded evidence tokens from those same real rows without feeding them
-back into decode:
+## Developer path
+
+The separated engine-linked developer client retains direct proof surfaces:
 
 ```sh
-./yvex graph transformer sample \
-  --target deepseek4-v4-flash --artifact "$ARTIFACT" --runtime-binding "$BINDING" \
-  --backend cuda --input token-ids --input-file "$TOKENS" \
-  --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 8 \
-  --strategy stochastic --temperature 0.8 --top-k 50 --top-p 0.95 \
-  --min-p 0.05 --typical-p 1.0 --seed 42 \
-  --progress off --output json
+./yvex-dev graph attention prepare --help
+./yvex-dev graph transformer execute --help
+./yvex-dev graph transformer decode --help
+./yvex-dev graph transformer logits --help
+./yvex-dev graph transformer sample --help
+./yvex-dev graph transformer generate --help
+
+./yvex-dev tokenizer show --help
+./yvex-dev tokenizer encode --help
+./yvex-dev quant preset --help
+./yvex-dev quant plan --help
+./yvex-dev artifact materialize --help
 ```
 
-Use `--strategy greedy` without stochastic parameters for deterministic
-maximum-logit selection. The sampler is a common host operation even when CUDA
-produced the logits; it changes neither the token stream nor persistent state.
+These are engineering and conformance operations, not product aliases. They may
+open the engine directly and may be absent from the release product package.
 
-The installed namespace also provides `./yvex graph attention qualify` and
-`./yvex graph attention benchmark compare`. The latter accepts
-`--max-regression-bps 500` as an explicit operator policy. Attention component
-evidence is not model evaluation, agent evaluation or full-model benchmark.
+## Runtime evidence
 
-## Canonical Control
+For a hosted two-turn proof record:
 
-Current milestone state, dependencies, gates, and Active Next live only in `PROJECT.md`.
-See `../v010-release-doctrine.md`, `../system-target.md`, and `../../MODEL_ARTIFACTS.md`.
+- artifact, physical variant, binding, model, session, and turn identities;
+- model/artifact open and residency build counts;
+- first and second prompt token counts;
+- exact reusable prefix and second-turn suffix counts;
+- sampled-token/decode-input equality;
+- final positions and persistent-state digests;
+- TTFT, prefill/decode timing and memory snapshots;
+- cancellation, detach/reconnect, reset, and shutdown results.
+
+Logs, traces, prompts, model output, artifacts, bindings, and model files remain
+untracked external operator assets.
+
+## Non-claims
+
+Hosted generation evidence is not model-quality evaluation, full-model
+benchmark evidence, release qualification, public serving, remote security,
+continuous batching, MTP, or speculative execution.

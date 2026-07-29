@@ -333,6 +333,7 @@ static int attn_upload_plan(attn_run *run) {
         upload.source = attn_allocation_source(run, spec->source);
         upload.staged = NULL;
         upload.width = spec->width;
+        upload.generated = spec->generated;
         upload.stage = spec->stage;
         if ((upload.used && !upload.source && !spec->generated) ||
             upload.used > upload.count ||
@@ -573,16 +574,15 @@ static int attn_validate_derived(attn_run *run) {
     if (rc == YVEX_OK) rc = attn_alias_validate(run);
     return rc;
 }
-/* Purpose: resolve one dynamic caller input to its stable pinned graph slot.
- * Inputs: run plan, device target, and source.
- * Effects: returns the stable slot without mutation.
- * Failure: null means no captured target.
- * Boundary: eager mode retains the caller source. */
-static const void *attn_upload_source(const attn_run *run,
-                                                const CUdeviceptr *target) {
+/* Purpose: resolve one dynamic input. Inputs: run and target. Effects: records its generated fact.
+ * Failure: null means no slot. Boundary: eager mode retains the caller source. */
+static const void *attn_upload_source(const attn_run *run, const CUdeviceptr *target, int *generated) {
     size_t i;
-    for (i = 0u; i < run->upload_count; ++i)
-        if (run->uploads[i].device == target) return run->uploads[i].staged;
+    for (i = 0u; i < run->upload_count; ++i) {
+        if (run->uploads[i].device != target) continue;
+        *generated = run->uploads[i].generated;
+        return run->uploads[i].staged;
+    }
     return NULL;
 }
 /* Purpose: allocate typed device values.
@@ -593,13 +593,14 @@ static const void *attn_upload_source(const attn_run *run,
 static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
                              unsigned long long count, size_t width,
                              const void *source, int zero, const char *stage) {
-    const void *stable_source = source;
+    const void *stable_source = source, *planned_source;
     unsigned long long resident_address = 0ull;
     CUdeviceptr device_source = 0u;
     size_t bytes;
     int captured = attn_graph_mode(run);
-    int resident, rc;
+    int generated = 0, resident, rc;
     if (*target) return YVEX_OK;
+    planned_source = attn_upload_source(run, target, &generated);
     if (!yvex_cuda_work_checked_bytes(count, (unsigned long long)width, &bytes))
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET, stage, ULLONG_MAX,
@@ -607,9 +608,9 @@ static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
             "CUDA attention allocation size overflowed");
     if (target == &run->phase_input)
         device_source = yvex_cuda_activation_pointer(run->backend, run->job->device_input);
-    resident = source && !device_source ? yvex_backend_state_residency_resolve(
-                            run->backend, source, bytes, &resident_address)
-                      : YVEX_BACKEND_RESIDENT_MISS;
+    resident = source && !device_source && !generated
+        ? yvex_backend_state_residency_resolve(run->backend, source, bytes, &resident_address)
+        : YVEX_BACKEND_RESIDENT_MISS;
     if (resident == YVEX_BACKEND_RESIDENT_INVALID)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull,
@@ -622,7 +623,6 @@ static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
         if (rc != YVEX_OK) return rc;
     }
     if (!device_source) {
-        const void *planned_source = attn_upload_source(run, target);
         if (planned_source)
             stable_source = planned_source;
         else if (source)

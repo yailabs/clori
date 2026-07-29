@@ -605,6 +605,42 @@ int yvex_tokenizer_decoder_finish(yvex_tokenizer_decoder *decoder,
     return rc;
 }
 
+/* Purpose: return one idle incremental decoder to its canonical empty-turn state.
+ * Inputs: open decoder with no concurrent operation. Effects: clears only decoder-local pending
+ * bytes and processed count. Failure: busy/closing or identity failure preserves prior state.
+ * Boundary: model, tokenizer plan, token ledger, and KV are untouched. */
+int yvex_tokenizer_decoder_reset(yvex_tokenizer_decoder *decoder,
+                                 yvex_error *err)
+{
+    char identity[YVEX_SHA256_HEX_CAP];
+    unsigned char pending[4] = {0};
+    int rc;
+
+    if (!decoder) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "tokenizer.decoder.reset",
+                       "decoder is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = decoder_enter(decoder, err);
+    if (rc != YVEX_OK)
+        return rc;
+    if (!decoder_state_identity(decoder, pending, 0u, 0u, identity)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.reset",
+                       "empty decoder identity derivation failed");
+        rc = YVEX_ERR_STATE;
+    } else {
+        memset(decoder->pending, 0, sizeof(decoder->pending));
+        decoder->pending_count = 0u;
+        decoder->processed_token_count = 0u;
+        yvex_core_text_copy(decoder->state_identity,
+                            sizeof(decoder->state_identity), identity);
+    }
+    decoder_leave(decoder);
+    if (rc == YVEX_OK)
+        yvex_error_clear(err);
+    return rc;
+}
+
 /* Purpose: release one owned incremental fragment.
  * Inputs: fragment owner. Effects: frees and clears. Failure: none. Boundary: caller ownership. */
 void yvex_tokenizer_fragment_clear(yvex_tokenizer_fragment *fragment)

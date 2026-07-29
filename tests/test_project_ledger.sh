@@ -80,7 +80,7 @@ function uncode(value) {
 ' "$project" > "$rows"
 
 row_count=$(wc -l < "$rows" | tr -d ' ')
-test "$row_count" -eq 683 || fail "expected 683 canonical IDs, found $row_count"
+test "$row_count" -eq 684 || fail "expected 684 canonical IDs, found $row_count"
 
 cut -f 2 "$rows" | LC_ALL=C sort > "$all_ids"
 unique_count=$(uniq "$all_ids" | wc -l | tr -d ' ')
@@ -91,7 +91,7 @@ duplicate=$(uniq -d "$all_ids" | head -n 1 || true)
 test -z "$duplicate" || fail "duplicate canonical ID: $duplicate"
 
 id_hash=$(sha256sum "$all_ids" | awk '{ print $1 }')
-expected_id_hash=b5fa3caa8c77b512aa36f784dc3ea781984691e0b6d64baa4af23121dabd498a
+expected_id_hash=b0fb30fdd578a15628690e6c9d6c384c9595152487155a74f3e772b5b2fa98af
 test "$id_hash" = "$expected_id_hash" ||
   fail "canonical ID set changed without an explicit migration: $id_hash"
 
@@ -133,6 +133,7 @@ V010.RUNTIME.DEEPSEEK.GENERATION.0
 V010.COMPILATION.PHYSICAL.VARIANT.1
 V010.ARTIFACT.MATERIALIZE.1
 V010.CLI.DEEPSEEK.GENERATE.0
+V010.RUNTIME.CLIENT.REFOUNDATION.0
 V010.EVAL.DEEPSEEK.0
 V010.BENCH.DEEPSEEK.0
 V010.RUNTIME.DEEPSEEK.ATTENTION.KV.0
@@ -152,7 +153,7 @@ EOF
 
 LC_ALL=C sort -u "$new_ids" -o "$new_ids"
 new_count=$(wc -l < "$new_ids" | tr -d ' ')
-test "$new_count" -eq 52 || fail "expected 52 explicit new IDs, found $new_count"
+test "$new_count" -eq 53 || fail "expected 53 explicit new IDs, found $new_count"
 
 missing_new=$(comm -23 "$new_ids" "$all_ids" | head -n 1 || true)
 test -z "$missing_new" || fail "explicit new ID is absent: $missing_new"
@@ -177,7 +178,7 @@ $4 !~ /^(complete|active|partial|blocked|planned|reopened|not-measured|deferred|
   printf "project ledger: invalid state for %s: %s\n", $2, $4 > "/dev/stderr"
   ok = 0
 }
-$3 == "milestone" && $4 !~ /^(complete|active|partial|blocked|planned|not-measured)$/ { ok = 0 }
+$3 == "milestone" && $4 !~ /^(complete|active|partial|blocked|planned|not-measured|superseded)$/ { ok = 0 }
 $3 == "capability" && $4 != "complete" { ok = 0 }
 $3 == "evidence" && $4 !~ /^(complete|reopened)$/ { ok = 0 }
 $3 == "subtask" && $4 != "planned" { ok = 0 }
@@ -404,8 +405,12 @@ grep -F '| `V010.RUNTIME.DEEPSEEK.TOKENIZER.0` | DeepSeek | `complete` |' "$proj
   fail "DeepSeek artifact-bound tokenizer is not complete"
 grep -F '| `V010.RUNTIME.DEEPSEEK.GENERATION.0` | DeepSeek | `complete` |' "$project" >/dev/null ||
   fail "DeepSeek generation composition is not complete"
-grep -F '| `V010.CLI.DEEPSEEK.GENERATE.0` | DeepSeek | `active` |' "$project" >/dev/null ||
-  fail "the canonical generation CLI is not active after runtime generation closure"
+grep -F '| `V010.CLI.DEEPSEEK.GENERATE.0` | DeepSeek | `superseded` |' "$project" >/dev/null ||
+  fail "the fresh-only generation CLI is not superseded by the client refoundation"
+grep -F '| `V010.RUNTIME.CLIENT.REFOUNDATION.0` | common host + DeepSeek first session vertical | `complete` |' "$project" >/dev/null ||
+  fail "the runtime/client refoundation is not complete"
+grep -F '| `V010.EVAL.DEEPSEEK.0` | DeepSeek | `active` |' "$project" >/dev/null ||
+  fail "DeepSeek evaluation is not the sole active successor"
 grep -F '| V010.MODEL.TRANSFORM.IR.0 | recovered/promoted |' "$project" >/dev/null ||
   fail "quantization does not depend on the transformation IR"
 

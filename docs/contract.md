@@ -11,11 +11,12 @@ and the point where a refusal stopped progress.
 
 ## Scope
 
-YVEX builds two root executables:
+YVEX builds three explicit product/developer executables:
 
 ```text
-./yvex   operator CLI
-./yvexd  bounded status/server shell
+./yvex      thin product client; no engine execution linkage
+./yvexd     long-lived local runtime host
+./yvex-dev  optional engine-linked developer tooling
 ```
 
 The admitted attention path is:
@@ -235,7 +236,7 @@ binds at least:
 - required tensor bindings, qtype and backend requirements;
 - physical compatibility and invalidation facts.
 
-The compiler-side `yvex graph attention prepare` action generates and publishes
+The compiler-side `yvex-dev graph attention prepare` action generates and publishes
 the binding transactionally outside the repository. Runtime open independently
 parses the record and verifies every imported descriptor and plan against the
 exact artifact. A missing binding refuses with the preparation command; runtime
@@ -556,23 +557,24 @@ Capture buckets bind token and history capacities to stable workspace
 addresses. Padding, where admitted, is masked and excluded from state
 publication and output identity. A request never enters a smaller bucket.
 
-### DeepSeek Attention Operator Contract
+### DeepSeek Developer Attention Operator Contract
 
-The main binary exposes the runtime through `yvex graph attention ...`.
+The separated developer binary exposes direct engine execution through
+`yvex-dev graph attention ...`.
 Representative execution is:
 
 ```sh
-./yvex graph attention execute --target deepseek4-v4-flash \
+./yvex-dev graph attention execute --target deepseek4-v4-flash \
   --runtime-binding /path/to/binding.yvex-runtime-binding \
   --backend cpu --phase prefill --mode eager \
   --operation-scope envelope --tokens 4 --probe canonical --output json
 
-./yvex graph attention execute --target deepseek4-v4-flash \
+./yvex-dev graph attention execute --target deepseek4-v4-flash \
   --runtime-binding /path/to/binding.yvex-runtime-binding \
   --backend cuda --phase decode --mode full \
   --operation-scope release-attention-set --probe canonical --output json
 
-./yvex graph attention execute --target deepseek4-v4-flash \
+./yvex-dev graph attention execute --target deepseek4-v4-flash \
   --runtime-binding /path/to/binding.yvex-runtime-binding \
   --backend cuda --phase prefill --mode eager --scope full \
   --operation-scope core --input tensor-file \
@@ -702,9 +704,10 @@ only resources owned by the failed transaction.
 
 ## Output Contract
 
-Normal output is compact. Table and audit output project the same typed result
-at increasing detail. JSON and CSV stdout remain parseable and contain no ANSI
-or progress noise; optional human progress uses stderr.
+Product output is conversation, compact status, chronological operational
+events, or explicit JSON. The retired selectable table/audit layouts are not a
+product surface. JSON stdout remains parseable and contains no ANSI or human
+prose; errors use stderr.
 
 Unavailable values use a typed unavailable representation when zero could be a
 valid measurement. Renderer success does not convert domain refusal into exit
@@ -712,10 +715,23 @@ status zero.
 
 ## Server Contract
 
-`yvexd` remains a bounded status/server shell. Health, metrics and model-listing
-surfaces do not imply runtime generation. OpenAI/Anthropic compatibility,
-streaming, tool calls and provider sessions remain unavailable until the same
-runtime path owns complete generation.
+`yvexd` owns one process-resident runtime model, one bounded model worker and
+request queue, one exact server-session registry, one private versioned local
+protocol, and one typed telemetry fan-out. It opens the artifact, binding,
+model, tokenizer plans and immutable residency once for the process lifetime.
+Socket threads never mutate model state directly.
+
+A client connection is not a session. Named sessions retain independent KV,
+token ledger, transcript, RNG policy and turn state across detach/reconnect.
+Every continuation proves the committed tokens are the exact prefix of the
+newly rendered and encoded prompt, then prefills only the suffix. Streaming
+publishes bytes only after model commit, decoder commit and internal text
+commit. Disconnect or sink failure preserves committed partial state.
+
+The local protocol uses a private UID-owned Unix-domain socket, bounded frames,
+explicit version negotiation, typed refusal and deterministic cleanup. Public
+HTTP, authentication, TLS, OpenAI/Anthropic compatibility, remote sessions and
+continuous batching remain unsupported.
 
 ## Validation Contract
 

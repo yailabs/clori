@@ -136,6 +136,11 @@ static int test_incremental_decoder(void)
                          fragment.pending_byte_count == 0u,
                      "finish complete decoder");
     yvex_tokenizer_fragment_clear(&fragment);
+    YVEX_TEST_ASSERT(yvex_tokenizer_decoder_reset(decoder, &err) == YVEX_OK &&
+                         yvex_tokenizer_decoder_push(decoder, 3u, &fragment, &err) == YVEX_OK &&
+                         fragment.processed_token_count == 1u && fragment.byte_count == 2u,
+                     "decoder reset starts one later turn without reallocating");
+    yvex_tokenizer_fragment_clear(&fragment);
     YVEX_TEST_ASSERT(yvex_tokenizer_decode(&tokenizer, ids, 3u, &options, &batch, &err) == YVEX_OK &&
                          batch.byte_count == 6u &&
                          memcmp(batch.bytes, "\xf0\x9f\x98\x80ok", 6u) == 0,
@@ -231,6 +236,10 @@ static int test_classification_and_append(void)
     YVEX_TEST_ASSERT(yvex_token_sequence_summary_get(second, &isolated, &err) == YVEX_OK &&
                          isolated.count == 0u && isolated.generation == 0u,
                      "separate append state is isolated");
+    YVEX_TEST_ASSERT(yvex_token_sequence_reset(first, &err) == YVEX_OK &&
+                         yvex_token_sequence_summary_get(first, &isolated, &err) == YVEX_OK &&
+                         isolated.count == 0u && isolated.generation > after.generation,
+                     "append reset retains capacity and advances directory identity state");
     yvex_token_sequence_close(&first);
     yvex_token_sequence_close(&second);
     yvex_token_sequence_close(&second);

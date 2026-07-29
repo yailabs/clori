@@ -39,7 +39,7 @@ if grep -E 'yvex_(attention|graph)|cpu_(chunk|probe|reference)' \
 fi
 
 set +e
-"$YVEX_BIN" backend cuda >"$OUT_DIR/backend.out" 2>"$OUT_DIR/backend.err"
+"$YVEX_BIN" evidence backend cuda >"$OUT_DIR/backend.out" 2>"$OUT_DIR/backend.err"
 rc=$?
 set -e
 
