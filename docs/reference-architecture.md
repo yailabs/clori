@@ -31,6 +31,35 @@ by explicit contracts. This document defines a conformance model. It neither
 prescribes one software implementation nor establishes that a particular
 system implements any capability.
 
+## YVEX implementation projection
+
+The reference model below is projected onto the current YVEX process and
+execution boundaries for orientation. The normative architecture remains the
+planes, identities, lifecycles, and invariants defined in this document;
+[`PROJECT.md`](../PROJECT.md) alone records which YVEX capabilities are
+currently admitted.
+
+![Physical model compilation from verified source snapshot to an identity-bound physical variant.](diagrams/physical_compilation.svg)
+
+*Physical compilation resolves each terminal tensor through the same sealed
+policy and capability authorities before artifact construction. The
+[editable source](diagrams/physical_compilation.mmd) is committed beside the
+canonical SVG.*
+
+![Long-lived runtime host with server-owned conversation and execution sessions, typed events, and client surfaces.](diagrams/runtime_host_sessions.svg)
+
+*One `yvexd` process owns immutable model resources and a bounded worker.
+Conversation sessions retain independent execution sessions, KV, token state,
+and turn state across client detach. See the
+[editable source](diagrams/runtime_host_sessions.mmd).*
+
+![Autoregressive execution showing exact prompt prefill, token classification, sampled-token decode, transactional KV commit, and incremental text publication.](diagrams/autoregressive_execution.svg)
+
+*One generation owner composes the admitted lower boundaries. Ordinary sampled
+tokens enter decode exactly once; EOS and tokenizer stop tokens terminate
+without falsely advancing KV. See the
+[editable source](diagrams/autoregressive_execution.mmd).*
+
 ## 1. Research Question and Scope
 
 The central question is:

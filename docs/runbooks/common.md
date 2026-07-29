@@ -1,6 +1,6 @@
 # Common Operator Runbook
 
-Date: 2026-07-22
+Date: 2026-07-29
 Status: repository validation and hygiene
 
 ## Purpose
@@ -9,10 +9,10 @@ This runbook covers repository-wide build, test, claim, topology, and artifact
 hygiene. It deliberately excludes selected model execution, diagnostic runtime
 command atlases, and future command syntax.
 
-Validation proves only the behavior exercised by each test. It does not make
-the DeepSeek target, a complete model artifact, CUDA generation, evaluation,
-full-model benchmark, or release supported. Bounded attention benchmarks do
-not satisfy those higher gates.
+Validation proves only the behavior exercised by each test. Existing hosted
+DeepSeek generation does not itself establish model evaluation, the release-
+path full-model benchmark, a selected release artifact, or release
+qualification. Bounded attention benchmarks do not satisfy those higher gates.
 
 ## Fast Build Check
 
@@ -105,8 +105,8 @@ Stop after:
   CUDA build, unit, smoke, refusal, and reference checks pass.
 
 Boundary:
-  generated-bundle CUDA validation, including the admitted attention runtime;
-  it does not establish persistent KV, transformer, or generation support.
+  generated-bundle CUDA validation for the currently admitted operations; it
+  does not establish model evaluation, full-model benchmark, or release status.
 
 ```sh
 make check-cuda
@@ -188,5 +188,6 @@ changes. Do not use an all-files stage operation in a mixed worktree.
 `../v010-release-doctrine.md` defines gate semantics, while `deepseek.md`
 defines the current operator boundary.
 
-This common runbook contains no model run because the full target remains
-unsupported.
+This common runbook contains no model run because model-specific hosted
+operation belongs to `deepseek.md`; project support state remains in
+`../../PROJECT.md`.

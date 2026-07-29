@@ -1,0 +1,32 @@
+flowchart TB
+    subgraph global[A. Global flow]
+        direction LR
+        source[1. Source snapshot<br/>and inventory]
+        family[2. Family semantics<br/>and logical model]
+        ir[3. Transformation IR]
+        policy[4. Policy resolution]
+        variant[5. Physical-variant plan]
+        gguf[6. GGUF construction]
+        admission[7. Artifact admission]
+        artifact[8. Identity-bound GGUF]
+        source --> family --> ir --> policy --> variant --> gguf --> admission --> artifact
+    end
+
+    subgraph decision[B. One terminal decision]
+        direction TB
+        role[Tensor role]
+        scope[Layer / scope]
+        constraints[Physical constraints]
+        rules[Matching policy rules]
+        imatrix[Imatrix evidence]
+        registry[Capability registry]
+        selected[Selected qtype and action]
+        encoded[Encoded bytes + decision identity]
+        role --> selected
+        scope --> selected
+        constraints --> selected
+        rules --> selected
+        imatrix --> selected
+        registry --> selected
+        selected --> encoded
+    end

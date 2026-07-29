@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="title desc">
+  <title id="title">Autoregressive execution path</title>
+  <desc id="desc">The prompt is rendered and tokenized once, then prefetched into persistent KV. Complete logits and sampling select the first token. Each ordinary token is decoded exactly once, committed to model state, incrementally detokenized, and published before its hidden state drives the next logits row. EOS and tokenizer stop tokens terminate without advancing KV. Failures preserve prior committed state and report exact partial progress.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0 0L0 6L9 3z" class="arrow-fill"/></marker>
+    <style>
+      :root{color-scheme:light dark}.panel{fill:#fff;stroke:#dc2626;stroke-width:1.9}.soft{fill:#fff7f7;stroke:#ef4444;stroke-width:1.7}.compute{fill:#fff;stroke:#ef4444;stroke-width:1.8}.commit{fill:#fef2f2;stroke:#dc2626;stroke-width:2}.state{fill:#fff;stroke:#475569;stroke-width:1.7}.terminal{fill:#fffbeb;stroke:#d97706;stroke-width:2}.head{fill:#0f172a;font-family:sans-serif;font-size:38px;font-weight:700;text-anchor:middle}.subhead{fill:#334155;font-family:sans-serif;font-size:20px;font-style:italic;text-anchor:middle}.section{fill:#b91c1c;font-family:sans-serif;font-size:20px;font-weight:700}.text{fill:#0f172a;font-family:sans-serif;font-size:14px;font-weight:600;text-anchor:middle}.small{fill:#334155;font-family:sans-serif;font-size:12.5px;text-anchor:middle}.red{fill:#b91c1c;font-family:sans-serif;font-size:14px;font-weight:600;text-anchor:middle}.line{fill:none;stroke:#1f2937;stroke-width:2;marker-end:url(#arrow)}.loop{fill:none;stroke:#b91c1c;stroke-width:2;stroke-dasharray:8 6;marker-end:url(#arrow)}.transaction{fill:none;stroke:#475569;stroke-width:1.8;stroke-dasharray:3 4;marker-end:url(#arrow)}.arrow-fill{fill:#1f2937}.foot{fill:#0f172a;font-family:sans-serif;font-size:17px;font-weight:600;text-anchor:middle}
+      @media (prefers-color-scheme: dark){.panel,.compute,.state{fill:#111827}.soft,.commit{fill:#450a0a}.terminal{fill:#451a03;stroke:#fbbf24}.head,.text,.foot{fill:#f8fafc}.subhead,.small{fill:#cbd5e1}.section,.red{fill:#fca5a5}.panel,.soft,.compute,.commit{stroke:#f87171}.line,.transaction{stroke:#e2e8f0}.loop{stroke:#fca5a5}.arrow-fill{fill:#e2e8f0}}
+    </style>
+  </defs>
+  <text class="head" x="800" y="48">Autoregressive Execution Path</text>
+  <text class="subhead" x="800" y="80">Exact prompt prefill, sampled-token feedback, and transactional text publication</text>
+
+  <rect class="panel" x="20" y="115" width="1560" height="260" rx="14"/>
+  <text class="section" x="50" y="150">A. Prompt prefill and first-token decision</text>
+  <g transform="translate(45 205)"><rect class="compute" width="150" height="92" rx="9"/><text class="text" x="75" y="39">Prompt text</text><text class="small" x="75" y="65">or typed messages</text></g>
+  <g transform="translate(235 205)"><rect class="compute" width="150" height="92" rx="9"/><text class="text" x="75" y="39">Tokenizer</text><text class="small" x="75" y="65">exact template</text></g>
+  <g transform="translate(425 205)"><rect class="state" width="150" height="92" rx="9"/><text class="text" x="75" y="39">Prompt IDs</text><text class="small" x="75" y="65">bounded sequence</text></g>
+  <g transform="translate(615 190)"><rect class="compute" width="205" height="122" rx="9"/><text class="text" x="102" y="38">Chunked Transformer</text><text class="text" x="102" y="60">prefill</text><text class="red" x="102" y="92">prompt KV committed</text></g>
+  <g transform="translate(860 205)"><rect class="state" width="165" height="92" rx="9"/><text class="text" x="82" y="39">Normalized hidden</text><text class="small" x="82" y="65">final prompt token</text></g>
+  <g transform="translate(1065 205)"><rect class="compute" width="150" height="92" rx="9"/><text class="text" x="75" y="39">Full logits</text><text class="small" x="75" y="65">complete vocabulary</text></g>
+  <g transform="translate(1255 205)"><rect class="compute" width="130" height="92" rx="9"/><text class="text" x="65" y="39">Sampling</text><text class="small" x="65" y="65">policy + RNG</text></g>
+  <g transform="translate(1425 205)"><rect class="commit" width="125" height="92" rx="9"/><text class="text" x="62" y="35">First selected</text><text class="text" x="62" y="58">token</text><text class="small" x="62" y="78">staged only</text></g>
+  <path class="line" d="M195 251H228"/><path class="line" d="M385 251H418"/><path class="line" d="M575 251H608"/><path class="line" d="M820 251H853"/><path class="line" d="M1025 251H1058"/><path class="line" d="M1215 251H1248"/><path class="line" d="M1385 251H1418"/>
+
+  <rect class="panel" x="20" y="400" width="1560" height="350" rx="14"/>
+  <text class="section" x="50" y="435">B. Generated-token loop</text>
+  <g transform="translate(55 505)"><rect class="state" width="150" height="92" rx="9"/><text class="text" x="75" y="38">Current hidden</text><text class="small" x="75" y="65">prompt or decode</text></g>
+  <g transform="translate(245 505)"><rect class="compute" width="140" height="92" rx="9"/><text class="text" x="70" y="39">Full logits</text><text class="small" x="70" y="65">output head</text></g>
+  <g transform="translate(425 505)"><rect class="compute" width="140" height="92" rx="9"/><text class="text" x="70" y="39">Sample token</text><text class="small" x="70" y="65">one RNG draw</text></g>
+  <path class="terminal" d="M660 472L745 551L660 630L575 551z"/>
+  <text class="text" x="660" y="540">EOS / stop?</text><text class="small" x="660" y="565">token classification</text>
+  <g transform="translate(800 455)"><rect class="terminal" width="180" height="85" rx="9"/><text class="text" x="90" y="34">Terminal record</text><text class="small" x="90" y="59">no decode · no KV advance</text></g>
+  <g transform="translate(800 570)"><rect class="compute" width="180" height="92" rx="9"/><text class="text" x="90" y="37">Decode exact ID</text><text class="small" x="90" y="64">one model step</text></g>
+  <g transform="translate(1020 570)"><rect class="commit" width="170" height="92" rx="9"/><text class="text" x="85" y="35">Model + KV</text><text class="text" x="85" y="57">commit</text><text class="small" x="85" y="79">position +1</text></g>
+  <g transform="translate(1230 570)"><rect class="compute" width="150" height="92" rx="9"/><text class="text" x="75" y="35">Incremental</text><text class="text" x="75" y="57">detokenizer</text><text class="small" x="75" y="79">valid UTF-8 only</text></g>
+  <g transform="translate(1420 570)"><rect class="commit" width="130" height="92" rx="9"/><text class="text" x="65" y="35">Publish</text><text class="text" x="65" y="57">fragment</text><text class="small" x="65" y="79">after commit</text></g>
+  <path class="line" d="M205 551H238"/><path class="line" d="M385 551H418"/><path class="line" d="M565 551H572"/>
+  <path class="line" d="M660 472V447H793"/><text class="small" x="735" y="439">terminal</text>
+  <path class="line" d="M745 551H770V616H793"/><text class="small" x="768" y="587">ordinary</text>
+  <path class="line" d="M980 616H1013"/><path class="line" d="M1190 616H1223"/><path class="line" d="M1380 616H1413"/>
+  <path class="loop" d="M1105 662V710H130V604"/>
+  <text class="red" x="635" y="704">decode hidden becomes the next logits source</text>
+  <path class="line" d="M1487 662V714"/><text class="small" x="1487" y="735">stream committed bytes</text>
+
+  <rect class="soft" x="20" y="780" width="1560" height="160" rx="14" stroke-dasharray="6 4"/>
+  <text class="section" x="800" y="815" text-anchor="middle">C. Per-token transaction</text>
+  <g transform="translate(170 845)"><rect class="commit" width="220" height="65" rx="9"/><text class="text" x="110" y="28">Sampled token staged</text><text class="small" x="110" y="50">RNG decision recorded</text></g>
+  <g transform="translate(465 845)"><rect class="compute" width="200" height="65" rx="9"/><text class="text" x="100" y="28">Decode candidate</text><text class="small" x="100" y="50">KV delta not visible</text></g>
+  <g transform="translate(740 845)"><rect class="compute" width="150" height="65" rx="9"/><text class="text" x="75" y="38">Validate</text></g>
+  <g transform="translate(965 845)"><rect class="commit" width="200" height="65" rx="9"/><text class="text" x="100" y="28">Model commit</text><text class="small" x="100" y="50">token + KV authoritative</text></g>
+  <g transform="translate(1240 845)"><rect class="commit" width="200" height="65" rx="9"/><text class="text" x="100" y="28">Text commit</text><text class="small" x="100" y="50">fragment identity sealed</text></g>
+  <path class="transaction" d="M390 877H458"/><path class="transaction" d="M665 877H733"/><path class="transaction" d="M890 877H958"/><path class="transaction" d="M1165 877H1233"/>
+  <text class="red" x="800" y="930">On failure: preserve prior committed state and publish exact partial progress</text>
+
+  <rect class="panel" x="20" y="965" width="1560" height="50" rx="10"/>
+  <text class="foot" x="800" y="996">Prompt fidelity  ·  Stateful decode  ·  Transactional commit  ·  Streaming text</text>
+</svg>

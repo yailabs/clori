@@ -1,6 +1,6 @@
 # YVEX Model Artifacts
 
-Date: 2026-07-22
+Date: 2026-07-29
 Status: artifact policy
 
 Complete and supported model artifacts are external operator assets. They are
@@ -50,15 +50,19 @@ Required artifact outcome:
 a complete GGUF for DeepSeek-V4-Flash produced by YVEX
 ```
 
-Two complete DeepSeek-V4-Flash model artifacts currently exist outside the
-repository: the source-faithful profile and the selected Q8_0 + Q2_K profile.
-Both passed complete writer/reader admission. The selected artifact also passed
-bounded materialization, runtime-descriptor construction and complete
-SWA/CSA/HCA attention execution through the admitted CPU and GB10 CUDA paths.
-Both are complete artifacts, but neither is a supported model artifact:
-persistent KV, complete transformer
-execution, generation, evaluation, full-model benchmark and release gates
-remain incomplete as recorded in `PROJECT.md`.
+Three complete DeepSeek-V4-Flash model artifacts currently exist outside the
+repository: the source-faithful profile, the Q8_0/Q2_K baseline, and the
+DS4-like IQ2_XXS/Q2_K candidate. All three passed their owned writer/reader
+admission. The baseline has complete hosted prompt-to-text, retained-session,
+CPU, and admitted GB10 CUDA evidence. The DS4-like candidate passed
+variant-adaptive materialization, binding, mixed-qtype CPU/CUDA execution, and
+generation smoke.
+
+These are complete artifacts, but none is yet a supported model artifact.
+Evaluation, the release-path full-model benchmark, release-profile selection,
+and release qualification remain incomplete as recorded in `PROJECT.md`. The
+DS4-like candidate is not promoted to the release profile by size or execution
+smoke alone.
 
 ## Source Payload Handoff
 
@@ -92,7 +96,7 @@ payload bytes.
 Parser budgets bound hostile counts and declared strings or arrays while
 admitting the known DeepSeek-scale directory. Duplicate identifiers, malformed
 records, refused qtypes, arithmetic failures, and short reads produce typed
-non-success results. Normal, table, audit, and integrity projections consume
+non-success results. Typed human, machine, and integrity projections consume
 that operational result; building a report cannot convert a rejection into an
 accepted artifact.
 
@@ -149,8 +153,7 @@ Expected result:
 ## Non-Claims
 
 This policy records the completed quantization, GGUF emission, roundtrip,
-bounded materialization and admitted attention-execution evidence named above.
-It does not claim that either complete artifact is a supported model artifact,
-nor does it claim persistent KV, complete transformer execution, DeepSeek text
-generation, CUDA model generation, evaluation evidence, a full-model benchmark
-or release readiness.
+variant-adaptive materialization, runtime, and hosted-generation evidence named
+above. It does not claim that any complete artifact is a supported model
+artifact, nor does it claim a selected release profile, model behavior or
+quality evaluation, a release-path full-model benchmark, or release readiness.

@@ -26,6 +26,10 @@ for file in \
   docs/operator-runbook.md docs/cli-output-architecture.md \
   docs/reference-architecture.md docs/v010-release-doctrine.md \
   docs/topology-closure-audit.md docs/system-target.md \
+  docs/diagrams/system_overview.mmd docs/diagrams/system_overview.svg \
+  docs/diagrams/physical_compilation.mmd docs/diagrams/physical_compilation.svg \
+  docs/diagrams/runtime_host_sessions.mmd docs/diagrams/runtime_host_sessions.svg \
+  docs/diagrams/autoregressive_execution.mmd docs/diagrams/autoregressive_execution.svg \
   docs/runbooks/README.md docs/runbooks/deepseek.md docs/runbooks/common.md
 do
   require_file "$file"
@@ -48,22 +52,44 @@ do
 done
 
 require_text README.md '# YVEX'
+require_text README.md '## Run YVEX'
+require_text README.md '### Terminal 1 — runtime and raw events'
+require_text README.md '### Terminal 2 — engine watch'
+require_text README.md '### Terminal 3 — REPL'
+require_text README.md '### One-shot run'
 require_text README.md '## Product topology'
-require_text README.md '## Runtime flow'
-require_text README.md '## Product client'
-require_text README.md '## Three terminal views'
-require_text README.md '## Build and package'
-require_text README.md '## Capability boundary'
-require_text README.md '-> yvexd: one long-lived local runtime host'
-require_text README.md '-> yvex: thin product client over the local protocol'
-require_text README.md '-> yvex-dev: optional compiler, graph, artifact, and evidence tooling'
-require_text README.md './yvex runtime start'
+require_text README.md '## What YVEX guarantees'
+require_text README.md '## Current vertical'
+require_text README.md '## Build'
+require_text README.md '## Documentation'
+require_text README.md '## Current limits'
+require_text README.md 'docs/diagrams/system_overview.svg'
+require_text README.md 'docs/diagrams/system_overview.mmd'
+require_text README.md 'libyvex'
+require_text README.md '`yvexd`'
+require_text README.md '`yvex`'
+require_text README.md '`yvex-dev`'
+require_text README.md './yvexd'
 require_text README.md './yvex runtime watch'
 require_text README.md './yvex chat --session main'
-require_text README.md 'The old flat public command registry and its aliases are intentionally absent.'
-require_text README.md 'public or remote serving'
+require_text README.md './yvex run "Explain attention in one sentence."'
+require_text README.md './yvex runtime status --json'
+require_text README.md './yvex runtime stop'
+require_text README.md '[`PROJECT.md`](PROJECT.md)'
+require_text README.md 'a public or remote production server'
 reject_text README.md 'Active Next:'
 reject_text README.md 'YVEX is release-ready'
+reject_text README.md 'YVEX is CLI-only'
+reject_text README.md 'yvexd bounded status shell'
+reject_text README.md 'top-level generation CLI pending'
+reject_text README.md '--output normal'
+reject_text README.md '--output table'
+reject_text README.md '--output audit'
+reject_text README.md '--include-'
+
+readme_lines=$(wc -l < README.md | tr -d ' ')
+test "$readme_lines" -le 450 || fail "README exceeds 450-line hard cap: $readme_lines"
+test "$readme_lines" -ge 200 || fail "README is too short to own the product entry point: $readme_lines"
 
 for old in \
   './yvex graph ' './yvex materialize ' './yvex quant-policy ' \
@@ -97,8 +123,44 @@ require_text docs/runbooks/deepseek.md './yvex-dev graph transformer generate --
 require_text docs/runbooks/deepseek.md 'On turn two'
 require_text docs/reference-architecture.md '### 10.4 Hosted Runtime And Conversation Sessions'
 require_text docs/reference-architecture.md 'exact prefix'
+require_text docs/reference-architecture.md 'diagrams/physical_compilation.svg'
+require_text docs/reference-architecture.md 'diagrams/physical_compilation.mmd'
+require_text docs/reference-architecture.md 'diagrams/runtime_host_sessions.svg'
+require_text docs/reference-architecture.md 'diagrams/runtime_host_sessions.mmd'
+require_text docs/reference-architecture.md 'diagrams/autoregressive_execution.svg'
+require_text docs/reference-architecture.md 'diagrams/autoregressive_execution.mmd'
+
+for svg in \
+  docs/diagrams/system_overview.svg \
+  docs/diagrams/physical_compilation.svg \
+  docs/diagrams/runtime_host_sessions.svg \
+  docs/diagrams/autoregressive_execution.svg
+do
+  require_text "$svg" '<svg '
+  require_text "$svg" '<title '
+  require_text "$svg" '<desc '
+  require_text "$svg" 'role="img"'
+  require_text "$svg" '@media (prefers-color-scheme: dark)'
+  require_text "$svg" '</svg>'
+done
+
+require_text docs/diagrams/system_overview.mmd 'B. Run — yvexd'
+require_text docs/diagrams/system_overview.mmd 'Session registry'
+require_text docs/diagrams/system_overview.mmd 'yvex-dev'
+require_text docs/diagrams/physical_compilation.mmd 'Physical-variant plan'
+require_text docs/diagrams/physical_compilation.mmd 'Imatrix evidence'
+require_text docs/diagrams/runtime_host_sessions.mmd 'Persistent execution session'
+require_text docs/diagrams/runtime_host_sessions.mmd 'Typed event authority'
+require_text docs/diagrams/autoregressive_execution.mmd 'Prompt prefill'
+require_text docs/diagrams/autoregressive_execution.mmd 'Terminal record'
+require_text docs/diagrams/autoregressive_execution.mmd 'Model + KV commit'
+
+test -z "$(find docs/diagrams -maxdepth 1 -type f \
+  \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' \) -print -quit)" ||
+  fail 'architecture diagrams retain a raster text asset'
 
 require_text PROJECT.md 'V010.RUNTIME.CLIENT.REFOUNDATION.0'
+require_text PROJECT.md 'V010.DOCS.README.PRODUCT.0'
 require_text PROJECT.md 'V010.CLI.DEEPSEEK.GENERATE.0: superseded'
 require_text PROJECT.md 'Active Next: V010.EVAL.DEEPSEEK.0'
 require_text PROJECT.md 'model_behavior_evaluation_ready=0'
@@ -120,6 +182,10 @@ if grep -niE \
   fail 'README contains forbidden marketing language'
 fi
 
+if grep -RniF -- 'J. C. Prado Angelo' README.md docs MODEL_ARTIFACTS.md; then
+  fail 'public documentation contains injected or foreign text'
+fi
+
 if grep -nE 'V010\.|POST010\.' README.md; then
   fail 'README exposes internal project-control IDs'
 fi
@@ -134,5 +200,31 @@ do
   target=${target%%#*}
   test -e "$target" || fail "README local link does not resolve: $target"
 done
+
+if test -x ./yvex; then
+  client_help=$(./yvex --help)
+  printf '%s\n' "$client_help" | grep -F 'yvex run [options] TEXT' >/dev/null ||
+    fail 'built yvex help lacks one-shot client'
+  printf '%s\n' "$client_help" | grep -F 'yvex runtime start|stop|status|watch|trace' >/dev/null ||
+    fail 'built yvex help lacks runtime administration'
+  printf '%s\n' "$client_help" | grep -F 'yvex session new|list|show|attach|detach|reset|close' >/dev/null ||
+    fail 'built yvex help lacks session administration'
+fi
+
+if test -x ./yvexd; then
+  daemon_help=$(./yvexd --help)
+  printf '%s\n' "$daemon_help" | grep -F '[--console off|raw]' >/dev/null ||
+    fail 'built yvexd help lacks the raw terminal contract'
+  printf '%s\n' "$daemon_help" | grep -F '[--trace-level summary|stages|tokens|full]' >/dev/null ||
+    fail 'built yvexd help lacks trace levels'
+fi
+
+if test -x ./yvex-dev; then
+  developer_help=$(./yvex-dev --help)
+  printf '%s\n' "$developer_help" | grep -F 'yvex-dev graph ...' >/dev/null ||
+    fail 'built yvex-dev help lacks separated graph tooling'
+  printf '%s\n' "$developer_help" | grep -F 'yvex-dev quant preset|plan|emit|summarize|explain|policy|imatrix' >/dev/null ||
+    fail 'built yvex-dev help lacks separated quant tooling'
+fi
 
 sh tests/test_project_ledger.sh

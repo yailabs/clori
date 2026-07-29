@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="title desc">
+  <title id="title">Physical model compilation</title>
+  <desc id="desc">Eight stages transform a verified source snapshot into an admitted identity-bound GGUF. A detailed terminal decision combines tensor role, scope, physical constraints, policy rules, imatrix evidence, and the qtype capability registry into encoded bytes and a versioned decision identity.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0 0L0 6L9 3z" class="arrow-fill"/></marker>
+    <style>
+      :root{color-scheme:light dark}.frame{fill:#f8fafc;stroke:#1d4ed8;stroke-width:2}.dashed{fill:#f8fafc;stroke:#2563eb;stroke-width:2;stroke-dasharray:8 7}.box{fill:#fff;stroke:#2563eb;stroke-width:1.8}.result{fill:#eff6ff;stroke:#1d4ed8;stroke-width:2.2}.head{fill:#0f172a;font-family:sans-serif;font-size:38px;font-weight:700;text-anchor:middle}.subhead{fill:#334155;font-family:sans-serif;font-size:20px;font-style:italic;text-anchor:middle}.section{fill:#1d4ed8;font-family:sans-serif;font-size:20px;font-weight:700}.text{fill:#0f172a;font-family:sans-serif;font-size:14px;font-weight:600;text-anchor:middle}.small{fill:#334155;font-family:sans-serif;font-size:12.5px;text-anchor:middle}.blue{fill:#1d4ed8;font-family:sans-serif;font-size:13px;font-weight:700;text-anchor:middle}.num{fill:#1d4ed8}.num-text{fill:#fff;font-family:sans-serif;font-size:12px;font-weight:700;text-anchor:middle}.line{fill:none;stroke:#1f2937;stroke-width:2;marker-end:url(#arrow)}.evidence{fill:none;stroke:#475569;stroke-width:1.8;stroke-dasharray:7 6;marker-end:url(#arrow)}.assoc{fill:none;stroke:#475569;stroke-width:1.7;stroke-dasharray:3 4}.arrow-fill{fill:#1f2937}
+      @media (prefers-color-scheme: dark){.frame,.dashed{fill:#0f172a}.box{fill:#111827;stroke:#60a5fa}.result{fill:#172554;stroke:#93c5fd}.head,.text{fill:#f8fafc}.subhead,.small{fill:#cbd5e1}.section,.blue{fill:#93c5fd}.line,.evidence,.assoc{stroke:#e2e8f0}.arrow-fill{fill:#e2e8f0}.num{fill:#2563eb}}
+    </style>
+  </defs>
+  <text class="head" x="800" y="48">Physical Model Compilation</text>
+  <text class="subhead" x="800" y="80">From verified logical source to an identity-bound physical variant</text>
+
+  <rect class="frame" x="20" y="115" width="1560" height="365" rx="14"/>
+  <text class="section" x="50" y="150">A. Global flow</text>
+
+  <g transform="translate(45 180)">
+    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">1</text>
+    <text class="text" x="85" y="62"><tspan x="85">Source snapshot</tspan><tspan x="85" dy="20">and inventory</tspan></text>
+    <text class="small" x="85" y="125">verified snapshot</text><text class="small" x="85" y="151">family metadata</text><text class="small" x="85" y="177">terminal inventory</text>
+  </g>
+  <g transform="translate(235 180)">
+    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">2</text>
+    <text class="text" x="85" y="62"><tspan x="85">Family semantics</tspan><tspan x="85" dy="20">and logical model</tspan></text>
+    <text class="small" x="85" y="125">architecture facts</text><text class="small" x="85" y="151">interfaces</text><text class="small" x="85" y="177">semantic contracts</text>
+  </g>
+  <g transform="translate(425 180)">
+    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">3</text>
+    <text class="text" x="85" y="72">Transformation IR</text>
+    <text class="small" x="85" y="125">typed operations</text><text class="small" x="85" y="151">canonical lowering</text><text class="small" x="85" y="177">versioned identity</text>
+  </g>
+  <g transform="translate(615 180)">
+    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">4</text>
+    <text class="text" x="85" y="72">Policy resolution</text>
+    <text class="small" x="85" y="125">typed matchers</text><text class="small" x="85" y="151">priority + conflicts</text><text class="small" x="85" y="177">fail-closed coverage</text>
+  </g>
+  <g transform="translate(805 180)">
+    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">5</text>
+    <text class="text" x="85" y="62"><tspan x="85">Physical-variant</tspan><tspan x="85" dy="20">plan</tspan></text>
+    <text class="small" x="85" y="125">terminal decisions</text><text class="small" x="85" y="151">exact byte plan</text><text class="small" x="85" y="177">backend requirements</text>
+  </g>
+  <g transform="translate(995 180)">
+    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">6</text>
+    <text class="text" x="85" y="72">GGUF construction</text>
+    <text class="small" x="85" y="125">quantization</text><text class="small" x="85" y="151">packing + layout</text><text class="small" x="85" y="177">integrity metadata</text>
+  </g>
+  <g transform="translate(1185 180)">
+    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">7</text>
+    <text class="text" x="85" y="72">Artifact admission</text>
+    <text class="small" x="85" y="125">validation</text><text class="small" x="85" y="151">attestation</text><text class="small" x="85" y="177">provenance</text>
+  </g>
+  <g transform="translate(1375 180)">
+    <rect class="box" width="170" height="245" rx="10"/><circle class="num" cx="19" cy="20" r="11"/><text class="num-text" x="19" y="24">8</text>
+    <text class="text" x="85" y="62"><tspan x="85">Identity-bound</tspan><tspan x="85" dy="20">GGUF</tspan></text>
+    <text class="small" x="85" y="125">content-addressed</text><text class="small" x="85" y="151">immutable</text><text class="small" x="85" y="177">runtime-admissible</text>
+  </g>
+  <path class="line" d="M215 302H228"/><path class="line" d="M405 302H418"/><path class="line" d="M595 302H608"/><path class="line" d="M785 302H798"/><path class="line" d="M975 302H988"/><path class="line" d="M1165 302H1178"/><path class="line" d="M1355 302H1368"/>
+  <path class="evidence" d="M1460 425V452H130V432"/>
+  <text class="small" x="800" y="466">every stage remains bound to source, policy, capability, and evidence identities</text>
+
+  <rect class="dashed" x="20" y="505" width="1560" height="405" rx="14"/>
+  <text class="section" x="50" y="540">B. Zoom: one terminal decision</text>
+  <g transform="translate(95 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Tensor role</text><text class="small" x="100" y="65">weights / exact facts</text><text class="small" x="100" y="89">attention / FFN / MoE</text></g>
+  <g transform="translate(335 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Layer / scope</text><text class="small" x="100" y="65">layer + collection</text><text class="small" x="100" y="89">main / MTP / global</text></g>
+  <g transform="translate(575 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Physical constraints</text><text class="small" x="100" y="65">geometry + exactness</text><text class="small" x="100" y="89">CPU / CUDA requirement</text></g>
+  <g transform="translate(815 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Matching policy rules</text><text class="small" x="100" y="65">conjunctive match</text><text class="small" x="100" y="89">priority + refusal</text></g>
+  <g transform="translate(1055 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Imatrix evidence</text><text class="small" x="100" y="65">coverage + sensitivity</text><text class="small" x="100" y="89">identity-bound weights</text></g>
+  <g transform="translate(1295 575)"><rect class="box" width="200" height="120" rx="10"/><text class="blue" x="100" y="31">Capability registry</text><text class="small" x="100" y="65">codec + compute truth</text><text class="small" x="100" y="89">materialization admission</text></g>
+  <path class="assoc" d="M195 695V725H800"/><path class="assoc" d="M435 695V725"/><path class="assoc" d="M675 695V725"/><path class="assoc" d="M915 695V725"/><path class="assoc" d="M1155 695V725"/><path class="assoc" d="M1395 695V725H800"/>
+  <path class="line" d="M800 725V747"/>
+  <rect class="result" x="590" y="755" width="420" height="62" rx="10"/>
+  <text class="text" x="800" y="781">Selected qtype + action</text><text class="small" x="800" y="803">matched rule · calibration · geometry · backend contract</text>
+  <path class="line" d="M800 817V836"/>
+  <rect class="result" x="565" y="843" width="470" height="50" rx="10"/>
+  <text class="text" x="800" y="866">Encoded bytes + versioned decision identity</text><text class="small" x="800" y="886">traceable · reproducible · independently admissible</text>
+
+  <rect class="frame" x="20" y="935" width="1560" height="55" rx="10"/>
+  <text class="text" x="800" y="969">Determinism  ·  Policy  ·  Capability  ·  Identity  ·  Evidence</text>
+  <text class="small" x="800" y="1020">Solid arrows: decisions and data   ·   dashed arrows: identity and evidence   ·   dotted lines: ownership inputs</text>
+</svg>

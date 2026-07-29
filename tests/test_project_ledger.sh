@@ -80,7 +80,7 @@ function uncode(value) {
 ' "$project" > "$rows"
 
 row_count=$(wc -l < "$rows" | tr -d ' ')
-test "$row_count" -eq 684 || fail "expected 684 canonical IDs, found $row_count"
+test "$row_count" -eq 685 || fail "expected 685 canonical IDs, found $row_count"
 
 cut -f 2 "$rows" | LC_ALL=C sort > "$all_ids"
 unique_count=$(uniq "$all_ids" | wc -l | tr -d ' ')
@@ -91,7 +91,7 @@ duplicate=$(uniq -d "$all_ids" | head -n 1 || true)
 test -z "$duplicate" || fail "duplicate canonical ID: $duplicate"
 
 id_hash=$(sha256sum "$all_ids" | awk '{ print $1 }')
-expected_id_hash=b0fb30fdd578a15628690e6c9d6c384c9595152487155a74f3e772b5b2fa98af
+expected_id_hash=1aa6ff7434c896c6ca763e4a319be1eddbd1c93c20fd713ed6beb7966d889a21
 test "$id_hash" = "$expected_id_hash" ||
   fail "canonical ID set changed without an explicit migration: $id_hash"
 
@@ -100,6 +100,7 @@ V010.DOCS.REFOUNDATION.0
 V010.PROJECT.RECOVERY.0
 V010.PROJECT.RECOVERY.1
 V010.DOCS.ARCHITECTURE.0
+V010.DOCS.README.PRODUCT.0
 V010.PROJECT.COMPILATION.0
 V010.DOCS.README.COMPILATION.0
 V010.REPO.SEMANTIC.COMPRESSION.0
@@ -153,7 +154,7 @@ EOF
 
 LC_ALL=C sort -u "$new_ids" -o "$new_ids"
 new_count=$(wc -l < "$new_ids" | tr -d ' ')
-test "$new_count" -eq 53 || fail "expected 53 explicit new IDs, found $new_count"
+test "$new_count" -eq 54 || fail "expected 54 explicit new IDs, found $new_count"
 
 missing_new=$(comm -23 "$new_ids" "$all_ids" | head -n 1 || true)
 test -z "$missing_new" || fail "explicit new ID is absent: $missing_new"

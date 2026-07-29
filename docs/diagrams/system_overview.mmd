@@ -1,0 +1,42 @@
+flowchart LR
+    subgraph compile[A. Compile]
+        source[Verified sources]
+        compiler[YVEX compiler]
+        artifact[Identity-bound GGUF<br/>+ runtime binding]
+        source --> compiler --> artifact
+    end
+
+    subgraph host[B. Run — yvexd]
+        protocol[Private local protocol]
+        sessions[Session registry<br/>+ persistent KV]
+        worker[Bounded model worker]
+        events[Typed runtime events]
+        protocol <--> sessions
+        sessions <--> worker
+        worker --> events
+    end
+
+    subgraph execution[C. Execute]
+        graph[Runtime graph]
+        backend[CPU / CUDA]
+        state[Transactional state]
+        graph --> backend --> state
+    end
+
+    subgraph interact[D. Interact]
+        raw[Raw trace]
+        watch[Engine watch]
+        chat[REPL / chat]
+        run[yvex run]
+    end
+
+    artifact --> worker
+    worker <--> graph
+    events --> raw
+    events --> watch
+    protocol <--> chat
+    protocol <--> run
+
+    dev[yvex-dev<br/>engineering tools]
+    dev -.-> compiler
+    dev -.-> artifact

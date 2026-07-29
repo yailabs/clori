@@ -1,6 +1,6 @@
 # YVEX System Target
 
-Date: 2026-07-22
+Date: 2026-07-29
 Status: filesystem and module ownership contract
 Authority: filesystem and module topology; current project state belongs only
 to `PROJECT.md`
@@ -14,7 +14,7 @@ claim.
 Current core areas:
 
 ```text
-src/client/              thin product client, REPL, protocol projections
+src/cli/io/client.c      thin product client, REPL, protocol projections
 src/daemon/              long-lived runtime-host entrypoint
 src/server/              protocol, worker, sessions, telemetry and host lifecycle
 src/cli/                 optional nested developer tooling, render and IO
@@ -68,7 +68,7 @@ domain algorithms. No writer owns command output.
 | Materialization | family-neutral materialization and a full bounded selected-artifact walk are complete; the runtime owns an attention-only resident pack, not full-model device residency | preserve exact physical bindings while later owners add KV, MoE and output-head residency | see `PROJECT.md` |
 | Runtime descriptor | immutable DeepSeek descriptor binds all 1,360 admitted tensors and topology facts and is consumed by the common attention, MoE, transformer, and persistent-state owners | feed repeated decode and output-head execution without rebuilding compiler truth | see `PROJECT.md` |
 | Graph/backend | complete DeepSeek attention, token-local MoE, selected-row embedding, 43-block transformer composition, final mHC collapse, and final RMSNorm execute on CPU and GB10 CUDA; committed state spans the whole request | preserve the admitted backbone while decode and logits consume it | see `PROJECT.md` |
-| Common runtime | content-addressed binding, immutable family-neutral model, session-owned persistent state/workspace, typed transformer plan, phase-aware dispatch, and CPU/CUDA execution | preserve warm reuse and the one-token backbone component while repeated decode becomes the next consumer | see `PROJECT.md` |
+| Common runtime | content-addressed binding, immutable family-neutral model, server-owned execution sessions, exact multi-turn KV, generation turns, protocol streaming, and CPU/CUDA execution | preserve one model lifetime, isolated session mutation, exact suffix reuse, and typed partial progress while evaluation consumes the hosted path | see `PROJECT.md` |
 
 ## Owner Rules
 
@@ -261,11 +261,10 @@ to `PROJECT.md`.
 
 This target does not claim:
 
-- tokenizer-backed prompt prefill
-- token append, EOS/stop behavior, detokenized text, or autoregressive generation
-- CUDA sampling or fused logits/sampling execution
-- evaluation or full-model benchmark results
-- supported-model or release readiness
+- public or remote serving, authentication, TLS, or compatibility APIs
+- CUDA sampling, tokenizer execution, or fused logits/sampling execution
+- evaluation or release-path full-model benchmark results
+- a selected release artifact or release readiness
 
 Attention-local prefill/decode phases operate on activation tensors and an
 explicit state view. Runtime-local benchmark/profile output and deterministic

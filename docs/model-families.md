@@ -1153,15 +1153,14 @@ This table records architectural scope, not delivery progress.
 
 | Family | v0.1.0 relation | Runtime class | Current support truth |
 | --- | --- | --- | --- |
-| DeepSeek-V4-Flash | exact release target at `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; canonical target id `deepseek4-v4-flash` | hybrid SWA/CSA/HCA decoder with mHC and MoE | typed architecture, exact source coverage, sealed Transformation IR, policy-driven complete artifacts, materialization, binding, CPU/GB10 execution, persistent state, tokenizer, logits, sampling and generation exist; the local host/session/client refoundation is the current product boundary, while evaluation and release remain gated |
+| DeepSeek-V4-Flash | exact release target at `$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash`; canonical target id `deepseek4-v4-flash` | hybrid SWA/CSA/HCA decoder with mHC and MoE | typed architecture, exact source coverage, sealed Transformation IR, policy-driven complete artifacts, materialization, binding, CPU/GB10 execution, persistent state, tokenizer, logits, sampling, generation, and the long-lived local host/session/client path exist; evaluation, benchmark, and release remain gated |
 | Qwen | outside v0.1.0 | target-dependent dense or sparse/MoE | unsupported; existing source/report facts do not enter the release path |
 | Gemma | outside v0.1.0 | dense | unsupported; existing source/report facts do not enter the release path |
 | GLM | outside v0.1.0 source-pressure work | sparse/MoE | unsupported; source evidence is not runtime support |
 | Phi/Llama/Mistral | unscoped architecture examples | target-dependent | unsupported; no current release target |
 
-In this table, unsupported prompt input means tokenizer-backed full-model
-prompt processing. Teacher-forced model decode is distinct from both the
-attention-local one-token phase and autoregressive token selection.
+Teacher-forced model decode remains distinct from both the attention-local
+one-token phase and the admitted autoregressive token-selection/feedback loop.
 
 Legacy bounded DeepSeek proof code and Qwen/Gemma report surfaces may remain
 until their owning rows remove or absorb them. They do not define family posture
@@ -1319,8 +1318,8 @@ runtime model, resident weights and typed persistent-state boundary. The
 DeepSeek provider derives distinct SWA/CSA/HCA local, compressed, indexer, and
 rolling recipes from the admitted plan, commits all affected layers and
 sequence position atomically, and supplies the committed state to later
-production executions. Full-model prefill is the next consumer; it must not
-introduce another state owner.
+production executions. Hosted multi-turn prompt prefill and decode consume the
+same owner and admit reuse only through an exact committed token prefix.
 
 ## Family Classification Table
 
@@ -1328,7 +1327,7 @@ This table records families as integration classes, not support claims.
 
 | Family | Runtime class | Architectural pressure | Current posture |
 | --- | --- | --- | --- |
-| DeepSeek | Sparse / MoE | Large sparse runtime, expert routing, KV pressure, high-end local inference | exact v0.1.0 target; token-local MoE admitted, complete model unsupported |
+| DeepSeek | Sparse / MoE | Large sparse runtime, expert routing, KV pressure, high-end local inference | exact v0.1.0 target; complete hosted model-to-text vertical admitted, evaluation/benchmark/release open |
 | GLM | Sparse / MoE | Huge source inventory and architecture pressure | outside v0.1.0; unsupported |
 | Qwen | Dense or Sparse / MoE depending target | Dense/sparse comparison, tokenizer/runtime comparison, portability pressure | outside v0.1.0; unsupported |
 | Gemma | Dense | Smaller local runtime and device-oriented pressure | outside v0.1.0; unsupported |
@@ -1408,13 +1407,12 @@ Practical failure modes include:
 
 ## Non-Claims
 
-This document does not claim support for any model family.
-
-It does not claim dense runtime support. It does not claim sparse or MoE runtime
-support. It does not claim tokenizer support, full artifact support, backend
-support, generation, serving, evaluation, full-model benchmark performance, or
-release readiness. Runtime-local attention benchmark/profile evidence and its
-identity-bound SVG documentation snapshots do not change those claims.
+This document does not promote support for any model family; current capability
+belongs only to `PROJECT.md`. The admitted DeepSeek vertical does not establish
+dense-family support, a second MoE family, public serving, model evaluation,
+full-model benchmark performance, or release readiness. Runtime-local attention
+benchmark/profile evidence and its identity-bound SVG documentation snapshots
+do not change those claims.
 
 Family-specific non-claims:
 

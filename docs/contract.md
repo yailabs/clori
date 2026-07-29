@@ -33,9 +33,10 @@ complete external artifact
 ```
 
 DeepSeek-V4-Flash is the first family adapter. It is not the owner of a second
-runtime. The admitted persistent state is session-owned and consumed by the
-numeric token-ID transformer backbone. Tokenizer-backed prompt prefill,
-token append and generation remain outside this contract.
+runtime. Persistent state is session-owned and consumed by the numeric token-ID
+transformer backbone. The admitted hosted path composes the artifact-bound
+tokenizer, exact prompt suffix, generation loop, committed text streaming, and
+server session authority without duplicating those lower owners.
 
 The admitted token-local MoE path is:
 
@@ -99,65 +100,36 @@ model resources.
 
 ## Command Contract
 
-The command catalog is discoverable through:
-
-```sh
-./yvex commands
-./yvex help
-./yvex help graph attention
-./yvex help graph transformer
-```
-
-Model selection is explicit. A command may resolve a typed registry alias or an
-existing path where its input contract allows either, but it never chooses an
-arbitrary model. Refusal returns non-zero even when a structured report is
-rendered successfully.
-
-The `graph attention` hierarchy is the operator surface for the common runtime:
+The product command surface is compact and daemon-backed:
 
 ```text
-prepare, describe, capabilities, plan, execute, compare
-state inspect, state validate, state exercise
-residency inspect
-capture, replay
-cuda-graph list, inspect, warmup, update, invalidate, release
-trace, profile, benchmark
+yvex
+yvex chat
+yvex run
+yvex runtime start|stop|status|watch|trace
+yvex session new|list|show|attach|detach|reset|close
+yvex model list|use|show
+yvex artifact show|verify
+yvex quant preset|plan|emit|explain
+yvex help
+yvex version
 ```
 
-`graph moe execute` is the operator surface for the production token-local MoE
-boundary. It consumes a schema-v1 tensor file and the admitted artifact/runtime
-binding directly. Numeric token IDs participate only in hash routing; they are
-not tokenizer output or tokenizer support.
+`yvex` is a thin local-protocol client. It does not link the engine, open an
+artifact, materialize weights, execute a Transformer, or compose generation in
+process. `yvex run` uses one ephemeral or explicitly named server session;
+`yvex` and `yvex chat` use the REPL. Runtime and session administration consume
+typed protocol state rather than process-list or log scraping.
 
-`graph transformer execute` is the operator surface for the complete numeric
-token-ID backbone. It admits a schema-v1 token file, executes the production
-CPU or CUDA transformer API, and publishes normalized hidden state plus the
-committed state transition. It does not tokenize text, project logits, or run
-an autoregressive loop.
+Direct compiler, artifact, tokenizer, graph, and evidence operations live in
+the separately linked `yvex-dev` hierarchy. Those operations may open the
+engine for engineering proof, but they are not compatibility aliases or a
+second product grammar. The former flat public command registry is absent.
 
-`graph transformer decode` reuses that schema and opens one model, session, and
-transformer context. It commits the first explicit token span as prefill, then
-executes each remaining externally supplied ID as one decode-phase transaction.
-Successful steps remain committed when a later step fails or is cancelled; the
-result publishes the exact completed count and first incomplete ordinal.
-
-`graph transformer logits` opens the same production model/session/transformer
-plane, projects the final prefill hidden row and every completed teacher-forced
-decode hidden row, and reports bounded complete-row identities. It neither
-dumps the raw vocabulary tensor nor chooses a token.
-
-`graph transformer sample` runs that logits workflow once, admits every value
-and identity in each complete row, and applies one explicit greedy or seeded
-stochastic policy. Selected token IDs are evidence only: they are not appended
-or fed back into decode.
-
-The CLI parses typed input, invokes production runtime APIs and renders copied
-results. CUDA Graph lifecycle actions operate on a real registry within the
-command's process-lifetime session; they do not claim persistent cross-process
-state. State actions allocate, inspect, validate, exercise, clear, and reuse the
-production session-owned persistent provider; they do not use a CLI cache. The
-CLI does not implement attention math, call Make, run a test program, spawn
-another YVEX process or link the test-only oracle.
+Model selection is explicit. A private XDG configuration may record inert
+artifact, binding, backend, target, and context values for a later daemon start;
+`yvexd` still authenticates the exact inputs. Refusal remains nonzero even when
+a typed human or machine result is rendered.
 
 ## Filesystem Contract
 
@@ -766,15 +738,12 @@ all exist. A complete artifact is not runtime. Attention prefill/decode is not
 model prefill/decode. Attention residency is not full-model residency. An
 attention benchmark is not a full-model benchmark.
 
-The current common runtime admits attention semantics, attention core/envelope,
-CPU eager phases, CUDA eager/piecewise/full phases, resident attention weights,
-reusable workspace, session-owned persistent DeepSeek attention state, and
-runtime-local operator evidence. Token-local MoE and the numeric-token complete
-transformer backbone are admitted on CPU and GB10 CUDA. Teacher-forced repeated
-decode reuses the same token schema, transformer context, and persistent state.
-Transformer-normalized prefill/decode hidden rows project through the complete
-resident output head to raw vocabulary logits on CPU and GB10 CUDA. The common
-host sampler admits every value in those rows and performs deterministic greedy
-or explicitly seeded canonical stochastic token selection. Mixed/speculative
-attention, prompt/tokenizer execution, token append, CUDA sampling, generation,
-evaluation, full-model benchmark and release remain unsupported.
+The current common runtime admits the complete DeepSeek prompt-to-text chain:
+artifact-bound tokenization, exact prompt-suffix prefill, persistent state,
+token-local MoE, the complete Transformer, raw vocabulary logits, common-host
+sampling, sampled-token decode feedback, typed stop, incremental decoding, and
+committed text streaming. CPU and the admitted mixed GB10 CUDA path share those
+owners. One long-lived local host reuses the immutable model across exact
+multi-turn server sessions. Public/remote serving, CUDA sampling, evaluation,
+the release-path full-model benchmark, and release qualification remain
+unsupported.

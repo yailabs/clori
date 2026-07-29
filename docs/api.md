@@ -1,8 +1,9 @@
 # YVEX API
 
 This document maps the installed C ABI and the non-installed contracts used by
-the YVEX operator binary. It describes ownership and lifetime; it does not turn
-an internal runtime boundary into a public compatibility promise.
+the engine-linked daemon and developer tools. It describes ownership and
+lifetime; it does not turn an internal runtime boundary into a public
+compatibility promise.
 
 Runtime behavior is governed by [the runtime contract](contract.md). Project
 state and decommission obligations in `PROJECT.md` remain authoritative.
@@ -38,14 +39,14 @@ They are available to repository production owners and focused tests only;
 `<yvex/api.h>` never includes them. No source-local header is part of either
 surface.
 
-The common-runtime cutover intentionally retires the former installed
+The common-runtime cutover intentionally retired the former installed
 `runtime.h`, `generation.h`, and `metrics.h` diagnostic contracts. Those
 headers exposed a bounded proof engine, flat F32 KV, fixture logits/sampling,
 and report-only metrics; they were not a model-backed runtime ABI. Retaining
 them would preserve a second lifecycle beside the sealed runtime model and
-session. This is an incompatible pre-release ABI cutover, not a compatibility
-alias: future KV, generation, and observability surfaces must be admitted by
-their owning milestones over the common runtime.
+session. Current KV, generation, and observability contracts are admitted
+through explicit internal owners and the installed server/protocol boundary
+rather than compatibility headers.
 
 All public headers are independently includable in C and C++. Public option
 structures borrow pointer fields for the duration of a call. An opaque object
@@ -354,6 +355,27 @@ Every owned result publishes only after complete success and carries field-wise
 identities. These operations do not read weights, mutate KV, append sampled
 tokens to decode, or compose generation.
 
+## Internal Generation And Hosted Turn Boundary
+
+`include/yvex/internal/generation.h` owns the family-neutral generation plan,
+prompt admission, exact suffix prefill, logits/sampling/decode loop, token
+transaction, stop reasons, incremental text publication, partial progress, and
+result validation. It borrows one admitted runtime model and one execution
+session; it does not reopen artifacts or duplicate tokenizer, Transformer,
+logits, sampling, or KV semantics.
+
+`<yvex/server.h>` exposes the local protocol, one-model host, server session,
+typed event, metrics snapshot, and thin protocol-client lifecycles. `yvexd`
+owns one engine-linked host and bounded model worker. Server sessions retain
+independent execution state, exact token ledgers, transcripts, and turn records
+across client detach. The next turn reuses KV only after exact token-prefix
+admission and prefills only the new suffix.
+
+Streaming sends a fragment after model, decoder, and internal text commit.
+Client delivery failure preserves committed state and reports a partial turn.
+The product `yvex` binary links the protocol/client surface only; it cannot call
+the internal generation or runtime-model APIs directly.
+
 ## Runtime Binding And Operator Actions
 
 The developer CLI provides the direct production consumer for the internal ABI:
@@ -461,17 +483,13 @@ CPU/CUDA phase and mode, residency, workspace, state delta, trace, profile and
 benchmark readiness. Compatibility booleans may be derived from that lattice;
 they are not independent capability authorities.
 
-The current runtime supports production DeepSeek attention, persistent state,
-activation prefill, token-local MoE, the numeric token-ID complete transformer
-backbone, teacher-forced repeated decode, and complete raw vocabulary logits on
-CPU and the admitted GB10 CUDA path. Logits consume transformer-normalized
-hidden rows without repeating final norm. The common host sampler consumes
-complete real logits and supports deterministic greedy plus explicitly seeded
-canonical stochastic token selection. The artifact-bound tokenizer provides
-exact encoding, bounded prompt rendering, EOS/stop facts, and batch/incremental
-detokenization. The runtime does not feed selected tokens into decode, compose
-the stop loop, publish generated text, evaluate model behavior, benchmark the
-full model, or establish release readiness.
+The current runtime supports the complete hosted DeepSeek prompt-to-text path on
+CPU and the admitted mixed GB10 CUDA path. It composes exact tokenizer encoding,
+prompt-suffix prefill, persistent state, MoE, the complete Transformer, raw
+vocabulary logits, common-host sampling, sampled-token decode feedback, typed
+stop, incremental detokenization, and committed streaming through one daemon
+model and isolated server sessions. It does not establish public serving,
+model evaluation, a release-path full-model benchmark, or release readiness.
 
 ## Extension Rules
 

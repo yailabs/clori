@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" role="img" aria-labelledby="title desc">
+  <title id="title">YVEX system overview</title>
+  <desc id="desc">Verified sources pass through the YVEX compiler into an identity-bound physical artifact. One long-lived yvexd host owns the model worker, sessions, persistent KV, private protocol, and typed events. CPU or CUDA executes the model while the yvex client provides raw trace, engine watch, chat, and one-shot interaction.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L0 6L9 3z" class="arrow-fill"/>
+    </marker>
+    <style>
+      :root{color-scheme:light dark}.panel{fill:#fff;stroke:#64748b;stroke-width:2}.compile-panel{fill:#eff6ff;stroke:#1d4ed8;stroke-width:2}.run-panel{fill:#f5f3ff;stroke:#6d28d9;stroke-width:2}.execute-panel{fill:#f0fdf4;stroke:#15803d;stroke-width:2}.interact-panel{fill:#fff7ed;stroke:#ea580c;stroke-width:2}.orange-box{fill:#fff;stroke:#ea580c;stroke-width:1.8}.box{fill:#fff;stroke:#475569;stroke-width:1.8}.state{fill:#faf5ff;stroke:#7e22ce;stroke-width:1.8}.head{fill:#0f172a;font-family:sans-serif;font-size:38px;font-weight:700;text-anchor:middle}.subhead{fill:#334155;font-family:sans-serif;font-size:20px;font-style:italic;text-anchor:middle}.section{font-family:sans-serif;font-size:20px;font-weight:700}.text{fill:#0f172a;font-family:sans-serif;font-size:15px;font-weight:600;text-anchor:middle}.small{fill:#334155;font-family:sans-serif;font-size:13px;text-anchor:middle}.foot{fill:#0f172a;font-family:sans-serif;font-size:17px;font-weight:600;text-anchor:middle}.line{fill:none;stroke:#1f2937;stroke-width:2.2;marker-end:url(#arrow)}.dash{fill:none;stroke:#475569;stroke-width:2;stroke-dasharray:8 7;marker-end:url(#arrow)}.assoc{fill:none;stroke:#6d28d9;stroke-width:2;stroke-dasharray:3 5}.arrow-fill{fill:#1f2937}
+      @media (prefers-color-scheme: dark){.panel,.box{fill:#111827}.compile-panel{fill:#172554;stroke:#60a5fa}.run-panel,.state{fill:#2e1065;stroke:#c4b5fd}.execute-panel{fill:#052e16;stroke:#86efac}.interact-panel{fill:#431407;stroke:#fdba74}.orange-box{fill:#111827;stroke:#fdba74}.head,.section,.text,.foot{fill:#f8fafc}.subhead,.small{fill:#cbd5e1}.box{stroke:#cbd5e1}.line,.dash{stroke:#e2e8f0}.arrow-fill{fill:#e2e8f0}.assoc{stroke:#c4b5fd}}
+    </style>
+  </defs>
+
+  <text class="head" x="800" y="48">YVEX System Overview</text>
+  <text class="subhead" x="800" y="80">From verified sources to hosted, session-aware inference</text>
+
+  <text class="section" x="45" y="126" fill="#1d4ed8">A. Compile</text>
+  <rect class="compile-panel" x="25" y="145" width="600" height="510" rx="15"/>
+  <rect class="box" x="55" y="235" width="145" height="300" rx="12"/>
+  <text class="text" x="127" y="272">Verified sources</text>
+  <text class="small" x="127" y="318">weights</text>
+  <text class="small" x="127" y="354">configuration</text>
+  <text class="small" x="127" y="390">tokenizer</text>
+  <text class="small" x="127" y="426">model metadata</text>
+  <text class="small" x="127" y="480">snapshot identity</text>
+
+  <rect class="box" x="245" y="205" width="175" height="360" rx="12"/>
+  <text class="text" x="332" y="244">YVEX compiler</text>
+  <text class="small" x="332" y="292">source trust</text>
+  <text class="small" x="332" y="330">family semantics</text>
+  <text class="small" x="332" y="368">Transformation IR</text>
+  <text class="small" x="332" y="406">physical policy</text>
+  <text class="small" x="332" y="444">GGUF construction</text>
+  <text class="small" x="332" y="482">artifact admission</text>
+
+  <rect class="compile-panel" x="465" y="250" width="130" height="270" rx="12"/>
+  <text class="text" x="530" y="292">Identity-bound</text>
+  <text class="text" x="530" y="315">GGUF + binding</text>
+  <text class="small" x="530" y="375">content-addressed</text>
+  <text class="small" x="530" y="405">immutable</text>
+  <text class="small" x="530" y="435">portable</text>
+  <path class="line" d="M200 385H238"/>
+  <path class="line" d="M420 385H458"/>
+  <rect class="box" x="245" y="585" width="350" height="48" rx="9"/>
+  <text class="text" x="420" y="606">yvex-dev</text>
+  <text class="small" x="420" y="624">separate engineering boundary</text>
+  <path class="dash" d="M330 585V572"/>
+  <path class="dash" d="M530 585V527"/>
+
+  <text class="section" x="655" y="126" fill="#6d28d9">B. Run</text>
+  <rect class="run-panel" x="645" y="145" width="445" height="510" rx="15"/>
+  <text class="text" x="867" y="181">yvexd · long-lived runtime host</text>
+  <rect class="box" x="680" y="205" width="375" height="70" rx="10"/>
+  <text class="text" x="867" y="234">Private local protocol</text>
+  <text class="small" x="867" y="257">connect · request · stream · control</text>
+
+  <rect class="state" x="680" y="300" width="175" height="105" rx="10"/>
+  <text class="text" x="767" y="331">Session registry</text>
+  <text class="small" x="767" y="358">conversation state</text>
+  <text class="small" x="767" y="382">persistent KV</text>
+  <rect class="state" x="880" y="300" width="175" height="105" rx="10"/>
+  <text class="text" x="967" y="331">Immutable model</text>
+  <text class="small" x="967" y="358">tokenizer + plans</text>
+  <text class="small" x="967" y="382">residency</text>
+
+  <rect class="box" x="680" y="435" width="375" height="170" rx="10"/>
+  <text class="text" x="867" y="466">Bounded model worker</text>
+  <rect class="box" x="710" y="495" width="130" height="70" rx="8"/>
+  <text class="small" x="775" y="525">request queue</text>
+  <text class="small" x="775" y="547">one mutation</text>
+  <rect class="box" x="875" y="495" width="145" height="70" rx="8"/>
+  <text class="small" x="947" y="525">generation turns</text>
+  <text class="small" x="947" y="547">typed events</text>
+  <path class="line" d="M840 530H868"/>
+  <path class="assoc" d="M767 405V430H867"/>
+  <path class="assoc" d="M967 405V430H867"/>
+  <path class="line" d="M595 385H638"/>
+
+  <text class="section" x="1120" y="126" fill="#15803d">C. Execute</text>
+  <rect class="execute-panel" x="1110" y="145" width="225" height="510" rx="15"/>
+  <rect class="box" x="1140" y="205" width="165" height="85" rx="10"/>
+  <text class="text" x="1222" y="238">Runtime graph</text>
+  <text class="small" x="1222" y="264">admitted operators</text>
+  <rect class="box" x="1140" y="330" width="165" height="105" rx="10"/>
+  <text class="text" x="1222" y="364">CPU / CUDA</text>
+  <text class="small" x="1222" y="391">encoded compute</text>
+  <text class="small" x="1222" y="415">backend resources</text>
+  <rect class="box" x="1140" y="475" width="165" height="90" rx="10"/>
+  <text class="text" x="1222" y="508">Transactional state</text>
+  <text class="small" x="1222" y="535">commit or preserve</text>
+  <path class="line" d="M1222 290V323"/>
+  <path class="line" d="M1222 435V468"/>
+  <path class="line" d="M1055 520H1103"/>
+
+  <text class="section" x="1365" y="126" fill="#ea580c">D. Interact</text>
+  <rect class="interact-panel" x="1355" y="145" width="220" height="510" rx="15"/>
+  <rect class="orange-box" x="1380" y="205" width="170" height="80" rx="10"/>
+  <text class="text" x="1465" y="237">Raw trace</text>
+  <text class="small" x="1465" y="261">typed JSONL events</text>
+  <rect class="orange-box" x="1380" y="315" width="170" height="80" rx="10"/>
+  <text class="text" x="1465" y="347">Engine watch</text>
+  <text class="small" x="1465" y="371">compact operations</text>
+  <rect class="orange-box" x="1380" y="425" width="170" height="80" rx="10"/>
+  <text class="text" x="1465" y="457">REPL / chat</text>
+  <text class="small" x="1465" y="481">multi-turn streaming</text>
+  <rect class="orange-box" x="1380" y="535" width="170" height="80" rx="10"/>
+  <text class="text" x="1465" y="567">yvex run</text>
+  <text class="small" x="1465" y="591">one-shot client</text>
+  <path class="line" d="M1305 247H1373"/>
+  <path class="line" d="M1305 355H1373"/>
+  <path class="line" d="M1055 240C1270 110 1320 465 1373 465"/>
+  <path class="line" d="M1055 240C1280 150 1320 575 1373 575"/>
+
+  <rect class="panel" x="25" y="690" width="1550" height="65" rx="12" stroke="#64748b"/>
+  <text class="foot" x="800" y="730">Identity  ·  Admission  ·  Transactional state  ·  Typed events  ·  Scoped evidence</text>
+  <text class="small" x="800" y="790">Solid arrows: execution/data flow   ·   dotted lines: ownership association</text>
+</svg>

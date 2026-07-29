@@ -5,7 +5,7 @@ Status: living engineering control
 Authority: product target, architecture tracks, complete wave ledger, milestone
 state, dependencies, evidence rank, family scope, release gates, and Active Next
 Recovery baseline: pre-refoundation `docs/spine.md` at commit `10ad6c3`
-Current proof stage: the selected GGUF now executes bounded real DeepSeek text generation through exact prompt encoding, full prefill, real-logits sampling, sampled-token decode feedback, typed stop, and incremental text publication; the canonical top-level generation CLI is the sole active boundary
+Current proof stage: the accepted product topology exposes hosted DeepSeek text generation through one long-lived model, exact multi-turn sessions, streaming clients, and three typed terminal views; the public README and architecture communication now match that implementation, and release-path model evaluation is the sole active boundary
 
 ## 1. Authority And Update Contract
 
@@ -348,7 +348,7 @@ in a conversation or closure report is not part of the architecture.
 
 | Boundary | Current truth |
 | --- | --- |
-| Project control | The 631-ID historical ledger is recovered and ranked here, then organized across 26 canonical tracks; project recovery, compilation-architecture rebasing, the public README cutover, repository semantic compression, and C canonicalization are complete. The explicit physical-variant compiler, variant-adaptive materialization, and runtime/client refoundation bring the canonical set to 684 IDs. `config/source_owners.tsv` registers every production source/header exactly once; explicit header tiers, source-relative object/archive identities, semantic contracts, and repository layout, ownership, dependency, complexity, and ABI gates are hard failures. |
+| Project control | The 631-ID historical ledger is recovered and ranked here, then organized across 26 canonical tracks; project recovery, compilation-architecture rebasing, both public README cutovers, repository semantic compression, and C canonicalization are complete. The explicit physical-variant compiler, variant-adaptive materialization, runtime/client refoundation, and product-documentation cutover bring the canonical set to 685 IDs. `config/source_owners.tsv` registers every production source/header exactly once; explicit header tiers, source-relative object/archive identities, semantic contracts, and repository layout, ownership, dependency, complexity, and ABI gates are hard failures. |
 | Source | The canonical DeepSeek target is verified against `deepseek-ai/DeepSeek-V4-Flash` at commit `60d8d70770c6776ff598c94bb586a859a38244f1`. The pinned upstream index, structured configs, tokenizer assets, 46/46 safetensors headers, 69,187 unique tensor records, and verifier-owned manifest agree. Manifest v3 binds every shard to its authoritative Hugging Face Git LFS SHA-256 and atomically publishes aggregate payload identity `e22b3678d131d334f154a93214bdddfafc172c9869f4c52db28fea198eaa9165` only after all 159,617,149,040 shard-file bytes pass digest and drift checks. |
 | Family profiles | The exact DeepSeek-V4-Flash source projects to one immutable typed IR with 43 main layers, one MTP layer, explicit SWA/CSA/HCA, mHC, MoE, position/KV, output, tokenizer, and source constraints. Runtime numeric schema v2 binds BF16/F32 compute boundaries, activation fake-quantization, UE8M0 scaling, deterministic top-k, and the full Hadamard authority at commit `e7706faf8d1c3b9f241e36860640ad1dac644ede`. SWA uses base RoPE without YaRN; compressed CSA/HCA classes use the versioned YaRN policy. Qwen, Gemma, and dense/MoE evidence remains at its prior rank. |
 | Tensor coverage | One immutable IR-derived requirement set reconciles exactly against all 69,187 tensors in the verified DeepSeek snapshot: every entry is assigned once, with zero missing, duplicate, ambiguous, unsupported, or unexpected tensors and zero payload reads. Qwen/Gemma evidence remains at its prior rank. |
@@ -597,6 +597,7 @@ V010.COMPILATION.PHYSICAL.VARIANT.1: complete (policy-v2 full-model resolution, 
 V010.ARTIFACT.MATERIALIZE.1: complete (artifact-qtype-driven materialization and expert subviews without preset-name policy)
 V010.CLI.DEEPSEEK.GENERATE.0: superseded (fresh-only CLI plan replaced before implementation by the runtime/client refoundation)
 V010.RUNTIME.CLIENT.REFOUNDATION.0: complete (long-lived local runtime host, exact sessions, protocol, telemetry, client, REPL, and incompatible CLI cutover)
+V010.DOCS.README.PRODUCT.0: complete (public product README, three-terminal quickstart, and reviewed architecture visuals)
 V010.EVAL.DEEPSEEK.0: active (release-path behavior, quality, regression, context, and refusal evaluation)
 Active Next: V010.EVAL.DEEPSEEK.0
 ```
@@ -1015,6 +1016,7 @@ V010.DOCS.README.COMPILATION.0
 -> V010.RUNTIME.DEEPSEEK.GENERATION.0
 -> V010.COMPILATION.PHYSICAL.VARIANT.1
 -> V010.RUNTIME.CLIENT.REFOUNDATION.0
+-> V010.DOCS.README.PRODUCT.0
 -> V010.EVAL.DEEPSEEK.0
 -> V010.BENCH.DEEPSEEK.0
 -> V010.RELEASE.0
@@ -1039,8 +1041,8 @@ another supported model.
 
 The recovery baseline contained 629 table entries across 24 tracks. Two source
 rows held paired IDs; those are expanded into 631 unique recovered IDs. The
-canonical architecture now contains 26 tracks. Fifty-one new milestone/future
-IDs and two explicit migration markers produce 684 unique canonical IDs.
+canonical architecture now contains 26 tracks. Fifty-two new milestone/future
+IDs and two explicit migration markers produce 685 unique canonical IDs.
 
 ### 7.1 Global Counts
 
@@ -1050,10 +1052,10 @@ calculated from rows rather than protected by a summary hash.
 | Metric | Count |
 | --- | ---: |
 | Recovered IDs | 631 |
-| Explicit new IDs | 53 |
-| Canonical IDs | 684 |
-| First-class milestones | 46 |
-| State: complete | 440 |
+| Explicit new IDs | 54 |
+| Canonical IDs | 685 |
+| First-class milestones | 47 |
+| State: complete | 441 |
 | State: active | 1 |
 | State: partial | 1 |
 | State: blocked | 1 |
@@ -1065,7 +1067,7 @@ calculated from rows rather than protected by a summary hash.
 
 | Track | Owns | Current truth | Conclusive handoff |
 | --- | --- | --- | --- |
-| `TRACK.SCOPE` | Project control, release scope, family/release distinction, claim boundary, version policy, repository semantic ownership, C interface/build boundaries, and documentation-control transitions. | repository semantic compression and C canonicalization are complete with one machine-readable ownership manifest and four correlated hard gates | One truthful project map, one explicit release contract, and one enforced source-owner topology. |
+| `TRACK.SCOPE` | Project control, release scope, family/release distinction, claim boundary, version policy, repository semantic ownership, C interface/build boundaries, and documentation-control transitions. | repository semantic compression, C canonicalization, and the public product README/architecture cutover are complete with one machine-readable ownership manifest and correlated hard gates | One truthful project map, one explicit release contract, one product-first public entry point, and one enforced source-owner topology. |
 | `TRACK.SOURCE` | Source identity, revision, provider intake, manifests, shards, sidecars, header inventory, payload trust, and bounded payload access. | exact metadata/header verification and trusted bounded payload access are complete | Verified source facts and readable payload ranges. |
 | `TRACK.MAP` | Family source names, canonical runtime roles, GGUF names, physical-lowering projections, layouts, ambiguity refusal, and complete mapping coverage. | canonical DeepSeek GGUF lowering evidence is complete | Every required source tensor maps exactly once to a runtime role and emitted layout. |
 | `TRACK.COMPILATION` | Artifact-neutral transformation IR, derivation identity/DAGs, physical variant identity, constraint profiles, requirement composition, variant selection, and evaluation/benchmark feedback intake. | one sealed policy now resolves all terminal decisions and drives exact sizing, byte execution, writer emission, materialization, and runtime binding; automatic optimization and Pareto search remain deferred | One immutable physical-variant plan carries every user-selected admissible representation into the exact downstream artifact. |
@@ -1100,7 +1102,7 @@ closure.
 
 | Track | Recovered IDs | Canonical IDs | First-class C/A/Pa/P/B/NM | Complete support | Open support | Superseded/deferred |
 | --- | ---: | ---: | --- | ---: | ---: | ---: |
-| `TRACK.SCOPE` | 25 | 33 | 7/0/1/0/0/0 | 9 | 9 | 7 |
+| `TRACK.SCOPE` | 25 | 34 | 8/0/1/0/0/0 | 9 | 9 | 7 |
 | `TRACK.SOURCE` | 24 | 26 | 2/0/0/0/0/0 | 23 | 1 | 0 |
 | `TRACK.MAP` | 12 | 13 | 1/0/0/0/0/0 | 11 | 1 | 0 |
 | `TRACK.COMPILATION` | 0 | 13 | 2/0/0/0/0/0 | 0 | 0 | 11 |
@@ -1200,10 +1202,11 @@ written after inspection of owner code, consumers, tests, and current contracts.
 | 40 | `V010.COMPILATION.PHYSICAL.VARIANT.1` | `TRACK.COMPILATION` | common compiler + DeepSeek first variant | `complete` | Resolve one sealed policy over all 1,360 terminals, execute calibrated mixed qtypes, emit and admit a complete variant, and carry its identity through variant-adaptive materialization and generation. | V010.RUNTIME.DEEPSEEK.GENERATION.0 |
 | 41 | `V010.CLI.DEEPSEEK.GENERATE.0` | `TRACK.OPERATOR` | DeepSeek | `superseded` | The fresh-only top-level CLI plan was replaced before implementation by the process, session, protocol, client, and total CLI refoundation. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
 | 42 | `V010.RUNTIME.CLIENT.REFOUNDATION.0` | `TRACK.SERVE` | common host + DeepSeek first session vertical | `complete` | Replaced the one-shot process and flat CLI with one long-lived model host, exact multi-turn KV sessions, local streaming protocol, typed telemetry, product client, REPL, developer client, and package topology. | V010.COMPILATION.PHYSICAL.VARIANT.1 |
-| 43 | `V010.EVAL.DEEPSEEK.0` | `TRACK.EVAL` | DeepSeek | `active` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
-| 44 | `V010.BENCH.DEEPSEEK.0` | `TRACK.BENCH` | DeepSeek / DGX Spark | `not-measured` | Record reproducible artifact, qtype, prompt/context, prefill, decode, generation, timing, throughput, and memory evidence. | V010.EVAL.DEEPSEEK.0 |
-| 45 | `V010.RELEASE.0` | `TRACK.RELEASE` | DeepSeek v0.1.0 | `blocked` | Close every source, architecture, mapping, artifact, materialization, backend, transformer, generation, evaluation, benchmark, validation, claim, operator, packaging, and version gate. | V010.BENCH.DEEPSEEK.0 |
-| 46 | `TOPOLOGY.CELL.CLOSURE.0` | `TRACK.OPERATOR` | common | `planned` | Close residual mixed ownership only where concrete behavior still crosses domain/report/input/command/render/write boundaries. | V010.DOCS.ARCHITECTURE.0; supporting, not a product-stage promotion |
+| 43 | `V010.DOCS.README.PRODUCT.0` | `TRACK.SCOPE` | project | `complete` | Rebuilt the public README around the accepted long-lived host, exact sessions, three terminal views, compact product workflow, binary topology, reviewed SVG architecture, and current non-claims without promoting executable capability. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
+| 44 | `V010.EVAL.DEEPSEEK.0` | `TRACK.EVAL` | DeepSeek | `active` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.DOCS.README.PRODUCT.0 |
+| 45 | `V010.BENCH.DEEPSEEK.0` | `TRACK.BENCH` | DeepSeek / DGX Spark | `not-measured` | Record reproducible artifact, qtype, prompt/context, prefill, decode, generation, timing, throughput, and memory evidence. | V010.EVAL.DEEPSEEK.0 |
+| 46 | `V010.RELEASE.0` | `TRACK.RELEASE` | DeepSeek v0.1.0 | `blocked` | Close every source, architecture, mapping, artifact, materialization, backend, transformer, generation, evaluation, benchmark, validation, claim, operator, packaging, and version gate. | V010.BENCH.DEEPSEEK.0 |
+| 47 | `TOPOLOGY.CELL.CLOSURE.0` | `TRACK.OPERATOR` | common | `planned` | Close residual mixed ownership only where concrete behavior still crosses domain/report/input/command/render/write boundaries. | V010.DOCS.ARCHITECTURE.0; supporting, not a product-stage promotion |
 
 ## 9. Complete Track/Wave Ledger
 
@@ -1216,9 +1219,9 @@ the row's use.
 
 **Owner:** Project control, release scope, family/release distinction, claim boundary, version policy, repository semantic ownership, C interface/build boundaries, architecture-control transitions, and public-document transitions.
 
-**Current truth:** repository-wide semantic compression and C canonicalization are complete; the common runtime model/session and attention execution plane are admitted, and persistent KV is the single active milestone
+**Current truth:** repository-wide semantic compression, C canonicalization, and the product-first README/architecture cutover are complete; the public quickstart now projects the accepted long-lived host, session, protocol, client, and three-terminal topology without promoting capability
 
-**Ledger summary:** 25 recovered IDs; 8 first-class milestones; 7 complete support rows; 12 open support rows; 6 superseded/deferred rows.
+**Ledger summary:** 25 recovered IDs; 9 first-class milestones; 7 complete support rows; 12 open support rows; 6 superseded/deferred rows.
 
 #### First-Class Milestones
 
@@ -1232,6 +1235,7 @@ the row's use.
 | `V010.DOCS.README.COMPILATION.0` | project | `complete` | Rebuilt README.md around the owned compilation/execution architecture while preserving project-state ownership, exact implemented truth, and unsupported boundaries. | V010.PROJECT.COMPILATION.0 | current |
 | `V010.REPO.SEMANTIC.COMPRESSION.0` | project | `complete` | Reconstructed every owned source boundary around compact semantic owners, enforced the dependency DAG and family budget, preserved executable identities, and installed permanent repository-wide gates. | V010.RUNTIME.DESCRIPTOR.DEEPSEEK.0 | current |
 | `V010.REPO.C.CANONICALIZATION.0` | project | `complete` | Canonicalized the three C header tiers, explicit include and archive identities, symbol visibility, semantic contracts, large owners, and hard ABI/complexity gates while preserving all capability refusals. | V010.REPO.SEMANTIC.COMPRESSION.0 | current |
+| `V010.DOCS.README.PRODUCT.0` | project | `complete` | Rebuilt README.md as the concise public product entry point, validated the accepted three-terminal/one-shot workflow, added reviewed editable product and system architecture visuals, routed depth to owned documents, and changed no executable capability. `cli_applicability=not_applicable`: documentation-only cutover. | V010.RUNTIME.CLIENT.REFOUNDATION.0 | current |
 
 #### Recovered And Subordinate Rows
 
@@ -2245,7 +2249,7 @@ runtime spine is introduced.
 
 | Milestone | Scope | State | Conclusive after-state | Depends on | Origin |
 | --- | --- | --- | --- | --- | --- |
-| `V010.EVAL.DEEPSEEK.0` | DeepSeek | `active` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.RUNTIME.CLIENT.REFOUNDATION.0 | current |
+| `V010.EVAL.DEEPSEEK.0` | DeepSeek | `active` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.DOCS.README.PRODUCT.0 | current |
 
 #### Recovered And Subordinate Rows
 
@@ -2463,6 +2467,7 @@ installed headers were intentionally removed rather than left available.
 | --- | --- | --- | --- |
 | Project control | One authority, complete ranked ledger, unique IDs, calculated counts, one Active Next, no shadow spine | complete | `V010.PROJECT.RECOVERY.1` |
 | Documentation architecture | Standard taxonomy, durable-content ownership, no duplicate roadmap, reference/paper map | complete | `V010.DOCS.ARCHITECTURE.0` |
+| Public product documentation | Concise executable three-terminal and one-shot workflow, accepted binary/process topology, reviewed editable SVG architecture, valid navigation, and current non-claims | complete; documentation-only and capability-neutral | `V010.DOCS.README.PRODUCT.0` |
 | Source | Exact local identity, revision, config, tokenizer, shard inventory, headers, and payload trust | complete | `V010.REBASE.DEEPSEEK.0` and `V010.SOURCE.PAYLOAD.STREAM.0` |
 | Architecture | Typed execution-complete DeepSeek specification | complete | `V010.MODEL.ARCH.IR.0` |
 | Tensor coverage | Complete required-role set with no unresolved role | complete | `V010.TENSOR.COVERAGE.DEEPSEEK.0` |
@@ -2541,6 +2546,7 @@ The version sequence records intended dependency order, not current support.
 
 | Document | Sole responsibility |
 | --- | --- |
+| `README.md` | Public project identity, first successful product workflow, concise product topology/current vertical, build entry point, documentation navigation, and public non-claims |
 | `PROJECT.md` | Product/release target, engineering scope, track registry, complete wave ledger, milestone state, dependencies, family matrix, gates, and Active Next |
 | `AGENTS.md` | Persistent repository ownership, implementation, testing, validation, claim, and project-update invariants |
 | `docs/v010-release-doctrine.md` | Release meaning and gate-closure semantics |
@@ -2553,6 +2559,7 @@ The version sequence records intended dependency order, not current support.
 | `docs/runbooks/deepseek.md` | Exact current DeepSeek operator boundary |
 | `docs/topology-closure-audit.md` | Point-in-time topology evidence, not project state |
 | `docs/reference-architecture.md` | Implementation-agnostic inference architecture, conformance model, external sources, and YVEX owner/milestone traceability |
+| `docs/diagrams/*.mmd` and `docs/diagrams/*.svg` | Editable and canonical vector projections of README product topology and detailed system architecture; orientation only, never runtime evidence |
 
 ## 16. Agent Start Checklist
 
