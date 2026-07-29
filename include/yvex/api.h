@@ -16,6 +16,7 @@
 #include <yvex/gguf.h>
 #include <yvex/graph.h>
 #include <yvex/model.h>
+#include <yvex/provider.h>
 #include <yvex/qtype.h>
 #include <yvex/quant.h>
 #include <yvex/registry.h>

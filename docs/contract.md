@@ -689,8 +689,9 @@ status zero.
 
 `yvexd` owns one process-resident runtime model, one bounded model worker and
 request queue, one exact server-session registry, one private versioned local
-protocol, and one typed telemetry fan-out. It opens the artifact, binding,
-model, tokenizer plans and immutable residency once for the process lifetime.
+protocol, and one typed telemetry fan-out. It opens the artifact and binding
+once, copies every encoded descriptor tensor into one immutable anonymous host
+arena, and builds model and tokenizer plans once for the process lifetime.
 Socket threads never mutate model state directly.
 
 A client connection is not a session. Named sessions retain independent KV,
@@ -701,9 +702,22 @@ publishes bytes only after model commit, decoder commit and internal text
 commit. Disconnect or sink failure preserves committed partial state.
 
 The local protocol uses a private UID-owned Unix-domain socket, bounded frames,
-explicit version negotiation, typed refusal and deterministic cleanup. Public
-HTTP, authentication, TLS, OpenAI/Anthropic compatibility, remote sessions and
+explicit v2 negotiation, typed provider messages/tools/results, typed refusal,
+and deterministic cleanup. Provider correlation participates in runtime-event
+identity without exposing prompt or answer content.
+
+The separate `yvex-openai` process may adapt the bounded
+`yvex.openai.compat.v1` profile over loopback HTTP/1.1. It links no inference
+engine, opens no model or artifact, owns no KV, and executes no application
+tool. Unknown fields refuse rather than disappear. SSE publishes only
+model-committed and detokenized provider output; disconnect propagates
+cancellation without closing the daemon model. Public HTTP exposure,
+authentication, TLS, full OpenAI/Anthropic compatibility, remote sessions and
 continuous batching remain unsupported.
+
+Protocol-v2 refusals include a typed application failure class. Bounded
+gateway transport expiry maps to timeout instead of being collapsed into a
+generic model or input error.
 
 ## Validation Contract
 
@@ -735,8 +749,8 @@ raw benchmark reports, and generated charts must remain untracked.
 A capability becomes true only when its owner, prerequisites, production API,
 operator command, tests, failure behavior, cleanup and identity-bound evidence
 all exist. A complete artifact is not runtime. Attention prefill/decode is not
-model prefill/decode. Attention residency is not full-model residency. An
-attention benchmark is not a full-model benchmark.
+model prefill/decode. Full-model host residency is not complete GPU residency.
+An attention benchmark is not a full-model benchmark.
 
 The current common runtime admits the complete DeepSeek prompt-to-text chain:
 artifact-bound tokenization, exact prompt-suffix prefill, persistent state,

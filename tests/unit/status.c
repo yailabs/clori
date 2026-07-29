@@ -53,6 +53,7 @@ int yvex_test_status(void)
     YVEX_TEST_ASSERT_STREQ(yvex_status_name(YVEX_ERR_STATE), "YVEX_ERR_STATE", "YVEX_ERR_STATE name");
     YVEX_TEST_ASSERT_STREQ(yvex_status_name(YVEX_ERR_CANCELLED), "YVEX_ERR_CANCELLED", "YVEX_ERR_CANCELLED name");
     YVEX_TEST_ASSERT_STREQ(yvex_status_name(YVEX_ERR_INVALID_ARG), "YVEX_ERR_INVALID_ARG", "YVEX_ERR_INVALID_ARG name");
+    YVEX_TEST_ASSERT_STREQ(yvex_status_name(YVEX_ERR_TIMEOUT), "YVEX_ERR_TIMEOUT", "YVEX_ERR_TIMEOUT name");
     YVEX_TEST_ASSERT_STREQ(yvex_status_name((yvex_status)1234), "YVEX_STATUS_UNKNOWN", "unknown status name");
 
     YVEX_TEST_ASSERT(yvex_status_is_ok(YVEX_OK), "YVEX_OK is ok");

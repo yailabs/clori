@@ -181,6 +181,8 @@ static int run_runtime_console(void)
 static int run_server(void)
 {
     if (run_test("protocol", yvex_test_protocol) != 0) return 1;
+    if (run_test("provider", yvex_test_provider) != 0) return 1;
+    if (run_test("openai", yvex_test_openai) != 0) return 1;
     if (run_test("server", yvex_test_server) != 0) return 1;
     return 0;
 }

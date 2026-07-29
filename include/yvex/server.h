@@ -15,12 +15,13 @@
 #include <yvex/artifact.h>
 #include <yvex/backend.h>
 #include <yvex/core.h>
+#include <yvex/provider.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define YVEX_LOCAL_PROTOCOL_VERSION 1u
+#define YVEX_LOCAL_PROTOCOL_VERSION 2u
 #define YVEX_SERVER_SESSION_NAME_CAP 64u
 #define YVEX_SERVER_ID_CAP 65u
 #define YVEX_SERVER_REASON_CAP 256u
@@ -116,6 +117,9 @@ typedef struct {
     char request_id[YVEX_SERVER_ID_CAP];
     char turn_id[YVEX_SERVER_ID_CAP];
     char phase[32];
+    char provider_adapter[YVEX_PROVIDER_ADAPTER_CAP];
+    char provider_request_identity[YVEX_PROVIDER_ID_CAP];
+    char external_correlation_id[YVEX_PROVIDER_ID_CAP];
     unsigned long long value_a, value_b, value_c;
     double seconds, rate;
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
@@ -202,6 +206,20 @@ typedef enum {
     YVEX_CLIENT_MESSAGE_TURN_COMPLETE
 } yvex_client_message_kind;
 
+typedef enum {
+    YVEX_CLIENT_FAILURE_NONE = 0,
+    YVEX_CLIENT_FAILURE_INVALID_REQUEST,
+    YVEX_CLIENT_FAILURE_MODEL_NOT_FOUND,
+    YVEX_CLIENT_FAILURE_INCOMPATIBLE_STATE,
+    YVEX_CLIENT_FAILURE_REQUEST_TOO_LARGE,
+    YVEX_CLIENT_FAILURE_UNSUPPORTED_PARAMETER,
+    YVEX_CLIENT_FAILURE_QUEUE_FULL,
+    YVEX_CLIENT_FAILURE_CLIENT_CANCELLED,
+    YVEX_CLIENT_FAILURE_INTERNAL,
+    YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE,
+    YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT
+} yvex_client_failure_class;
+
 typedef struct {
     unsigned int schema_version;
     yvex_client_operation operation;
@@ -215,12 +233,14 @@ typedef struct {
     unsigned long long top_k, event_after_sequence;
     yvex_server_trace_level trace_level;
     int trace_content;
+    const yvex_provider_request *provider_request;
 } yvex_client_request;
 
 typedef struct {
     unsigned int schema_version;
     yvex_client_message_kind kind;
     int status;
+    yvex_client_failure_class failure_class;
     unsigned long long request_number;
     char session_name[YVEX_SERVER_SESSION_NAME_CAP];
     char reason[YVEX_SERVER_REASON_CAP];
@@ -237,6 +257,13 @@ typedef struct {
     char state_digest[YVEX_SHA256_HEX_CAP];
     char generated_token_identity[YVEX_SHA256_HEX_CAP];
     char generated_text_digest[YVEX_SHA256_HEX_CAP];
+    yvex_provider_output_kind provider_output_kind;
+    yvex_provider_finish_class provider_finish;
+    unsigned long long completion_tokens, total_tokens;
+    char provider_request_identity[YVEX_PROVIDER_ID_CAP];
+    char external_correlation_id[YVEX_PROVIDER_ID_CAP];
+    char tool_call_id[YVEX_PROVIDER_ID_CAP];
+    char tool_name[YVEX_PROVIDER_TOOL_NAME_CAP];
     yvex_server_summary runtime;
     yvex_server_event event;
 } yvex_client_message;
@@ -260,6 +287,9 @@ void yvex_server_close(yvex_server **server);
 
 int yvex_client_connect(yvex_client **out, const char *socket_path,
                         yvex_error *err);
+int yvex_client_timeout_set(yvex_client *client,
+                            unsigned long long milliseconds,
+                            yvex_error *err);
 int yvex_client_send(yvex_client *client, const yvex_client_request *request,
                      yvex_error *err);
 int yvex_client_receive(yvex_client *client, yvex_client_message *message,
@@ -274,6 +304,7 @@ int yvex_protocol_request_decode(const unsigned char *input,
                                  unsigned long long byte_count,
                                  yvex_client_request *request,
                                  unsigned char **owned_prompt,
+                                 yvex_provider_request **owned_provider,
                                  yvex_error *err);
 int yvex_protocol_message_encode(const yvex_client_message *message,
                                  unsigned char *output,

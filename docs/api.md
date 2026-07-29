@@ -130,10 +130,12 @@ payloads and does not rebuild Transformation IR, quantization plans or GGUF
 writer plans.
 
 One runtime model performs one complete artifact hash and one GGUF directory
-admission. Warm operations reuse the same verified handle, immutable descriptor,
-attention graph and resident weight pack. Before and after execution, snapshot
-drift invalidates the model, sessions, residency, workspace, graph executables
-and candidate state.
+admission. It then owns one anonymous host arena containing every encoded
+descriptor tensor; a compact accelerator prefix is uploaded and shared under
+the admitted backend contract. Warm operations reuse the same verified handle,
+immutable descriptor, attention graph and complete resident weight pack.
+Before and after execution, snapshot drift invalidates the model, sessions,
+residency, workspace, graph executables and candidate state.
 
 Sessions own mutable state. `yvex_runtime_session_prepare_persistent_state`
 seals the provider layout and CPU/CUDA residency for an exact capacity;
@@ -354,6 +356,33 @@ lifetime; incremental decoder and append contexts are isolated mutable owners.
 Every owned result publishes only after complete success and carries field-wise
 identities. These operations do not read weights, mutate KV, append sampled
 tokens to decode, or compose generation.
+
+## Application Provider And Local Protocol v2
+
+`<yvex/provider.h>` is the installed transport-neutral application request and
+result ABI. A sealed request binds the model, ordered typed messages, explicit
+content extents, sampling policy, maximum output, bounded stop strings,
+response format, function definitions and choice, prior-response reference,
+adapter correlation, and request identity. Clone and wire-decode publish only a
+complete owned request graph. The provider owner neither parses HTTP nor
+renders model-family prompt syntax.
+
+`<yvex/server.h>` protocol v2 carries the sealed provider request through the
+private Unix socket. Provider output messages distinguish assistant text,
+function calls, usage, terminal completion, and failure. Typed events bind the
+provider adapter, provider-request identity, and external correlation ID while
+excluding prompt and output content.
+
+Protocol error messages carry `yvex_client_failure_class`, so adapters map
+queue capacity, timeout, incompatible state and unsupported input without
+inspecting diagnostic text. `yvex_client_timeout_set()` bounds application
+adapter send/receive waiting; zero restores unbounded post-handshake waiting
+for native watch and trace consumers.
+
+`yvex-openai` consumes only the provider contract, protocol client, and bounded
+HTTP/JSON/SSE adapters. It is not a library API and links no artifact, runtime,
+Transformer, generation, or CUDA owner. The exact HTTP profile is documented
+in [`openai-compatibility.md`](openai-compatibility.md).
 
 ## Internal Generation And Hosted Turn Boundary
 

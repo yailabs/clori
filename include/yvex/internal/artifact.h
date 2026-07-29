@@ -329,9 +329,8 @@ typedef struct yvex_materialization_options {
     unsigned long long backend_resident_budget_bytes;
     unsigned long long future_graph_scratch_reserve_bytes;
     unsigned long long future_kv_reserve_bytes;
-    int require_complete_admission;
-    int require_deepseek_map;
-    int cancel_after_first_chunk;
+    int require_complete_admission, require_deepseek_map;
+    int release_artifact_cache_after_read, cancel_after_first_chunk;
 } yvex_materialization_options;
 typedef struct {
     unsigned long long tensor_id;

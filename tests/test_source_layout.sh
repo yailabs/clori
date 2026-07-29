@@ -110,5 +110,22 @@ for filter in $focused_runtime_filters; do
       exit 1
     }
 done
+for filter in provider openai; do
+  printf '%s\n' "$runtime_aggregate" |
+    grep -F "YVEX_TEST_FILTER=$filter \$(TEST_RUNNER)" >/dev/null || {
+      echo "source layout: provider sanitizer aggregate omits $filter" >&2
+      exit 1
+    }
+done
+grep -A16 '^test-runtime-asan:' Makefile |
+  grep -F 'test-runtime client daemon test-openai' >/dev/null || {
+    echo "source layout: ASan omits the OpenAI gateway process" >&2
+    exit 1
+  }
+grep -A16 '^test-runtime-ubsan:' Makefile |
+  grep -F 'test-runtime client daemon test-openai' >/dev/null || {
+    echo "source layout: UBSan omits the OpenAI gateway process" >&2
+    exit 1
+  }
 
 echo "source layout: ok canonical_owners=19 superseded_owners=0"

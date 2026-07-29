@@ -6,9 +6,10 @@ snapshot into an explicit physical model variant, admits the resulting artifact,
 and executes it through a long-lived runtime host with isolated sessions.
 
 Today, the complete product path is available for DeepSeek-V4-Flash on CPU and
-the admitted NVIDIA GB10 CUDA path. The model stays open in `yvexd`; `yvex`
-connects to it for one-shot or multi-turn generation. Evaluation, release
-benchmarking, and release qualification remain open gates.
+the admitted NVIDIA GB10 CUDA path. The model stays open in `yvexd`; native
+clients use the private local protocol and applications may use the bounded
+`yvex.openai.compat.v1` HTTP/SSE gateway. Evaluation, release benchmarking, and
+release qualification remain open gates.
 
 Start here:
 
@@ -55,7 +56,8 @@ Start the long-lived host and select the structured runtime-event stream:
 ```
 
 Wait for the `runtime.ready` JSONL event. The daemon authenticates the artifact
-and binding, builds immutable runtime resources once, then accepts local client
+and binding, copies the complete encoded model payload into its process-lifetime
+host RAM arena, builds the accelerator residency once, then accepts local client
 connections. Raw events exclude prompt and response text by default.
 
 ### Terminal 2 — engine watch
@@ -100,6 +102,21 @@ By default, `run` creates an ephemeral session, closes that session when the
 turn ends, and leaves the daemon and model alive. An explicit `--session NAME`
 uses an admitted existing session instead.
 
+### OpenAI-compatible applications
+
+Start the engine-free loopback gateway after `runtime.ready`:
+
+```sh
+./yvex-openai --host 127.0.0.1 --port 8001
+```
+
+Point an OpenAI-compatible client at `http://127.0.0.1:8001/v1` with any local
+non-secret API-key placeholder. The admitted profile covers model discovery,
+Chat Completions, Responses, SSE, bounded function calls, usage, stop strings,
+and JSON-object validation. YVEX never executes application tools. See the
+[compatibility profile](docs/openai-compatibility.md) for exact fields and
+refusals.
+
 ### Status and shutdown
 
 Inspect the authoritative runtime snapshot:
@@ -137,6 +154,7 @@ The product separates process and linkage responsibilities:
 | `libyvex` | Compilation, artifact admission, runtime, backend, tokenizer, and generation domain owners | engine |
 | `yvexd` | One long-lived model host, bounded worker queue, session registry, local protocol, telemetry, and graceful shutdown | yes |
 | `yvex` | REPL, one-shot client, runtime/session administration, status, watch, and trace | no |
+| `yvex-openai` | Loopback HTTP/JSON/SSE adapter over the private YVEX protocol; opens no model or artifact | no |
 | `yvex-dev` | Optional direct compiler, artifact, graph, tokenizer, and evidence tooling | yes |
 
 `yvex` cannot open a model, materialize weights, execute a Transformer, or run
@@ -215,13 +233,14 @@ Implemented facts include:
 - exact verification of the pinned source snapshot and tokenizer material;
 - complete source coverage and an immutable artifact-neutral Transformation IR;
 - policy-driven physical compilation over all 1,360 terminal tensors;
-- complete YVEX-produced source-faithful, Q8_0/Q2_K, and DS4-like
+- complete YVEX-produced source-faithful, Q8_0/Q2_K, and mixed
   IQ2_XXS/Q2_K GGUF variants outside the repository;
 - variant-adaptive materialization and identity-bound runtime bindings;
 - the 43-layer Transformer, persistent DeepSeek state, MoE, logits over the
   complete 129,280-token vocabulary, sampling, and exact tokenizer execution;
 - complete prompt-to-text generation on CPU and the admitted mixed GB10 path;
-- a long-lived local host with streaming one-shot and exact multi-turn sessions.
+- a long-lived local host with streaming one-shot and exact multi-turn sessions;
+- a bounded OpenAI-compatible application gateway over the same hosted model.
 
 The CUDA product path executes the model backbone and output head on CUDA while
 sampling, tokenizer work, protocol handling, and orchestration remain on the
@@ -234,7 +253,8 @@ decision. Exact artifacts, sizes, identities, and current gates are recorded in
 
 ## Build
 
-Build the engine, daemon, product client, and developer tools:
+Build the engine, daemon, product client, application gateway, and developer
+tools:
 
 ```sh
 make -j4 all
@@ -287,6 +307,8 @@ and hygiene workflow is in the [common runbook](docs/runbooks/common.md).
 - [C API](docs/api.md): installed and internal interfaces and lifetimes.
 - [Runtime contract](docs/contract.md): admission, publication, failure,
   cleanup, protocol, and server behavior.
+- [OpenAI compatibility](docs/openai-compatibility.md): exact local endpoints,
+  request fields, streaming events, SDK profile, and explicit refusals.
 
 ### Develop YVEX
 
@@ -310,7 +332,8 @@ and hygiene workflow is in the [common runbook](docs/runbooks/common.md).
 YVEX does not currently claim:
 
 - a public or remote production server;
-- authentication, TLS, OpenAI/Anthropic compatibility, or remote security;
+- the full OpenAI API, Anthropic compatibility, authentication, TLS, or remote
+  security;
 - multi-model hosting, hot model reload, continuous batching, or distributed
   serving;
 - session persistence across daemon restart;

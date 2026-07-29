@@ -16,6 +16,7 @@ static int test_request_roundtrip(void)
     static const unsigned char prompt[] = {'a', 0u, 'b', 0xf0u, 0x9fu, 0x98u, 0x80u};
     unsigned char frame[2048];
     unsigned char *owned_prompt = NULL;
+    yvex_provider_request *owned_provider = NULL;
     yvex_client_request source, decoded;
     unsigned long long count = 0u;
     yvex_error err;
@@ -39,7 +40,8 @@ static int test_request_roundtrip(void)
     rc = yvex_protocol_request_encode(&source, frame, sizeof(frame), &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && count > 0u, "request encode");
     memset(&decoded, 0, sizeof(decoded));
-    rc = yvex_protocol_request_decode(frame, count, &decoded, &owned_prompt, &err);
+    rc = yvex_protocol_request_decode(frame, count, &decoded, &owned_prompt,
+                                      &owned_provider, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "request decode");
     YVEX_TEST_ASSERT(decoded.operation == source.operation, "request operation");
     YVEX_TEST_ASSERT(decoded.request_number == 42u, "request number");
@@ -49,13 +51,15 @@ static int test_request_roundtrip(void)
                      "prompt bytes including NUL");
     YVEX_TEST_ASSERT(decoded.seed_present && decoded.seed == 0u, "seed zero");
     free(owned_prompt);
+    yvex_provider_request_close(&owned_provider);
 
     source.schema_version++;
     count = 99u;
     rc = yvex_protocol_request_encode(&source, frame, sizeof(frame), &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG && count == 0u,
                      "unsupported request version refuses");
-    rc = yvex_protocol_request_decode(frame, 3u, &decoded, &owned_prompt, &err);
+    rc = yvex_protocol_request_decode(frame, 3u, &decoded, &owned_prompt,
+                                      &owned_provider, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT, "truncated request refuses");
     return 0;
 }
@@ -99,10 +103,12 @@ static int test_message_roundtrip(void)
     source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     source.kind = YVEX_CLIENT_MESSAGE_ERROR;
     source.status = YVEX_ERR_BOUNDS;
+    source.failure_class = YVEX_CLIENT_FAILURE_QUEUE_FULL;
     rc = yvex_protocol_message_encode(&source, frame, sizeof(frame), &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "negative status encode");
     rc = yvex_protocol_message_decode(frame, count, &decoded, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && decoded.status == YVEX_ERR_BOUNDS,
+    YVEX_TEST_ASSERT(rc == YVEX_OK && decoded.status == YVEX_ERR_BOUNDS &&
+                         decoded.failure_class == YVEX_CLIENT_FAILURE_QUEUE_FULL,
                      "negative status roundtrip");
     rc = yvex_protocol_message_decode(frame, count - 1u, &decoded, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT, "truncated message refuses");
@@ -118,6 +124,7 @@ static int test_bounded_parser_mutation(void)
         yvex_client_request request;
         yvex_client_message message;
         unsigned char *prompt = NULL;
+        yvex_provider_request *provider = NULL;
         yvex_error err;
         unsigned long long count = (iteration * 37u) % sizeof(bytes);
         int request_rc, message_rc;
@@ -128,10 +135,11 @@ static int test_bounded_parser_mutation(void)
             bytes[index] = (unsigned char)state;
         }
         request_rc = yvex_protocol_request_decode(
-            bytes, count, &request, &prompt, &err);
+            bytes, count, &request, &prompt, &provider, &err);
         YVEX_TEST_ASSERT(request_rc == YVEX_OK || request_rc < YVEX_OK,
                          "request mutation returns typed status");
         free(prompt);
+        yvex_provider_request_close(&provider);
         message_rc = yvex_protocol_message_decode(bytes, count, &message, &err);
         YVEX_TEST_ASSERT(message_rc == YVEX_OK || message_rc < YVEX_OK,
                          "message mutation returns typed status");

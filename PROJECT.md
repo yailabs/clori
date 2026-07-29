@@ -1,11 +1,11 @@
 # YVEX Project Control
 
-Date: 2026-07-28
+Date: 2026-07-29
 Status: living engineering control
 Authority: product target, architecture tracks, complete wave ledger, milestone
 state, dependencies, evidence rank, family scope, release gates, and Active Next
 Recovery baseline: pre-refoundation `docs/spine.md` at commit `10ad6c3`
-Current proof stage: the accepted product topology exposes hosted DeepSeek text generation through one long-lived model, exact multi-turn sessions, streaming clients, and three typed terminal views; the public README and architecture communication now match that implementation, and release-path model evaluation is the sole active boundary
+Current proof stage: the accepted product topology exposes hosted DeepSeek text generation through one long-lived model, exact multi-turn sessions, streaming clients, three typed terminal views, and one bounded OpenAI-compatible application-provider boundary; release-path model evaluation is now active
 
 ## 1. Authority And Update Contract
 
@@ -348,7 +348,7 @@ in a conversation or closure report is not part of the architecture.
 
 | Boundary | Current truth |
 | --- | --- |
-| Project control | The 631-ID historical ledger is recovered and ranked here, then organized across 26 canonical tracks; project recovery, compilation-architecture rebasing, both public README cutovers, repository semantic compression, and C canonicalization are complete. The explicit physical-variant compiler, variant-adaptive materialization, runtime/client refoundation, and product-documentation cutover bring the canonical set to 685 IDs. `config/source_owners.tsv` registers every production source/header exactly once; explicit header tiers, source-relative object/archive identities, semantic contracts, and repository layout, ownership, dependency, complexity, and ABI gates are hard failures. |
+| Project control | The 631-ID historical ledger is recovered and ranked here, then organized across 26 canonical tracks; project recovery, compilation-architecture rebasing, both public README cutovers, repository semantic compression, and C canonicalization are complete. The explicit physical-variant compiler, variant-adaptive materialization, runtime/client refoundation, product-documentation cutover, and bounded application-provider milestone bring the canonical set to 686 IDs. `config/source_owners.tsv` registers every production source/header exactly once; explicit header tiers, source-relative object/archive identities, semantic contracts, and repository layout, ownership, dependency, complexity, and ABI gates are hard failures. |
 | Source | The canonical DeepSeek target is verified against `deepseek-ai/DeepSeek-V4-Flash` at commit `60d8d70770c6776ff598c94bb586a859a38244f1`. The pinned upstream index, structured configs, tokenizer assets, 46/46 safetensors headers, 69,187 unique tensor records, and verifier-owned manifest agree. Manifest v3 binds every shard to its authoritative Hugging Face Git LFS SHA-256 and atomically publishes aggregate payload identity `e22b3678d131d334f154a93214bdddfafc172c9869f4c52db28fea198eaa9165` only after all 159,617,149,040 shard-file bytes pass digest and drift checks. |
 | Family profiles | The exact DeepSeek-V4-Flash source projects to one immutable typed IR with 43 main layers, one MTP layer, explicit SWA/CSA/HCA, mHC, MoE, position/KV, output, tokenizer, and source constraints. Runtime numeric schema v2 binds BF16/F32 compute boundaries, activation fake-quantization, UE8M0 scaling, deterministic top-k, and the full Hadamard authority at commit `e7706faf8d1c3b9f241e36860640ad1dac644ede`. SWA uses base RoPE without YaRN; compressed CSA/HCA classes use the versioned YaRN policy. Qwen, Gemma, and dense/MoE evidence remains at its prior rank. |
 | Tensor coverage | One immutable IR-derived requirement set reconciles exactly against all 69,187 tensors in the verified DeepSeek snapshot: every entry is assigned once, with zero missing, duplicate, ambiguous, unsupported, or unexpected tensors and zero payload reads. Qwen/Gemma evidence remains at its prior rank. |
@@ -356,16 +356,16 @@ in a conversation or closure report is not part of the architecture.
 | Compilation | Schema-v1 immutable Transformation IR owns 69,187 source values, 1,360 typed terminal operations, 69,187 edges, deterministic topology, checked shapes/dtypes/axes, canonical identity `cc774dffb6aa3a8e9f507b1dd454fbf7f5c68187138736f9a330ee9eaec07067`, and an exhaustive payload-range binding. Policy-v2 presets or custom rules resolve every terminal with deterministic priority/conflict semantics into one pointer-free physical-variant plan while reading zero payload bytes. Exact sizing precedes execution; automatic precision/target-size optimization, placement selection, feedback, and Pareto search remain deferred. |
 | GGUF foundations | The canonical row-aware qtype storage ABI, scalable native GGUF v3 structural reader ABI, and global directory-order layout admission are closed. `V010.GGUF.ARTIFACT.ABI.0` remains reopened as bounded historical evidence. |
 | Qtype | Pinned GGUF identities, removed/outside-baseline refusal, exact scalar/block geometry, and shape-aware storage accounting are canonical. One numeric capability registry owns deterministic codec, calibration, and CPU/CUDA compute truth. F32, F16, BF16, I32, Q8_0, Q2_K, IQ2_XXS, and MXFP4 codecs and direct encoded row-dot proofs are complete. IQ2_XXS uses exact 256-value/66-byte geometry, imatrix-weighted encoding, an independent decoder, and bit-identical CPU/GB10 CUDA row compute; unsupported identities refuse explicitly. |
-| Artifact | One immutable GGUF v3 writer plan consumes canonical lowering, quantization, tokenizer, and provenance owners. It emitted three complete DeepSeek artifacts outside the repository: source-faithful is 177,680,573,600 bytes with identity `f16e800c0d7383ee76cb2e2fa8bdd674bab29c017cba64eaba85c39016e257ca`; Q8_0/Q2_K is 102,408,545,440 bytes with identity `01b2bed4f070d0a3fdb02e546764b3a49cb69886eebe17b4877d20294725682c`; the DS4-like IQ2_XXS/Q2_K candidate is 94,154,155,392 bytes with identity `bdc6b442cf03f86f9d9a5cfe2a2f46a6ed7e3268b3ee6f3124725c999ca75a53`. Each retains exact tokenizer material and all 1,360 tensors. The baseline and candidate artifacts are consumed by variant-adaptive materialization; neither is supported-model or release-profile evidence. |
+| Artifact | One immutable GGUF v3 writer plan consumes canonical lowering, quantization, tokenizer, and provenance owners. It emitted three complete DeepSeek artifacts outside the repository: source-faithful is 177,680,573,600 bytes with identity `f16e800c0d7383ee76cb2e2fa8bdd674bab29c017cba64eaba85c39016e257ca`; Q8_0/Q2_K is 102,408,545,440 bytes with identity `01b2bed4f070d0a3fdb02e546764b3a49cb69886eebe17b4877d20294725682c`; the mixed IQ2_XXS/Q2_K candidate is 94,154,155,392 bytes with identity `bdc6b442cf03f86f9d9a5cfe2a2f46a6ed7e3268b3ee6f3124725c999ca75a53`. Each retains exact tokenizer material and all 1,360 tensors. The baseline and candidate artifacts are consumed by variant-adaptive materialization; neither is supported-model or release-profile evidence. |
 | Integrity | Canonical layout admission, full-file SHA-256 identity, exact payload-range verification, native writer-reader equivalence, pinned official ggml reader acceptance, deterministic serialization, and complete-artifact support admission are closed for the admitted DeepSeek artifacts. The physical catalog selects only immutable extent and exact digest evidence; operator admission rehashes every byte before binding. Tensor proofs and external or structurally incomplete GGUF files remain outside the complete-artifact path. |
-| Materialization | The admitted Q8_0/Q2_K baseline and DS4-like candidate use the same family-neutral materialization owner over all 1,360 tensors. Candidate materialization identity `04efd6362926cc009d9096b16f583993425dca91cd644ee369a5446c823ef263` derives 94,142,453,320 payload bytes and mixed IQ2_XXS/Q2_K routed-expert subviews from actual directory qtypes without preset-name branches. Both variants use bounded file-backed/staged access, selected expert/embedding access, and model-lifetime output-head residency; whole-expert-collection residency remains unsupported. |
+| Materialization | The admitted Q8_0/Q2_K baseline and mixed IQ2_XXS/Q2_K candidate use the same family-neutral materialization owner over all 1,360 tensors. Candidate materialization identity `04efd6362926cc009d9096b16f583993425dca91cd644ee369a5446c823ef263` derives 94,142,453,320 payload bytes and mixed routed-expert subviews from actual directory qtypes without preset-name branches. Cold admission remains bounded and file-backed; the runtime then copies every encoded tensor into one checked model-lifetime host arena and releases consumed artifact cache pages. |
 | Runtime descriptor | The common runtime descriptor and DeepSeek specialization project the admitted artifact, materialization plan, canonical qtype facts, all 1,360 tensor bindings, topology, MoE/expert geometry, output/vocabulary geometry, tokenizer availability, and runtime numeric authority into one immutable graph-input descriptor. Logical-model identity `ec22b4bf78811265d1881071919593991f33ab883303f3df16d64c0689a63950` and runtime-numeric identity `33182fd6b75e9263861d5a873550e6d0c5d5010267fb315ec687c693c9572dcd` are shared semantic facts; the candidate derives runtime-descriptor identity `e1b25e80d6a0ae97cbde61b1aeec261a170bd2d8874f8bbc85f496db46d973d0` from its distinct physical bindings. |
-| Runtime | Content-addressed schema-V6 runtime bindings open each admitted physical artifact into one family-neutral process-resident model. `yvexd` owns that model for its complete lifetime, one bounded model worker, and independent server sessions whose execution sessions retain exact KV, token, transcript, RNG, and partial-turn state across client detach. The GB10 product proof opened the model, artifact, residency, and output head exactly once, completed two turns with exact prefix reuse, executed an independent REPL session, reset to fresh-session equivalence, cancelled one active request, and closed the model once. Physical-variant identities remain descriptor facts rather than host or client policy. |
+| Runtime | Content-addressed schema-V6 runtime bindings open each admitted physical artifact into one family-neutral process-resident model. Before `READY`, `yvexd` copies all 1,360 encoded tensor payloads into one anonymous host arena and requires the complete arena to be locked in physical RAM; the mixed candidate proves `resident_host_bytes=94,142,453,320` and `VmLck=91,935,992 KiB`. The daemon owns that model for its complete lifetime, one bounded model worker, and independent server sessions whose execution sessions retain exact KV, token, transcript, RNG, and partial-turn state across client detach. Protocol v2 additionally carries provider messages, tools, usage, finish classes, and correlations through an engine-free loopback OpenAI gateway. Physical-variant identities remain descriptor facts rather than host, gateway, or client policy. |
 | CUDA | Production C contains no fallback PTX. Context, Driver API memory operations, generated-bundle admission, resolved functions, exact variants, runtime-session CUDA Graph lifecycles, and persistent-state residency are distinct typed facts. A no-`nvcc` build refuses every kernel before dispatch. The GB10 eager path executes the backbone and direct encoded BF16 output-head projection over every vocabulary row without CPU numerical fallback. |
 | Transformer | Numeric token IDs execute through selected encoded embedding rows, exact four-stream mHC initialization, 43 canonical attention/MoE blocks, deferred FFN mHC posts, final mHC collapse, and final RMSNorm on CPU and GB10 CUDA. One global state transaction commits all attention publications and advances position only after finite normalized hidden output is ready. The generation owner consumes this numeric boundary unchanged for prompt prefill and sampled-token decode. |
 | Operator | `yvex` is a thin local-protocol client with compact `chat`, `run`, `runtime`, `session`, `model`, `artifact`, and `quant` namespaces. It cannot link or invoke model execution. `yvex-dev` owns redesigned nested direct engineering tools, and the former flat public command registry, aliases, help hierarchy, and audit walls are absent. |
 | Text path | Exact artifact-bound text/message encoding composes with real prefill, full logits, sampling, unchanged sampled-token decode feedback, typed terminal/context stops, and incremental detokenization. `yvex run` streams one daemon-backed turn; `yvex chat` provides retained multi-turn sessions whose second turn reuses exact prior KV and prefills only the new prompt suffix. Model quality remains unclaimed. |
-| Evaluation | Model behavior and model quality evaluation require the complete tokenizer-to-text path. They remain unavailable; attention numerical conformance is not model evaluation. |
+| Evaluation | Model behavior and model quality evaluation require the complete tokenizer-to-text and application-provider path. The evaluation milestone is active; no behavior or quality result exists yet, and attention numerical conformance is not model evaluation. |
 | Benchmark | The runtime owns schema-v5 `attention_component` cold/warm, eager/piecewise/full measurements, identity-bound baseline comparison, JSON/CSV facts, and deterministic external SVG charts. Correctness, structural-runtime, and performance status remain independent. Release-path generation and full-model benchmark evidence remain not measured. |
 | Agent | No agent runtime, tool execution loop, agent evaluation owner, milestone, or operator command exists. Development agents, JSON output, external harnesses, and `yvexd` do not establish agent capability. |
 | Release | Release qualification remains blocked and is not promoted by component qualification or benchmark evidence. |
@@ -511,6 +511,8 @@ client_engine_separation_ready=1
 local_runtime_host_ready=1
 runtime_model_process_persistence_ready=1
 runtime_model_reuse_across_requests_ready=1
+full_model_host_residency_ready=1
+full_model_host_ram_lock_ready=1
 runtime_worker_ready=1
 bounded_request_queue_ready=1
 local_protocol_ready=1
@@ -543,7 +545,39 @@ public_server_generation_ready=0
 remote_server_ready=0
 authentication_ready=0
 tls_ready=0
-openai_compatibility_ready=0
+provider_compatibility_boundary_ready=1
+provider_neutral_request_ready=1
+provider_neutral_tool_contract_ready=1
+local_protocol_v2_ready=1
+openai_compatibility_ready=1
+openai_profile_v1_ready=1
+openai_gateway_ready=1
+openai_models_ready=1
+openai_chat_completions_ready=1
+openai_chat_streaming_ready=1
+openai_responses_ready=1
+openai_responses_streaming_ready=1
+openai_usage_mapping_ready=1
+openai_error_mapping_ready=1
+openai_stop_strings_ready=1
+openai_json_object_ready=1
+openai_function_tools_ready=1
+openai_tool_result_continuation_ready=1
+openai_agent_function_loop_ready=1
+openai_python_sdk_ready=1
+openai_javascript_sdk_ready=1
+bet_tennis_openai_provider_ready=1
+gateway_client_engine_separation_ready=1
+gateway_model_reuse_ready=1
+gateway_cancellation_ready=1
+gateway_packaging_ready=1
+openai_full_api_ready=0
+openai_multimodal_ready=0
+openai_embeddings_ready=0
+openai_hosted_tools_ready=0
+openai_mcp_tools_ready=0
+openai_realtime_ready=0
+openai_batch_ready=0
 anthropic_compatibility_ready=0
 multi_model_server_ready=0
 continuous_batching_ready=0
@@ -598,7 +632,8 @@ V010.ARTIFACT.MATERIALIZE.1: complete (artifact-qtype-driven materialization and
 V010.CLI.DEEPSEEK.GENERATE.0: superseded (fresh-only CLI plan replaced before implementation by the runtime/client refoundation)
 V010.RUNTIME.CLIENT.REFOUNDATION.0: complete (long-lived local runtime host, exact sessions, protocol, telemetry, client, REPL, and incompatible CLI cutover)
 V010.DOCS.README.PRODUCT.0: complete (public product README, three-terminal quickstart, and reviewed architecture visuals)
-V010.EVAL.DEEPSEEK.0: active (release-path behavior, quality, regression, context, and refusal evaluation)
+V010.SERVE.OPENAI.COMPAT.0: complete (provider-neutral application contract, protocol-v2 gateway, bounded OpenAI profile, and external consumer proof)
+V010.EVAL.DEEPSEEK.0: active (release-path behavior, regression, context, and refusal evaluation)
 Active Next: V010.EVAL.DEEPSEEK.0
 ```
 
@@ -751,7 +786,7 @@ coverage, source, dataset, producer, geometry, and numeric use are validated
 before source payload reads. `V010.QUANT.3` is therefore complete for imported
 calibration evidence; calibration collection inside YVEX remains deferred.
 
-The sealed DS4-like policy identity
+The sealed mixed IQ2_XXS/Q2_K policy identity
 `e482aac9f97b1fad3011288ff24a836b3d3bae81693161a6be91698856c0d93f`
 resolves all 1,360 terminals without ambiguity into physical-variant identity
 `f0ba4b56e57842e4ca82fa4fc60d0a79c32061b5715b541d896a52ea76289ba4`.
@@ -796,7 +831,7 @@ identities. The complete-artifact gate admits those immutable snapshots for
 materialization; it does not claim residency, runtime execution, transformer
 execution, or generation.
 
-The DS4-like writer plan identity
+The mixed IQ2_XXS/Q2_K writer plan identity
 `8aa949e9a3e3b77211176a3a6dfed99ea0e63f210c7d80a3aedfb9b57527360d`
 consumes the same lowering and tokenizer scope plus policy/imatrix provenance.
 Its complete 70-metadata-entry artifact has identity
@@ -1017,6 +1052,7 @@ V010.DOCS.README.COMPILATION.0
 -> V010.COMPILATION.PHYSICAL.VARIANT.1
 -> V010.RUNTIME.CLIENT.REFOUNDATION.0
 -> V010.DOCS.README.PRODUCT.0
+-> V010.SERVE.OPENAI.COMPAT.0
 -> V010.EVAL.DEEPSEEK.0
 -> V010.BENCH.DEEPSEEK.0
 -> V010.RELEASE.0
@@ -1041,8 +1077,8 @@ another supported model.
 
 The recovery baseline contained 629 table entries across 24 tracks. Two source
 rows held paired IDs; those are expanded into 631 unique recovered IDs. The
-canonical architecture now contains 26 tracks. Fifty-two new milestone/future
-IDs and two explicit migration markers produce 685 unique canonical IDs.
+canonical architecture now contains 26 tracks. Fifty-three new milestone/future
+IDs and two explicit migration markers produce 686 unique canonical IDs.
 
 ### 7.1 Global Counts
 
@@ -1052,14 +1088,14 @@ calculated from rows rather than protected by a summary hash.
 | Metric | Count |
 | --- | ---: |
 | Recovered IDs | 631 |
-| Explicit new IDs | 54 |
-| Canonical IDs | 685 |
-| First-class milestones | 47 |
-| State: complete | 441 |
+| Explicit new IDs | 55 |
+| Canonical IDs | 686 |
+| First-class milestones | 48 |
+| State: complete | 446 |
 | State: active | 1 |
 | State: partial | 1 |
 | State: blocked | 1 |
-| State: planned | 202 |
+| State: planned | 198 |
 | State: reopened | 2 |
 | State: deferred | 20 |
 | State: superseded | 16 |
@@ -1076,7 +1112,7 @@ calculated from rows rather than protected by a summary hash.
 | `TRACK.INTEGRITY` | Container, metadata, tensor directory, offsets, alignment, qtype-sized ranges, corruption, drift, and artifact admission. | canonical global layout and complete-artifact support admission are complete; tensor proofs remain explicitly separate | A complete artifact passes every pre-payload and pre-runtime integrity gate. |
 | `TRACK.MODEL` | Family architecture profiles, typed architecture IR, layer topology, attention/position/KV/MoE rules, and runtime descriptor projection. | canonical DeepSeek family facts, runtime-numeric schema v2, common/DeepSeek runtime descriptor projection, and complete attention consumption are admitted | A family-correct typed model specification and executable runtime descriptor. |
 | `TRACK.TENSOR` | Canonical tensor collections, role requirements, global/layer/attention/MoE/norm/output/tokenizer coverage, and missing-role truth. | exact DeepSeek source coverage is complete; multi-family evidence remains at its prior rank | No unresolved required tensor collection or runtime role. |
-| `TRACK.RESIDENCY` | Payload streaming, materialization, placement, memory planning, CUDA residency, movement, ownership, cleanup, and release. | variant-adaptive bounded materialization, resident attention/state resources, mixed-qtype selected-expert subviews, selected embedding rows, transformer workspaces, and the shared immutable output head are complete; whole-expert-collection residency remains unsupported | Any admitted tensor map can materialize from its actual qtype inventory; runtime owners acquire exact immutable and mutable resources without redefining family semantics. |
+| `TRACK.RESIDENCY` | Payload streaming, materialization, placement, memory planning, CUDA residency, movement, ownership, cleanup, and release. | variant-adaptive bounded materialization feeds one complete model-lifetime encoded host arena; every dense, routed/shared expert, embedding, attention, envelope, norm, and output-head tensor is identity-bound and locked in physical RAM, while the direct CUDA prefix is uploaded once | Any admitted tensor map can materialize from its actual qtype inventory; runtime owners acquire exact immutable and mutable resources without redefining family semantics. |
 | `TRACK.RUNTIME` | Runtime binding consumption, immutable runtime-model sealing, execution-session lifecycle, workload descriptors, phase/mode dispatch, reusable contexts, capability truth, invalidation, timing, and common state-provider boundaries. | common attention, persistent state, activation input, MoE, complete transformer/decode/logits coordination, host sampling, model-owned immutable tokenizer reuse, generation composition, and compatible workspace reuse across context lifecycles are admitted | One admitted binding opens once into a reusable family-neutral runtime model; lower owners hand off typed logits, selected IDs, tokenizer facts, and committed text-generation progress without duplicating model/session/KV ownership. |
 | `TRACK.BACKEND` | Hardware/build profiles, CPU/CUDA capability, qtype operations, reference parity, scratch, fallback, synchronization, refusal, and cleanup. | CUDA is fail-closed; selected-qtype backbone operations and direct encoded complete-vocabulary output-head projection have GB10 proof with no CPU numerical fallback | Every required DGX Spark logits-boundary operation is real, reference-compared, and fail-closed. |
 | `TRACK.GRAPH` | Primitive contracts, graph construction/planning, attention, position handling, MoE routing/experts, residuals, layers, scratch, and transformer execution. | Complete DeepSeek attention, token-local MoE, embedding, 43-block composition, final mHC collapse, and final RMSNorm are admitted through CPU and GB10 CUDA paths and consumed unchanged by repeated decode | Normalized hidden states from repeated steps hand off to output-head projection. |
@@ -1088,8 +1124,8 @@ calculated from rows rather than protected by a summary hash.
 | `TRACK.TOKENIZER` | Exact tokenizer loading, prompt encoding, templates, special/EOS/stop policy, append boundary, detokenization, and failure behavior. | the selected GGUF reconstructs one immutable exact ByteLevel-BPE plan with 129,280 tokens, 127,741 merges, added/special policy, bounded DeepSeek prompt rendering, and batch/incremental decode | Prompt text and sampled IDs traverse the exact tokenizer contract without mutating model state. |
 | `TRACK.GENERATION` | Tokenizer/prefill/KV/decode/logits/sampling composition, append, stop, cancellation, partial output, trace, cleanup, and autoregression. | one reusable common turn owner executes exact prompt suffix prefill, first-token sampling, sampled-token decode feedback, typed stop, partial progress, committed-fragment streaming, and incremental text on CPU and mixed CUDA/host paths | Server sessions invoke the same generation owner for fresh and retained turns without rebuilding its loop or lower owners. |
 | `TRACK.OPERATOR` | Product/developer CLI grammar, typed protocol input, dispatch, rendering, refusal, topology guards, and operator acceptance. | one thin `yvex` product client and one nested engine-linked `yvex-dev` surface have replaced the former flat registry; old commands and compatibility aliases refuse | Product commands reach the local runtime protocol while direct engine proof remains confined to developer or test ownership. |
-| `TRACK.SERVE` | Long-lived local runtime hosting, session/KV authority, streaming, typed telemetry, protocol, product client, and process topology. | one local-only UDS host owns a process-resident model, bounded worker queue, exact multi-turn sessions, committed-fragment streaming, shared typed telemetry, metrics, raw/engine terminals, and the REPL; public/remote serving remains deferred | Evaluation consumes the exact hosted product path without reopening models or bypassing session semantics. |
-| `TRACK.EVAL` | Complete-model behavior, quality, regression, tokenizer, context, and refusal evaluation after real generation exists. | active over the hosted DeepSeek release path; software tests, numerical conformance, runtime qualification, and operational metrics remain distinct from model evaluation | Repeatable evaluation passes over the release path. |
+| `TRACK.SERVE` | Long-lived local runtime hosting, session/KV authority, streaming, typed telemetry, local and application protocols, product clients, and process topology. | one local-only UDS host owns a process-resident model and exact sessions; protocol v2 and the engine-free loopback OpenAI profile provide bounded Chat, Responses, SSE, tools, usage, and application interoperability, while public/remote serving remains deferred | Applications consume the hosted path through a lightweight compatibility gateway without reopening models or bypassing session semantics. |
+| `TRACK.EVAL` | Complete-model behavior, quality, regression, tokenizer, context, and refusal evaluation after real generation exists. | active over the complete hosted application-consumable path; software tests, numerical conformance, runtime qualification, and operational metrics remain distinct from model evaluation | Repeatable evaluation passes over the hosted application-consumable release path. |
 | `TRACK.BENCH` | Reproducible component and complete-model performance measurements with machine, identity, workload, timing, throughput, memory, regression, and visualization metadata. | schema-v5 attention-component measurements and deterministic SVG evidence are implemented; full-model generation benchmark evidence is not measured | Accepted DGX Spark benchmark evidence over the release path. |
 | `TRACK.RELEASE` | Final software, conformance, runtime, evaluation, benchmark, operator, packaging, claim, version, release-record, and tag qualification. | blocked; component qualification does not close the release gate | Every release gate passes in one traceable transcript. |
 | `TRACK.POST010` | Explicitly deferred portability, serving hardening, speculative execution, extra-family runtime promotion, and later product scope. | deferred | No work enters the active path without a new version-scope decision. |
@@ -1111,7 +1147,7 @@ closure.
 | `TRACK.INTEGRITY` | 14 | 15 | 1/0/0/0/0/0 | 10 | 4 | 0 |
 | `TRACK.MODEL` | 21 | 23 | 3/0/0/0/0/0 | 9 | 11 | 0 |
 | `TRACK.TENSOR` | 27 | 28 | 1/0/0/0/0/0 | 18 | 9 | 0 |
-| `TRACK.RESIDENCY` | 42 | 44 | 2/0/0/0/0/0 | 31 | 11 | 0 |
+| `TRACK.RESIDENCY` | 42 | 44 | 2/0/0/0/0/0 | 33 | 9 | 0 |
 | `TRACK.RUNTIME` | 18 | 18 | 1/0/0/0/0/0 | 17 | 0 | 0 |
 | `TRACK.BACKEND` | 29 | 30 | 1/0/0/0/0/0 | 12 | 15 | 2 |
 | `TRACK.GRAPH` | 71 | 75 | 3/0/0/0/0/0 | 67 | 4 | 1 |
@@ -1123,7 +1159,7 @@ closure.
 | `TRACK.TOKENIZER` | 13 | 14 | 1/0/0/0/0/0 | 13 | 0 | 0 |
 | `TRACK.GENERATION` | 35 | 36 | 1/0/0/0/0/0 | 34 | 1 | 0 |
 | `TRACK.OPERATOR` | 81 | 82 | 1/0/0/1/0/0 | 37 | 40 | 2 |
-| `TRACK.SERVE` | 12 | 13 | 1/0/0/0/0/0 | 9 | 3 | 0 |
+| `TRACK.SERVE` | 12 | 14 | 2/0/0/0/0/0 | 11 | 1 | 0 |
 | `TRACK.EVAL` | 15 | 16 | 0/1/0/0/0/0 | 0 | 15 | 0 |
 | `TRACK.BENCH` | 16 | 17 | 0/0/0/0/0/1 | 7 | 9 | 0 |
 | `TRACK.RELEASE` | 42 | 42 | 0/0/0/0/1/0 | 4 | 37 | 0 |
@@ -1203,10 +1239,11 @@ written after inspection of owner code, consumers, tests, and current contracts.
 | 41 | `V010.CLI.DEEPSEEK.GENERATE.0` | `TRACK.OPERATOR` | DeepSeek | `superseded` | The fresh-only top-level CLI plan was replaced before implementation by the process, session, protocol, client, and total CLI refoundation. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
 | 42 | `V010.RUNTIME.CLIENT.REFOUNDATION.0` | `TRACK.SERVE` | common host + DeepSeek first session vertical | `complete` | Replaced the one-shot process and flat CLI with one long-lived model host, exact multi-turn KV sessions, local streaming protocol, typed telemetry, product client, REPL, developer client, and package topology. | V010.COMPILATION.PHYSICAL.VARIANT.1 |
 | 43 | `V010.DOCS.README.PRODUCT.0` | `TRACK.SCOPE` | project | `complete` | Rebuilt the public README around the accepted long-lived host, exact sessions, three terminal views, compact product workflow, binary topology, reviewed SVG architecture, and current non-claims without promoting executable capability. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
-| 44 | `V010.EVAL.DEEPSEEK.0` | `TRACK.EVAL` | DeepSeek | `active` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.DOCS.README.PRODUCT.0 |
-| 45 | `V010.BENCH.DEEPSEEK.0` | `TRACK.BENCH` | DeepSeek / DGX Spark | `not-measured` | Record reproducible artifact, qtype, prompt/context, prefill, decode, generation, timing, throughput, and memory evidence. | V010.EVAL.DEEPSEEK.0 |
-| 46 | `V010.RELEASE.0` | `TRACK.RELEASE` | DeepSeek v0.1.0 | `blocked` | Close every source, architecture, mapping, artifact, materialization, backend, transformer, generation, evaluation, benchmark, validation, claim, operator, packaging, and version gate. | V010.BENCH.DEEPSEEK.0 |
-| 47 | `TOPOLOGY.CELL.CLOSURE.0` | `TRACK.OPERATOR` | common | `planned` | Close residual mixed ownership only where concrete behavior still crosses domain/report/input/command/render/write boundaries. | V010.DOCS.ARCHITECTURE.0; supporting, not a product-stage promotion |
+| 44 | `V010.SERVE.OPENAI.COMPAT.0` | `TRACK.SERVE` | common provider + DeepSeek first tool vertical | `complete` | Added one provider-neutral application contract and a lightweight loopback OpenAI-compatible gateway over protocol v2, with typed messages, tools, structured output, SSE, SDK, and unchanged external-consumer proof. | V010.DOCS.README.PRODUCT.0 |
+| 45 | `V010.EVAL.DEEPSEEK.0` | `TRACK.EVAL` | DeepSeek | `active` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.SERVE.OPENAI.COMPAT.0 |
+| 46 | `V010.BENCH.DEEPSEEK.0` | `TRACK.BENCH` | DeepSeek / DGX Spark | `not-measured` | Record reproducible artifact, qtype, prompt/context, prefill, decode, generation, timing, throughput, and memory evidence. | V010.EVAL.DEEPSEEK.0 |
+| 47 | `V010.RELEASE.0` | `TRACK.RELEASE` | DeepSeek v0.1.0 | `blocked` | Close every source, architecture, mapping, artifact, materialization, backend, transformer, generation, evaluation, benchmark, validation, claim, operator, packaging, and version gate. | V010.BENCH.DEEPSEEK.0 |
+| 48 | `TOPOLOGY.CELL.CLOSURE.0` | `TRACK.OPERATOR` | common | `planned` | Close residual mixed ownership only where concrete behavior still crosses domain/report/input/command/render/write boundaries. | V010.DOCS.ARCHITECTURE.0; supporting, not a product-stage promotion |
 
 ## 9. Complete Track/Wave Ledger
 
@@ -1564,9 +1601,9 @@ the row's use.
 
 **Owner:** Payload streaming, materialization, placement, memory planning, CUDA residency, movement, ownership, cleanup, and release.
 
-**Current truth:** common source-side streaming and family-neutral materialization derive qtype geometry, binding ranges, expert subviews, and backend capability from each admitted artifact and physical-variant identity; runtime execution seals attention/state resources, accesses selected routed/shared expert subviews, gathers selected encoded embedding rows, reuses bounded CPU/CUDA transformer workspaces, and shares the exact encoded output head at model lifetime. Whole-expert-collection residency remains unsupported
+**Current truth:** common source-side streaming and family-neutral materialization derive qtype geometry, binding ranges, expert subviews, and backend capability from each admitted artifact and physical-variant identity. Runtime preparation copies all encoded tensors into one model-lifetime anonymous arena, authenticates every extent, releases consumed artifact cache pages, and requires the complete arena to be locked in physical host RAM before readiness. CUDA retains one direct accelerator prefix while dense, routed/shared expert, embedding, attention, envelope, norm, and output-head bytes remain available from the same immutable host owner
 
-**Ledger summary:** 42 recovered IDs; 2 first-class milestones; 31 complete support rows; 11 open support rows; 0 superseded/deferred rows.
+**Ledger summary:** 42 recovered IDs; 2 first-class milestones; 33 complete support rows; 9 open support rows; 0 superseded/deferred rows.
 
 #### First-Class Milestones
 
@@ -1609,7 +1646,7 @@ target or payload snapshot exists.
 | `V010.STORAGE.18` | `evidence` | MoE/common | `complete` | The live map-to-range proof resolves all 67,584 routed-expert contributions plus shared experts under bounded physical-order plans. | V010.SOURCE.PAYLOAD.STREAM.0 |
 | `V010.STORAGE.19` | `evidence` | common | `complete` | The live proof resolves and streams the complete output-head contribution as an indexed bounded range. | V010.SOURCE.PAYLOAD.STREAM.0 |
 | `V010.STORAGE.20` | `evidence` | common | `complete` | The v0.1.0 source-storage gate admits all 46 shards, 69,187 tensors and contributions, and 1,360 descriptors with upstream payload trust and zero drift/read failures. | V010.SOURCE.PAYLOAD.STREAM.0 |
-| `V010.RESIDENCY.0` | `evidence` | common | `complete` | Typed residency facts distinguish stable attention/state/workspace/output-head resources, selected embedding/expert access, and unsupported whole-expert residency. | V010.RUNTIME.1 |
+| `V010.RESIDENCY.0` | `evidence` | common | `complete` | Typed residency facts distinguish the complete locked host arena, direct CUDA prefix, session state, workspaces, access counters, and lifecycle state. | V010.SERVE.OPENAI.COMPAT.0 |
 | `V010.RESIDENCY.1` | `capability` | common | `complete` | The sealed runtime model derives one immutable identity-bound resident tensor plan from the admitted runtime binding before execution. | V010.RUNTIME.1 |
 | `V010.RESIDENCY.2` | `capability` | common | `complete` | CPU sessions reuse one stable host attention-weight pack and perform zero artifact weight reads during warm execution. | V010.RUNTIME.1 |
 | `V010.RESIDENCY.3` | `capability` | CUDA / DGX Spark | `complete` | GB10 sessions upload the complete attention pack once to stable device addresses and perform zero warm weight uploads or allocations. | V010.RUNTIME.1 |
@@ -1622,8 +1659,8 @@ target or payload snapshot exists.
 | `V010.RESIDENCY.10` | `capability` | common | `complete` | Only selected encoded embedding rows are staged; CUDA decoding and hidden initialization remain device-owned. | V010.GRAPH.DEEPSEEK.TRANSFORMER.0 |
 | `V010.RESIDENCY.11` | `capability` | common | `complete` | The runtime seals all 806 required attention-core and envelope bindings, totaling 5,766,703,652 encoded bytes, into one reusable resident pack. | V010.RUNTIME.1 |
 | `V010.RESIDENCY.12` | `capability` | common | `complete` | Session-owned persistent DeepSeek attention state uses stable reusable CPU storage and two GB10 CUDA device banks with checked layout identity, zero warm resizing, and graph invalidation on generation change. | V010.RUNTIME.DEEPSEEK.KV.0 |
-| `V010.RESIDENCY.13` | `subtask` | dense/common | `planned` | dense MLP residency. | V010.ARTIFACT.MATERIALIZE.DEEPSEEK.0 |
-| `V010.RESIDENCY.14` | `subtask` | MoE/common | `planned` | MoE expert residency. | V010.ARTIFACT.MATERIALIZE.DEEPSEEK.0 |
+| `V010.RESIDENCY.13` | `capability` | dense/common | `complete` | Every admitted dense MLP tensor is indexed in the complete immutable host arena and served without warm artifact reads. | V010.SERVE.OPENAI.COMPAT.0 |
+| `V010.RESIDENCY.14` | `capability` | MoE/common | `complete` | Every routed and shared expert tensor is indexed in the complete immutable host arena; mixed qtype expert subviews resolve from stable locked bytes without warm artifact reads. | V010.SERVE.OPENAI.COMPAT.0 |
 | `V010.RESIDENCY.15` | `capability` | common | `complete` | The exact 1,059,061,760-byte encoded output head has stable shared model-lifetime CPU/CUDA residency and zero warm reads, uploads, or allocations. | V010.RUNTIME.DEEPSEEK.LOGITS.0 |
 | `V010.RESIDENCY.16` | `subtask` | common | `planned` | tokenizer/runtime metadata residency. | V010.ARTIFACT.MATERIALIZE.DEEPSEEK.0 |
 | `V010.RESIDENCY.17` | `evidence` | common | `complete` | Cold preparation, warm reuse, stable-address verification, and artifact-drift invalidation prove the complete attention residency transition. | V010.RUNTIME.1 |
@@ -2207,17 +2244,18 @@ runtime spine is introduced.
 
 ### 9.22 TRACK.SERVE
 
-**Owner:** Long-lived local runtime hosting, model-worker coordination, exact session/KV authority, streaming, typed telemetry, local protocol, product-client process topology, and runtime administration.
+**Owner:** Long-lived local runtime hosting, model-worker coordination, exact session/KV authority, streaming, typed telemetry, local and application protocols, product-client process topology, and runtime administration.
 
-**Current truth:** one local-only Unix-domain-socket daemon owns a process-resident model, bounded worker queue, exact server sessions, multi-turn KV reuse, committed-fragment streaming, typed telemetry, metrics, raw/engine terminals, and graceful shutdown. The thin product client supplies one-shot and REPL surfaces while the separate developer client owns direct engine tooling; public and remote serving remain deferred
+**Current truth:** one local-only Unix-domain-socket daemon owns a process-resident model, bounded worker queue, exact server sessions, multi-turn KV reuse, committed-fragment streaming, typed telemetry, metrics, raw/engine terminals, and graceful shutdown. Protocol v2 carries bounded provider messages, tools, response formats, stop strings, usage, finish classes, and correlation through one engine-free loopback OpenAI gateway. Chat Completions, Responses, SSE, function-tool continuation, official SDK clients, and unchanged Bet-tennis provider acceptance are complete; public and remote serving remain deferred
 
-**Ledger summary:** 12 recovered IDs; 1 complete first-class milestone; 9 complete support rows; 3 open support rows; 0 superseded/deferred rows.
+**Ledger summary:** 12 recovered IDs; 2 complete first-class milestones; 11 complete support rows; 1 open support row; 0 superseded/deferred rows.
 
 #### First-Class Milestones
 
 | Milestone | Scope | State | Conclusive after-state | Depends on | Origin |
 | --- | --- | --- | --- | --- | --- |
 | `V010.RUNTIME.CLIENT.REFOUNDATION.0` | common host + DeepSeek first session vertical | `complete` | Open one runtime model for the daemon lifetime, own exact multi-turn KV sessions and turn streaming through one local protocol and typed telemetry authority, split product/developer binaries, and remove the old public CLI completely. | V010.COMPILATION.PHYSICAL.VARIANT.1 | current |
+| `V010.SERVE.OPENAI.COMPAT.0` | common provider + DeepSeek first tool vertical | `complete` | Carries bounded typed application messages, tools, structured output, stop, usage, and streaming through local protocol v2 and one engine-free loopback OpenAI-compatible gateway, with official SDK and unchanged external-consumer acceptance. | V010.DOCS.README.PRODUCT.0 | current |
 
 #### Recovered And Subordinate Rows
 
@@ -2230,8 +2268,8 @@ runtime spine is introduced.
 | `V010.SERVE.4` | `capability` | local runtime | `complete` | Server-owned turns reuse exact session KV and prefill only the canonical new prompt suffix. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
 | `V010.SERVE.5` | `capability` | local runtime | `complete` | Only internally committed and detokenized fragments stream through the local protocol. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
 | `V010.SERVE.6` | `capability` | local runtime | `complete` | Request, disconnect, SIGINT, queue, session, and graceful-shutdown cancellation preserve typed partial progress. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
-| `V010.SERVE.7` | `subtask` | post-v0.1 | `planned` | provider compatibility boundary. | future scope decision |
-| `V010.SERVE.8` | `subtask` | post-v0.1 | `planned` | OpenAI compatibility after generation. | future scope decision |
+| `V010.SERVE.7` | `capability` | application provider | `complete` | One provider-neutral typed request/result owner carries ordered messages, sampling, response formats, tools, finish classes, usage, cancellation, and field-wise identity without transport syntax. | V010.SERVE.OPENAI.COMPAT.0 |
+| `V010.SERVE.8` | `capability` | application provider | `complete` | YVEX OpenAI Compatibility Profile v1 maps bounded Models, Chat Completions, Responses, SSE, stop, JSON-object, function tools, usage, and errors through protocol v2 without gateway engine linkage. | V010.SERVE.OPENAI.COMPAT.0 |
 | `V010.SERVE.9` | `subtask` | post-v0.1 | `planned` | Anthropic compatibility after generation. | future scope decision |
 | `V010.SERVE.10` | `capability` | local runtime | `complete` | One bounded typed event authority feeds raw JSONL, compact engine views, metrics, client projections, privacy defaults, and coalesced backpressure. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
 | `V010.SERVE.11` | `evidence` | local runtime | `complete` | Product binaries prove one hosted model, exact multi-turn sessions, REPL/one-shot streaming, client-engine separation, packaging, and total incompatible CLI cutover on GB10. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
@@ -2241,7 +2279,7 @@ runtime spine is introduced.
 
 **Owner:** Complete-model behavior, quality, regression, tokenizer, context, refusal, and capability evaluation after real generation exists.
 
-**Current truth:** active over the complete hosted DeepSeek text path; software testing, attention numerical conformance, runtime qualification, operational metrics, and component benchmarking do not satisfy model behavior or quality evaluation
+**Current truth:** active over the complete hosted DeepSeek application-provider path; software testing, attention numerical conformance, runtime qualification, operational metrics, and component benchmarking do not satisfy model behavior or quality evaluation
 
 **Ledger summary:** 15 recovered IDs; 1 first-class milestones; 0 complete support rows; 15 open support rows; 0 superseded/deferred rows.
 
@@ -2249,7 +2287,7 @@ runtime spine is introduced.
 
 | Milestone | Scope | State | Conclusive after-state | Depends on | Origin |
 | --- | --- | --- | --- | --- | --- |
-| `V010.EVAL.DEEPSEEK.0` | DeepSeek | `active` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.DOCS.README.PRODUCT.0 | current |
+| `V010.EVAL.DEEPSEEK.0` | DeepSeek | `active` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.SERVE.OPENAI.COMPAT.0 | current |
 
 #### Recovered And Subordinate Rows
 
@@ -2476,14 +2514,15 @@ installed headers were intentionally removed rather than left available.
 | Qtype/quantization | Sealed policy-v2 resolution, baseline and candidate presets, canonical codecs/refusals, identity-bound imatrix coverage, independent decoding, numeric bounds, trusted bounded execution, and direct CPU/CUDA selected-qtype compute | complete for explicit policy-driven variants; automatic precision/target-size solving remains unsupported | `V010.QUANT.2`, `V010.QUANT.3`, and `V010.COMPILATION.PHYSICAL.VARIANT.1` |
 | Artifact | Complete YVEX-produced GGUF from the exact physical-variant plan with native and pinned official-reader equivalence | complete for the Q8_0/Q2_K baseline and the IQ2_XXS/Q2_K candidate; release-profile selection remains evaluation/benchmark-owned | `V010.GGUF.WRITER.1` through `V010.GGUF.ROUNDTRIP.1` and `V010.COMPILATION.PHYSICAL.VARIANT.1` |
 | Integrity/admission | Canonical global layout, complete physical identity, payload integrity, role coverage, and complete-artifact admission | complete | `V010.GGUF.LAYOUT.INTEGRITY.1` and `V010.ARTIFACT.SUPPORT.CUTOVER.0` |
-| Materialization | Family-neutral materializer derives ranges, qtype geometry, expert subviews, and backend capability from each admitted variant | complete for baseline and mixed IQ2_XXS/Q2_K candidate file-backed/staged access; complete-model residency not claimed | `V010.ARTIFACT.MATERIALIZE.0`, `V010.ARTIFACT.MATERIALIZE.1`, and runtime milestones |
+| Materialization | Family-neutral materializer derives ranges, qtype geometry, expert subviews, and backend capability from each admitted variant | complete for baseline and mixed IQ2_XXS/Q2_K candidate cold access; runtime readiness additionally requires every encoded tensor in one authenticated, locked, model-lifetime host arena | `V010.ARTIFACT.MATERIALIZE.0`, `V010.ARTIFACT.MATERIALIZE.1`, and runtime milestones |
 | Descriptor | Canonical common descriptor and execution-complete DeepSeek graph-input specialization | complete and consumed by attention, MoE, and the full transformer backbone | descriptor, attention, MoE, and transformer milestones |
 | Runtime | Content-addressed binding, one process-resident authenticated model, server-owned mutable sessions, persistent state, exact prefix continuation, bounded worker execution, local protocol, typed telemetry, and reusable execution without compiler reconstruction | complete through hosted exact text encoding, prompt-suffix prefill, sampled-token feedback, repeated decode, complete logits, common-host sampling, stop, partial progress, streaming, detach/reconnect, reset, and graceful shutdown | runtime, KV, prefill, MoE, transformer, decode, logits, sampling, tokenizer, generation, and runtime/client refoundation milestones |
 | CUDA | Capability admission is fail-closed; selected embedding, complete DeepSeek attention, routed/shared MoE, residual mHC, final collapse/norm, and direct encoded output-head projection have GB10 proof with no CPU numerical fallback | complete eager backbone and full-vocabulary logits ready; transformer/logits CUDA Graph and optimized/fused output-head execution remain unsupported | attention/KV/prefill/MoE/transformer/logits milestones |
 | Transformer | Numeric tokens execute selected embedding, 43 canonical attention/MoE blocks, deferred residuals, final mHC collapse, final RMSNorm, and atomic persistent-state publication | complete CPU/GB10 CUDA backbone and normalized hidden output, consumed by repeated decode and logits without duplicating final norm | transformer, decode, and logits milestones |
 | Text generation | Exact tokenizer, output head, logits, sampling, repeated decode, stop, detokenization, session continuation, and committed-fragment streaming | complete bounded CPU and mixed CUDA-model/host-sampling-tokenizer generation runtime with daemon-backed one-shot and retained multi-turn clients; model quality is not claimed | logits/sampling/tokenizer/generation/runtime-client milestones |
-| Operator | One truthful product client invokes the hosted release path while direct execution stays developer-only | complete; `yvex run` and `yvex chat` cross protocol-v1 to the long-lived daemon, old public commands refuse, and the thin client has no engine symbols | `V010.RUNTIME.CLIENT.REFOUNDATION.0` |
-| Evaluation | Repeatable release-path quality, regression, context, and refusal cases | active | `V010.EVAL.DEEPSEEK.0` |
+| Operator | One truthful product client invokes the hosted release path while direct execution stays developer-only | complete; `yvex run` and `yvex chat` cross protocol v2 to the long-lived daemon, old public commands refuse, and the thin client has no engine symbols | `V010.RUNTIME.CLIENT.REFOUNDATION.0` |
+| Application provider | Provider-neutral typed requests traverse protocol v2 through one engine-free loopback OpenAI-compatible gateway with bounded JSON/SSE, tools, official SDKs, and unchanged application-consumer proof | complete for YVEX OpenAI Compatibility Profile v1; full OpenAI API and remote serving are not claimed | `V010.SERVE.OPENAI.COMPAT.0` |
+| Evaluation | Repeatable release-path quality, regression, context, and refusal cases | active; no behavior or quality result exists yet | `V010.EVAL.DEEPSEEK.0` |
 | Benchmark | Reproducible release-path prompt/context, full-model prefill/decode/generation throughput, latency, and memory measurements | not measured; bounded attention runtime benchmarks are available but do not satisfy this gate | `V010.BENCH.DEEPSEEK.0` |
 | Release | Full validation, artifact guardrail, claim audit, transcript, packaging, version, and tag | blocked | `V010.RELEASE.0` |
 
@@ -2511,17 +2550,17 @@ YVEX does not currently claim:
 - a supported DeepSeek-V4-Flash target;
 - a supported DeepSeek-V4-Flash model artifact; admitted variants pass hosted generation but have not passed evaluation, benchmark, and release gates;
 - automatic precision optimization, target-size solving, calibration-data collection, placement search, evaluation-feedback optimization, or Pareto variant selection;
-- a release-profile or quality claim for the DS4-like IQ2_XXS/Q2_K candidate before evaluation and benchmark evidence;
+- a release-profile or quality claim for the mixed IQ2_XXS/Q2_K candidate before evaluation and benchmark evidence;
 - arbitrary-family policy admission beyond the first complete DeepSeek physical-variant vertical;
 - an artifact materialization cache or inference-time SSD expert streaming;
-- complete-model or whole-expert-collection residency; the exact output head, attention/state resources, selected embeddings, and bounded selected expert subviews use their admitted residency contracts;
+- complete GPU model residency, paged weight residency, inference-time SSD streaming, or automatic placement; the complete encoded model is locked in host RAM while one admitted accelerator prefix is resident on CUDA;
 - paged, spilled, or quantized KV;
 - CUDA sampling; upstream logits may come from CUDA, while the canonical sampler is common-host;
-- a public or remote production server, authentication, TLS, OpenAI/Anthropic compatibility, multi-model hosting, continuous batching, distributed serving, or sessions persisted across daemon restart;
+- a public or remote production server, authentication, TLS, full OpenAI API equivalence, Anthropic compatibility, multimodal OpenAI input, hosted tools, multi-model hosting, continuous batching, distributed serving, or sessions persisted across daemon restart; only YVEX OpenAI Compatibility Profile v1 is complete;
 - GPU-resident sampling or tokenizer execution; the CUDA generation path uses CUDA model/logits execution with common-host orchestration, sampling, and tokenization;
 - model behavior, model quality, question-answering, judge-model, or release-path evaluation readiness;
 - full-model/generation benchmark evidence or release qualification; bounded attention-component qualification, measurements, and charts do not close those gates;
-- an agent runtime, tool registry, tool execution, action/observation loop, agent evaluation, agent CLI, agent track, or agent milestone; Codex-assisted development, `yvexd`, JSON output, and external harnesses do not establish those capabilities;
+- an agent runtime, tool registry, tool execution, generalized action/observation loop, agent evaluation, agent CLI, agent track, or agent milestone; the provider function-call contract leaves tool execution to the application and does not establish those capabilities;
 - Qwen, Gemma, GLM, or another model as a supported generation target;
 - Metal, ROCm, remote/distributed serving, or speculative support.
 

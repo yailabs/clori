@@ -23,7 +23,8 @@ reject_text() {
 for file in \
   README.md AGENTS.md PROJECT.md MODEL_ARTIFACTS.md NOTICE.md \
   docs/api.md docs/contract.md docs/model-families.md \
-  docs/operator-runbook.md docs/cli-output-architecture.md \
+  docs/operator-runbook.md docs/openai-compatibility.md \
+  docs/cli-output-architecture.md \
   docs/reference-architecture.md docs/v010-release-doctrine.md \
   docs/topology-closure-audit.md docs/system-target.md \
   docs/diagrams/system_overview.mmd docs/diagrams/system_overview.svg \
@@ -113,13 +114,19 @@ require_text docs/contract.md '## Server Contract'
 require_text docs/contract.md 'one process-resident runtime model'
 require_text docs/contract.md 'A client connection is not a session.'
 require_text docs/contract.md 'publishes bytes only after model commit'
-require_text docs/contract.md 'Public'
-require_text docs/contract.md 'HTTP, authentication, TLS'
+require_text docs/contract.md 'yvex.openai.compat.v1'
+require_text docs/contract.md 'Public HTTP exposure'
 require_text docs/api.md '`<yvex/server.h>` | local protocol, runtime host, sessions, telemetry'
+require_text docs/api.md '## Application Provider And Local Protocol v2'
+require_text docs/openai-compatibility.md '# YVEX OpenAI Compatibility Profile v1'
+require_text docs/openai-compatibility.md 'POST /v1/chat/completions'
+require_text docs/openai-compatibility.md 'POST /v1/responses'
+require_text docs/openai-compatibility.md 'YVEX never executes application tools'
 
 require_text docs/operator-runbook.md './yvex runtime start'
 require_text docs/operator-runbook.md './yvex session reset main'
-require_text docs/operator-runbook.md 'It does not load the complete GGUF into anonymous RAM'
+require_text docs/operator-runbook.md 'copies every encoded model tensor'
+reject_text docs/operator-runbook.md 'It does not load the complete GGUF into anonymous RAM'
 require_text docs/operator-runbook.md '## Prerequisites'
 require_text docs/operator-runbook.md '## First verified startup'
 require_text docs/operator-runbook.md '## Three-terminal operation'
@@ -170,10 +177,12 @@ done
 require_text docs/diagrams/system_overview.mmd 'B. Run — yvexd'
 require_text docs/diagrams/system_overview.mmd 'Session registry'
 require_text docs/diagrams/system_overview.mmd 'yvex-dev'
+require_text docs/diagrams/system_overview.mmd 'yvex-openai'
 require_text docs/diagrams/physical_compilation.mmd 'Physical-variant plan'
 require_text docs/diagrams/physical_compilation.mmd 'Imatrix evidence'
 require_text docs/diagrams/runtime_host_sessions.mmd 'Persistent execution session'
 require_text docs/diagrams/runtime_host_sessions.mmd 'Typed event authority'
+require_text docs/diagrams/runtime_host_sessions.mmd 'yvex-openai'
 require_text docs/diagrams/autoregressive_execution.mmd 'Prompt prefill'
 require_text docs/diagrams/autoregressive_execution.mmd 'Terminal record'
 require_text docs/diagrams/autoregressive_execution.mmd 'Model + KV commit'

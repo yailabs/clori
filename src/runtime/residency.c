@@ -1,5 +1,5 @@
-/* Owner: runtime attention residency.
- * Owns: sealed weight residency and session-owned persistent-state device banks.
+/* Owner: runtime model residency.
+ * Owns: sealed full-model weight residency and session-owned persistent-state device banks.
  * Does not own: artifact admission, family state geometry, execution workspace, or graph math.
  * Invariants: immutable ranges read once; mutable state uses stable addresses and explicit generations.
  * Boundary: models share weights; sessions own persistent state and mutable staging.
@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 
 #include <yvex/internal/core.h>
 #include <yvex/internal/backend.h>
@@ -21,7 +22,8 @@
 typedef enum {
     RESIDENCY_BINDING_CORE = YVEX_ATTENTION_BINDING_CORE,
     RESIDENCY_BINDING_ENVELOPE = YVEX_ATTENTION_BINDING_ENVELOPE,
-    RESIDENCY_BINDING_OUTPUT_HEAD = 3
+    RESIDENCY_BINDING_OUTPUT_HEAD = 3,
+    RESIDENCY_BINDING_MODEL = 4
 } residency_binding_class;
 
 typedef struct {
@@ -40,7 +42,7 @@ struct yvex_runtime_residency {
     yvex_device_tensor *cuda_weights;
     yvex_runtime_residency_summary summary;
     pthread_mutex_t access_mutex;
-    int access_mutex_ready;
+    int access_mutex_ready, arena_locked;
 };
 typedef struct {
     const void *host[2][3];
@@ -499,6 +501,8 @@ static void residency_storage_release(yvex_runtime_residency **owner)
     yvex_runtime_residency *residency = owner ? *owner : NULL;
 
     if (!residency) return;
+    if (residency->arena_locked)
+        (void)munlock(residency->arena, (size_t)residency->summary.encoded_bytes);
     free(residency->arena);
     free(residency->records);
     free(residency->record_index);
@@ -509,7 +513,7 @@ static void residency_storage_release(yvex_runtime_residency **owner)
     *owner = NULL;
 }
 
-/* Purpose: release the optional model-owned CUDA pack without touching host residency.
+/* Purpose: release the optional accelerator-prefix CUDA pack without touching host residency.
  * Inputs: exclusively owned residency and typed cleanup output.
  * Effects: releases device bytes before their context and clears CUDA readiness.
  * Failure: preserves the first not-yet-released owner for exact retry.
@@ -597,7 +601,7 @@ static int residency_add_record(yvex_runtime_residency *residency,
                                     YVEX_ERR_BOUNDS, err);
     } else if (binding_class == RESIDENCY_BINDING_ENVELOPE) {
         residency->summary.envelope_binding_count++;
-    } else {
+    } else if (binding_class == RESIDENCY_BINDING_OUTPUT_HEAD) {
         residency->summary.output_head_binding_count++;
         if (!yvex_core_u64_add(residency->summary.output_head_encoded_bytes,
                                binding->encoded_bytes,
@@ -607,6 +611,8 @@ static int residency_add_record(yvex_runtime_residency *residency,
                 ULLONG_MAX, binding->encoded_bytes,
                 "resident output-head byte accounting overflowed",
                 YVEX_ERR_BOUNDS, err);
+    } else {
+        residency->summary.model_binding_count++;
     }
     residency->summary.binding_count++;
     return YVEX_OK;
@@ -683,15 +689,19 @@ static int residency_identity_build(yvex_runtime_residency *residency,
     unsigned long long index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.residency.v2") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_RESIDENCY_SCHEMA_V2) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.residency.v3") ||
+        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_RESIDENCY_SCHEMA_V3) ||
         !yvex_sha256_update_text(&hash, model->runtime_model_identity) ||
         !yvex_sha256_update_text(&hash, model->artifact_identity) ||
         !yvex_sha256_update_text(&hash, model->materialization_identity) ||
         !yvex_sha256_update_text(&hash, attention->attention_plan_identity) ||
+        !yvex_sha256_update_u64(&hash, residency->summary.model_binding_count) ||
         !yvex_sha256_update_u64(&hash, residency->summary.core_binding_count) ||
         !yvex_sha256_update_u64(&hash, residency->summary.envelope_binding_count) ||
         !yvex_sha256_update_u64(&hash, residency->summary.output_head_binding_count) ||
+        !yvex_sha256_update_u64(&hash, (unsigned long long)residency->summary.host_locked) ||
+        !yvex_sha256_update_u64(
+            &hash, residency->summary.accelerator_encoded_bytes) ||
         !yvex_sha256_update_u64(&hash, residency->summary.encoded_bytes))
         goto failed;
     for (index = 0ull; index < residency->summary.binding_count; ++index) {
@@ -748,11 +758,54 @@ static int residency_release(yvex_runtime_residency **owner, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: build and attach one exact process-lifetime attention residency pack.
+/* Purpose: allocate, populate, and pin the complete encoded model arena in physical host RAM.
+ * Inputs: checked resident byte accounting, optional host budget, and typed failure output.
+ * Effects: owns one populated locked arena on success; publishes no readiness fact.
+ * Failure: reports checked budget, allocation, read, or lock refusal for caller cleanup.
+ * Boundary: model planning and provider attachment remain owned by residency preparation. */
+static int residency_arena_prepare(yvex_runtime_residency *residency,
+                                   const yvex_runtime_residency_options *options,
+                                   yvex_runtime_residency_failure *failure,
+                                   yvex_error *err)
+{
+    int rc = YVEX_OK;
+
+    if (residency->summary.encoded_bytes > (unsigned long long)SIZE_MAX)
+        return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_BUDGET, NULL,
+                                (unsigned long long)SIZE_MAX,
+                                residency->summary.encoded_bytes,
+                                "resident arena exceeds platform allocation range",
+                                YVEX_ERR_BOUNDS, err);
+    if (options && options->maximum_host_bytes &&
+        residency->summary.encoded_bytes > options->maximum_host_bytes)
+        return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_BUDGET, NULL,
+                                options->maximum_host_bytes,
+                                residency->summary.encoded_bytes,
+                                "resident arena exceeds the configured host budget",
+                                YVEX_ERR_NOMEM, err);
+    residency->arena = (unsigned char *)malloc((size_t)residency->summary.encoded_bytes);
+    if (!residency->arena)
+        return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_ALLOCATION, NULL,
+                                residency->summary.encoded_bytes, 0ull,
+                                "resident encoded arena allocation failed",
+                                YVEX_ERR_NOMEM, err);
+    rc = residency_load_and_hash(residency, failure, err);
+    if (rc != YVEX_OK) return rc;
+    if (mlock(residency->arena, (size_t)residency->summary.encoded_bytes) != 0)
+        return residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_BUDGET, NULL,
+                                residency->summary.encoded_bytes, 0ull,
+                                "complete resident arena could not be locked in host RAM",
+                                YVEX_ERR_NOMEM, err);
+    residency->arena_locked = 1;
+    residency->summary.host_locked = 1;
+    return YVEX_OK;
+}
+
+/* Purpose: build and attach one exact process-lifetime full-model residency pack.
  * Inputs: sealed runtime model and optional explicit host budget.
- * Effects: performs one cold read per selected range, then serves immutable warm reads.
+ * Effects: performs one cold read per tensor, then serves every immutable warm read from RAM.
  * Failure: checked selection, accounting, read, or attach failure publishes no pack.
- * Boundary: this owner never decodes qtypes or allocates backend/device memory. */
+ * Boundary: the accelerator prefix contains only direct-resident weights; all other tensors stay host-resident. */
 int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_model *model,
                                    const yvex_runtime_residency_options *options,
                                    yvex_runtime_residency_failure *failure, yvex_error *err)
@@ -820,6 +873,8 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
     residency->summary.expected_core_binding_count = attention->required_binding_count;
     residency->summary.expected_envelope_binding_count =
         attention->required_envelope_binding_count;
+    /* The direct CUDA pack remains a compact prefix while every other tensor is
+     * retained after it in the same process-lifetime host arena. */
     for (index = 0ull; rc == YVEX_OK && index < descriptor_summary->tensor_count; ++index) {
         const yvex_runtime_tensor_binding *binding =
             yvex_runtime_descriptor_tensor_at(descriptor, index);
@@ -841,19 +896,45 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
             rc = residency_add_record(residency, binding, binding_class, ordinal++,
                                       &core_bytes, core_qtypes, failure, err);
     }
+    residency->summary.accelerator_encoded_bytes =
+        residency->summary.encoded_bytes;
+    for (index = 0ull; rc == YVEX_OK && index < descriptor_summary->tensor_count; ++index) {
+        const yvex_runtime_tensor_binding *binding =
+            yvex_runtime_descriptor_tensor_at(descriptor, index);
+        yvex_attention_binding_class attention_class =
+            yvex_attention_plan_binding_classify(plan, binding);
+        int accelerator_binding =
+            attention_class == YVEX_ATTENTION_BINDING_CORE ||
+            attention_class == YVEX_ATTENTION_BINDING_ENVELOPE ||
+            (model_summary.capabilities.output_head_binding_ready && binding &&
+             binding->role == YVEX_TENSOR_ROLE_OUTPUT_HEAD &&
+             binding->scope == YVEX_TENSOR_SCOPE_GLOBAL);
+        if (!accelerator_binding)
+            rc = residency_add_record(
+                residency, binding, RESIDENCY_BINDING_MODEL, ordinal++,
+                &core_bytes, core_qtypes, failure, err);
+    }
     residency->summary.expected_output_head_binding_count =
         model_summary.capabilities.output_head_binding_ready ? 1ull : 0ull;
+    residency->summary.expected_model_binding_count =
+        descriptor_summary->tensor_count -
+        residency->summary.expected_core_binding_count -
+        residency->summary.expected_envelope_binding_count -
+        residency->summary.expected_output_head_binding_count;
     if (rc == YVEX_OK &&
         (residency->summary.core_binding_count != attention->required_binding_count ||
          residency->summary.envelope_binding_count != attention->required_envelope_binding_count ||
          residency->summary.output_head_binding_count !=
              residency->summary.expected_output_head_binding_count ||
+         residency->summary.model_binding_count !=
+             residency->summary.expected_model_binding_count ||
+         residency->summary.binding_count != descriptor_summary->tensor_count ||
+         residency->summary.encoded_bytes != descriptor_summary->payload_bytes ||
          core_bytes != attention->payload_bytes_bound))
         rc = residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_PLAN, NULL,
-                              attention->required_binding_count +
-                                  attention->required_envelope_binding_count,
+                              descriptor_summary->tensor_count,
                               residency->summary.binding_count,
-                              "resident core or envelope accounting differs from the plan",
+                              "full-model resident accounting differs from the descriptor",
                               YVEX_ERR_FORMAT, err);
     for (index = 0ull; rc == YVEX_OK && index < YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP; ++index)
         if (core_qtypes[index] != attention->qtype_binding_counts[index])
@@ -862,6 +943,10 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
                                   "resident core qtype accounting differs from the plan",
                                   YVEX_ERR_FORMAT, err);
     if (rc == YVEX_OK) {
+        residency->summary.model_complete =
+            residency->summary.binding_count == descriptor_summary->tensor_count &&
+            residency->summary.model_binding_count ==
+                residency->summary.expected_model_binding_count;
         residency->summary.core_complete =
             residency->summary.core_binding_count ==
             residency->summary.expected_core_binding_count;
@@ -872,26 +957,7 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
             residency->summary.output_head_binding_count ==
             residency->summary.expected_output_head_binding_count;
     }
-    if (rc == YVEX_OK && residency->summary.encoded_bytes > (unsigned long long)SIZE_MAX)
-        rc = residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_BUDGET, NULL,
-                              (unsigned long long)SIZE_MAX, residency->summary.encoded_bytes,
-                              "resident arena exceeds platform allocation range",
-                              YVEX_ERR_BOUNDS, err);
-    if (rc == YVEX_OK && options && options->maximum_host_bytes &&
-        residency->summary.encoded_bytes > options->maximum_host_bytes)
-        rc = residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_BUDGET, NULL,
-                              options->maximum_host_bytes, residency->summary.encoded_bytes,
-                              "resident arena exceeds the configured host budget",
-                              YVEX_ERR_NOMEM, err);
-    if (rc == YVEX_OK) {
-        residency->arena = (unsigned char *)malloc((size_t)residency->summary.encoded_bytes);
-        if (!residency->arena)
-            rc = residency_reject(failure, YVEX_RUNTIME_RESIDENCY_FAILURE_ALLOCATION, NULL,
-                                  residency->summary.encoded_bytes, 0ull,
-                                  "resident encoded arena allocation failed",
-                                  YVEX_ERR_NOMEM, err);
-    }
-    if (rc == YVEX_OK) rc = residency_load_and_hash(residency, failure, err);
+    if (rc == YVEX_OK) rc = residency_arena_prepare(residency, options, failure, err);
     if (rc == YVEX_OK)
         rc = residency_identity_build(residency, &model_summary, attention, err);
     if (rc == YVEX_OK) {
@@ -910,7 +976,7 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
         residency_storage_release(&residency);
         return rc;
     }
-    residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V2;
+    residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V3;
     residency->summary.generation = 1ull;
     residency->summary.host_resident_bytes = residency->summary.encoded_bytes;
     residency->summary.sealed = 1;
@@ -921,7 +987,7 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
     return YVEX_OK;
 }
 
-/* Purpose: prepare one model-owned CUDA pack and attach an isolated session backend.
+/* Purpose: prepare one model-owned accelerator prefix and attach an isolated session backend.
  * Inputs: sealed residency, exact session device budget, and caller-owned outputs.
  * Effects: uploads once under the residency mutex, then shares its context and immutable mapping.
  * Failure: releases unpublished candidates and returns no partially attached session backend.
@@ -957,14 +1023,16 @@ int yvex_runtime_residency_cuda_session_attach(
         return YVEX_ERR_STATE;
     }
     if (!residency->summary.sealed || !residency->summary.host_ready ||
-        residency->summary.invalidated || !residency->arena) {
+        !residency->summary.host_locked ||
+        residency->summary.invalidated || !residency->arena ||
+        !residency->summary.accelerator_encoded_bytes) {
         rc = YVEX_ERR_STATE;
         yvex_error_set(err, rc, "runtime.residency.cuda",
                        "sealed valid host residency is required");
         goto done;
     }
     if (maximum_device_bytes &&
-        residency->summary.encoded_bytes > maximum_device_bytes) {
+        residency->summary.accelerator_encoded_bytes > maximum_device_bytes) {
         rc = YVEX_ERR_BOUNDS;
         yvex_error_set(err, rc, "runtime.residency.cuda",
                        "resident weights exceed the session device budget");
@@ -984,14 +1052,15 @@ int yvex_runtime_residency_cuda_session_attach(
         descriptor.name = "runtime-attention-residency";
         descriptor.dtype = YVEX_DTYPE_I8;
         descriptor.rank = 1u;
-        descriptor.dims[0] = descriptor.bytes = residency->summary.encoded_bytes;
+        descriptor.dims[0] = descriptor.bytes =
+            residency->summary.accelerator_encoded_bytes;
         if (rc == YVEX_OK)
             rc = yvex_backend_tensor_alloc(
                 candidate_backend, &descriptor, &candidate_weights, err);
         if (rc == YVEX_OK)
             rc = yvex_backend_tensor_write(
                 candidate_backend, candidate_weights, residency->arena,
-                residency->summary.encoded_bytes, err);
+                residency->summary.accelerator_encoded_bytes, err);
         if (rc != YVEX_OK) {
             primary = err ? *err : (yvex_error){0};
             yvex_error_clear(&cleanup);
@@ -1011,8 +1080,10 @@ int yvex_runtime_residency_cuda_session_attach(
         }
         residency->cuda_backend = candidate_backend;
         residency->cuda_weights = candidate_weights;
-        residency->summary.device_resident_bytes = residency->summary.encoded_bytes;
-        residency->summary.cuda_upload_bytes = residency->summary.encoded_bytes;
+        residency->summary.device_resident_bytes =
+            residency->summary.accelerator_encoded_bytes;
+        residency->summary.cuda_upload_bytes =
+            residency->summary.accelerator_encoded_bytes;
         residency->summary.cuda_upload_count = 1ull;
         residency->summary.cuda_ready = 1;
         *uploaded = 1;
@@ -1021,7 +1092,8 @@ int yvex_runtime_residency_cuda_session_attach(
         &session_backend, residency->cuda_backend, maximum_device_bytes, err);
     if (rc == YVEX_OK)
         rc = yvex_backend_resident_attach(
-            session_backend, residency->arena, residency->summary.encoded_bytes,
+            session_backend, residency->arena,
+            residency->summary.accelerator_encoded_bytes,
             residency->cuda_weights, residency->summary.generation, err);
     if (rc != YVEX_OK) {
         primary = err ? *err : (yvex_error){0};
@@ -1043,7 +1115,7 @@ done:
     return rc;
 }
 
-/* Purpose: detach and release one process-lifetime resident attention arena.
+/* Purpose: detach and release one process-lifetime resident full-model arena.
  * Inputs: address of an exclusively owned residency handle or null.
  * Effects: removes its read provider and nulls the owner after releasing storage.
  * Failure: detach failure retains the owner for retry; null close is harmless.

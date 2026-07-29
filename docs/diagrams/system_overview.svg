@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" role="img" aria-labelledby="title desc">
   <title id="title">YVEX system overview</title>
-  <desc id="desc">Verified sources pass through the YVEX compiler into an identity-bound physical artifact. One long-lived yvexd host owns the model worker, sessions, persistent KV, private protocol, and typed events. CPU or CUDA executes the model while the yvex client provides raw trace, engine watch, chat, and one-shot interaction.</desc>
+  <desc id="desc">Verified sources pass through the YVEX compiler into an identity-bound physical artifact. One long-lived yvexd host owns the model worker, sessions, persistent KV, private protocol, and typed events. CPU or CUDA executes the model while native clients use trace, watch, chat, and run, and an engine-free loopback gateway serves bounded OpenAI-compatible applications.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L0 6L9 3z" class="arrow-fill"/>
@@ -94,22 +94,26 @@
 
   <text class="section" x="1365" y="126" fill="#ea580c">D. Interact</text>
   <rect class="interact-panel" x="1355" y="145" width="220" height="510" rx="15"/>
-  <rect class="orange-box" x="1380" y="205" width="170" height="80" rx="10"/>
-  <text class="text" x="1465" y="237">Raw trace</text>
-  <text class="small" x="1465" y="261">typed JSONL events</text>
-  <rect class="orange-box" x="1380" y="315" width="170" height="80" rx="10"/>
-  <text class="text" x="1465" y="347">Engine watch</text>
-  <text class="small" x="1465" y="371">compact operations</text>
-  <rect class="orange-box" x="1380" y="425" width="170" height="80" rx="10"/>
-  <text class="text" x="1465" y="457">REPL / chat</text>
-  <text class="small" x="1465" y="481">multi-turn streaming</text>
-  <rect class="orange-box" x="1380" y="535" width="170" height="80" rx="10"/>
-  <text class="text" x="1465" y="567">yvex run</text>
-  <text class="small" x="1465" y="591">one-shot client</text>
-  <path class="line" d="M1305 247H1373"/>
-  <path class="line" d="M1305 355H1373"/>
-  <path class="line" d="M1055 240C1270 110 1320 465 1373 465"/>
-  <path class="line" d="M1055 240C1280 150 1320 575 1373 575"/>
+  <rect class="orange-box" x="1380" y="180" width="170" height="65" rx="10"/>
+  <text class="text" x="1465" y="207">Raw trace</text>
+  <text class="small" x="1465" y="228">typed JSONL events</text>
+  <rect class="orange-box" x="1380" y="270" width="170" height="65" rx="10"/>
+  <text class="text" x="1465" y="297">Engine watch</text>
+  <text class="small" x="1465" y="318">compact operations</text>
+  <rect class="orange-box" x="1380" y="360" width="170" height="65" rx="10"/>
+  <text class="text" x="1465" y="387">yvex chat</text>
+  <text class="small" x="1465" y="408">multi-turn streaming</text>
+  <rect class="orange-box" x="1380" y="450" width="170" height="65" rx="10"/>
+  <text class="text" x="1465" y="477">yvex run</text>
+  <text class="small" x="1465" y="498">one-shot client</text>
+  <rect class="orange-box" x="1380" y="540" width="170" height="75" rx="10"/>
+  <text class="text" x="1465" y="568">yvex-openai</text>
+  <text class="small" x="1465" y="590">HTTP/SSE · SDKs/apps</text>
+  <path class="line" d="M1305 212H1373"/>
+  <path class="line" d="M1305 302H1373"/>
+  <path class="line" d="M1055 240C1270 110 1320 392 1373 392"/>
+  <path class="line" d="M1055 240C1280 150 1320 482 1373 482"/>
+  <path class="line" d="M1055 240C1280 190 1320 577 1373 577"/>
 
   <rect class="panel" x="25" y="690" width="1550" height="65" rx="12" stroke="#64748b"/>
   <text class="foot" x="800" y="730">Identity  ·  Admission  ·  Transactional state  ·  Typed events  ·  Scoped evidence</text>

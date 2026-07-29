@@ -38,8 +38,10 @@ typedef struct server_work_item {
     yvex_client_request request;
     char request_id[YVEX_SERVER_ID_CAP];
     unsigned char *prompt;
+    yvex_provider_request *provider;
     unsigned long long enqueued_ns;
     int fd, done, response_sent, status;
+    yvex_client_failure_class failure_class;
     pthread_mutex_t mutex;
     pthread_cond_t condition;
     yvex_error error;
@@ -81,6 +83,27 @@ static int server_refuse(yvex_error *err, yvex_status status,
 {
     yvex_error_set(err, status, "server.host", reason);
     return status;
+}
+
+/* Purpose: project one lower typed status into a stable local-protocol refusal class.
+ * Inputs: authoritative YVEX status. Effects: none.
+ * Failure: unknown failures become internal rather than an application input claim.
+ * Boundary: specific owners may override this conservative mapping, such as queue admission. */
+static yvex_client_failure_class failure_class_from_status(int status)
+{
+    switch (status) {
+    case YVEX_ERR_FORMAT:
+    case YVEX_ERR_INVALID_ARG: return YVEX_CLIENT_FAILURE_INVALID_REQUEST;
+    case YVEX_ERR_UNSUPPORTED:
+        return YVEX_CLIENT_FAILURE_UNSUPPORTED_PARAMETER;
+    case YVEX_ERR_BOUNDS: return YVEX_CLIENT_FAILURE_REQUEST_TOO_LARGE;
+    case YVEX_ERR_STATE: return YVEX_CLIENT_FAILURE_INCOMPATIBLE_STATE;
+    case YVEX_ERR_CANCELLED: return YVEX_CLIENT_FAILURE_CLIENT_CANCELLED;
+    case YVEX_ERR_IO:
+    case YVEX_ERR_BACKEND: return YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE;
+    case YVEX_ERR_TIMEOUT: return YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT;
+    default: return YVEX_CLIENT_FAILURE_INTERNAL;
+    }
 }
 
 /* Purpose: admit only same-UID peers to the private local runtime protocol.
@@ -378,13 +401,17 @@ static int work_emit(void *opaque, const yvex_client_message *message,
 
 /* Purpose: publish one compact typed error over the protocol. */
 static int protocol_error(int fd, const yvex_client_request *request,
-                          int status, const char *reason, yvex_error *err)
+                          int status, yvex_client_failure_class failure_class,
+                          const char *reason, yvex_error *err)
 {
     yvex_client_message message;
     memset(&message, 0, sizeof(message));
     message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     message.kind = YVEX_CLIENT_MESSAGE_ERROR;
     message.status = status;
+    message.failure_class = failure_class != YVEX_CLIENT_FAILURE_NONE
+                                ? failure_class
+                                : failure_class_from_status(status);
     message.request_number = request ? request->request_number : 0u;
     if (request)
         yvex_core_text_copy(message.session_name, sizeof(message.session_name),
@@ -438,8 +465,12 @@ static void *model_worker_main(void *opaque)
         }
         if (rc != YVEX_OK && !item->response_sent) {
             yvex_error send_error;
-            (void)protocol_error(item->fd, &item->request, rc,
-                                 yvex_error_message(&item->error), &send_error);
+            item->failure_class = failure_class_from_status(rc);
+            if (protocol_error(item->fd, &item->request, rc,
+                               item->failure_class,
+                               yvex_error_message(&item->error),
+                               &send_error) == YVEX_OK)
+                item->response_sent = 1;
         }
         yvex_server_telemetry_request(server->telemetry, -1, rc == YVEX_OK,
                                  rc != YVEX_OK && rc != YVEX_ERR_CANCELLED,
@@ -592,6 +623,9 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
         int stopping = atomic_load_explicit(&server->stopping,
                                             memory_order_acquire);
         (void)pthread_mutex_unlock(&server->queue_mutex);
+        item->failure_class = stopping
+                                  ? YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE
+                                  : YVEX_CLIENT_FAILURE_QUEUE_FULL;
         return server_refuse(err, stopping ? YVEX_ERR_STATE : YVEX_ERR_BOUNDS,
                              stopping ? "runtime is stopping"
                                       : "bounded request queue is full");
@@ -599,11 +633,11 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
     server->next_request_id++;
     (void)snprintf(item->request_id, sizeof(item->request_id), "r%llu",
                    server->next_request_id);
-    if (yvex_server_telemetry_emit(
+    if (yvex_server_telemetry_emit_provider(
             server->telemetry, YVEX_SERVER_EVENT_REQUEST_RECEIVED,
             YVEX_SERVER_SEVERITY_INFO, item->request.session_name,
             item->request_id, NULL, "queue", item->request.prompt_bytes,
-            0u, 0u, 0.0, 0.0, err) != YVEX_OK) {
+            0u, 0u, 0.0, 0.0, item->request.provider_request, err) != YVEX_OK) {
         (void)pthread_mutex_unlock(&server->queue_mutex);
         return yvex_error_code(err);
     }
@@ -613,11 +647,12 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
     server->queue_count++;
     yvex_server_telemetry_queue(server->telemetry, server->queue_count,
                            server->queue_capacity);
-    (void)yvex_server_telemetry_emit(
+    (void)yvex_server_telemetry_emit_provider(
         server->telemetry, YVEX_SERVER_EVENT_REQUEST_QUEUED,
         YVEX_SERVER_SEVERITY_INFO, item->request.session_name,
         item->request_id, NULL, "queue", server->queue_count,
-        server->queue_capacity, 0u, 0.0, 0.0, err);
+        server->queue_capacity, 0u, 0.0, 0.0,
+        item->request.provider_request, err);
     (void)pthread_cond_signal(&server->queue_condition);
     (void)pthread_mutex_unlock(&server->queue_mutex);
     return YVEX_OK;
@@ -731,8 +766,12 @@ static void *client_main(void *opaque)
            !atomic_load_explicit(&server->stopping, memory_order_acquire)) {
         yvex_client_request request;
         unsigned char *prompt = NULL;
+        yvex_provider_request *provider = NULL;
         yvex_error err;
-        int rc = yvex_server_protocol_receive(fd, &request, &prompt, &err);
+        int response_sent = 0;
+        yvex_client_failure_class failure_class = YVEX_CLIENT_FAILURE_NONE;
+        int rc = yvex_server_protocol_receive(
+            fd, &request, &prompt, &provider, &err);
         if (rc != YVEX_OK) break;
         if (request.operation == YVEX_CLIENT_OP_RUNTIME_STATUS ||
             request.operation == YVEX_CLIENT_OP_MODEL_SHOW ||
@@ -779,16 +818,19 @@ static void *client_main(void *opaque)
             message.status = YVEX_OK;
             message.request_number = request.request_number;
             yvex_core_text_copy(message.reason, sizeof(message.reason),
-                                "protocol-v1");
+                                "protocol-v2");
             rc = yvex_server_protocol_send(fd, &message, &err);
         } else {
             server_work_item item;
             memset(&item, 0, sizeof(item));
             item.request = request;
             item.prompt = prompt;
+            item.provider = provider;
             item.request.prompt = prompt;
+            item.request.provider_request = provider;
             item.fd = fd;
             prompt = NULL;
+            provider = NULL;
             {
                 int mutex_ready = 0, condition_ready = 0;
                 if (pthread_mutex_init(&item.mutex, NULL) == 0)
@@ -808,13 +850,17 @@ static void *client_main(void *opaque)
                 if (mutex_ready) (void)pthread_mutex_destroy(&item.mutex);
             }
             free(item.prompt);
+            yvex_provider_request_close(&item.provider);
+            response_sent = item.response_sent;
+            failure_class = item.failure_class;
         }
-        if (rc != YVEX_OK && !done) {
+        if (rc != YVEX_OK && !done && !response_sent) {
             yvex_error send_error;
-            (void)protocol_error(fd, &request, rc,
+            (void)protocol_error(fd, &request, rc, failure_class,
                                  yvex_error_message(&err), &send_error);
         }
         free(prompt);
+        yvex_provider_request_close(&provider);
     }
     (void)yvex_server_telemetry_emit(
         server->telemetry, YVEX_SERVER_EVENT_CLIENT_DISCONNECTED,

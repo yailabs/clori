@@ -17,6 +17,8 @@ Current core areas:
 src/cli/io/client.c      thin product client, REPL, protocol projections
 src/daemon/              long-lived runtime-host entrypoint
 src/server/              protocol, worker, sessions, telemetry and host lifecycle
+src/provider/            transport-neutral application request/result semantics
+src/gateway/openai/      engine-free loopback HTTP/JSON/SSE compatibility adapter
 src/cli/                 optional nested developer tooling, render and IO
 src/source/              source manifests, provenance, inventory, payload trust/streaming
 src/model/target/        generic target catalogs, gates and qtype reports
@@ -34,6 +36,7 @@ src/runtime/             common immutable model, binding, execution sessions, st
 
 ```text
 product argv -> local protocol -> yvexd worker/session -> typed events/results -> client render
+application -> OpenAI profile -> provider contract -> local protocol -> same yvexd worker/session
 developer argv -> nested owner route -> report/domain -> developer render -> cli/io
 
 file writer -> explicit local files only
@@ -230,6 +233,8 @@ domain algorithms. No writer owns command output.
 | Product entry, REPL and compact render | `src/cli/io/client.c` |
 | Runtime-host entry | `src/daemon/yvexd.c` |
 | Local protocol and host | `src/server/*` |
+| Provider-neutral application contract | `include/yvex/provider.h`, `src/provider/core.c` |
+| OpenAI compatibility entry and adapters | `src/gateway/openai/*` |
 | Developer entry and nested dispatch | `src/cli/main.c` |
 | Developer input/commands/render | `src/cli/input`, `src/cli/commands`, `src/cli/render` |
 | Developer terminal IO | `src/cli/io/*` |

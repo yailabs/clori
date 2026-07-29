@@ -1,6 +1,7 @@
 path	profile	owner	tracked
 bin/yvex	product	client.yvex	generated
 bin/yvexd	product	daemon.yvexd	generated
+bin/yvex-openai	product	gateway.openai	generated
 share/yvex/package_manifest.tsv	product	build.package	tracked
 share/yvex/NOTICE.md	product	project.notice	tracked
 share/yvex/profile	product	build.package	generated

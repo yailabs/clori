@@ -13,6 +13,7 @@
 #include <yvex/artifact.h>
 #include <yvex/core.h>
 #include <yvex/model.h>
+#include <yvex/provider.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -357,6 +358,31 @@ int yvex_tokenizer_encode_prompt(const yvex_tokenizer *tokenizer,
                                  yvex_error *err);
 
 void yvex_rendered_prompt_free(yvex_rendered_prompt *prompt);
+
+typedef struct {
+    unsigned int schema_version;
+    yvex_provider_output_kind kind;
+    unsigned char *content;
+    unsigned long long content_count;
+    yvex_provider_tool_call tool_call;
+    char output_identity[YVEX_SHA256_HEX_CAP];
+    int completed;
+} yvex_tokenizer_provider_result;
+
+int yvex_tokenizer_provider_prompt(
+    const yvex_tokenizer *tokenizer, const yvex_provider_request *request,
+    yvex_rendered_prompt *rendered, yvex_error *err);
+int yvex_tokenizer_encode_provider_prompt(
+    const yvex_tokenizer *tokenizer, const yvex_provider_request *request,
+    const yvex_tokenizer_encode_options *encode_options,
+    yvex_rendered_prompt *rendered, yvex_tokenizer_encode_result *encoded,
+    yvex_error *err);
+int yvex_tokenizer_parse_provider_completion(
+    const yvex_tokenizer *tokenizer, const yvex_provider_request *request,
+    const unsigned char *bytes, unsigned long long byte_count,
+    yvex_tokenizer_provider_result *result, yvex_error *err);
+void yvex_tokenizer_provider_result_clear(
+    yvex_tokenizer_provider_result *result);
 
 #ifdef __cplusplus
 }

@@ -2,7 +2,10 @@ flowchart LR
     subgraph clients[Client connections]
         client_a[Client A]
         client_b[Client B]
-        client_n[Client N]
+        native_n[Native client N]
+        gateway[yvex-openai]
+        apps[SDKs / applications]
+        apps <--> gateway
     end
 
     subgraph host[yvexd — long-lived runtime host]

@@ -27,6 +27,7 @@ include/yvex/internal/runtime.h	runtime	runtime.internal	generic	private	interna
 include/yvex/internal/source.h	source	source.internal	generic	private	internal-abi	model,compilation	interface	none
 include/yvex/internal/source_payload.h	source	source.payload	generic	private	internal-abi	model,compilation,cli	interface	none
 include/yvex/model.h	abi	abi.model	generic	public	public-abi	repository	interface	none
+include/yvex/provider.h	abi	abi.provider	generic	public	public-abi	repository	interface	none
 include/yvex/qtype.h	abi	abi.qtype	generic	public	public-abi	repository	interface	none
 include/yvex/quant.h	abi	abi.quant	generic	public	public-abi	repository	interface	none
 include/yvex/registry.h	abi	abi.registry	generic	public	public-abi	repository	interface	none
@@ -96,7 +97,15 @@ src/core/fs.c	core	core.fs	generic	private	file-serialization	repository	impleme
 src/core/sha256.c	core	core.sha256	generic	private	reusable-algorithm	repository	implementation	none
 src/core/shard_index.c	core	core.shard_index	generic	private	reusable-algorithm	repository	implementation	none
 src/core/status.c	core	core.status	generic	private	reusable-algorithm	repository	implementation	none
+src/provider/core.c	provider	provider.core	generic	private	resource-lifecycle	gateway,server,applications	implementation	none
 src/daemon/yvexd.c	daemon	daemon.yvexd	entrypoint	private	entrypoint	operator	entrypoint	none
+src/gateway/openai/core.c	gateway	gateway.openai.core	generic	private	resource-lifecycle	provider,server,protocol	implementation	none
+src/gateway/openai/http.c	gateway	gateway.openai.http	generic	private	reusable-algorithm	gateway.openai.core	implementation	none
+src/gateway/openai/json.c	gateway	gateway.openai.json	generic	private	reusable-algorithm	gateway.openai.core,provider	implementation	none
+src/gateway/openai/main.c	gateway	gateway.openai	entrypoint	private	entrypoint	gateway.openai.core	entrypoint	none
+src/gateway/openai/private.h	gateway	gateway.openai.shared	generic	private	source-local-interface	gateway.openai.core,gateway.openai.http,gateway.openai.json,gateway.openai.render,gateway.openai.state	interface	none
+src/gateway/openai/render.c	gateway	gateway.openai.render	generic	private	reusable-algorithm	gateway.openai.core	implementation	none
+src/gateway/openai/state.c	gateway	gateway.openai.state	generic	private	resource-lifecycle	gateway.openai.core	implementation	none
 src/gguf/conversion.c	gguf	gguf.conversion	generic	private	file-serialization	artifact,model,quant	implementation	none
 src/gguf/core.c	gguf	gguf.core	generic	private	resource-lifecycle	artifact,model,quant	implementation	none
 src/gguf/descriptor.c	gguf	gguf.descriptor	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
@@ -195,6 +204,7 @@ src/source/write.c	source	source.write	generic	private	transactional-io	model,co
 src/tokenizer/core.c	tokenizer	tokenizer.core	generic	private	resource-lifecycle	runtime,cli	implementation	none
 src/tokenizer/decode.c	tokenizer	tokenizer.decode	generic	private	resource-lifecycle	runtime,generation	implementation	none
 src/tokenizer/execution.c	tokenizer	tokenizer.execution	generic	private	reusable-algorithm	runtime,cli,generation	implementation	none
-src/tokenizer/private.h	tokenizer	tokenizer.shared	generic	private	source-local-interface	tokenizer.core,tokenizer.execution,tokenizer.decode	interface	none
+src/tokenizer/provider.c	tokenizer	tokenizer.provider	generic	private	reusable-algorithm	server,generation,provider	implementation	none
+src/tokenizer/private.h	tokenizer	tokenizer.shared	generic	private	source-local-interface	tokenizer.core,tokenizer.execution,tokenizer.decode,tokenizer.provider	interface	none
 src/tokenizer/token_input.c	tokenizer	tokenizer.token_input	generic	private	reusable-algorithm	runtime,cli	implementation	none
 src/tokenizer/unicode.c	tokenizer	tokenizer.unicode	generic	private	reusable-algorithm	tokenizer.execution,tokenizer.decode	implementation	none

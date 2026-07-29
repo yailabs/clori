@@ -2074,13 +2074,18 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
     if (after.schema_version != before.schema_version ||
         after.sealed != before.sealed || after.attached != before.attached ||
         after.host_ready != before.host_ready ||
+        after.host_locked != before.host_locked ||
         after.cuda_ready != before.cuda_ready ||
         after.invalidated != before.invalidated ||
         after.generation != before.generation ||
+        after.model_complete != before.model_complete ||
+        after.expected_model_binding_count != before.expected_model_binding_count ||
+        after.model_binding_count != before.model_binding_count ||
         after.core_binding_count != before.core_binding_count ||
         after.envelope_binding_count != before.envelope_binding_count ||
         after.binding_count != before.binding_count ||
         after.encoded_bytes != before.encoded_bytes ||
+        after.accelerator_encoded_bytes != before.accelerator_encoded_bytes ||
         after.host_resident_bytes != before.host_resident_bytes ||
         after.device_resident_bytes != before.device_resident_bytes ||
         after.cuda_upload_bytes != before.cuda_upload_bytes ||

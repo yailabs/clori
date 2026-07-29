@@ -515,7 +515,7 @@ static int generation_encode_prompt(
     memset(rendered, 0, sizeof(*rendered));
     memset(encoded, 0, sizeof(*encoded));
     if (!request || request->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V2 ||
-        request->kind > YVEX_GENERATION_INPUT_MESSAGES)
+        request->kind > YVEX_GENERATION_INPUT_PROVIDER)
         return generation_refuse(err, YVEX_ERR_INVALID_ARG,
                                  "typed text or message input is required");
     encode = request->encode_options;
@@ -531,13 +531,23 @@ static int generation_encode_prompt(
         if (rc == YVEX_OK)
             yvex_runtime_identity_copy(prompt_identity,
                                        encoded->input_identity);
-    } else {
+    } else if (request->kind == YVEX_GENERATION_INPUT_MESSAGES) {
         if (!request->messages || !request->message_count)
             return generation_refuse(err, YVEX_ERR_INVALID_ARG,
                                      "nonempty typed prompt messages are required");
         rc = yvex_tokenizer_encode_prompt(
             context->tokenizer, request->messages, request->message_count,
             &request->prompt_options, &encode, rendered, encoded, err);
+        if (rc == YVEX_OK)
+            yvex_runtime_identity_copy(prompt_identity,
+                                       rendered->prompt_identity);
+    } else {
+        if (!request->provider_request)
+            return generation_refuse(err, YVEX_ERR_INVALID_ARG,
+                                     "sealed provider request is required");
+        rc = yvex_tokenizer_encode_provider_prompt(
+            context->tokenizer, request->provider_request, &encode,
+            rendered, encoded, err);
         if (rc == YVEX_OK)
             yvex_runtime_identity_copy(prompt_identity,
                                        rendered->prompt_identity);

@@ -539,6 +539,14 @@ Multi-turn reuse is admitted only when the newly rendered and encoded prompt
 has the committed token ledger as an exact prefix. The host prefills only the
 remaining suffix. String similarity or silent replay cannot establish KV reuse.
 
+An application compatibility gateway is a protocol adapter, not a second host.
+It translates one bounded external request schema into a provider-neutral
+typed request and submits that request through the same private local protocol.
+The daemon retains prompt-family semantics, sessions, KV, generation,
+cancellation, telemetry, and model metrics. A gateway therefore opens no model
+or artifact, owns no persistent sequence state, and cannot execute application
+tools. Restarting it does not restart the model host.
+
 ## 11. Transactional State
 
 Persistent state is any information required to continue inference without

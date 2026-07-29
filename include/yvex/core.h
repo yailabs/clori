@@ -28,7 +28,8 @@ typedef enum {
     YVEX_ERR_BOUNDS = -7,
     YVEX_ERR_STATE = -8,
     YVEX_ERR_CANCELLED = -9,
-    YVEX_ERR_INVALID_ARG = -10
+    YVEX_ERR_INVALID_ARG = -10,
+    YVEX_ERR_TIMEOUT = -11
 } yvex_status;
 
 const char *yvex_status_name(yvex_status status);

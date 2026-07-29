@@ -959,6 +959,13 @@ static int materialize_session_access_locked(
                 failure, YVEX_MATERIALIZATION_FAILURE_READ, binding->name,
                 binding->tensor_id, len, 0ull, absolute, err, YVEX_ERR_IO,
                 "materialization positioned read failed");
+        if (session->options.release_artifact_cache_after_read &&
+            yvex_artifact_cache_release(session->artifact, absolute,
+                                        (unsigned long long)len, err) != YVEX_OK)
+            return materialize_reject(
+                failure, YVEX_MATERIALIZATION_FAILURE_READ, binding->name,
+                binding->tensor_id, len, 0ull, absolute, err, YVEX_ERR_IO,
+                "materialization read-cache release failed");
         session->access.artifact_read_calls = next_calls;
         session->access.artifact_bytes_read = next_bytes;
     }

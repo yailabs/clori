@@ -10,6 +10,7 @@ retired; they are not compatibility surfaces.
 | --- | --- | --- | --- |
 | `yvexd` | runtime host | yes | optional raw JSONL console and fatal stderr |
 | `yvex` | product client | no | conversation, compact status, watch, trace |
+| `yvex-openai` | application gateway | no | bounded HTTP JSON/SSE, process diagnostics on stderr |
 | `yvex-dev` | developer tooling | yes | technical summary, JSON, explicit evidence |
 
 Runtime and model code never writes product output. It publishes typed facts or
@@ -107,6 +108,15 @@ Product errors contain one class/reason and, where known, one remediation hint.
 Errors go to stderr. Exit `2` is parser/usage refusal; runtime and protocol
 refusals are nonzero without turning diagnostic evidence into normal output.
 
+### Application protocol
+
+`yvex-openai` is not a fourth terminal renderer. It returns the documented
+compatibility JSON or SSE schema over loopback HTTP and writes only process
+startup/fatal diagnostics to stderr. Its response objects project typed
+provider and YVEX protocol facts; they never scrape `yvex` or daemon-console
+text. The exact profile lives in
+[`openai-compatibility.md`](openai-compatibility.md).
+
 ## Typed event fan-out
 
 One event has a schema, global sequence, UTC and monotonic timestamps, severity,
@@ -138,6 +148,7 @@ boundaries supplied by the tokenizer decoder.
 
 ## Non-claims
 
-The local client architecture does not establish public HTTP serving,
-authentication, TLS, remote security, API compatibility, continuous batching,
-model quality, benchmark authority, or release qualification.
+The local client architecture and bounded loopback gateway do not establish
+public HTTP serving, authentication, TLS, remote security, full OpenAI API or
+Anthropic compatibility, continuous batching, model quality, benchmark
+authority, or release qualification.

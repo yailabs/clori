@@ -426,6 +426,8 @@ const char *yvex_status_name(yvex_status status)
         return "YVEX_ERR_CANCELLED";
     case YVEX_ERR_INVALID_ARG:
         return "YVEX_ERR_INVALID_ARG";
+    case YVEX_ERR_TIMEOUT:
+        return "YVEX_ERR_TIMEOUT";
     default:
         return "YVEX_STATUS_UNKNOWN";
     }

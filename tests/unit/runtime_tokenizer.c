@@ -14,6 +14,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define TEST_DSML "\xef\xbd\x9c" "DSML" "\xef\xbd\x9c"
+
 typedef struct {
     pthread_mutex_t mutex;
     pthread_cond_t condition;
@@ -97,7 +99,97 @@ static void fixture_open(yvex_tokenizer *tokenizer, yvex_token_info tokens[4])
     tokenizer->eos.id = 0u;
     tokenizer->plan.sealed = 1;
     tokenizer->plan.vocabulary_size = 4u;
+    tokenizer->plan.prompt_policy = YVEX_TOKENIZER_PROMPT_DEEPSEEK_V4;
     memcpy(tokenizer->plan.tokenizer_plan_identity, identity, sizeof(identity));
+}
+
+/* Purpose: build one sealed provider request for exact DeepSeek prompt/tool projection. */
+static int provider_fixture(yvex_provider_request *request,
+                            yvex_provider_message messages[1],
+                            yvex_provider_function_tool tools[1],
+                            yvex_error *err)
+{
+    static const unsigned char user[] = "Get match m1.";
+    static const unsigned char description[] = "Load match context.";
+    static const unsigned char schema[] =
+        "{\"type\":\"object\",\"properties\":{\"match_id\":{"
+        "\"type\":\"string\"}},\"required\":[\"match_id\"]}";
+    memset(request, 0, sizeof(*request));
+    memset(messages, 0, sizeof(*messages));
+    memset(tools, 0, sizeof(*tools));
+    messages[0].role = YVEX_PROVIDER_ROLE_USER;
+    messages[0].content = (yvex_provider_span){user, sizeof(user) - 1u};
+    strcpy(tools[0].name, "get_match_context");
+    tools[0].description = (yvex_provider_span){description,
+                                                sizeof(description) - 1u};
+    tools[0].parameters_json = (yvex_provider_span){schema,
+                                                    sizeof(schema) - 1u};
+    request->schema_version = YVEX_PROVIDER_SCHEMA_V1;
+    strcpy(request->model, "deepseek4-v4-flash");
+    request->messages = messages;
+    request->message_count = 1u;
+    request->tools = tools;
+    request->tool_count = 1u;
+    request->tool_choice.kind = YVEX_PROVIDER_TOOL_CHOICE_AUTO;
+    request->sampling.temperature = 0.0;
+    request->sampling.top_p = 1.0;
+    request->sampling.typical_p = 1.0;
+    request->maximum_output_tokens = 16u;
+    return yvex_provider_request_seal(request, err);
+}
+
+/* Purpose: prove exact family-owned prompt and DSML tool parsing without prose guessing. */
+static int test_provider_projection(void)
+{
+    static const unsigned char completion[] =
+        "\n\n<" TEST_DSML "tool_calls>\n"
+        "<" TEST_DSML "invoke name=\"get_match_context\">\n"
+        "<" TEST_DSML "parameter name=\"match_id\" string=\"true\">m1"
+        "</" TEST_DSML "parameter>\n"
+        "</" TEST_DSML "invoke>\n"
+        "</" TEST_DSML "tool_calls>";
+    static const unsigned char prose[] = "Please call get_match_context with m1.";
+    yvex_tokenizer tokenizer;
+    yvex_token_info tokens[4];
+    yvex_provider_request request;
+    yvex_provider_message messages[1];
+    yvex_provider_function_tool tools[1];
+    yvex_rendered_prompt rendered = {0};
+    yvex_tokenizer_provider_result result = {0};
+    yvex_error err;
+
+    fixture_open(&tokenizer, tokens);
+    YVEX_TEST_ASSERT(provider_fixture(&request, messages, tools, &err) ==
+                         YVEX_OK,
+                     "provider fixture seals");
+    YVEX_TEST_ASSERT(yvex_tokenizer_provider_prompt(
+                         &tokenizer, &request, &rendered, &err) == YVEX_OK,
+                     "provider prompt renders through tokenizer policy");
+    YVEX_TEST_ASSERT(strstr(rendered.text, "Available Tool Schemas") != NULL &&
+                         strstr(rendered.text, "get_match_context") != NULL,
+                     "rendered prompt contains exact tool policy and schema");
+    yvex_rendered_prompt_free(&rendered);
+    YVEX_TEST_ASSERT(yvex_tokenizer_parse_provider_completion(
+                         &tokenizer, &request, completion,
+                         sizeof(completion) - 1u, &result, &err) == YVEX_OK &&
+                         result.kind == YVEX_PROVIDER_OUTPUT_FUNCTION_CALL,
+                     "exact DSML completion becomes one typed function call");
+    YVEX_TEST_ASSERT_STREQ(result.tool_call.name, "get_match_context",
+                           "tool name remains exact");
+    YVEX_TEST_ASSERT(result.tool_call.call_id[0] &&
+                         yvex_provider_json_value_validate(
+                             result.tool_call.arguments_json.bytes,
+                             result.tool_call.arguments_json.count, 1,
+                             &err) == YVEX_OK,
+                     "tool arguments and call identity are valid");
+    yvex_tokenizer_provider_result_clear(&result);
+    YVEX_TEST_ASSERT(yvex_tokenizer_parse_provider_completion(
+                         &tokenizer, &request, prose, sizeof(prose) - 1u,
+                         &result, &err) == YVEX_OK &&
+                         result.kind == YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
+                     "ordinary prose never becomes a tool call");
+    yvex_tokenizer_provider_result_clear(&result);
+    return 0;
 }
 
 static int test_incremental_decoder(void)
@@ -248,6 +340,8 @@ static int test_classification_and_append(void)
 
 int yvex_test_runtime_tokenizer(void)
 {
+    if (test_provider_projection() != 0)
+        return 1;
     if (test_incremental_decoder() != 0)
         return 1;
     if (test_incremental_close_drain() != 0)

@@ -18,9 +18,10 @@ terminals:
 ./yvex chat --session main
 ```
 
-The daemon opens one model and retains immutable tokenizer, attention,
-materialization, residency, output-head, and plan resources. Each named session
-owns independent DeepSeek persistent state and exact prompt/token continuation.
+The daemon opens one model and retains the complete encoded model payload in
+one immutable process-lifetime host arena together with tokenizer, attention,
+materialization, output-head, and plan resources. Each named session owns
+independent DeepSeek persistent state and exact prompt/token continuation.
 
 On turn two, the host renders and encodes the complete expected conversation,
 proves that the committed token ledger is its exact prefix, and prefills only
@@ -35,6 +36,28 @@ the new suffix. An incompatible prefix refuses; reset is explicit.
 Sampling remains common-host even when Transformer, MoE, persistent state, and
 output-head projection execute on CUDA. Streamed fragments are sent only after
 sampled-token decode commit and incremental detokenization commit.
+
+## Application-provider path
+
+After the same daemon reaches `runtime.ready`, expose the bounded loopback
+profile without loading another DeepSeek model:
+
+```sh
+./yvex-openai --host 127.0.0.1 --port 8001
+```
+
+Discover the exact admitted model identifier with one command:
+
+```sh
+curl -fsS http://127.0.0.1:8001/v1/models
+```
+
+OpenAI Python and JavaScript SDKs use
+`base_url=http://127.0.0.1:8001/v1`. Chat Completions and Responses translate
+typed messages through the DeepSeek tokenizer/prompt owner; the gateway never
+constructs DeepSeek control-token syntax. Function tools return typed calls for
+the application to execute. See the
+[bounded compatibility profile](../openai-compatibility.md).
 
 ## Developer path
 
@@ -76,6 +99,7 @@ untracked external operator assets.
 
 ## Non-claims
 
-Hosted generation evidence is not model-quality evaluation, full-model
-benchmark evidence, release qualification, public serving, remote security,
-continuous batching, MTP, or speculative execution.
+Hosted generation and local compatibility evidence are not model-quality
+evaluation, full-model benchmark evidence, release qualification, full OpenAI
+service equivalence, public serving, remote security, continuous batching, MTP,
+or speculative execution.

@@ -1470,7 +1470,7 @@ class Audit:
                 boundary = row[5] if row else ""
                 admitted = (
                     name.startswith("src/cli/io/")
-                    or name == "src/daemon/yvexd.c"
+                    or (row is not None and row[3] == "entrypoint")
                     or boundary in {"transactional-io", "file-serialization"}
                 )
                 if not admitted:

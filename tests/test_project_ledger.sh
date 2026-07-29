@@ -80,7 +80,7 @@ function uncode(value) {
 ' "$project" > "$rows"
 
 row_count=$(wc -l < "$rows" | tr -d ' ')
-test "$row_count" -eq 685 || fail "expected 685 canonical IDs, found $row_count"
+test "$row_count" -eq 686 || fail "expected 686 canonical IDs, found $row_count"
 
 cut -f 2 "$rows" | LC_ALL=C sort > "$all_ids"
 unique_count=$(uniq "$all_ids" | wc -l | tr -d ' ')
@@ -91,7 +91,7 @@ duplicate=$(uniq -d "$all_ids" | head -n 1 || true)
 test -z "$duplicate" || fail "duplicate canonical ID: $duplicate"
 
 id_hash=$(sha256sum "$all_ids" | awk '{ print $1 }')
-expected_id_hash=1aa6ff7434c896c6ca763e4a319be1eddbd1c93c20fd713ed6beb7966d889a21
+expected_id_hash=4b064f49415fa30f6fd528369280afa6979f7839788ddad68668ef79418e411b
 test "$id_hash" = "$expected_id_hash" ||
   fail "canonical ID set changed without an explicit migration: $id_hash"
 
@@ -135,6 +135,7 @@ V010.COMPILATION.PHYSICAL.VARIANT.1
 V010.ARTIFACT.MATERIALIZE.1
 V010.CLI.DEEPSEEK.GENERATE.0
 V010.RUNTIME.CLIENT.REFOUNDATION.0
+V010.SERVE.OPENAI.COMPAT.0
 V010.EVAL.DEEPSEEK.0
 V010.BENCH.DEEPSEEK.0
 V010.RUNTIME.DEEPSEEK.ATTENTION.KV.0
@@ -154,7 +155,7 @@ EOF
 
 LC_ALL=C sort -u "$new_ids" -o "$new_ids"
 new_count=$(wc -l < "$new_ids" | tr -d ' ')
-test "$new_count" -eq 54 || fail "expected 54 explicit new IDs, found $new_count"
+test "$new_count" -eq 55 || fail "expected 55 explicit new IDs, found $new_count"
 
 missing_new=$(comm -23 "$new_ids" "$all_ids" | head -n 1 || true)
 test -z "$missing_new" || fail "explicit new ID is absent: $missing_new"
@@ -410,8 +411,10 @@ grep -F '| `V010.CLI.DEEPSEEK.GENERATE.0` | DeepSeek | `superseded` |' "$project
   fail "the fresh-only generation CLI is not superseded by the client refoundation"
 grep -F '| `V010.RUNTIME.CLIENT.REFOUNDATION.0` | common host + DeepSeek first session vertical | `complete` |' "$project" >/dev/null ||
   fail "the runtime/client refoundation is not complete"
+grep -F '| `V010.SERVE.OPENAI.COMPAT.0` | common provider + DeepSeek first tool vertical | `complete` |' "$project" >/dev/null ||
+  fail "OpenAI compatibility is not complete"
 grep -F '| `V010.EVAL.DEEPSEEK.0` | DeepSeek | `active` |' "$project" >/dev/null ||
-  fail "DeepSeek evaluation is not the sole active successor"
+  fail "DeepSeek evaluation is not active after the application-provider gate"
 grep -F '| V010.MODEL.TRANSFORM.IR.0 | recovered/promoted |' "$project" >/dev/null ||
   fail "quantization does not depend on the transformation IR"
 

@@ -172,10 +172,59 @@ static int test_bounded_telemetry_overflow(void)
     return 0;
 }
 
+/* Purpose: prove provider correlation is identity-bound into the authoritative event stream. */
+static int test_provider_telemetry(void)
+{
+    static const unsigned char text[] = "hello";
+    yvex_provider_message message = {0};
+    yvex_provider_request request = {0};
+    server_telemetry *telemetry = NULL;
+    yvex_server_event event;
+    yvex_error err;
+    char json[4096];
+    int rc;
+    message.role = YVEX_PROVIDER_ROLE_USER;
+    message.content.bytes = text;
+    message.content.count = sizeof(text) - 1u;
+    request.schema_version = YVEX_PROVIDER_SCHEMA_V1;
+    strcpy(request.model, "deepseek4-v4-flash");
+    request.messages = &message;
+    request.message_count = 1u;
+    request.maximum_output_tokens = 4u;
+    strcpy(request.adapter, "openai");
+    strcpy(request.external_correlation_id, "chatcmpl-yvex-1");
+    rc = yvex_provider_request_seal(&request, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry request seal");
+    rc = yvex_server_telemetry_open(&telemetry, 4u, NULL, NULL, NULL, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry open");
+    rc = yvex_server_telemetry_emit_provider(
+        telemetry, YVEX_SERVER_EVENT_REQUEST_STARTED,
+        YVEX_SERVER_SEVERITY_INFO, "session", "r1", "t1", "turn",
+        1u, 0u, 4u, 0.0, 0.0, &request, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry emit");
+    rc = yvex_server_telemetry_next(telemetry, 0u, 0, &event, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry read");
+    YVEX_TEST_ASSERT_STREQ(event.provider_adapter, "openai",
+                           "provider adapter event fact");
+    YVEX_TEST_ASSERT_STREQ(event.provider_request_identity,
+                           request.request_identity,
+                           "provider request event identity");
+    rc = yvex_server_event_json(&event, json, sizeof(json), &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && strstr(json, "\"provider\":\"openai\"") != NULL,
+                     "provider correlation JSON");
+    event.external_correlation_id[0] = 'X';
+    rc = yvex_server_event_validate(&event, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT,
+                     "provider correlation mutation refuses");
+    yvex_server_telemetry_close(&telemetry);
+    return 0;
+}
+
 int yvex_test_server(void)
 {
     if (test_configured_summary_and_event() != 0) return 1;
     if (test_model_open_refusal() != 0) return 1;
     if (test_bounded_telemetry_overflow() != 0) return 1;
+    if (test_provider_telemetry() != 0) return 1;
     return 0;
 }

@@ -23,7 +23,7 @@
 
 #include <yvex/internal/core.h>
 
-#define TELEMETRY_SCHEMA_V1 1u
+#define TELEMETRY_SCHEMA_V2 2u
 
 struct server_telemetry {
     pthread_mutex_t mutex;
@@ -85,7 +85,7 @@ static int event_identity(yvex_server_event *event)
     if (!event)
         return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.server.event.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.server.event.v2") ||
         !yvex_sha256_update_u64(&hash, event->schema_version) ||
         !yvex_sha256_update_u64(&hash, event->sequence) ||
         !yvex_sha256_update_u64(&hash, event->wall_time_ns) ||
@@ -97,6 +97,9 @@ static int event_identity(yvex_server_event *event)
         !yvex_sha256_update_text(&hash, event->request_id) ||
         !yvex_sha256_update_text(&hash, event->turn_id) ||
         !yvex_sha256_update_text(&hash, event->phase) ||
+        !yvex_sha256_update_text(&hash, event->provider_adapter) ||
+        !yvex_sha256_update_text(&hash, event->provider_request_identity) ||
+        !yvex_sha256_update_text(&hash, event->external_correlation_id) ||
         !yvex_sha256_update_u64(&hash, event->value_a) ||
         !yvex_sha256_update_u64(&hash, event->value_b) ||
         !yvex_sha256_update_u64(&hash, event->value_c) ||
@@ -138,7 +141,7 @@ int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capaci
     }
     telemetry->capacity = capacity;
     telemetry->next_sequence = 1u;
-    telemetry->metrics.schema_version = TELEMETRY_SCHEMA_V1;
+    telemetry->metrics.schema_version = TELEMETRY_SCHEMA_V2;
     (void)clock_gettime(CLOCK_MONOTONIC, &telemetry->started);
     yvex_core_text_copy(telemetry->runtime_model_identity,
                         sizeof(telemetry->runtime_model_identity),
@@ -174,15 +177,13 @@ int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capaci
 /* Purpose: publish one authoritative event into the bounded global sequence.
  * Inputs: telemetry, typed facts, identities, counters, timing, and error output. Effects: seals and appends one event.
  * Failure: refuses invalid ownership or identity derivation. Boundary: content bytes are excluded by schema. */
-int yvex_server_telemetry_emit(server_telemetry *telemetry,
-                          yvex_server_event_kind kind,
-                          yvex_server_event_severity severity,
-                          const char *session_id, const char *request_id,
-                          const char *turn_id, const char *phase,
-                          unsigned long long value_a,
-                          unsigned long long value_b,
-                          unsigned long long value_c,
-                          double seconds, double rate, yvex_error *err)
+int yvex_server_telemetry_emit_provider(
+    server_telemetry *telemetry, yvex_server_event_kind kind,
+    yvex_server_event_severity severity, const char *session_id,
+    const char *request_id, const char *turn_id, const char *phase,
+    unsigned long long value_a, unsigned long long value_b,
+    unsigned long long value_c, double seconds, double rate,
+    const yvex_provider_request *provider, yvex_error *err)
 {
     yvex_server_event event;
     int ring_full;
@@ -192,8 +193,15 @@ int yvex_server_telemetry_emit(server_telemetry *telemetry,
                        "valid telemetry owner and event facts are required");
         return YVEX_ERR_INVALID_ARG;
     }
+    if (provider &&
+        (!provider->adapter[0] ||
+         yvex_provider_request_validate(provider, err) != YVEX_OK)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.emit",
+                       "sealed provider correlation facts are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
     memset(&event, 0, sizeof(event));
-    event.schema_version = TELEMETRY_SCHEMA_V1;
+    event.schema_version = TELEMETRY_SCHEMA_V2;
     event.wall_time_ns = time_ns(CLOCK_REALTIME);
     event.monotonic_time_ns = time_ns(CLOCK_MONOTONIC);
     event.process_id = (unsigned long long)getpid();
@@ -211,6 +219,16 @@ int yvex_server_telemetry_emit(server_telemetry *telemetry,
     yvex_core_text_copy(event.turn_id, sizeof(event.turn_id),
                         turn_id ? turn_id : "");
     yvex_core_text_copy(event.phase, sizeof(event.phase), phase ? phase : "");
+    if (provider) {
+        yvex_core_text_copy(event.provider_adapter,
+                            sizeof(event.provider_adapter), provider->adapter);
+        yvex_core_text_copy(event.provider_request_identity,
+                            sizeof(event.provider_request_identity),
+                            provider->request_identity);
+        yvex_core_text_copy(event.external_correlation_id,
+                            sizeof(event.external_correlation_id),
+                            provider->external_correlation_id);
+    }
     yvex_core_text_copy(event.runtime_model_identity,
                         sizeof(event.runtime_model_identity),
                         telemetry->runtime_model_identity);
@@ -261,6 +279,24 @@ int yvex_server_telemetry_emit(server_telemetry *telemetry,
     (void)pthread_mutex_unlock(&telemetry->mutex);
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+/* Purpose: publish one native event without application-provider correlation.
+ * Inputs: typed server facts and error output. Effects: appends one identity-sealed event.
+ * Failure: forwards the authoritative telemetry refusal. Boundary: provider fields remain empty. */
+int yvex_server_telemetry_emit(server_telemetry *telemetry,
+                               yvex_server_event_kind kind,
+                               yvex_server_event_severity severity,
+                               const char *session_id, const char *request_id,
+                               const char *turn_id, const char *phase,
+                               unsigned long long value_a,
+                               unsigned long long value_b,
+                               unsigned long long value_c, double seconds,
+                               double rate, yvex_error *err)
+{
+    return yvex_server_telemetry_emit_provider(
+        telemetry, kind, severity, session_id, request_id, turn_id, phase,
+        value_a, value_b, value_c, seconds, rate, NULL, err);
 }
 
 /* Purpose: read the first retained event after a cursor, optionally waiting for publication.
@@ -533,9 +569,15 @@ int yvex_server_event_validate(const yvex_server_event *event, yvex_error *err)
 {
     yvex_server_event candidate;
     char supplied[YVEX_SHA256_HEX_CAP];
-    if (!event || event->schema_version != TELEMETRY_SCHEMA_V1 ||
+    if (!event || event->schema_version != TELEMETRY_SCHEMA_V2 ||
         event->kind > YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE ||
         event->severity > YVEX_SERVER_SEVERITY_FATAL ||
+        (event->provider_adapter[0] &&
+         (!yvex_sha256_hex_valid(event->provider_request_identity) ||
+          !event->external_correlation_id[0])) ||
+        (!event->provider_adapter[0] &&
+         (event->provider_request_identity[0] ||
+          event->external_correlation_id[0])) ||
         !yvex_sha256_hex_valid(event->event_identity)) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "server.telemetry.validate",
                        "complete versioned event evidence is required");
@@ -567,10 +609,12 @@ int yvex_server_event_json(const yvex_server_event *event, char *output,
         return YVEX_ERR_INVALID_ARG;
     }
     length = snprintf(output, (size_t)capacity,
-                      "{\"schema\":1,\"sequence\":%llu,\"process\":%llu,"
+                      "{\"schema\":2,\"sequence\":%llu,\"process\":%llu,"
                       "\"wall_time_ns\":%llu,\"monotonic_time_ns\":%llu,\"kind\":\"%s\","
                       "\"severity\":%u,\"session\":\"%s\",\"request\":\"%s\","
-                      "\"turn\":\"%s\",\"phase\":\"%s\",\"a\":%llu,"
+                      "\"turn\":\"%s\",\"phase\":\"%s\","
+                      "\"provider\":\"%s\",\"provider_request_identity\":\"%s\","
+                      "\"external_correlation_id\":\"%s\",\"a\":%llu,"
                       "\"b\":%llu,\"c\":%llu,\"seconds\":%.9g,\"rate\":%.9g,"
                       "\"runtime_model_identity\":\"%s\","
                       "\"artifact_identity\":\"%s\",\"variant_identity\":\"%s\","
@@ -580,6 +624,9 @@ int yvex_server_event_json(const yvex_server_event *event, char *output,
                       yvex_server_event_kind_name(event->kind),
                       (unsigned int)event->severity, event->session_id,
                       event->request_id, event->turn_id, event->phase,
+                      event->provider_adapter,
+                      event->provider_request_identity,
+                      event->external_correlation_id,
                       event->value_a, event->value_b, event->value_c,
                       event->seconds, event->rate,
                       event->runtime_model_identity, event->artifact_identity,

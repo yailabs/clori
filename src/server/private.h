@@ -21,6 +21,7 @@ typedef int (*server_message_emit)(void *context,
 
 int yvex_server_protocol_receive(int fd, yvex_client_request *request,
                                  unsigned char **owned_prompt,
+                                 yvex_provider_request **owned_provider,
                                  yvex_error *err);
 int yvex_server_protocol_send(int fd, const yvex_client_message *message,
                               yvex_error *err);
@@ -38,6 +39,13 @@ int yvex_server_telemetry_emit(server_telemetry *telemetry,
                           unsigned long long value_b,
                           unsigned long long value_c,
                           double seconds, double rate, yvex_error *err);
+int yvex_server_telemetry_emit_provider(
+    server_telemetry *telemetry, yvex_server_event_kind kind,
+    yvex_server_event_severity severity, const char *session_id,
+    const char *request_id, const char *turn_id, const char *phase,
+    unsigned long long value_a, unsigned long long value_b,
+    unsigned long long value_c, double seconds, double rate,
+    const yvex_provider_request *provider, yvex_error *err);
 int yvex_server_telemetry_next(server_telemetry *telemetry,
                           unsigned long long after_sequence, int wait,
                           yvex_server_event *event, yvex_error *err);

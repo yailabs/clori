@@ -25,7 +25,8 @@ extern "C" {
 
 typedef enum {
     YVEX_GENERATION_INPUT_TEXT = 0,
-    YVEX_GENERATION_INPUT_MESSAGES = 1
+    YVEX_GENERATION_INPUT_MESSAGES = 1,
+    YVEX_GENERATION_INPUT_PROVIDER = 2
 } yvex_runtime_generation_input_kind;
 
 typedef enum {
@@ -70,6 +71,7 @@ typedef struct {
     unsigned long long message_count;
     yvex_prompt_options prompt_options;
     yvex_tokenizer_encode_options encode_options;
+    const yvex_provider_request *provider_request;
 } yvex_runtime_generation_request;
 
 typedef struct {

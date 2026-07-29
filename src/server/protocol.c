@@ -19,6 +19,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -43,6 +44,7 @@ enum {
     TAG_TYPICAL_P,
     TAG_EVENT_AFTER,
     TAG_TRACE_LEVEL,
+    TAG_PROVIDER_REQUEST,
     TAG_MESSAGE_KIND = 32,
     TAG_STATUS,
     TAG_REASON,
@@ -96,7 +98,19 @@ enum {
     TAG_EVENT_RUNTIME_MODEL_ID,
     TAG_EVENT_ARTIFACT_ID,
     TAG_EVENT_SESSION_ID,
-    TAG_PHYSICAL_VARIANT_ID
+    TAG_PHYSICAL_VARIANT_ID,
+    TAG_PROVIDER_OUTPUT_KIND,
+    TAG_PROVIDER_FINISH,
+    TAG_COMPLETION_TOKENS,
+    TAG_TOTAL_TOKENS,
+    TAG_PROVIDER_REQUEST_ID,
+    TAG_EXTERNAL_CORRELATION_ID,
+    TAG_TOOL_CALL_ID,
+    TAG_TOOL_NAME,
+    TAG_EVENT_PROVIDER_ADAPTER,
+    TAG_EVENT_PROVIDER_REQUEST_ID,
+    TAG_EVENT_EXTERNAL_CORRELATION_ID,
+    TAG_FAILURE_CLASS
 };
 
 typedef struct {
@@ -115,6 +129,8 @@ struct yvex_client {
 };
 
 _Static_assert(sizeof(double) == 8u, "local protocol requires binary64 double");
+_Static_assert(TAG_FAILURE_CLASS < 128u,
+               "known protocol tags must fit the duplicate-field set");
 
 /* Purpose: publish one protocol refusal without preserving parser-local state. */
 static int protocol_refuse(yvex_error *err, yvex_status status,
@@ -309,15 +325,32 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
                                  yvex_error *err)
 {
     wire_writer writer = {output, capacity, 0u};
+    unsigned char *provider_bytes = NULL;
+    unsigned long long provider_count = 0u;
     unsigned long long flags;
+    int provider_rc = YVEX_OK;
     if (byte_count) *byte_count = 0u;
     if (!request || !output || !byte_count ||
         request->schema_version != YVEX_LOCAL_PROTOCOL_VERSION ||
         request->operation > YVEX_CLIENT_OP_ARTIFACT_VERIFY ||
         request->prompt_bytes > YVEX_SERVER_FRAME_MAX_BYTES ||
-        (!request->prompt && request->prompt_bytes))
+        (!request->prompt && request->prompt_bytes) ||
+        (request->prompt_bytes && request->provider_request))
         return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
                                "complete bounded client request is required");
+    if (request->provider_request) {
+        provider_bytes = malloc(YVEX_PROVIDER_WIRE_MAX_BYTES);
+        if (!provider_bytes)
+            return protocol_refuse(err, YVEX_ERR_NOMEM,
+                                   "provider request wire allocation failed");
+        provider_rc = yvex_provider_request_wire_encode(
+            request->provider_request, provider_bytes,
+            YVEX_PROVIDER_WIRE_MAX_BYTES, &provider_count, err);
+        if (provider_rc != YVEX_OK) {
+            free(provider_bytes);
+            return provider_rc;
+        }
+    }
     flags = (request->stochastic ? 1u : 0u) |
             (request->seed_present ? 2u : 0u) |
             (request->trace_content ? 4u : 0u);
@@ -336,9 +369,14 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         !writer_double(&writer, TAG_MIN_P, request->min_p) ||
         !writer_double(&writer, TAG_TYPICAL_P, request->typical_p) ||
         !writer_u64(&writer, TAG_EVENT_AFTER, request->event_after_sequence) ||
-        !writer_u64(&writer, TAG_TRACE_LEVEL, request->trace_level))
+        !writer_u64(&writer, TAG_TRACE_LEVEL, request->trace_level) ||
+        !writer_field(&writer, TAG_PROVIDER_REQUEST, provider_bytes,
+                      provider_count)) {
+        free(provider_bytes);
         return protocol_refuse(err, YVEX_ERR_BOUNDS,
                                "request does not fit the admitted frame");
+    }
+    free(provider_bytes);
     *byte_count = writer.count;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -351,17 +389,20 @@ int yvex_protocol_request_decode(const unsigned char *input,
                                  unsigned long long byte_count,
                                  yvex_client_request *request,
                                  unsigned char **owned_prompt,
+                                 yvex_provider_request **owned_provider,
                                  yvex_error *err)
 {
     wire_reader reader = {input, byte_count, 0u, {0u, 0u}};
     yvex_client_request candidate;
+    yvex_provider_request *provider = NULL;
     unsigned char *prompt = NULL;
     const unsigned char *bytes;
     unsigned long long count, value;
     unsigned int tag;
     int next, valid = 1, have_operation = 0;
     if (owned_prompt) *owned_prompt = NULL;
-    if (!input || !request || !owned_prompt ||
+    if (owned_provider) *owned_provider = NULL;
+    if (!input || !request || !owned_prompt || !owned_provider ||
         byte_count > YVEX_SERVER_FRAME_MAX_BYTES)
         return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
                                "bounded request bytes and outputs are required");
@@ -411,16 +452,25 @@ int yvex_protocol_request_decode(const unsigned char *input,
             valid = reader_u64(bytes, count, &value) && value <= YVEX_SERVER_TRACE_FULL;
             candidate.trace_level = (yvex_server_trace_level)value;
             break;
+        case TAG_PROVIDER_REQUEST:
+            valid = !provider &&
+                    (!count || yvex_provider_request_wire_decode(
+                        bytes, count, &provider, err) == YVEX_OK);
+            candidate.provider_request = provider;
+            break;
         default: break;
         }
     }
-    if (next < 0 || !valid || !have_operation) {
+    if (next < 0 || !valid || !have_operation ||
+        (candidate.prompt_bytes && candidate.provider_request)) {
         free(prompt);
+        yvex_provider_request_close(&provider);
         return protocol_refuse(err, YVEX_ERR_FORMAT,
                                "request frame contains malformed or duplicate fields");
     }
     *request = candidate;
     *owned_prompt = prompt;
+    *owned_provider = provider;
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -506,6 +556,7 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
 #define WRITE_U64(tag, field) writer_u64(&writer, tag, (unsigned long long)(field))
     if (!WRITE_U64(TAG_MESSAGE_KIND, message->kind) ||
         !WRITE_U64(TAG_STATUS, (uint32_t)(int32_t)message->status) ||
+        !WRITE_U64(TAG_FAILURE_CLASS, message->failure_class) ||
         !WRITE_U64(TAG_REQUEST_NUMBER, message->request_number) ||
         !writer_text(&writer, TAG_SESSION_NAME, message->session_name) ||
         !writer_text(&writer, TAG_REASON, message->reason) ||
@@ -531,6 +582,16 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
                      message->generated_token_identity) ||
         !writer_text(&writer, TAG_GENERATED_TEXT_DIGEST,
                      message->generated_text_digest) ||
+        !WRITE_U64(TAG_PROVIDER_OUTPUT_KIND, message->provider_output_kind) ||
+        !WRITE_U64(TAG_PROVIDER_FINISH, message->provider_finish) ||
+        !WRITE_U64(TAG_COMPLETION_TOKENS, message->completion_tokens) ||
+        !WRITE_U64(TAG_TOTAL_TOKENS, message->total_tokens) ||
+        !writer_text(&writer, TAG_PROVIDER_REQUEST_ID,
+                     message->provider_request_identity) ||
+        !writer_text(&writer, TAG_EXTERNAL_CORRELATION_ID,
+                     message->external_correlation_id) ||
+        !writer_text(&writer, TAG_TOOL_CALL_ID, message->tool_call_id) ||
+        !writer_text(&writer, TAG_TOOL_NAME, message->tool_name) ||
         !WRITE_U64(TAG_RUNTIME_STATUS, message->runtime.status) ||
         !WRITE_U64(TAG_RUNTIME_BACKEND, message->runtime.backend) ||
         !writer_text(&writer, TAG_SOCKET_PATH, message->runtime.socket_path) ||
@@ -559,6 +620,12 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
         !writer_text(&writer, TAG_EVENT_REQUEST_ID, message->event.request_id) ||
         !writer_text(&writer, TAG_EVENT_TURN_ID, message->event.turn_id) ||
         !writer_text(&writer, TAG_EVENT_PHASE, message->event.phase) ||
+        !writer_text(&writer, TAG_EVENT_PROVIDER_ADAPTER,
+                     message->event.provider_adapter) ||
+        !writer_text(&writer, TAG_EVENT_PROVIDER_REQUEST_ID,
+                     message->event.provider_request_identity) ||
+        !writer_text(&writer, TAG_EVENT_EXTERNAL_CORRELATION_ID,
+                     message->event.external_correlation_id) ||
         !WRITE_U64(TAG_EVENT_VALUE_A, message->event.value_a) ||
         !WRITE_U64(TAG_EVENT_VALUE_B, message->event.value_b) ||
         !WRITE_U64(TAG_EVENT_VALUE_C, message->event.value_c) ||
@@ -578,6 +645,254 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
     *byte_count = writer.count;
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+/* Purpose: decode one message-level protocol field outside runtime/event snapshots.
+ * Inputs: candidate, tag, explicit field bytes/count, and kind-presence output.
+ * Effects: writes exactly one recognized message field.
+ * Failure: returns negative for malformed recognized fields and zero for unknown extensions.
+ * Boundary: no reader position, runtime summary, event, or socket ownership. */
+static int message_base_field(yvex_client_message *candidate, unsigned int tag,
+                              const unsigned char *bytes,
+                              unsigned long long count, int *have_kind)
+{
+    unsigned long long value;
+    int valid = 1;
+#define BASE_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
+    switch (tag) {
+    case TAG_MESSAGE_KIND:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
+        candidate->kind = (yvex_client_message_kind)value;
+        *have_kind = valid;
+        break;
+    case TAG_STATUS:
+        valid = reader_u64(bytes, count, &value) && value <= UINT32_MAX;
+        if (valid) candidate->status = (int)(int32_t)(uint32_t)value;
+        break;
+    case TAG_FAILURE_CLASS:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT;
+        if (valid)
+            candidate->failure_class = (yvex_client_failure_class)value;
+        break;
+    case TAG_REQUEST_NUMBER: valid = BASE_U64(candidate->request_number); break;
+    case TAG_SESSION_NAME:
+        valid = reader_text(bytes, count, candidate->session_name,
+                            sizeof(candidate->session_name));
+        break;
+    case TAG_REASON:
+        valid = reader_text(bytes, count, candidate->reason,
+                            sizeof(candidate->reason));
+        break;
+    case TAG_BYTES:
+        valid = count <= sizeof(candidate->bytes);
+        if (valid && count) memcpy(candidate->bytes, bytes, (size_t)count);
+        candidate->byte_count = count;
+        break;
+    case TAG_PROMPT_TOKENS: valid = BASE_U64(candidate->prompt_tokens); break;
+    case TAG_REUSED_TOKENS: valid = BASE_U64(candidate->reused_tokens); break;
+    case TAG_PREFILL_TOKENS: valid = BASE_U64(candidate->prefill_tokens); break;
+    case TAG_GENERATED_TOKENS: valid = BASE_U64(candidate->generated_tokens); break;
+    case TAG_FINAL_POSITION: valid = BASE_U64(candidate->final_position); break;
+    case TAG_QUEUE_SECONDS: valid = reader_double(bytes, count, &candidate->queue_seconds); break;
+    case TAG_PREFILL_SECONDS: valid = reader_double(bytes, count, &candidate->prefill_seconds); break;
+    case TAG_FIRST_TOKEN_SECONDS:
+        valid = reader_double(bytes, count, &candidate->first_token_seconds);
+        break;
+    case TAG_DECODE_SECONDS: valid = reader_double(bytes, count, &candidate->decode_seconds); break;
+    case TAG_PREFILL_RATE: valid = reader_double(bytes, count, &candidate->prefill_rate); break;
+    case TAG_DECODE_RATE: valid = reader_double(bytes, count, &candidate->decode_rate); break;
+    case TAG_STOP_REASON:
+        valid = reader_u64(bytes, count, &value) && value <= UINT_MAX;
+        if (valid) candidate->stop_reason = (unsigned int)value;
+        break;
+    case TAG_SESSION_STATE: valid = BASE_U64(candidate->session_state); break;
+    case TAG_SESSION_IDENTITY:
+        valid = reader_text(bytes, count, candidate->session_identity,
+                            sizeof(candidate->session_identity));
+        break;
+    case TAG_TURN_IDENTITY:
+        valid = reader_text(bytes, count, candidate->turn_identity,
+                            sizeof(candidate->turn_identity));
+        break;
+    case TAG_STATE_DIGEST:
+        valid = reader_text(bytes, count, candidate->state_digest,
+                            sizeof(candidate->state_digest));
+        break;
+    case TAG_GENERATED_TOKEN_IDENTITY:
+        valid = reader_text(bytes, count, candidate->generated_token_identity,
+                            sizeof(candidate->generated_token_identity));
+        break;
+    case TAG_GENERATED_TEXT_DIGEST:
+        valid = reader_text(bytes, count, candidate->generated_text_digest,
+                            sizeof(candidate->generated_text_digest));
+        break;
+    case TAG_PROVIDER_OUTPUT_KIND:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_PROVIDER_OUTPUT_ERROR;
+        candidate->provider_output_kind = (yvex_provider_output_kind)value;
+        break;
+    case TAG_PROVIDER_FINISH:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_PROVIDER_FINISH_FAILED;
+        candidate->provider_finish = (yvex_provider_finish_class)value;
+        break;
+    case TAG_COMPLETION_TOKENS: valid = BASE_U64(candidate->completion_tokens); break;
+    case TAG_TOTAL_TOKENS: valid = BASE_U64(candidate->total_tokens); break;
+    case TAG_PROVIDER_REQUEST_ID:
+        valid = reader_text(bytes, count, candidate->provider_request_identity,
+                            sizeof(candidate->provider_request_identity));
+        break;
+    case TAG_EXTERNAL_CORRELATION_ID:
+        valid = reader_text(bytes, count, candidate->external_correlation_id,
+                            sizeof(candidate->external_correlation_id));
+        break;
+    case TAG_TOOL_CALL_ID:
+        valid = reader_text(bytes, count, candidate->tool_call_id,
+                            sizeof(candidate->tool_call_id));
+        break;
+    case TAG_TOOL_NAME:
+        valid = reader_text(bytes, count, candidate->tool_name,
+                            sizeof(candidate->tool_name));
+        break;
+    default: return 0;
+    }
+#undef BASE_U64
+    return valid ? 1 : -1;
+}
+
+/* Purpose: decode one authoritative runtime-summary field from a server message.
+ * Inputs: candidate, tag, and explicit field bytes/count.
+ * Effects: writes one recognized runtime summary field.
+ * Failure: returns negative for malformed recognized fields and zero for unknown fields.
+ * Boundary: does not validate event identity or message kind. */
+static int message_runtime_field(yvex_client_message *candidate,
+                                 unsigned int tag,
+                                 const unsigned char *bytes,
+                                 unsigned long long count)
+{
+    unsigned long long value;
+    int valid = 1;
+#define RUNTIME_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
+    switch (tag) {
+    case TAG_RUNTIME_STATUS: valid = RUNTIME_U64(candidate->runtime.status); break;
+    case TAG_RUNTIME_BACKEND: valid = RUNTIME_U64(candidate->runtime.backend); break;
+    case TAG_SOCKET_PATH:
+        valid = reader_text(bytes, count, candidate->runtime.socket_path,
+                            sizeof(candidate->runtime.socket_path));
+        break;
+    case TAG_TARGET_ID:
+        valid = reader_text(bytes, count, candidate->runtime.target_id,
+                            sizeof(candidate->runtime.target_id));
+        break;
+    case TAG_RUNTIME_MODEL_ID:
+        valid = reader_text(bytes, count, candidate->runtime.runtime_model_identity,
+                            sizeof(candidate->runtime.runtime_model_identity));
+        break;
+    case TAG_RUNTIME_BINDING_ID:
+        valid = reader_text(bytes, count, candidate->runtime.runtime_binding_identity,
+                            sizeof(candidate->runtime.runtime_binding_identity));
+        break;
+    case TAG_ARTIFACT_ID:
+        valid = reader_text(bytes, count, candidate->runtime.artifact_identity,
+                            sizeof(candidate->runtime.artifact_identity));
+        break;
+    case TAG_PHYSICAL_VARIANT_ID:
+        valid = reader_text(bytes, count, candidate->runtime.physical_variant_identity,
+                            sizeof(candidate->runtime.physical_variant_identity));
+        break;
+    case TAG_CONTEXT_CAPACITY: valid = RUNTIME_U64(candidate->runtime.context_capacity); break;
+    case TAG_SESSION_COUNT: valid = RUNTIME_U64(candidate->runtime.session_count); break;
+    case TAG_RUNTIME_REQUEST_COUNT: valid = RUNTIME_U64(candidate->runtime.request_count); break;
+    case TAG_RUNTIME_FLAGS:
+        valid = reader_u64(bytes, count, &value) && !(value & ~7u);
+        candidate->runtime.runtime_ready = (value & 1u) != 0u;
+        candidate->runtime.generation_ready = (value & 2u) != 0u;
+        candidate->runtime.public_server_ready = (value & 4u) != 0u;
+        break;
+    case TAG_METRICS: valid = reader_metrics(bytes, count, &candidate->runtime.metrics); break;
+    default: return 0;
+    }
+#undef RUNTIME_U64
+    return valid ? 1 : -1;
+}
+
+/* Purpose: decode one authoritative typed-event field from a server message.
+ * Inputs: candidate, tag, and explicit field bytes/count.
+ * Effects: writes one recognized event field for later identity validation.
+ * Failure: returns negative for malformed recognized fields and zero for unknown fields.
+ * Boundary: event identity is validated only after the complete message is decoded. */
+static int message_event_field(yvex_client_message *candidate,
+                               unsigned int tag,
+                               const unsigned char *bytes,
+                               unsigned long long count)
+{
+    unsigned long long value;
+    int valid = 1;
+#define EVENT_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
+    switch (tag) {
+    case TAG_EVENT_SEQUENCE: valid = EVENT_U64(candidate->event.sequence); break;
+    case TAG_EVENT_WALL_TIME: valid = EVENT_U64(candidate->event.wall_time_ns); break;
+    case TAG_EVENT_MONOTONIC_TIME: valid = EVENT_U64(candidate->event.monotonic_time_ns); break;
+    case TAG_EVENT_PROCESS_ID: valid = EVENT_U64(candidate->event.process_id); break;
+    case TAG_EVENT_KIND: valid = EVENT_U64(candidate->event.kind); break;
+    case TAG_EVENT_SEVERITY: valid = EVENT_U64(candidate->event.severity); break;
+    case TAG_EVENT_SESSION_ID:
+        valid = reader_text(bytes, count, candidate->event.session_id,
+                            sizeof(candidate->event.session_id));
+        break;
+    case TAG_EVENT_REQUEST_ID:
+        valid = reader_text(bytes, count, candidate->event.request_id,
+                            sizeof(candidate->event.request_id));
+        break;
+    case TAG_EVENT_TURN_ID:
+        valid = reader_text(bytes, count, candidate->event.turn_id,
+                            sizeof(candidate->event.turn_id));
+        break;
+    case TAG_EVENT_PHASE:
+        valid = reader_text(bytes, count, candidate->event.phase,
+                            sizeof(candidate->event.phase));
+        break;
+    case TAG_EVENT_PROVIDER_ADAPTER:
+        valid = reader_text(bytes, count, candidate->event.provider_adapter,
+                            sizeof(candidate->event.provider_adapter));
+        break;
+    case TAG_EVENT_PROVIDER_REQUEST_ID:
+        valid = reader_text(bytes, count,
+                            candidate->event.provider_request_identity,
+                            sizeof(candidate->event.provider_request_identity));
+        break;
+    case TAG_EVENT_EXTERNAL_CORRELATION_ID:
+        valid = reader_text(bytes, count,
+                            candidate->event.external_correlation_id,
+                            sizeof(candidate->event.external_correlation_id));
+        break;
+    case TAG_EVENT_VALUE_A: valid = EVENT_U64(candidate->event.value_a); break;
+    case TAG_EVENT_VALUE_B: valid = EVENT_U64(candidate->event.value_b); break;
+    case TAG_EVENT_VALUE_C: valid = EVENT_U64(candidate->event.value_c); break;
+    case TAG_EVENT_SECONDS: valid = reader_double(bytes, count, &candidate->event.seconds); break;
+    case TAG_EVENT_RATE: valid = reader_double(bytes, count, &candidate->event.rate); break;
+    case TAG_EVENT_VARIANT_ID:
+        valid = reader_text(bytes, count, candidate->event.variant_identity,
+                            sizeof(candidate->event.variant_identity));
+        break;
+    case TAG_EVENT_RUNTIME_MODEL_ID:
+        valid = reader_text(bytes, count, candidate->event.runtime_model_identity,
+                            sizeof(candidate->event.runtime_model_identity));
+        break;
+    case TAG_EVENT_ARTIFACT_ID:
+        valid = reader_text(bytes, count, candidate->event.artifact_identity,
+                            sizeof(candidate->event.artifact_identity));
+        break;
+    case TAG_EVENT_IDENTITY:
+        valid = reader_text(bytes, count, candidate->event.event_identity,
+                            sizeof(candidate->event.event_identity));
+        break;
+    default: return 0;
+    }
+#undef EVENT_U64
+    return valid ? 1 : -1;
 }
 
 /* Purpose: validate and publish one fully decoded server-message candidate.
@@ -610,7 +925,7 @@ int yvex_protocol_message_decode(const unsigned char *input,
     wire_reader reader = {input, byte_count, 0u, {0u, 0u}};
     yvex_client_message candidate;
     const unsigned char *bytes;
-    unsigned long long count, value;
+    unsigned long long count;
     unsigned int tag;
     int next, valid = 1, have_kind = 0;
     if (!input || !message || byte_count > YVEX_SERVER_FRAME_MAX_BYTES)
@@ -621,184 +936,22 @@ int yvex_protocol_message_decode(const unsigned char *input,
     candidate.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     candidate.event.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     while ((next = reader_next(&reader, &tag, &bytes, &count)) > 0 && valid) {
-#define READ_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
-        switch (tag) {
-        case TAG_MESSAGE_KIND:
-            valid = reader_u64(bytes, count, &value) &&
-                    value <= YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
-            candidate.kind = (yvex_client_message_kind)value;
-            have_kind = valid;
-            break;
-        case TAG_STATUS:
-            valid = reader_u64(bytes, count, &value) && value <= UINT32_MAX;
-            if (valid) candidate.status = (int)(int32_t)(uint32_t)value;
-            break;
-        case TAG_REQUEST_NUMBER: valid = READ_U64(candidate.request_number); break;
-        case TAG_SESSION_NAME:
-            valid = reader_text(bytes, count, candidate.session_name,
-                                sizeof(candidate.session_name));
-            break;
-        case TAG_REASON:
-            valid = reader_text(bytes, count, candidate.reason,
-                                sizeof(candidate.reason));
-            break;
-        case TAG_BYTES:
-            valid = count <= sizeof(candidate.bytes);
-            if (valid && count) memcpy(candidate.bytes, bytes, (size_t)count);
-            candidate.byte_count = count;
-            break;
-        case TAG_PROMPT_TOKENS: valid = READ_U64(candidate.prompt_tokens); break;
-        case TAG_REUSED_TOKENS: valid = READ_U64(candidate.reused_tokens); break;
-        case TAG_PREFILL_TOKENS: valid = READ_U64(candidate.prefill_tokens); break;
-        case TAG_GENERATED_TOKENS: valid = READ_U64(candidate.generated_tokens); break;
-        case TAG_FINAL_POSITION: valid = READ_U64(candidate.final_position); break;
-        case TAG_QUEUE_SECONDS:
-            valid = reader_double(bytes, count, &candidate.queue_seconds);
-            break;
-        case TAG_PREFILL_SECONDS:
-            valid = reader_double(bytes, count, &candidate.prefill_seconds);
-            break;
-        case TAG_FIRST_TOKEN_SECONDS:
-            valid = reader_double(bytes, count,
-                                  &candidate.first_token_seconds);
-            break;
-        case TAG_DECODE_SECONDS:
-            valid = reader_double(bytes, count, &candidate.decode_seconds);
-            break;
-        case TAG_PREFILL_RATE:
-            valid = reader_double(bytes, count, &candidate.prefill_rate);
-            break;
-        case TAG_DECODE_RATE:
-            valid = reader_double(bytes, count, &candidate.decode_rate);
-            break;
-        case TAG_STOP_REASON:
-            valid = reader_u64(bytes, count, &value) && value <= UINT_MAX;
-            if (valid) candidate.stop_reason = (unsigned int)value;
-            break;
-        case TAG_SESSION_STATE: valid = READ_U64(candidate.session_state); break;
-        case TAG_SESSION_IDENTITY:
-            valid = reader_text(bytes, count, candidate.session_identity,
-                                sizeof(candidate.session_identity));
-            break;
-        case TAG_TURN_IDENTITY:
-            valid = reader_text(bytes, count, candidate.turn_identity,
-                                sizeof(candidate.turn_identity));
-            break;
-        case TAG_STATE_DIGEST:
-            valid = reader_text(bytes, count, candidate.state_digest,
-                                sizeof(candidate.state_digest));
-            break;
-        case TAG_GENERATED_TOKEN_IDENTITY:
-            valid = reader_text(bytes, count,
-                                candidate.generated_token_identity,
-                                sizeof(candidate.generated_token_identity));
-            break;
-        case TAG_GENERATED_TEXT_DIGEST:
-            valid = reader_text(bytes, count,
-                                candidate.generated_text_digest,
-                                sizeof(candidate.generated_text_digest));
-            break;
-        case TAG_RUNTIME_STATUS: valid = READ_U64(candidate.runtime.status); break;
-        case TAG_RUNTIME_BACKEND: valid = READ_U64(candidate.runtime.backend); break;
-        case TAG_SOCKET_PATH:
-            valid = reader_text(bytes, count, candidate.runtime.socket_path,
-                                sizeof(candidate.runtime.socket_path));
-            break;
-        case TAG_TARGET_ID:
-            valid = reader_text(bytes, count, candidate.runtime.target_id,
-                                sizeof(candidate.runtime.target_id));
-            break;
-        case TAG_RUNTIME_MODEL_ID:
-            valid = reader_text(bytes, count,
-                                candidate.runtime.runtime_model_identity,
-                                sizeof(candidate.runtime.runtime_model_identity));
-            break;
-        case TAG_RUNTIME_BINDING_ID:
-            valid = reader_text(bytes, count,
-                                candidate.runtime.runtime_binding_identity,
-                                sizeof(candidate.runtime.runtime_binding_identity));
-            break;
-        case TAG_ARTIFACT_ID:
-            valid = reader_text(bytes, count,
-                                candidate.runtime.artifact_identity,
-                                sizeof(candidate.runtime.artifact_identity));
-            break;
-        case TAG_PHYSICAL_VARIANT_ID:
-            valid = reader_text(bytes, count,
-                                candidate.runtime.physical_variant_identity,
-                                sizeof(candidate.runtime.physical_variant_identity));
-            break;
-        case TAG_CONTEXT_CAPACITY: valid = READ_U64(candidate.runtime.context_capacity); break;
-        case TAG_SESSION_COUNT: valid = READ_U64(candidate.runtime.session_count); break;
-        case TAG_RUNTIME_REQUEST_COUNT: valid = READ_U64(candidate.runtime.request_count); break;
-        case TAG_RUNTIME_FLAGS:
-            valid = reader_u64(bytes, count, &value) && !(value & ~7u);
-            candidate.runtime.runtime_ready = (value & 1u) != 0u;
-            candidate.runtime.generation_ready = (value & 2u) != 0u;
-            candidate.runtime.public_server_ready = (value & 4u) != 0u;
-            break;
-        case TAG_METRICS:
-            valid = reader_metrics(bytes, count, &candidate.runtime.metrics);
-            break;
-        case TAG_EVENT_SEQUENCE: valid = READ_U64(candidate.event.sequence); break;
-        case TAG_EVENT_WALL_TIME: valid = READ_U64(candidate.event.wall_time_ns); break;
-        case TAG_EVENT_MONOTONIC_TIME:
-            valid = READ_U64(candidate.event.monotonic_time_ns);
-            break;
-        case TAG_EVENT_PROCESS_ID: valid = READ_U64(candidate.event.process_id); break;
-        case TAG_EVENT_KIND: valid = READ_U64(candidate.event.kind); break;
-        case TAG_EVENT_SEVERITY: valid = READ_U64(candidate.event.severity); break;
-        case TAG_EVENT_SESSION_ID:
-            valid = reader_text(bytes, count, candidate.event.session_id,
-                                sizeof(candidate.event.session_id));
-            break;
-        case TAG_EVENT_REQUEST_ID:
-            valid = reader_text(bytes, count, candidate.event.request_id,
-                                sizeof(candidate.event.request_id));
-            break;
-        case TAG_EVENT_TURN_ID:
-            valid = reader_text(bytes, count, candidate.event.turn_id,
-                                sizeof(candidate.event.turn_id));
-            break;
-        case TAG_EVENT_PHASE:
-            valid = reader_text(bytes, count, candidate.event.phase,
-                                sizeof(candidate.event.phase));
-            break;
-        case TAG_EVENT_VALUE_A: valid = READ_U64(candidate.event.value_a); break;
-        case TAG_EVENT_VALUE_B: valid = READ_U64(candidate.event.value_b); break;
-        case TAG_EVENT_VALUE_C: valid = READ_U64(candidate.event.value_c); break;
-        case TAG_EVENT_SECONDS:
-            valid = reader_double(bytes, count, &candidate.event.seconds);
-            break;
-        case TAG_EVENT_RATE:
-            valid = reader_double(bytes, count, &candidate.event.rate);
-            break;
-        case TAG_EVENT_VARIANT_ID:
-            valid = reader_text(bytes, count, candidate.event.variant_identity,
-                                sizeof(candidate.event.variant_identity));
-            break;
-        case TAG_EVENT_RUNTIME_MODEL_ID:
-            valid = reader_text(bytes, count,
-                                candidate.event.runtime_model_identity,
-                                sizeof(candidate.event.runtime_model_identity));
-            break;
-        case TAG_EVENT_ARTIFACT_ID:
-            valid = reader_text(bytes, count,
-                                candidate.event.artifact_identity,
-                                sizeof(candidate.event.artifact_identity));
-            break;
-        case TAG_EVENT_IDENTITY:
-            valid = reader_text(bytes, count, candidate.event.event_identity,
-                                sizeof(candidate.event.event_identity));
-            break;
-        default: break;
-        }
-#undef READ_U64
+        int field = message_base_field(&candidate, tag, bytes, count,
+                                       &have_kind);
+        if (!field)
+            field = message_runtime_field(&candidate, tag, bytes, count);
+        if (!field)
+            field = message_event_field(&candidate, tag, bytes, count);
+        if (field < 0) valid = 0;
     }
     return message_publish(&candidate, next, valid, have_kind, message, err);
 }
 
-/* Purpose: read or write a complete byte span while preserving the first I/O error. */
+/* Purpose: read or write a complete byte span while preserving the first I/O error.
+ * Inputs: socket descriptor, mutable byte span/count, direction, and error output.
+ * Effects: advances the exact span until complete.
+ * Failure: distinguishes configured timeout from peer closure and other I/O failure.
+ * Boundary: raw local transport only; frame syntax remains with the caller. */
 static int transfer_all(int fd, void *buffer, size_t count, int writing,
                         yvex_error *err)
 {
@@ -809,12 +962,40 @@ static int transfer_all(int fd, void *buffer, size_t count, int writing,
                                 : recv(fd, bytes + offset, count - offset, 0);
         if (moved < 0 && errno == EINTR)
             continue;
+        if (moved < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            return protocol_refuse(err, YVEX_ERR_TIMEOUT,
+                                   "local protocol operation timed out");
         if (moved <= 0)
             return protocol_refuse(err, YVEX_ERR_IO,
                                    writing ? "local socket write failed"
                                            : "local socket closed during frame read");
         offset += (size_t)moved;
     }
+    return YVEX_OK;
+}
+
+/* Purpose: apply or clear one bounded local-protocol socket I/O timeout.
+ * Inputs: connected client, milliseconds where zero clears the timeout, and error output.
+ * Effects: updates both receive and send timeout policy on the owned descriptor.
+ * Failure: preserves descriptor ownership and reports conversion or socket refusal.
+ * Boundary: controls transport waiting only; generation cancellation remains caller-owned. */
+int yvex_client_timeout_set(yvex_client *client,
+                            unsigned long long milliseconds,
+                            yvex_error *err)
+{
+    struct timeval timeout;
+    if (!client || client->fd < 0 || milliseconds > 86400000u)
+        return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "connected client and bounded timeout are required");
+    timeout.tv_sec = (time_t)(milliseconds / 1000u);
+    timeout.tv_usec = (suseconds_t)((milliseconds % 1000u) * 1000u);
+    if (setsockopt(client->fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                   sizeof(timeout)) != 0 ||
+        setsockopt(client->fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+                   sizeof(timeout)) != 0)
+        return protocol_refuse(err, YVEX_ERR_IO,
+                               "local protocol timeout configuration failed");
+    yvex_error_clear(err);
     return YVEX_OK;
 }
 
@@ -944,6 +1125,11 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
                                "local client allocation failed");
     }
     client->fd = fd;
+    if (yvex_client_timeout_set(client, 30000u, err) != YVEX_OK) {
+        (void)close(client->fd);
+        free(client);
+        return yvex_error_code(err);
+    }
     memset(&handshake, 0, sizeof(handshake));
     handshake.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     handshake.operation = YVEX_CLIENT_OP_HANDSHAKE;
@@ -953,13 +1139,18 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
     if (yvex_client_send(client, &handshake, err) != YVEX_OK ||
         yvex_client_receive(client, &response, err) != YVEX_OK ||
         response.kind != YVEX_CLIENT_MESSAGE_ACK ||
-        response.status != YVEX_OK || strcmp(response.reason, "protocol-v1") != 0) {
+        response.status != YVEX_OK || strcmp(response.reason, "protocol-v2") != 0) {
         (void)close(client->fd);
         memset(client, 0, sizeof(*client));
         free(client);
         if (yvex_error_code(err) == YVEX_OK)
             yvex_error_set(err, YVEX_ERR_FORMAT, "server.protocol.handshake",
-                           "daemon did not admit local protocol version 1");
+                           "daemon did not admit local protocol version 2");
+        return yvex_error_code(err);
+    }
+    if (yvex_client_timeout_set(client, 0u, err) != YVEX_OK) {
+        (void)close(client->fd);
+        free(client);
         return yvex_error_code(err);
     }
     *out = client;
@@ -979,7 +1170,8 @@ int yvex_client_send(yvex_client *client, const yvex_client_request *request,
     if (!client || client->fd < 0 || !request)
         return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
                                "connected client and request are required");
-    capacity = request->prompt_bytes + 512u;
+    capacity = request->provider_request ? YVEX_SERVER_FRAME_MAX_BYTES
+                                         : request->prompt_bytes + 512u;
     if (capacity > YVEX_SERVER_FRAME_MAX_BYTES)
         return protocol_refuse(err, YVEX_ERR_BOUNDS,
                                "client request exceeds frame capacity");
@@ -1032,6 +1224,7 @@ void yvex_client_close(yvex_client **client)
  * Failure: frees frame storage and preserves transactional decode refusal. Boundary: host consumes private ABI. */
 int yvex_server_protocol_receive(int fd, yvex_client_request *request,
                                  unsigned char **owned_prompt,
+                                 yvex_provider_request **owned_provider,
                                  yvex_error *err)
 {
     unsigned char *payload;
@@ -1039,7 +1232,7 @@ int yvex_server_protocol_receive(int fd, yvex_client_request *request,
     int rc = frame_receive(fd, FRAME_KIND_REQUEST, &payload, &count, err);
     if (rc == YVEX_OK)
         rc = yvex_protocol_request_decode(payload, count, request,
-                                          owned_prompt, err);
+                                          owned_prompt, owned_provider, err);
     free(payload);
     return rc;
 }

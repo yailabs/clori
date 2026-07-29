@@ -28,6 +28,8 @@ flowchart LR
         watch[Engine watch]
         chat[REPL / chat]
         run[yvex run]
+        gateway[yvex-openai]
+        apps[SDKs / applications]
     end
 
     artifact --> worker
@@ -36,6 +38,7 @@ flowchart LR
     events --> watch
     protocol <--> chat
     protocol <--> run
+    protocol <--> gateway <--> apps
 
     dev[yvex-dev<br/>engineering tools]
     dev -.-> compiler
