@@ -3,6 +3,12 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
+grep -nF 'test-layout: $(LIBYVEX) $(YVEX_BIN) $(TEST_REFERENCE_OBJS) tests/test_source_layout.sh' \
+  Makefile >/dev/null || {
+  echo "source layout: test-layout lacks required production dependencies" >&2
+  exit 1
+}
+
 sh tests/test_source_ownership.sh
 sh tests/test_repository_layout.sh
 sh tests/test_architecture_boundaries.sh

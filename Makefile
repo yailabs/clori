@@ -1366,7 +1366,7 @@ test-gguf-layout-integrity: $(TEST_RUNNER) tests/test_gguf_layout_integrity.sh
 test-gguf-qtype-abi: $(TEST_RUNNER) tests/test_gguf_qtype_abi.sh
 	sh tests/test_gguf_qtype_abi.sh
 
-test-layout: tests/test_source_layout.sh
+test-layout: $(LIBYVEX) $(YVEX_BIN) $(TEST_REFERENCE_OBJS) tests/test_source_layout.sh
 	sh tests/test_source_layout.sh
 
 test-code-natural: tests/test_code_natural.sh
@@ -1658,4 +1658,4 @@ clean:
 	elif [ -e "$$build_dir" ]; then \
 		printf 'clean: refusing non-directory BUILD_DIR: %s\n' "$$build_dir" >&2; exit 1; \
 	fi; \
-	rm -f -- ./yvex ./yvexd ./*.o
+	rm -f -- ./yvex ./yvexd ./yvex-dev ./*.o
