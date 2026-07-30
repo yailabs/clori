@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="YVEX logo" width="180">
+  <img src="docs/logo.svg" alt="YVEX logo" width="160">
 </p>
 
 # YVEX

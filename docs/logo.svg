@@ -9,11 +9,11 @@
   <defs>
     <linearGradient id="ringMetal" gradientUnits="userSpaceOnUse"
                     x1="132" y1="92" x2="382" y2="366">
-      <stop offset="0" stop-color="#4f545c"/>
-      <stop offset="0.22" stop-color="#8c929b"/>
-      <stop offset="0.50" stop-color="#596069"/>
-      <stop offset="0.78" stop-color="#a3a8af"/>
-      <stop offset="1" stop-color="#555b64"/>
+      <stop offset="0" stop-color="#686e76"/>
+      <stop offset="0.22" stop-color="#a7abb1"/>
+      <stop offset="0.50" stop-color="#747a82"/>
+      <stop offset="0.78" stop-color="#b1b5ba"/>
+      <stop offset="1" stop-color="#666c74"/>
     </linearGradient>
 
     <linearGradient id="gold" gradientUnits="userSpaceOnUse"
@@ -26,17 +26,17 @@
     </linearGradient>
 
     <style>
-      .ring-shadow { stroke: #17191d; opacity: 0.42; }
-      .ring-highlight { stroke: #ffffff; opacity: 0.24; }
-      .slash-highlight { stroke: #fff0ad; opacity: 0.38; }
+      .ring-shadow { stroke: #202329; opacity: 0.34; }
+      .ring-highlight { stroke: #ffffff; opacity: 0.30; }
+      .slash-highlight { stroke: #fff0ad; opacity: 0.42; }
       .star { fill: #d6a222; }
       .star-core { fill: #fff1a1; }
       .word { fill: #666c75; }
       .word-accent { fill: #b6812b; }
 
       @media (prefers-color-scheme: dark) {
-        .ring-shadow { stroke: #050607; opacity: 0.68; }
-        .ring-highlight { opacity: 0.34; }
+        .ring-shadow { stroke: #050607; opacity: 0.52; }
+        .ring-highlight { opacity: 0.38; }
         .star { fill: #efbd35; }
         .star-core { fill: #fff8c9; }
         .word { fill: #c7cbd1; }
@@ -49,22 +49,22 @@
   <g fill="none" stroke-linecap="round">
     <path d="M 390.0 125.4 A 170 170 0 0 1 146.7 360.2
              M 121.9 334.7 A 170 170 0 0 1 365.3 99.8"
-          class="ring-shadow" stroke-width="17"/>
+          class="ring-shadow" stroke-width="9"/>
     <path d="M 390.0 125.4 A 170 170 0 0 1 146.7 360.2
              M 121.9 334.7 A 170 170 0 0 1 365.3 99.8"
-          stroke="url(#ringMetal)" stroke-width="11"/>
+          stroke="url(#ringMetal)" stroke-width="5.8"/>
     <path d="M 390.0 125.4 A 170 170 0 0 1 146.7 360.2
              M 121.9 334.7 A 170 170 0 0 1 365.3 99.8"
-          class="ring-highlight" stroke-width="2"/>
+          class="ring-highlight" stroke-width="0.9"/>
   </g>
 
   <!-- Crisp diagonal: no raster blur, so the edge remains clean at README size. -->
   <path d="M 49 458 L 458 49" fill="none" stroke="#4e3412"
-        stroke-width="10" stroke-linecap="round" opacity="0.44"/>
+        stroke-width="6.2" stroke-linecap="round" opacity="0.38"/>
   <path d="M 49 458 L 458 49" fill="none" stroke="url(#gold)"
-        stroke-width="7" stroke-linecap="round"/>
+        stroke-width="4.2" stroke-linecap="round"/>
   <path d="M 53 454 L 454 53" fill="none" class="slash-highlight"
-        stroke-width="1.4" stroke-linecap="round"/>
+        stroke-width="0.7" stroke-linecap="round"/>
 
   <!-- Four-point star, kept broad enough to remain legible below 200 CSS pixels. -->
   <path d="M 256 106
