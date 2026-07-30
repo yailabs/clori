@@ -195,7 +195,7 @@ test -z "$(find docs/diagrams -maxdepth 1 -type f \
 require_text PROJECT.md 'V010.RUNTIME.CLIENT.REFOUNDATION.0'
 require_text PROJECT.md 'V010.DOCS.README.PRODUCT.0'
 require_text PROJECT.md 'V010.CLI.DEEPSEEK.GENERATE.0: superseded'
-require_text PROJECT.md 'Active Next: V010.OPERATOR.SURFACE.AUDIT.0'
+require_text PROJECT.md 'Active Next: V010.PROJECT.CONTROL.PUBLIC.0'
 require_text PROJECT.md 'model_behavior_evaluation_ready=0'
 require_text PROJECT.md 'release_qualification_ready=0'
 
