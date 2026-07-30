@@ -188,9 +188,6 @@ candidates, and one inert flag is a removal/definition candidate.
   neither lists models nor reports the live daemon model.
 - protocol operations MODEL_SHOW, ARTIFACT_SHOW, and ARTIFACT_VERIFY all return
   the same runtime status message and are provisional false facades.
-- /status sends SESSION_SHOW for the current session, while yvex runtime status
-  sends RUNTIME_STATUS. Their names imply a shared operation that does not
-  exist.
 - runtime trace accepts --follow but follows with or without it.
 - runtime watch exposes generic a/b event payloads rather than the semantic
   operational view claimed by documentation.
@@ -214,10 +211,10 @@ public grammar.
 
 ## Overlap accounting
 
-The audit analyzes 18 named overlap groups.
+The audit analyzes 17 named overlap groups.
 
 - 4 exact duplicate surface groups;
-- 5 semantic-overlap groups requiring one declared authority;
+- 4 semantic-overlap groups requiring one declared authority;
 - 39 offline adapter projections, of which 23 reconstruct or rename the lower
   adapter spelling;
 - 15 user-facing transport/interaction projections (10 slash commands and 5

@@ -329,7 +329,7 @@ Slash commands become adapters:
 | /cancel | generation.cancel |
 | /quit | REPL-local exit |
 | /help | command discovery |
-| /status | explicit composed console status or renamed /session |
+| /status | runtime.status |
 
 The adapter may tailor interaction and rendering, but cannot duplicate
 validation or session semantics.

@@ -8,7 +8,7 @@ identify the baseline owner; later edits may move them.
 | Severity | Count | Progression effect |
 |---|---:|---|
 | P0 — authority/correctness violation | 0 | none found |
-| P1 — public semantic defect | 9 | input to command-console; three provisional protocol operations require explicit disposition |
+| P1 — public semantic defect | 8 | input to command-console; three provisional protocol operations require explicit disposition |
 | P2 — architecture/maintenance debt | 13 | registry and taxonomy work |
 | P3 — presentation/documentation debt | 5 | renderer/help work |
 
@@ -61,20 +61,7 @@ runtime status.
 
 Owner: protocol part of V010.OPERATOR.COMMAND.CONSOLE.0.
 
-### P1-04 — REPL /status is not runtime status
-
-Evidence: the slash branch invokes SESSION_SHOW for the current session.
-External yvex runtime status invokes RUNTIME_STATUS.
-
-Consequence: identical status language refers to different authorities and
-schemas.
-
-Disposition: reserve /status for an explicit composed console view or rename
-the current operation to /session. The registry must record the distinction.
-
-Owner: V010.OPERATOR.COMMAND.CONSOLE.0.
-
-### P1-05 — runtime trace --follow is inert
+### P1-04 — runtime trace --follow is inert
 
 Evidence: src/cli/io/client.c accepts --follow, then invokes runtime_events(1)
 exactly as it does without the flag. Both calls block and follow events.
@@ -87,7 +74,7 @@ with a real operation contract.
 
 Owner: V010.OPERATOR.COMMAND.CONSOLE.0.
 
-### P1-06 — human runtime status contradicts documented fields
+### P1-05 — human runtime status contradicts documented fields
 
 Evidence: render_status() receives physical-variant identity and the complete
 server summary; its JSON projection includes the variant. The human renderer
@@ -103,7 +90,7 @@ descriptor; retain different layouts, not different truth.
 
 Owner: V010.OPERATOR.COMMAND.CONSOLE.0.
 
-### P1-07 — runtime watch is not the claimed semantic view
+### P1-06 — runtime watch is not the claimed semantic view
 
 Evidence: runtime_events(0) prints event name followed by generic a= and b=
 fields. The CLI-output architecture describes an interpreted operational
@@ -117,7 +104,7 @@ Do not change event truth or create a second metric system.
 
 Owner: V010.OPERATOR.COMMAND.CONSOLE.0.
 
-### P1-08 — help cannot describe the reachable grammar
+### P1-07 — help cannot describe the reachable grammar
 
 Evidence: print_help() is a manual summary independent of the 39-row offline
 table. It omits admitted actions such as artifact template/model-gate,
@@ -133,7 +120,7 @@ default versus advanced visibility.
 
 Owner: V010.OPERATOR.COMMAND.CONSOLE.0.
 
-### P1-09 — artifact verify has two unowned grammars
+### P1-08 — artifact verify has two unowned grammars
 
 Evidence: src/cli/main.c silently rewrites a bare first argument into
 integrity check --model. Dynamic help documents check/report forms, not the
@@ -188,7 +175,7 @@ The audit uses four distinct terms:
 - transport projection: REPL or HTTP syntax maps to an existing semantic
   operation and is correctly allowed to render differently.
 
-Eighteen overlap groups were reviewed.
+Seventeen overlap groups were reviewed.
 
 ### Four exact duplicate groups
 
@@ -201,13 +188,12 @@ Eighteen overlap groups were reviewed.
 Build/test aliases may remain if project control declares one canonical CI
 name. The model duplicate is a public defect.
 
-### Five semantic-overlap groups
+### Four semantic-overlap groups
 
 1. selected model configuration versus live runtime model identity;
 2. evidence models registry/current/use versus product model list/show/use;
 3. artifact show/verify versus the three provisional protocol facade IDs;
-4. graph profile/benchmark/qualify versus dedicated profile/benchmark planes;
-5. runtime status, REPL /status, and HTTP health/model projections.
+4. graph profile/benchmark/qualify versus dedicated profile/benchmark planes.
 
 These are not assumed equivalent. Each needs one operation authority and
 explicit projection mapping.
@@ -242,27 +228,26 @@ violations.
 There are 15 user-facing projection rows: 10 slash commands and 5 HTTP
 endpoints. The local protocol has 17 operation enum values.
 
-Correct projections include session new/list/attach/detach/reset/close and
-generation cancellation. Chat Completions and Responses legitimately map HTTP
-syntax to provider-neutral requests and the same server generation/session
-authority.
+Correct projections include runtime status through both `yvex runtime status`
+and `/status`, session new/list/attach/detach/reset/close, and generation
+cancellation. Chat Completions and Responses legitimately map HTTP syntax to
+provider-neutral requests and the same server generation/session authority.
 
-Problem projections are /status and the three false facade enum values. They
-must not be counted as separate domain capabilities.
+The three false facade enum values are problem projections. They must not be
+counted as separate domain capabilities.
 
 ## Misleading or provisional surfaces
 
-Nine surface-level items require explicit disposition:
+Eight surface-level items require explicit disposition:
 
 1. yvex model list;
 2. yvex model show;
-3. REPL /status;
-4. yvex runtime watch human rendering contract;
-5. yvex runtime trace --follow grammar;
-6. YVEX_CLIENT_OP_MODEL_SHOW;
-7. YVEX_CLIENT_OP_ARTIFACT_SHOW;
-8. YVEX_CLIENT_OP_ARTIFACT_VERIFY;
-9. /health gateway terminology.
+3. yvex runtime watch human rendering contract;
+4. yvex runtime trace --follow grammar;
+5. YVEX_CLIENT_OP_MODEL_SHOW;
+6. YVEX_CLIENT_OP_ARTIFACT_SHOW;
+7. YVEX_CLIENT_OP_ARTIFACT_VERIFY;
+8. /health gateway terminology.
 
 The artifact verify shorthand and incomplete help are additional grammar
 defects, but are not counted again as standalone surfaces.
