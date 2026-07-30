@@ -45,15 +45,7 @@
     </style>
   </defs>
 
-  <!-- The diagonal is exactly centered on the planet and star at (256, 230). -->
-  <path d="M 46 440 L 466 20" fill="none" stroke="#4e3412"
-        stroke-width="6.2" stroke-linecap="round" opacity="0.38"/>
-  <path d="M 46 440 L 466 20" fill="none" stroke="url(#gold)"
-        stroke-width="4.2" stroke-linecap="round"/>
-  <path d="M 50 436 L 462 24" fill="none" class="slash-highlight"
-        stroke-width="0.7" stroke-linecap="round"/>
-
-  <!-- A complete circle is rendered above the diagonal, so its contour never breaks. -->
+  <!-- The planet is one complete circle. -->
   <g fill="none">
     <circle cx="256" cy="230" r="170"
             class="ring-shadow" stroke-width="9"/>
@@ -62,6 +54,14 @@
     <circle cx="256" cy="230" r="170"
             class="ring-highlight" stroke-width="0.9"/>
   </g>
+
+  <!-- The centered light blade renders above the planet and below the star. -->
+  <path d="M 46 440 L 466 20" fill="none" stroke="#4e3412"
+        stroke-width="6.2" stroke-linecap="round" opacity="0.38"/>
+  <path d="M 46 440 L 466 20" fill="none" stroke="url(#gold)"
+        stroke-width="4.2" stroke-linecap="round"/>
+  <path d="M 50 436 L 462 24" fill="none" class="slash-highlight"
+        stroke-width="0.7" stroke-linecap="round"/>
 
   <!-- Four-point star, kept broad enough to remain legible below 200 CSS pixels. -->
   <path d="M 256 106
