@@ -80,7 +80,7 @@ function uncode(value) {
 ' "$project" > "$rows"
 
 row_count=$(wc -l < "$rows" | tr -d ' ')
-test "$row_count" -eq 694 || fail "expected 694 canonical IDs, found $row_count"
+test "$row_count" -eq 696 || fail "expected 696 canonical IDs, found $row_count"
 
 cut -f 2 "$rows" | LC_ALL=C sort > "$all_ids"
 unique_count=$(uniq "$all_ids" | wc -l | tr -d ' ')
@@ -91,7 +91,7 @@ duplicate=$(uniq -d "$all_ids" | head -n 1 || true)
 test -z "$duplicate" || fail "duplicate canonical ID: $duplicate"
 
 id_hash=$(sha256sum "$all_ids" | awk '{ print $1 }')
-expected_id_hash=72e2919f378f41cfc478b26a52c50f9ce30bbe7ab66c8a993c8c4e1dd97f6a33
+expected_id_hash=59a01876fbacc37488db2d32a400a6615120a109f666bc677bde5fd22c22536a
 test "$id_hash" = "$expected_id_hash" ||
   fail "canonical ID set changed without an explicit migration: $id_hash"
 
@@ -143,6 +143,8 @@ V010.OPERATOR.SURFACE.AUDIT.0
 V010.PROJECT.CONTROL.PUBLIC.0
 V010.OPERATOR.RUNTIME.CONSOLE.0
 V010.OPERATOR.COMMAND.CONSOLE.0
+V010.OPERATOR.COMMAND.ARCHITECTURE.0
+V010.OPERATOR.REPL.CONSOLE.0
 V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
 V010.EVAL.DEEPSEEK.0
 V010.BENCH.DEEPSEEK.0
@@ -163,7 +165,7 @@ EOF
 
 LC_ALL=C sort -u "$new_ids" -o "$new_ids"
 new_count=$(wc -l < "$new_ids" | tr -d ' ')
-test "$new_count" -eq 63 || fail "expected 63 explicit new IDs, found $new_count"
+test "$new_count" -eq 65 || fail "expected 65 explicit new IDs, found $new_count"
 
 missing_new=$(comm -23 "$new_ids" "$all_ids" | head -n 1 || true)
 test -z "$missing_new" || fail "explicit new ID is absent: $missing_new"
@@ -433,8 +435,12 @@ grep -F '| `V010.PROJECT.CONTROL.PUBLIC.0` | project | `active` |' "$project" >/
   fail "public project-control refoundation is not active"
 grep -F '| `V010.OPERATOR.RUNTIME.CONSOLE.0` | common console + DeepSeek first vertical | `superseded` |' "$project" >/dev/null ||
   fail "standalone runtime console is not superseded"
-grep -F '| `V010.OPERATOR.COMMAND.CONSOLE.0` | product commands + runtime console | `blocked` |' "$project" >/dev/null ||
-  fail "canonical command-console milestone is not blocked"
+grep -F '| `V010.OPERATOR.COMMAND.CONSOLE.0` | product commands + runtime console | `superseded` |' "$project" >/dev/null ||
+  fail "combined command-console milestone is not superseded"
+grep -F '| `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | product + engineering operations | `blocked` |' "$project" >/dev/null ||
+  fail "canonical command-architecture milestone is not blocked"
+grep -F '| `V010.OPERATOR.REPL.CONSOLE.0` | daemon-backed terminal + DeepSeek first vertical | `blocked` |' "$project" >/dev/null ||
+  fail "mature REPL-console milestone is not blocked"
 grep -F '| `V010.EVAL.DEEPSEEK.0` | DeepSeek | `blocked` |' "$project" >/dev/null ||
   fail "DeepSeek evaluation is not blocked behind performance and console"
 grep -F '| V010.MODEL.TRANSFORM.IR.0 | recovered/promoted |' "$project" >/dev/null ||

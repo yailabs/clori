@@ -5,7 +5,7 @@ Status: living engineering control
 Authority: product target, architecture tracks, complete wave ledger, milestone
 state, dependencies, evidence rank, family scope, release gates, and Active Next
 Recovery baseline: pre-refoundation `docs/spine.md` at commit `10ad6c3`
-Current proof stage: the accepted product topology exposes one public `yvex` command process and one long-lived `yvexd` runtime process. Runtime-facing commands cross local protocol v3, offline engineering commands share the finite `yvex` process without becoming a hosted model authority, and the bounded OpenAI-compatible listener runs inside `yvexd`. The identity-bound post-cutover surface audit is complete with zero unmatched executable, flag, slash, protocol, HTTP, Make, script, and environment/configuration inputs. Public project-control refoundation is now active before command-console implementation, measured optimization, and release-path evaluation work
+Current proof stage: the accepted product topology exposes one public `yvex` command process and one long-lived `yvexd` runtime process. Runtime-facing commands cross local protocol v3, offline engineering commands share the finite `yvex` process without becoming a hosted model authority, and the bounded OpenAI-compatible listener runs inside `yvexd`. The identity-bound post-cutover surface audit is complete with zero unmatched executable, flag, slash, protocol, HTTP, Make, script, and environment/configuration inputs. Public project-control refoundation is now active before the canonical command architecture, the separately owned mature runtime REPL, measured optimization, and release-path evaluation work
 
 ## 1. Authority And Update Contract
 
@@ -363,9 +363,9 @@ in a conversation or closure report is not part of the architecture.
 | Runtime | Content-addressed schema-V6 runtime bindings open each admitted physical artifact into one family-neutral process-resident model. Before `READY`, `yvexd` copies all 1,360 encoded tensor payloads into one anonymous host arena and requires the complete arena to be locked in physical RAM; the mixed candidate proves `resident_host_bytes=94,142,453,320` and `VmLck=91,935,992 KiB`. The sole long-lived `yvexd` process owns that model for its complete lifetime, one bounded model worker, independent server sessions, the private Unix listener, and the loopback OpenAI listener. Protocol v3 carries provider messages, tools, usage, finish classes, correlations, and integrated-listener status while the OpenAI adapter remains source-separated and reaches the existing session/worker authority through the local protocol. The partial performance delivery reduced the accepted cold-start candidate to 236.97 seconds, corrected residency accounting, and measured a 32-token warm request at 0.432 decode tokens/s with bounded stage, movement, launch, and synchronization facts; these are optimization evidence, not benchmark results or full performance admission. Physical-variant identities remain descriptor facts rather than host, adapter, or client policy. |
 | CUDA | Production C contains no fallback PTX. Context, Driver API memory operations, generated-bundle admission, resolved functions, exact variants, runtime-session CUDA Graph lifecycles, and persistent-state residency are distinct typed facts. A no-`nvcc` build refuses every kernel before dispatch. The GB10 eager path executes the backbone and direct encoded BF16 output-head projection over every vocabulary row without CPU numerical fallback. |
 | Transformer | Numeric token IDs execute through selected encoded embedding rows, exact four-stream mHC initialization, 43 canonical attention/MoE blocks, deferred FFN mHC posts, final mHC collapse, and final RMSNorm on CPU and GB10 CUDA. One global state transaction commits all attention publications and advances position only after finite normalized hidden output is ready. The generation owner consumes this numeric boundary unchanged for prompt prefill and sampled-token decode. |
-| Operator | `yvex` is the sole public command executable. Its runtime-client lane owns `chat`, `run`, `runtime`, `session`, and hosted-model administration and can reach the engine only through the local protocol; its offline lane owns the absorbed nested artifact, graph, quantization, tokenizer, source, tensor, and evidence operations and may link `libyvex` for finite engineering work. Route-level dependency and dispatch guards prevent daemon-backed commands from opening artifacts, initializing CUDA, or becoming a second hosted model authority. The frozen `ec7dcc` audit reconciles 70 route-level commands, 426 command/flag pairs, 99 operations, 121 Make targets, 52 scripts, 100 environment/build inputs, 26 orphan catalogs, and two external child-CLI projections with zero unmatched categories. It also records transitional manual dispatch/help/slash authorities, report-mode walls, misleading selected/live-model projections, three provisional protocol facades, and semantic-renderer gaps for the later command-console owner. |
+| Operator | `yvex` is the sole public command executable. Its runtime-client lane owns `chat`, `run`, `runtime`, `session`, and hosted-model administration and can reach the engine only through the local protocol; its offline lane owns the absorbed nested artifact, graph, quantization, tokenizer, source, tensor, and evidence operations and may link `libyvex` for finite engineering work. Route-level dependency and dispatch guards prevent daemon-backed commands from opening artifacts, initializing CUDA, or becoming a second hosted model authority. The frozen `ec7dcc` audit reconciles 70 route-level commands, 426 command/flag pairs, 99 operations, 121 Make targets, 52 scripts, 100 environment/build inputs, 26 orphan catalogs, and two external child-CLI projections with zero unmatched categories. The canonical command-architecture successor owns registry, parsing, protocol facts, discovery, and semantic repair; the separately ordered REPL successor consumes that authority and owns only the mature terminal experience. |
 | Text path | Exact artifact-bound text/message encoding composes with real prefill, full logits, sampling, unchanged sampled-token decode feedback, typed terminal/context stops, and incremental detokenization. `yvex run` streams one daemon-backed turn; `yvex chat` provides retained multi-turn sessions whose second turn reuses exact prior KV and prefills only the new prompt suffix. Model quality remains unclaimed. |
-| Evaluation | Model behavior and model quality evaluation require the complete tokenizer-to-text and application-provider path. Evaluation is blocked behind the active public project-control refoundation, canonical command-console work, and the measured GB10 optimization continuation; no behavior or quality result exists yet, and attention numerical conformance is not model evaluation. |
+| Evaluation | Model behavior and model quality evaluation require the complete tokenizer-to-text and application-provider path. Evaluation is blocked behind the active public project-control refoundation, canonical command architecture, mature REPL console, and measured GB10 optimization continuation; no behavior or quality result exists yet, and attention numerical conformance is not model evaluation. |
 | Benchmark | The runtime owns schema-v5 `attention_component` cold/warm, eager/piecewise/full measurements, identity-bound baseline comparison, JSON/CSV facts, and deterministic external SVG charts. Correctness, structural-runtime, and performance status remain independent. Release-path generation and full-model benchmark evidence remain not measured. |
 | Agent | No agent runtime, tool execution loop, agent evaluation owner, milestone, or operator command exists. Development agents, JSON output, external harnesses, and `yvexd` do not establish agent capability. |
 | Release | Release qualification remains blocked and is not promoted by component qualification or benchmark evidence. |
@@ -671,9 +671,11 @@ V010.RUNTIME.DEEPSEEK.PERFORMANCE.0: partial (startup and bounded profiling clos
 V010.PRODUCT.SURFACE.REALIGNMENT.0: complete (one public yvex surface, one yvexd runtime process, absorbed engineering commands, and integrated OpenAI listener)
 V010.OPERATOR.SURFACE.AUDIT.0: complete (frozen identity-bound command, flag, operation, automation, configuration, taxonomy, registry, and project-control input with zero unmatched categories)
 V010.PROJECT.CONTROL.PUBLIC.0: active (refound public project control from the accepted post-cutover topology and frozen audit)
-V010.OPERATOR.RUNTIME.CONSOLE.0: superseded (the isolated console plan is absorbed by the canonical command-console boundary)
-V010.OPERATOR.COMMAND.CONSOLE.0: blocked (canonical commands and runtime console wait for public project control)
-V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0: blocked (measured warm-runtime continuation after surface refoundation)
+V010.OPERATOR.RUNTIME.CONSOLE.0: superseded (the earlier isolated console plan is replaced by the ordered command-architecture and mature-REPL contracts)
+V010.OPERATOR.COMMAND.CONSOLE.0: superseded (the combined command and console plan is split before implementation)
+V010.OPERATOR.COMMAND.ARCHITECTURE.0: blocked (canonical operations, commands, flags, protocol facts, and discovery wait for public project control)
+V010.OPERATOR.REPL.CONSOLE.0: blocked (the mature daemon-backed terminal consumes the canonical command architecture)
+V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0: blocked (measured warm-runtime continuation waits for the mature REPL boundary)
 V010.EVAL.DEEPSEEK.0: blocked (PASS 5 waits for the measured GB10 optimization continuation)
 Active Next: V010.PROJECT.CONTROL.PUBLIC.0
 ```
@@ -1098,7 +1100,8 @@ V010.DOCS.README.COMPILATION.0
 -> V010.PRODUCT.SURFACE.REALIGNMENT.0
 -> V010.OPERATOR.SURFACE.AUDIT.0
 -> V010.PROJECT.CONTROL.PUBLIC.0
--> V010.OPERATOR.COMMAND.CONSOLE.0
+-> V010.OPERATOR.COMMAND.ARCHITECTURE.0
+-> V010.OPERATOR.REPL.CONSOLE.0
 -> V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
 -> V010.EVAL.DEEPSEEK.0
 -> V010.BENCH.DEEPSEEK.0
@@ -1135,17 +1138,17 @@ calculated from rows rather than protected by a summary hash.
 | Metric | Count |
 | --- | ---: |
 | Recovered IDs | 631 |
-| Explicit new IDs | 63 |
-| Canonical IDs | 694 |
-| First-class milestones | 55 |
+| Explicit new IDs | 65 |
+| Canonical IDs | 696 |
+| First-class milestones | 57 |
 | State: complete | 448 |
 | State: active | 1 |
 | State: partial | 2 |
-| State: blocked | 4 |
+| State: blocked | 5 |
 | State: planned | 198 |
 | State: reopened | 3 |
 | State: deferred | 20 |
-| State: superseded | 17 |
+| State: superseded | 18 |
 | State: not-measured | 1 |
 
 | Track | Owns | Current truth | Conclusive handoff |
@@ -1170,9 +1173,9 @@ calculated from rows rather than protected by a summary hash.
 | `TRACK.SAMPLING` | Deterministic and stochastic token selection over real vocabulary logits, seeding, reproducibility, validation, and refusal. | repaired full-vocabulary greedy and filter-order-v2 stochastic selection use compensated normalization, positive-mass entropy, atomic close/drain, authenticated evidence, and transactional PCG progress | Selected token IDs and their identities hand off to tokenizer/generation composition without implying append or decode. |
 | `TRACK.TOKENIZER` | Exact tokenizer loading, prompt encoding, templates, special/EOS/stop policy, append boundary, detokenization, and failure behavior. | the selected GGUF reconstructs one immutable exact ByteLevel-BPE plan with 129,280 tokens, 127,741 merges, added/special policy, bounded DeepSeek prompt rendering, and batch/incremental decode | Prompt text and sampled IDs traverse the exact tokenizer contract without mutating model state. |
 | `TRACK.GENERATION` | Tokenizer/prefill/KV/decode/logits/sampling composition, append, stop, cancellation, partial output, trace, cleanup, and autoregression. | one reusable common turn owner executes exact prompt suffix prefill, first-token sampling, sampled-token decode feedback, typed stop, partial progress, committed-fragment streaming, and incremental text on CPU and mixed CUDA/host paths | Server sessions invoke the same generation owner for fresh and retained turns without rebuilding its loop or lower owners. |
-| `TRACK.OPERATOR` | Public and offline CLI grammar, typed protocol input, dispatch, rendering, refusal, topology guards, and operator acceptance. | one `yvex` entrypoint exposes a protocol-only runtime lane and an offline engineering lane; the complete audit freezes the current surface and its P1-P3 debt without changing behavior | Hosted product commands reach the local runtime protocol while finite offline proof remains route-separated and the later registry/console consumes the approved audit. |
+| `TRACK.OPERATOR` | Public and offline CLI grammar, typed protocol input, dispatch, rendering, refusal, topology guards, and operator acceptance. | one `yvex` entrypoint exposes a protocol-only runtime lane and an offline engineering lane; the complete audit freezes the current surface and its P1-P3 debt without changing behavior | The canonical command architecture first establishes one operation/projection authority; the mature REPL then consumes it without duplicating parsing or runtime state. |
 | `TRACK.SERVE` | Long-lived local runtime hosting, session/KV authority, streaming, typed telemetry, local and application protocols, product clients, and process topology. | one `yvexd` process owns the process-resident model, exact sessions, Unix protocol listener, and loopback OpenAI listener; protocol v3 and OpenAI Compatibility Profile v1 are complete, while unchanged Bet-tennis-to-real-DeepSeek composition evidence is reopened and public/remote serving remains deferred | Native and OpenAI-compatible clients consume one session/worker/model authority without reopening models or bypassing session semantics. |
-| `TRACK.EVAL` | Complete-model behavior, quality, regression, tokenizer, context, and refusal evaluation after real generation exists. | blocked behind active public project control, canonical command-console work, and the measured GB10 optimization continuation; operational profiles are not model evaluation | Repeatable evaluation passes over the optimized hosted application-consumable release path. |
+| `TRACK.EVAL` | Complete-model behavior, quality, regression, tokenizer, context, and refusal evaluation after real generation exists. | blocked behind active public project control, canonical command architecture, mature REPL console, and measured GB10 optimization; operational profiles are not model evaluation | Repeatable evaluation passes over the optimized hosted application-consumable release path. |
 | `TRACK.BENCH` | Reproducible component and complete-model performance measurements with machine, identity, workload, timing, throughput, memory, regression, and visualization metadata. | schema-v5 attention-component measurements and deterministic SVG evidence are implemented; full-model generation benchmark evidence is not measured | Accepted DGX Spark benchmark evidence over the release path. |
 | `TRACK.RELEASE` | Final software, conformance, runtime, evaluation, benchmark, operator, packaging, claim, version, release-record, and tag qualification. | blocked; component qualification does not close the release gate | Every release gate passes in one traceable transcript. |
 | `TRACK.POST010` | Explicitly deferred portability, serving hardening, speculative execution, extra-family runtime promotion, and later product scope. | deferred | No work enters the active path without a new version-scope decision. |
@@ -1205,7 +1208,7 @@ closure.
 | `TRACK.SAMPLING` | 15 | 16 | 1/0/0/0/0/0 | 15 | 0 | 0 |
 | `TRACK.TOKENIZER` | 13 | 14 | 1/0/0/0/0/0 | 13 | 0 | 0 |
 | `TRACK.GENERATION` | 35 | 36 | 1/0/0/0/0/0 | 34 | 1 | 0 |
-| `TRACK.OPERATOR` | 81 | 85 | 2/0/0/1/1/0 | 37 | 40 | 2 |
+| `TRACK.OPERATOR` | 81 | 87 | 2/0/0/1/2/0 | 37 | 40 | 2 |
 | `TRACK.SERVE` | 12 | 15 | 2/0/0/0/0/0 | 11 | 2 | 0 |
 | `TRACK.EVAL` | 15 | 16 | 0/0/0/0/1/0 | 0 | 15 | 0 |
 | `TRACK.BENCH` | 16 | 17 | 0/0/0/0/0/1 | 7 | 9 | 0 |
@@ -1291,13 +1294,15 @@ written after inspection of owner code, consumers, tests, and current contracts.
 | 46 | `V010.PRODUCT.SURFACE.REALIGNMENT.0` | `TRACK.SCOPE` | product | `complete` | Reduced the product to one public `yvex` command executable and one long-lived `yvexd` process, absorbed engineering routes into a guarded offline lane, integrated the OpenAI listener into the daemon, and removed the retired binaries, service, and package entries without changing runtime mathematics. | V010.RUNTIME.DEEPSEEK.PERFORMANCE.0 |
 | 47 | `V010.OPERATOR.SURFACE.AUDIT.0` | `TRACK.OPERATOR` | product + engineering operations | `complete` | Froze the complete post-cutover executable, command, flag, operation, protocol, HTTP, Make, script, environment/configuration, workflow, taxonomy, registry-input, and project-control inventory with zero unmatched categories and no behavior change. | V010.PRODUCT.SURFACE.REALIGNMENT.0 |
 | 48 | `V010.PROJECT.CONTROL.PUBLIC.0` | `TRACK.SCOPE` | project | `active` | Refound public project control around the audited product surfaces, explicit successors, gates, non-claims, and one canonical critical path. | V010.OPERATOR.SURFACE.AUDIT.0 |
-| 49 | `V010.OPERATOR.RUNTIME.CONSOLE.0` | `TRACK.OPERATOR` | common console + DeepSeek first vertical | `superseded` | The standalone console plan is absorbed by the canonical command architecture and runtime-console milestone after the surface audits. | V010.OPERATOR.COMMAND.CONSOLE.0 |
-| 50 | `V010.OPERATOR.COMMAND.CONSOLE.0` | `TRACK.OPERATOR` | product commands + runtime console | `blocked` | Establish the canonical command architecture and DwarfStar-style runtime console from audited binaries and authoritative telemetry without changing numerical execution. | V010.PROJECT.CONTROL.PUBLIC.0 |
-| 51 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `TRACK.RUNTIME` | DeepSeek / GB10 | `blocked` | Resume issue-shaped warm-runtime optimization from measured attention, MoE, movement, and launch pressure; select no mechanism before its dedicated evidence gate. | V010.OPERATOR.COMMAND.CONSOLE.0 |
-| 52 | `V010.EVAL.DEEPSEEK.0` | `TRACK.EVAL` | DeepSeek | `blocked` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0 |
-| 53 | `V010.BENCH.DEEPSEEK.0` | `TRACK.BENCH` | DeepSeek / DGX Spark | `not-measured` | Record reproducible artifact, qtype, prompt/context, prefill, decode, generation, timing, throughput, and memory evidence. | V010.EVAL.DEEPSEEK.0 |
-| 54 | `V010.RELEASE.0` | `TRACK.RELEASE` | DeepSeek v0.1.0 | `blocked` | Close every source, architecture, mapping, artifact, materialization, backend, transformer, generation, evaluation, benchmark, validation, claim, operator, packaging, and version gate. | V010.BENCH.DEEPSEEK.0 |
-| 55 | `TOPOLOGY.CELL.CLOSURE.0` | `TRACK.OPERATOR` | common | `planned` | Close residual mixed ownership only where concrete behavior still crosses domain/report/input/command/render/write boundaries. | V010.DOCS.ARCHITECTURE.0; supporting, not a product-stage promotion |
+| 49 | `V010.OPERATOR.RUNTIME.CONSOLE.0` | `TRACK.OPERATOR` | common console + DeepSeek first vertical | `superseded` | The earlier standalone console plan is replaced by the ordered command-architecture and mature-REPL contracts. | V010.OPERATOR.REPL.CONSOLE.0 |
+| 50 | `V010.OPERATOR.COMMAND.CONSOLE.0` | `TRACK.OPERATOR` | product commands + runtime console | `superseded` | The combined plan is split before implementation so command/protocol authority closes before terminal presentation begins. | V010.OPERATOR.COMMAND.ARCHITECTURE.0; V010.OPERATOR.REPL.CONSOLE.0 |
+| 51 | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `TRACK.OPERATOR` | product + engineering operations | `blocked` | Establish one versioned operation source and checked generated descriptors for commands, flags, defaults, validation, help, discovery, projections, and semantic repairs. | V010.PROJECT.CONTROL.PUBLIC.0 |
+| 52 | `V010.OPERATOR.REPL.CONSOLE.0` | `TRACK.OPERATOR` | daemon-backed terminal + DeepSeek first vertical | `blocked` | Build the mature linear runtime console, semantic progress, explicit admitted reasoning projection, metrics, watch, trace, and terminal lifecycle entirely over the canonical operation architecture. | V010.OPERATOR.COMMAND.ARCHITECTURE.0 |
+| 53 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `TRACK.RUNTIME` | DeepSeek / GB10 | `blocked` | Resume issue-shaped warm-runtime optimization from measured attention, MoE, movement, and launch pressure; select no mechanism before its dedicated evidence gate. | V010.OPERATOR.REPL.CONSOLE.0 |
+| 54 | `V010.EVAL.DEEPSEEK.0` | `TRACK.EVAL` | DeepSeek | `blocked` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0 |
+| 55 | `V010.BENCH.DEEPSEEK.0` | `TRACK.BENCH` | DeepSeek / DGX Spark | `not-measured` | Record reproducible artifact, qtype, prompt/context, prefill, decode, generation, timing, throughput, and memory evidence. | V010.EVAL.DEEPSEEK.0 |
+| 56 | `V010.RELEASE.0` | `TRACK.RELEASE` | DeepSeek v0.1.0 | `blocked` | Close every source, architecture, mapping, artifact, materialization, backend, transformer, generation, evaluation, benchmark, validation, claim, operator, packaging, and version gate. | V010.BENCH.DEEPSEEK.0 |
+| 57 | `TOPOLOGY.CELL.CLOSURE.0` | `TRACK.OPERATOR` | common | `planned` | Close residual mixed ownership only where concrete behavior still crosses domain/report/input/command/render/write boundaries. | V010.DOCS.ARCHITECTURE.0; supporting, not a product-stage promotion |
 
 ## 9. Complete Track/Wave Ledger
 
@@ -1747,7 +1752,7 @@ runtime spine is introduced.
 | --- | --- | --- | --- | --- | --- |
 | `V010.RUNTIME.1` | common | `complete` | Sealed one immutable family-neutral runtime model and process-lifetime execution-session plane over a content-addressed binding, resident attention resources, phase-aware execution descriptors, CPU eager and GB10 CUDA eager/graph modes, invalidation, timing, and bounded benchmark/profile and external-chart capability. | V010.CLI.GRAPH.0 | recovered/promoted |
 | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` | DeepSeek / GB10 | `partial` | Reduced cold startup to the accepted sub-four-minute candidate, corrected residency accounting, formalized warm generation, and added bounded movement/stage/synchronization profiling; warm decode remains below admission. | V010.SERVE.OPENAI.COMPAT.0 | current |
-| `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | DeepSeek / GB10 | `blocked` | Resume issue-shaped optimization from measured attention, MoE, movement, and launch pressure without preselecting placement, cache, fusion, graph, or prefetch mechanisms. | V010.OPERATOR.COMMAND.CONSOLE.0 | current |
+| `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | DeepSeek / GB10 | `blocked` | Resume issue-shaped optimization from measured attention, MoE, movement, and launch pressure without preselecting placement, cache, fusion, graph, or prefetch mechanisms. | V010.OPERATOR.REPL.CONSOLE.0 | current |
 
 #### Recovered And Subordinate Rows
 
@@ -2203,9 +2208,9 @@ runtime spine is introduced.
 
 **Owner:** Public and offline CLI grammar, typed input, dispatch, rendering, refusal, control-plane integration, topology guards, and operator acceptance.
 
-**Current truth:** `yvex` is the sole public command entrypoint. Its runtime lane remains protocol-only while its guarded offline lane owns the absorbed engineering operations; the separate developer executable is gone. The complete identity-bound audit freezes every current route, flag, operation, automation/configuration input, overlap, finding, workflow, and proposed disposition for public project control and later command-console implementation
+**Current truth:** `yvex` is the sole public command entrypoint. Its runtime lane remains protocol-only while its guarded offline lane owns the absorbed engineering operations; the separate developer executable is gone. The complete identity-bound audit freezes every current route, flag, operation, automation/configuration input, overlap, finding, workflow, and proposed disposition. The combined command-console plan is superseded before implementation: canonical operations and projections close first, then the mature daemon-backed REPL consumes them
 
-**Ledger summary:** 81 recovered IDs; 6 first-class milestones; 37 complete support rows; 40 open support rows; 2 superseded/deferred rows.
+**Ledger summary:** 81 recovered IDs; 8 first-class milestones; 37 complete support rows; 40 open support rows; 2 superseded/deferred support rows.
 
 #### First-Class Milestones
 
@@ -2214,8 +2219,10 @@ runtime spine is introduced.
 | `V010.CLI.GRAPH.0` | DeepSeek + common operator | `complete` | Expose production DeepSeek attention through the main YVEX binary with CPU, CUDA, quick/full canonical probes, typed structured refusal, and explicit non-generation semantics. | V010.GRAPH.DEEPSEEK.ATTENTION.0 | recovered/promoted |
 | `V010.CLI.DEEPSEEK.GENERATE.0` | DeepSeek | `superseded` | Fresh-only top-level generation UX was superseded before implementation by the long-lived runtime/client product boundary. | V010.RUNTIME.CLIENT.REFOUNDATION.0 | current/superseded |
 | `V010.OPERATOR.SURFACE.AUDIT.0` | product + engineering operations | `complete` | Froze the authoritative two-executable command, flag, operation, automation/configuration, taxonomy, registry-input, and migration inventory with zero behavior change and zero unmatched completeness gates. | V010.PRODUCT.SURFACE.REALIGNMENT.0 | current |
-| `V010.OPERATOR.RUNTIME.CONSOLE.0` | common console + DeepSeek first vertical | `superseded` | The standalone console plan is absorbed by the canonical command architecture and runtime-console milestone after the surface audits. | V010.OPERATOR.COMMAND.CONSOLE.0 | current/superseded |
-| `V010.OPERATOR.COMMAND.CONSOLE.0` | product commands + runtime console | `blocked` | Establish canonical commands and the DwarfStar-style runtime console from audited binaries and authoritative telemetry without changing numerical execution. | V010.PROJECT.CONTROL.PUBLIC.0 | current |
+| `V010.OPERATOR.RUNTIME.CONSOLE.0` | common console + DeepSeek first vertical | `superseded` | The earlier standalone console plan is replaced by the ordered command-architecture and mature-REPL contracts. | V010.OPERATOR.REPL.CONSOLE.0 | current/superseded |
+| `V010.OPERATOR.COMMAND.CONSOLE.0` | product commands + runtime console | `superseded` | The combined plan is split before implementation so operation/protocol authority closes before terminal presentation. | V010.OPERATOR.COMMAND.ARCHITECTURE.0; V010.OPERATOR.REPL.CONSOLE.0 | current/superseded |
+| `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | product + engineering operations | `blocked` | Establish one versioned operation source and checked generated descriptors for commands, flags, defaults, validation, help, discovery, projections, and semantic repairs. | V010.PROJECT.CONTROL.PUBLIC.0 | current |
+| `V010.OPERATOR.REPL.CONSOLE.0` | daemon-backed terminal + DeepSeek first vertical | `blocked` | Build the mature linear runtime console, semantic progress, explicitly admitted reasoning projection, final metrics, watch, trace, and terminal lifecycle entirely over the canonical operation architecture. | V010.OPERATOR.COMMAND.ARCHITECTURE.0 | current |
 | `TOPOLOGY.CELL.CLOSURE.0` | common | `planned` | Close residual mixed ownership only where concrete behavior still crosses domain/report/input/command/render/write boundaries. | V010.DOCS.ARCHITECTURE.0; supporting, not a product-stage promotion | recovered/promoted |
 
 #### Recovered And Subordinate Rows
@@ -2341,7 +2348,7 @@ runtime spine is introduced.
 
 **Owner:** Complete-model behavior, quality, regression, tokenizer, context, refusal, and capability evaluation after real generation exists.
 
-**Current truth:** blocked until product-surface realignment, command/binary audit, public project-control refoundation, canonical command-console work, and the measured GB10 optimization continuation close; software testing, numerical conformance, runtime qualification, operational metrics, and component profiling do not satisfy model behavior or quality evaluation
+**Current truth:** blocked until product-surface realignment, command/binary audit, public project-control refoundation, canonical command architecture, mature REPL console, and the measured GB10 optimization continuation close; software testing, numerical conformance, runtime qualification, operational metrics, and component profiling do not satisfy model behavior or quality evaluation
 
 **Ledger summary:** 15 recovered IDs; 1 first-class milestones; 0 complete support rows; 15 open support rows; 0 superseded/deferred rows.
 
@@ -2583,9 +2590,9 @@ installed headers were intentionally removed rather than left available.
 | CUDA | Capability admission is fail-closed; selected embedding, complete DeepSeek attention, routed/shared MoE, residual mHC, final collapse/norm, and direct encoded output-head projection have GB10 proof with no CPU numerical fallback | complete eager backbone and full-vocabulary logits ready; transformer/logits CUDA Graph and optimized/fused output-head execution remain unsupported | attention/KV/prefill/MoE/transformer/logits milestones |
 | Transformer | Numeric tokens execute selected embedding, 43 canonical attention/MoE blocks, deferred residuals, final mHC collapse, final RMSNorm, and atomic persistent-state publication | complete CPU/GB10 CUDA backbone and normalized hidden output, consumed by repeated decode and logits without duplicating final norm | transformer, decode, and logits milestones |
 | Text generation | Exact tokenizer, output head, logits, sampling, repeated decode, stop, detokenization, session continuation, and committed-fragment streaming | complete bounded CPU and mixed CUDA-model/host-sampling-tokenizer generation runtime with daemon-backed one-shot and retained multi-turn clients; model quality is not claimed | logits/sampling/tokenizer/generation/runtime-client milestones |
-| Operator | One truthful public command entrypoint invokes the hosted release path through a protocol-only runtime lane and finite engineering operations through a guarded offline lane | complete for the two-executable role topology and frozen surface audit; current grammar debt is classified for the later registry/console rather than accepted as final taxonomy | `V010.RUNTIME.CLIENT.REFOUNDATION.0`, `V010.PRODUCT.SURFACE.REALIGNMENT.0`, and `V010.OPERATOR.SURFACE.AUDIT.0` |
+| Operator | One truthful public command entrypoint invokes the hosted release path through a protocol-only runtime lane and finite engineering operations through a guarded offline lane | complete for the two-executable role topology and frozen surface audit; command/protocol authority and mature terminal presentation remain separate ordered successors | `V010.RUNTIME.CLIENT.REFOUNDATION.0`, `V010.PRODUCT.SURFACE.REALIGNMENT.0`, and `V010.OPERATOR.SURFACE.AUDIT.0` |
 | Application provider | Provider-neutral typed requests traverse protocol v3 through the source-separated in-daemon OpenAI adapter with bounded JSON/SSE, tools, official SDKs, and unchanged application-consumer proof | implementation complete for YVEX OpenAI Compatibility Profile v1 with one `yvexd` model/session/worker authority; the unchanged Bet-tennis-to-real-DeepSeek composition evidence is reopened, while full OpenAI API and remote serving are not claimed | `V010.SERVE.OPENAI.COMPAT.0`, `V010.PRODUCT.SURFACE.REALIGNMENT.0`, and `V010.SERVE.OPENAI.BETTENNIS.REAL.1` |
-| Evaluation | Repeatable release-path quality, regression, context, and refusal cases | blocked behind active public project control, canonical command-console work, and measured GB10 optimization; no behavior or quality result exists yet | `V010.EVAL.DEEPSEEK.0` |
+| Evaluation | Repeatable release-path quality, regression, context, and refusal cases | blocked behind active public project control, canonical command architecture, mature REPL console, and measured GB10 optimization; no behavior or quality result exists yet | `V010.EVAL.DEEPSEEK.0` |
 | Benchmark | Reproducible release-path prompt/context, full-model prefill/decode/generation throughput, latency, and memory measurements | not measured; bounded attention runtime benchmarks are available but do not satisfy this gate | `V010.BENCH.DEEPSEEK.0` |
 | Release | Full validation, artifact guardrail, claim audit, transcript, packaging, version, and tag | blocked | `V010.RELEASE.0` |
 
@@ -2661,6 +2668,8 @@ The version sequence records intended dependency order, not current support.
 | `docs/runbooks/deepseek.md` | Exact current DeepSeek operator boundary |
 | `docs/topology-closure-audit.md` | Point-in-time topology evidence, not project state |
 | `docs/audits/operator-surface-ec7dcc/` | Frozen identity-bound operator-surface evidence and successor design input, never live command or project authority |
+| `docs/milestones/command-architecture.md` | Future canonical operation, command, flag, projection, and discovery implementation contract; no current capability claim |
+| `docs/milestones/runtime-console-repl.md` | Future mature daemon-backed terminal and REPL contract consuming canonical operations; no current capability claim |
 | `docs/reference-architecture.md` | Implementation-agnostic inference architecture, conformance model, external sources, and YVEX owner/milestone traceability |
 | `docs/diagrams/*.mmd` and `docs/diagrams/*.svg` | Editable and canonical vector projections of README product topology and detailed system architecture; orientation only, never runtime evidence |
 
