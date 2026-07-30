@@ -6,6 +6,10 @@
  */
 #include <string.h>
 
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <yvex/server.h>
 
 #include "src/server/private.h"
@@ -161,6 +165,15 @@ static int test_bounded_telemetry_overflow(void)
                          metrics.resident_device_bytes == 2048u &&
                          metrics.output_head_upload_count == 1u,
                      "resource metrics retain authoritative high-water facts");
+    yvex_server_telemetry_openai_request(telemetry, 1, 0, 0, 0);
+    yvex_server_telemetry_openai_request(telemetry, -1, 1, 0, 0);
+    yvex_server_telemetry_openai_request(telemetry, 0, 0, 1, 1);
+    rc = yvex_server_telemetry_metrics_copy(telemetry, &metrics, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && metrics.active_http_requests == 0u &&
+                         metrics.completed_http_requests == 1u &&
+                         metrics.failed_http_requests == 1u &&
+                         metrics.cancelled_http_requests == 1u,
+                     "integrated HTTP counters share server metrics");
     for (index = 0u; index < 2u; ++index) {
         rc = yvex_server_telemetry_next(telemetry, cursor, 0, &event, &err);
         YVEX_TEST_ASSERT(rc == YVEX_OK, "retained overflow event");
@@ -169,6 +182,69 @@ static int test_bounded_telemetry_overflow(void)
     }
     YVEX_TEST_ASSERT(saw_drop, "overflow event is not silent");
     yvex_server_telemetry_close(&telemetry);
+    return 0;
+}
+
+/* Purpose: reserve one loopback port so configured-listener collision can be proved. */
+static int loopback_reserve(unsigned short *port)
+{
+    struct sockaddr_in address;
+    socklen_t address_count = sizeof(address);
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(*port);
+    if (bind(fd, (struct sockaddr *)&address, sizeof(address)) != 0 ||
+        getsockname(fd, (struct sockaddr *)&address, &address_count) != 0 ||
+        listen(fd, 1) != 0) {
+        (void)close(fd);
+        return -1;
+    }
+    *port = ntohs(address.sin_port);
+    return fd;
+}
+
+/* Purpose: prove enabled HTTP admission is reserved before model open and rolls back exactly. */
+static int test_openai_listener_admission(void)
+{
+    yvex_server_options options;
+    yvex_server_summary summary;
+    yvex_server *server = NULL;
+    yvex_error err;
+    unsigned short port = 0u;
+    int blocker, probe, rc;
+
+    blocker = loopback_reserve(&port);
+    YVEX_TEST_ASSERT(blocker >= 0, "loopback collision fixture");
+    test_options(&options);
+    options.openai_enabled = 1;
+    options.openai_port = port;
+    options.openai_timeout_ms = 1000u;
+    rc = yvex_server_create(&server, &options, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_IO && server == NULL,
+                     "OpenAI bind collision refuses host construction");
+    (void)close(blocker);
+
+    test_options(&options);
+    options.openai_enabled = 1;
+    options.openai_port = port;
+    options.openai_timeout_ms = 1000u;
+    rc = yvex_server_create(&server, &options, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && server != NULL,
+                     "OpenAI listener reserves before model start");
+    rc = yvex_server_get_summary(server, &summary, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && summary.openai_listener_enabled &&
+                         !summary.openai_listener_ready &&
+                         summary.openai_port == port,
+                     "configured listener status is truthful");
+    rc = yvex_server_start(server, &err);
+    YVEX_TEST_ASSERT(rc != YVEX_OK, "model refusal precedes HTTP acceptance");
+    yvex_server_close(&server);
+    probe = loopback_reserve(&port);
+    YVEX_TEST_ASSERT(probe >= 0, "failed startup releases HTTP listener");
+    (void)close(probe);
     return 0;
 }
 
@@ -229,5 +305,6 @@ int yvex_test_server(void)
     if (test_model_open_refusal() != 0) return 1;
     if (test_bounded_telemetry_overflow() != 0) return 1;
     if (test_provider_telemetry() != 0) return 1;
+    if (test_openai_listener_admission() != 0) return 1;
     return 0;
 }

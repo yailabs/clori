@@ -70,7 +70,8 @@ require_text README.md 'docs/diagrams/system_overview.mmd'
 require_text README.md 'libyvex'
 require_text README.md '`yvexd`'
 require_text README.md '`yvex`'
-require_text README.md '`yvex-dev`'
+reject_text README.md '`yvex-dev`'
+reject_text README.md '`yvex-openai`'
 require_text README.md './yvexd'
 require_text README.md './yvex runtime watch'
 require_text README.md './yvex chat --session main'
@@ -94,8 +95,8 @@ test "$readme_lines" -le 450 || fail "README exceeds 450-line hard cap: $readme_
 test "$readme_lines" -ge 200 || fail "README is too short to own the product entry point: $readme_lines"
 
 for old in \
-  './yvex graph ' './yvex materialize ' './yvex quant-policy ' \
-  './yvex tokenizer ' './yvex metadata ' './yvex tensor-map ' \
+  './yvex materialize ' './yvex quant-policy ' \
+  './yvex metadata ' './yvex tensor-map ' \
   './yvex model-target ' './yvex fullmodel '
 do
   if grep -nF -- "$old" README.md docs/*.md docs/runbooks/*.md >/dev/null; then
@@ -106,7 +107,7 @@ done
 require_text docs/cli-output-architecture.md '# Client And Terminal Architecture'
 require_text docs/cli-output-architecture.md '## Binary boundaries'
 require_text docs/cli-output-architecture.md '## Product grammar'
-require_text docs/cli-output-architecture.md '## Developer grammar'
+require_text docs/cli-output-architecture.md '## Offline engineering grammar'
 require_text docs/cli-output-architecture.md '## Typed event fan-out'
 require_text docs/cli-output-architecture.md 'The former flat command catalog and selectable `normal|table|audit` layouts are'
 
@@ -117,7 +118,7 @@ require_text docs/contract.md 'publishes bytes only after model commit'
 require_text docs/contract.md 'yvex.openai.compat.v1'
 require_text docs/contract.md 'Public HTTP exposure'
 require_text docs/api.md '`<yvex/server.h>` | local protocol, runtime host, sessions, telemetry'
-require_text docs/api.md '## Application Provider And Local Protocol v2'
+require_text docs/api.md '## Application Provider And Local Protocol v3'
 require_text docs/openai-compatibility.md '# YVEX OpenAI Compatibility Profile v1'
 require_text docs/openai-compatibility.md 'POST /v1/chat/completions'
 require_text docs/openai-compatibility.md 'POST /v1/responses'
@@ -149,7 +150,7 @@ if grep -nE '\\[[:space:]]*$' docs/operator-runbook.md; then
   fail 'operator runbook contains a multiline shell continuation'
 fi
 
-require_text docs/runbooks/deepseek.md './yvex-dev graph transformer generate --help'
+require_text docs/runbooks/deepseek.md './yvex graph transformer generate --help'
 require_text docs/runbooks/deepseek.md 'On turn two'
 require_text docs/reference-architecture.md '### 10.4 Hosted Runtime And Conversation Sessions'
 require_text docs/reference-architecture.md 'exact prefix'
@@ -176,13 +177,13 @@ done
 
 require_text docs/diagrams/system_overview.mmd 'B. Run — yvexd'
 require_text docs/diagrams/system_overview.mmd 'Session registry'
-require_text docs/diagrams/system_overview.mmd 'yvex-dev'
-require_text docs/diagrams/system_overview.mmd 'yvex-openai'
+require_text docs/diagrams/system_overview.mmd 'offline engineering lane'
+require_text docs/diagrams/system_overview.mmd 'Loopback OpenAI adapter'
 require_text docs/diagrams/physical_compilation.mmd 'Physical-variant plan'
 require_text docs/diagrams/physical_compilation.mmd 'Imatrix evidence'
 require_text docs/diagrams/runtime_host_sessions.mmd 'Persistent execution session'
 require_text docs/diagrams/runtime_host_sessions.mmd 'Typed event authority'
-require_text docs/diagrams/runtime_host_sessions.mmd 'yvex-openai'
+require_text docs/diagrams/runtime_host_sessions.mmd 'In-process OpenAI adapter'
 require_text docs/diagrams/autoregressive_execution.mmd 'Prompt prefill'
 require_text docs/diagrams/autoregressive_execution.mmd 'Terminal record'
 require_text docs/diagrams/autoregressive_execution.mmd 'Model + KV commit'
@@ -194,7 +195,7 @@ test -z "$(find docs/diagrams -maxdepth 1 -type f \
 require_text PROJECT.md 'V010.RUNTIME.CLIENT.REFOUNDATION.0'
 require_text PROJECT.md 'V010.DOCS.README.PRODUCT.0'
 require_text PROJECT.md 'V010.CLI.DEEPSEEK.GENERATE.0: superseded'
-require_text PROJECT.md 'Active Next: V010.PRODUCT.SURFACE.REALIGNMENT.0'
+require_text PROJECT.md 'Active Next: V010.OPERATOR.SURFACE.AUDIT.0'
 require_text PROJECT.md 'model_behavior_evaluation_ready=0'
 require_text PROJECT.md 'release_qualification_ready=0'
 
@@ -241,6 +242,8 @@ if test -x ./yvex; then
     fail 'built yvex help lacks runtime administration'
   printf '%s\n' "$client_help" | grep -F 'yvex session new|list|show|attach|detach|reset|close' >/dev/null ||
     fail 'built yvex help lacks session administration'
+  printf '%s\n' "$client_help" | grep -F 'yvex graph ...' >/dev/null ||
+    fail 'built yvex help lacks absorbed engineering operations'
 fi
 
 if test -x ./yvexd; then
@@ -249,14 +252,11 @@ if test -x ./yvexd; then
     fail 'built yvexd help lacks the raw terminal contract'
   printf '%s\n' "$daemon_help" | grep -F '[--trace-level summary|stages|tokens|full]' >/dev/null ||
     fail 'built yvexd help lacks trace levels'
+  printf '%s\n' "$daemon_help" | grep -F '[--openai on|off]' >/dev/null ||
+    fail 'built yvexd help lacks the integrated OpenAI listener contract'
 fi
 
-if test -x ./yvex-dev; then
-  developer_help=$(./yvex-dev --help)
-  printf '%s\n' "$developer_help" | grep -F 'yvex-dev graph ...' >/dev/null ||
-    fail 'built yvex-dev help lacks separated graph tooling'
-  printf '%s\n' "$developer_help" | grep -F 'yvex-dev quant preset|plan|emit|summarize|explain|policy|imatrix' >/dev/null ||
-    fail 'built yvex-dev help lacks separated quant tooling'
-fi
+test ! -e ./yvex-dev || fail 'retired yvex-dev executable remains'
+test ! -e ./yvex-openai || fail 'retired yvex-openai executable remains'
 
 sh tests/test_project_ledger.sh

@@ -18,7 +18,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 2u
+#define YVEX_LOCAL_PROTOCOL_VERSION 3u
+#define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 2u
+#define YVEX_RUNTIME_METRICS_SCHEMA_VERSION 3u
 #define YVEX_SERVER_SESSION_NAME_CAP 64u
 #define YVEX_SERVER_ID_CAP 65u
 #define YVEX_SERVER_REASON_CAP 256u
@@ -129,6 +131,8 @@ typedef struct {
     unsigned long long active_sessions, total_sessions;
     unsigned long long active_requests, completed_requests;
     unsigned long long failed_requests, cancelled_requests;
+    unsigned long long active_http_requests, completed_http_requests;
+    unsigned long long failed_http_requests, cancelled_http_requests;
     unsigned long long telemetry_dropped;
 } yvex_server_metrics;
 typedef struct {
@@ -142,9 +146,11 @@ typedef struct {
     unsigned long long maximum_host_bytes, maximum_device_bytes;
     unsigned long long maximum_sessions, request_queue_capacity;
     unsigned long long sampling_seed;
+    unsigned long long openai_timeout_ms;
+    unsigned short openai_port;
     yvex_server_trace_level trace_level;
     yvex_server_console_kind console;
-    int trace_content;
+    int trace_content, openai_enabled;
 } yvex_server_options;
 typedef struct {
     unsigned int schema_version;
@@ -157,8 +163,10 @@ typedef struct {
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char physical_variant_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long context_capacity, session_count, request_count;
+    unsigned short openai_port;
     yvex_server_metrics metrics;
     int runtime_ready, generation_ready, public_server_ready;
+    int openai_listener_enabled, openai_listener_ready;
 } yvex_server_summary;
 typedef enum {
     YVEX_CLIENT_OP_HANDSHAKE = 0,

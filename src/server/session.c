@@ -78,7 +78,7 @@ static int provider_text_stream_direct(const yvex_provider_request *request)
            request->stop_count == 0u && request->tool_count == 0u &&
            request->tool_choice.kind == YVEX_PROVIDER_TOOL_CHOICE_NONE;
 }
-/* Purpose: emit one already-committed provider output span through protocol v2. */
+/* Purpose: emit one already-committed provider output span through protocol v3. */
 static int provider_output_emit(turn_sink *sink,
                                 yvex_provider_output_kind kind,
                                 const unsigned char *bytes,
@@ -631,7 +631,7 @@ static unsigned long long provider_visible_bytes(
 }
 /* Purpose: emit one provider output span through bounded protocol fragments after complete admission.
  * Inputs: turn sink, output kind, bytes/count, optional call metadata, and error output.
- * Effects: emits ordered bounded protocol-v2 fragments after parsing succeeds.
+ * Effects: emits ordered bounded protocol-v3 fragments after parsing succeeds.
  * Failure: stops at the first sink error and reports no later fragment.
  * Boundary: all bytes are already model-committed and tokenizer-validated. */
 static int provider_output_emit(turn_sink *sink,

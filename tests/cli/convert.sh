@@ -45,10 +45,10 @@ cat > "$OUT_DIR/policy.json" <<'JSON'
 }
 JSON
 
-"$YVEX_BIN" qtype-support > "$OUT_DIR/qtype.out" 2> "$OUT_DIR/qtype.err" || fail "qtype support failed"
+"$YVEX_BIN" quant qtype > "$OUT_DIR/qtype.out" 2> "$OUT_DIR/qtype.err" || fail "qtype support failed"
 grep 'status: qtype-support' "$OUT_DIR/qtype.out" >/dev/null || fail "missing qtype status"
 
-"$YVEX_BIN" convert plan \
+"$YVEX_BIN" quant convert plan \
   --arch qwen3 \
   --native-source "$NATIVE" \
   --quant-policy "$OUT_DIR/policy.json" \
@@ -56,7 +56,7 @@ grep 'status: qtype-support' "$OUT_DIR/qtype.out" >/dev/null || fail "missing qt
 test -f "$OUT_DIR/plan.json" || fail "plan missing"
 grep 'status: conversion-plan-written' "$OUT_DIR/plan.out" >/dev/null || fail "missing plan status"
 
-"$YVEX_BIN" convert emit \
+"$YVEX_BIN" quant convert emit \
   --arch qwen3 \
   --native-source "$NATIVE" \
   --tensor model.embed_tokens.weight \
@@ -65,9 +65,9 @@ grep 'status: conversion-plan-written' "$OUT_DIR/plan.out" >/dev/null || fail "m
   --overwrite > "$OUT_DIR/emit.out" 2> "$OUT_DIR/emit.err" || fail "emit failed"
 grep 'status: conversion-gguf-written' "$OUT_DIR/emit.out" >/dev/null || fail "missing emit status"
 
-"$YVEX_BIN" inspect "$OUT_DIR/qwen3-8b-selected-embed-F32-noimatrix-yvex-v1.gguf" > "$OUT_DIR/inspect.out" 2> "$OUT_DIR/inspect.err" || fail "inspect failed"
+"$YVEX_BIN" artifact show "$OUT_DIR/qwen3-8b-selected-embed-F32-noimatrix-yvex-v1.gguf" > "$OUT_DIR/inspect.out" 2> "$OUT_DIR/inspect.err" || fail "inspect failed"
 grep 'status: descriptor-only' "$OUT_DIR/inspect.out" >/dev/null || fail "missing inspect status"
-"$YVEX_BIN" materialize --model "$OUT_DIR/qwen3-8b-selected-embed-F32-noimatrix-yvex-v1.gguf" --backend cpu > "$OUT_DIR/materialize.out" 2> "$OUT_DIR/materialize.err" || fail "materialize failed"
+"$YVEX_BIN" artifact materialize --model "$OUT_DIR/qwen3-8b-selected-embed-F32-noimatrix-yvex-v1.gguf" --backend cpu > "$OUT_DIR/materialize.out" 2> "$OUT_DIR/materialize.err" || fail "materialize failed"
 grep 'status: weights-materialized' "$OUT_DIR/materialize.out" >/dev/null || fail "missing materialize status"
-"$YVEX_BIN" help convert > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help failed"
-grep 'usage: yvex convert' "$OUT_DIR/help.out" >/dev/null || fail "missing help"
+"$YVEX_BIN" quant convert --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help failed"
+grep 'usage: yvex quant convert' "$OUT_DIR/help.out" >/dev/null || fail "missing help"

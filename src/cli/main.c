@@ -1,9 +1,9 @@
-/* Owner: client.yvex_dev.
- * Owns: nested developer/plumbing grammar and dispatch into retained typed CLI adapters.
- * Does not own: product-client grammar, domain capability, runtime hosting, or compatibility aliases.
- * Invariants: every admitted command has a namespace and no retired flat public command is accepted.
- * Boundary: optional developer entrypoint over existing domain/report adapters.
- * Purpose: retain engineering reachability after the incompatible product-client cutover.
+/* Owner: client.yvex entrypoint.
+ * Owns: the sole process entrypoint and dispatch into runtime-client or offline command lanes.
+ * Does not own: domain capability, runtime hosting, protocol semantics, or compatibility aliases.
+ * Invariants: every offline route is nested and every other route delegates once to the client lane.
+ * Boundary: one public executable over existing protocol and domain/report adapters.
+ * Purpose: preserve engineering reachability inside the unified yvex surface.
  * Inputs: one namespace, one action, and owner-specific remaining arguments.
  * Effects: dispatches exactly one existing typed adapter and closes any retained runtime lease.
  * Failure: unknown namespace/action returns parser status without fallback to the retired registry. */
@@ -12,24 +12,25 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "src/cli/private.h"
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
 
 #include <yvex/core.h>
 
-typedef int (*developer_handler)(int argc, char **argv);
-typedef int (*developer_owned_handler)(
+typedef int (*offline_handler)(int argc, char **argv);
+typedef int (*offline_owned_handler)(
     int argc, char **argv, yvex_runtime_cleanup_lease **retained_cleanup);
 
 typedef struct {
     const char *name_space;
     const char *action;
     const char *adapter_name;
-    developer_handler handler;
-    developer_owned_handler owned_handler;
-} developer_route;
+    offline_handler handler;
+    offline_owned_handler owned_handler;
+} offline_route;
 
-static const developer_route routes[] = {
+static const offline_route routes[] = {
     {"artifact", "show", "inspect", yvex_inspect_command, NULL},
     {"artifact", "verify", "integrity", yvex_integrity_command, NULL},
     {"artifact", "metadata", "metadata", yvex_metadata_command, NULL},
@@ -40,6 +41,7 @@ static const developer_route routes[] = {
     {"artifact", "template", "gguf-template", yvex_gguf_template_command, NULL},
     {"artifact", "emit", "gguf-emit", yvex_gguf_emit_command, NULL},
     {"graph", NULL, "graph", NULL, yvex_graph_command},
+    {"quant", "--help", "quant", yvex_quant_command, NULL},
     {"quant", "preset", "quant", yvex_quant_command, NULL},
     {"quant", "plan", "quant", yvex_quant_command, NULL},
     {"quant", "emit", "quant", yvex_quant_command, NULL},
@@ -70,25 +72,8 @@ static const developer_route routes[] = {
     {"evidence", "models", "models", yvex_models_command, NULL},
 };
 
-/* Purpose: render the complete bounded developer namespace without old flat catalog metadata. */
-static void print_help(FILE *output)
-{
-    yvex_cli_out_writef(
-        output,
-        "YVEX developer tools\n\n"
-        "  yvex-dev graph ...\n"
-        "  yvex-dev artifact show|verify|metadata|tensors|materialize|emit ...\n"
-        "  yvex-dev quant preset|plan|emit|summarize|explain|policy|imatrix ...\n"
-        "  yvex-dev tokenizer show|encode|decode|prompt ...\n"
-        "  yvex-dev source manifest|native ...\n"
-        "  yvex-dev tensor map|collection ...\n"
-        "  yvex-dev runtime input|context ...\n"
-        "  yvex-dev evidence target|model|moe|backend|cuda ...\n"
-        "  yvex-dev help | version\n");
-}
-
 /* Purpose: choose one exact nested route; graph retains its already nested graph grammar. */
-static const developer_route *route_find(int argc, char **argv, int *skip)
+static const offline_route *route_find(int argc, char **argv, int *skip)
 {
     size_t index;
     if (argc < 2) return NULL;
@@ -106,17 +91,24 @@ static const developer_route *route_find(int argc, char **argv, int *skip)
     return NULL;
 }
 
-/* Purpose: reconstruct one nested developer argv vector for a retained typed adapter.
+/* Purpose: reconstruct one nested offline argv vector for a retained typed adapter.
  * Inputs: admitted route, source argv, and first remaining argument. Effects: allocates argv.
  * Failure: returns NULL on allocation failure. Boundary: never dispatches or restores flat aliases. */
-static char **adapter_argv(const developer_route *route, int argc,
+static char **adapter_argv(const offline_route *route, int argc,
                            char **argv, int skip, int *adapter_argc)
 {
     int source, output = 0;
-    char **adapted = calloc((size_t)(argc - skip + 3), sizeof(*adapted));
+    char **adapted = calloc((size_t)(argc - skip + 5), sizeof(*adapted));
     if (!adapted) return NULL;
     adapted[output++] = argv[0];
     adapted[output++] = (char *)route->adapter_name;
+    if (!strcmp(route->name_space, "artifact") &&
+        !strcmp(route->action, "verify") && argc > skip &&
+        strcmp(argv[skip], "--help") != 0 && strcmp(argv[skip], "check") != 0 &&
+        strcmp(argv[skip], "report") != 0) {
+        adapted[output++] = "check";
+        adapted[output++] = "--model";
+    }
     if (!strcmp(route->name_space, "quant") &&
         !strcmp(route->adapter_name, "quant"))
         adapted[output++] = argv[2];
@@ -127,34 +119,21 @@ static char **adapter_argv(const developer_route *route, int argc,
     return adapted;
 }
 
-/* Purpose: dispatch exactly one nested developer command and preserve cleanup as secondary evidence.
+/* Purpose: dispatch exactly one nested offline command and preserve cleanup as secondary evidence.
  * Inputs: process argv in the redesigned developer grammar. Effects: invokes one retained adapter.
- * Failure: returns stable parse, adapter, or cleanup status. Boundary: no product-client fallback. */
+ * Failure: returns stable adapter or cleanup status. Boundary: no runtime-client fallback after selection. */
 int main(int argc, char **argv)
 {
-    const developer_route *route;
+    const offline_route *route;
     yvex_runtime_cleanup_lease *cleanup = NULL;
     yvex_error cleanup_error;
     char **adapted;
     int skip = 0, adapted_count = 0, status, close_status;
-    if (argc == 1 || !strcmp(argv[1], "help") || !strcmp(argv[1], "--help") ||
-        !strcmp(argv[1], "-h")) {
-        print_help(stdout);
-        return 0;
-    }
-    if (!strcmp(argv[1], "version") || !strcmp(argv[1], "--version")) {
-        yvex_cli_out_writef(stdout, "yvex-dev %s\n", yvex_version_string());
-        return 0;
-    }
     route = route_find(argc, argv, &skip);
-    if (!route) {
-        yvex_cli_out_writef(stderr, "yvex-dev: unknown developer command\n");
-        yvex_cli_out_writef(stderr, "hint: use `yvex-dev help`\n");
-        return 2;
-    }
+    if (!route) return yvex_client_dispatch(argc, argv);
     adapted = adapter_argv(route, argc, argv, skip, &adapted_count);
     if (!adapted) {
-        yvex_cli_out_writef(stderr, "yvex-dev: argument allocation failed\n");
+        yvex_cli_out_writef(stderr, "yvex: argument allocation failed\n");
         return 1;
     }
     status = route->owned_handler
@@ -164,7 +143,7 @@ int main(int argc, char **argv)
     yvex_error_clear(&cleanup_error);
     close_status = yvex_runtime_cleanup_lease_close(&cleanup, &cleanup_error);
     if (close_status != YVEX_OK) {
-        yvex_cli_out_writef(stderr, "yvex-dev: cleanup failed: %s\n",
+        yvex_cli_out_writef(stderr, "yvex: cleanup failed: %s\n",
                             yvex_error_message(&cleanup_error));
         return status ? status : 1;
     }

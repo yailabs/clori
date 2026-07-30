@@ -1,40 +1,117 @@
 #!/bin/sh
-# Purpose: prove the product grammar, retired-command refusal, non-TTY chat refusal,
-# and thin-client symbol boundary without requiring a model host.
+# Purpose: prove one yvex dispatch surface, engineering-route absorption, and runtime-lane isolation.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
-YVEX_DEV_BIN=${YVEX_DEV_BIN:-./yvex-dev}
+YVEX_CLIENT_LANE_OBJ=${YVEX_CLIENT_LANE_OBJ:-build/obj/src/cli/io/client.o}
 . tests/support/cleanup.sh
 
-"$YVEX_BIN" help > /tmp/yvex-client-help.$$
-config_root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-client-config.XXXXXX")
-mkdir -m 700 "$config_root/config"
+root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-client-cutover.XXXXXX")
+config_root=$root/config-root
+mkdir -m 700 "$config_root"
 cleanup()
 {
-    rm -f /tmp/yvex-client-help.$$ /tmp/yvex-client-out.$$ /tmp/yvex-client-err.$$
-    yvex_test_cleanup "$config_root"
+    status=$?
+    trap - EXIT HUP INT TERM
+    if test "$status" -ne 0; then
+        test ! -f "$root/err" || cat "$root/err" >&2
+        test ! -f "$root/out" || cat "$root/out" >&2
+    fi
+    yvex_test_cleanup "$root" || test "$status" -ne 0
+    exit "$status"
 }
 trap cleanup EXIT HUP INT TERM
-grep -F 'yvex chat' /tmp/yvex-client-help.$$ >/dev/null
-grep -F 'yvex runtime start|stop|status|watch|trace' /tmp/yvex-client-help.$$ >/dev/null
-! grep -F 'yvex graph' /tmp/yvex-client-help.$$ >/dev/null
 
-for command in graph materialize quant-policy tokenizer metadata tensor-map model-target fullmodel; do
+"$YVEX_BIN" help >"$root/help"
+for expected in \
+    'yvex chat' \
+    'yvex runtime start|stop|status|watch|trace' \
+    'yvex graph' \
+    'yvex artifact show|verify|metadata' \
+    'yvex quant preset|plan|emit' \
+    'yvex tokenizer show|encode|decode|prompt' \
+    'yvex evidence target|model|moe|backend|cuda'
+do
+    grep -F "$expected" "$root/help" >/dev/null
+done
+! grep -F 'yvex dev' "$root/help" >/dev/null
+! grep -F 'yvex-dev' "$root/help" >/dev/null
+! grep -F 'yvex-openai' "$root/help" >/dev/null
+
+# Every former engineering executable route is reached by the sole yvex dispatcher.
+for arguments in \
+    'artifact show --help' \
+    'artifact verify --help' \
+    'artifact metadata --help' \
+    'artifact tensors --help' \
+    'artifact materialize --help' \
+    'artifact materialize-gate --help' \
+    'artifact model-gate --help' \
+    'artifact template --help' \
+    'artifact emit --help' \
+    'graph --help' \
+    'quant plan --help' \
+    'quant emit --help' \
+    'quant summarize --help' \
+    'quant explain --help' \
+    'quant policy --help' \
+    'quant imatrix --help' \
+    'quant job --help' \
+    'quant qtype --help' \
+    'quant convert --help' \
+    'runtime input --help' \
+    'runtime context --help' \
+    'tokenizer show --help' \
+    'tokenizer encode --help' \
+    'tokenizer decode --help' \
+    'tokenizer prompt --help' \
+    'source manifest --help' \
+    'source native --help' \
+    'tensor map --help' \
+    'tensor collection --help' \
+    'evidence target --help' \
+    'evidence model --help' \
+    'evidence moe --help' \
+    'evidence backend --help' \
+    'evidence cuda --help' \
+    'evidence accounts --help' \
+    'evidence paths --help' \
+    'evidence models --help'
+do
+    # shellcheck disable=SC2086
+    "$YVEX_BIN" $arguments >"$root/out" 2>"$root/err"
+done
+"$YVEX_BIN" quant preset list >"$root/out" 2>"$root/err"
+
+# The retired flat spellings remain unknown; no forwarding alias executes.
+for command in materialize quant-policy tokenizer metadata tensor-map model-target fullmodel; do
     set +e
-    "$YVEX_BIN" "$command" > /tmp/yvex-client-out.$$ 2> /tmp/yvex-client-err.$$
+    "$YVEX_BIN" "$command" >"$root/out" 2>"$root/err"
     status=$?
     set -e
     test "$status" -eq 2
-    grep -F "unknown command: $command" /tmp/yvex-client-err.$$ >/dev/null
+    grep -F "unknown command: $command" "$root/err" >/dev/null
 done
 
+# Artifact routes execute artifact owners, not the removed runtime-status facade.
 set +e
-printf 'hello\n' | "$YVEX_BIN" chat > /tmp/yvex-client-out.$$ 2> /tmp/yvex-client-err.$$
+"$YVEX_BIN" artifact show "$root/missing.gguf" >"$root/out" 2>"$root/err"
+show_status=$?
+"$YVEX_BIN" artifact verify "$root/missing.gguf" >"$root/out2" 2>"$root/err2"
+verify_status=$?
+set -e
+test "$show_status" -ne 0
+test "$verify_status" -ne 0
+grep -F 'failed to open' "$root/err" >/dev/null
+grep -F 'failed to open' "$root/out2" >/dev/null
+! grep -F 'runtime socket' "$root/err" "$root/err2" >/dev/null
+
+set +e
+printf 'hello\n' | "$YVEX_BIN" chat >"$root/out" 2>"$root/err"
 status=$?
 set -e
 test "$status" -eq 2
-grep -F 'chat requires a terminal' /tmp/yvex-client-err.$$ >/dev/null
+grep -F 'chat requires a terminal' "$root/err" >/dev/null
 
 for arguments in \
     'runtime status --bogus' \
@@ -43,31 +120,27 @@ for arguments in \
     'runtime stop --bogus' \
     'session list --bogus' \
     'session show main --json' \
-    'model show --bogus' \
-    'artifact verify --bogus'; do
+    'model show --bogus'
+do
     set +e
-    # The product grammar refuses trailing options instead of silently changing semantics.
     # shellcheck disable=SC2086
-    "$YVEX_BIN" $arguments > /tmp/yvex-client-out.$$ 2> /tmp/yvex-client-err.$$
+    "$YVEX_BIN" $arguments >"$root/out" 2>"$root/err"
     status=$?
     set -e
     test "$status" -eq 2
 done
 
-XDG_CONFIG_HOME="$config_root/config" "$YVEX_BIN" model use current \
+XDG_CONFIG_HOME="$config_root" "$YVEX_BIN" model use current \
     --artifact /models/current.gguf --runtime-binding /bindings/current.binding \
-    --target deepseek4-v4-flash --backend cuda --context 4096 \
-    > /tmp/yvex-client-out.$$
-grep -F 'selected model: current' /tmp/yvex-client-out.$$ >/dev/null
-test "$(stat -c '%a' "$config_root/config/yvex/model.conf")" = 600
-XDG_CONFIG_HOME="$config_root/config" "$YVEX_BIN" model show > /tmp/yvex-client-out.$$
-grep -F 'current' /tmp/yvex-client-out.$$ >/dev/null
-grep -F 'backend=cuda context=4096' /tmp/yvex-client-out.$$ >/dev/null
-grep -F '/models/current.gguf' /tmp/yvex-client-out.$$ >/dev/null
+    --target deepseek4-v4-flash --backend cuda --context 4096 >"$root/out"
+grep -F 'selected model: current' "$root/out" >/dev/null
+test "$(stat -c '%a' "$config_root/yvex/model.conf")" = 600
+XDG_CONFIG_HOME="$config_root" "$YVEX_BIN" model show >"$root/out"
+grep -F 'backend=cuda context=4096' "$root/out" >/dev/null
 
-"$YVEX_DEV_BIN" help > /tmp/yvex-client-out.$$
-grep -F 'yvex-dev graph' /tmp/yvex-client-out.$$ >/dev/null
-grep -F 'yvex-dev quant preset|plan|emit' /tmp/yvex-client-out.$$ >/dev/null
-
-! nm "$YVEX_BIN" | grep -E 'yvex_runtime_model_open|yvex_artifact_materialize|yvex_runtime_generation_operator_execute|yvex_backend_cuda_graph_execute' >/dev/null
+# The whole ELF intentionally links offline engine owners; the runtime-client object does not.
+test -f "$YVEX_CLIENT_LANE_OBJ"
+! nm -u "$YVEX_CLIENT_LANE_OBJ" | grep -E \
+    'yvex_(runtime_model_open|artifact_materialize|runtime_transformer|runtime_generation_operator_execute|backend_cuda)' \
+    >/dev/null
 printf 'test: client_cutover\n'

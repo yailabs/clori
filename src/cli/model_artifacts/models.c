@@ -214,57 +214,57 @@ static const char *const literal_pair_4[] = { "identity_status: recorded",
     "status: models-added"};
 
 static const char *const models_help_lines[] = {
-    "usage: yvex models scan --root DIR [--registry FILE]",
-    "       yvex models add --path FILE [--alias ALIAS] [--support-level LEVEL] [--registry FILE]",
-    "       yvex models download TARGET [--models-root DIR] [--auth auto|required|never] [--dry-run] "
+    "usage: yvex evidence models scan --root DIR [--registry FILE]",
+    "       yvex evidence models add --path FILE [--alias ALIAS] [--support-level LEVEL] [--registry FILE]",
+    "       yvex evidence models download TARGET [--models-root DIR] [--auth auto|required|never] [--dry-run] "
         "[--progress auto|live|plain|log|off] [--tick-seconds N] [--no-progress] [--audit | --output "
         "normal|table|audit]",
-    "       yvex models download status TARGET [--models-root DIR] [--audit | --output "
+    "       yvex evidence models download status TARGET [--models-root DIR] [--audit | --output "
         "normal|table|audit]",
-    "       yvex models download stop TARGET [--models-root DIR] [--force] [--timeout-seconds N] "
+    "       yvex evidence models download stop TARGET [--models-root DIR] [--force] [--timeout-seconds N] "
         "[--match-provider-process] [--dry-run] [--audit]",
-    "       yvex models download resume TARGET [--models-root DIR] [--auth auto|required|never] "
+    "       yvex evidence models download resume TARGET [--models-root DIR] [--auth auto|required|never] "
         "[--progress auto|live|plain|log|off] [--tick-seconds N] [--clear-stale-locks] [--audit]",
-    "       yvex models download cleanup TARGET [--models-root DIR] [--stale-locks] [--logs] "
+    "       yvex evidence models download cleanup TARGET [--models-root DIR] [--stale-locks] [--logs] "
         "[--receipts] [--failed-partials] [--all-provider-cache] [--dry-run] [--yes] [--audit]",
-    "       yvex models download --repo OWNER/NAME --family deepseek|glm|qwen|gemma "
+    "       yvex evidence models download --repo OWNER/NAME --family deepseek|glm|qwen|gemma "
         "[--name LOCAL_NAME] [--models-root DIR] [--auth auto|required|never] "
         "[--progress auto|live|plain|log|off]",
-    "       yvex models download --provider github --repo OWNER/NAME [--release TAG] --asset GLOB "
+    "       yvex evidence models download --provider github --repo OWNER/NAME [--release TAG] --asset GLOB "
         "[--models-root DIR] [--auth auto|required|never] [--progress auto|live|plain|log|off]",
-    "       yvex models artifacts list [--models-root DIR] [--family deepseek|glm|qwen|gemma] "
+    "       yvex evidence models artifacts list [--models-root DIR] [--family deepseek|glm|qwen|gemma] "
         "[--output normal|table|audit|json]",
-    "       yvex models artifacts status TARGET [--models-root DIR] [--audit | --output "
+    "       yvex evidence models artifacts status TARGET [--models-root DIR] [--audit | --output "
         "normal|table|audit|json]",
-    "       yvex models prepare TARGET [--overwrite] [--source DIR] [--out FILE | --out-dir DIR] "
+    "       yvex evidence models prepare TARGET [--overwrite] [--source DIR] [--out FILE | --out-dir DIR] "
         "[--models-root DIR] [--registry FILE] [--dry-run] [--no-register] [--no-use] "
         "[--audit | --output normal|table|audit]",
-    "       yvex models check TARGET [--backend cpu|cuda] [--level quick|runtime|full] "
+    "       yvex evidence models check TARGET [--backend cpu|cuda] [--level quick|runtime|full] "
         "[--models-root DIR] [--registry FILE] [--report-dir DIR] [--no-materialize] [--no-graph] "
         "[--audit | --output normal|table|audit]",
-    "       yvex models list|current [--registry FILE] [--audit | --output normal|table|audit]",
-    "       yvex models verify|inspect ALIAS [--registry FILE] [--audit | --output normal|table|audit]",
-    "       yvex models use|remove ALIAS [--registry FILE]",
+    "       yvex evidence models list|current [--registry FILE] [--audit | --output normal|table|audit]",
+    "       yvex evidence models verify|inspect ALIAS [--registry FILE] [--audit | --output normal|table|audit]",
+    "       yvex evidence models use|remove ALIAS [--registry FILE]",
     "\nExamples:",
-    "  yvex models check deepseek4-v4-flash-selected-embed",
-    "  yvex models download gemma-4-12b-it --models-root ~/lab/models --dry-run --audit",
-    "  yvex models download status gemma-4-12b-it --models-root ~/lab/models --audit",
-    "  yvex models download stop gemma-4-12b-it --models-root ~/lab/models --audit",
-    "  yvex models download resume gemma-4-12b-it --models-root ~/lab/models --auth required "
+    "  yvex evidence models check deepseek4-v4-flash-selected-embed",
+    "  yvex evidence models download gemma-4-12b-it --models-root ~/lab/models --dry-run --audit",
+    "  yvex evidence models download status gemma-4-12b-it --models-root ~/lab/models --audit",
+    "  yvex evidence models download stop gemma-4-12b-it --models-root ~/lab/models --audit",
+    "  yvex evidence models download resume gemma-4-12b-it --models-root ~/lab/models --auth required "
         "--progress live --tick-seconds 2 --audit",
-    "  yvex models download cleanup gemma-4-12b-it --models-root ~/lab/models --stale-locks "
+    "  yvex evidence models download cleanup gemma-4-12b-it --models-root ~/lab/models --stale-locks "
         "--dry-run --audit",
-    "  yvex models download gemma-4-12b-it --models-root ~/lab/models --auth required "
+    "  yvex evidence models download gemma-4-12b-it --models-root ~/lab/models --auth required "
         "--progress live --tick-seconds 2 --audit",
-    "  yvex models download qwen3-8b --models-root ~/lab/models --auth auto --audit",
-    "  yvex models download status qwen3-32b --models-root ~/lab/models",
-    "  yvex models artifacts list --models-root ~/lab/models --output table",
-    "  yvex models artifacts status qwen3-6-35b-a3b --models-root ~/lab/models --audit",
-    "  yvex models download --provider github --repo OWNER/REPO --release TAG --asset \"*.gguf\" "
+    "  yvex evidence models download qwen3-8b --models-root ~/lab/models --auth auto --audit",
+    "  yvex evidence models download status qwen3-32b --models-root ~/lab/models",
+    "  yvex evidence models artifacts list --models-root ~/lab/models --output table",
+    "  yvex evidence models artifacts status qwen3-6-35b-a3b --models-root ~/lab/models --audit",
+    "  yvex evidence models download --provider github --repo OWNER/REPO --release TAG --asset \"*.gguf\" "
         "--models-root ~/lab/models --auth auto --audit",
-    "  yvex models check deepseek4-v4-flash-selected-embed --backend cpu --level runtime",
-    "  yvex models check deepseek4-v4-flash-selected-embed --backend cuda --level runtime --no-graph",
-    "  yvex models check deepseek4-v4-flash-selected-embed --level full --report-dir build/reports",
+    "  yvex evidence models check deepseek4-v4-flash-selected-embed --backend cpu --level runtime",
+    "  yvex evidence models check deepseek4-v4-flash-selected-embed --backend cuda --level runtime --no-graph",
+    "  yvex evidence models check deepseek4-v4-flash-selected-embed --level full --report-dir build/reports",
     "\nModels manages the local alias registry, source tensor download sidecars, GGUF artifact discovery, "
         "selected artifact preparation, selected artifact checks, digest identity, and metadata drift facts "
         "for registered artifacts. Download uses the local accounts/provider preflight for Hugging Face and "
@@ -638,7 +638,7 @@ static int command_models_current(int arg_count, char **args)
     } else {
         yvex_cli_out_lines(stdout, literal_pair_3, sizeof(literal_pair_3) / sizeof(literal_pair_3[0]));
         if (output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
-            yvex_cli_out_writef(stdout, "hint: use 'yvex models use ALIAS' to select a model\n");
+            yvex_cli_out_writef(stdout, "hint: use 'yvex evidence models use ALIAS' to select a model\n");
         }
     }
     yvex_model_registry_close(registry);

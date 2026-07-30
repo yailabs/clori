@@ -19,7 +19,8 @@
 #include <string.h>
 
 static const char *const literal_pair_0[] = { "yvex: input requires tokens or prompt",
-    "usage: yvex input tokens --model FILE_OR_ALIAS --tokens IDS | yvex input prompt --model FILE_OR_ALIAS --text TEXT"
+    "usage: yvex runtime input tokens --model FILE_OR_ALIAS --tokens IDS | "
+    "yvex runtime input prompt --model FILE_OR_ALIAS --text TEXT"
 };
 
 static const char *const literal_pair_1[] = { "token_input_status: fail",
@@ -45,8 +46,8 @@ static const char *const literal_lines_2[] = { "prefill_ready: false",
     "logits_ready: false",
     "generation: unsupported"};
 
-static const char *const literal_lines_3[] = { "usage: yvex input tokens --model FILE_OR_ALIAS --tokens IDS",
-    "       yvex input prompt --model FILE_OR_ALIAS --text TEXT",
+static const char *const literal_lines_3[] = { "usage: yvex runtime input tokens --model FILE_OR_ALIAS --tokens IDS",
+    "       yvex runtime input prompt --model FILE_OR_ALIAS --text TEXT",
     "\nInput parses explicit tokens or tokenizer-backed prompt text into validated token input."};
 
 /* Domain-owned command surface moved out of core.c. */
@@ -86,7 +87,7 @@ static int command_tokenizer(int arg_count, char **args)
             return 0;
         }
         yvex_cli_out_writef(stderr, "yvex: tokenizer requires exactly one path\n");
-        yvex_cli_out_writef(stderr, "usage: yvex tokenizer <path>\n");
+        yvex_cli_out_writef(stderr, "usage: yvex tokenizer show <path>\n");
         return 2;
     }
 
@@ -759,7 +760,7 @@ int yvex_tokenizer_command(int arg_count, char **args)
 void yvex_detokenize_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex detokenize <path> --ids IDS\n\nDecodes IDs through the exact artifact tokenizer.\n");
+        "usage: yvex tokenizer decode <path> --ids IDS\n\nDecodes IDs through the exact artifact tokenizer.\n");
 }
 
 /* Purpose: Render input help from typed facts (`yvex_input_help`).
@@ -780,7 +781,7 @@ void yvex_input_help(FILE *fp)
 void yvex_prompt_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex prompt <path> [--system TEXT] --user TEXT [--assistant TEXT] "
+        "usage: yvex tokenizer prompt <path> [--system TEXT] --user TEXT [--assistant TEXT] "
         "[--tool TEXT] [--thinking] [--tokens]\n\nRenders the exact bounded DeepSeek prompt policy.\n");
 }
 
@@ -792,7 +793,7 @@ void yvex_prompt_help(FILE *fp)
 void yvex_tokenize_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex tokenize <path> --text TEXT [--bos] [--eos] [--pieces]\n\n"
+        "usage: yvex tokenizer encode <path> --text TEXT [--bos] [--eos] [--pieces]\n\n"
         "Encodes an explicit byte span through the exact artifact tokenizer.\n");
 }
 
@@ -804,6 +805,6 @@ void yvex_tokenize_help(FILE *fp)
 void yvex_tokenizer_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex tokenizer <path>\n\nPrints tokenizer kind, support level, vocabulary facts, special "
+        "usage: yvex tokenizer show <path>\n\nPrints tokenizer kind, support level, vocabulary facts, special "
             "token IDs, and chat template presence.\n");
 }

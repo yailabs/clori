@@ -425,8 +425,10 @@ grep -F '| `V010.SERVE.OPENAI.BETTENNIS.REAL.1` | `evidence` | Bet-tennis + real
   fail "real Bet-tennis/DeepSeek composition evidence is not reopened"
 grep -F '| `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` | DeepSeek / GB10 | `partial` |' "$project" >/dev/null ||
   fail "bounded DeepSeek PASS 4 delivery is not partial"
-grep -F '| `V010.PRODUCT.SURFACE.REALIGNMENT.0` | product | `active` |' "$project" >/dev/null ||
-  fail "product-surface realignment is not active"
+grep -F '| `V010.PRODUCT.SURFACE.REALIGNMENT.0` | product | `complete` |' "$project" >/dev/null ||
+  fail "product-surface realignment is not complete"
+grep -F '| `V010.OPERATOR.SURFACE.AUDIT.0` | product + engineering operations | `active` |' "$project" >/dev/null ||
+  fail "operator-surface audit is not active"
 grep -F '| `V010.OPERATOR.RUNTIME.CONSOLE.0` | common console + DeepSeek first vertical | `superseded` |' "$project" >/dev/null ||
   fail "standalone runtime console is not superseded"
 grep -F '| `V010.OPERATOR.COMMAND.CONSOLE.0` | product commands + runtime console | `blocked` |' "$project" >/dev/null ||

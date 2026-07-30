@@ -83,9 +83,16 @@ static int test_message_roundtrip(void)
     strcpy(source.runtime.target_id, "deepseek4-v4-flash");
     source.runtime.runtime_ready = 1;
     source.runtime.generation_ready = 1;
+    source.runtime.openai_listener_enabled = 1;
+    source.runtime.openai_listener_ready = 1;
+    source.runtime.openai_port = 8001u;
     source.runtime.metrics.model_open_count = 1u;
     source.runtime.metrics.artifact_open_count = 1u;
     source.runtime.metrics.queue_capacity = 16u;
+    source.runtime.metrics.active_http_requests = 2u;
+    source.runtime.metrics.completed_http_requests = 7u;
+    source.runtime.metrics.failed_http_requests = 3u;
+    source.runtime.metrics.cancelled_http_requests = 1u;
     rc = yvex_protocol_message_encode(&source, frame, sizeof(frame), &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "message encode");
     rc = yvex_protocol_message_decode(frame, count, &decoded, &err);
@@ -99,6 +106,15 @@ static int test_message_roundtrip(void)
                      "model-open metric");
     YVEX_TEST_ASSERT(decoded.runtime.metrics.queue_capacity == 16u,
                      "queue-capacity metric");
+    YVEX_TEST_ASSERT(decoded.runtime.openai_listener_enabled &&
+                         decoded.runtime.openai_listener_ready &&
+                         decoded.runtime.openai_port == 8001u,
+                     "integrated OpenAI listener roundtrip");
+    YVEX_TEST_ASSERT(decoded.runtime.metrics.active_http_requests == 2u &&
+                         decoded.runtime.metrics.completed_http_requests == 7u &&
+                         decoded.runtime.metrics.failed_http_requests == 3u &&
+                         decoded.runtime.metrics.cancelled_http_requests == 1u,
+                     "integrated HTTP metrics roundtrip");
     memset(&source, 0, sizeof(source));
     source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     source.kind = YVEX_CLIENT_MESSAGE_ERROR;

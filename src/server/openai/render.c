@@ -1,4 +1,4 @@
-/* Owner: gateway.openai.render.
+/* Owner: server.openai.render.
  * Owns: OpenAI-profile JSON/error/model/result objects and streaming event projections.
  * Does not own: JSON request admission, HTTP framing, YVEX counters, generation, or terminal UI.
  * Invariants: every string is escaped, usage is authoritative, and no internal path/identity leaks by default.
@@ -8,7 +8,7 @@
  * Effects: allocates one complete JSON document per call.
  * Failure: allocation/bounds errors publish no partial JSON owner. */
 
-#include "src/gateway/openai/private.h"
+#include "src/server/openai/private.h"
 
 #include <stdio.h>
 #include <limits.h>
@@ -42,7 +42,7 @@ static int render_reserve(render_builder *builder, unsigned long long add,
     }
     grown = realloc(builder->data, (size_t)capacity);
     if (!grown) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "gateway.openai.render",
+        yvex_error_set(err, YVEX_ERR_NOMEM, "server.openai.render",
                        "JSON response allocation failed");
         return YVEX_ERR_NOMEM;
     }
@@ -455,7 +455,7 @@ static int render_response_chunk(render_builder *builder, const char *id,
     return rc == YVEX_OK ? render_literal(builder, "}}", err) : rc;
 }
 
-/* Purpose: render one endpoint-specific SSE data object from a protocol-v2 message.
+/* Purpose: render one endpoint-specific SSE data object from a protocol-v3 message.
  * Inputs: endpoint, IDs/time, protocol message, initial flag, and output owner.
  * Effects: allocates and transfers one complete stream JSON object.
  * Failure: frees partial storage and leaves output null/count zero.

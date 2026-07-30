@@ -8,10 +8,8 @@ retired; they are not compatibility surfaces.
 
 | Binary | Owner | Engine linkage | Terminal authority |
 | --- | --- | --- | --- |
-| `yvexd` | runtime host | yes | optional raw JSONL console and fatal stderr |
-| `yvex` | product client | no | conversation, compact status, watch, trace |
-| `yvex-openai` | application gateway | no | bounded HTTP JSON/SSE, process diagnostics on stderr |
-| `yvex-dev` | developer tooling | yes | technical summary, JSON, explicit evidence |
+| `yvexd` | runtime host and server adapters | yes | optional raw JSONL console, loopback HTTP/SSE, and fatal stderr |
+| `yvex` | unified public command | runtime lane: no; offline lane: yes | conversation, compact status, watch, trace, and explicit offline evidence |
 
 Runtime and model code never writes product output. It publishes typed facts or
 typed events. Client renderers own layout; only client I/O owners and daemon
@@ -27,15 +25,21 @@ yvex run [options] TEXT
 yvex runtime start|stop|status|watch|trace
 yvex session new|list|show|attach|detach|reset|close
 yvex model list|use|show
-yvex artifact show|verify
-yvex quant preset|plan|emit|explain
+yvex artifact show|verify|metadata|tensors|materialize|emit ...
+yvex graph ...
+yvex quant preset|plan|emit|summarize|explain|policy|imatrix ...
+yvex tokenizer show|encode|decode|prompt ...
+yvex source manifest|native ...
+yvex tensor map|collection ...
+yvex evidence target|model|moe|backend|cuda ...
 yvex help
 yvex version
 ```
 
-The product client does not accept direct graph, materialization, tokenizer,
-metadata, tensor-map, or target-report commands. It has no deprecated, hidden,
-or forwarding aliases.
+The runtime-facing lane has no dependency edge to engine execution. Direct
+graph, materialization, tokenizer, metadata, tensor-map, and target-report
+operations enter a separately guarded finite offline lane in the same ELF. No
+deprecated, hidden, or forwarding aliases exist.
 
 `model use NAME --artifact FILE --runtime-binding FILE` atomically records one
 private XDG selection for a later `runtime start`; it never opens the model and
@@ -50,23 +54,24 @@ The REPL owns bounded in-memory history, UTF-8 code-point deletion, bracketed
 multiline paste, resize redraw, and two-stage SIGINT/EOF behavior. History is
 not persisted and never becomes telemetry content.
 
-## Developer grammar
+## Offline engineering grammar
 
 Direct engineering capability is grouped by semantic owner:
 
 ```text
-yvex-dev graph ...
-yvex-dev artifact show|verify|metadata|tensors|materialize|emit ...
-yvex-dev quant preset|plan|emit|summarize|explain|policy|imatrix ...
-yvex-dev tokenizer show|encode|decode|prompt ...
-yvex-dev source manifest|native ...
-yvex-dev tensor map|collection ...
-yvex-dev runtime input|context ...
-yvex-dev evidence target|model|moe|backend|cuda ...
+yvex graph ...
+yvex artifact show|verify|metadata|tensors|materialize|emit ...
+yvex quant preset|plan|emit|summarize|explain|policy|imatrix ...
+yvex tokenizer show|encode|decode|prompt ...
+yvex source manifest|native ...
+yvex tensor map|collection ...
+yvex runtime input|context ...
+yvex evidence target|model|moe|backend|cuda ...
 ```
 
-This is a nested developer surface, not a renamed public flat registry. The
-release product package may omit `yvex-dev` through its package profile.
+This is a nested offline lane, not a renamed flat registry or a second process.
+Its handlers may link engine owners, while runtime-client handlers continue to
+cross the local protocol.
 
 ## Canonical projections
 
@@ -110,11 +115,10 @@ refusals are nonzero without turning diagnostic evidence into normal output.
 
 ### Application protocol
 
-`yvex-openai` is not a fourth terminal renderer. It returns the documented
-compatibility JSON or SSE schema over loopback HTTP and writes only process
-startup/fatal diagnostics to stderr. Its response objects project typed
-provider and YVEX protocol facts; they never scrape `yvex` or daemon-console
-text. The exact profile lives in
+The OpenAI adapter inside `yvexd` is not a third terminal renderer. It returns
+the documented compatibility JSON or SSE schema over loopback HTTP. Its
+response objects project typed provider and YVEX protocol facts; they never
+scrape `yvex` or daemon-console text. The exact profile lives in
 [`openai-compatibility.md`](openai-compatibility.md).
 
 ## Typed event fan-out
@@ -148,7 +152,7 @@ boundaries supplied by the tokenizer decoder.
 
 ## Non-claims
 
-The local client architecture and bounded loopback gateway do not establish
+The local client architecture and bounded loopback adapter do not establish
 public HTTP serving, authentication, TLS, remote security, full OpenAI API or
 Anthropic compatibility, continuous batching, model quality, benchmark
 authority, or release qualification.

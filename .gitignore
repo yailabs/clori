@@ -4,8 +4,6 @@
 build/
 /yvex
 /yvexd
-/yvex-openai
-/yvex-dev
 /*.o
 .yvex/
 dist/

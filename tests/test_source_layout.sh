@@ -119,12 +119,12 @@ for filter in provider openai; do
 done
 grep -A16 '^test-runtime-asan:' Makefile |
   grep -F 'test-runtime client daemon test-openai' >/dev/null || {
-    echo "source layout: ASan omits the OpenAI gateway process" >&2
+    echo "source layout: ASan omits the in-process OpenAI adapter" >&2
     exit 1
   }
 grep -A16 '^test-runtime-ubsan:' Makefile |
   grep -F 'test-runtime client daemon test-openai' >/dev/null || {
-    echo "source layout: UBSan omits the OpenAI gateway process" >&2
+    echo "source layout: UBSan omits the in-process OpenAI adapter" >&2
     exit 1
   }
 

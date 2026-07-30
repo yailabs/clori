@@ -349,6 +349,14 @@ No renderer or output format owns capability or may imply a higher stage.
 
 ### Executable reachability
 
+The normal executable topology is `yvex` plus `yvexd`. `yvex` is the sole
+public command entrypoint: runtime-facing handlers remain protocol-only while
+finite offline engineering handlers may consume admitted engine owners through
+a separately guarded dispatch lane. `yvexd` is the sole persistent runtime
+process and owns both the private Unix listener and the loopback
+OpenAI-compatible adapter. Additional developer or gateway executables are not
+compatibility surfaces.
+
 Every first-class milestone that adds or changes executable behavior closes
 with a real operator-reachable command in the main `yvex` CLI. A milestone may
 declare `cli_applicability=not_applicable` only when its project-control owner

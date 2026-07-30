@@ -19,7 +19,6 @@
 #include <time.h>
 #include <unistd.h>
 #include <yvex/internal/core.h>
-#define TELEMETRY_SCHEMA_V2 2u
 struct server_telemetry {
     pthread_mutex_t mutex;
     pthread_cond_t condition;
@@ -130,7 +129,7 @@ int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capaci
     }
     telemetry->capacity = capacity;
     telemetry->next_sequence = 1u;
-    telemetry->metrics.schema_version = TELEMETRY_SCHEMA_V2;
+    telemetry->metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
     (void)clock_gettime(CLOCK_MONOTONIC, &telemetry->started);
     yvex_core_text_copy(telemetry->runtime_model_identity,
                         sizeof(telemetry->runtime_model_identity),
@@ -189,7 +188,7 @@ int yvex_server_telemetry_emit_provider(
         return YVEX_ERR_INVALID_ARG;
     }
     memset(&event, 0, sizeof(event));
-    event.schema_version = TELEMETRY_SCHEMA_V2;
+    event.schema_version = YVEX_RUNTIME_EVENT_SCHEMA_VERSION;
     event.wall_time_ns = time_ns(CLOCK_REALTIME);
     event.monotonic_time_ns = time_ns(CLOCK_MONOTONIC);
     event.process_id = (unsigned long long)getpid();
@@ -482,6 +481,22 @@ void yvex_server_telemetry_request(server_telemetry *telemetry, int active_delta
     telemetry->metrics.cancelled_requests += cancelled != 0;
     (void)pthread_mutex_unlock(&telemetry->mutex);
 }
+/* Purpose: account loopback HTTP adapter requests in the common server metrics snapshot.
+ * Inputs: telemetry, signed active delta, and terminal classification. Effects: updates HTTP counters.
+ * Failure: clamps impossible negative gauges. Boundary: model request metrics remain worker-owned. */
+void yvex_server_telemetry_openai_request(server_telemetry *telemetry,
+                                          int active_delta, int completed,
+                                          int failed, int cancelled)
+{
+    if (!telemetry || pthread_mutex_lock(&telemetry->mutex) != 0) return;
+    if (active_delta > 0) telemetry->metrics.active_http_requests++;
+    if (active_delta < 0 && telemetry->metrics.active_http_requests)
+        telemetry->metrics.active_http_requests--;
+    telemetry->metrics.completed_http_requests += completed != 0;
+    telemetry->metrics.failed_http_requests += failed != 0;
+    telemetry->metrics.cancelled_http_requests += cancelled != 0;
+    (void)pthread_mutex_unlock(&telemetry->mutex);
+}
 /* Purpose: transfer and release the sole telemetry owner after waking subscribers.
  * Inputs: unique owner pointer. Effects: marks closed, wakes readers, destroys synchronization, and frees ring.
  * Failure: cleanup errors are secondary in this destructor. Boundary: caller pointer becomes NULL. */
@@ -543,7 +558,7 @@ int yvex_server_event_validate(const yvex_server_event *event, yvex_error *err)
 {
     yvex_server_event candidate;
     char supplied[YVEX_SHA256_HEX_CAP];
-    if (!event || event->schema_version != TELEMETRY_SCHEMA_V2 ||
+    if (!event || event->schema_version != YVEX_RUNTIME_EVENT_SCHEMA_VERSION ||
         event->kind > YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE ||
         event->severity > YVEX_SERVER_SEVERITY_FATAL ||
         (event->provider_adapter[0] &&

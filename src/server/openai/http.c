@@ -1,4 +1,4 @@
-/* Owner: gateway.openai.http.
+/* Owner: server.openai.http.
  * Owns: bounded loopback HTTP/1.1 admission, complete body reads, responses, and SSE framing.
  * Does not own: JSON semantics, OpenAI translation, YVEX sessions, model work, or public networking.
  * Invariants: Content-Length is unique, transfer encoding is refused, and each connection serves one request.
@@ -8,7 +8,7 @@
  * Effects: reads/writes one connection and allocates at most the admitted body extent.
  * Failure: malformed, oversized, timed-out, or incomplete messages publish no partial request. */
 #define _POSIX_C_SOURCE 200809L
-#include "src/gateway/openai/private.h"
+#include "src/server/openai/private.h"
 #include <errno.h>
 #include <limits.h>
 #include <poll.h>

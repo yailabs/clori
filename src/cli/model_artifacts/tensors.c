@@ -270,7 +270,7 @@ static int parse_tensor_collection_options(int arg_count,
     if (arg_count < 3 || strcmp(args[2], "report") != 0) {
         yvex_cli_out_writef(stderr, "yvex: tensor-collection requires report\n");
         yvex_cli_out_writef(stderr,
-            "usage: yvex tensor-collection report --model FILE_OR_ALIAS --collection moe [--family auto|"
+            "usage: yvex tensor collection report --model FILE_OR_ALIAS --collection moe [--family auto|"
                 "deepseek|glm|qwen] [--backend cpu|cuda]\n");
         return 2;
     }
@@ -740,16 +740,16 @@ int yvex_model_artifacts_surface_tensor_collection_command(int arg_count, char *
 void yvex_model_artifacts_surface_tensor_collection_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex tensor-collection report --model FILE_OR_ALIAS --collection moe [--family auto|"
+        "usage: yvex tensor collection report --model FILE_OR_ALIAS --collection moe [--family auto|"
             "deepseek|glm|qwen] [--backend cpu|cuda] [--registry FILE] [--audit | --output normal|table|audit] "
             "[--include-router] [--include-experts] [--include-shared] [--include-dispatch] [--include-"
             "storage] [--include-residency] [--include-blockers]\n");
     yvex_cli_out_writef(fp, "\nExamples:\n");
     yvex_cli_out_writef(fp,
-        "  yvex tensor-collection report --model deepseek4-v4-flash-selected-embed-rmsnorm --family "
+        "  yvex tensor collection report --model deepseek4-v4-flash-selected-embed-rmsnorm --family "
             "deepseek --collection moe --backend cpu --include-router --include-experts --include-blockers\n");
     yvex_cli_out_writef(fp,
-        "  yvex tensor-collection report --model glm-5.2-official-safetensors --family glm --collection "
+        "  yvex tensor collection report --model glm-5.2-official-safetensors --family glm --collection "
             "moe --backend cpu --include-blockers\n");
     yvex_cli_out_lines(fp, literal_pair_0, sizeof(literal_pair_0) / sizeof(literal_pair_0[0]));
     yvex_cli_out_writef(fp, "  Default output is compact. Use --audit for full diagnostic fields.\n");

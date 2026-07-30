@@ -1,8 +1,8 @@
 #!/bin/sh
-# Purpose: exercise the real gateway binary over HTTP/SSE and the real local protocol v2.
+# Purpose: exercise the production adapter modules over HTTP/SSE and the real local protocol v3.
 set -eu
 
-YVEX_OPENAI_BIN=${YVEX_OPENAI_BIN:-./yvex-openai}
+YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}
 YVEX_OPENAI_HOST=${YVEX_OPENAI_HOST:-build/tests/openai_host}
 . tests/support/cleanup.sh
 
@@ -40,7 +40,7 @@ while test "$attempt" -lt 100; do
 done
 test -S "$socket"
 
-"$YVEX_OPENAI_BIN" --host 127.0.0.1 --port "$port" --timeout-ms 500 \
+"$YVEX_OPENAI_ADAPTER" --host 127.0.0.1 --port "$port" --timeout-ms 500 \
     --yvex-socket "$socket" \
     >"$root/gateway.out" 2>"$root/gateway.err" &
 gateway_pid=$!
@@ -211,4 +211,4 @@ closed=$(grep -c '^session.close ' "$root/host.err" || true)
 test "$created" -gt 0
 test "$created" = "$closed"
 
-echo 'OpenAI gateway integration: protocol-v2 Chat/Responses/SSE/tool/state/cleanup/refusal passed'
+echo 'OpenAI adapter integration: protocol-v3 Chat/Responses/SSE/tool/state/cleanup/refusal passed'

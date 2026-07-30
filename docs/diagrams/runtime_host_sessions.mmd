@@ -3,13 +3,12 @@ flowchart LR
         client_a[Client A]
         client_b[Client B]
         native_n[Native client N]
-        gateway[yvex-openai]
         apps[SDKs / applications]
-        apps <--> gateway
     end
 
     subgraph host[yvexd — long-lived runtime host]
         protocol[Private local protocol]
+        openai[In-process OpenAI adapter]
         resources[Immutable model, tokenizer,<br/>binding, and residency]
         queue[Bounded request queue]
         worker[Single model worker]
@@ -22,6 +21,7 @@ flowchart LR
         end
 
         protocol --> queue --> worker
+        openai <--> protocol
         resources --> worker
         registry --> session
         worker <--> turn
@@ -42,6 +42,7 @@ flowchart LR
     end
 
     clients <--> protocol
+    apps <--> openai
     worker --> events
     turn --> events
     events --> raw

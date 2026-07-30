@@ -1,14 +1,14 @@
-/* Owner: gateway.openai.core.
- * Owns: loopback gateway lifecycle, endpoint routing, YVEX session orchestration, streaming, and cancellation.
+/* Owner: server.openai.core.
+ * Owns: loopback adapter lifecycle, endpoint routing, YVEX session orchestration, streaming, and cancellation.
  * Does not own: model/runtime lifecycle, JSON syntax, HTTP parsing, provider prompts, KV, or tool execution.
- * Invariants: every generation uses yvexd over protocol v2; ephemeral sessions close and retained state is explicit.
- * Boundary: the gateway is a process adapter and never links or invokes the inference engine.
+ * Invariants: every generation uses the local protocol; ephemeral sessions close and retained state is explicit.
+ * Boundary: the adapter is server-owned and never links or invokes the inference engine directly.
  * Purpose: compose bounded HTTP/OpenAI translation with the existing local runtime-host protocol.
  * Inputs: loopback configuration, accepted HTTP requests, and a private YVEX socket path.
  * Effects: creates client protocol connections/sessions, streams committed results, and retains bounded response IDs.
  * Failure: cancels abandoned work, closes owned sessions/connections, and never reports false HTTP success. */
 #define _POSIX_C_SOURCE 200809L
-#include "src/gateway/openai/private.h"
+#include "src/server/openai/private.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
@@ -31,6 +31,14 @@ typedef struct {
     pthread_t thread;
     int started;
 } disconnect_watch;
+
+struct server_openai_listener {
+    openai_gateway gateway;
+    atomic_int stop, admit, ready;
+    pthread_t thread;
+    int listen_fd, thread_started, thread_status;
+    yvex_error thread_error;
+};
 /* Purpose: return current wall seconds for public OpenAI object timestamps and state TTL only. */
 static unsigned long long wall_seconds(void)
 {
@@ -65,7 +73,7 @@ static int result_append(unsigned char **bytes, unsigned long long *count,
         }
         storage = realloc(*bytes, (size_t)grown);
         if (!storage) {
-            yvex_error_set(err, YVEX_ERR_NOMEM, "gateway.openai.result",
+            yvex_error_set(err, YVEX_ERR_NOMEM, "server.openai.result",
                            "provider output allocation failed");
             return YVEX_ERR_NOMEM;
         }
@@ -91,7 +99,7 @@ static void result_clear(openai_generation_result *result)
 }
 /* Purpose: open one gateway protocol client with a bounded model-response timeout.
  * Inputs: gateway socket, client output, and error output.
- * Effects: authenticates protocol v2 and applies the configured send/receive ceiling.
+ * Effects: authenticates protocol v3 and applies the configured send/receive ceiling.
  * Failure: closes partial client ownership and preserves the typed timeout/refusal.
  * Boundary: bounds gateway waiting without changing daemon generation semantics. */
 static int client_connect(const openai_gateway *gateway, yvex_client **client,
@@ -125,7 +133,7 @@ static int daemon_status(const openai_gateway *gateway,
     if (rc == YVEX_OK && (message.kind != YVEX_CLIENT_MESSAGE_STATUS ||
                           message.status != YVEX_OK ||
                           !message.runtime.runtime_ready)) {
-        yvex_error_set(err, YVEX_ERR_STATE, "gateway.openai.runtime",
+        yvex_error_set(err, YVEX_ERR_STATE, "server.openai.runtime",
                        "yvexd is not ready");
         rc = YVEX_ERR_STATE;
     }
@@ -249,7 +257,10 @@ static void *disconnect_watch_main(void *opaque)
         int closed = 0;
         yvex_error err;
         int rc = openai_http_peer_wait(watch->http_fd, 100u, &closed, &err);
-        if ((watch->gateway->stop && *watch->gateway->stop) || rc != YVEX_OK || closed) {
+        if ((watch->gateway->stop &&
+             atomic_load_explicit(watch->gateway->stop,
+                                  memory_order_acquire)) ||
+            rc != YVEX_OK || closed) {
             atomic_store_explicit(&watch->peer_closed, 1,
                                   memory_order_release);
             cancel_session(watch->gateway, watch->session_name);
@@ -277,7 +288,7 @@ static int disconnect_watch_open(disconnect_watch *watch,
     atomic_init(&watch->stop, 0);
     atomic_init(&watch->peer_closed, 0);
     if (pthread_create(&watch->thread, NULL, disconnect_watch_main, watch) != 0) {
-        yvex_error_set(err, YVEX_ERR_IO, "gateway.openai.disconnect",
+        yvex_error_set(err, YVEX_ERR_IO, "server.openai.disconnect",
                        "HTTP disconnect watcher could not start");
         return YVEX_ERR_IO;
     }
@@ -315,12 +326,12 @@ static int session_operation(yvex_client *client, yvex_client_operation operatio
     if (rc == YVEX_OK) rc = yvex_client_receive(client, &response, err);
     if (rc == YVEX_OK && response.status != YVEX_OK) {
         yvex_error_set(err, (yvex_status)response.status,
-                       "gateway.openai.session", response.reason);
+                       "server.openai.session", response.reason);
         rc = response.status;
     }
     return rc;
 }
-/* Purpose: close one retained or ephemeral server session through protocol v2.
+/* Purpose: close one retained or ephemeral server session through protocol v3.
  * Inputs: gateway socket, exact session name, and error output.
  * Effects: opens one bounded client connection and transfers session cleanup to yvexd.
  * Failure: leaves the caller's mapping intact so cleanup can be retried or reported.
@@ -442,7 +453,7 @@ static int response_event_emit(openai_http_sink *sink,
  * Inputs: sink/IDs/time, terminal message, completed aggregate result, and error output.
  * Effects: seals text or arguments, item, and response in canonical order.
  * Failure: stops at the first incomplete socket event without claiming completion.
- * Boundary: all bytes and usage facts originate in protocol-v2 messages. */
+ * Boundary: all bytes and usage facts originate in protocol-v3 messages. */
 static int response_terminal_emit(openai_http_sink *sink, const char *id,
                                   const char *model,
                                   unsigned long long created,
@@ -607,7 +618,7 @@ static int generation_execute(openai_gateway *gateway,
             result->failure_class = message.failure_class;
             yvex_error_set(err, (yvex_status)(message.status ? message.status
                                                              : YVEX_ERR),
-                           "gateway.openai.generation", message.reason);
+                           "server.openai.generation", message.reason);
             rc = message.status ? message.status : YVEX_ERR;
             break;
         }
@@ -845,11 +856,11 @@ static int handle_generation(openai_gateway *gateway, int fd,
                                   admitted.provider->previous_response_id, now);
         if (!prior) {
             rc = YVEX_ERR_STATE;
-            yvex_error_set(&err, rc, "gateway.openai.previous_response",
+            yvex_error_set(&err, rc, "server.openai.previous_response",
                            "previous_response_id is unknown or expired");
         } else if (strcmp(prior->model, admitted.provider->model) != 0) {
             rc = YVEX_ERR_STATE;
-            yvex_error_set(&err, rc, "gateway.openai.previous_response",
+            yvex_error_set(&err, rc, "server.openai.previous_response",
                            "previous response belongs to another model");
         }
     }
@@ -884,7 +895,7 @@ static int handle_generation(openai_gateway *gateway, int fd,
     if (rc == YVEX_OK && peer_closed) {
         rc = YVEX_ERR_CANCELLED;
         result.failure_class = YVEX_CLIENT_FAILURE_CLIENT_CANCELLED;
-        yvex_error_set(&err, rc, "gateway.openai.disconnect",
+        yvex_error_set(&err, rc, "server.openai.disconnect",
                        "HTTP client disconnected during generation");
     }
     if (rc != YVEX_OK) goto failure;
@@ -971,7 +982,7 @@ failure:
  * Effects: reads one request, writes one response or stream, then clears request storage.
  * Failure: sends one bounded error when possible and always returns connection ownership.
  * Boundary: one request per connection; no keep-alive or runtime ownership. */
-static void handle_connection(openai_gateway *gateway, int fd)
+static int handle_connection(openai_gateway *gateway, int fd)
 {
     struct timeval timeout = {30, 0};
     openai_http_request request;
@@ -985,55 +996,41 @@ static void handle_connection(openai_gateway *gateway, int fd)
     if (rc != YVEX_OK) {
         (void)send_error(fd, http_status(rc, YVEX_CLIENT_FAILURE_NONE),
                          yvex_error_message(&err));
-        return;
+        return rc;
     }
-    if (!route(&request, &endpoint, model))
+    if (!route(&request, &endpoint, model)) {
         (void)send_error(fd, 404, "endpoint is outside the YVEX OpenAI profile");
-    else if (endpoint <= OPENAI_ENDPOINT_MODEL)
-        (void)handle_read(gateway, fd, endpoint, model);
+        rc = YVEX_ERR_UNSUPPORTED;
+    } else if (endpoint <= OPENAI_ENDPOINT_MODEL)
+        rc = handle_read(gateway, fd, endpoint, model);
     else
-        (void)handle_generation(gateway, fd, &request, endpoint);
+        rc = handle_generation(gateway, fd, &request, endpoint);
     openai_http_request_clear(&request);
+    return rc;
 }
-/* Purpose: run one local-only gateway listener with bounded one-request connections.
- * Inputs: validated gateway configuration, shared stop flag, and error output.
- * Effects: binds loopback, accepts bounded clients, and clears retained mappings on stop.
- * Failure: closes listener/state and reports bind, listen, accept, or translation failure.
- * Boundary: gateway lifecycle only; it never starts or embeds yvexd. */
-int openai_gateway_run(openai_gateway *gateway, volatile sig_atomic_t *stop,
-                       yvex_error *err)
+/* Purpose: serve one already-reserved loopback listener until its server owner requests stop.
+ * Inputs: prepared listener ownership. Effects: accepts serial bounded requests and clears response state.
+ * Failure: records the first listener failure for the lifecycle joiner. Boundary: no model ownership. */
+static void *listener_main(void *opaque)
 {
-    struct sockaddr_in address;
-    int listener, one = 1, rc = YVEX_OK, listener_failed = 0;
-    if (!gateway || !stop || strcmp(gateway->host, "127.0.0.1") != 0 ||
-        !gateway->port || !gateway->yvex_timeout_ms ||
-        !gateway->yvex_socket[0]) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "gateway.openai.config",
-                       "loopback host, port, and YVEX socket are required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    gateway->stop = stop;
-    listener = socket(AF_INET, SOCK_STREAM, 0);
-    if (listener < 0) goto io_failure;
-    (void)setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    memset(&address, 0, sizeof(address));
-    address.sin_family = AF_INET;
-    address.sin_port = htons(gateway->port);
-    if (inet_pton(AF_INET, gateway->host, &address.sin_addr) != 1 ||
-        bind(listener, (struct sockaddr *)&address, sizeof(address)) != 0 ||
-        listen(listener, 16) != 0) {
-        (void)close(listener);
-        goto io_failure;
-    }
-    while (!*stop) {
+    server_openai_listener *listener = opaque;
+    openai_gateway *gateway = &listener->gateway;
+    struct timespec delay = {0, 1000000L};
+    int rc = YVEX_OK, listener_failed = 0;
+    while (!atomic_load_explicit(&listener->admit, memory_order_acquire) &&
+           !atomic_load_explicit(&listener->stop, memory_order_acquire))
+        (void)nanosleep(&delay, NULL);
+    while (!atomic_load_explicit(&listener->stop, memory_order_acquire)) {
         fd_set readable;
         struct timeval wait = {1, 0};
         int ready;
         FD_ZERO(&readable);
-        FD_SET(listener, &readable);
-        ready = select(listener + 1, &readable, NULL, NULL, &wait);
+        FD_SET(listener->listen_fd, &readable);
+        ready = select(listener->listen_fd + 1, &readable, NULL, NULL, &wait);
         if (ready < 0 && errno == EINTR) continue;
         if (ready < 0) {
+            if (atomic_load_explicit(&listener->stop, memory_order_acquire))
+                break;
             rc = YVEX_ERR_IO;
             listener_failed = 1;
             break;
@@ -1041,36 +1038,213 @@ int openai_gateway_run(openai_gateway *gateway, volatile sig_atomic_t *stop,
         if (ready > 0) {
             struct sockaddr_in peer;
             socklen_t peer_count = sizeof(peer);
-            int client = accept(listener, (struct sockaddr *)&peer, &peer_count);
+            int client = accept(listener->listen_fd,
+                                (struct sockaddr *)&peer, &peer_count);
             if (client < 0 && errno == EINTR) continue;
             if (client < 0) {
+                if (atomic_load_explicit(&listener->stop,
+                                         memory_order_acquire))
+                    break;
                 rc = YVEX_ERR_IO;
                 listener_failed = 1;
                 break;
             }
-            if (peer.sin_addr.s_addr == htonl(INADDR_LOOPBACK))
-                handle_connection(gateway, client);
+            if (peer.sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
+                int request_rc;
+                yvex_server_telemetry_openai_request(gateway->telemetry,
+                                                     1, 0, 0, 0);
+                request_rc = handle_connection(gateway, client);
+                yvex_server_telemetry_openai_request(
+                    gateway->telemetry, -1, request_rc == YVEX_OK,
+                    request_rc != YVEX_OK && request_rc != YVEX_ERR_CANCELLED,
+                    request_rc == YVEX_ERR_CANCELLED);
+            }
             (void)close(client);
         }
     }
-    (void)close(listener);
+    if (listener->listen_fd >= 0) {
+        (void)close(listener->listen_fd);
+        listener->listen_fd = -1;
+    }
     {
         yvex_error cleanup_error;
         int cleanup_rc = state_sessions_close(gateway, &cleanup_error);
         if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
             rc = cleanup_rc;
-            *err = cleanup_error;
+            listener->thread_error = cleanup_error;
         }
     }
     openai_state_clear(gateway);
-    if (rc == YVEX_OK)
-        yvex_error_clear(err);
-    else if (listener_failed)
-        yvex_error_set(err, rc, "gateway.openai.listener",
-                       "loopback listener failed");
-    return rc;
+    if (rc != YVEX_OK && listener_failed)
+        yvex_error_set(&listener->thread_error, rc,
+                       "server.openai.listener", "loopback listener failed");
+    listener->thread_status = rc;
+    atomic_store_explicit(&listener->ready, 0, memory_order_release);
+    return NULL;
+}
+
+/* Purpose: reserve the loopback HTTP endpoint before any runtime model opens.
+ * Inputs: unique output, explicit local protocol path, port, timeout, and shared telemetry.
+ * Effects: allocates adapter state and binds/listens without accepting requests.
+ * Failure: closes every partial descriptor and reports configuration or port collision.
+ * Boundary: preparation owns no model, session, worker, or process entrypoint. */
+int yvex_server_openai_prepare(server_openai_listener **out,
+                               const server_openai_options *options,
+                               server_telemetry *telemetry,
+                               yvex_error *err)
+{
+    struct sockaddr_in address;
+    server_openai_listener *listener;
+    int one = 1;
+    if (out) *out = NULL;
+    if (!out || !options || !options->yvex_socket ||
+        options->yvex_socket[0] != '/' || !options->port ||
+        options->timeout_ms < 100u || options->timeout_ms > 86400000u ||
+        strlen(options->yvex_socket) >= YVEX_SERVER_SOCKET_PATH_CAP) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.openai.config",
+                       "loopback port, timeout, and YVEX socket are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    listener = calloc(1u, sizeof(*listener));
+    if (!listener) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "server.openai.prepare",
+                       "OpenAI listener allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    listener->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listener->listen_fd < 0) goto io_failure;
+    (void)setsockopt(listener->listen_fd, SOL_SOCKET, SO_REUSEADDR,
+                     &one, sizeof(one));
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(options->port);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (bind(listener->listen_fd, (struct sockaddr *)&address,
+             sizeof(address)) != 0 || listen(listener->listen_fd, 16) != 0)
+        goto io_failure;
+    strcpy(listener->gateway.host, "127.0.0.1");
+    listener->gateway.port = options->port;
+    listener->gateway.yvex_timeout_ms = options->timeout_ms;
+    listener->gateway.telemetry = telemetry;
+    strcpy(listener->gateway.yvex_socket, options->yvex_socket);
+    atomic_init(&listener->stop, 0);
+    atomic_init(&listener->admit, 0);
+    atomic_init(&listener->ready, 0);
+    listener->gateway.stop = &listener->stop;
+    *out = listener;
+    yvex_error_clear(err);
+    return YVEX_OK;
 io_failure:
-    yvex_error_set(err, YVEX_ERR_IO, "gateway.openai.listener",
-                   "loopback listener creation failed");
+    if (listener->listen_fd >= 0) (void)close(listener->listen_fd);
+    free(listener);
+    yvex_error_set(err, YVEX_ERR_IO, "server.openai.listener",
+                   "loopback listener reservation failed");
     return YVEX_ERR_IO;
+}
+
+/* Purpose: start the gated listener thread before runtime readiness is published.
+ * Inputs: one prepared listener and writable error output.
+ * Effects: creates exactly one joinable thread; HTTP admission remains disabled.
+ * Failure: reports invalid lifecycle state or thread creation failure without consuming the listener.
+ * Boundary: does not admit requests or mutate runtime/model state. */
+int yvex_server_openai_start(server_openai_listener *listener,
+                             yvex_error *err)
+{
+    if (!listener || listener->listen_fd < 0 || listener->thread_started) {
+        yvex_error_set(err, YVEX_ERR_STATE, "server.openai.start",
+                       "one prepared OpenAI listener is required");
+        return YVEX_ERR_STATE;
+    }
+    if (pthread_create(&listener->thread, NULL, listener_main, listener) != 0) {
+        yvex_error_set(err, YVEX_ERR_STATE, "server.openai.start",
+                       "OpenAI listener thread creation failed");
+        return YVEX_ERR_STATE;
+    }
+    listener->thread_started = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Purpose: admit HTTP accepts only after the runtime-ready transaction has published.
+ * Inputs: one successfully started listener. Effects: atomically publishes ready and admission.
+ * Failure: invalid or unstarted listeners remain unchanged. Boundary: no socket or runtime mutation. */
+void yvex_server_openai_activate(server_openai_listener *listener)
+{
+    if (!listener || !listener->thread_started) return;
+    atomic_store_explicit(&listener->ready, 1, memory_order_release);
+    atomic_store_explicit(&listener->admit, 1, memory_order_release);
+}
+
+/* Purpose: stop HTTP admission and wake the accept owner for bounded shutdown.
+ * Inputs: optional prepared listener. Effects: publishes stop and shuts down the listening descriptor.
+ * Failure: descriptor shutdown failure is deferred to lifecycle cleanup. Boundary: no model close. */
+void yvex_server_openai_request_stop(server_openai_listener *listener)
+{
+    if (!listener) return;
+    atomic_store_explicit(&listener->stop, 1, memory_order_release);
+    if (listener->listen_fd >= 0)
+        (void)shutdown(listener->listen_fd, SHUT_RDWR);
+}
+
+/* Purpose: join the HTTP owner after bounded cancellation and response-state cleanup.
+ * Inputs: prepared listener and error output. Effects: joins at most once.
+ * Failure: reports thread or listener cleanup failure. Boundary: no runtime owner closes here. */
+int yvex_server_openai_finish(server_openai_listener *listener,
+                              yvex_error *err)
+{
+    int rc;
+    if (!listener) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    yvex_server_openai_request_stop(listener);
+    if (!listener->thread_started) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    rc = pthread_join(listener->thread, NULL) == 0
+             ? listener->thread_status : YVEX_ERR_STATE;
+    listener->thread_started = 0;
+    if (rc != YVEX_OK) {
+        if (yvex_error_code(&listener->thread_error) == YVEX_OK)
+            yvex_error_set(&listener->thread_error, rc,
+                           "server.openai.finish",
+                           "OpenAI listener thread join failed");
+        if (err) *err = listener->thread_error;
+        return rc;
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+/* Purpose: copy bounded listener lifecycle facts into the authoritative server status.
+ * Inputs: optional listener and writable snapshot. Effects: writes one self-contained snapshot.
+ * Failure: absent listener produces disabled zero facts. Boundary: reads no request or runtime state. */
+void yvex_server_openai_snapshot(const server_openai_listener *listener,
+                                 server_openai_snapshot *snapshot)
+{
+    if (!snapshot) return;
+    memset(snapshot, 0, sizeof(*snapshot));
+    if (!listener) return;
+    snapshot->enabled = 1;
+    snapshot->ready = atomic_load_explicit(&listener->ready,
+                                           memory_order_acquire);
+    snapshot->port = listener->gateway.port;
+}
+
+/* Purpose: release the adapter after its thread and retained protocol state have stopped.
+ * Inputs: unique listener-owner slot. Effects: joins, closes, clears state, frees, and nulls the slot.
+ * Failure: finish failure is cleanup evidence but ownership is still reclaimed. Boundary: closes no model. */
+void yvex_server_openai_close(server_openai_listener **listener)
+{
+    server_openai_listener *owner;
+    yvex_error err;
+    if (!listener || !*listener) return;
+    owner = *listener;
+    (void)yvex_server_openai_finish(owner, &err);
+    if (owner->listen_fd >= 0) (void)close(owner->listen_fd);
+    openai_state_clear(&owner->gateway);
+    memset(owner, 0, sizeof(*owner));
+    free(owner);
+    *listener = NULL;
 }

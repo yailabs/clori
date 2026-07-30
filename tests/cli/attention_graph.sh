@@ -60,7 +60,7 @@ expect_nonzero() {
     [ "$actual" -ne 0 ] || fail "expected nonzero status: $*"
 }
 
-"$YVEX_BIN" help graph >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
+"$YVEX_BIN" graph --help >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
 "$YVEX_BIN" graph attention --help >"$OUT_DIR/attention-help.out" \
     2>"$OUT_DIR/attention-help.err"
 "$YVEX_BIN" graph attention execute --help >"$OUT_DIR/execute-help.out" \
@@ -92,8 +92,6 @@ for action in "state inspect" "state validate" "state exercise" \
         >"$OUT_DIR/action-help.out" 2>"$OUT_DIR/action-help.err"
     contains "$OUT_DIR/action-help.out" "graph attention"
 done
-"$YVEX_BIN" commands >"$OUT_DIR/catalog.out" 2>"$OUT_DIR/catalog.err"
-contains "$OUT_DIR/catalog.out" "Production graph and generation execution."
 contains "$OUT_DIR/help.out" "yvex graph attention execute --target deepseek4-v4-flash"
 contains "$OUT_DIR/help.out" "--backend cpu|cuda"
 contains "$OUT_DIR/help.out" "--compare-backends"

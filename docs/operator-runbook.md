@@ -8,13 +8,11 @@ gates.
 
 ## Prerequisites
 
-Builds provide four distinct products:
+Builds provide two executable products:
 
-- `yvexd` hosts one process-resident runtime model;
-- `yvex` connects as the product client;
-- `yvex-openai` adapts bounded loopback HTTP/JSON/SSE requests to the private
-  local protocol without linking the inference engine;
-- `yvex-dev` retains direct engineering and conformance operations.
+- `yvexd` hosts one process-resident runtime model, the private Unix listener,
+  and the bounded loopback OpenAI-compatible listener;
+- `yvex` owns native runtime clients and finite offline engineering operations.
 
 The first startup requires one admitted complete GGUF and its exact runtime
 binding. Keep both outside the repository and assign their absolute paths:
@@ -33,7 +31,7 @@ Backend selection never falls back silently.
 Start the host directly in the first terminal:
 
 ```sh
-./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages
+./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages --openai on --openai-port 8001
 ```
 
 Foreground operation is intentional. Keep this terminal open and wait for the
@@ -58,7 +56,7 @@ three model copies.
 Terminal 1 owns the host and raw typed events:
 
 ```sh
-./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages
+./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages --openai on --openai-port 8001
 ```
 
 Terminal 2 renders the operational engine view:
@@ -95,10 +93,11 @@ intended:
 
 ## OpenAI-compatible application provider
 
-Keep `yvexd` running, then start the application gateway in another terminal:
+The same `yvexd` process owns the application listener. After
+`runtime.ready`, verify it without starting another process:
 
 ```sh
-./yvex-openai --host 127.0.0.1 --port 8001
+curl -fsS http://127.0.0.1:8001/health
 ```
 
 Configure compatible applications with `base_url=http://127.0.0.1:8001/v1`
@@ -112,8 +111,8 @@ curl -fsS http://127.0.0.1:8001/v1/chat/completions -H 'Content-Type: applicatio
 ```
 
 The model identifier must match `GET /v1/models`; it is not a quantization
-preset name. The gateway is loopback-only, opens no model, owns no KV, executes
-no tools, and may be restarted without closing `yvexd`. Exact Chat Completions,
+preset name. The adapter is loopback-only, opens no second model, owns no KV,
+and executes no tools. Exact Chat Completions,
 Responses, SSE, function-call, stop, JSON-object, error, and unsupported-field
 semantics are in [`openai-compatibility.md`](openai-compatibility.md).
 
@@ -214,12 +213,12 @@ fallback.
   CUDA request falls back silently.
 - Queue refusal: wait for current work or reduce client concurrency; do not
   launch another daemon against the same socket.
-- Gateway `503 runtime_unavailable`: start `yvexd`, wait for `runtime.ready`,
-  and verify that `yvex-openai` uses the same private socket.
-- Gateway `422 unsupported_parameter`: remove the named unsupported field;
+- OpenAI `503 runtime_unavailable`: start `yvexd`, wait for `runtime.ready`, and
+  confirm `openai_ready` in `yvex runtime status --json`.
+- OpenAI `422 unsupported_parameter`: remove the named unsupported field;
   fields are never ignored silently.
 
 DeepSeek-specific operation is documented in
 [`runbooks/deepseek.md`](runbooks/deepseek.md). Direct graph, tokenizer,
-artifact, and physical-compilation diagnostics belong to `yvex-dev`, not the
-product startup path.
+artifact, and physical-compilation diagnostics use the offline `yvex` lane;
+they are not part of the normal hosted startup path.

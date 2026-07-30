@@ -26,7 +26,7 @@ printf '{}\n' > "$OUT_DIR/policy.json"
 printf '#!/bin/sh\nexit 0\n' > "$OUT_DIR/tool"
 chmod +x "$OUT_DIR/tool"
 
-"$YVEX_BIN" quant-job create \
+"$YVEX_BIN" quant job create \
   --name test-job \
   --arch deepseek4 \
   --tool external \
@@ -49,13 +49,13 @@ grep 'template_exists: yes' "$OUT_DIR/create.out" >/dev/null || fail "missing te
 grep 'output_exists: no' "$OUT_DIR/create.out" >/dev/null || fail "missing output exists"
 grep 'status: quant-job-written' "$OUT_DIR/create.out" >/dev/null || fail "missing create status"
 
-"$YVEX_BIN" quant-job inspect --manifest "$OUT_DIR/job.json" > "$OUT_DIR/inspect.out" 2> "$OUT_DIR/inspect.err" || fail "inspect failed"
+"$YVEX_BIN" quant job inspect --manifest "$OUT_DIR/job.json" > "$OUT_DIR/inspect.out" 2> "$OUT_DIR/inspect.err" || fail "inspect failed"
 grep 'quant job: inspect' "$OUT_DIR/inspect.out" >/dev/null || fail "missing inspect heading"
 grep 'status: quant-job-manifest' "$OUT_DIR/inspect.out" >/dev/null || fail "missing inspect status"
 
-"$YVEX_BIN" quant-job validate --manifest "$OUT_DIR/job.json" > "$OUT_DIR/validate.out" 2> "$OUT_DIR/validate.err" || fail "validate failed"
+"$YVEX_BIN" quant job validate --manifest "$OUT_DIR/job.json" > "$OUT_DIR/validate.out" 2> "$OUT_DIR/validate.err" || fail "validate failed"
 grep 'quant job: validate' "$OUT_DIR/validate.out" >/dev/null || fail "missing validate heading"
 grep 'status: quant-job-valid' "$OUT_DIR/validate.out" >/dev/null || fail "missing validate status"
 
-"$YVEX_BIN" help quant-job > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help failed"
-grep 'usage: yvex quant-job' "$OUT_DIR/help.out" >/dev/null || fail "missing help"
+"$YVEX_BIN" quant job --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help failed"
+grep 'usage: yvex quant job' "$OUT_DIR/help.out" >/dev/null || fail "missing help"

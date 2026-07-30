@@ -1,8 +1,8 @@
-/* Owner: OpenAI gateway focused tests.
+/* Owner: OpenAI server-adapter focused tests.
  * Owns: bounded profile request, rendering, and HTTP admission checks.
  * Does not own: model execution, external SDK environments, or live runtime proof.
  * Invariants: profile syntax reaches provider facts and refusals publish no request.
- * Boundary: tests may inspect the gateway source-local interface without entering production objects.
+ * Boundary: tests may inspect the adapter source-local interface without entering production objects.
  * Purpose: exercise the compatibility adapter independently of a model or daemon.
  * Inputs: deterministic JSON and socket-pair HTTP fixtures.
  * Effects: allocates only test-local request/result storage.
@@ -10,7 +10,7 @@
 
 #include "tests/test.h"
 
-#include "src/gateway/openai/private.h"
+#include "src/server/openai/private.h"
 
 #include <stdlib.h>
 #include <string.h>

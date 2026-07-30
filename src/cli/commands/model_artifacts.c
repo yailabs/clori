@@ -423,7 +423,7 @@ static int command_models_download_stop(int arg_count, char **args)
     if (pgid <= 0 || !model_download_pgid_alive(pgid)) {
         yvex_cli_out_writef(stdout, "model-download-stop: target=%s\n", report.target_id);
         yvex_cli_out_lines(stdout, literal_pair_1, sizeof(literal_pair_1) / sizeof(literal_pair_1[0]));
-        yvex_cli_out_writef(stdout, "next: yvex models download status %s --models-root %s\n",
+        yvex_cli_out_writef(stdout, "next: yvex evidence models download status %s --models-root %s\n",
                report.target_id, report.models_root);
         yvex_cli_out_writef(stdout, "status: model-download-stop-none\n");
         return 0;
@@ -1080,7 +1080,7 @@ static int download_account_admit(const yvex_cli_models_download_options *option
         snprintf(report->stage_account_provider, sizeof(report->stage_account_provider), "blocked");
         snprintf(report->top_blocker, sizeof(report->top_blocker), "provider-login-required");
         snprintf(report->error, sizeof(report->error), "%s",
-                 observation->next[0] ? observation->next : "yvex accounts login provider");
+                 observation->next[0] ? observation->next : "yvex evidence accounts login provider");
         return model_download_finish(options, report);
     }
     rc = model_download_write_receipt(report->receipt_path, options, report,

@@ -14,12 +14,11 @@ claim.
 Current core areas:
 
 ```text
-src/cli/io/client.c      thin product client, REPL, protocol projections
+src/cli/io/client.c      runtime-client lane, REPL, protocol projections
 src/daemon/              long-lived runtime-host entrypoint
-src/server/              protocol, worker, sessions, telemetry and host lifecycle
+src/server/              protocol, worker, sessions, telemetry, host lifecycle and server adapters
 src/provider/            transport-neutral application request/result semantics
-src/gateway/openai/      engine-free loopback HTTP/JSON/SSE compatibility adapter
-src/cli/                 optional nested developer tooling, render and IO
+src/cli/                 unified runtime-client and offline command lanes, render and IO
 src/source/              source manifests, provenance, inventory, payload trust/streaming
 src/model/target/        generic target catalogs, gates and qtype reports
 src/model/families/      family architecture, coverage and lowering recipes
@@ -234,10 +233,10 @@ domain algorithms. No writer owns command output.
 | Runtime-host entry | `src/daemon/yvexd.c` |
 | Local protocol and host | `src/server/*` |
 | Provider-neutral application contract | `include/yvex/provider.h`, `src/provider/core.c` |
-| OpenAI compatibility entry and adapters | `src/gateway/openai/*` |
-| Developer entry and nested dispatch | `src/cli/main.c` |
-| Developer input/commands/render | `src/cli/input`, `src/cli/commands`, `src/cli/render` |
-| Developer terminal IO | `src/cli/io/*` |
+| OpenAI compatibility adapter | `src/server/openai/*` |
+| Unified command entry and nested dispatch | `src/cli/main.c` |
+| Offline input/commands/render | `src/cli/input`, `src/cli/commands`, `src/cli/render` |
+| Runtime-client and terminal IO | `src/cli/io/*` |
 
 ## GGUF Structural Reader Boundary
 

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820" role="img" aria-labelledby="title desc">
   <title id="title">YVEX system overview</title>
-  <desc id="desc">Verified sources pass through the YVEX compiler into an identity-bound physical artifact. One long-lived yvexd host owns the model worker, sessions, persistent KV, private protocol, and typed events. CPU or CUDA executes the model while native clients use trace, watch, chat, and run, and an engine-free loopback gateway serves bounded OpenAI-compatible applications.</desc>
+  <desc id="desc">Verified sources pass through the YVEX compiler into an identity-bound physical artifact. One long-lived yvexd host owns the model worker, sessions, persistent KV, private protocol, integrated loopback OpenAI adapter, and typed events. CPU or CUDA executes the model while yvex and OpenAI-compatible applications use the same runtime authority.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L0 6L9 3z" class="arrow-fill"/>
@@ -42,8 +42,8 @@
   <path class="line" d="M200 385H238"/>
   <path class="line" d="M420 385H458"/>
   <rect class="box" x="245" y="585" width="350" height="48" rx="9"/>
-  <text class="text" x="420" y="606">yvex-dev</text>
-  <text class="small" x="420" y="624">separate engineering boundary</text>
+  <text class="text" x="420" y="606">yvex · offline lane</text>
+  <text class="small" x="420" y="624">finite engineering operations</text>
   <path class="dash" d="M330 585V572"/>
   <path class="dash" d="M530 585V527"/>
 
@@ -51,8 +51,8 @@
   <rect class="run-panel" x="645" y="145" width="445" height="510" rx="15"/>
   <text class="text" x="867" y="181">yvexd · long-lived runtime host</text>
   <rect class="box" x="680" y="205" width="375" height="70" rx="10"/>
-  <text class="text" x="867" y="234">Private local protocol</text>
-  <text class="small" x="867" y="257">connect · request · stream · control</text>
+  <text class="text" x="867" y="234">Server listeners</text>
+  <text class="small" x="867" y="257">private Unix protocol · loopback HTTP/SSE</text>
 
   <rect class="state" x="680" y="300" width="175" height="105" rx="10"/>
   <text class="text" x="767" y="331">Session registry</text>
@@ -107,7 +107,7 @@
   <text class="text" x="1465" y="477">yvex run</text>
   <text class="small" x="1465" y="498">one-shot client</text>
   <rect class="orange-box" x="1380" y="540" width="170" height="75" rx="10"/>
-  <text class="text" x="1465" y="568">yvex-openai</text>
+  <text class="text" x="1465" y="568">OpenAI clients</text>
   <text class="small" x="1465" y="590">HTTP/SSE · SDKs/apps</text>
   <path class="line" d="M1305 212H1373"/>
   <path class="line" d="M1305 302H1373"/>

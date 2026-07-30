@@ -1,8 +1,8 @@
 #!/bin/sh
-# Purpose: run pinned official SDKs against the real gateway and protocol-v2 fixture host.
+# Purpose: run pinned official SDKs against the production adapter and protocol-v3 fixture host.
 set -eu
 
-YVEX_OPENAI_BIN=${YVEX_OPENAI_BIN:-./yvex-openai}
+YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}
 YVEX_OPENAI_HOST=${YVEX_OPENAI_HOST:-build/tests/openai_host}
 YVEX_NODE_BIN=${YVEX_NODE_BIN:-/home/dgmothx/lab/bet-tennis/.tools/node/bin/node}
 YVEX_NPM_BIN=${YVEX_NPM_BIN:-/home/dgmothx/lab/bet-tennis/.tools/node/bin/npm}
@@ -38,7 +38,7 @@ while test "$attempt" -lt 100; do
     attempt=$((attempt + 1))
 done
 test -S "$socket"
-"$YVEX_OPENAI_BIN" --host 127.0.0.1 --port "$port" --yvex-socket "$socket" \
+"$YVEX_OPENAI_ADAPTER" --host 127.0.0.1 --port "$port" --yvex-socket "$socket" \
     >"$root/gateway.out" 2>"$root/gateway.err" &
 gateway_pid=$!
 base=http://127.0.0.1:$port

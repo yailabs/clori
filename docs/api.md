@@ -305,7 +305,7 @@ decode, tokenize, stop, detokenize, or generate.
 ### Internal DeepSeek Attention Operator Boundary
 
 `yvex_graph_attention_operator_execute` is the non-installed typed adapter used
-by `yvex-dev graph attention ...`. It consumes a runtime binding, common runtime
+by the offline `yvex graph attention ...` lane. It consumes a runtime binding, common runtime
 model/session, admitted external artifact, and either a canonical diagnostic
 probe or admitted tensor-file activation input. It never calls Make, a test
 executable, another process or the test-only oracle.
@@ -357,7 +357,7 @@ Every owned result publishes only after complete success and carries field-wise
 identities. These operations do not read weights, mutate KV, append sampled
 tokens to decode, or compose generation.
 
-## Application Provider And Local Protocol v2
+## Application Provider And Local Protocol v3
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. A sealed request binds the model, ordered typed messages, explicit
@@ -367,7 +367,7 @@ adapter correlation, and request identity. Clone and wire-decode publish only a
 complete owned request graph. The provider owner neither parses HTTP nor
 renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v2 carries the sealed provider request through the
+`<yvex/server.h>` protocol v3 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 function calls, usage, terminal completion, and failure. Typed events bind the
 provider adapter, provider-request identity, and external correlation ID while
@@ -379,10 +379,11 @@ inspecting diagnostic text. `yvex_client_timeout_set()` bounds application
 adapter send/receive waiting; zero restores unbounded post-handshake waiting
 for native watch and trace consumers.
 
-`yvex-openai` consumes only the provider contract, protocol client, and bounded
-HTTP/JSON/SSE adapters. It is not a library API and links no artifact, runtime,
-Transformer, generation, or CUDA owner. The exact HTTP profile is documented
-in [`openai-compatibility.md`](openai-compatibility.md).
+The source-separated OpenAI adapter inside `yvexd` consumes only the provider
+contract, protocol client, and bounded HTTP/JSON/SSE owners. It opens no second
+artifact or model, owns no KV, and cannot call Transformer, generation, or CUDA
+owners directly. The exact HTTP profile is documented in
+[`openai-compatibility.md`](openai-compatibility.md).
 
 ## Internal Generation And Hosted Turn Boundary
 
@@ -402,28 +403,29 @@ admission and prefills only the new suffix.
 
 Streaming sends a fragment after model, decoder, and internal text commit.
 Client delivery failure preserves committed state and reports a partial turn.
-The product `yvex` binary links the protocol/client surface only; it cannot call
-the internal generation or runtime-model APIs directly.
+The runtime-client object lane in `yvex` links the protocol/client surface only
+and cannot call the internal generation or runtime-model APIs directly. Offline
+routes in the same ELF have separately guarded engine dependencies.
 
 ## Runtime Binding And Operator Actions
 
-The developer CLI provides the direct production consumer for the internal ABI:
+The offline command lane provides the direct production consumer for the internal ABI:
 
 ```text
-yvex-dev graph attention prepare
-yvex-dev graph attention describe
-yvex-dev graph attention capabilities
-yvex-dev graph attention plan
-yvex-dev graph attention execute
-yvex-dev graph attention compare
-yvex-dev graph attention state inspect|validate|exercise
-yvex-dev graph attention residency inspect
-yvex-dev graph attention capture|replay
-yvex-dev graph attention cuda-graph list|inspect|warmup|update|invalidate|release
-yvex-dev graph attention trace|profile|benchmark|qualify
-yvex-dev graph attention benchmark compare
-yvex-dev graph moe execute
-yvex-dev graph transformer execute
+yvex graph attention prepare
+yvex graph attention describe
+yvex graph attention capabilities
+yvex graph attention plan
+yvex graph attention execute
+yvex graph attention compare
+yvex graph attention state inspect|validate|exercise
+yvex graph attention residency inspect
+yvex graph attention capture|replay
+yvex graph attention cuda-graph list|inspect|warmup|update|invalidate|release
+yvex graph attention trace|profile|benchmark|qualify
+yvex graph attention benchmark compare
+yvex graph moe execute
+yvex graph transformer execute
 ```
 
 `prepare` is the compiler-side producer for an external runtime binding.

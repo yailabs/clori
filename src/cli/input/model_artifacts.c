@@ -20,31 +20,31 @@
 static const char *const literal_lines_0[] = {
     "yvex: fullmodel requires report, materialization-plan, materialize, descriptor, or "
     "family-runtime",
-    "usage: yvex fullmodel materialization-plan --model FILE_OR_ALIAS [--backend cpu|cuda] "
+    "usage: yvex evidence model materialization-plan --model FILE_OR_ALIAS [--backend cpu|cuda] "
     "[--residency "
     "resident|host-staged|ssd-staged|hybrid] [--limit-tensors N]",
-    "usage: yvex fullmodel materialize --model FILE_OR_ALIAS [--backend cpu|cuda] [--dry-run] "
+    "usage: yvex evidence model materialize --model FILE_OR_ALIAS [--backend cpu|cuda] [--dry-run] "
     "[--plan-"
     "only] [--limit-bytes N]",
-    "usage: yvex fullmodel descriptor --model FILE_OR_ALIAS [--backend cpu|cuda] [--target TARGET] "
+    "usage: yvex evidence model descriptor --model FILE_OR_ALIAS [--backend cpu|cuda] [--target TARGET] "
     "[--"
     "format text] [--limit-tensors N]",
-    "usage: yvex fullmodel family-runtime --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] "
+    "usage: yvex evidence model family-runtime --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] "
     "[--backend cpu|cuda]"};
 
 static const char *const literal_lines_1[] = {
-    "usage: yvex fullmodel report --model FILE_OR_ALIAS [--backend cpu|cuda] [--target TARGET] "
+    "usage: yvex evidence model report --model FILE_OR_ALIAS [--backend cpu|cuda] [--target TARGET] "
     "[--limit-tensors N]",
-    "usage: yvex fullmodel materialization-plan --model FILE_OR_ALIAS [--backend cpu|cuda] "
+    "usage: yvex evidence model materialization-plan --model FILE_OR_ALIAS [--backend cpu|cuda] "
     "[--residency "
     "resident|host-staged|ssd-staged|hybrid] [--limit-tensors N]",
-    "usage: yvex fullmodel materialize --model FILE_OR_ALIAS [--backend cpu|cuda] [--dry-run] "
+    "usage: yvex evidence model materialize --model FILE_OR_ALIAS [--backend cpu|cuda] [--dry-run] "
     "[--plan-"
     "only] [--limit-bytes N]",
-    "usage: yvex fullmodel descriptor --model FILE_OR_ALIAS [--backend cpu|cuda] [--target TARGET] "
+    "usage: yvex evidence model descriptor --model FILE_OR_ALIAS [--backend cpu|cuda] [--target TARGET] "
     "[--"
     "format text] [--limit-tensors N]",
-    "usage: yvex fullmodel family-runtime --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] "
+    "usage: yvex evidence model family-runtime --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] "
     "[--backend cpu|cuda]"};
 
 typedef enum {

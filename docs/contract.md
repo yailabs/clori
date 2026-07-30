@@ -11,12 +11,11 @@ and the point where a refusal stopped progress.
 
 ## Scope
 
-YVEX builds three explicit product/developer executables:
+YVEX builds two explicit executables:
 
 ```text
-./yvex      thin product client; no engine execution linkage
-./yvexd     long-lived local runtime host
-./yvex-dev  optional engine-linked developer tooling
+./yvex   unified public command surface with protocol and finite offline lanes
+./yvexd  long-lived local runtime host with Unix and loopback HTTP listeners
 ```
 
 The admitted attention path is:
@@ -109,22 +108,28 @@ yvex run
 yvex runtime start|stop|status|watch|trace
 yvex session new|list|show|attach|detach|reset|close
 yvex model list|use|show
-yvex artifact show|verify
-yvex quant preset|plan|emit|explain
+yvex artifact show|verify|metadata|tensors|materialize|emit ...
+yvex graph ...
+yvex quant preset|plan|emit|summarize|explain|policy|imatrix ...
+yvex tokenizer show|encode|decode|prompt ...
+yvex source manifest|native ...
+yvex tensor map|collection ...
+yvex evidence target|model|moe|backend|cuda ...
 yvex help
 yvex version
 ```
 
-`yvex` is a thin local-protocol client. It does not link the engine, open an
-artifact, materialize weights, execute a Transformer, or compose generation in
-process. `yvex run` uses one ephemeral or explicitly named server session;
-`yvex` and `yvex chat` use the REPL. Runtime and session administration consume
-typed protocol state rather than process-list or log scraping.
+The runtime-client lane does not depend on engine objects, open an artifact,
+materialize weights, execute a Transformer, or compose generation in process.
+`yvex run` uses one ephemeral or explicitly named server session; `yvex` and
+`yvex chat` use the REPL. Runtime and session administration consume typed
+protocol state rather than process-list or log scraping.
 
-Direct compiler, artifact, tokenizer, graph, and evidence operations live in
-the separately linked `yvex-dev` hierarchy. Those operations may open the
-engine for engineering proof, but they are not compatibility aliases or a
-second product grammar. The former flat public command registry is absent.
+Direct compiler, artifact, tokenizer, graph, and evidence operations live in a
+separate offline dispatch lane in the same `yvex` ELF. Those finite operations
+may open the engine for engineering proof, but they are not compatibility
+aliases or a second hosted model authority. The former flat public command
+registry is absent.
 
 Model selection is explicit. A private XDG configuration may record inert
 artifact, binding, backend, target, and context values for a later daemon start;
@@ -208,7 +213,7 @@ binds at least:
 - required tensor bindings, qtype and backend requirements;
 - physical compatibility and invalidation facts.
 
-The compiler-side `yvex-dev graph attention prepare` action generates and publishes
+The compiler-side `yvex graph attention prepare` action generates and publishes
 the binding transactionally outside the repository. Runtime open independently
 parses the record and verifies every imported descriptor and plan against the
 exact artifact. A missing binding refuses with the preparation command; runtime
@@ -529,24 +534,24 @@ Capture buckets bind token and history capacities to stable workspace
 addresses. Padding, where admitted, is masked and excluded from state
 publication and output identity. A request never enters a smaller bucket.
 
-### DeepSeek Developer Attention Operator Contract
+### DeepSeek Offline Attention Operator Contract
 
-The separated developer binary exposes direct engine execution through
-`yvex-dev graph attention ...`.
+The offline command lane exposes direct engine execution through
+`yvex graph attention ...`.
 Representative execution is:
 
 ```sh
-./yvex-dev graph attention execute --target deepseek4-v4-flash \
+./yvex graph attention execute --target deepseek4-v4-flash \
   --runtime-binding /path/to/binding.yvex-runtime-binding \
   --backend cpu --phase prefill --mode eager \
   --operation-scope envelope --tokens 4 --probe canonical --output json
 
-./yvex-dev graph attention execute --target deepseek4-v4-flash \
+./yvex graph attention execute --target deepseek4-v4-flash \
   --runtime-binding /path/to/binding.yvex-runtime-binding \
   --backend cuda --phase decode --mode full \
   --operation-scope release-attention-set --probe canonical --output json
 
-./yvex-dev graph attention execute --target deepseek4-v4-flash \
+./yvex graph attention execute --target deepseek4-v4-flash \
   --runtime-binding /path/to/binding.yvex-runtime-binding \
   --backend cuda --phase prefill --mode eager --scope full \
   --operation-scope core --input tensor-file \
@@ -702,21 +707,21 @@ publishes bytes only after model commit, decoder commit and internal text
 commit. Disconnect or sink failure preserves committed partial state.
 
 The local protocol uses a private UID-owned Unix-domain socket, bounded frames,
-explicit v2 negotiation, typed provider messages/tools/results, typed refusal,
+explicit v3 negotiation, typed provider messages/tools/results, typed refusal,
 and deterministic cleanup. Provider correlation participates in runtime-event
 identity without exposing prompt or answer content.
 
-The separate `yvex-openai` process may adapt the bounded
-`yvex.openai.compat.v1` profile over loopback HTTP/1.1. It links no inference
-engine, opens no model or artifact, owns no KV, and executes no application
-tool. Unknown fields refuse rather than disappear. SSE publishes only
-model-committed and detokenized provider output; disconnect propagates
-cancellation without closing the daemon model. Public HTTP exposure,
+The source-separated OpenAI adapter inside `yvexd` may expose the bounded
+`yvex.openai.compat.v1` profile over loopback HTTP/1.1. It opens no second model
+or artifact, owns no KV, and executes no application tool. Unknown fields
+refuse rather than disappear. SSE publishes only model-committed and
+detokenized provider output; disconnect propagates cancellation without closing
+the daemon model. Public HTTP exposure,
 authentication, TLS, full OpenAI/Anthropic compatibility, remote sessions and
 continuous batching remain unsupported.
 
-Protocol-v2 refusals include a typed application failure class. Bounded
-gateway transport expiry maps to timeout instead of being collapsed into a
+Protocol-v3 refusals include a typed application failure class. Bounded
+adapter transport expiry maps to timeout instead of being collapsed into a
 generic model or input error.
 
 ## Validation Contract

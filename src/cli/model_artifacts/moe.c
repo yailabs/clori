@@ -197,7 +197,7 @@ static int parse_moe_options(int arg_count,
     if (arg_count < 3 || strcmp(args[2], "report") != 0) {
         yvex_cli_out_writef(stderr, "yvex: moe requires report\n");
         yvex_cli_out_writef(stderr,
-            "usage: yvex moe report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend cpu|"
+            "usage: yvex evidence moe report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend cpu|"
                 "cuda] [--registry FILE] [--include-tensors] [--include-residency] [--include-blockers]\n");
         return 2;
     }
@@ -609,18 +609,19 @@ int yvex_model_artifacts_surface_moe_command(int arg_count, char **args)
 void yvex_model_artifacts_surface_moe_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex moe report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend cpu|"
+        "usage: yvex evidence moe report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend cpu|"
             "cuda] [--registry FILE] [--audit | --output normal|table|audit] [--include-tensors] [--include-"
             "residency] [--include-blockers]\n");
     yvex_cli_out_writef(fp, "\nExamples:\n");
     yvex_cli_out_writef(fp,
-        "  yvex moe report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+        "  yvex evidence moe report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
             "cpu --include-tensors --include-blockers\n");
     yvex_cli_out_writef(fp,
-        "  yvex moe report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+        "  yvex evidence moe report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
             "cuda --include-residency\n");
     yvex_cli_out_writef(fp,
-        "  yvex moe report --model glm-5.2-official-safetensors --family glm --backend cpu --include-blockers\n");
+        "  yvex evidence moe report --model glm-5.2-official-safetensors --family glm "
+        "--backend cpu --include-blockers\n");
     yvex_cli_out_lines(fp, literal_pair_0, sizeof(literal_pair_0) / sizeof(literal_pair_0[0]));
     yvex_cli_out_writef(fp, "  Default output is compact. Use --audit for full diagnostic fields.\n");
     yvex_cli_out_lines(fp, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));

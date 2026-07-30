@@ -7,8 +7,6 @@
 #   make lib
 #   make client
 #   make daemon
-#   make gateway
-#   make dev-tools
 #   make package
 #   make cuda-info
 #   make cuda
@@ -38,14 +36,12 @@
 #   make clean
 #
 # Product topology:
-#   - ./yvex is a thin local-protocol client.
-#   - ./yvexd is the sole long-lived model host.
-#   - ./yvex-openai is the loopback application compatibility gateway.
-#   - ./yvex-dev contains optional direct engineering tools.
+#   - ./yvex is the sole public command surface.
+#   - ./yvexd is the sole long-lived model host and owns the loopback adapter.
 
 .DEFAULT_GOAL := all
 
-.PHONY: all info lib client daemon gateway dev-tools package package-dev cli server cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
+.PHONY: all info lib client daemon package cli server cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
 	test-cuda-no-nvcc smoke-cuda check-cuda test test-core test-cli test-materialize \
 	test-runtime-descriptor test-runtime-binding test-runtime-model-session \
 	test-runtime-residency test-runtime-phases test-runtime-envelope \
@@ -73,7 +69,7 @@
 	test-protocol test-runtime-host test-runtime-sessions test-runtime-turns \
 	test-runtime-telemetry test-runtime-streaming test-client test-repl \
 	test-openai test-openai-sdk test-openai-agent test-openai-bet-tennis test-openai-live \
-	test-cli-cutover test-packaging test-runtime-client-refoundation-live \
+	test-cli-cutover test-packaging test-product-topology test-runtime-client-refoundation-live \
 	test-artifact-writer test-artifact-writer-fault test-artifact-live-plan \
 	test-artifact-live-structure test-artifact-live test-transform-ir-live-plan \
 	test-source-payload-live-plan test-source-payload-live test-gguf-artifact-abi \
@@ -144,8 +140,6 @@ PINNED_GGML_BUILD ?= $(PINNED_GGML_ROOT)/build-yvex
 LIBYVEX ?= $(LIB_DIR)/libyvex.a
 YVEX_BIN ?= ./yvex
 YVEXD_BIN ?= ./yvexd
-YVEX_OPENAI_BIN ?= ./yvex-openai
-YVEX_DEV_BIN ?= ./yvex-dev
 
 # Attention wrappers own a collision-free temporary root and delete only that
 # root after validating its canonical parent and generated basename.
@@ -299,17 +293,17 @@ CORE_SRCS := \
 	src/server/session.c \
 	src/server/telemetry.c
 
-DEV_CLI_SRCS := \
+YVEX_SRCS := \
 	src/cli/main.c \
+	src/cli/io/client.c \
 	$(CLI_COMMAND_SRCS) \
 	$(CLI_INPUT_SRCS) \
 	$(CLI_MODEL_ARTIFACT_SRCS) \
 	$(CLI_RENDER_SRCS) \
 	$(CLI_IO_SRCS)
 
-DEV_CLI_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(DEV_CLI_SRCS))
-CLIENT_SRCS := src/cli/io/client.c
-CLIENT_OBJ := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CLIENT_SRCS))
+YVEX_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(YVEX_SRCS))
+CLIENT_LANE_OBJ := $(OBJ_DIR)/src/cli/io/client.o
 CLIENT_PROTOCOL_OBJS := \
 	$(OBJ_DIR)/src/core/status.o \
 	$(OBJ_DIR)/src/core/sha256.o \
@@ -318,19 +312,13 @@ CLIENT_PROTOCOL_OBJS := \
 	$(OBJ_DIR)/src/server/protocol.o \
 	$(OBJ_DIR)/src/server/telemetry.o
 DAEMON_OBJ := $(OBJ_DIR)/src/daemon/yvexd.o
-GATEWAY_SRCS := \
-	src/gateway/openai/main.c \
-	src/gateway/openai/core.c \
-	src/gateway/openai/http.c \
-	src/gateway/openai/json.c \
-	src/gateway/openai/render.c \
-	src/gateway/openai/state.c
-GATEWAY_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(GATEWAY_SRCS))
-GATEWAY_TEST_OBJS := \
-	$(OBJ_DIR)/src/gateway/openai/http.o \
-	$(OBJ_DIR)/src/gateway/openai/json.o \
-	$(OBJ_DIR)/src/gateway/openai/render.o \
-	$(OBJ_DIR)/src/gateway/openai/state.o
+OPENAI_ADAPTER_SRCS := \
+	src/server/openai/core.c \
+	src/server/openai/http.c \
+	src/server/openai/json.c \
+	src/server/openai/render.c \
+	src/server/openai/state.c
+OPENAI_ADAPTER_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(OPENAI_ADAPTER_SRCS))
 
 CUDA_SRCS := \
 	src/backend/cuda/backend.c \
@@ -382,6 +370,7 @@ LOGITS_LIVE_RUNNER := $(TEST_DIR)/logits_deepseek
 TOKENIZER_LIVE_RUNNER := $(TEST_DIR)/tokenizer_deepseek
 GENERATION_LIVE_RUNNER := $(TEST_DIR)/generation_deepseek
 OPENAI_FAKE_HOST := $(TEST_DIR)/openai_host
+OPENAI_ADAPTER_HOST := $(TEST_DIR)/openai_adapter
 OFFICIAL_GGUF_CHECKER := $(TEST_DIR)/ggml_gguf_check
 CUDA_TEST_RUNNER := $(TEST_DIR)/test_cuda
 
@@ -422,15 +411,16 @@ LOGITS_LIVE_OBJ := $(OBJ_DIR)/tests/live/logits_deepseek.o
 TOKENIZER_LIVE_OBJ := $(OBJ_DIR)/tests/live/tokenizer_deepseek.o
 GENERATION_LIVE_OBJ := $(OBJ_DIR)/tests/live/generation_deepseek.o
 OPENAI_FAKE_HOST_OBJ := $(OBJ_DIR)/tests/integration/openai_host.o
+OPENAI_ADAPTER_HOST_OBJ := $(OBJ_DIR)/tests/integration/openai_adapter.o
 
 RUNNER_OBJS := $(TEST_MAIN_OBJ) $(QUANT_TEST_RUNNER_OBJ) \
 	$(ARTIFACT_TEST_RUNNER_OBJ) $(CUDA_TEST_MAIN_OBJ) \
 	$(SOURCE_PAYLOAD_LIVE_OBJ) $(QUANT_LIVE_OBJ) $(ARTIFACT_LIVE_OBJ) \
 	$(MATERIALIZE_LIVE_OBJ) $(ATTENTION_LIVE_OBJ) $(PREFILL_LIVE_OBJ) $(MOE_LIVE_OBJ) \
 	$(TRANSFORMER_LIVE_OBJ) $(DECODE_LIVE_OBJ) $(LOGITS_LIVE_OBJ) $(TOKENIZER_LIVE_OBJ) \
-	$(GENERATION_LIVE_OBJ) $(OPENAI_FAKE_HOST_OBJ)
-DEPENDENCY_FILES := $(CORE_OBJS:.o=.d) $(DEV_CLI_OBJS:.o=.d) $(CLIENT_OBJ:.o=.d) \
-	$(DAEMON_OBJ:.o=.d) $(GATEWAY_OBJS:.o=.d) $(TEST_UNIT_OBJS:.o=.d) \
+	$(GENERATION_LIVE_OBJ) $(OPENAI_FAKE_HOST_OBJ) $(OPENAI_ADAPTER_HOST_OBJ)
+DEPENDENCY_FILES := $(CORE_OBJS:.o=.d) $(YVEX_OBJS:.o=.d) \
+	$(DAEMON_OBJ:.o=.d) $(OPENAI_ADAPTER_OBJS:.o=.d) $(TEST_UNIT_OBJS:.o=.d) \
 	$(TEST_REFERENCE_OBJS:.o=.d) $(QUANT_TEST_UNIT_OBJS:.o=.d) \
 	$(CUDA_TEST_UNIT_OBJS:.o=.d) $(RUNNER_OBJS:.o=.d)
 
@@ -452,16 +442,15 @@ info:
 	@echo "project_control: PROJECT.md"
 	@echo "interface: local client/protocol plus engine library ABI"
 	@echo "library: libyvex.a"
-	@echo "client: ./yvex run|chat|runtime|session"
-	@echo "daemon: ./yvexd long-lived local runtime host"
-	@echo "developer: ./yvex-dev graph|artifact|quant|tokenizer"
+	@echo "client: ./yvex run|chat|runtime|session|graph|artifact|quant|tokenizer"
+	@echo "daemon: ./yvexd long-lived local runtime host plus loopback OpenAI adapter"
 	@echo "runtime_attention: CPU eager and admitted GB10 CUDA eager/piecewise/full implemented"
 	@echo "benchmark_attention: identity-bound baseline, JSON/CSV, and deterministic SVG capability implemented"
 	@echo "persistent_kv: session-owned DeepSeek CPU/CUDA state implemented"
 	@echo "generation: implemented behind the admitted local runtime host"
 	@echo "release: blocked"
 
-all: lib client daemon gateway dev-tools
+all: lib client daemon
 
 lib: $(LIBYVEX)
 
@@ -469,63 +458,41 @@ client: $(YVEX_BIN)
 
 daemon: $(YVEXD_BIN)
 
-gateway: $(YVEX_OPENAI_BIN)
-
-dev-tools: $(YVEX_DEV_BIN)
-
-
 server: $(YVEXD_BIN)
 
-package: client daemon gateway config/package_manifest.tsv NOTICE.md
+cli: $(YVEX_BIN)
+
+package: client daemon config/package_manifest.tsv NOTICE.md
 	@set -eu; \
+	package_root='$(BUILD_DIR)/package'; \
 	package_dir='$(BUILD_DIR)/package/product'; \
+	if test -L "$$package_root"; then echo 'package root may not be a symlink' >&2; exit 1; fi; \
+	if test -d "$$package_root"; then find "$$package_root" -depth -mindepth 1 -delete; fi; \
 	mkdir -p "$$package_dir/bin" "$$package_dir/share/yvex"; \
 	cp '$(YVEX_BIN)' "$$package_dir/bin/yvex"; \
 	cp '$(YVEXD_BIN)' "$$package_dir/bin/yvexd"; \
-	cp '$(YVEX_OPENAI_BIN)' "$$package_dir/bin/yvex-openai"; \
 	cp config/package_manifest.tsv NOTICE.md "$$package_dir/share/yvex/"; \
 	printf '%s\n' 'yvex package: product client + local runtime host' \
 		> "$$package_dir/share/yvex/profile"; \
 	commit=$$(git rev-parse HEAD); \
 	client_sha=$$(sha256sum '$(YVEX_BIN)' | awk '{print $$1}'); \
 	daemon_sha=$$(sha256sum '$(YVEXD_BIN)' | awk '{print $$1}'); \
-	gateway_sha=$$(sha256sum '$(YVEX_OPENAI_BIN)' | awk '{print $$1}'); \
 	library_sha=$$(sha256sum '$(LIBYVEX)' | awk '{print $$1}'); \
-	package_identity=$$(printf '%s\n' "$$commit" '2' 'cpu+cuda-dynamic' \
-		"$$client_sha" "$$daemon_sha" "$$gateway_sha" "$$library_sha" | sha256sum | awk '{print $$1}'); \
+	package_identity=$$(printf '%s\n' "$$commit" '3' 'cpu+cuda-dynamic' \
+		"$$client_sha" "$$daemon_sha" "$$library_sha" | sha256sum | awk '{print $$1}'); \
 	{ printf 'field\tvalue\n'; \
 	  printf 'profile\tproduct\nsource_commit\t%s\n' "$$commit"; \
 	  printf 'package_identity\t%s\n' "$$package_identity"; \
-	  printf 'protocol_version\t%s\nbackend\t%s\n' '2' 'cpu+cuda-dynamic'; \
-	  printf 'yvex_sha256\t%s\nyvexd_sha256\t%s\nyvex_openai_sha256\t%s\nlibyvex_sha256\t%s\n' \
-		"$$client_sha" "$$daemon_sha" "$$gateway_sha" "$$library_sha"; \
+	  printf 'protocol_version\t%s\nbackend\t%s\n' '3' 'cpu+cuda-dynamic'; \
+	  printf 'yvex_sha256\t%s\nyvexd_sha256\t%s\nlibyvex_sha256\t%s\n' \
+		"$$client_sha" "$$daemon_sha" "$$library_sha"; \
 	} > "$$package_dir/share/yvex/build.tsv"
 
-package-dev: dev-tools config/package_manifest.tsv NOTICE.md
-	@set -eu; \
-	package_dir='$(BUILD_DIR)/package/developer'; \
-	mkdir -p "$$package_dir/bin" "$$package_dir/share/yvex"; \
-	cp '$(YVEX_DEV_BIN)' "$$package_dir/bin/yvex-dev"; \
-	cp config/package_manifest.tsv NOTICE.md "$$package_dir/share/yvex/"; \
-	printf '%s\n' 'yvex package: optional developer and direct-proof tools' \
-		> "$$package_dir/share/yvex/profile"; \
-	commit=$$(git rev-parse HEAD); \
-	dev_sha=$$(sha256sum '$(YVEX_DEV_BIN)' | awk '{print $$1}'); \
-	library_sha=$$(sha256sum '$(LIBYVEX)' | awk '{print $$1}'); \
-	package_identity=$$(printf '%s\n' "$$commit" '2' 'cpu+cuda-dynamic' \
-		"$$dev_sha" "$$library_sha" | sha256sum | awk '{print $$1}'); \
-	{ printf 'field\tvalue\n'; \
-	  printf 'profile\tdeveloper\nsource_commit\t%s\n' "$$commit"; \
-	  printf 'package_identity\t%s\n' "$$package_identity"; \
-	  printf 'protocol_version\t%s\nbackend\t%s\n' '2' 'cpu+cuda-dynamic'; \
-	  printf 'yvex_dev_sha256\t%s\nlibyvex_sha256\t%s\n' "$$dev_sha" "$$library_sha"; \
-	} > "$$package_dir/share/yvex/build.tsv"
-
-cuda-info: $(YVEX_DEV_BIN)
+cuda-info: $(YVEX_BIN)
 	@echo "nvcc: $$(command -v $(NVCC) >/dev/null 2>&1 && command -v $(NVCC) || echo unavailable)"
 	@echo "CUDA_HOME: $(CUDA_HOME)"
 	@echo "YVEX_CUDA_ARCH: $(YVEX_CUDA_ARCH)"
-	$(YVEX_DEV_BIN) evidence cuda
+	$(YVEX_BIN) evidence cuda
 
 cuda-kernels: $(CUDA_PTX_INC)
 	@echo "yvex cuda kernels: built from $(CUDA_CU_SRCS)"
@@ -534,14 +501,14 @@ cuda: cuda-kernels lib cli server $(CUDA_TEST_RUNNER)
 	@echo "yvex cuda build: dynamic CUDA Driver API path plus CUDA kernel PTX"
 
 test-cuda: cuda
-	$(YVEX_DEV_BIN) evidence cuda >/dev/null
+	$(YVEX_BIN) evidence cuda >/dev/null
 	$(CUDA_TEST_RUNNER)
 
 test-cuda-graph: cuda
 	YVEX_CUDA_TEST_FILTER=graph $(CUDA_TEST_RUNNER)
 
-smoke-cuda: cuda $(YVEX_DEV_BIN)
-	YVEX_BIN=$(YVEX_DEV_BIN) sh tests/cli/cuda.sh
+smoke-cuda: cuda $(YVEX_BIN)
+	YVEX_BIN=$(YVEX_BIN) sh tests/cli/cuda.sh
 
 check-cuda: cuda-info test-cuda smoke-cuda test-attention-cuda
 	@echo "yvex check-cuda: ok"
@@ -550,36 +517,34 @@ test-cuda-no-nvcc: tests/test_cuda_failclosed.sh
 	$(MAKE) BUILD_DIR=build/no-nvcc \
 		YVEX_BIN=build/no-nvcc/yvex \
 		YVEXD_BIN=build/no-nvcc/yvexd \
-		YVEX_OPENAI_BIN=build/no-nvcc/yvex-openai \
-		YVEX_DEV_BIN=build/no-nvcc/yvex-dev \
 		NVCC=__yvex_nvcc_unavailable__ all
-	YVEX_BIN=build/no-nvcc/yvex-dev sh tests/test_cuda_failclosed.sh
+	YVEX_BIN=build/no-nvcc/yvex sh tests/test_cuda_failclosed.sh
 
 test-core: $(TEST_RUNNER)
 	$(TEST_RUNNER)
 
-test-openai: $(TEST_RUNNER) $(YVEX_OPENAI_BIN) $(OPENAI_FAKE_HOST) \
+test-openai: $(TEST_RUNNER) $(OPENAI_ADAPTER_HOST) $(OPENAI_FAKE_HOST) \
 	$(OPENAI_INTEGRATION_TEST)
-	YVEX_OPENAI_BIN=$(YVEX_OPENAI_BIN) sh tests/test_gateway_boundary.sh
+	YVEX_OPENAI_ADAPTER=$(OPENAI_ADAPTER_HOST) sh tests/test_gateway_boundary.sh
 	YVEX_TEST_FILTER=provider,protocol,openai,runtime_tokenizer $(TEST_RUNNER)
-	YVEX_OPENAI_BIN=$(YVEX_OPENAI_BIN) \
+	YVEX_OPENAI_ADAPTER=$(OPENAI_ADAPTER_HOST) \
 		YVEX_OPENAI_HOST=$(OPENAI_FAKE_HOST) sh $(OPENAI_INTEGRATION_TEST)
 
 test-openai-sdk: test-openai
-	YVEX_OPENAI_BIN=$(YVEX_OPENAI_BIN) \
+	YVEX_OPENAI_ADAPTER=$(OPENAI_ADAPTER_HOST) \
 		YVEX_OPENAI_HOST=$(OPENAI_FAKE_HOST) \
 		sh tests/integration/openai_sdk.sh
 
 test-openai-agent: test-openai-sdk
 
 test-openai-bet-tennis: test-openai
-	YVEX_OPENAI_BIN=$(YVEX_OPENAI_BIN) \
+	YVEX_OPENAI_ADAPTER=$(OPENAI_ADAPTER_HOST) \
 		YVEX_OPENAI_HOST=$(OPENAI_FAKE_HOST) \
 		sh tests/integration/bet_tennis.sh
 
-test-openai-live: gateway daemon
+test-openai-live: daemon
 	YVEX_BIN=$(YVEX_BIN) YVEXD_BIN=$(YVEXD_BIN) \
-		YVEX_OPENAI_BIN=$(YVEX_OPENAI_BIN) sh tests/live/openai.sh
+		sh tests/live/openai.sh
 
 test-cli: test-cli-cutover
 
@@ -606,8 +571,8 @@ test-runtime-phases: $(TEST_RUNNER)
 test-runtime-envelope: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=deepseek_attention $(TEST_RUNNER)
 
-test-runtime-operator: $(YVEX_DEV_BIN) tests/cli/attention_graph.sh
-	YVEX_BIN=$(YVEX_DEV_BIN) sh tests/cli/attention_graph.sh
+test-runtime-operator: $(YVEX_BIN) tests/cli/attention_graph.sh
+	YVEX_BIN=$(YVEX_BIN) sh tests/cli/attention_graph.sh
 
 test-runtime-digests: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state,runtime_benchmark,deepseek_attention $(TEST_RUNNER)
@@ -686,7 +651,7 @@ test-runtime-benchmark-chart-live: cuda
 		echo "runtime binding must be outside the source repository" >&2; exit 2;; \
 	esac; \
 	for mode in eager piecewise full; do \
-		$(YVEX_DEV_BIN) graph attention benchmark --target deepseek4-v4-flash \
+		$(YVEX_BIN) graph attention benchmark --target deepseek4-v4-flash \
 			--models-root "$(DEEPSEEK_OPERATOR_MODELS_ROOT)" \
 			--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 			--backend cuda --phase decode --mode "$$mode" --scope full \
@@ -695,7 +660,7 @@ test-runtime-benchmark-chart-live: cuda
 			--baseline "$$evidence_dir/$$mode.yvex-benchmark" --write-baseline \
 			--chart "$$evidence_dir/$$mode.svg" --output json \
 			>"$$evidence_dir/$$mode.json"; \
-		$(YVEX_DEV_BIN) graph attention benchmark --target deepseek4-v4-flash \
+		$(YVEX_BIN) graph attention benchmark --target deepseek4-v4-flash \
 			--models-root "$(DEEPSEEK_OPERATOR_MODELS_ROOT)" \
 			--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 			--backend cuda --phase decode --mode "$$mode" --scope full \
@@ -787,25 +752,27 @@ test-runtime-streaming: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=protocol $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_generation $(TEST_RUNNER)
 
-test-client test-cli-cutover: client dev-tools $(CLIENT_CUTOVER_TEST)
-	YVEX_BIN='$(YVEX_BIN)' YVEX_DEV_BIN='$(YVEX_DEV_BIN)' \
+test-client test-cli-cutover: client $(CLIENT_CUTOVER_TEST)
+	YVEX_BIN='$(YVEX_BIN)' YVEX_CLIENT_LANE_OBJ='$(CLIENT_LANE_OBJ)' \
 		sh $(CLIENT_CUTOVER_TEST)
 
 test-repl: client $(REPL_PTY_TEST)
 	YVEX_BIN='$(YVEX_BIN)' sh $(REPL_PTY_TEST)
 
-test-packaging: package package-dev
+test-packaging: package
 	@test -x '$(BUILD_DIR)/package/product/bin/yvex'
 	@test -x '$(BUILD_DIR)/package/product/bin/yvexd'
-	@test -x '$(BUILD_DIR)/package/product/bin/yvex-openai'
+	@test ! -e '$(BUILD_DIR)/package/product/bin/yvex-openai'
 	@test ! -e '$(BUILD_DIR)/package/product/bin/yvex-dev'
 	@test -f '$(BUILD_DIR)/package/product/share/yvex/package_manifest.tsv'
 	@test -f '$(BUILD_DIR)/package/product/share/yvex/build.tsv'
-	@grep -F 'protocol_version	2' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
+	@grep -F 'protocol_version	3' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
 	@grep -F 'source_commit	' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
-	@test -x '$(BUILD_DIR)/package/developer/bin/yvex-dev'
-	@test ! -e '$(BUILD_DIR)/package/developer/bin/yvex'
-	@test -f '$(BUILD_DIR)/package/developer/share/yvex/build.tsv'
+	@test ! -e '$(BUILD_DIR)/package/developer'
+
+test-product-topology: all package tests/product_topology.sh
+	YVEX_BIN='$(YVEX_BIN)' YVEXD_BIN='$(YVEXD_BIN)' BUILD_DIR='$(BUILD_DIR)' \
+		sh tests/product_topology.sh
 
 test-runtime-client-refoundation-live: client daemon $(CLIENT_REFOUNDATION_LIVE_TEST)
 	YVEX_BIN='$(YVEX_BIN)' YVEXD_BIN='$(YVEXD_BIN)' \
@@ -821,7 +788,6 @@ test-runtime-asan:
 	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:strict_string_checks=1 \
 		$(MAKE) BUILD_DIR="$$build_dir" \
 			YVEX_BIN="$$build_dir/yvex" YVEXD_BIN="$$build_dir/yvexd" \
-			YVEX_OPENAI_BIN="$$build_dir/yvex-openai" \
 			NVCC=__yvex_nvcc_unavailable__ \
 			CFLAGS='$(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=address,leak' \
 			LDFLAGS='$(LDFLAGS) -fsanitize=address,leak' \
@@ -868,7 +834,6 @@ test-runtime-ubsan:
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 		$(MAKE) BUILD_DIR="$$build_dir" \
 			YVEX_BIN="$$build_dir/yvex" YVEXD_BIN="$$build_dir/yvexd" \
-			YVEX_OPENAI_BIN="$$build_dir/yvex-openai" \
 			NVCC=__yvex_nvcc_unavailable__ \
 		CFLAGS='$(CFLAGS) -O1 -g -fno-omit-frame-pointer -fsanitize=undefined \
 			-fno-sanitize-recover=undefined' \
@@ -924,14 +889,14 @@ test-materialize-live: $(MATERIALIZE_LIVE_RUNNER)
 test-attention: $(TEST_RUNNER) test-attention-fixture-isolation
 	$(TEST_RUNNER)
 
-test-attention-fixture-isolation: $(YVEX_DEV_BIN) tests/cli/attention_graph.sh
+test-attention-fixture-isolation: $(YVEX_BIN) tests/cli/attention_graph.sh
 	@set -eu; \
 	tmp_tag=attention-fixture-isolation; \
 	$(ATTENTION_OWNED_TMP_BEGIN) \
-	YVEX_BIN="$(YVEX_DEV_BIN)" YVEX_TEST_OUT_DIR="$$tmp_dir/first" \
+	YVEX_BIN="$(YVEX_BIN)" YVEX_TEST_OUT_DIR="$$tmp_dir/first" \
 		sh tests/cli/attention_graph.sh >"$$tmp_dir/first.log" 2>&1 & \
 	first_pid=$$!; \
-	YVEX_BIN="$(YVEX_DEV_BIN)" YVEX_TEST_OUT_DIR="$$tmp_dir/second" \
+	YVEX_BIN="$(YVEX_BIN)" YVEX_TEST_OUT_DIR="$$tmp_dir/second" \
 		sh tests/cli/attention_graph.sh >"$$tmp_dir/second.log" 2>&1 & \
 	second_pid=$$!; \
 	set +e; \
@@ -986,7 +951,7 @@ test-runtime-deepseek-kv-live: cuda
 	test -f "$$binding" && test ! -L "$$binding" || { \
 		echo "runtime binding must be a regular non-symlink file" >&2; exit 2; }; \
 	for backend in cpu cuda; do \
-		$(YVEX_DEV_BIN) graph attention state exercise --target deepseek4-v4-flash \
+		$(YVEX_BIN) graph attention state exercise --target deepseek4-v4-flash \
 			--models-root "$(DEEPSEEK_OPERATOR_MODELS_ROOT)" \
 			--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 			--backend "$$backend" --phase prefill --mode eager --scope full \
@@ -1008,7 +973,7 @@ test-runtime-deepseek-kv-live: cuda
 	echo "persistent DeepSeek KV live: CPU/CUDA 43 layers and 634 bindings"
 
 # This serial target proves tensor-file prefill, causality, rollback, and real CPU/CUDA state.
-test-runtime-deepseek-prefill-live: cuda $(PREFILL_LIVE_RUNNER) $(YVEX_DEV_BIN)
+test-runtime-deepseek-prefill-live: cuda $(PREFILL_LIVE_RUNNER) $(YVEX_BIN)
 	@set -eu; \
 	tmp_tag=runtime-deepseek-prefill-live; \
 	$(ATTENTION_OWNED_TMP_BEGIN) \
@@ -1022,7 +987,7 @@ test-runtime-deepseek-prefill-live: cuda $(PREFILL_LIVE_RUNNER) $(YVEX_DEV_BIN)
 	$(PREFILL_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		"$$activations" >"$$tmp_dir/api.out"; \
 	for backend in cpu cuda; do \
-		$(YVEX_DEV_BIN) graph attention execute --target deepseek4-v4-flash \
+		$(YVEX_BIN) graph attention execute --target deepseek4-v4-flash \
 			--models-root "$(DEEPSEEK_OPERATOR_MODELS_ROOT)" \
 			--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 			--backend "$$backend" --phase prefill --mode eager --scope full \
@@ -1046,7 +1011,7 @@ test-runtime-deepseek-prefill-live: cuda $(PREFILL_LIVE_RUNNER) $(YVEX_DEV_BIN)
 	echo "production DeepSeek activation prefill live: CPU/CUDA 43 layers and 634 bindings"
 
 # This serial target proves real selected-expert CPU/CUDA and the full CUDA operator path.
-test-runtime-deepseek-moe-live: cuda $(MOE_LIVE_RUNNER) $(YVEX_DEV_BIN)
+test-runtime-deepseek-moe-live: cuda $(MOE_LIVE_RUNNER) $(YVEX_BIN)
 	@set -eu; \
 	tmp_tag=runtime-deepseek-moe-live; \
 	$(ATTENTION_OWNED_TMP_BEGIN) \
@@ -1059,7 +1024,7 @@ test-runtime-deepseek-moe-live: cuda $(MOE_LIVE_RUNNER) $(YVEX_DEV_BIN)
 	input="$$tmp_dir/deepseek-moe.yvex-moe-input"; \
 	$(MOE_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
 		>"$$tmp_dir/api.out"; \
-	$(YVEX_DEV_BIN) graph moe execute --target deepseek4-v4-flash \
+	$(YVEX_BIN) graph moe execute --target deepseek4-v4-flash \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --input tensor-file --input-file "$$input" \
 		--scope full --progress off --output json >"$$tmp_dir/cuda.json"; \
@@ -1075,7 +1040,7 @@ test-runtime-deepseek-moe-live: cuda $(MOE_LIVE_RUNNER) $(YVEX_DEV_BIN)
 	echo "production DeepSeek MoE live: CPU hash/learned and CUDA 43-layer operator"
 
 # This serial target proves numeric-token CPU/CUDA backbone execution and operator reachability.
-test-runtime-deepseek-transformer-live: cuda $(TRANSFORMER_LIVE_RUNNER) $(YVEX_DEV_BIN)
+test-runtime-deepseek-transformer-live: cuda $(TRANSFORMER_LIVE_RUNNER) $(YVEX_BIN)
 	@set -eu; \
 	tmp_tag=runtime-deepseek-transformer-live; \
 	$(ATTENTION_OWNED_TMP_BEGIN) \
@@ -1088,7 +1053,7 @@ test-runtime-deepseek-transformer-live: cuda $(TRANSFORMER_LIVE_RUNNER) $(YVEX_D
 	input="$$tmp_dir/deepseek-transformer.yvex-transformer-input"; \
 	$(TRANSFORMER_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
 		>"$$tmp_dir/api.out"; \
-	$(YVEX_DEV_BIN) graph transformer execute --target deepseek4-v4-flash \
+	$(YVEX_BIN) graph transformer execute --target deepseek4-v4-flash \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --phase prefill --input token-ids --input-file "$$input" \
 		--chunk-tokens 1 --context-capacity 1 --progress off --output json \
@@ -1106,7 +1071,7 @@ test-runtime-deepseek-transformer-live: cuda $(TRANSFORMER_LIVE_RUNNER) $(YVEX_D
 	echo "production DeepSeek transformer live: CPU/CUDA token-to-normalized-hidden backbone"
 
 # This serial target proves shared-context prefill and two real CPU/CUDA decode steps.
-test-runtime-deepseek-decode-live: cuda $(DECODE_LIVE_RUNNER) $(YVEX_DEV_BIN)
+test-runtime-deepseek-decode-live: cuda $(DECODE_LIVE_RUNNER) $(YVEX_BIN)
 	@set -eu; \
 	tmp_tag=runtime-deepseek-decode-live; \
 	$(ATTENTION_OWNED_TMP_BEGIN) \
@@ -1119,7 +1084,7 @@ test-runtime-deepseek-decode-live: cuda $(DECODE_LIVE_RUNNER) $(YVEX_DEV_BIN)
 	input="$$tmp_dir/deepseek-decode.yvex-transformer-input"; \
 	$(DECODE_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
 		>"$$tmp_dir/api.out"; \
-	$(YVEX_DEV_BIN) graph transformer decode --target deepseek4-v4-flash \
+	$(YVEX_BIN) graph transformer decode --target deepseek4-v4-flash \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --input token-ids --input-file "$$input" \
 		--prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
@@ -1138,7 +1103,7 @@ test-runtime-deepseek-decode-live: cuda $(DECODE_LIVE_RUNNER) $(YVEX_DEV_BIN)
 	echo "production DeepSeek decode live: shared-context CPU/CUDA repeated teacher-forced steps"
 
 # This serial target proves exact resident-head projection for one prefill and two decode rows.
-test-runtime-deepseek-logits-live: cuda $(LOGITS_LIVE_RUNNER) $(YVEX_DEV_BIN)
+test-runtime-deepseek-logits-live: cuda $(LOGITS_LIVE_RUNNER) $(YVEX_BIN)
 	@set -eu; \
 	tmp_tag=runtime-deepseek-logits-live; \
 	$(ATTENTION_OWNED_TMP_BEGIN) \
@@ -1151,7 +1116,7 @@ test-runtime-deepseek-logits-live: cuda $(LOGITS_LIVE_RUNNER) $(YVEX_DEV_BIN)
 	input="$$tmp_dir/deepseek-logits.yvex-transformer-input"; \
 	$(LOGITS_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$input" \
 		>"$$tmp_dir/api.out"; \
-	$(YVEX_DEV_BIN) graph transformer logits --target deepseek4-v4-flash \
+	$(YVEX_BIN) graph transformer logits --target deepseek4-v4-flash \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --input token-ids --input-file "$$input" \
 		--prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
@@ -1166,7 +1131,7 @@ test-runtime-deepseek-logits-live: cuda $(LOGITS_LIVE_RUNNER) $(YVEX_DEV_BIN)
 		and r["decode_logits_rows"]==2 and len(r["rows"])==3 \
 		and all(x["logits_count"]==129280 for x in r["rows"]) \
 		and not r["sampling_ready"] and not r["generation_ready"]' "$$tmp_dir/cuda.json"; \
-	$(YVEX_DEV_BIN) graph transformer sample --target deepseek4-v4-flash \
+	$(YVEX_BIN) graph transformer sample --target deepseek4-v4-flash \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --input token-ids --input-file "$$input" \
 		--prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
@@ -1194,7 +1159,7 @@ test-runtime-deepseek-sampling-live: test-runtime-deepseek-logits-live
 
 # This serial target reuses the real-logits live workflow to hand actual sampled IDs
 # into the metadata-only artifact tokenizer proof after all model resources close.
-test-runtime-deepseek-tokenizer-live: cuda $(TOKENIZER_LIVE_RUNNER) $(LOGITS_LIVE_RUNNER) $(YVEX_DEV_BIN)
+test-runtime-deepseek-tokenizer-live: cuda $(TOKENIZER_LIVE_RUNNER) $(LOGITS_LIVE_RUNNER) $(YVEX_BIN)
 	@set -eu; \
 	tmp_tag=runtime-deepseek-tokenizer-live; \
 	$(ATTENTION_OWNED_TMP_BEGIN) \
@@ -1216,13 +1181,13 @@ test-runtime-deepseek-tokenizer-live: cuda $(TOKENIZER_LIVE_RUNNER) $(LOGITS_LIV
 	$(TOKENIZER_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" "$$sampled" \
 		>"$$tmp_dir/tokenizer.out"; \
 	PYTHONDONTWRITEBYTECODE=1 "$$reference_python" tests/reference/tokenizer.py "$(DEEPSEEK_SOURCE)" \
-		"$(abspath $(YVEX_DEV_BIN))" "$(DEEPSEEK_SELECTED_ARTIFACT)" >"$$tmp_dir/reference.out"; \
-	$(YVEX_DEV_BIN) tokenizer show "$(DEEPSEEK_SELECTED_ARTIFACT)" >"$$tmp_dir/inspect.out"; \
-	$(YVEX_DEV_BIN) tokenizer encode "$(DEEPSEEK_SELECTED_ARTIFACT)" --text 'hello world' --pieces \
+		"$(abspath $(YVEX_BIN))" "$(DEEPSEEK_SELECTED_ARTIFACT)" >"$$tmp_dir/reference.out"; \
+	$(YVEX_BIN) tokenizer show "$(DEEPSEEK_SELECTED_ARTIFACT)" >"$$tmp_dir/inspect.out"; \
+	$(YVEX_BIN) tokenizer encode "$(DEEPSEEK_SELECTED_ARTIFACT)" --text 'hello world' --pieces \
 		>"$$tmp_dir/tokenize.out"; \
-	$(YVEX_DEV_BIN) tokenizer decode "$(DEEPSEEK_SELECTED_ARTIFACT)" --ids 33310,2058 \
+	$(YVEX_BIN) tokenizer decode "$(DEEPSEEK_SELECTED_ARTIFACT)" --ids 33310,2058 \
 		>"$$tmp_dir/detokenize.out"; \
-	$(YVEX_DEV_BIN) tokenizer prompt "$(DEEPSEEK_SELECTED_ARTIFACT)" --system policy --user hi \
+	$(YVEX_BIN) tokenizer prompt "$(DEEPSEEK_SELECTED_ARTIFACT)" --system policy --user hi \
 		--assistant ok --user next --tokens >"$$tmp_dir/prompt.out"; \
 	grep -q '^tokenizer_runtime_ready: true$$' "$$tmp_dir/inspect.out"; \
 	grep -q '^ids: 33310 2058$$' "$$tmp_dir/tokenize.out"; \
@@ -1233,7 +1198,7 @@ test-runtime-deepseek-tokenizer-live: cuda $(TOKENIZER_LIVE_RUNNER) $(LOGITS_LIV
 	echo "production DeepSeek tokenizer live: artifact BPE, exact prompt, and incremental decode"
 
 # This serial lane proves sampled-token feedback with independent lower-owner composition.
-test-runtime-deepseek-generation-live: cuda $(GENERATION_LIVE_RUNNER) $(YVEX_DEV_BIN)
+test-runtime-deepseek-generation-live: cuda $(GENERATION_LIVE_RUNNER) $(YVEX_BIN)
 	@set -eu; \
 	tmp_tag=runtime-deepseek-generation-live; \
 	$(ATTENTION_OWNED_TMP_BEGIN) \
@@ -1252,7 +1217,7 @@ test-runtime-deepseek-generation-live: cuda $(GENERATION_LIVE_RUNNER) $(YVEX_DEV
 	$(GENERATION_LIVE_RUNNER) "$(DEEPSEEK_SELECTED_ARTIFACT)" "$$binding" \
 		cuda stochastic 42 2 >"$$tmp_dir/cuda-stochastic-second.out"; \
 	cmp "$$tmp_dir/cuda-stochastic-first.out" "$$tmp_dir/cuda-stochastic-second.out"; \
-	$(YVEX_DEV_BIN) graph transformer generate --target deepseek4-v4-flash \
+	$(YVEX_BIN) graph transformer generate --target deepseek4-v4-flash \
 		--artifact "$(DEEPSEEK_SELECTED_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --text Hi --max-new-tokens 1 --max-output-bytes 64 \
 		--context-capacity 8 --prefill-chunk-tokens 8 --strategy greedy \
@@ -1269,11 +1234,11 @@ test-runtime-deepseek-generation-live: cuda $(GENERATION_LIVE_RUNNER) $(YVEX_DEV
 		"$$tmp_dir/cuda-stochastic-first.out"; \
 	echo "production DeepSeek generation live: sampled-token feedback and manual composition parity"
 
-test-attention-cli-live: $(YVEX_DEV_BIN) tests/cli/attention_graph.sh
+test-attention-cli-live: $(YVEX_BIN) tests/cli/attention_graph.sh
 	@set -eu; \
 	tmp_tag=attention-cli-live; \
 	$(ATTENTION_OWNED_TMP_BEGIN) \
-	YVEX_BIN="$(YVEX_DEV_BIN)" YVEX_TEST_OUT_DIR="$$tmp_dir/output" \
+	YVEX_BIN="$(YVEX_BIN)" YVEX_TEST_OUT_DIR="$$tmp_dir/output" \
 		YVEX_ATTENTION_LIVE=1 \
 		YVEX_ATTENTION_MODELS_ROOT="$(DEEPSEEK_OPERATOR_MODELS_ROOT)" \
 		YVEX_ATTENTION_ARTIFACT="$(DEEPSEEK_SELECTED_ARTIFACT)" \
@@ -1342,13 +1307,13 @@ test-quant-live-plan: $(QUANT_LIVE_RUNNER)
 test-quant-live: $(QUANT_LIVE_RUNNER)
 	$(QUANT_LIVE_RUNNER) "$(DEEPSEEK_SOURCE)" "$(DEEPSEEK_MODELS_ROOT)" "$(DEEPSEEK_SOURCE_MANIFEST)" "$(DEEPSEEK_SELECTED_ARTIFACT)"
 
-test-physical-variant-plan-deepseek-live: $(QUANT_LIVE_RUNNER) $(YVEX_DEV_BIN)
+test-physical-variant-plan-deepseek-live: $(QUANT_LIVE_RUNNER) $(YVEX_BIN)
 	@test -n "$(YVEX_IMATRIX)" || { echo "YVEX_IMATRIX is required" >&2; exit 2; }
 	YVEX_QUANT_PRESET="deepseek-v4-flash-q8_0-q2_k-v1" \
 		$(QUANT_LIVE_RUNNER) --plan-only "$(DEEPSEEK_SOURCE)" "$(DEEPSEEK_MODELS_ROOT)" "$(DEEPSEEK_SOURCE_MANIFEST)"
 	YVEX_QUANT_PRESET="$(YVEX_QUANT_DS4_PRESET)" YVEX_IMATRIX_PATH="$(YVEX_IMATRIX)" \
 		$(QUANT_LIVE_RUNNER) --plan-only "$(DEEPSEEK_SOURCE)" "$(DEEPSEEK_MODELS_ROOT)" "$(DEEPSEEK_SOURCE_MANIFEST)"
-	YVEX_BIN="$(YVEX_DEV_BIN)" YVEX_TEST_OUT_DIR="$(BUILD_DIR)/tests/physical-variant-refusal" \
+	YVEX_BIN="$(YVEX_BIN)" YVEX_TEST_OUT_DIR="$(BUILD_DIR)/tests/physical-variant-refusal" \
 		YVEX_DEEPSEEK_SOURCE="$(DEEPSEEK_SOURCE)" \
 		YVEX_DEEPSEEK_MODELS_ROOT="$(DEEPSEEK_MODELS_ROOT)" \
 		YVEX_DEEPSEEK_SOURCE_MANIFEST="$(DEEPSEEK_SOURCE_MANIFEST)" \
@@ -1368,7 +1333,7 @@ test-artifact-emit-deepseek-variant-live: $(ARTIFACT_LIVE_RUNNER) $(OFFICIAL_GGU
 		$(ARTIFACT_LIVE_RUNNER) --variant "$(DEEPSEEK_SOURCE)" "$(DEEPSEEK_MODELS_ROOT)" \
 			"$(DEEPSEEK_SOURCE_MANIFEST)" "$(YVEX_VARIANT_ARTIFACT)"
 
-test-materialize-deepseek-variant-live: $(YVEX_DEV_BIN)
+test-materialize-deepseek-variant-live: $(YVEX_BIN)
 	@test -n "$(YVEX_IMATRIX)" || { echo "YVEX_IMATRIX is required" >&2; exit 2; }
 	@test -f "$(YVEX_VARIANT_ARTIFACT)" || { echo "emitted YVEX_VARIANT_ARTIFACT is required" >&2; exit 2; }
 	@set -eu; \
@@ -1377,12 +1342,12 @@ test-materialize-deepseek-variant-live: $(YVEX_DEV_BIN)
 		find "$$root" -xdev -mindepth 1 -delete; rmdir "$$root"; exit $$status; }; \
 	trap cleanup 0 HUP INT TERM; \
 	mkdir -p "$$root/bindings"; \
-	$(YVEX_DEV_BIN) quant plan --target deepseek4-v4-flash \
+	$(YVEX_BIN) quant plan --target deepseek4-v4-flash \
 		--source "$(DEEPSEEK_SOURCE)" --models-root "$(DEEPSEEK_MODELS_ROOT)" \
 		--source-manifest "$(DEEPSEEK_SOURCE_MANIFEST)" \
 		--preset "$(YVEX_QUANT_DS4_PRESET)" --imatrix-manifest "$(YVEX_IMATRIX)" \
 		--out-plan "$$root/variant.plan" >/dev/null; \
-	$(YVEX_DEV_BIN) graph attention prepare --target deepseek4-v4-flash \
+	$(YVEX_BIN) graph attention prepare --target deepseek4-v4-flash \
 		--source "$(DEEPSEEK_SOURCE)" --source-manifest "$(DEEPSEEK_SOURCE_MANIFEST)" \
 		--models-root "$(DEEPSEEK_MODELS_ROOT)" --artifact "$(YVEX_VARIANT_ARTIFACT)" \
 		--runtime-binding-dir "$$root/bindings" \
@@ -1391,17 +1356,17 @@ test-materialize-deepseek-variant-live: $(YVEX_DEV_BIN)
 		--imatrix-manifest "$(YVEX_IMATRIX)" --output json; \
 	echo "variant materialization live: canonical operator binding accepted"
 
-test-runtime-deepseek-variant-generation-live: cuda $(YVEX_DEV_BIN)
+test-runtime-deepseek-variant-generation-live: cuda $(YVEX_BIN)
 	@test -f "$(YVEX_VARIANT_ARTIFACT)" || { echo "emitted YVEX_VARIANT_ARTIFACT is required" >&2; exit 2; }
 	@binding=$$(find "$(YVEX_VARIANT_BINDING_DIR)" -maxdepth 1 -type f \
 		-name '*.yvex-runtime-binding' -print | sort | tail -1); \
 	test -n "$$binding" || { echo "variant runtime binding is required" >&2; exit 2; }; \
-	$(YVEX_DEV_BIN) graph transformer generate --target deepseek4-v4-flash \
+	$(YVEX_BIN) graph transformer generate --target deepseek4-v4-flash \
 		--artifact "$(YVEX_VARIANT_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cpu --text Hi --max-new-tokens 1 --max-output-bytes 64 \
 		--context-capacity 8 --prefill-chunk-tokens 8 --strategy greedy \
 		--progress off --output json; \
-	$(YVEX_DEV_BIN) graph transformer generate --target deepseek4-v4-flash \
+	$(YVEX_BIN) graph transformer generate --target deepseek4-v4-flash \
 		--artifact "$(YVEX_VARIANT_ARTIFACT)" --runtime-binding "$$binding" \
 		--backend cuda --text Hi --max-new-tokens 1 --max-output-bytes 64 \
 		--context-capacity 8 --prefill-chunk-tokens 8 --strategy greedy \
@@ -1451,8 +1416,9 @@ test-source-ownership: tests/test_source_ownership.sh config/source_owners.tsv
 test-repository-layout: tests/test_repository_layout.sh Makefile
 	sh tests/test_repository_layout.sh
 
-test-architecture-boundaries: $(LIBYVEX) $(YVEX_BIN) $(TEST_REFERENCE_OBJS) tests/test_architecture_boundaries.sh
-	YVEX_LIB="$(LIBYVEX)" YVEX_BIN="$(YVEX_BIN)" \
+test-architecture-boundaries: $(LIBYVEX) $(YVEX_BIN) $(YVEXD_BIN) $(TEST_REFERENCE_OBJS) tests/test_architecture_boundaries.sh
+	YVEX_LIB="$(LIBYVEX)" YVEX_BIN="$(YVEX_BIN)" YVEXD_BIN="$(YVEXD_BIN)" \
+		YVEX_CLIENT_LANE_OBJ="$(CLIENT_LANE_OBJ)" \
 		YVEX_REFERENCE_OBJS="$(TEST_REFERENCE_OBJS)" \
 		sh tests/test_architecture_boundaries.sh
 
@@ -1505,30 +1471,20 @@ $(CUDA_PTX_INC): $(CUDA_PTX)
 		printf '};\n'; \
 	} > $@
 
-$(YVEX_BIN): $(CLIENT_OBJ) $(CLIENT_PROTOCOL_OBJS)
+$(YVEX_BIN): $(YVEX_OBJS) $(LIBYVEX)
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(CLIENT_OBJ) $(CLIENT_PROTOCOL_OBJS) \
+	$(CC) $(CFLAGS) $(YVEX_OBJS) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(YVEXD_BIN): $(DAEMON_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(DAEMON_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
 		$(LDFLAGS) $(LDLIBS) -o $@
-
-$(YVEXD_BIN): $(DAEMON_OBJ) $(LIBYVEX)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(DAEMON_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
-
-$(YVEX_OPENAI_BIN): $(GATEWAY_OBJS) $(CLIENT_PROTOCOL_OBJS)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(GATEWAY_OBJS) $(CLIENT_PROTOCOL_OBJS) \
-		$(LDFLAGS) $(LDLIBS) -o $@
-	@! nm -u $@ | grep -E 'yvex_(runtime_model_open|artifact_materialize|runtime_transformer|runtime_generation)' >/dev/null
-
-$(YVEX_DEV_BIN): $(DEV_CLI_OBJS) $(LIBYVEX)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(DEV_CLI_OBJS) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(TEST_RUNNER): $(TEST_MAIN_OBJ) $(TEST_UNIT_OBJS) $(TEST_REFERENCE_OBJS) \
-	$(GATEWAY_TEST_OBJS) $(LIBYVEX) tests/test.h
+	$(OPENAI_ADAPTER_OBJS) $(LIBYVEX) tests/test.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(TEST_MAIN_OBJ) $(TEST_UNIT_OBJS) $(TEST_REFERENCE_OBJS) \
-		$(GATEWAY_TEST_OBJS) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
+		$(OPENAI_ADAPTER_OBJS) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(QUANT_TEST_RUNNER): $(QUANT_TEST_RUNNER_OBJ) $(QUANT_TEST_UNIT_OBJS) $(LIBYVEX) tests/test.h
 	@mkdir -p $(@D)
@@ -1541,6 +1497,11 @@ $(ARTIFACT_TEST_RUNNER): $(ARTIFACT_TEST_RUNNER_OBJ) $(OBJ_DIR)/tests/unit/quant
 $(OPENAI_FAKE_HOST): $(OPENAI_FAKE_HOST_OBJ) $(LIBYVEX)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(OPENAI_FAKE_HOST_OBJ) $(LIBYVEX) \
+		$(LDFLAGS) $(LDLIBS) -o $@
+
+$(OPENAI_ADAPTER_HOST): $(OPENAI_ADAPTER_HOST_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(OPENAI_ADAPTER_HOST_OBJ) $(OPENAI_ADAPTER_OBJS) $(LIBYVEX) \
 		$(LDFLAGS) $(LDLIBS) -o $@
 
 $(SOURCE_PAYLOAD_LIVE_RUNNER): $(SOURCE_PAYLOAD_LIVE_OBJ) $(LIBYVEX)

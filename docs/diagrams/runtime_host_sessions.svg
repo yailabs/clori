@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1040" viewBox="0 0 1600 1040" role="img" aria-labelledby="title desc">
   <title id="title">Runtime host and session ownership</title>
-  <desc id="desc">Native clients and the engine-free yvex-openai application gateway connect across a private local protocol to one long-lived yvexd process. The daemon owns immutable model resources, a bounded model worker, and conversation sessions with persistent KV. One typed event authority feeds raw trace, engine watch, metrics, and client projections.</desc>
+  <desc id="desc">Native clients connect across a private local protocol and OpenAI-compatible applications connect through an integrated loopback adapter to one long-lived yvexd process. The daemon owns immutable model resources, a bounded model worker, conversation sessions with persistent KV, and one typed event authority.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0 0L0 6L9 3z" class="arrow-fill"/></marker>
     <style>
@@ -17,10 +17,10 @@
 
   <g transform="translate(35 205)"><rect class="client-box" width="165" height="125" rx="12"/><text class="text" x="82" y="48">Client A</text><text class="small" x="82" y="78">connect · request</text><text class="small" x="82" y="101">event stream</text></g>
   <g transform="translate(35 405)"><rect class="client-box" width="165" height="125" rx="12"/><text class="text" x="82" y="48">Client B</text><text class="small" x="82" y="78">attach · cancel</text><text class="small" x="82" y="101">detach</text></g>
-  <g transform="translate(35 605)"><rect class="client-box" width="165" height="125" rx="12"/><text class="text" x="82" y="38">yvex-openai</text><text class="small" x="82" y="66">engine-free adapter</text><text class="small" x="82" y="88">HTTP/SSE applications</text><text class="small" x="82" y="108">not a model host</text></g>
+  <g transform="translate(35 605)"><rect class="client-box" width="165" height="125" rx="12"/><text class="text" x="82" y="38">SDKs / apps</text><text class="small" x="82" y="66">loopback HTTP/SSE</text><text class="small" x="82" y="88">OpenAI profile v1</text><text class="small" x="82" y="108">external clients</text></g>
 
   <rect class="host" x="285" y="115" width="720" height="750" rx="18"/>
-  <text class="section" x="645" y="151" fill="#6d28d9" text-anchor="middle">yvexd · long-lived runtime host</text>
+  <text class="section" x="645" y="151" fill="#6d28d9" text-anchor="middle">yvexd · runtime host + OpenAI adapter</text>
 
   <rect class="group" x="320" y="180" width="650" height="140" rx="12"/>
   <text class="text" x="645" y="210">Process-lifetime immutable resources</text>

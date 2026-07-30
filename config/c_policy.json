@@ -15,7 +15,7 @@
   "limits": {
     "production_files": 222,
     "translation_units": 165,
-    "headers": 49,
+    "headers": 50,
     "public_headers": 16,
     "source_headers": 24,
     "translation_unit_lines": 2000,
@@ -23,12 +23,12 @@
     "function_lines": 200,
     "preferred_line_width": 100,
     "hard_line_width": 120,
-    "physical_lines": 166000,
-    "code_lines": 141000,
+    "physical_lines": 166500,
+    "code_lines": 141500,
     "executable_lines": 89000,
     "public_function_declarations": 385,
     "library_global_symbols": 1080,
-    "nonpublic_global_symbols": 690,
+    "nonpublic_global_symbols": 691,
     "family_sources": 3,
     "family_headers": 1,
     "family_sources_per_subsystem": 1,
@@ -106,7 +106,7 @@
   "archive": {
     "path": "build/lib/libyvex.a",
     "member_prefix": "build/obj/",
-    "source_variables": ["CORE_SRCS", "DEV_CLI_SRCS", "CLIENT_SRCS", "GATEWAY_SRCS", "CUDA_SRCS", "CUDA_CU_SRCS"],
+    "source_variables": ["CORE_SRCS", "YVEX_SRCS", "OPENAI_ADAPTER_SRCS", "CUDA_SRCS", "CUDA_CU_SRCS"],
     "object_variable": "CORE_OBJS"
   },
   "analysis": {

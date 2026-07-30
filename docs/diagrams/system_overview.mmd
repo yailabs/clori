@@ -8,10 +8,12 @@ flowchart LR
 
     subgraph host[B. Run — yvexd]
         protocol[Private local protocol]
+        openai[Loopback OpenAI adapter]
         sessions[Session registry<br/>+ persistent KV]
         worker[Bounded model worker]
         events[Typed runtime events]
         protocol <--> sessions
+        openai <--> protocol
         sessions <--> worker
         worker --> events
     end
@@ -28,7 +30,6 @@ flowchart LR
         watch[Engine watch]
         chat[REPL / chat]
         run[yvex run]
-        gateway[yvex-openai]
         apps[SDKs / applications]
     end
 
@@ -38,8 +39,8 @@ flowchart LR
     events --> watch
     protocol <--> chat
     protocol <--> run
-    protocol <--> gateway <--> apps
+    openai <--> apps
 
-    dev[yvex-dev<br/>engineering tools]
-    dev -.-> compiler
-    dev -.-> artifact
+    offline[yvex<br/>offline engineering lane]
+    offline -.-> compiler
+    offline -.-> artifact

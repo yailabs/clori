@@ -1,5 +1,5 @@
-/* Test-only fake YVEX protocol host for OpenAI gateway integration.
- * Purpose: provide deterministic status, session, text, JSON, and tool-call protocol-v2 facts.
+/* Test-only fake YVEX protocol host for OpenAI adapter integration.
+ * Purpose: provide deterministic status, session, text, JSON, and tool-call protocol-v3 facts.
  * Inputs: one private Unix socket path. Effects: serves bounded local requests until signalled.
  * Failure: exits nonzero on socket/protocol errors. Boundary: never enters production objects. */
 
@@ -57,7 +57,7 @@ static int send_ack(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_ACK, request);
-    strcpy(message.reason, "protocol-v2");
+    strcpy(message.reason, "protocol-v3");
     return yvex_server_protocol_send(fd, &message, err);
 }
 

@@ -1,14 +1,14 @@
-/* Owner: gateway.openai.state.
+/* Owner: server.openai.state.
  * Owns: bounded in-memory Responses ID to YVEX session/provider-context mapping and deterministic eviction.
  * Does not own: session KV, hidden state, protocol framing, HTTP parsing, or persistence.
  * Invariants: every record is model/session bound, uniquely owned, TTL-limited, and absent after restart.
- * Boundary: previous_response_id can name only state created by this gateway process.
+ * Boundary: previous_response_id can name only state created by this daemon adapter lifetime.
  * Purpose: retain exact application-visible context references without reconstructing model state from text.
  * Inputs: sealed provider requests, response/session IDs, monotonic process sequence, and wall seconds.
  * Effects: clones bounded request state and evicts/releases expired or least-recent records.
  * Failure: allocation failure leaves prior records intact and publishes no new response mapping. */
 
-#include "src/gateway/openai/private.h"
+#include "src/server/openai/private.h"
 
 #include <string.h>
 
@@ -76,7 +76,7 @@ int openai_state_store(openai_gateway *gateway, const char *response_id,
     }
     if (!slot) {
         yvex_provider_request_close(&clone);
-        yvex_error_set(err, YVEX_ERR_STATE, "gateway.openai.state",
+        yvex_error_set(err, YVEX_ERR_STATE, "server.openai.state",
                        "response-state directory has no admissible slot");
         return YVEX_ERR_STATE;
     }

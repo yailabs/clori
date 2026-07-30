@@ -75,6 +75,7 @@ enum {
     TAG_RUNTIME_REQUEST_COUNT,
     TAG_RUNTIME_FLAGS,
     TAG_METRICS = 80,
+    TAG_OPENAI_PORT,
     TAG_EVENT_SEQUENCE = 96,
     TAG_EVENT_WALL_TIME,
     TAG_EVENT_MONOTONIC_TIME,
@@ -454,7 +455,7 @@ int yvex_protocol_request_decode(const unsigned char *input,
  * Failure: returns false on capacity exhaustion. Boundary: metrics meaning is owned by telemetry. */
 static int writer_metrics(wire_writer *writer, const yvex_server_metrics *metrics)
 {
-    unsigned char bytes[25u * 8u];
+    unsigned char bytes[32u * 8u];
     const unsigned long long values[] = {
         metrics->schema_version, metrics->uptime_ns, metrics->model_open_count,
         metrics->model_close_count, metrics->artifact_open_count,
@@ -466,7 +467,9 @@ static int writer_metrics(wire_writer *writer, const yvex_server_metrics *metric
         metrics->queue_capacity, metrics->active_sessions,
         metrics->total_sessions, metrics->active_requests,
         metrics->completed_requests, metrics->failed_requests,
-        metrics->cancelled_requests, metrics->telemetry_dropped};
+        metrics->cancelled_requests, metrics->active_http_requests,
+        metrics->completed_http_requests, metrics->failed_http_requests,
+        metrics->cancelled_http_requests, metrics->telemetry_dropped};
     unsigned int index;
     for (index = 0u; index < sizeof(values) / sizeof(values[0]); ++index)
         put_u64(bytes + index * 8u, values[index]);
@@ -491,6 +494,8 @@ static int reader_metrics(const unsigned char *bytes, unsigned long long count,
         &metrics->active_sessions, &metrics->total_sessions,
         &metrics->active_requests, &metrics->completed_requests,
         &metrics->failed_requests, &metrics->cancelled_requests,
+        &metrics->active_http_requests, &metrics->completed_http_requests,
+        &metrics->failed_http_requests, &metrics->cancelled_http_requests,
         &metrics->telemetry_dropped};
     unsigned int index;
     if (count != sizeof(values) / sizeof(values[0]) * 8u)
@@ -517,7 +522,9 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
     unsigned long long runtime_flags =
         (message && message->runtime.runtime_ready ? 1u : 0u) |
         (message && message->runtime.generation_ready ? 2u : 0u) |
-        (message && message->runtime.public_server_ready ? 4u : 0u);
+        (message && message->runtime.public_server_ready ? 4u : 0u) |
+        (message && message->runtime.openai_listener_enabled ? 8u : 0u) |
+        (message && message->runtime.openai_listener_ready ? 16u : 0u);
     if (byte_count) *byte_count = 0u;
     if (!message || !output || !byte_count ||
         message->schema_version != YVEX_LOCAL_PROTOCOL_VERSION ||
@@ -580,6 +587,7 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
         !WRITE_U64(TAG_SESSION_COUNT, message->runtime.session_count) ||
         !WRITE_U64(TAG_RUNTIME_REQUEST_COUNT, message->runtime.request_count) ||
         !WRITE_U64(TAG_RUNTIME_FLAGS, runtime_flags) ||
+        !WRITE_U64(TAG_OPENAI_PORT, message->runtime.openai_port) ||
         !writer_metrics(&writer, &message->runtime.metrics) ||
         !WRITE_U64(TAG_EVENT_SEQUENCE, message->event.sequence) ||
         !WRITE_U64(TAG_EVENT_WALL_TIME, message->event.wall_time_ns) ||
@@ -775,11 +783,17 @@ static int message_runtime_field(yvex_client_message *candidate,
     case TAG_CONTEXT_CAPACITY: valid = RUNTIME_U64(candidate->runtime.context_capacity); break;
     case TAG_SESSION_COUNT: valid = RUNTIME_U64(candidate->runtime.session_count); break;
     case TAG_RUNTIME_REQUEST_COUNT: valid = RUNTIME_U64(candidate->runtime.request_count); break;
+    case TAG_OPENAI_PORT:
+        valid = reader_u64(bytes, count, &value) && value <= 65535u;
+        if (valid) candidate->runtime.openai_port = (unsigned short)value;
+        break;
     case TAG_RUNTIME_FLAGS:
-        valid = reader_u64(bytes, count, &value) && !(value & ~7u);
+        valid = reader_u64(bytes, count, &value) && !(value & ~31u);
         candidate->runtime.runtime_ready = (value & 1u) != 0u;
         candidate->runtime.generation_ready = (value & 2u) != 0u;
         candidate->runtime.public_server_ready = (value & 4u) != 0u;
+        candidate->runtime.openai_listener_enabled = (value & 8u) != 0u;
+        candidate->runtime.openai_listener_ready = (value & 16u) != 0u;
         break;
     case TAG_METRICS: valid = reader_metrics(bytes, count, &candidate->runtime.metrics); break;
     default: return 0;
@@ -901,7 +915,7 @@ int yvex_protocol_message_decode(const unsigned char *input,
     memset(&candidate, 0, sizeof(candidate));
     candidate.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     candidate.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
-    candidate.event.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    candidate.event.schema_version = YVEX_RUNTIME_EVENT_SCHEMA_VERSION;
     while ((next = reader_next(&reader, &tag, &bytes, &count)) > 0 && valid) {
         int field = message_base_field(&candidate, tag, bytes, count,
                                        &have_kind);
@@ -1100,13 +1114,13 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
     if (yvex_client_send(client, &handshake, err) != YVEX_OK ||
         yvex_client_receive(client, &response, err) != YVEX_OK ||
         response.kind != YVEX_CLIENT_MESSAGE_ACK ||
-        response.status != YVEX_OK || strcmp(response.reason, "protocol-v2") != 0) {
+        response.status != YVEX_OK || strcmp(response.reason, "protocol-v3") != 0) {
         (void)close(client->fd);
         memset(client, 0, sizeof(*client));
         free(client);
         if (yvex_error_code(err) == YVEX_OK)
             yvex_error_set(err, YVEX_ERR_FORMAT, "server.protocol.handshake",
-                           "daemon did not admit local protocol version 2");
+                           "daemon did not admit local protocol version 3");
         return yvex_error_code(err);
     }
     if (yvex_client_timeout_set(client, 0u, err) != YVEX_OK) {

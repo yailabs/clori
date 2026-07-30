@@ -24,25 +24,25 @@
 #include <string.h>
 
 static const char *const literal_pair_0[] = {
-    "       yvex quant-policy derive --template FILE --arch NAME --out FILE",
+    "       yvex quant policy derive --template FILE --arch NAME --out FILE",
     "\nQuant policy handles declarative qtype policy manifests. It does not quantize tensors or infer."};
 
-static const char *const literal_pair_1[] = { "       yvex quant-job inspect|validate --manifest FILE",
+static const char *const literal_pair_1[] = { "       yvex quant job inspect|validate --manifest FILE",
     "\nQuant job records an external quantization/conversion job manifest without running arbitrary tools."};
 
-static const char *const literal_pair_2[] = { "       yvex imatrix inspect|validate --manifest FILE",
+static const char *const literal_pair_2[] = { "       yvex quant imatrix inspect|validate --manifest FILE",
     "\nImatrix handles calibration artifact manifests. It does not generate imatrix data, calibrate, "
         "quantize, emit GGUF, materialize, or infer."
 };
 
 static const char *const literal_pair_3[] = {
-    "       yvex gguf-template compare --template FILE --native-source DIR",
+    "       yvex artifact template compare --template FILE --native-source DIR",
     "\nGGUF template validates metadata, tokenizer metadata, tensor directory, tensor roles, and optional "
         "exact-name native inventory comparison."
 };
 
 static const char *const literal_pair_4[] = {
-    "       yvex convert emit --arch ARCH --native-source DIR --tensor NAME --target-qtype QTYPE --out "
+    "       yvex quant convert emit --arch ARCH --native-source DIR --tensor NAME --target-qtype QTYPE --out "
         "FILE [--overwrite]",
     "\nConvert plans or emits selected open-weight GGUF tensor artifacts. It does not infer, execute a "
         "full model, or claim generation support."
@@ -151,7 +151,7 @@ static int command_gguf_template(int arg_count, char **args)
     }
     if (arg_count < 3) {
         yvex_cli_out_writef(stderr, "yvex: gguf-template requires inspect, validate, or compare\n");
-        yvex_cli_out_writef(stderr, "usage: yvex gguf-template inspect|validate --template FILE\n");
+        yvex_cli_out_writef(stderr, "usage: yvex artifact template inspect|validate --template FILE\n");
         return 2;
     }
     if (strcmp(args[2], "inspect") != 0 && strcmp(args[2], "validate") != 0 &&
@@ -251,7 +251,7 @@ static int command_gguf_emit(int arg_count, char **args)
     if (arg_count < 3 || strcmp(args[2], "controlled") != 0) {
         yvex_cli_out_writef(stderr, "yvex: gguf-emit requires subcommand controlled\n");
         yvex_cli_out_writef(stderr,
-            "usage: yvex gguf-emit controlled --out FILE [--template FILE] [--model-name NAME] [--arch "
+            "usage: yvex artifact emit controlled --out FILE [--template FILE] [--model-name NAME] [--arch "
                 "ARCH] [--target-qtype F32|F16] [--overwrite]\n");
         return 2;
     }
@@ -297,7 +297,7 @@ static int command_gguf_emit(int arg_count, char **args)
     if (!options.out_path) {
         yvex_cli_out_writef(stderr, "yvex: gguf-emit controlled requires --out FILE\n");
         yvex_cli_out_writef(stderr,
-            "usage: yvex gguf-emit controlled --out FILE [--template FILE] [--model-name NAME] [--arch "
+            "usage: yvex artifact emit controlled --out FILE [--template FILE] [--model-name NAME] [--arch "
                 "ARCH] [--target-qtype F32|F16] [--overwrite]\n");
         return 2;
     }
@@ -1344,7 +1344,7 @@ int yvex_qtype_support_command(int arg_count, char **args)
  * Boundary: No capability policy. */
 void yvex_convert_help(FILE *fp)
 {
-    yvex_cli_out_writef(fp, "usage: yvex convert plan --arch ARCH --native-source DIR --out-plan FILE\n");
+    yvex_cli_out_writef(fp, "usage: yvex quant convert plan --arch ARCH --native-source DIR --out-plan FILE\n");
     yvex_cli_out_lines(fp, literal_pair_4, sizeof(literal_pair_4) / sizeof(literal_pair_4[0]));
 }
 
@@ -1355,7 +1355,7 @@ void yvex_convert_help(FILE *fp)
  * Boundary: No capability policy. */
 void yvex_gguf_template_help(FILE *fp)
 {
-    yvex_cli_out_writef(fp, "usage: yvex gguf-template inspect|validate --template FILE\n");
+    yvex_cli_out_writef(fp, "usage: yvex artifact template inspect|validate --template FILE\n");
     yvex_cli_out_lines(fp, literal_pair_3, sizeof(literal_pair_3) / sizeof(literal_pair_3[0]));
 }
 
@@ -1367,7 +1367,7 @@ void yvex_gguf_template_help(FILE *fp)
 void yvex_gguf_emit_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex gguf-emit controlled --out FILE [--template FILE] [--model-name NAME] [--arch ARCH] [-"
+        "usage: yvex artifact emit controlled --out FILE [--template FILE] [--model-name NAME] [--arch ARCH] [-"
             "-target-qtype F32|F16] [--overwrite]\n\nGGUF emit writes a controlled YVEX-owned tensor artifact "
             "and validates the emitted file.\n");
 }
@@ -1380,7 +1380,7 @@ void yvex_gguf_emit_help(FILE *fp)
 void yvex_imatrix_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex imatrix create --name NAME --arch NAME --imatrix FILE --format FORMAT --status STATUS "
+        "usage: yvex quant imatrix create --name NAME --arch NAME --imatrix FILE --format FORMAT --status STATUS "
             "--out FILE\n");
     yvex_cli_out_lines(fp, literal_pair_2, sizeof(literal_pair_2) / sizeof(literal_pair_2[0]));
 }
@@ -1393,7 +1393,7 @@ void yvex_imatrix_help(FILE *fp)
 void yvex_native_weights_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex native-weights --source DIR [--limit N] [--tensor NAME] [--json]\n\nNative weights "
+        "usage: yvex source native --source DIR [--limit N] [--tensor NAME] [--json]\n\nNative weights "
             "reads safetensors headers and reports metadata only.\n");
 }
 
@@ -1405,7 +1405,7 @@ void yvex_native_weights_help(FILE *fp)
 void yvex_tensor_map_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex tensor-map --arch NAME --native-source DIR [--template FILE] [--tensor NAME] [--limit "
+        "usage: yvex tensor map --arch NAME --native-source DIR [--template FILE] [--tensor NAME] [--limit "
             "N] [--json]\n\nTensor map maps native safetensors names to canonical YVEX roles and proposed GGUF/"
             "template names.\n");
 }
@@ -1418,7 +1418,7 @@ void yvex_tensor_map_help(FILE *fp)
 void yvex_quant_job_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex quant-job create --name NAME --arch ARCH --tool TOOL --tool-path FILE --native-source "
+        "usage: yvex quant job create --name NAME --arch ARCH --tool TOOL --tool-path FILE --native-source "
             "DIR --template FILE --out-gguf FILE --log FILE --status STATUS --command TEXT --out FILE\n");
     yvex_cli_out_lines(fp, literal_pair_1, sizeof(literal_pair_1) / sizeof(literal_pair_1[0]));
 }
@@ -1430,7 +1430,7 @@ void yvex_quant_job_help(FILE *fp)
  * Boundary: No capability policy. */
 void yvex_quant_policy_help(FILE *fp)
 {
-    yvex_cli_out_writef(fp, "usage: yvex quant-policy inspect|validate --policy FILE [--template FILE]\n");
+    yvex_cli_out_writef(fp, "usage: yvex quant policy inspect|validate --policy FILE [--template FILE]\n");
     yvex_cli_out_lines(fp, literal_pair_0, sizeof(literal_pair_0) / sizeof(literal_pair_0[0]));
 }
 
@@ -1442,6 +1442,6 @@ void yvex_quant_policy_help(FILE *fp)
 void yvex_qtype_support_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex qtype-support\n\nReports policy/storage/emit/quantize/compute support separately. "
+        "usage: yvex quant qtype\n\nReports policy/storage/emit/quantize/compute support separately. "
             "Compute support is not implied by conversion support.\n");
 }

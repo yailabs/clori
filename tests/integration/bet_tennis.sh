@@ -2,7 +2,7 @@
 # Purpose: prove the unchanged external bet-tennis provider through configuration only.
 set -eu
 
-YVEX_OPENAI_BIN=${YVEX_OPENAI_BIN:-./yvex-openai}
+YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}
 YVEX_OPENAI_HOST=${YVEX_OPENAI_HOST:-build/tests/openai_host}
 YVEX_BET_TENNIS_ROOT=${YVEX_BET_TENNIS_ROOT:-/home/dgmothx/lab/bet-tennis}
 . tests/support/cleanup.sh
@@ -43,7 +43,7 @@ while test "$attempt" -lt 100; do
     attempt=$((attempt + 1))
 done
 test -S "$socket"
-"$YVEX_OPENAI_BIN" --host 127.0.0.1 --port "$port" --yvex-socket "$socket" \
+"$YVEX_OPENAI_ADAPTER" --host 127.0.0.1 --port "$port" --yvex-socket "$socket" \
     >"$root/gateway.out" 2>"$root/gateway.err" &
 gateway_pid=$!
 base=http://127.0.0.1:$port

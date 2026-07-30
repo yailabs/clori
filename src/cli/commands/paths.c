@@ -19,10 +19,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static const char *const literal_lines_0[] = { "       yvex paths [--project DIR] --run [--create]",
-    "       yvex paths [--project DIR] configure --models-root DIR [--create]",
-    "       yvex paths [--project DIR] configure --reset",
-    "       yvex paths [--project DIR] resolve --family deepseek|glm|qwen|gemma --kind source|gguf|reports|"
+static const char *const literal_lines_0[] = { "       yvex evidence paths [--project DIR] --run [--create]",
+    "       yvex evidence paths [--project DIR] configure --models-root DIR [--create]",
+    "       yvex evidence paths [--project DIR] configure --reset",
+    "       yvex evidence paths [--project DIR] resolve --family deepseek|glm|qwen|gemma --kind source|gguf|reports|"
         "reference|registry\n",
     "Path configuration records operator-local storage only; it does not download models, create artifacts,"
         " register aliases, or claim runtime support."
@@ -530,6 +530,6 @@ int yvex_paths_command(int arg_count, char **args)
 void yvex_paths_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex paths [--project DIR] [--create] [--audit | --output normal|audit]\n");
+        "usage: yvex evidence paths [--project DIR] [--create] [--audit | --output normal|audit]\n");
     yvex_cli_out_lines(fp, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
 }

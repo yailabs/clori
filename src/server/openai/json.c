@@ -1,4 +1,4 @@
-/* Owner: gateway.openai.json.
+/* Owner: server.openai.json.
  * Owns: strict bounded OpenAI-profile JSON request parsing into provider-neutral typed requests.
  * Does not own: HTTP framing, response rendering, model prompt syntax, sessions, or generation.
  * Invariants: duplicate/unknown/unsupported fields refuse; strings and arrays retain explicit bounded lengths.
@@ -8,7 +8,7 @@
  * Effects: allocates one fully owned sealed provider request or none.
  * Failure: malformed types, duplicates, bounds, and unsupported semantics return typed refusals. */
 
-#include "src/gateway/openai/private.h"
+#include "src/server/openai/private.h"
 
 #include <errno.h>
 #include <math.h>
@@ -31,7 +31,7 @@ typedef struct {
 static int json_refuse(yvex_error *err, yvex_status status,
                        const char *message)
 {
-    yvex_error_set(err, status, "gateway.openai.request", message);
+    yvex_error_set(err, status, "server.openai.request", message);
     return status;
 }
 
@@ -1021,7 +1021,7 @@ failure:
     free((void *)instruction.bytes);
     yvex_provider_request_close(&request);
     if (!yvex_error_code(err))
-        yvex_error_set(err, rc, "gateway.openai.request",
+        yvex_error_set(err, rc, "server.openai.request",
                        "OpenAI request admission failed");
     return rc;
 }

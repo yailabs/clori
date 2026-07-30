@@ -1,14 +1,16 @@
-/* Owner: client.yvex.
+/* Owner: client.yvex runtime-client lane.
  * Owns: product CLI grammar, thin protocol requests, one-shot streaming, REPL, and compact views.
- * Does not own: model/artifact opening, generation, sessions, telemetry truth, or developer tooling.
- * Invariants: no product command invokes an engine API and all generation flows through yvexd.
- * Boundary: product entrypoint over the public local client protocol.
- * Purpose: provide run/chat/runtime/session/model/artifact/quant product surfaces.
+ * Does not own: model/artifact opening, generation, sessions, telemetry truth, or offline tooling.
+ * Invariants: no runtime-client route invokes an engine API and all generation flows through yvexd.
+ * Boundary: runtime-facing command lane over the public local client protocol.
+ * Purpose: provide chat, run, runtime, session, model selection, help, and version surfaces.
  * Inputs: argv, terminal input, explicit prompt bytes, and protocol messages.
- * Effects: writes client stdout/stderr, connects local sockets, and may exec yvexd/yvex-dev.
+ * Effects: writes client stdout/stderr, connects local sockets, and may exec yvexd.
  * Failure: concise errors preserve stable parser/runtime exit classes and one actionable hint. */
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
+
+#include "src/cli/private.h"
 
 #include <yvex/server.h>
 
@@ -74,8 +76,13 @@ static void print_help(FILE *output)
             "  yvex runtime start|stop|status|watch|trace\n"
             "  yvex session new|list|show|attach|detach|reset|close\n"
             "  yvex model list|use|show\n"
-            "  yvex artifact show|verify\n"
-            "  yvex quant ...               invoke separated developer compiler\n"
+            "  yvex artifact show|verify|metadata|tensors|materialize|emit ...\n"
+            "  yvex graph ...\n"
+            "  yvex quant preset|plan|emit|summarize|explain|policy|imatrix ...\n"
+            "  yvex tokenizer show|encode|decode|prompt ...\n"
+            "  yvex source manifest|native ...\n"
+            "  yvex tensor map|collection ...\n"
+            "  yvex evidence target|model|moe|backend|cuda ...\n"
             "  yvex help | version\n");
 }
 
@@ -259,6 +266,11 @@ static void render_status(const yvex_server_summary *status, int json)
                "\"queue_depth\":%llu,\"queue_capacity\":%llu,"
                "\"active_requests\":%llu,\"completed_requests\":%llu,"
                "\"failed_requests\":%llu,\"cancelled_requests\":%llu,"
+               "\"openai_enabled\":%s,\"openai_ready\":%s,"
+               "\"openai_port\":%u,\"active_http_requests\":%llu,"
+               "\"completed_http_requests\":%llu,"
+               "\"failed_http_requests\":%llu,"
+               "\"cancelled_http_requests\":%llu,"
                "\"telemetry_dropped\":%llu,\"rss_bytes\":%llu,"
                "\"peak_rss_bytes\":%llu,\"mapped_artifact_bytes\":%llu,"
                "\"resident_host_bytes\":%llu,\"resident_device_bytes\":%llu,"
@@ -280,6 +292,13 @@ static void render_status(const yvex_server_summary *status, int json)
                status->metrics.completed_requests,
                status->metrics.failed_requests,
                status->metrics.cancelled_requests,
+               status->openai_listener_enabled ? "true" : "false",
+               status->openai_listener_ready ? "true" : "false",
+               (unsigned int)status->openai_port,
+               status->metrics.active_http_requests,
+               status->metrics.completed_http_requests,
+               status->metrics.failed_http_requests,
+               status->metrics.cancelled_http_requests,
                status->metrics.telemetry_dropped,
                status->metrics.current_rss_bytes,
                status->metrics.peak_rss_bytes,
@@ -302,6 +321,14 @@ static void render_status(const yvex_server_summary *status, int json)
            status->metrics.queue_capacity);
     printf("  model      opened %llu time%s\n", status->metrics.model_open_count,
            status->metrics.model_open_count == 1u ? "" : "s");
+    if (status->openai_listener_enabled)
+        printf("  openai     %s · 127.0.0.1:%u · %llu active · %llu completed\n",
+               status->openai_listener_ready ? "ready" : "starting",
+               (unsigned int)status->openai_port,
+               status->metrics.active_http_requests,
+               status->metrics.completed_http_requests);
+    else
+        printf("  openai     disabled\n");
     printf("  memory     host %.2f GiB · device %.2f GiB · RSS %.2f GiB\n",
            (double)status->metrics.resident_host_bytes / 1073741824.0,
            (double)status->metrics.resident_device_bytes / 1073741824.0,
@@ -1268,14 +1295,18 @@ static int runtime_start(int argc, char **argv)
     return exec_sibling_vector("yvexd", arguments);
 }
 
-/* Purpose: dispatch the compact product grammar.
- * Inputs: process argv. Effects: selects one product, administration, or separated-tool path.
- * Failure: returns stable parser or runtime status. Boundary: old flat commands have no forwarding path. */
-int main(int argc, char **argv)
+/* Purpose: dispatch only the runtime-client lane of the unified yvex grammar.
+ * Inputs: process argv not claimed by the offline route table. Effects: selects one protocol/admin path.
+ * Failure: returns stable parser or runtime status. Boundary: it cannot enter an offline engine handler. */
+int yvex_client_dispatch(int argc, char **argv)
 {
     const char *command = argc > 1 ? argv[1] : "chat";
     if (!strcmp(command, "help") || !strcmp(command, "--help") ||
         !strcmp(command, "-h")) {
+        if (!strcmp(command, "help") && argc != 2) {
+            fprintf(stderr, "yvex: unknown help topic: %s\n", argv[2]);
+            return 2;
+        }
         print_help(stdout);
         return 0;
     }
@@ -1319,12 +1350,6 @@ int main(int argc, char **argv)
         if (argc >= 4 && !strcmp(argv[2], "use")) return model_use_command(argc, argv);
         return 2;
     }
-    if (!strcmp(command, "artifact")) {
-        if (argc == 3 && (!strcmp(argv[2], "show") || !strcmp(argv[2], "verify")))
-            return runtime_status(0);
-        return 2;
-    }
-    if (!strcmp(command, "quant")) return exec_sibling("yvex-dev", argc, argv, 1);
     fprintf(stderr, "yvex: unknown command: %s\nhint: use `yvex help`\n", command);
     return 2;
 }

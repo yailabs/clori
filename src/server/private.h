@@ -14,6 +14,18 @@
 
 typedef struct server_telemetry server_telemetry;
 typedef struct server_session_registry server_session_registry;
+typedef struct server_openai_listener server_openai_listener;
+
+typedef struct {
+    const char *yvex_socket;
+    unsigned short port;
+    unsigned long long timeout_ms;
+} server_openai_options;
+
+typedef struct {
+    unsigned short port;
+    int enabled, ready;
+} server_openai_snapshot;
 
 typedef int (*server_message_emit)(void *context,
                                    const yvex_client_message *message,
@@ -73,7 +85,24 @@ void yvex_server_telemetry_session(server_telemetry *telemetry, int active_delta
                               int created);
 void yvex_server_telemetry_request(server_telemetry *telemetry, int active_delta,
                               int completed, int failed, int cancelled);
+void yvex_server_telemetry_openai_request(server_telemetry *telemetry,
+                                          int active_delta, int completed,
+                                          int failed, int cancelled);
 void yvex_server_telemetry_close(server_telemetry **telemetry);
+
+int yvex_server_openai_prepare(server_openai_listener **out,
+                               const server_openai_options *options,
+                               server_telemetry *telemetry,
+                               yvex_error *err);
+int yvex_server_openai_start(server_openai_listener *listener,
+                             yvex_error *err);
+void yvex_server_openai_activate(server_openai_listener *listener);
+void yvex_server_openai_request_stop(server_openai_listener *listener);
+int yvex_server_openai_finish(server_openai_listener *listener,
+                              yvex_error *err);
+void yvex_server_openai_snapshot(const server_openai_listener *listener,
+                                 server_openai_snapshot *snapshot);
+void yvex_server_openai_close(server_openai_listener **listener);
 
 int yvex_server_sessions_open(server_session_registry **out,
                                  yvex_runtime_model *model,

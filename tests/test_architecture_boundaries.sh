@@ -396,6 +396,24 @@ for product in "${YVEX_LIB:-build/lib/libyvex.a}" "${YVEX_BIN:-./yvex}"; do
     fi
 done
 
+# The unified ELF may contain offline engine commands, but runtime-facing dispatch
+# remains one protocol-only object lane and the two products retain one main each.
+client_lane=${YVEX_CLIENT_LANE_OBJ:-build/obj/src/cli/io/client.o}
+[ -f "$client_lane" ] || fail "runtime-client lane object is missing: $client_lane"
+if nm -u "$client_lane" | rg \
+    'yvex_(runtime_model_open|artifact_materialize|runtime_transformer|runtime_generation_operator_execute|backend_cuda)'; then
+    fail "runtime-client lane gained an engine dependency"
+fi
+for product in "${YVEX_BIN:-./yvex}" "${YVEXD_BIN:-./yvexd}"; do
+    [ -x "$product" ] || fail "role product is missing: $product"
+    main_count=$(nm "$product" | awk '$NF == "main" { count++ } END { print count + 0 }')
+    [ "$main_count" -eq 1 ] || fail "role product does not own exactly one main: $product"
+done
+[ ! -d src/gateway/openai ] || fail "retired standalone OpenAI source owner remains"
+if rg -n '(^|[[:space:]])int[[:space:]]+main[[:space:]]*\(' src/server/openai; then
+    fail "in-process OpenAI adapter contains a process entrypoint"
+fi
+
 # Link-time dependency admission keeps the independent oracle limited to checked
 # allocation, immutable family facts, payload reads, descriptor lookup, and digests.
 reference_objects=${YVEX_REFERENCE_OBJS:-build/obj/tests/reference/deepseek_attention.o}

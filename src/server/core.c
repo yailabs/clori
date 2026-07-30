@@ -59,6 +59,7 @@ struct yvex_server {
     yvex_runtime_execution_session *warm_session;
     server_telemetry *telemetry;
     server_session_registry *sessions;
+    server_openai_listener *openai;
     server_work_item **queue;
     unsigned long long queue_capacity, queue_head, queue_count, next_request_id;
     server_client_slot *clients;
@@ -149,7 +150,10 @@ static int server_options_admit(yvex_server *server,
         !options->maximum_new_tokens || !options->maximum_output_bytes ||
         !options->maximum_sessions || !options->request_queue_capacity ||
         options->request_queue_capacity > SIZE_MAX / sizeof(server_work_item *) ||
-        options->maximum_sessions > SERVER_CLIENT_CAPACITY)
+        options->maximum_sessions > SERVER_CLIENT_CAPACITY ||
+        (options->openai_enabled &&
+         (!options->openai_port || options->openai_timeout_ms < 100u ||
+          options->openai_timeout_ms > 86400000u)))
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
                              "complete bounded runtime-host options are required");
     server->options = *options;
@@ -247,6 +251,15 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
         rc = yvex_server_telemetry_open(&server->telemetry,
                                    SERVER_TELEMETRY_CAPACITY,
                                    NULL, NULL, NULL, err);
+    if (rc == YVEX_OK && options->openai_enabled) {
+        server_openai_options openai = {
+            .yvex_socket = server->socket_path,
+            .port = options->openai_port,
+            .timeout_ms = options->openai_timeout_ms
+        };
+        rc = yvex_server_openai_prepare(&server->openai, &openai,
+                                        server->telemetry, err);
+    }
     if (rc != YVEX_OK) {
         yvex_server_close(&server);
         return rc;
@@ -256,6 +269,9 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     server->summary.status = YVEX_SERVER_STATUS_CONFIGURED;
     server->summary.backend = options->backend;
     server->summary.context_capacity = options->context_capacity;
+    server->summary.openai_listener_enabled = options->openai_enabled;
+    server->summary.openai_port = options->openai_enabled
+                                      ? options->openai_port : 0u;
     yvex_core_text_copy(server->summary.socket_path,
                         sizeof(server->summary.socket_path),
                         server->socket_path);
@@ -647,16 +663,8 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "listener",
             0600u, server->queue_capacity, server->options.maximum_sessions,
             0.0, 0.0, err);
-    (void)pthread_mutex_lock(&server->state_mutex);
-    if (rc == YVEX_OK) {
-        server->summary.status = YVEX_SERVER_STATUS_READY;
-        server->summary.runtime_ready = 1;
-        server->summary.generation_ready = 1;
-        server->summary.public_server_ready = 0;
-    } else {
-        server->summary.status = YVEX_SERVER_STATUS_FAILED;
-    }
-    (void)pthread_mutex_unlock(&server->state_mutex);
+    if (rc == YVEX_OK && server->openai)
+        rc = yvex_server_openai_start(server->openai, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_emit(
             server->telemetry, YVEX_SERVER_EVENT_RUNTIME_READY,
@@ -664,6 +672,32 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
             1u, server->options.context_capacity, server->options.backend,
             server_elapsed_seconds(startup_started, server_monotonic_ns()),
             0.0, err);
+    if (rc != YVEX_OK && server->openai) {
+        yvex_error cleanup;
+        yvex_server_openai_request_stop(server->openai);
+        (void)yvex_server_openai_finish(server->openai, &cleanup);
+    }
+    (void)pthread_mutex_lock(&server->state_mutex);
+    if (rc == YVEX_OK) {
+        server_openai_snapshot openai = {0};
+        yvex_server_openai_snapshot(server->openai, &openai);
+        server->summary.status = YVEX_SERVER_STATUS_READY;
+        server->summary.runtime_ready = 1;
+        server->summary.generation_ready = 1;
+        server->summary.public_server_ready = 0;
+        server->summary.openai_listener_enabled = openai.enabled;
+        server->summary.openai_listener_ready = openai.ready;
+        server->summary.openai_port = openai.port;
+    } else {
+        server->summary.status = YVEX_SERVER_STATUS_FAILED;
+    }
+    (void)pthread_mutex_unlock(&server->state_mutex);
+    if (rc == YVEX_OK && server->openai) {
+        yvex_server_openai_activate(server->openai);
+        (void)pthread_mutex_lock(&server->state_mutex);
+        server->summary.openai_listener_ready = 1;
+        (void)pthread_mutex_unlock(&server->state_mutex);
+    }
     return rc;
 }
 /* Purpose: enqueue one request pointer while its transport thread retains stack ownership.
@@ -872,7 +906,7 @@ static void *client_main(void *opaque)
             message.status = YVEX_OK;
             message.request_number = request.request_number;
             yvex_core_text_copy(message.reason, sizeof(message.reason),
-                                "protocol-v2");
+                                "protocol-v3");
             rc = yvex_server_protocol_send(fd, &message, &err);
         } else {
             server_work_item item;
@@ -1011,19 +1045,27 @@ int yvex_server_serve(yvex_server *server, yvex_error *err)
  * Failure: absent host refuses; repeated successful stop is idempotent. Boundary: resource release belongs to close. */
 int yvex_server_stop(yvex_server *server, yvex_error *err)
 {
+    yvex_error openai_error = {0};
+    int rc = YVEX_OK;
     if (!server || !server->state_mutex_ready ||
         pthread_mutex_lock(&server->state_mutex) != 0)
         return server_refuse(err, YVEX_ERR_INVALID_ARG,
                              "runtime host is required");
     if (atomic_load_explicit(&server->stopping, memory_order_acquire) ||
+        server->summary.status == YVEX_SERVER_STATUS_STOPPING ||
         server->summary.status == YVEX_SERVER_STATUS_STOPPED) {
         (void)pthread_mutex_unlock(&server->state_mutex);
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    atomic_store_explicit(&server->stopping, 1, memory_order_release);
     server->summary.status = YVEX_SERVER_STATUS_STOPPING;
+    server->summary.openai_listener_ready = 0;
     (void)pthread_mutex_unlock(&server->state_mutex);
+    if (server->openai) {
+        yvex_server_openai_request_stop(server->openai);
+        rc = yvex_server_openai_finish(server->openai, &openai_error);
+    }
+    atomic_store_explicit(&server->stopping, 1, memory_order_release);
     (void)yvex_server_telemetry_emit(
         server->telemetry, YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_START,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "shutdown",
@@ -1037,6 +1079,10 @@ int yvex_server_stop(yvex_server *server, yvex_error *err)
     (void)pthread_mutex_lock(&server->queue_mutex);
     (void)pthread_cond_broadcast(&server->queue_condition);
     (void)pthread_mutex_unlock(&server->queue_mutex);
+    if (rc != YVEX_OK) {
+        if (err) *err = openai_error;
+        return rc;
+    }
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -1135,6 +1181,13 @@ int yvex_server_get_summary(const yvex_server *server,
     out->request_count = out->metrics.completed_requests +
                          out->metrics.failed_requests +
                          out->metrics.cancelled_requests;
+    if (server->openai) {
+        server_openai_snapshot openai = {0};
+        yvex_server_openai_snapshot(server->openai, &openai);
+        out->openai_listener_enabled = openai.enabled;
+        out->openai_listener_ready = openai.ready;
+        out->openai_port = openai.port;
+    }
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -1192,6 +1245,7 @@ void yvex_server_close(yvex_server **server)
     if (owner->lock_fd >= 0) (void)close(owner->lock_fd);
     if (owner->lock_owned && owner->lock_path[0])
         (void)unlink(owner->lock_path);
+    yvex_server_openai_close(&owner->openai);
     yvex_server_telemetry_close(&owner->telemetry);
     if (owner->clients_condition_ready)
         (void)pthread_cond_destroy(&owner->clients_condition);

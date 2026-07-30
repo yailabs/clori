@@ -70,7 +70,7 @@ PY
 yvex_test_cleanup "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-"$YVEX_BIN" materialize --model "$FIXTURE" --backend cpu \
+"$YVEX_BIN" artifact materialize --model "$FIXTURE" --backend cpu \
   >"$OUT_DIR/valid-materialize.out" 2>"$OUT_DIR/valid-materialize.err"
 contains "$OUT_DIR/valid-materialize.out" "materialization_gate: pass"
 contains "$OUT_DIR/valid-materialize.out" "materialization_phase: complete"
@@ -83,7 +83,7 @@ contains "$OUT_DIR/valid-materialize.out" "transfer_attempted: true"
 contains "$OUT_DIR/valid-materialize.out" "cleanup_status: not-needed"
 contains "$OUT_DIR/valid-materialize.out" "status: weights-materialized"
 
-"$YVEX_BIN" materialize --model "$BAD_MAGIC" --backend cpu \
+"$YVEX_BIN" artifact materialize --model "$BAD_MAGIC" --backend cpu \
   >"$OUT_DIR/bad-magic.out" 2>"$OUT_DIR/bad-magic.err" && \
   fail "bad magic materialize unexpectedly passed" || true
 contains "$OUT_DIR/bad-magic.out" "materialization_gate: fail"
@@ -92,28 +92,28 @@ contains "$OUT_DIR/bad-magic.out" "integrity_status: fail"
 contains "$OUT_DIR/bad-magic.out" "allocation_attempted: false"
 contains "$OUT_DIR/bad-magic.out" "status: materialization-integrity-fail"
 
-"$YVEX_BIN" materialize --model "$RANGE_BAD" --backend cpu \
+"$YVEX_BIN" artifact materialize --model "$RANGE_BAD" --backend cpu \
   >"$OUT_DIR/range-bad.out" 2>"$OUT_DIR/range-bad.err" && \
   fail "range-bad materialize unexpectedly passed" || true
 contains "$OUT_DIR/range-bad.out" "materialization_phase: preflight"
 contains "$OUT_DIR/range-bad.out" "allocation_attempted: false"
 contains "$OUT_DIR/range-bad.out" "status: materialization-integrity-fail"
 
-"$YVEX_BIN" materialize --model "$SHAPE_BAD" --backend cpu \
+"$YVEX_BIN" artifact materialize --model "$SHAPE_BAD" --backend cpu \
   >"$OUT_DIR/shape-bad.out" 2>"$OUT_DIR/shape-bad.err" && \
   fail "shape-bad materialize unexpectedly passed" || true
 contains "$OUT_DIR/shape-bad.out" "materialization_phase: preflight"
 contains "$OUT_DIR/shape-bad.out" "allocation_attempted: false"
 contains "$OUT_DIR/shape-bad.out" "status: materialization-integrity-fail"
 
-"$YVEX_BIN" gguf-emit controlled \
+"$YVEX_BIN" artifact emit controlled \
   --out "$MODEL" \
   --model-name materialization-gate-selected \
   --arch deepseek \
   --target-qtype F16 \
   --overwrite >"$OUT_DIR/emit.out" 2>"$OUT_DIR/emit.err"
 
-"$YVEX_BIN" models add \
+"$YVEX_BIN" evidence models add \
   --path "$MODEL" \
   --alias "$ALIAS" \
   --registry "$REG" \
@@ -122,7 +122,7 @@ contains "$OUT_DIR/shape-bad.out" "status: materialization-integrity-fail"
 
 cp "$REG" "$OUT_DIR/stale.models.local.json"
 mutate_file_byte "$MODEL"
-YVEX_MODELS_REGISTRY="$OUT_DIR/stale.models.local.json" "$YVEX_BIN" materialize \
+YVEX_MODELS_REGISTRY="$OUT_DIR/stale.models.local.json" "$YVEX_BIN" artifact materialize \
   --model "$ALIAS" \
   --backend cpu \
   >"$OUT_DIR/stale.out" 2>"$OUT_DIR/stale.err" && \
@@ -131,7 +131,7 @@ contains "$OUT_DIR/stale.out" "identity_status: fail"
 contains "$OUT_DIR/stale.out" "allocation_attempted: false"
 contains "$OUT_DIR/stale.out" "status: materialization-integrity-fail"
 
-"$YVEX_BIN" gguf-emit controlled \
+"$YVEX_BIN" artifact emit controlled \
   --out "$MODEL" \
   --model-name materialization-gate-selected \
   --arch deepseek \
@@ -139,7 +139,7 @@ contains "$OUT_DIR/stale.out" "status: materialization-integrity-fail"
   --overwrite >"$OUT_DIR/emit-reset.out" 2>"$OUT_DIR/emit-reset.err"
 
 mutate_registry "$REG" "$DRIFT_REG" "primary_tensor_dtype" "F32"
-YVEX_MODELS_REGISTRY="$DRIFT_REG" "$YVEX_BIN" materialize \
+YVEX_MODELS_REGISTRY="$DRIFT_REG" "$YVEX_BIN" artifact materialize \
   --model "$ALIAS" \
   --backend cpu \
   >"$OUT_DIR/metadata-drift.out" 2>"$OUT_DIR/metadata-drift.err" && \
@@ -149,7 +149,7 @@ contains "$OUT_DIR/metadata-drift.out" "allocation_attempted: false"
 contains "$OUT_DIR/metadata-drift.out" "status: materialization-integrity-fail"
 not_contains "$OUT_DIR/metadata-drift.out" "status: weights-materialized"
 
-YVEX_TEST_FAIL_MATERIALIZE_AFTER_TRANSFER=1 "$YVEX_BIN" materialize \
+YVEX_TEST_FAIL_MATERIALIZE_AFTER_TRANSFER=1 "$YVEX_BIN" artifact materialize \
   --model "$FIXTURE" \
   --backend cpu \
   >"$OUT_DIR/injected-transfer.out" 2>"$OUT_DIR/injected-transfer.err" && \
@@ -162,12 +162,12 @@ contains "$OUT_DIR/injected-transfer.out" "cleanup_attempted: true"
 contains "$OUT_DIR/injected-transfer.out" "cleanup_status: pass"
 contains "$OUT_DIR/injected-transfer.out" "status: materialization-failed-cleaned"
 
-"$YVEX_BIN" materialize --model "$FIXTURE" --backend cpu \
+"$YVEX_BIN" artifact materialize --model "$FIXTURE" --backend cpu \
   >"$OUT_DIR/repeat-after-failure.out" 2>"$OUT_DIR/repeat-after-failure.err"
 contains "$OUT_DIR/repeat-after-failure.out" "materialization_gate: pass"
 contains "$OUT_DIR/repeat-after-failure.out" "status: weights-materialized"
 
-"$YVEX_BIN" materialize-gate check \
+"$YVEX_BIN" artifact materialize-gate check \
   --model "$FIXTURE" \
   --label fixture-selected \
   --family test \
@@ -183,7 +183,7 @@ contains "$OUT_DIR/gate-pass-report.txt" "materialization_phase: complete"
 contains "$OUT_DIR/gate-pass-report.txt" "cleanup_status: pass"
 contains "$OUT_DIR/gate-pass-report.txt" "status: materialize-gate-pass"
 
-YVEX_TEST_FAIL_MATERIALIZE_AFTER_TRANSFER=1 "$YVEX_BIN" materialize-gate check \
+YVEX_TEST_FAIL_MATERIALIZE_AFTER_TRANSFER=1 "$YVEX_BIN" artifact materialize-gate check \
   --model "$FIXTURE" \
   --label fixture-selected \
   --family test \

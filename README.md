@@ -12,7 +12,7 @@ and executes it through a long-lived runtime host with isolated sessions.
 Today, the complete product path is available for DeepSeek-V4-Flash on CPU and
 the admitted NVIDIA GB10 CUDA path. The model stays open in `yvexd`; native
 clients use the private local protocol and applications may use the bounded
-`yvex.openai.compat.v1` HTTP/SSE gateway. Evaluation, release benchmarking, and
+`yvex.openai.compat.v1` HTTP/SSE listener in the same daemon. Evaluation, release benchmarking, and
 release qualification remain open gates.
 
 Start here:
@@ -56,7 +56,7 @@ three copies of the model.
 Start the long-lived host and select the structured runtime-event stream:
 
 ```sh
-./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages
+./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages --openai on --openai-port 8001
 ```
 
 Wait for the `runtime.ready` JSONL event. The daemon authenticates the artifact
@@ -108,10 +108,11 @@ uses an admitted existing session instead.
 
 ### OpenAI-compatible applications
 
-Start the engine-free loopback gateway after `runtime.ready`:
+The daemon prepares the loopback listener during startup and admits HTTP work
+only after `runtime.ready`. Verify the integrated endpoint:
 
 ```sh
-./yvex-openai --host 127.0.0.1 --port 8001
+curl -fsS http://127.0.0.1:8001/health
 ```
 
 Point an OpenAI-compatible client at `http://127.0.0.1:8001/v1` with any local
@@ -156,15 +157,14 @@ The product separates process and linkage responsibilities:
 | Component | Responsibility | Engine linkage |
 | --- | --- | --- |
 | `libyvex` | Compilation, artifact admission, runtime, backend, tokenizer, and generation domain owners | engine |
-| `yvexd` | One long-lived model host, bounded worker queue, session registry, local protocol, telemetry, and graceful shutdown | yes |
-| `yvex` | REPL, one-shot client, runtime/session administration, status, watch, and trace | no |
-| `yvex-openai` | Loopback HTTP/JSON/SSE adapter over the private YVEX protocol; opens no model or artifact | no |
-| `yvex-dev` | Optional direct compiler, artifact, graph, tokenizer, and evidence tooling | yes |
+| `yvexd` | One long-lived model host, bounded worker queue, session registry, local protocol, integrated loopback OpenAI listener, telemetry, and graceful shutdown | yes |
+| `yvex` | REPL, one-shot and administrative protocol client plus finite offline compiler, artifact, graph, tokenizer, quantization, and evidence operations | yes; offline lane only |
 
-`yvex` cannot open a model, materialize weights, execute a Transformer, or run
-generation in-process. It communicates over a private, versioned Unix-domain
-socket. Direct engineering operations remain separated in `yvex-dev` and may
-be omitted from a product package.
+Runtime-facing `yvex` routes cannot open a model, materialize weights, execute a
+Transformer, or run generation in-process. They communicate over a private,
+versioned Unix-domain socket. Offline engineering routes share the same
+executable but retain separate dispatch and object dependencies; they are
+finite operations and never become a second persistent model host.
 
 The runtime layers remain distinct:
 
@@ -244,7 +244,7 @@ Implemented facts include:
   complete 129,280-token vocabulary, sampling, and exact tokenizer execution;
 - complete prompt-to-text generation on CPU and the admitted mixed GB10 path;
 - a long-lived local host with streaming one-shot and exact multi-turn sessions;
-- a bounded OpenAI-compatible application gateway over the same hosted model.
+- a bounded OpenAI-compatible listener inside the same hosted process.
 
 The CUDA product path executes the model backbone and output head on CUDA while
 sampling, tokenizer work, protocol handling, and orchestration remain on the
@@ -257,8 +257,7 @@ decision. Exact artifacts, sizes, identities, and current gates are recorded in
 
 ## Build
 
-Build the engine, daemon, product client, application gateway, and developer
-tools:
+Build the engine, unified command client, and daemon:
 
 ```sh
 make -j4 all
@@ -321,8 +320,8 @@ and hygiene workflow is in the [common runbook](docs/runbooks/common.md).
 - [System target](docs/system-target.md): filesystem and module ownership.
 - [Validation runbook](docs/runbooks/common.md): build, checks, CUDA, and
   artifact hygiene.
-- [Client and terminal architecture](docs/cli-output-architecture.md): product,
-  developer, raw, operational, and conversation surfaces.
+- [Client and terminal architecture](docs/cli-output-architecture.md): runtime,
+  offline engineering, raw, operational, and conversation surfaces.
 
 ### Track YVEX
 

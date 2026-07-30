@@ -1,7 +1,7 @@
 # YVEX OpenAI Compatibility Profile v1
 
 `yvex.openai.compat.v1` is a bounded, local application-provider profile. It
-adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v2 and
+adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v3 and
 the existing `yvexd` model host. It is not a claim of full OpenAI API or OpenAI
 service equivalence.
 
@@ -17,24 +17,25 @@ Those moving interfaces do not expand this explicitly versioned YVEX subset.
 ```text
 application or SDK
   -> loopback HTTP/1.1
-  -> yvex-openai
-  -> YVEX protocol v2 over the private Unix socket
+  -> yvexd OpenAI adapter
+  -> provider-neutral request over YVEX protocol v3
   -> yvexd session and generation owners
 ```
 
-`yvex-openai` links no inference engine, opens no model or artifact, owns no KV,
-and executes no application tool. `yvexd` remains the only model host. The
-gateway refuses non-loopback bind addresses; authentication, TLS, CORS, and
+The adapter is source-separated from runtime mathematics, opens no second model
+or artifact, owns no KV, and executes no application tool. `yvexd` remains the
+only model host and process. The adapter refuses non-loopback bind addresses; authentication, TLS, CORS, and
 remote exposure are outside this profile.
 
-Start it after the daemon reports `runtime.ready`:
+Enable it on the daemon; the listener is prepared before model admission and
+begins accepting requests only after `runtime.ready`:
 
 ```sh
-./yvex-openai --host 127.0.0.1 --port 8001
+./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --openai on --openai-port 8001
 ```
 
-Gateway-to-daemon frame I/O has a bounded 600000 ms default timeout; local
-operators may override it with `--timeout-ms` for their admitted workload.
+Adapter-to-runtime frame I/O has a bounded 600000 ms default timeout; local
+operators may override it with `--openai-timeout-ms` for their admitted workload.
 
 SDKs use `base_url=http://127.0.0.1:8001/v1` and any local non-secret API-key
 placeholder.
@@ -43,7 +44,7 @@ placeholder.
 
 | Method and path | Profile status | YVEX mapping |
 | --- | --- | --- |
-| `GET /health` | supported, YVEX extension | gateway and daemon readiness |
+| `GET /health` | supported, YVEX extension | adapter and runtime readiness |
 | `GET /v1/models` | supported | loaded daemon model list containing one model |
 | `GET /v1/models/{id}` | supported | exact loaded-model lookup |
 | `POST /v1/chat/completions` | supported subset | ephemeral YVEX session and typed turn |
@@ -97,7 +98,7 @@ Supported fields are:
 | `stream` | boolean |
 | `tools` | flat Responses function definitions |
 | `tool_choice` | none, auto, required, or one named function |
-| `previous_response_id` | live record created by this gateway process |
+| `previous_response_id` | live record created by this daemon instance |
 | `store` | false only |
 | `background` | false only |
 
@@ -117,8 +118,8 @@ response.completed | response.incomplete | response.failed
 ```
 
 Every event has an ordered `sequence_number`. `previous_response_id` names a
-bounded in-memory gateway record tied to an existing YVEX session and model.
-Records do not survive gateway restart and never reconstruct hidden state from
+bounded in-memory adapter record tied to an existing YVEX session and model.
+Records do not survive daemon restart and never reconstruct hidden state from
 text. A successful continuation consumes the prior response ID and replaces it
 with the returned successor ID; branching an already-mutated KV session is
 refused rather than replayed implicitly.
@@ -137,7 +138,7 @@ admits one tool call per assistant turn and requires
 YVEX returns a stable call ID, function name, and arguments that validate as a
 JSON object. The application validates and executes the function, then returns
 the result with the exact call ID. The tokenizer/family prompt owner renders
-tool definitions, calls, and results; the HTTP gateway never invents model
+tool definitions, calls, and results; the HTTP adapter never invents model
 control-token syntax.
 
 YVEX never executes application tools.
@@ -150,7 +151,7 @@ promoted into a function-call object.
 
 `response_format={"type":"json_object"}` requests JSON through the admitted
 prompt policy and validates the complete result as one JSON object with no
-trailing non-whitespace bytes. Malformed JSON fails; the gateway never repairs
+trailing non-whitespace bytes. Malformed JSON fails; the adapter never repairs
 it. JSON Schema and constrained decoding are not part of profile v1.
 
 Stop strings are bounded and matched across generated fragment boundaries
@@ -174,7 +175,7 @@ prompt usage.
 
 ## HTTP and error contract
 
-The gateway accepts bounded HTTP/1.1 with an explicit `Content-Length`, bounded
+The adapter accepts bounded HTTP/1.1 with an explicit `Content-Length`, bounded
 headers and body, strict UTF-8 JSON, no duplicate keys, no trailing data, and no
 silent type coercion. Transfer-encoded request bodies refuse. One connection
 serves one request in profile v1.
@@ -192,7 +193,7 @@ gateway timeout (504). Once SSE headers are committed, failure is represented
 by the admitted terminal stream error/failure event rather than a fictional
 replacement HTTP status.
 
-Default gateway and daemon telemetry excludes prompt and response content.
+Default adapter and daemon telemetry excludes prompt and response content.
 Provider request, YVEX request, session, turn, endpoint, and stream facts remain
 correlatable through typed identities.
 

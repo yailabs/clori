@@ -184,29 +184,30 @@ static int model_target_render_help_rows(FILE *fp,
 {
     if (kind == YVEX_MODEL_TARGET_COMMAND_DECISION) {
         return yvex_cli_out_writef(
-            fp, "usage: yvex model-target decision --release v0.1.0 [options]\n");
+            fp, "usage: yvex evidence target decision --release v0.1.0 [options]\n");
     }
     if (kind == YVEX_MODEL_TARGET_COMMAND_CANDIDATE) {
         return yvex_cli_out_writef(
-            fp, "usage: yvex model-target candidate --release v0.1.0 [options]\n");
+            fp, "usage: yvex evidence target candidate --release v0.1.0 [options]\n");
     }
     if (kind == YVEX_MODEL_TARGET_COMMAND_DENSE_CANDIDATE) {
         return yvex_cli_out_writef(
-            fp, "usage: yvex model-target dense-candidate --release v0.1.0 [options]\n");
+            fp, "usage: yvex evidence target dense-candidate --release v0.1.0 [options]\n");
     }
     if (kind == YVEX_MODEL_TARGET_COMMAND_QWEN_METAL) {
         return yvex_cli_out_writef(
-            fp, "usage: yvex model-target qwen-metal --release v0.1.0 [options]\n");
+            fp, "usage: yvex evidence target qwen-metal --release v0.1.0 [options]\n");
     }
     return yvex_cli_out_writef(
         fp,
-        "usage: yvex model-target <action> [TARGET]\nusage: yvex model-target classes\n       yvex model-"
-            "target list\n       yvex model-target candidate --release v0.1.0 [options]\n       yvex model-"
-            "target dense-candidate --release v0.1.0 [options]\n       yvex model-target qwen-metal --release "
-            "v0.1.0 [options]\n       yvex model-target decision --release v0.1.0 [options]\n       yvex model-"
-            "target class-profile TARGET\n       yvex model-target tensor-collection TARGET\n       yvex model-"
-            "target tensor-map TARGET\n       yvex model-target missing-roles TARGET --gate v0.1.0\n       "
-            "yvex model-target inspect TARGET [--paths] [--models-root DIR]\n--paths           show expected "
+        "usage: yvex evidence target <action> [TARGET]\nusage: yvex evidence target classes\n       yvex "
+            "evidence target list\n       yvex evidence target candidate --release v0.1.0 [options]\n       "
+            "yvex evidence target dense-candidate --release v0.1.0 [options]\n       yvex evidence target "
+            "qwen-metal --release v0.1.0 [options]\n       yvex evidence target decision --release v0.1.0 "
+            "[options]\n       yvex evidence target class-profile TARGET\n       yvex evidence target "
+            "tensor-collection TARGET\n       yvex evidence target tensor-map TARGET\n       yvex evidence target "
+            "missing-roles TARGET --gate v0.1.0\n       "
+            "yvex evidence target inspect TARGET [--paths] [--models-root DIR]\n--paths           show expected "
             "operator-local source, artifact, report, reference, and registry paths\n--models-root DIR "
             "override configured operator model root for this command only\noption_classes: selector, path, "
             "diagnostic, transitional-layout\n");

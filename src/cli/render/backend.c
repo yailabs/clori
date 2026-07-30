@@ -154,8 +154,9 @@ int yvex_backend_render(FILE *fp, const yvex_backend_report *report)
  * Boundary: No capability policy. */
 int yvex_backend_render_help(FILE *fp)
 {
-    yvex_cli_out_writef(fp,
-                        "usage: yvex backend cpu|cuda\n\nReports context, bundle, and exact primitive capabilities.\n");
+    yvex_cli_out_writef(
+        fp, "usage: yvex evidence backend cpu|cuda\n\n"
+            "Reports context, bundle, and exact primitive capabilities.\n");
     return YVEX_OK;
 }
 
@@ -167,6 +168,6 @@ int yvex_backend_render_help(FILE *fp)
 int yvex_cuda_info_render_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-                        "usage: yvex cuda-info\n\nReports CUDA driver, device, context, and bundle facts.\n");
+                        "usage: yvex evidence cuda\n\nReports CUDA driver, device, context, and bundle facts.\n");
     return YVEX_OK;
 }

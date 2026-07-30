@@ -506,18 +506,20 @@ static const char *const literal_lines_41[] = {
     "runtime_blockers: GGUF metadata or tensor directory parse failed"};
 
 static const char *const literal_lines_42[] = {
-    "alias: yvex fullmodel plan --model FILE_OR_ALIAS [options]", "\nExamples:",
-    "  yvex fullmodel report --model deepseek4-v4-flash-selected-embed --backend cpu",
-    "  yvex fullmodel report --model deepseek4-v4-flash-selected-embed-rmsnorm --backend cpu --limit-tensors 8",
-    "  yvex fullmodel report --model ./candidate.gguf --target deepseek4-v4-flash --backend cuda",
-    "  yvex fullmodel materialization-plan --model deepseek4-v4-flash-selected-embed-rmsnorm --backend cpu "
+    "alias: yvex evidence model plan --model FILE_OR_ALIAS [options]", "\nExamples:",
+    "  yvex evidence model report --model deepseek4-v4-flash-selected-embed --backend cpu",
+    "  yvex evidence model report --model deepseek4-v4-flash-selected-embed-rmsnorm --backend cpu --limit-tensors 8",
+    "  yvex evidence model report --model ./candidate.gguf --target deepseek4-v4-flash --backend cuda",
+    "  yvex evidence model materialization-plan --model deepseek4-v4-flash-selected-embed-rmsnorm --backend cpu "
         "--residency resident",
-    "  yvex fullmodel materialization-plan --model ./candidate.gguf --target deepseek4-v4-flash --backend "
+    "  yvex evidence model materialization-plan --model ./candidate.gguf --target deepseek4-v4-flash --backend "
         "cuda --residency hybrid",
-    "  yvex fullmodel materialize --model ./tiny-fullish.gguf --backend cpu --limit-bytes 1048576",
-    "  yvex fullmodel materialize --model deepseek4-v4-flash-selected-embed-rmsnorm --backend cpu",
-    "  yvex fullmodel descriptor --model ./candidate.gguf --target deepseek4-v4-flash --backend cpu --limit-tensors 40",
-    "  yvex fullmodel family-runtime --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend cpu",
+    "  yvex evidence model materialize --model ./tiny-fullish.gguf --backend cpu --limit-bytes 1048576",
+    "  yvex evidence model materialize --model deepseek4-v4-flash-selected-embed-rmsnorm --backend cpu",
+    "  yvex evidence model descriptor --model ./candidate.gguf --target deepseek4-v4-flash "
+        "--backend cpu --limit-tensors 40",
+    "  yvex evidence model family-runtime --model deepseek4-v4-flash-selected-embed-rmsnorm "
+        "--family deepseek --backend cpu",
     "\nfullmodel report:", "  inventory and placement pressure report."};
 
 static const char *const literal_lines_43[] = {
@@ -827,20 +829,20 @@ static const fullmodel_materialize_report source_only_materialize_template = {
 };
 
 static const char *const fullmodel_usage_lines[] = {
-    "usage: yvex fullmodel report --model FILE_OR_ALIAS [--backend cpu|cuda] [--target TARGET] "
+    "usage: yvex evidence model report --model FILE_OR_ALIAS [--backend cpu|cuda] [--target TARGET] "
         "[--limit-tensors N] [--registry FILE] [--audit | --output normal|table|audit]",
-    "usage: yvex fullmodel materialization-plan --model FILE_OR_ALIAS [--backend cpu|cuda] "
+    "usage: yvex evidence model materialization-plan --model FILE_OR_ALIAS [--backend cpu|cuda] "
         "[--residency resident|host-staged|ssd-staged|hybrid] [--target TARGET] [--limit-tensors N] "
         "[--registry FILE] [--audit | --output normal|table|audit]",
-    "usage: yvex fullmodel materialize --model FILE_OR_ALIAS [--backend cpu|cuda] [--registry FILE] "
+    "usage: yvex evidence model materialize --model FILE_OR_ALIAS [--backend cpu|cuda] [--registry FILE] "
         "[--dry-run] [--plan-only] [--require-role ROLE] [--require-collection COLLECTION] "
         "[--limit-bytes N] [--fail-after-phase PHASE] [--report-dir DIR] "
         "[--audit | --output normal|table|audit]",
-    "usage: yvex fullmodel descriptor --model FILE_OR_ALIAS [--backend cpu|cuda] [--target TARGET] "
+    "usage: yvex evidence model descriptor --model FILE_OR_ALIAS [--backend cpu|cuda] [--target TARGET] "
         "[--format text] [--limit-tensors N] [--require-role ROLE] [--require-collection COLLECTION] "
         "[--include-blockers] [--include-placement] [--include-graph] [--include-kv] "
         "[--include-logits] [--audit | --output normal|table|audit]",
-    "usage: yvex fullmodel family-runtime --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] "
+    "usage: yvex evidence model family-runtime --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] "
         "[--backend cpu|cuda] [--include-blockers] [--include-roles] [--include-graph] [--include-kv] "
         "[--include-moe] [--include-output] [--audit | --output normal|table|audit]",
 };

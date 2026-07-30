@@ -60,6 +60,7 @@ trap cleanup EXIT HUP INT TERM
 XDG_RUNTIME_DIR="$runtime" "$YVEXD_BIN" \
     --model "$ARTIFACT" --runtime-binding "$BINDING" \
     --backend cuda --context 128 --console raw --trace-level tokens \
+    --openai off \
     >"$root/raw.jsonl" 2>"$root/daemon.err" &
 daemon_pid=$!
 

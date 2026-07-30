@@ -39,11 +39,11 @@ sampled-token decode commit and incremental detokenization commit.
 
 ## Application-provider path
 
-After the same daemon reaches `runtime.ready`, expose the bounded loopback
-profile without loading another DeepSeek model:
+The same daemon exposes the bounded loopback profile without loading another
+DeepSeek model. After `runtime.ready`, verify it:
 
 ```sh
-./yvex-openai --host 127.0.0.1 --port 8001
+curl -fsS http://127.0.0.1:8001/health
 ```
 
 Discover the exact admitted model identifier with one command:
@@ -59,27 +59,28 @@ constructs DeepSeek control-token syntax. Function tools return typed calls for
 the application to execute. See the
 [bounded compatibility profile](../openai-compatibility.md).
 
-## Developer path
+## Offline engineering path
 
-The separated engine-linked developer client retains direct proof surfaces:
+The engine-linked offline lane of `yvex` retains direct proof surfaces:
 
 ```sh
-./yvex-dev graph attention prepare --help
-./yvex-dev graph transformer execute --help
-./yvex-dev graph transformer decode --help
-./yvex-dev graph transformer logits --help
-./yvex-dev graph transformer sample --help
-./yvex-dev graph transformer generate --help
+./yvex graph attention prepare --help
+./yvex graph transformer execute --help
+./yvex graph transformer decode --help
+./yvex graph transformer logits --help
+./yvex graph transformer sample --help
+./yvex graph transformer generate --help
 
-./yvex-dev tokenizer show --help
-./yvex-dev tokenizer encode --help
-./yvex-dev quant preset --help
-./yvex-dev quant plan --help
-./yvex-dev artifact materialize --help
+./yvex tokenizer show --help
+./yvex tokenizer encode --help
+./yvex quant preset --help
+./yvex quant plan --help
+./yvex artifact materialize --help
 ```
 
-These are engineering and conformance operations, not product aliases. They may
-open the engine directly and may be absent from the release product package.
+These are finite engineering and conformance operations, not hosted-generation
+aliases. They may open the engine directly but never create a persistent model
+authority.
 
 ## Runtime evidence
 

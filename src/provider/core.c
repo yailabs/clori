@@ -594,7 +594,7 @@ static int write_text(provider_writer *writer, const char *text, size_t capacity
 
 /* Purpose: encode one sealed provider request in deterministic field order.
  * Inputs: validated request, output bytes/capacity/count, and error output.
- * Effects: publishes one complete canonical protocol-v2 provider payload.
+ * Effects: publishes one complete canonical protocol-v3 provider payload.
  * Failure: reports bounds/validation failure and leaves byte count zero.
  * Boundary: native structures and pointer values never enter the wire. */
 int yvex_provider_request_wire_encode(const yvex_provider_request *request,

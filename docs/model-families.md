@@ -184,11 +184,11 @@ to prevent later runtime claims from floating above unexamined model bytes.
 Source and family evidence is a developer surface:
 
 ```sh
-./yvex-dev evidence target inspect qwen3-8b
-./yvex-dev evidence target tensor-map qwen3-8b --audit
-./yvex-dev evidence target inspect gemma-4-12b-it
-./yvex-dev source manifest report --family qwen --release v0.1.0 --audit
-./yvex-dev evidence models download qwen3-8b --models-root "$HOME/lab/models"
+./yvex evidence target inspect qwen3-8b
+./yvex evidence target tensor-map qwen3-8b --audit
+./yvex evidence target inspect gemma-4-12b-it
+./yvex source manifest report --family qwen --release v0.1.0 --audit
+./yvex evidence models download qwen3-8b --models-root "$HOME/lab/models"
 ```
 
 Detailed operator flow belongs in runbooks. Model Families owns architecture.

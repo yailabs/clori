@@ -11,7 +11,7 @@
 
 #include <string.h>
 
-/* Contract: parses `yvex backend cpu|cuda` without opening a backend. */
+/* Contract: parses `yvex evidence backend cpu|cuda` without opening a backend. */
 
 /* Purpose: Admit the two backend names supported by CLI selectors.
  * Inputs: Borrowed nullable backend name.

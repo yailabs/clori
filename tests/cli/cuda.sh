@@ -52,6 +52,6 @@ contains "$OUT_DIR/materialize.out" "status: weights-materialized"
 "$YVEX_BIN" help >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
 rc=$?
 [ "$rc" -eq 0 ] || fail "help cuda-info exit code was $rc"
-contains "$OUT_DIR/help.out" "yvex-dev evidence target|model|moe|backend|cuda"
+contains "$OUT_DIR/help.out" "yvex evidence target|model|moe|backend|cuda"
 
 printf 'cli cuda smoke: ok\n'

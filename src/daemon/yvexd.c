@@ -30,8 +30,11 @@ static void print_help(FILE *output)
             "             [--context TOKENS] [--prefill-chunk TOKENS] "
             "[--max-new-tokens N] [--console off|raw]\n"
             "             [--trace-level summary|stages|tokens|full] "
-            "[--trace-content]\n\n"
-            "Hosts one process-resident model on a private local Unix socket.\n");
+            "[--trace-content]\n"
+            "             [--openai on|off] [--openai-port PORT] "
+            "[--openai-timeout-ms MS]\n\n"
+            "Hosts one process-resident model, a private Unix socket, and an optional "
+            "loopback OpenAI listener.\n");
 }
 
 /* Purpose: parse one positive unsigned daemon option without trailing bytes.
@@ -104,6 +107,7 @@ int main(int argument_count, char **arguments)
     sigset_t signals;
     yvex_error err;
     int index, rc, signal_ready = 0, console_ready = 0;
+    int openai_seen = 0, openai_port_seen = 0, openai_timeout_seen = 0;
     memset(&options, 0, sizeof(options));
     options.target_id = "deepseek4-v4-flash";
     options.backend = YVEX_BACKEND_KIND_CPU;
@@ -114,6 +118,9 @@ int main(int argument_count, char **arguments)
     options.maximum_sessions = 8u;
     options.request_queue_capacity = 16u;
     options.trace_level = YVEX_SERVER_TRACE_STAGES;
+    options.openai_enabled = 1;
+    options.openai_port = 8001u;
+    options.openai_timeout_ms = 600000u;
     for (index = 1; index < argument_count; ++index) {
         const char *argument = arguments[index];
         if (!strcmp(argument, "--help") || !strcmp(argument, "-h")) {
@@ -132,7 +139,10 @@ int main(int argument_count, char **arguments)
                     !strcmp(argument, "--prefill-chunk") ||
                     !strcmp(argument, "--max-new-tokens") ||
                     !strcmp(argument, "--console") ||
-                    !strcmp(argument, "--trace-level")) &&
+                    !strcmp(argument, "--trace-level") ||
+                    !strcmp(argument, "--openai") ||
+                    !strcmp(argument, "--openai-port") ||
+                    !strcmp(argument, "--openai-timeout-ms")) &&
                    index + 1 >= argument_count) {
             fprintf(stderr, "yvexd: %s requires a value\n", argument);
             return 2;
@@ -172,6 +182,33 @@ int main(int argument_count, char **arguments)
             else return 2;
         } else if (!strcmp(argument, "--trace-content")) {
             options.trace_content = 1;
+        } else if (!strcmp(argument, "--openai")) {
+            const char *enabled;
+            if (openai_seen++) {
+                fprintf(stderr, "yvexd: duplicate --openai option\n");
+                return 2;
+            }
+            enabled = arguments[++index];
+            if (!strcmp(enabled, "on")) options.openai_enabled = 1;
+            else if (!strcmp(enabled, "off")) options.openai_enabled = 0;
+            else return 2;
+        } else if (!strcmp(argument, "--openai-port")) {
+            unsigned long long port;
+            if (openai_port_seen++ ||
+                !parse_u64(arguments[++index], &port) || port > 65535u) {
+                fprintf(stderr, "yvexd: invalid or duplicate --openai-port\n");
+                return 2;
+            }
+            options.openai_port = (unsigned short)port;
+        } else if (!strcmp(argument, "--openai-timeout-ms")) {
+            unsigned long long timeout;
+            if (openai_timeout_seen++ ||
+                !parse_u64(arguments[++index], &timeout) || timeout < 100u ||
+                timeout > 86400000u) {
+                fprintf(stderr, "yvexd: invalid or duplicate --openai-timeout-ms\n");
+                return 2;
+            }
+            options.openai_timeout_ms = timeout;
         } else {
             fprintf(stderr, "yvexd: unknown option: %s\n", argument);
             return 2;
