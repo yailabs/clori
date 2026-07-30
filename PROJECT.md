@@ -1,11 +1,11 @@
 # YVEX Project Control
 
-Date: 2026-07-29
+Date: 2026-07-30
 Status: living engineering control
 Authority: product target, architecture tracks, complete wave ledger, milestone
 state, dependencies, evidence rank, family scope, release gates, and Active Next
 Recovery baseline: pre-refoundation `docs/spine.md` at commit `10ad6c3`
-Current proof stage: the accepted product topology exposes hosted DeepSeek text generation through one long-lived model, exact multi-turn sessions, streaming clients, three typed terminal views, and one bounded OpenAI-compatible application-provider boundary; release-path model evaluation is now active
+Current proof stage: the accepted product topology exposes hosted DeepSeek text generation through one long-lived model, exact multi-turn sessions, streaming clients, three typed terminal views, and one bounded OpenAI-compatible application-provider boundary; a bounded partial GB10 performance delivery closed startup and profiling evidence, and product-surface realignment is now active before the measured optimization continuation and release-path evaluation
 
 ## 1. Authority And Update Contract
 
@@ -348,7 +348,7 @@ in a conversation or closure report is not part of the architecture.
 
 | Boundary | Current truth |
 | --- | --- |
-| Project control | The 631-ID historical ledger is recovered and ranked here, then organized across 26 canonical tracks; project recovery, compilation-architecture rebasing, both public README cutovers, repository semantic compression, and C canonicalization are complete. The explicit physical-variant compiler, variant-adaptive materialization, runtime/client refoundation, product-documentation cutover, and bounded application-provider milestone bring the canonical set to 686 IDs. `config/source_owners.tsv` registers every production source/header exactly once; explicit header tiers, source-relative object/archive identities, semantic contracts, and repository layout, ownership, dependency, complexity, and ABI gates are hard failures. |
+| Project control | The 631-ID historical ledger is recovered and ranked here, then organized across 26 canonical tracks; project recovery, compilation-architecture rebasing, both public README cutovers, repository semantic compression, and C canonicalization are complete. The physical-variant compiler, runtime/client refoundation, bounded application-provider milestone, partial full-model performance delivery, surface-refoundation sequence, measured optimization continuation, and reopened real Bet-tennis evidence bring the canonical set to 694 IDs. `config/source_owners.tsv` registers every production source/header exactly once; explicit header tiers, source-relative object/archive identities, semantic contracts, and repository layout, ownership, dependency, complexity, and ABI gates are hard failures. |
 | Source | The canonical DeepSeek target is verified against `deepseek-ai/DeepSeek-V4-Flash` at commit `60d8d70770c6776ff598c94bb586a859a38244f1`. The pinned upstream index, structured configs, tokenizer assets, 46/46 safetensors headers, 69,187 unique tensor records, and verifier-owned manifest agree. Manifest v3 binds every shard to its authoritative Hugging Face Git LFS SHA-256 and atomically publishes aggregate payload identity `e22b3678d131d334f154a93214bdddfafc172c9869f4c52db28fea198eaa9165` only after all 159,617,149,040 shard-file bytes pass digest and drift checks. |
 | Family profiles | The exact DeepSeek-V4-Flash source projects to one immutable typed IR with 43 main layers, one MTP layer, explicit SWA/CSA/HCA, mHC, MoE, position/KV, output, tokenizer, and source constraints. Runtime numeric schema v2 binds BF16/F32 compute boundaries, activation fake-quantization, UE8M0 scaling, deterministic top-k, and the full Hadamard authority at commit `e7706faf8d1c3b9f241e36860640ad1dac644ede`. SWA uses base RoPE without YaRN; compressed CSA/HCA classes use the versioned YaRN policy. Qwen, Gemma, and dense/MoE evidence remains at its prior rank. |
 | Tensor coverage | One immutable IR-derived requirement set reconciles exactly against all 69,187 tensors in the verified DeepSeek snapshot: every entry is assigned once, with zero missing, duplicate, ambiguous, unsupported, or unexpected tensors and zero payload reads. Qwen/Gemma evidence remains at its prior rank. |
@@ -360,12 +360,12 @@ in a conversation or closure report is not part of the architecture.
 | Integrity | Canonical layout admission, full-file SHA-256 identity, exact payload-range verification, native writer-reader equivalence, pinned official ggml reader acceptance, deterministic serialization, and complete-artifact support admission are closed for the admitted DeepSeek artifacts. The physical catalog selects only immutable extent and exact digest evidence; operator admission rehashes every byte before binding. Tensor proofs and external or structurally incomplete GGUF files remain outside the complete-artifact path. |
 | Materialization | The admitted Q8_0/Q2_K baseline and mixed IQ2_XXS/Q2_K candidate use the same family-neutral materialization owner over all 1,360 tensors. Candidate materialization identity `04efd6362926cc009d9096b16f583993425dca91cd644ee369a5446c823ef263` derives 94,142,453,320 payload bytes and mixed routed-expert subviews from actual directory qtypes without preset-name branches. Cold admission remains bounded and file-backed; the runtime then copies every encoded tensor into one checked model-lifetime host arena and releases consumed artifact cache pages. |
 | Runtime descriptor | The common runtime descriptor and DeepSeek specialization project the admitted artifact, materialization plan, canonical qtype facts, all 1,360 tensor bindings, topology, MoE/expert geometry, output/vocabulary geometry, tokenizer availability, and runtime numeric authority into one immutable graph-input descriptor. Logical-model identity `ec22b4bf78811265d1881071919593991f33ab883303f3df16d64c0689a63950` and runtime-numeric identity `33182fd6b75e9263861d5a873550e6d0c5d5010267fb315ec687c693c9572dcd` are shared semantic facts; the candidate derives runtime-descriptor identity `e1b25e80d6a0ae97cbde61b1aeec261a170bd2d8874f8bbc85f496db46d973d0` from its distinct physical bindings. |
-| Runtime | Content-addressed schema-V6 runtime bindings open each admitted physical artifact into one family-neutral process-resident model. Before `READY`, `yvexd` copies all 1,360 encoded tensor payloads into one anonymous host arena and requires the complete arena to be locked in physical RAM; the mixed candidate proves `resident_host_bytes=94,142,453,320` and `VmLck=91,935,992 KiB`. The daemon owns that model for its complete lifetime, one bounded model worker, and independent server sessions whose execution sessions retain exact KV, token, transcript, RNG, and partial-turn state across client detach. Protocol v2 additionally carries provider messages, tools, usage, finish classes, and correlations through an engine-free loopback OpenAI gateway. Physical-variant identities remain descriptor facts rather than host, gateway, or client policy. |
+| Runtime | Content-addressed schema-V6 runtime bindings open each admitted physical artifact into one family-neutral process-resident model. Before `READY`, `yvexd` copies all 1,360 encoded tensor payloads into one anonymous host arena and requires the complete arena to be locked in physical RAM; the mixed candidate proves `resident_host_bytes=94,142,453,320` and `VmLck=91,935,992 KiB`. The daemon owns that model for its complete lifetime, one bounded model worker, and independent server sessions whose execution sessions retain exact KV, token, transcript, RNG, and partial-turn state across client detach. Protocol v2 additionally carries provider messages, tools, usage, finish classes, and correlations through an engine-free loopback OpenAI gateway. The partial performance delivery reduced the accepted cold-start candidate to 236.97 seconds, corrected residency accounting, and measured a 32-token warm request at 0.432 decode tokens/s with bounded stage, movement, launch, and synchronization facts; these are optimization evidence, not benchmark results or full performance admission. Physical-variant identities remain descriptor facts rather than host, gateway, or client policy. |
 | CUDA | Production C contains no fallback PTX. Context, Driver API memory operations, generated-bundle admission, resolved functions, exact variants, runtime-session CUDA Graph lifecycles, and persistent-state residency are distinct typed facts. A no-`nvcc` build refuses every kernel before dispatch. The GB10 eager path executes the backbone and direct encoded BF16 output-head projection over every vocabulary row without CPU numerical fallback. |
 | Transformer | Numeric token IDs execute through selected encoded embedding rows, exact four-stream mHC initialization, 43 canonical attention/MoE blocks, deferred FFN mHC posts, final mHC collapse, and final RMSNorm on CPU and GB10 CUDA. One global state transaction commits all attention publications and advances position only after finite normalized hidden output is ready. The generation owner consumes this numeric boundary unchanged for prompt prefill and sampled-token decode. |
 | Operator | `yvex` is a thin local-protocol client with compact `chat`, `run`, `runtime`, `session`, `model`, `artifact`, and `quant` namespaces. It cannot link or invoke model execution. `yvex-dev` owns redesigned nested direct engineering tools, and the former flat public command registry, aliases, help hierarchy, and audit walls are absent. |
 | Text path | Exact artifact-bound text/message encoding composes with real prefill, full logits, sampling, unchanged sampled-token decode feedback, typed terminal/context stops, and incremental detokenization. `yvex run` streams one daemon-backed turn; `yvex chat` provides retained multi-turn sessions whose second turn reuses exact prior KV and prefills only the new prompt suffix. Model quality remains unclaimed. |
-| Evaluation | Model behavior and model quality evaluation require the complete tokenizer-to-text and application-provider path. The evaluation milestone is active; no behavior or quality result exists yet, and attention numerical conformance is not model evaluation. |
+| Evaluation | Model behavior and model quality evaluation require the complete tokenizer-to-text and application-provider path. Evaluation is blocked behind product-surface realignment, command/binary audit, public project-control refoundation, canonical command-console work, and the measured GB10 optimization continuation; no behavior or quality result exists yet, and attention numerical conformance is not model evaluation. |
 | Benchmark | The runtime owns schema-v5 `attention_component` cold/warm, eager/piecewise/full measurements, identity-bound baseline comparison, JSON/CSV facts, and deterministic external SVG charts. Correctness, structural-runtime, and performance status remain independent. Release-path generation and full-model benchmark evidence remain not measured. |
 | Agent | No agent runtime, tool execution loop, agent evaluation owner, milestone, or operator command exists. Development agents, JSON output, external harnesses, and `yvexd` do not establish agent capability. |
 | Release | Release qualification remains blocked and is not promoted by component qualification or benchmark evidence. |
@@ -567,10 +567,32 @@ openai_agent_function_loop_ready=1
 openai_python_sdk_ready=1
 openai_javascript_sdk_ready=1
 bet_tennis_openai_provider_ready=1
+real_bet_tennis_deepseek_ready=0
 gateway_client_engine_separation_ready=1
 gateway_model_reuse_ready=1
 gateway_cancellation_ready=1
 gateway_packaging_ready=1
+full_model_profile_ready=0
+startup_profile_ready=0
+prefill_profile_ready=0
+decode_profile_ready=0
+movement_profile_ready=0
+synchronization_profile_ready=0
+moe_profile_ready=0
+optimized_startup_ready=0
+expert_placement_ready=0
+expert_cache_ready=0
+device_router_ready=0
+grouped_moe_prefill_ready=0
+multi_turn_suffix_chunk_ready=0
+optimized_decode_ready=0
+normal_serving_reduced_evidence_io_ready=0
+audit_execution_ready=0
+performance_regression_gate_ready=0
+decode_cuda_graph_ready=0
+full_decode_graph_ready=0
+cuda_sampling_ready=0
+complete_device_residency_ready=0
 openai_full_api_ready=0
 openai_multimodal_ready=0
 openai_embeddings_ready=0
@@ -633,8 +655,16 @@ V010.CLI.DEEPSEEK.GENERATE.0: superseded (fresh-only CLI plan replaced before im
 V010.RUNTIME.CLIENT.REFOUNDATION.0: complete (long-lived local runtime host, exact sessions, protocol, telemetry, client, REPL, and incompatible CLI cutover)
 V010.DOCS.README.PRODUCT.0: complete (public product README, three-terminal quickstart, and reviewed architecture visuals)
 V010.SERVE.OPENAI.COMPAT.0: complete (provider-neutral application contract, protocol-v2 gateway, bounded OpenAI profile, and external consumer proof)
-V010.EVAL.DEEPSEEK.0: active (release-path behavior, regression, context, and refusal evaluation)
-Active Next: V010.EVAL.DEEPSEEK.0
+V010.SERVE.OPENAI.BETTENNIS.REAL.1: reopened (the unchanged provider has not yet traversed the gateway and real resident DeepSeek in one proof)
+V010.RUNTIME.DEEPSEEK.PERFORMANCE.0: partial (startup and bounded profiling close; warm decode remains below admission)
+V010.PRODUCT.SURFACE.REALIGNMENT.0: active (reconcile the accepted product topology before further runtime optimization)
+V010.OPERATOR.SURFACE.AUDIT.0: planned (inventory the command and binary boundaries after product realignment)
+V010.PROJECT.CONTROL.PUBLIC.0: blocked (public project control waits for the product and operator audits)
+V010.OPERATOR.RUNTIME.CONSOLE.0: superseded (the isolated console plan is absorbed by the canonical command-console boundary)
+V010.OPERATOR.COMMAND.CONSOLE.0: blocked (canonical commands and runtime console wait for public project control)
+V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0: blocked (measured warm-runtime continuation after surface refoundation)
+V010.EVAL.DEEPSEEK.0: blocked (PASS 5 waits for the measured GB10 optimization continuation)
+Active Next: V010.PRODUCT.SURFACE.REALIGNMENT.0
 ```
 
 Repository compression and C canonicalization preserved every admitted source,
@@ -1053,6 +1083,12 @@ V010.DOCS.README.COMPILATION.0
 -> V010.RUNTIME.CLIENT.REFOUNDATION.0
 -> V010.DOCS.README.PRODUCT.0
 -> V010.SERVE.OPENAI.COMPAT.0
+-> V010.RUNTIME.DEEPSEEK.PERFORMANCE.0
+-> V010.PRODUCT.SURFACE.REALIGNMENT.0
+-> V010.OPERATOR.SURFACE.AUDIT.0
+-> V010.PROJECT.CONTROL.PUBLIC.0
+-> V010.OPERATOR.COMMAND.CONSOLE.0
+-> V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
 -> V010.EVAL.DEEPSEEK.0
 -> V010.BENCH.DEEPSEEK.0
 -> V010.RELEASE.0
@@ -1077,8 +1113,8 @@ another supported model.
 
 The recovery baseline contained 629 table entries across 24 tracks. Two source
 rows held paired IDs; those are expanded into 631 unique recovered IDs. The
-canonical architecture now contains 26 tracks. Fifty-three new milestone/future
-IDs and two explicit migration markers produce 686 unique canonical IDs.
+canonical architecture now contains 26 tracks. Sixty-one new milestone/future/
+evidence IDs and two explicit migration markers produce 694 unique canonical IDs.
 
 ### 7.1 Global Counts
 
@@ -1088,22 +1124,22 @@ calculated from rows rather than protected by a summary hash.
 | Metric | Count |
 | --- | ---: |
 | Recovered IDs | 631 |
-| Explicit new IDs | 55 |
-| Canonical IDs | 686 |
-| First-class milestones | 48 |
+| Explicit new IDs | 63 |
+| Canonical IDs | 694 |
+| First-class milestones | 55 |
 | State: complete | 446 |
 | State: active | 1 |
-| State: partial | 1 |
-| State: blocked | 1 |
-| State: planned | 198 |
-| State: reopened | 2 |
+| State: partial | 2 |
+| State: blocked | 5 |
+| State: planned | 199 |
+| State: reopened | 3 |
 | State: deferred | 20 |
-| State: superseded | 16 |
+| State: superseded | 17 |
 | State: not-measured | 1 |
 
 | Track | Owns | Current truth | Conclusive handoff |
 | --- | --- | --- | --- |
-| `TRACK.SCOPE` | Project control, release scope, family/release distinction, claim boundary, version policy, repository semantic ownership, C interface/build boundaries, and documentation-control transitions. | repository semantic compression, C canonicalization, and the public product README/architecture cutover are complete with one machine-readable ownership manifest and correlated hard gates | One truthful project map, one explicit release contract, one product-first public entry point, and one enforced source-owner topology. |
+| `TRACK.SCOPE` | Project control, release scope, family/release distinction, claim boundary, version policy, repository semantic ownership, C interface/build boundaries, and documentation-control transitions. | product-surface realignment is active before command/binary audit and public project-control refoundation; existing capability remains unchanged | One truthful project map, one explicit release contract, one product-first public entry point, and one enforced source-owner topology. |
 | `TRACK.SOURCE` | Source identity, revision, provider intake, manifests, shards, sidecars, header inventory, payload trust, and bounded payload access. | exact metadata/header verification and trusted bounded payload access are complete | Verified source facts and readable payload ranges. |
 | `TRACK.MAP` | Family source names, canonical runtime roles, GGUF names, physical-lowering projections, layouts, ambiguity refusal, and complete mapping coverage. | canonical DeepSeek GGUF lowering evidence is complete | Every required source tensor maps exactly once to a runtime role and emitted layout. |
 | `TRACK.COMPILATION` | Artifact-neutral transformation IR, derivation identity/DAGs, physical variant identity, constraint profiles, requirement composition, variant selection, and evaluation/benchmark feedback intake. | one sealed policy now resolves all terminal decisions and drives exact sizing, byte execution, writer emission, materialization, and runtime binding; automatic optimization and Pareto search remain deferred | One immutable physical-variant plan carries every user-selected admissible representation into the exact downstream artifact. |
@@ -1113,7 +1149,7 @@ calculated from rows rather than protected by a summary hash.
 | `TRACK.MODEL` | Family architecture profiles, typed architecture IR, layer topology, attention/position/KV/MoE rules, and runtime descriptor projection. | canonical DeepSeek family facts, runtime-numeric schema v2, common/DeepSeek runtime descriptor projection, and complete attention consumption are admitted | A family-correct typed model specification and executable runtime descriptor. |
 | `TRACK.TENSOR` | Canonical tensor collections, role requirements, global/layer/attention/MoE/norm/output/tokenizer coverage, and missing-role truth. | exact DeepSeek source coverage is complete; multi-family evidence remains at its prior rank | No unresolved required tensor collection or runtime role. |
 | `TRACK.RESIDENCY` | Payload streaming, materialization, placement, memory planning, CUDA residency, movement, ownership, cleanup, and release. | variant-adaptive bounded materialization feeds one complete model-lifetime encoded host arena; every dense, routed/shared expert, embedding, attention, envelope, norm, and output-head tensor is identity-bound and locked in physical RAM, while the direct CUDA prefix is uploaded once | Any admitted tensor map can materialize from its actual qtype inventory; runtime owners acquire exact immutable and mutable resources without redefining family semantics. |
-| `TRACK.RUNTIME` | Runtime binding consumption, immutable runtime-model sealing, execution-session lifecycle, workload descriptors, phase/mode dispatch, reusable contexts, capability truth, invalidation, timing, and common state-provider boundaries. | common attention, persistent state, activation input, MoE, complete transformer/decode/logits coordination, host sampling, model-owned immutable tokenizer reuse, generation composition, and compatible workspace reuse across context lifecycles are admitted | One admitted binding opens once into a reusable family-neutral runtime model; lower owners hand off typed logits, selected IDs, tokenizer facts, and committed text-generation progress without duplicating model/session/KV ownership. |
+| `TRACK.RUNTIME` | Runtime binding consumption, immutable runtime-model sealing, execution-session lifecycle, workload descriptors, phase/mode dispatch, reusable contexts, capability truth, invalidation, timing, profiling, and common state-provider boundaries. | correctness-complete hosting, optimized startup, corrected residency accounting, and bounded warm-path profiling are admitted; decode remains below the serving floor and its measured continuation is blocked | One admitted binding opens once into a reusable family-neutral runtime model and supplies a measured, transactionally equivalent full-model execution path to the operator and later evaluation owners. |
 | `TRACK.BACKEND` | Hardware/build profiles, CPU/CUDA capability, qtype operations, reference parity, scratch, fallback, synchronization, refusal, and cleanup. | CUDA is fail-closed; selected-qtype backbone operations and direct encoded complete-vocabulary output-head projection have GB10 proof with no CPU numerical fallback | Every required DGX Spark logits-boundary operation is real, reference-compared, and fail-closed. |
 | `TRACK.GRAPH` | Primitive contracts, graph construction/planning, attention, position handling, MoE routing/experts, residuals, layers, scratch, and transformer execution. | Complete DeepSeek attention, token-local MoE, embedding, 43-block composition, final mHC collapse, and final RMSNorm are admitted through CPU and GB10 CUDA paths and consumed unchanged by repeated decode | Normalized hidden states from repeated steps hand off to output-head projection. |
 | `TRACK.PREFILL` | Identity-bound activation input, deterministic chunking, all-layer attention execution, state ownership, position progression, persistent-state write integration, and cleanup. | numeric token chunks execute embedding and all 43 DeepSeek attention/MoE blocks on CPU and GB10 CUDA and commit persistent state atomically per chunk; prompt text remains unsupported | Repeated decode consumes the same transformer, position, cancellation, and state contracts. |
@@ -1123,9 +1159,9 @@ calculated from rows rather than protected by a summary hash.
 | `TRACK.SAMPLING` | Deterministic and stochastic token selection over real vocabulary logits, seeding, reproducibility, validation, and refusal. | repaired full-vocabulary greedy and filter-order-v2 stochastic selection use compensated normalization, positive-mass entropy, atomic close/drain, authenticated evidence, and transactional PCG progress | Selected token IDs and their identities hand off to tokenizer/generation composition without implying append or decode. |
 | `TRACK.TOKENIZER` | Exact tokenizer loading, prompt encoding, templates, special/EOS/stop policy, append boundary, detokenization, and failure behavior. | the selected GGUF reconstructs one immutable exact ByteLevel-BPE plan with 129,280 tokens, 127,741 merges, added/special policy, bounded DeepSeek prompt rendering, and batch/incremental decode | Prompt text and sampled IDs traverse the exact tokenizer contract without mutating model state. |
 | `TRACK.GENERATION` | Tokenizer/prefill/KV/decode/logits/sampling composition, append, stop, cancellation, partial output, trace, cleanup, and autoregression. | one reusable common turn owner executes exact prompt suffix prefill, first-token sampling, sampled-token decode feedback, typed stop, partial progress, committed-fragment streaming, and incremental text on CPU and mixed CUDA/host paths | Server sessions invoke the same generation owner for fresh and retained turns without rebuilding its loop or lower owners. |
-| `TRACK.OPERATOR` | Product/developer CLI grammar, typed protocol input, dispatch, rendering, refusal, topology guards, and operator acceptance. | one thin `yvex` product client and one nested engine-linked `yvex-dev` surface have replaced the former flat registry; old commands and compatibility aliases refuse | Product commands reach the local runtime protocol while direct engine proof remains confined to developer or test ownership. |
-| `TRACK.SERVE` | Long-lived local runtime hosting, session/KV authority, streaming, typed telemetry, local and application protocols, product clients, and process topology. | one local-only UDS host owns a process-resident model and exact sessions; protocol v2 and the engine-free loopback OpenAI profile provide bounded Chat, Responses, SSE, tools, usage, and application interoperability, while public/remote serving remains deferred | Applications consume the hosted path through a lightweight compatibility gateway without reopening models or bypassing session semantics. |
-| `TRACK.EVAL` | Complete-model behavior, quality, regression, tokenizer, context, and refusal evaluation after real generation exists. | active over the complete hosted application-consumable path; software tests, numerical conformance, runtime qualification, and operational metrics remain distinct from model evaluation | Repeatable evaluation passes over the hosted application-consumable release path. |
+| `TRACK.OPERATOR` | Product/developer CLI grammar, typed protocol input, dispatch, rendering, refusal, topology guards, and operator acceptance. | the thin product client and nested developer client remain accepted; command/binary audit and public control now precede one canonical command-console implementation | Product commands reach the local runtime protocol while direct profiling/proof remains confined to developer ownership and the later console consumes authoritative runtime metrics. |
+| `TRACK.SERVE` | Long-lived local runtime hosting, session/KV authority, streaming, typed telemetry, local and application protocols, product clients, and process topology. | one local-only UDS host owns a process-resident model and exact sessions; protocol v2 and the engine-free loopback OpenAI profile are complete, while the unchanged Bet-tennis-to-real-DeepSeek composition evidence is reopened and public/remote serving remains deferred | Applications consume the hosted path through a lightweight compatibility gateway without reopening models or bypassing session semantics; the active runtime milestone consumes the missing real external-composition proof. |
+| `TRACK.EVAL` | Complete-model behavior, quality, regression, tokenizer, context, and refusal evaluation after real generation exists. | blocked behind product-surface refoundation, canonical command-console work, and the measured GB10 optimization continuation; operational profiles are not model evaluation | Repeatable evaluation passes over the optimized hosted application-consumable release path. |
 | `TRACK.BENCH` | Reproducible component and complete-model performance measurements with machine, identity, workload, timing, throughput, memory, regression, and visualization metadata. | schema-v5 attention-component measurements and deterministic SVG evidence are implemented; full-model generation benchmark evidence is not measured | Accepted DGX Spark benchmark evidence over the release path. |
 | `TRACK.RELEASE` | Final software, conformance, runtime, evaluation, benchmark, operator, packaging, claim, version, release-record, and tag qualification. | blocked; component qualification does not close the release gate | Every release gate passes in one traceable transcript. |
 | `TRACK.POST010` | Explicitly deferred portability, serving hardening, speculative execution, extra-family runtime promotion, and later product scope. | deferred | No work enters the active path without a new version-scope decision. |
@@ -1138,7 +1174,7 @@ closure.
 
 | Track | Recovered IDs | Canonical IDs | First-class C/A/Pa/P/B/NM | Complete support | Open support | Superseded/deferred |
 | --- | ---: | ---: | --- | ---: | ---: | ---: |
-| `TRACK.SCOPE` | 25 | 34 | 8/0/1/0/0/0 | 9 | 9 | 7 |
+| `TRACK.SCOPE` | 25 | 36 | 8/1/1/0/1/0 | 9 | 9 | 7 |
 | `TRACK.SOURCE` | 24 | 26 | 2/0/0/0/0/0 | 23 | 1 | 0 |
 | `TRACK.MAP` | 12 | 13 | 1/0/0/0/0/0 | 11 | 1 | 0 |
 | `TRACK.COMPILATION` | 0 | 13 | 2/0/0/0/0/0 | 0 | 0 | 11 |
@@ -1148,7 +1184,7 @@ closure.
 | `TRACK.MODEL` | 21 | 23 | 3/0/0/0/0/0 | 9 | 11 | 0 |
 | `TRACK.TENSOR` | 27 | 28 | 1/0/0/0/0/0 | 18 | 9 | 0 |
 | `TRACK.RESIDENCY` | 42 | 44 | 2/0/0/0/0/0 | 33 | 9 | 0 |
-| `TRACK.RUNTIME` | 18 | 18 | 1/0/0/0/0/0 | 17 | 0 | 0 |
+| `TRACK.RUNTIME` | 18 | 20 | 1/0/1/0/1/0 | 17 | 0 | 0 |
 | `TRACK.BACKEND` | 29 | 30 | 1/0/0/0/0/0 | 12 | 15 | 2 |
 | `TRACK.GRAPH` | 71 | 75 | 3/0/0/0/0/0 | 67 | 4 | 1 |
 | `TRACK.PREFILL` | 27 | 28 | 1/0/0/0/0/0 | 24 | 3 | 0 |
@@ -1158,9 +1194,9 @@ closure.
 | `TRACK.SAMPLING` | 15 | 16 | 1/0/0/0/0/0 | 15 | 0 | 0 |
 | `TRACK.TOKENIZER` | 13 | 14 | 1/0/0/0/0/0 | 13 | 0 | 0 |
 | `TRACK.GENERATION` | 35 | 36 | 1/0/0/0/0/0 | 34 | 1 | 0 |
-| `TRACK.OPERATOR` | 81 | 82 | 1/0/0/1/0/0 | 37 | 40 | 2 |
-| `TRACK.SERVE` | 12 | 14 | 2/0/0/0/0/0 | 11 | 1 | 0 |
-| `TRACK.EVAL` | 15 | 16 | 0/1/0/0/0/0 | 0 | 15 | 0 |
+| `TRACK.OPERATOR` | 81 | 85 | 1/0/0/2/1/0 | 37 | 40 | 2 |
+| `TRACK.SERVE` | 12 | 15 | 2/0/0/0/0/0 | 11 | 2 | 0 |
+| `TRACK.EVAL` | 15 | 16 | 0/0/0/0/1/0 | 0 | 15 | 0 |
 | `TRACK.BENCH` | 16 | 17 | 0/0/0/0/0/1 | 7 | 9 | 0 |
 | `TRACK.RELEASE` | 42 | 42 | 0/0/0/0/1/0 | 4 | 37 | 0 |
 | `TRACK.POST010` | 23 | 23 | 0/0/0/0/0/0 | 0 | 14 | 9 |
@@ -1240,10 +1276,17 @@ written after inspection of owner code, consumers, tests, and current contracts.
 | 42 | `V010.RUNTIME.CLIENT.REFOUNDATION.0` | `TRACK.SERVE` | common host + DeepSeek first session vertical | `complete` | Replaced the one-shot process and flat CLI with one long-lived model host, exact multi-turn KV sessions, local streaming protocol, typed telemetry, product client, REPL, developer client, and package topology. | V010.COMPILATION.PHYSICAL.VARIANT.1 |
 | 43 | `V010.DOCS.README.PRODUCT.0` | `TRACK.SCOPE` | project | `complete` | Rebuilt the public README around the accepted long-lived host, exact sessions, three terminal views, compact product workflow, binary topology, reviewed SVG architecture, and current non-claims without promoting executable capability. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
 | 44 | `V010.SERVE.OPENAI.COMPAT.0` | `TRACK.SERVE` | common provider + DeepSeek first tool vertical | `complete` | Added one provider-neutral application contract and a lightweight loopback OpenAI-compatible gateway over protocol v2, with typed messages, tools, structured output, SSE, SDK, and unchanged external-consumer proof. | V010.DOCS.README.PRODUCT.0 |
-| 45 | `V010.EVAL.DEEPSEEK.0` | `TRACK.EVAL` | DeepSeek | `active` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.SERVE.OPENAI.COMPAT.0 |
-| 46 | `V010.BENCH.DEEPSEEK.0` | `TRACK.BENCH` | DeepSeek / DGX Spark | `not-measured` | Record reproducible artifact, qtype, prompt/context, prefill, decode, generation, timing, throughput, and memory evidence. | V010.EVAL.DEEPSEEK.0 |
-| 47 | `V010.RELEASE.0` | `TRACK.RELEASE` | DeepSeek v0.1.0 | `blocked` | Close every source, architecture, mapping, artifact, materialization, backend, transformer, generation, evaluation, benchmark, validation, claim, operator, packaging, and version gate. | V010.BENCH.DEEPSEEK.0 |
-| 48 | `TOPOLOGY.CELL.CLOSURE.0` | `TRACK.OPERATOR` | common | `planned` | Close residual mixed ownership only where concrete behavior still crosses domain/report/input/command/render/write boundaries. | V010.DOCS.ARCHITECTURE.0; supporting, not a product-stage promotion |
+| 45 | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` | `TRACK.RUNTIME` | DeepSeek / GB10 | `partial` | Reduced admitted cold startup from roughly fourteen minutes to under four, corrected residency accounting, formalized the warm baseline, and added bounded internal profiling; warm decode remains below admission. | V010.SERVE.OPENAI.COMPAT.0 |
+| 46 | `V010.PRODUCT.SURFACE.REALIGNMENT.0` | `TRACK.SCOPE` | product | `active` | Reconcile public product responsibilities and lifecycle boundaries against the accepted host, provider, client, and developer topology without changing runtime capability. | V010.RUNTIME.DEEPSEEK.PERFORMANCE.0 |
+| 47 | `V010.OPERATOR.SURFACE.AUDIT.0` | `TRACK.OPERATOR` | product + developer tools | `planned` | Produce the authoritative command, binary, linkage, ownership, and migration inventory consumed by the incompatible public cutover. | V010.PRODUCT.SURFACE.REALIGNMENT.0 |
+| 48 | `V010.PROJECT.CONTROL.PUBLIC.0` | `TRACK.SCOPE` | project | `blocked` | Refound public project control around the audited product surfaces, explicit successors, gates, non-claims, and one canonical critical path. | V010.OPERATOR.SURFACE.AUDIT.0 |
+| 49 | `V010.OPERATOR.RUNTIME.CONSOLE.0` | `TRACK.OPERATOR` | common console + DeepSeek first vertical | `superseded` | The standalone console plan is absorbed by the canonical command architecture and runtime-console milestone after the surface audits. | V010.OPERATOR.COMMAND.CONSOLE.0 |
+| 50 | `V010.OPERATOR.COMMAND.CONSOLE.0` | `TRACK.OPERATOR` | product commands + runtime console | `blocked` | Establish the canonical command architecture and DwarfStar-style runtime console from audited binaries and authoritative telemetry without changing numerical execution. | V010.PROJECT.CONTROL.PUBLIC.0 |
+| 51 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `TRACK.RUNTIME` | DeepSeek / GB10 | `blocked` | Resume issue-shaped warm-runtime optimization from measured attention, MoE, movement, and launch pressure; select no mechanism before its dedicated evidence gate. | V010.OPERATOR.COMMAND.CONSOLE.0 |
+| 52 | `V010.EVAL.DEEPSEEK.0` | `TRACK.EVAL` | DeepSeek | `blocked` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0 |
+| 53 | `V010.BENCH.DEEPSEEK.0` | `TRACK.BENCH` | DeepSeek / DGX Spark | `not-measured` | Record reproducible artifact, qtype, prompt/context, prefill, decode, generation, timing, throughput, and memory evidence. | V010.EVAL.DEEPSEEK.0 |
+| 54 | `V010.RELEASE.0` | `TRACK.RELEASE` | DeepSeek v0.1.0 | `blocked` | Close every source, architecture, mapping, artifact, materialization, backend, transformer, generation, evaluation, benchmark, validation, claim, operator, packaging, and version gate. | V010.BENCH.DEEPSEEK.0 |
+| 55 | `TOPOLOGY.CELL.CLOSURE.0` | `TRACK.OPERATOR` | common | `planned` | Close residual mixed ownership only where concrete behavior still crosses domain/report/input/command/render/write boundaries. | V010.DOCS.ARCHITECTURE.0; supporting, not a product-stage promotion |
 
 ## 9. Complete Track/Wave Ledger
 
@@ -1256,9 +1299,9 @@ the row's use.
 
 **Owner:** Project control, release scope, family/release distinction, claim boundary, version policy, repository semantic ownership, C interface/build boundaries, architecture-control transitions, and public-document transitions.
 
-**Current truth:** repository-wide semantic compression, C canonicalization, and the product-first README/architecture cutover are complete; the public quickstart now projects the accepted long-lived host, session, protocol, client, and three-terminal topology without promoting capability
+**Current truth:** repository-wide semantic compression, C canonicalization, and the product-first README/architecture cutover are complete; product-surface realignment is active before the command/binary audit and public project-control refoundation
 
-**Ledger summary:** 25 recovered IDs; 9 first-class milestones; 7 complete support rows; 12 open support rows; 6 superseded/deferred rows.
+**Ledger summary:** 25 recovered IDs; 11 first-class milestones; 7 complete support rows; 12 open support rows; 6 superseded/deferred rows.
 
 #### First-Class Milestones
 
@@ -1273,6 +1316,8 @@ the row's use.
 | `V010.REPO.SEMANTIC.COMPRESSION.0` | project | `complete` | Reconstructed every owned source boundary around compact semantic owners, enforced the dependency DAG and family budget, preserved executable identities, and installed permanent repository-wide gates. | V010.RUNTIME.DESCRIPTOR.DEEPSEEK.0 | current |
 | `V010.REPO.C.CANONICALIZATION.0` | project | `complete` | Canonicalized the three C header tiers, explicit include and archive identities, symbol visibility, semantic contracts, large owners, and hard ABI/complexity gates while preserving all capability refusals. | V010.REPO.SEMANTIC.COMPRESSION.0 | current |
 | `V010.DOCS.README.PRODUCT.0` | project | `complete` | Rebuilt README.md as the concise public product entry point, validated the accepted three-terminal/one-shot workflow, added reviewed editable product and system architecture visuals, routed depth to owned documents, and changed no executable capability. `cli_applicability=not_applicable`: documentation-only cutover. | V010.RUNTIME.CLIENT.REFOUNDATION.0 | current |
+| `V010.PRODUCT.SURFACE.REALIGNMENT.0` | product | `active` | Reconcile public product responsibilities and lifecycle boundaries against the accepted host, provider, client, and developer topology without promoting runtime capability. | V010.RUNTIME.DEEPSEEK.PERFORMANCE.0 | current |
+| `V010.PROJECT.CONTROL.PUBLIC.0` | project | `blocked` | Refound public project control around the audited product surfaces, successors, gates, non-claims, and one canonical critical path. | V010.OPERATOR.SURFACE.AUDIT.0 | current |
 
 #### Recovered And Subordinate Rows
 
@@ -1670,11 +1715,11 @@ target or payload snapshot exists.
 
 ### 9.11 TRACK.RUNTIME
 
-**Owner:** Runtime binding consumption, immutable runtime-model sealing, mutable execution-session lifecycle, execution descriptors, phase/mode dispatch, reusable contexts, capability truth, invalidation, timing, and common state-provider boundaries.
+**Owner:** Runtime binding consumption, immutable runtime-model sealing, mutable execution-session lifecycle, execution descriptors, phase/mode dispatch, reusable contexts, capability truth, invalidation, timing, identity-bound profiling, full-model execution optimization, and common state-provider boundaries.
 
-**Current truth:** one family-neutral sealed runtime model/session plane consumes a content-addressed binding without rebuilding compilation truth; DeepSeek enters through typed attention, MoE, transformer, logits, sampling, tokenizer, and generation policies. Each isolated session owns persistent state and reusable resources while the generation context composes prompt prefill and exact sampled-token decode commits; immutable model resources remain shared and mutable text/RNG/state remain local
+**Current truth:** one family-neutral sealed runtime model/session plane consumes a content-addressed binding without rebuilding compilation truth; the bounded PASS 4 delivery reduced startup, corrected residency accounting, and added internal warm-path profiling, while decode remains below admission and its measured continuation is blocked behind the product-surface sequence
 
-**Ledger summary:** 18 recovered IDs; 1 first-class milestone; 17 complete support rows; 0 open support rows; 0 superseded/deferred rows.
+**Ledger summary:** 18 recovered IDs; 3 first-class milestones; 17 complete support rows; 0 open support rows; 0 superseded/deferred rows.
 
 `V010.RUNTIME.0` through `V010.RUNTIME.17` move here explicitly from
 `TRACK.GENERATION`; their IDs remain stable. `V010.RUNTIME.1` is promoted from
@@ -1690,6 +1735,8 @@ runtime spine is introduced.
 | Milestone | Scope | State | Conclusive after-state | Depends on | Origin |
 | --- | --- | --- | --- | --- | --- |
 | `V010.RUNTIME.1` | common | `complete` | Sealed one immutable family-neutral runtime model and process-lifetime execution-session plane over a content-addressed binding, resident attention resources, phase-aware execution descriptors, CPU eager and GB10 CUDA eager/graph modes, invalidation, timing, and bounded benchmark/profile and external-chart capability. | V010.CLI.GRAPH.0 | recovered/promoted |
+| `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` | DeepSeek / GB10 | `partial` | Reduced cold startup to the accepted sub-four-minute candidate, corrected residency accounting, formalized warm generation, and added bounded movement/stage/synchronization profiling; warm decode remains below admission. | V010.SERVE.OPENAI.COMPAT.0 | current |
+| `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | DeepSeek / GB10 | `blocked` | Resume issue-shaped optimization from measured attention, MoE, movement, and launch pressure without preselecting placement, cache, fusion, graph, or prefetch mechanisms. | V010.OPERATOR.COMMAND.CONSOLE.0 | current |
 
 #### Recovered And Subordinate Rows
 
@@ -2145,9 +2192,9 @@ runtime spine is introduced.
 
 **Owner:** CLI grammar, command adaptation, typed input, dispatch, rendering, refusal, control-plane integration, topology guards, and operator acceptance.
 
-**Current truth:** the `yvex graph attention`, `yvex graph moe execute`, and `yvex graph transformer execute|decode|logits|sample|generate` namespaces directly reach production APIs. `yvex tokenizer|tokenize|detokenize|prompt` reach the exact artifact-bound tokenizer and bounded prompt policy. The graph generation command is the internal runtime proof; the canonical top-level command and polished UX remain active here
+**Current truth:** the accepted product cutover keeps `yvex` as a thin protocol client and groups direct engine/profiling proof under `yvex-dev`; the command/binary audit now precedes public project-control refoundation and one canonical command-console implementation
 
-**Ledger summary:** 81 recovered IDs; 3 first-class milestones; 37 complete support rows; 40 open support rows; 2 superseded/deferred rows.
+**Ledger summary:** 81 recovered IDs; 6 first-class milestones; 37 complete support rows; 40 open support rows; 2 superseded/deferred rows.
 
 #### First-Class Milestones
 
@@ -2155,6 +2202,9 @@ runtime spine is introduced.
 | --- | --- | --- | --- | --- | --- |
 | `V010.CLI.GRAPH.0` | DeepSeek + common operator | `complete` | Expose production DeepSeek attention through the main YVEX binary with CPU, CUDA, quick/full canonical probes, typed structured refusal, and explicit non-generation semantics. | V010.GRAPH.DEEPSEEK.ATTENTION.0 | recovered/promoted |
 | `V010.CLI.DEEPSEEK.GENERATE.0` | DeepSeek | `superseded` | Fresh-only top-level generation UX was superseded before implementation by the long-lived runtime/client product boundary. | V010.RUNTIME.CLIENT.REFOUNDATION.0 | current/superseded |
+| `V010.OPERATOR.SURFACE.AUDIT.0` | product + developer tools | `planned` | Produce the authoritative command, binary, linkage, ownership, and migration inventory consumed by the incompatible public cutover. | V010.PRODUCT.SURFACE.REALIGNMENT.0 | current |
+| `V010.OPERATOR.RUNTIME.CONSOLE.0` | common console + DeepSeek first vertical | `superseded` | The standalone console plan is absorbed by the canonical command architecture and runtime-console milestone after the surface audits. | V010.OPERATOR.COMMAND.CONSOLE.0 | current/superseded |
+| `V010.OPERATOR.COMMAND.CONSOLE.0` | product commands + runtime console | `blocked` | Establish canonical commands and the DwarfStar-style runtime console from audited binaries and authoritative telemetry without changing numerical execution. | V010.PROJECT.CONTROL.PUBLIC.0 | current |
 | `TOPOLOGY.CELL.CLOSURE.0` | common | `planned` | Close residual mixed ownership only where concrete behavior still crosses domain/report/input/command/render/write boundaries. | V010.DOCS.ARCHITECTURE.0; supporting, not a product-stage promotion | recovered/promoted |
 
 #### Recovered And Subordinate Rows
@@ -2246,9 +2296,9 @@ runtime spine is introduced.
 
 **Owner:** Long-lived local runtime hosting, model-worker coordination, exact session/KV authority, streaming, typed telemetry, local and application protocols, product-client process topology, and runtime administration.
 
-**Current truth:** one local-only Unix-domain-socket daemon owns a process-resident model, bounded worker queue, exact server sessions, multi-turn KV reuse, committed-fragment streaming, typed telemetry, metrics, raw/engine terminals, and graceful shutdown. Protocol v2 carries bounded provider messages, tools, response formats, stop strings, usage, finish classes, and correlation through one engine-free loopback OpenAI gateway. Chat Completions, Responses, SSE, function-tool continuation, official SDK clients, and unchanged Bet-tennis provider acceptance are complete; public and remote serving remain deferred
+**Current truth:** one local-only Unix-domain-socket daemon owns a process-resident model, bounded worker queue, exact server sessions, multi-turn KV reuse, committed-fragment streaming, typed telemetry, metrics, raw/engine terminals, and graceful shutdown. Protocol v2 carries bounded provider messages, tools, response formats, stop strings, usage, finish classes, and correlation through one engine-free loopback OpenAI gateway. Chat Completions, Responses, SSE, function-tool continuation, official SDK clients, and unchanged Bet-tennis provider syntax against the gateway test host are complete; the combined unchanged Bet-tennis -> gateway -> real resident DeepSeek proof is reopened and consumed by PASS 4, while public and remote serving remain deferred
 
-**Ledger summary:** 12 recovered IDs; 2 complete first-class milestones; 11 complete support rows; 1 open support row; 0 superseded/deferred rows.
+**Ledger summary:** 12 recovered IDs; 2 complete first-class milestones; 11 complete support rows; 2 open support rows; 0 superseded/deferred rows.
 
 #### First-Class Milestones
 
@@ -2273,13 +2323,14 @@ runtime spine is introduced.
 | `V010.SERVE.9` | `subtask` | post-v0.1 | `planned` | Anthropic compatibility after generation. | future scope decision |
 | `V010.SERVE.10` | `capability` | local runtime | `complete` | One bounded typed event authority feeds raw JSONL, compact engine views, metrics, client projections, privacy defaults, and coalesced backpressure. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
 | `V010.SERVE.11` | `evidence` | local runtime | `complete` | Product binaries prove one hosted model, exact multi-turn sessions, REPL/one-shot streaming, client-engine separation, packaging, and total incompatible CLI cutover on GB10. | V010.RUNTIME.CLIENT.REFOUNDATION.0 |
+| `V010.SERVE.OPENAI.BETTENNIS.REAL.1` | `evidence` | Bet-tennis + real DeepSeek | `reopened` | Prove the unchanged Bet-tennis provider through `yvex-openai`, protocol v2, `yvexd`, and the real resident DeepSeek model for health, model discovery, chat, structured JSON, tools, SSE, cancellation, and daemon survival; the prior synthetic-host proof is retained but narrower. | V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0 |
 
 
 ### 9.23 TRACK.EVAL
 
 **Owner:** Complete-model behavior, quality, regression, tokenizer, context, refusal, and capability evaluation after real generation exists.
 
-**Current truth:** active over the complete hosted DeepSeek application-provider path; software testing, attention numerical conformance, runtime qualification, operational metrics, and component benchmarking do not satisfy model behavior or quality evaluation
+**Current truth:** blocked until product-surface realignment, command/binary audit, public project-control refoundation, canonical command-console work, and the measured GB10 optimization continuation close; software testing, numerical conformance, runtime qualification, operational metrics, and component profiling do not satisfy model behavior or quality evaluation
 
 **Ledger summary:** 15 recovered IDs; 1 first-class milestones; 0 complete support rows; 15 open support rows; 0 superseded/deferred rows.
 
@@ -2287,7 +2338,7 @@ runtime spine is introduced.
 
 | Milestone | Scope | State | Conclusive after-state | Depends on | Origin |
 | --- | --- | --- | --- | --- | --- |
-| `V010.EVAL.DEEPSEEK.0` | DeepSeek | `active` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.SERVE.OPENAI.COMPAT.0 | current |
+| `V010.EVAL.DEEPSEEK.0` | DeepSeek | `blocked` | Run repeatable correctness, tokenizer, regression, long-context, refusal, and release-path generation evaluations. | V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0 | current |
 
 #### Recovered And Subordinate Rows
 
@@ -2516,13 +2567,14 @@ installed headers were intentionally removed rather than left available.
 | Integrity/admission | Canonical global layout, complete physical identity, payload integrity, role coverage, and complete-artifact admission | complete | `V010.GGUF.LAYOUT.INTEGRITY.1` and `V010.ARTIFACT.SUPPORT.CUTOVER.0` |
 | Materialization | Family-neutral materializer derives ranges, qtype geometry, expert subviews, and backend capability from each admitted variant | complete for baseline and mixed IQ2_XXS/Q2_K candidate cold access; runtime readiness additionally requires every encoded tensor in one authenticated, locked, model-lifetime host arena | `V010.ARTIFACT.MATERIALIZE.0`, `V010.ARTIFACT.MATERIALIZE.1`, and runtime milestones |
 | Descriptor | Canonical common descriptor and execution-complete DeepSeek graph-input specialization | complete and consumed by attention, MoE, and the full transformer backbone | descriptor, attention, MoE, and transformer milestones |
-| Runtime | Content-addressed binding, one process-resident authenticated model, server-owned mutable sessions, persistent state, exact prefix continuation, bounded worker execution, local protocol, typed telemetry, and reusable execution without compiler reconstruction | complete through hosted exact text encoding, prompt-suffix prefill, sampled-token feedback, repeated decode, complete logits, common-host sampling, stop, partial progress, streaming, detach/reconnect, reset, and graceful shutdown | runtime, KV, prefill, MoE, transformer, decode, logits, sampling, tokenizer, generation, and runtime/client refoundation milestones |
+| Runtime | Content-addressed binding, one process-resident authenticated model, server-owned mutable sessions, persistent state, exact prefix continuation, bounded worker execution, local protocol, typed telemetry, and reusable execution without compiler reconstruction | correctness-complete through hosted exact text encoding, prompt-suffix prefill, sampled-token feedback, repeated decode, complete logits, common-host sampling, stop, partial progress, streaming, detach/reconnect, reset, and graceful shutdown; startup and bounded warm-path profiling are admitted | runtime, KV, prefill, MoE, transformer, decode, logits, sampling, tokenizer, generation, runtime/client refoundation, and `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` |
+| Full-model performance | Identity-bound cold/warm profiles, preserved golden behavior, measured movement/synchronization, reusable expert placement, device routing, grouped multi-token MoE prefill, suffix chunking, stable decode, and quantitative GB10 admission | partial: startup is under four minutes and profile attribution is available, but warm decode is 0.432 tok/s and fails the 5/10/20 tok/s gates; continuation is explicit | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` and `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
 | CUDA | Capability admission is fail-closed; selected embedding, complete DeepSeek attention, routed/shared MoE, residual mHC, final collapse/norm, and direct encoded output-head projection have GB10 proof with no CPU numerical fallback | complete eager backbone and full-vocabulary logits ready; transformer/logits CUDA Graph and optimized/fused output-head execution remain unsupported | attention/KV/prefill/MoE/transformer/logits milestones |
 | Transformer | Numeric tokens execute selected embedding, 43 canonical attention/MoE blocks, deferred residuals, final mHC collapse, final RMSNorm, and atomic persistent-state publication | complete CPU/GB10 CUDA backbone and normalized hidden output, consumed by repeated decode and logits without duplicating final norm | transformer, decode, and logits milestones |
 | Text generation | Exact tokenizer, output head, logits, sampling, repeated decode, stop, detokenization, session continuation, and committed-fragment streaming | complete bounded CPU and mixed CUDA-model/host-sampling-tokenizer generation runtime with daemon-backed one-shot and retained multi-turn clients; model quality is not claimed | logits/sampling/tokenizer/generation/runtime-client milestones |
 | Operator | One truthful product client invokes the hosted release path while direct execution stays developer-only | complete; `yvex run` and `yvex chat` cross protocol v2 to the long-lived daemon, old public commands refuse, and the thin client has no engine symbols | `V010.RUNTIME.CLIENT.REFOUNDATION.0` |
-| Application provider | Provider-neutral typed requests traverse protocol v2 through one engine-free loopback OpenAI-compatible gateway with bounded JSON/SSE, tools, official SDKs, and unchanged application-consumer proof | complete for YVEX OpenAI Compatibility Profile v1; full OpenAI API and remote serving are not claimed | `V010.SERVE.OPENAI.COMPAT.0` |
-| Evaluation | Repeatable release-path quality, regression, context, and refusal cases | active; no behavior or quality result exists yet | `V010.EVAL.DEEPSEEK.0` |
+| Application provider | Provider-neutral typed requests traverse protocol v2 through one engine-free loopback OpenAI-compatible gateway with bounded JSON/SSE, tools, official SDKs, and unchanged application-consumer proof | implementation complete for YVEX OpenAI Compatibility Profile v1; the unchanged Bet-tennis-to-real-DeepSeek composition evidence is reopened, while full OpenAI API and remote serving are not claimed | `V010.SERVE.OPENAI.COMPAT.0` and `V010.SERVE.OPENAI.BETTENNIS.REAL.1` |
+| Evaluation | Repeatable release-path quality, regression, context, and refusal cases | blocked behind surface refoundation, canonical command-console work, and measured GB10 optimization; no behavior or quality result exists yet | `V010.EVAL.DEEPSEEK.0` |
 | Benchmark | Reproducible release-path prompt/context, full-model prefill/decode/generation throughput, latency, and memory measurements | not measured; bounded attention runtime benchmarks are available but do not satisfy this gate | `V010.BENCH.DEEPSEEK.0` |
 | Release | Full validation, artifact guardrail, claim audit, transcript, packaging, version, and tag | blocked | `V010.RELEASE.0` |
 

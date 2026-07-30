@@ -9,17 +9,14 @@
  * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
 #ifndef SRC_BACKEND_CUDA_PRIVATE_H_INCLUDED
 #define SRC_BACKEND_CUDA_PRIVATE_H_INCLUDED
-
 #include <stddef.h>
 #include <yvex/backend.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/quant_numeric.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 /* Driver contract. */
 typedef int CUresult;
 typedef int CUdevice;
@@ -74,6 +71,10 @@ typedef struct {
 #define YVEX_CUDA_ERROR_NOT_INITIALIZED 3
 #define YVEX_CUDA_ERROR_NO_DEVICE 100
 #define YVEX_CUDA_ERROR_NOT_SUPPORTED 801
+#define YVEX_CUDA_CTX_MAP_HOST 0x08u
+#define YVEX_CUDA_MEM_ATTACH_GLOBAL 0x01u
+#define YVEX_CUDA_MEMHOSTREGISTER_DEVICEMAP 0x02u
+#define YVEX_CUDA_DEVICE_ATTRIBUTE_CAN_MAP_HOST_MEMORY 19
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING 41
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_MANAGED_MEMORY 83
 typedef struct {
@@ -92,6 +93,11 @@ typedef struct {
     CUresult (*cuCtxSynchronize)(void);
     CUresult (*cuMemGetInfo_v2)(size_t *free_bytes, size_t *total_bytes);
     CUresult (*cuMemAlloc_v2)(CUdeviceptr *dptr, size_t bytesize);
+    CUresult (*cuMemAllocManaged)(CUdeviceptr *dptr, size_t bytesize, unsigned int flags);
+    CUresult (*cuMemHostRegister_v2)(void *ptr, size_t bytes, unsigned int flags);
+    CUresult (*cuMemHostGetDevicePointer_v2)(CUdeviceptr *device, void *host,
+                                             unsigned int flags);
+    CUresult (*cuMemHostUnregister)(void *ptr);
     CUresult (*cuMemFree_v2)(CUdeviceptr dptr);
     CUresult (*cuMemsetD8_v2)(CUdeviceptr dstDevice, unsigned char uc, size_t n);
     CUresult (*cuMemcpyHtoD_v2)(CUdeviceptr dstDevice, const void *srcHost, size_t ByteCount);
@@ -180,6 +186,7 @@ typedef struct {
     CUfunction qtype_row_dot_function;
     CUfunction attention_bf16_round_function;
     CUfunction qtype_matvec_function;
+    CUfunction q8_quantize_function;
     CUfunction deepseek_decode_function;
     CUfunction deepseek_weighted_norm_function;
     CUfunction deepseek_unit_norm_function;
@@ -192,6 +199,8 @@ typedef struct {
     CUfunction deepseek_topk_function;
     CUfunction deepseek_reduce_function;
     CUfunction moe_route_function;
+    CUfunction moe_grouped_up_function;
+    CUfunction moe_grouped_down_function;
     CUfunction moe_swiglu_function;
     CUfunction moe_accumulate_function;
     CUfunction mlp_function;
@@ -218,16 +227,17 @@ typedef struct {
     yvex_cuda_deferred_release deferred_releases[YVEX_CUDA_DEFERRED_RELEASE_MAX];
     unsigned int deferred_release_count;
     unsigned long long deferred_release_bytes;
+    void *registered_host;
+    CUdeviceptr registered_device;
+    unsigned long long registered_bytes;
     char kernel_bundle_identity[YVEX_SHA256_HEX_BYTES];
     char attention_compatibility_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
     char attention_capture_bucket[YVEX_BACKEND_CUDA_CAPTURE_BUCKET_CAP];
     const yvex_backend *context_owner;
     int context_borrowed;
 } yvex_cuda_backend_state;
-
 typedef int (*yvex_cuda_graph_enqueue_fn)(void *context, int enqueue_kernels,
                                           yvex_error *err);
-
 /* Canonical contiguous stages in the admitted CUDA attention launch schedule. */
 typedef enum {
     YVEX_CUDA_ATTENTION_STAGE_ENVELOPE_PRE = 0,
@@ -237,7 +247,6 @@ typedef enum {
     YVEX_CUDA_ATTENTION_STAGE_ENVELOPE_POST,
     YVEX_CUDA_ATTENTION_STAGE_COUNT
 } yvex_cuda_attention_stage;
-
 /* Purpose: admit only semantically active pieces to the piecewise launch graph. */
 static inline int cuda_attention_piece_active(
     yvex_backend_attention_scope scope,
@@ -253,17 +262,16 @@ static inline int cuda_attention_piece_active(
     return stage != YVEX_CUDA_ATTENTION_STAGE_COMPRESS ||
            attention_class != YVEX_BACKEND_ATTENTION_SWA;
 }
-
 typedef struct {
     yvex_backend *backend;
     yvex_cuda_backend_state *state;
     yvex_backend_operation_variant variant;
-    CUdeviceptr pointers[YVEX_CUDA_WORK_MAX_RANGES];
+    CUdeviceptr pointers[YVEX_CUDA_WORK_MAX_RANGES], q8_input;
     unsigned long long sizes[YVEX_CUDA_WORK_MAX_RANGES];
     unsigned char workspace_owned[YVEX_CUDA_WORK_MAX_RANGES];
     int prepare_only, raw_only;
     unsigned int count;
-    unsigned long long current_bytes, peak_bytes, budget, launches;
+    unsigned long long current_bytes, peak_bytes, budget, launches, q8_capacity;
 } yvex_cuda_work;
 typedef enum {
     YVEX_CUDA_WORK_FAILURE_NONE = 0,
@@ -528,7 +536,6 @@ int yvex_cuda_op_attention(yvex_backend *backend,
                            yvex_device_tensor *probability_scratch,
                            yvex_device_tensor *out,
                            yvex_error *err);
-
 /* Qtype contract. */
 int yvex_cuda_quant_row_dot(yvex_backend *backend,
                             unsigned int qtype,
@@ -539,9 +546,7 @@ int yvex_cuda_quant_row_dot(yvex_backend *backend,
                             float *out,
                             yvex_quant_failure *failure,
                             yvex_error *err);
-
 #ifdef __cplusplus
 }
 #endif
-
 #endif /* SRC_BACKEND_CUDA_PRIVATE_H_INCLUDED */

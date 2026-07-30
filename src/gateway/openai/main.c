@@ -7,9 +7,7 @@
  * Inputs: host/port/YVEX socket arguments and process termination signals.
  * Effects: runs one loopback listener and writes only entrypoint diagnostics to stderr.
  * Failure: exits nonzero without opening artifacts, models, CUDA, or runtime engine state. */
-
 #define _POSIX_C_SOURCE 200809L
-
 #include "src/gateway/openai/private.h"
 
 #include <errno.h>

@@ -80,7 +80,7 @@ function uncode(value) {
 ' "$project" > "$rows"
 
 row_count=$(wc -l < "$rows" | tr -d ' ')
-test "$row_count" -eq 686 || fail "expected 686 canonical IDs, found $row_count"
+test "$row_count" -eq 694 || fail "expected 694 canonical IDs, found $row_count"
 
 cut -f 2 "$rows" | LC_ALL=C sort > "$all_ids"
 unique_count=$(uniq "$all_ids" | wc -l | tr -d ' ')
@@ -91,7 +91,7 @@ duplicate=$(uniq -d "$all_ids" | head -n 1 || true)
 test -z "$duplicate" || fail "duplicate canonical ID: $duplicate"
 
 id_hash=$(sha256sum "$all_ids" | awk '{ print $1 }')
-expected_id_hash=4b064f49415fa30f6fd528369280afa6979f7839788ddad68668ef79418e411b
+expected_id_hash=72e2919f378f41cfc478b26a52c50f9ce30bbe7ab66c8a993c8c4e1dd97f6a33
 test "$id_hash" = "$expected_id_hash" ||
   fail "canonical ID set changed without an explicit migration: $id_hash"
 
@@ -136,6 +136,14 @@ V010.ARTIFACT.MATERIALIZE.1
 V010.CLI.DEEPSEEK.GENERATE.0
 V010.RUNTIME.CLIENT.REFOUNDATION.0
 V010.SERVE.OPENAI.COMPAT.0
+V010.SERVE.OPENAI.BETTENNIS.REAL.1
+V010.RUNTIME.DEEPSEEK.PERFORMANCE.0
+V010.PRODUCT.SURFACE.REALIGNMENT.0
+V010.OPERATOR.SURFACE.AUDIT.0
+V010.PROJECT.CONTROL.PUBLIC.0
+V010.OPERATOR.RUNTIME.CONSOLE.0
+V010.OPERATOR.COMMAND.CONSOLE.0
+V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
 V010.EVAL.DEEPSEEK.0
 V010.BENCH.DEEPSEEK.0
 V010.RUNTIME.DEEPSEEK.ATTENTION.KV.0
@@ -155,7 +163,7 @@ EOF
 
 LC_ALL=C sort -u "$new_ids" -o "$new_ids"
 new_count=$(wc -l < "$new_ids" | tr -d ' ')
-test "$new_count" -eq 55 || fail "expected 55 explicit new IDs, found $new_count"
+test "$new_count" -eq 63 || fail "expected 63 explicit new IDs, found $new_count"
 
 missing_new=$(comm -23 "$new_ids" "$all_ids" | head -n 1 || true)
 test -z "$missing_new" || fail "explicit new ID is absent: $missing_new"
@@ -413,8 +421,18 @@ grep -F '| `V010.RUNTIME.CLIENT.REFOUNDATION.0` | common host + DeepSeek first s
   fail "the runtime/client refoundation is not complete"
 grep -F '| `V010.SERVE.OPENAI.COMPAT.0` | common provider + DeepSeek first tool vertical | `complete` |' "$project" >/dev/null ||
   fail "OpenAI compatibility is not complete"
-grep -F '| `V010.EVAL.DEEPSEEK.0` | DeepSeek | `active` |' "$project" >/dev/null ||
-  fail "DeepSeek evaluation is not active after the application-provider gate"
+grep -F '| `V010.SERVE.OPENAI.BETTENNIS.REAL.1` | `evidence` | Bet-tennis + real DeepSeek | `reopened` |' "$project" >/dev/null ||
+  fail "real Bet-tennis/DeepSeek composition evidence is not reopened"
+grep -F '| `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` | DeepSeek / GB10 | `partial` |' "$project" >/dev/null ||
+  fail "bounded DeepSeek PASS 4 delivery is not partial"
+grep -F '| `V010.PRODUCT.SURFACE.REALIGNMENT.0` | product | `active` |' "$project" >/dev/null ||
+  fail "product-surface realignment is not active"
+grep -F '| `V010.OPERATOR.RUNTIME.CONSOLE.0` | common console + DeepSeek first vertical | `superseded` |' "$project" >/dev/null ||
+  fail "standalone runtime console is not superseded"
+grep -F '| `V010.OPERATOR.COMMAND.CONSOLE.0` | product commands + runtime console | `blocked` |' "$project" >/dev/null ||
+  fail "canonical command-console milestone is not blocked"
+grep -F '| `V010.EVAL.DEEPSEEK.0` | DeepSeek | `blocked` |' "$project" >/dev/null ||
+  fail "DeepSeek evaluation is not blocked behind performance and console"
 grep -F '| V010.MODEL.TRANSFORM.IR.0 | recovered/promoted |' "$project" >/dev/null ||
   fail "quantization does not depend on the transformation IR"
 

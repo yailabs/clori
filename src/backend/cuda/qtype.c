@@ -11,16 +11,13 @@
  * Effects: Uses temporary CUDA allocations and releases them before returning.
  * Failure: Unsupported qtypes and Driver failures return typed refusal with deterministic cleanup. */
 #include "src/backend/cuda/private.h"
-
 #include <yvex/internal/quant_numeric.h>
-
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
 #define CUDA_QTYPE_MATVEC_BLOCK 256u
-
+#define CUDA_QTYPE_MATVEC_ROWS 8u
 /* Purpose: Implement the canonical quant fail mechanism owned by the CUDA backend boundary.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
@@ -50,7 +47,6 @@ static int cuda_quant_fail(yvex_quant_failure *failure,
     yvex_error_set(err, (yvex_status)status, "cuda.quant.row_dot", message);
     return status;
 }
-
 /* Purpose: project one resident encoded matrix through the generic CUDA qtype matvec.
  * Inputs: exact resident span/geometry and stable backend-owned F32 input/output tensors.
  * Effects: launches every row and marks the complete output written only after status validation.
@@ -67,9 +63,9 @@ int yvex_backend_cuda_encoded_matvec(
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
     unsigned long long device_address = 0ull, input_bytes, output_bytes;
-    CUdeviceptr encoded_ptr, input_ptr, output_ptr, status = 0ull;
+    CUdeviceptr encoded_ptr, input_ptr, output_ptr, status = 0ull, quantized = 0ull;
     unsigned long long start_row = 0ull;
-    int output_bf16 = 0, host_status = 0, rc, cleanup_rc;
+    int output_bf16 = 0, host_status = 0, rc, cleanup_rc, q8_path, q8_input = 0;
     yvex_error cleanup;
     if (kernel_launches) *kernel_launches = 0ull;
     if (!state || !resident_encoded || !encoded_bytes || !row_count ||
@@ -99,17 +95,43 @@ int yvex_backend_cuda_encoded_matvec(
     encoded_ptr = (CUdeviceptr)device_address;
     input_ptr = (CUdeviceptr)input->data;
     output_ptr = (CUdeviceptr)output->data;
+    q8_path = row_width % 256ull == 0ull &&
+              (qtype == YVEX_GGUF_QTYPE_IQ2_XXS || qtype == YVEX_GGUF_QTYPE_Q2_K ||
+               qtype == YVEX_GGUF_QTYPE_Q8_0);
+    if (rc == YVEX_OK && q8_path) {
+        unsigned long long blocks = row_width / 256ull;
+        if (blocks > UINT_MAX || blocks > ULLONG_MAX / 292ull) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.encoded-matvec",
+                           "Q8 activation workspace exceeds launch bounds");
+            rc = YVEX_ERR_BOUNDS;
+        } else
+            rc = yvex_cuda_work_allocate(&work, &quantized, (size_t)(blocks * 292ull),
+                                         NULL, 0, "cuda.encoded-matvec.q8", NULL, err);
+        if (rc == YVEX_OK) {
+            unsigned long long one = 1ull;
+            void *params[] = {&quantized, &input_ptr, &row_width, &one, &status};
+            rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                                  state->q8_quantize_function, (unsigned int)blocks,
+                                  CUDA_QTYPE_MATVEC_BLOCK, 0u, params,
+                                  "cuda.encoded-matvec.q8", err);
+            if (rc == YVEX_OK && kernel_launches) *kernel_launches = 1ull;
+        }
+    }
     if (rc == YVEX_OK) {
         void *params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
-                          &row_count, &qtype, &input_ptr, &output_ptr,
+                          &row_count, &qtype, &input_ptr, &q8_input, &output_ptr,
                           &output_bf16, &status};
+        void *q8_params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
+                             &row_count, &qtype, &quantized, &q8_input, &output_ptr,
+                             &output_bf16, &status};
+        unsigned int grid = (unsigned int)((row_count + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
+                                           CUDA_QTYPE_MATVEC_ROWS);
+        q8_input = q8_path;
         rc = yvex_cuda_launch(
-            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-            state->qtype_matvec_function, (unsigned int)row_count,
-            CUDA_QTYPE_MATVEC_BLOCK,
-            CUDA_QTYPE_MATVEC_BLOCK * (unsigned int)sizeof(double), params,
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, state->qtype_matvec_function,
+            grid, CUDA_QTYPE_MATVEC_BLOCK, 0u, q8_path ? q8_params : params,
             "cuda.encoded-matvec.launch", err);
-        if (rc == YVEX_OK && kernel_launches) *kernel_launches = 1ull;
+        if (rc == YVEX_OK && kernel_launches) (*kernel_launches)++;
     }
     if (rc == YVEX_OK)
         rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -136,7 +158,6 @@ int yvex_backend_cuda_encoded_matvec(
     }
     return rc;
 }
-
 /*
  * Executes one encoded row dot directly on CUDA. Host inputs are borrowed,
  * device temporaries are always released, and no decoded tensor is retained. */
@@ -171,7 +192,6 @@ int yvex_cuda_quant_row_dot(yvex_backend *backend,
     yvex_error primary_error;
     int rc;
     int cleanup_rc;
-
     memset(&work, 0, sizeof(work));
     if (failure) memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
@@ -244,7 +264,6 @@ int yvex_cuda_quant_row_dot(yvex_backend *backend,
     rc = yvex_cuda_work_allocate(&work, &device_output, sizeof(float), NULL, 1,
                                  "cuda.quant.row_dot.alloc_output", NULL, err);
     if (rc != YVEX_OK) goto execution_failure;
-
     copy_failure = getenv("YVEX_TEST_CUDA_QTYPE_COPY_FAILURE");
     if (copy_failure && strcmp(copy_failure, "input") == 0) {
         yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.quant.row_dot.copy_input",
@@ -287,7 +306,6 @@ int yvex_cuda_quant_row_dot(yvex_backend *backend,
         state->driver.cuMemcpyDtoH_v2(out, device_output, sizeof(float)),
         "cuda.quant.row_dot.copy_output", err);
     if (rc != YVEX_OK) goto execution_failure;
-
     cleanup_rc = yvex_cuda_work_cleanup(&work, err);
     if (cleanup_rc != YVEX_OK) {
         return cuda_quant_fail(
@@ -297,7 +315,6 @@ int yvex_cuda_quant_row_dot(yvex_backend *backend,
     if (failure) memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
     return YVEX_OK;
-
 execution_failure:
     if (err)
         primary_error = *err;

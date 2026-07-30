@@ -9,20 +9,16 @@
  * Failure: implementations own and clear all allocations described here. */
 #ifndef SRC_GATEWAY_OPENAI_PRIVATE_H_INCLUDED
 #define SRC_GATEWAY_OPENAI_PRIVATE_H_INCLUDED
-
 #include <signal.h>
 #include <stddef.h>
-
 #include <yvex/provider.h>
 #include <yvex/server.h>
-
 #define OPENAI_COMPAT_PROFILE "yvex.openai.compat.v1"
 #define OPENAI_HTTP_BODY_MAX YVEX_PROVIDER_WIRE_MAX_BYTES
 #define OPENAI_HTTP_HEADER_MAX 32768u
 #define OPENAI_HTTP_HEADER_COUNT_MAX 64u
 #define OPENAI_RESPONSE_RECORD_MAX 64u
 #define OPENAI_RESPONSE_TTL_SECONDS 3600u
-
 typedef enum {
     OPENAI_ENDPOINT_HEALTH = 0,
     OPENAI_ENDPOINT_MODELS,
@@ -30,7 +26,6 @@ typedef enum {
     OPENAI_ENDPOINT_CHAT,
     OPENAI_ENDPOINT_RESPONSES
 } openai_endpoint;
-
 typedef enum {
     OPENAI_RESPONSE_EVENT_CREATED = 0,
     OPENAI_RESPONSE_EVENT_OUTPUT_ITEM_ADDED,
@@ -45,14 +40,12 @@ typedef enum {
     OPENAI_RESPONSE_EVENT_INCOMPLETE,
     OPENAI_RESPONSE_EVENT_FAILED
 } openai_response_event_kind;
-
 typedef struct {
     char method[8];
     char path[256];
     unsigned char *body;
     unsigned long long body_count;
 } openai_http_request;
-
 typedef struct {
     int fd;
     int headers_sent;
@@ -61,12 +54,10 @@ typedef struct {
     unsigned long long response_sequence;
     int response_item_started;
 } openai_http_sink;
-
 typedef struct {
     yvex_provider_request *provider;
     openai_endpoint endpoint;
 } openai_admitted_request;
-
 typedef struct {
     unsigned char *text, *arguments;
     unsigned long long text_count, text_capacity;
@@ -80,7 +71,6 @@ typedef struct {
     yvex_client_failure_class failure_class;
     int has_tool_call, complete;
 } openai_generation_result;
-
 typedef struct {
     int occupied;
     char response_id[YVEX_PROVIDER_ID_CAP];
@@ -89,16 +79,15 @@ typedef struct {
     yvex_provider_request *context;
     unsigned long long created_seconds, last_used_sequence;
 } openai_response_record;
-
 typedef struct {
     char host[64];
     unsigned short port;
     unsigned long long yvex_timeout_ms;
+    volatile sig_atomic_t *stop;
     char yvex_socket[YVEX_SERVER_SOCKET_PATH_CAP];
     unsigned long long next_id, request_count;
     openai_response_record records[OPENAI_RESPONSE_RECORD_MAX];
 } openai_gateway;
-
 int openai_http_read(int fd, openai_http_request *request, yvex_error *err);
 void openai_http_request_clear(openai_http_request *request);
 int openai_http_json(int fd, int status, const unsigned char *body,
@@ -108,7 +97,8 @@ int openai_http_sse_event(int fd, const char *event,
                           const unsigned char *json,
                           unsigned long long count, yvex_error *err);
 int openai_http_sse_done(int fd, yvex_error *err);
-
+int openai_http_peer_wait(int fd, unsigned int milliseconds, int *closed,
+                          yvex_error *err);
 int openai_json_admit(const openai_http_request *http,
                       openai_endpoint endpoint, const char *model,
                       openai_admitted_request *request, yvex_error *err);
@@ -144,7 +134,6 @@ int openai_json_response_event(openai_response_event_kind kind,
                                unsigned long long sequence,
                                unsigned char **output,
                                unsigned long long *count, yvex_error *err);
-
 openai_response_record *openai_state_find(openai_gateway *gateway,
                                           const char *response_id,
                                           unsigned long long now);
@@ -159,8 +148,6 @@ int openai_state_replace(openai_gateway *gateway,
                          unsigned long long now, yvex_error *err);
 void openai_state_remove(openai_response_record *record);
 void openai_state_clear(openai_gateway *gateway);
-
 int openai_gateway_run(openai_gateway *gateway, volatile sig_atomic_t *stop,
                        yvex_error *err);
-
 #endif

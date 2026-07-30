@@ -640,7 +640,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     const float input_data[8] = {1.0f, -2.0f, 3.0f, -4.0f,
                                  5.0f, -6.0f, 7.0f, -8.0f};
     float dynamic_data[8] = {0};
-    unsigned char resident_data[32] = {0};
+    unsigned char *resident_data = NULL;
     attention_graph_fixture fixture;
     yvex_backend_attention_job job;
     yvex_backend_cuda_attention_graph_entry entry;
@@ -689,12 +689,14 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "full graph mode refuses without stable residency and workspace");
 
     make_desc(&desc, "attention_resident");
-    rc = yvex_backend_tensor_alloc(backend, &desc, &resident, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "allocate stable resident range");
+    rc = backend->vtable->resident_alloc(
+        backend, &desc, &resident, &resident_data, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "allocate stable managed resident range");
+    memset(resident_data, 0, (size_t)desc.bytes);
     make_desc(&desc, "attention_workspace");
     rc = yvex_backend_tensor_alloc(backend, &desc, &workspace, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "allocate stable workspace range");
-    rc = yvex_backend_resident_attach(backend, resident_data, sizeof(resident_data),
+    rc = yvex_backend_resident_attach(backend, resident_data, desc.bytes,
                                       resident, 7ull, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "attach stable attention residency");
     rc = yvex_backend_workspace_attach(backend, workspace, 9ull, &err);
@@ -1148,7 +1150,8 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "new compatibility identity invalidates before full mode configuration");
     yvex_backend_workspace_detach(backend);
-    yvex_backend_resident_detach(backend);
+    YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK,
+                     "detach stable attention residency");
     rc = yvex_backend_tensor_release(backend, &workspace, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "release stable workspace range");
     rc = yvex_backend_tensor_release(backend, &resident, &err);

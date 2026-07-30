@@ -245,6 +245,24 @@ static int test_http_admission(void)
     return 0;
 }
 
+/* Purpose: prove bounded HTTP peer observation distinguishes an open socket from FIN. */
+static int test_http_peer_liveness(void)
+{
+    int pair[2], closed = -1;
+    yvex_error err;
+    YVEX_TEST_ASSERT(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0,
+                     "HTTP peer-liveness socket pair must open");
+    YVEX_TEST_ASSERT(openai_http_peer_wait(pair[1], 1u, &closed, &err) == YVEX_OK &&
+                         !closed,
+                     "an idle connected HTTP peer must remain live");
+    close(pair[0]);
+    YVEX_TEST_ASSERT(openai_http_peer_wait(pair[1], 100u, &closed, &err) == YVEX_OK &&
+                         closed,
+                     "HTTP peer FIN must be observed without a response write");
+    close(pair[1]);
+    return 0;
+}
+
 /* Purpose: run the bounded compatibility-adapter unit matrix. */
 int yvex_test_openai(void)
 {
@@ -252,5 +270,6 @@ int yvex_test_openai(void)
     if (test_request_refusals() != 0) return 1;
     if (test_responses_admission() != 0) return 1;
     if (test_rendering() != 0) return 1;
-    return test_http_admission();
+    if (test_http_admission() != 0) return 1;
+    return test_http_peer_liveness();
 }

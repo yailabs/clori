@@ -11,24 +11,20 @@
  * Failure: preserves typed partial token/model/text progress and never publishes text for an uncommitted token. */
 #ifndef INCLUDE_YVEX_INTERNAL_GENERATION_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_GENERATION_H_INCLUDED
-
 #include <yvex/internal/sampling.h>
+#include <yvex/internal/profile.h>
 #include <yvex/tokenizer.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V1 1u
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V2 2u
 #define YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 1u
-
 typedef enum {
     YVEX_GENERATION_INPUT_TEXT = 0,
     YVEX_GENERATION_INPUT_MESSAGES = 1,
     YVEX_GENERATION_INPUT_PROVIDER = 2
 } yvex_runtime_generation_input_kind;
-
 typedef enum {
     YVEX_GENERATION_STOP_NONE = 0,
     YVEX_GENERATION_STOP_EOS,
@@ -40,7 +36,6 @@ typedef enum {
     YVEX_GENERATION_STOP_TOKENIZER_FAILURE,
     YVEX_GENERATION_STOP_OUTPUT_FAILURE
 } yvex_runtime_generation_stop_reason;
-
 typedef enum {
     YVEX_GENERATION_STATUS_NONE = 0,
     YVEX_GENERATION_STATUS_COMPLETE,
@@ -48,7 +43,6 @@ typedef enum {
     YVEX_GENERATION_STATUS_CANCELLED,
     YVEX_GENERATION_STATUS_FAILED
 } yvex_runtime_generation_status;
-
 typedef struct {
     unsigned int schema_version;
     yvex_backend_kind backend;
@@ -61,7 +55,6 @@ typedef struct {
     int (*cancel_requested)(void *context);
     void *cancel_context;
 } yvex_runtime_generation_options;
-
 typedef struct {
     unsigned int schema_version;
     yvex_runtime_generation_input_kind kind;
@@ -73,7 +66,6 @@ typedef struct {
     yvex_tokenizer_encode_options encode_options;
     const yvex_provider_request *provider_request;
 } yvex_runtime_generation_request;
-
 typedef struct {
     unsigned int schema_version;
     yvex_backend_kind backend;
@@ -91,7 +83,6 @@ typedef struct {
     char stop_policy_identity[YVEX_SHA256_HEX_CAP];
     char generation_plan_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_plan_summary;
-
 typedef struct {
     unsigned int schema_version;
     unsigned long long ordinal;
@@ -111,7 +102,6 @@ typedef struct {
     char decoder_fragment_identity[YVEX_SHA256_HEX_CAP];
     char token_step_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_token_result;
-
 typedef struct {
     unsigned int schema_version;
     yvex_runtime_generation_status status;
@@ -137,24 +127,21 @@ typedef struct {
     char final_persistent_state_digest[YVEX_SHA256_HEX_CAP];
     char generation_plan_identity[YVEX_SHA256_HEX_CAP];
     char generation_execution_identity[YVEX_SHA256_HEX_CAP];
+    yvex_runtime_profile_record profile;
 } yvex_runtime_generation_result;
-
 typedef int (*yvex_runtime_generation_fragment_sink)(
     void *context, const yvex_runtime_generation_token_result *token,
     const unsigned char *bytes, unsigned long long byte_count,
     yvex_error *err);
-
 typedef enum {
     YVEX_GENERATION_PROGRESS_PROMPT_ACCEPTED = 0,
     YVEX_GENERATION_PROGRESS_PREFILL_STARTED,
     YVEX_GENERATION_PROGRESS_PREFILL_COMPLETED
 } yvex_runtime_generation_progress_kind;
-
 typedef int (*yvex_runtime_generation_progress_sink)(
     void *context, yvex_runtime_generation_progress_kind kind,
     unsigned long long value_a, unsigned long long value_b,
     yvex_error *err);
-
 typedef struct {
     unsigned int schema_version;
     const yvex_runtime_generation_request *prompt;
@@ -168,7 +155,6 @@ typedef struct {
     yvex_runtime_generation_progress_sink progress_sink;
     void *progress_context;
 } yvex_runtime_generation_turn_request;
-
 typedef struct {
     unsigned int schema_version;
     int open, busy, closing;
@@ -179,9 +165,7 @@ typedef struct {
     char token_sequence_identity[YVEX_SHA256_HEX_CAP];
     char rng_state_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_context_summary;
-
 typedef struct yvex_runtime_generation_context yvex_runtime_generation_context;
-
 int yvex_runtime_generation_context_open(
     yvex_runtime_generation_context **out, yvex_runtime_model *model,
     yvex_runtime_execution_session *session,
@@ -210,7 +194,6 @@ int yvex_runtime_generation_result_validate(
     const yvex_runtime_generation_result *result, yvex_error *err);
 int yvex_runtime_generation_context_close(
     yvex_runtime_generation_context **context, yvex_error *err);
-
 typedef struct {
     const char *target, *artifact_path, *runtime_binding_path;
     yvex_backend_kind backend;
@@ -227,7 +210,6 @@ typedef struct {
     int (*cancel_requested)(void *context);
     void *cancel_context;
 } yvex_generation_operator_request;
-
 typedef struct {
     int completed;
     char status[32], command[64], target[128], family[32], backend[16];
@@ -251,17 +233,14 @@ typedef struct {
     int model_behavior_evaluation_ready, full_model_benchmark_ready;
     int release_qualification_ready, mtp_ready, speculative_execution_ready;
 } yvex_generation_operator_result;
-
 int yvex_runtime_generation_operator_execute(
     const yvex_generation_operator_request *request,
     yvex_generation_operator_result *result,
     yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err);
 void yvex_runtime_generation_operator_result_release(
     yvex_generation_operator_result *result);
-
 const char *yvex_runtime_generation_stop_reason_name(
     yvex_runtime_generation_stop_reason reason);
-
 #ifdef __cplusplus
 }
 #endif

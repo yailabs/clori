@@ -8,30 +8,25 @@
  * Effects: reads selected/global weights, reuses bounded buffers, commits complete chunks, and publishes results.
  * Failure: cancellation, drift, state, resource, or numeric error commits no failing chunk and no hidden output. */
 #include <yvex/internal/transformer.h>
-
 #include <math.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
-
 typedef struct {
     unsigned char *bytes;
     unsigned long long capacity;
     float *decoded;
     unsigned long long decoded_count;
 } transformer_weight_owner;
-
 static const yvex_tensor_role transformer_runtime_roles[YVEX_TRANSFORMER_WEIGHT_COUNT] = {
     YVEX_TENSOR_ROLE_TOKEN_EMBEDDING, YVEX_TENSOR_ROLE_HC_HEAD_FUNCTION,
     YVEX_TENSOR_ROLE_HC_HEAD_BASE, YVEX_TENSOR_ROLE_HC_HEAD_SCALE,
     YVEX_TENSOR_ROLE_OUTPUT_NORM};
-
 struct yvex_runtime_transformer_context {
     yvex_runtime_model *model;
     yvex_runtime_execution_session *session;
@@ -53,10 +48,27 @@ struct yvex_runtime_transformer_context {
     pthread_mutex_t mutex;
     int mutex_ready, busy, invalidated;
 };
-
 static int transformer_hash_values(yvex_sha256 *hash, const float *values,
                                    unsigned long long count);
-
+/* Purpose: identify a completed device-resident block when normal serving omits host numerics.
+ * Inputs: exact plan/layer/routing facts. Effects: writes one evidence digest.
+ * Failure: identity construction returns false. Boundary: this is not a numerical output digest. */
+static int transformer_device_block_digest(
+    const yvex_transformer_plan_summary *plan, unsigned long long layer,
+    const char *routing, char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    if (!plan || !routing || !output) return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.transformer.device-block.v1") ||
+        !yvex_sha256_update_text(&hash, plan->transformer_plan_identity) ||
+        !yvex_sha256_update_u64(&hash, layer) ||
+        !yvex_sha256_update_text(&hash, routing) || !yvex_sha256_final(&hash, digest))
+        return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
 typedef struct {
     yvex_runtime_transformer_context *owner;
     const unsigned int *tokens;
@@ -66,15 +78,14 @@ typedef struct {
     yvex_sha256 layer_hash, routing_hash, embedding_hash;
     yvex_backend_kind backend;
     yvex_runtime_transformer_result *result;
+    char last_expanded_digest[YVEX_SHA256_HEX_CAP];
 } transformer_chunk_context;
-
 /* Purpose: publish one stable runtime transformer refusal. */
 static int transformer_runtime_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "runtime.transformer", reason);
     return status;
 }
-
 /* Purpose: resolve one plan binding to its exact immutable materialization record. */
 static const yvex_materialized_tensor_binding *transformer_runtime_binding(
     const yvex_runtime_transformer_context *context, yvex_transformer_weight_slot slot)
@@ -86,7 +97,6 @@ static const yvex_materialized_tensor_binding *transformer_runtime_binding(
                      context->model_view->materialization, summary->weights[slot].tensor_id)
                : NULL;
 }
-
 /* Purpose: project one exact descriptor/materialization binding into pointer-free plan facts.
  * Inputs: model view and required global role. Effects: fills one caller-owned binding fact.
  * Failure: rejects missing geometry or unavailable CPU/CUDA qtype compute.
@@ -119,7 +129,6 @@ static int transformer_runtime_binding_project(
         binding->encoded_bytes, binding->role, binding->qtype};
     return YVEX_OK;
 }
-
 /* Purpose: assemble typed family/runtime facts for the family-neutral graph plan.
  * Inputs: sealed model view and registered adapter. Effects: fills pointer-free facts.
  * Failure: missing adapter policy or identities refuse before plan allocation.
@@ -153,7 +162,6 @@ static int transformer_runtime_plan_facts(
             return yvex_error_code(err);
     return YVEX_OK;
 }
-
 /* Purpose: read one exact admitted transformer binding range.
  * Inputs: context, binding, checked range, and destination. Effects: fills destination.
  * Failure: typed range/I/O refusal. Boundary: immutable materialization bytes only. */
@@ -172,7 +180,6 @@ static int transformer_runtime_read(yvex_runtime_transformer_context *context,
                                               offset, destination, (size_t)bytes,
                                               &failure, err);
 }
-
 /* Purpose: decode one exact qtype extent through the canonical decoder.
  * Inputs: binding and block-exact encoded/output ranges. Effects: fills decoded values.
  * Failure: typed geometry/codec refusal. Boundary: no whole-collection decode. */
@@ -204,7 +211,6 @@ static int transformer_runtime_decode(const yvex_materialized_tensor_binding *bi
     }
     return YVEX_OK;
 }
-
 /* Purpose: allocate and decode final transformer globals once per context.
  * Inputs: sealed context and budgets. Effects: owns immutable decoded global weights.
  * Failure: typed allocation/read/decode refusal. Boundary: excludes embedding rows and layer weights. */
@@ -244,7 +250,6 @@ static int transformer_runtime_globals(yvex_runtime_transformer_context *context
     context->host_bytes = total;
     return YVEX_OK;
 }
-
 /* Purpose: allocate one stable backend tensor with exact byte/element geometry.
  * Inputs: CUDA context, name, dtype, element count, and byte extent.
  * Effects: returns one context-owned device allocation. Failure: typed backend refusal.
@@ -262,7 +267,6 @@ static int transformer_device_tensor_open(
     descriptor.bytes = bytes;
     return yvex_backend_tensor_alloc(context->session_view->backend, &descriptor, out, err);
 }
-
 /* Purpose: seal all stable CUDA transformer activation and final-weight resources.
  * Inputs: exact chunk extents and admitted global/embedding bindings.
  * Effects: allocates device tensors once and uploads decoded immutable final weights.
@@ -324,7 +328,6 @@ static int transformer_device_buffers(yvex_runtime_transformer_context *context,
     }
     return rc;
 }
-
 /* Purpose: allocate all chunk buffers once and refuse later growth.
  * Inputs: requested token capacity. Effects: allocates stable host publication/scratch ranges.
  * Failure: no incomplete capacity is admitted. Boundary: no execution or state mutation. */
@@ -371,7 +374,6 @@ static int transformer_runtime_buffers(yvex_runtime_transformer_context *context
     context->host_bytes += bytes;
     return transformer_device_buffers(context, hidden, expanded, err);
 }
-
 /* Purpose: borrow an exact leading byte span from one backend-owned encoded tensor.
  * Inputs: parent device tensor, requested bytes, and output view. Effects: publishes a borrowed subview.
  * Failure: returns false for absent or out-of-bounds storage. Boundary: never allocates or transfers. */
@@ -388,7 +390,6 @@ static int transformer_encoded_subview(const yvex_device_tensor *source,
     view->bytes = bytes;
     return 1;
 }
-
 /* Purpose: prepare selected embedding rows and exact initial expanded state.
  * Inputs: token chunk and admitted embedding binding. Effects: reads selected rows and fills scratch.
  * Failure: typed range/qtype/numeric refusal. Boundary: never reads the complete vocabulary matrix. */
@@ -461,7 +462,6 @@ static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_
     return yvex_transformer_initial_residual(context->plan, context->embedding,
                                              chunk->token_count, context->expanded_a, err);
 }
-
 /* Purpose: hash finite F32 values by canonical bits. Inputs: values/hash. Effects: updates hash.
  * Failure: false on non-finite/hash refusal. Boundary: excludes pointers and native aggregate bytes. */
 static int transformer_hash_values(yvex_sha256 *hash, const float *values,
@@ -476,7 +476,6 @@ static int transformer_hash_values(yvex_sha256 *hash, const float *values,
     }
     return 1;
 }
-
 /* Purpose: derive one checked borrowed F32 range without creating device ownership.
  * Inputs: one owned tensor plus element offset/count. Effects: fills a non-owning alias.
  * Failure: false on owner/dtype/range mismatch. Boundary: alias must never be released. */
@@ -496,7 +495,6 @@ static int transformer_device_subview(const yvex_device_tensor *source,
     view->data = source->data + offset * sizeof(float);
     return 1;
 }
-
 /* Purpose: borrow the current internally generated expanded activation for one ordered layer. */
 static int transformer_activation_view(void *opaque, unsigned long long layer_ordinal,
                                        unsigned long long token_count, const float **input,
@@ -513,7 +511,6 @@ static int transformer_activation_view(void *opaque, unsigned long long layer_or
     *stride = s->expanded_width;
     return YVEX_OK;
 }
-
 /* Purpose: borrow the current and next device-resident activation views for attention.
  * Inputs: exact ordered layer/chunk coordinates. Effects: returns non-owning device aliases.
  * Failure: typed order or geometry refusal. Boundary: CUDA transformer composition only. */
@@ -531,7 +528,6 @@ static int transformer_device_view(void *opaque, unsigned long long layer_ordina
     *output = &chunk->device_attention;
     return YVEX_OK;
 }
-
 /* Purpose: complete one ordered transformer block from its staged attention publication.
  * Inputs: exact layer/token coordinates, active-transaction publication, and output workspace.
  * Effects: executes MoE/deferred mHC post and publishes field-wise block evidence.
@@ -554,6 +550,8 @@ int yvex_runtime_transformer_execute_block(
     yvex_sha256 routing_hash, output_hash, identity_hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long token, output_elements;
+    unsigned long long started_ns;
+    int normal_cuda;
     int rc = YVEX_OK;
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !s || !layer || !token_ids || !token_count || !attention ||
@@ -566,6 +564,9 @@ int yvex_runtime_transformer_execute_block(
         (backend == YVEX_BACKEND_KIND_CUDA && (!device_attention || !device_output)))
         return transformer_runtime_refuse(err, YVEX_ERR_FORMAT,
                                           "transformer attention publication is incompatible");
+    started_ns = yvex_core_monotonic_ns();
+    normal_cuda = backend == YVEX_BACKEND_KIND_CUDA &&
+                  context->options.evidence_level != YVEX_ATTENTION_EVIDENCE_FULL;
     yvex_sha256_init(&routing_hash);
     (void)yvex_sha256_update_text(&routing_hash, "yvex.transformer.block.routing.v1");
     for (token = 0ull; token < token_count; ++token) {
@@ -615,25 +616,39 @@ int yvex_runtime_transformer_execute_block(
         result->h2d_bytes += moe_result.host_to_device_bytes;
         result->d2h_bytes += moe_result.device_to_host_bytes;
         result->kernel_launches += moe_result.kernel_launches;
+        result->d2d_bytes += moe_result.device_to_device_bytes;
+        result->upload_count += moe_result.upload_count;
+        result->download_count += moe_result.download_count;
+        result->cache_hits += moe_result.cache_hits;
+        result->cache_misses += moe_result.cache_misses;
+        result->stream_synchronizations += moe_result.stream_synchronizations;
+        result->device_synchronizations += moe_result.device_synchronizations;
+        result->moe_ns += moe_result.total_ns;
+        result->synchronization_ns += moe_result.synchronization_ns;
         if (!yvex_sha256_update_text(&routing_hash, moe_result.routing_digest))
             return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                               "transformer block routing digest failed");
     }
-    rc = yvex_transformer_deferred_post(
-        context->plan, attention->envelope_output, context->moe_combined,
-        context->moe_post, context->moe_combination, token_count, expanded_output, err);
-    if (rc != YVEX_OK) return rc;
-    yvex_sha256_init(&output_hash);
-    if (!yvex_sha256_update_text(&output_hash, "yvex.transformer.block.output.v1") ||
-        !transformer_hash_values(&output_hash, expanded_output, output_elements) ||
-        !yvex_sha256_final(&output_hash, digest))
-        return transformer_runtime_refuse(err, YVEX_ERR_STATE,
-                                          "transformer block output digest failed");
-    yvex_sha256_hex(digest, result->expanded_digest);
     if (!yvex_sha256_final(&routing_hash, digest))
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                           "transformer block routing digest failed");
     yvex_sha256_hex(digest, result->routing_digest);
+    if (!normal_cuda) {
+        rc = yvex_transformer_deferred_post(
+            context->plan, attention->envelope_output, context->moe_combined,
+            context->moe_post, context->moe_combination, token_count, expanded_output, err);
+        if (rc != YVEX_OK) return rc;
+        yvex_sha256_init(&output_hash);
+        if (!yvex_sha256_update_text(&output_hash, "yvex.transformer.block.output.v1") ||
+            !transformer_hash_values(&output_hash, expanded_output, output_elements) ||
+            !yvex_sha256_final(&output_hash, digest))
+            return transformer_runtime_refuse(err, YVEX_ERR_STATE,
+                                              "transformer block output digest failed");
+        yvex_sha256_hex(digest, result->expanded_digest);
+    } else if (!transformer_device_block_digest(
+                   s, layer_ordinal, result->routing_digest, result->expanded_digest))
+        return transformer_runtime_refuse(err, YVEX_ERR_STATE,
+                                          "transformer device block identity failed");
     yvex_sha256_init(&identity_hash);
     if (!yvex_sha256_update_text(&identity_hash, "yvex.transformer.block.execution.v1") ||
         !yvex_sha256_update_text(&identity_hash, s->transformer_plan_identity) ||
@@ -641,17 +656,18 @@ int yvex_runtime_transformer_execute_block(
         !yvex_sha256_update_text(&identity_hash, result->routing_digest) ||
         !yvex_sha256_update_text(&identity_hash, result->expanded_digest) ||
         !yvex_sha256_update_u64(&identity_hash, backend) ||
+        !yvex_sha256_update_u64(&identity_hash, context->options.evidence_level) ||
         !yvex_sha256_final(&identity_hash, digest))
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                           "transformer block execution identity failed");
     yvex_sha256_hex(digest, result->execution_identity);
     result->layer_ordinal = layer_ordinal;
     result->token_count = token_count;
+    if (!result->moe_ns) result->moe_ns = yvex_core_monotonic_ns() - started_ns;
     result->completed = 1;
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: complete and advance one ordered block inside the active all-layer transaction.
  * Inputs: ordered callback context, exact backend, and completed attention publication.
  * Effects: executes the block API, accumulates evidence, swaps residual state, and may run final norm.
@@ -676,10 +692,18 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
         backend == YVEX_BACKEND_KIND_CUDA ? &chunk->device_attention : NULL,
         backend == YVEX_BACKEND_KIND_CUDA ? &chunk->device_next : NULL,
         chunk->next, &block, err);
-    if (rc != YVEX_OK || !transformer_hash_values(
-            &chunk->layer_hash, chunk->next, chunk->token_count * s->expanded_width))
-        return rc != YVEX_OK ? rc : transformer_runtime_refuse(
+    if (rc != YVEX_OK) return rc;
+    if (backend == YVEX_BACKEND_KIND_CUDA &&
+        context->options.evidence_level != YVEX_ATTENTION_EVIDENCE_FULL) {
+        if (!yvex_sha256_update_text(&chunk->layer_hash, block.expanded_digest))
+            return transformer_runtime_refuse(
+                err, YVEX_ERR_STATE, "transformer device layer identity update failed");
+    } else if (!transformer_hash_values(
+                   &chunk->layer_hash, chunk->next,
+                   chunk->token_count * s->expanded_width))
+        return transformer_runtime_refuse(
             err, YVEX_ERR_STATE, "transformer layer digest update failed");
+    yvex_runtime_identity_copy(chunk->last_expanded_digest, block.expanded_digest);
     if (!yvex_sha256_update_text(&chunk->routing_hash, block.routing_digest))
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                           "transformer routing digest update failed");
@@ -689,7 +713,16 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
     chunk->result->shared_experts += block.shared_experts;
     chunk->result->h2d_bytes += block.h2d_bytes;
     chunk->result->d2h_bytes += block.d2h_bytes;
+    chunk->result->d2d_bytes += block.d2d_bytes;
+    chunk->result->upload_count += block.upload_count;
+    chunk->result->download_count += block.download_count;
+    chunk->result->cache_hits += block.cache_hits;
+    chunk->result->cache_misses += block.cache_misses;
+    chunk->result->stream_synchronizations += block.stream_synchronizations;
+    chunk->result->device_synchronizations += block.device_synchronizations;
     chunk->result->kernel_launches += block.kernel_launches;
+    chunk->result->moe_ns += block.moe_ns;
+    chunk->result->synchronization_ns += block.synchronization_ns;
     chunk->result->layers_executed++;
     chunk->layer_ordinal++;
     {
@@ -703,24 +736,28 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
     if (chunk->layer_ordinal == s->layer_count && backend == YVEX_BACKEND_KIND_CUDA) {
         unsigned long long expanded_bytes = chunk->token_count * s->expanded_width * sizeof(float);
         unsigned long long hidden_bytes = chunk->token_count * s->hidden_width * sizeof(float);
-        rc = yvex_backend_tensor_read(context->session_view->backend,
-                                      &chunk->device_current, chunk->current,
-                                      expanded_bytes, err);
-        if (rc == YVEX_OK)
-            rc = yvex_backend_transformer_cuda_final(
-                context->session_view->backend, &chunk->device_current,
-                context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_FUNCTION],
-                context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_BASE],
-                context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_SCALE],
-                context->device_global[YVEX_TRANSFORMER_WEIGHT_OUTPUT_NORM],
-                chunk->token_count, s->hidden_width, s->residual_streams,
-                s->output_norm_epsilon, s->mhc_epsilon, &chunk->device_hidden, err);
+        unsigned long long started_ns = yvex_core_monotonic_ns();
+        rc = yvex_backend_transformer_cuda_final(
+            context->session_view->backend, &chunk->device_current,
+            context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_FUNCTION],
+            context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_BASE],
+            context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_SCALE],
+            context->device_global[YVEX_TRANSFORMER_WEIGHT_OUTPUT_NORM],
+            chunk->token_count, s->hidden_width, s->residual_streams,
+            s->output_norm_epsilon, s->mhc_epsilon, &chunk->device_hidden, err);
+        if (rc == YVEX_OK && context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL)
+            rc = yvex_backend_tensor_read(context->session_view->backend,
+                                          &chunk->device_current, chunk->current,
+                                          expanded_bytes, err);
         if (rc == YVEX_OK)
             rc = yvex_backend_tensor_read(context->session_view->backend,
                 &chunk->device_hidden, context->candidate_hidden, hidden_bytes, err);
         if (rc == YVEX_OK) {
-            chunk->result->d2h_bytes += expanded_bytes + hidden_bytes;
+            chunk->result->d2h_bytes += hidden_bytes;
+            if (context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL)
+                chunk->result->d2h_bytes += expanded_bytes;
             chunk->result->kernel_launches++;
+            chunk->result->final_ns += yvex_core_monotonic_ns() - started_ns;
         }
         return rc;
     }
@@ -734,7 +771,6 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
             context->candidate_hidden, err);
     return YVEX_OK;
 }
-
 /* Purpose: copy the complete session persistent-state summary. */
 static int transformer_state_summary(const yvex_runtime_execution_session *session,
                                      yvex_graph_attention_state_summary *summary,
@@ -748,7 +784,6 @@ static int transformer_state_summary(const yvex_runtime_execution_session *sessi
                                           "transformer persistent state is unavailable");
     return YVEX_OK;
 }
-
 /* Purpose: build one exact full-layer attention capacity plan.
  * Inputs: model, start, and token extent. Effects: allocates caller-owned plan.
  * Failure: typed graph refusal. Boundary: no state allocation or execution. */
@@ -770,7 +805,6 @@ static int transformer_capacity_build(yvex_graph_attention_capacity_plan **out,
                                                      model ? model->attention : NULL,
                                                      &request, err);
 }
-
 /* Purpose: prepare persistent-state capacity and CUDA attention workspace before mutation.
  * Inputs: context, admitted input/request, and state summary. Effects: seals reusable capacities.
  * Failure: typed budget/position/backend refusal. Boundary: no transformer chunk has begun. */
@@ -853,7 +887,6 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                                    session.workspace_identity);
     return rc;
 }
-
 /* Purpose: finalize one canonical F32 digest. */
 static int transformer_values_digest(const char *domain, const float *values,
                                      unsigned long long count,
@@ -868,7 +901,6 @@ static int transformer_values_digest(const char *domain, const float *values,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-
 /* Purpose: allocate and seal one transformer execution context over a model/session pair.
  * Inputs: matching model/session and budgets. Effects: owns plan, MoE context, weights, and mutex.
  * Failure: typed refusal with complete rollback. Boundary: no token execution or state mutation. */
@@ -910,6 +942,7 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
     moe_options.cancel_requested = options->cancel_requested;
     moe_options.cancel_context = options->cancel_context;
     moe_options.defer_cuda_workspace = 1;
+    moe_options.evidence_level = options->evidence_level;
     rc = yvex_runtime_moe_context_open(&context->moe, model, session, &moe_options, err);
     moe_plan = yvex_runtime_moe_context_plan(context->moe);
     if (rc == YVEX_OK)
@@ -929,7 +962,6 @@ failure:
     (void)yvex_runtime_transformer_context_close(&context, NULL);
     return rc;
 }
-
 /* Purpose: borrow one context-owned plan. Inputs: context. Effects: none. Failure: NULL.
  * Boundary: borrowed lifetime ends when the context closes. */
 const yvex_transformer_plan *yvex_runtime_transformer_context_plan(
@@ -937,7 +969,6 @@ const yvex_transformer_plan *yvex_runtime_transformer_context_plan(
 {
     return context ? context->plan : NULL;
 }
-
 /* Purpose: borrow the exact execution session paired with one transformer context.
  * Inputs: live context. Effects: none. Failure: NULL. Boundary: enables lifecycle coordinators
  * to prove owner pairing without exposing transformer-private resources. */
@@ -946,7 +977,33 @@ const yvex_runtime_execution_session *yvex_runtime_transformer_context_session(
 {
     return context ? context->session : NULL;
 }
-
+/* Purpose: seal the semantic execution identity after state and output publication.
+ * Inputs: admitted plan/request and one complete mutable result.
+ * Effects: writes only the result execution identity.
+ * Failure: malformed hash input returns a typed runtime refusal.
+ * Boundary: movement and timing evidence do not enter semantic execution identity. */
+static int transformer_execution_identity(
+    const yvex_transformer_plan_summary *plan,
+    const yvex_runtime_transformer_request *request,
+    yvex_runtime_transformer_result *result, yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.transformer.execution.v2") ||
+        !yvex_sha256_update_text(&hash, plan->transformer_plan_identity) ||
+        !yvex_sha256_update_text(&hash, result->input_identity) ||
+        !yvex_sha256_update_text(&hash, result->normalized_hidden_digest) ||
+        !yvex_sha256_update_text(&hash, result->persistent_state_digest) ||
+        !yvex_sha256_update_u64(&hash, request->phase) ||
+        !yvex_sha256_update_u64(&hash, request->backend) ||
+        !yvex_sha256_update_u64(&hash, request->chunk_tokens) ||
+        !yvex_sha256_final(&hash, digest))
+        return transformer_runtime_refuse(err, YVEX_ERR_STATE,
+                                          "transformer execution identity failed");
+    yvex_sha256_hex(digest, result->execution_identity);
+    return YVEX_OK;
+}
 /* Purpose: validate one token input against the exact model binding and transformer plan.
  * Inputs: live context and admitted memory/file input. Effects: checks file drift when applicable.
  * Failure: propagates typed identity, payload, or snapshot refusal. Boundary: validation only. */
@@ -960,7 +1017,6 @@ int yvex_runtime_transformer_context_validate_input(
     return yvex_transformer_input_validate(input, context->plan,
                                            context->model_view->binding, err);
 }
-
 /* Purpose: execute an identity-bound token request as independently committed chunks.
  * Inputs: matching context/input/backend, output capacity, and deterministic chunk size.
  * Effects: commits each complete full-stack chunk and publishes normalized hidden rows after commit.
@@ -1027,6 +1083,7 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
         unsigned long long remaining = input_summary->token_count - offset;
         unsigned long long count = remaining < request->chunk_tokens
                                        ? remaining : request->chunk_tokens;
+        unsigned long long started_ns;
         if (context->options.cancel_requested &&
             context->options.cancel_requested(context->options.cancel_context)) {
             rc = transformer_runtime_refuse(err, YVEX_ERR_CANCELLED,
@@ -1043,7 +1100,10 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
         chunk.backend = request->backend;
         chunk.current = context->expanded_a;
         chunk.next = context->expanded_b;
+        started_ns = yvex_core_monotonic_ns();
         if (rc == YVEX_OK) rc = transformer_runtime_embedding(&chunk, err);
+        if (rc == YVEX_OK)
+            result->embedding_ns += yvex_core_monotonic_ns() - started_ns;
         if (rc == YVEX_OK && request->backend == YVEX_BACKEND_KIND_CUDA &&
             (!transformer_device_subview(context->device_residual[0], 0ull,
                                          count * plan->expanded_width,
@@ -1074,11 +1134,15 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
         execution.activation_context = &chunk;
         execution.cancel_requested = context->options.cancel_requested;
         execution.cancel_context = context->options.cancel_context;
+        execution.evidence_level = context->options.evidence_level;
         execution.evidence = transformer_layer_evidence;
         execution.evidence_context = &chunk;
+        started_ns = yvex_core_monotonic_ns();
         rc = yvex_runtime_attention_probe_execute(context->session, context->model,
                                                   &execution, &attention_result,
                                                   &failure, err);
+        if (rc == YVEX_OK)
+            result->attention_ns += yvex_core_monotonic_ns() - started_ns;
         if (rc == YVEX_OK && (chunk.layer_ordinal != plan->layer_count ||
                               attention_result.layers_executed != plan->layer_count))
             rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
@@ -1093,6 +1157,8 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
             result->h2d_bytes += attention_result.h2d_bytes;
             result->d2h_bytes += attention_result.d2h_bytes;
             result->kernel_launches += attention_result.kernel_launches;
+            result->attention_device_ns +=
+                attention_result.cuda_device_execution_elapsed_ns;
             result->chunk_count++;
             offset += count;
         }
@@ -1124,32 +1190,24 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
     else if (rc == YVEX_OK)
         rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                         "transformer embedding digest finalization failed");
+    if (rc == YVEX_OK && request->backend == YVEX_BACKEND_KIND_CUDA &&
+        context->options.evidence_level != YVEX_ATTENTION_EVIDENCE_FULL)
+        yvex_runtime_identity_copy(result->final_expanded_digest,
+                                   chunk.last_expanded_digest);
+    else if (rc == YVEX_OK &&
+             !transformer_values_digest("yvex.transformer.final-expanded.v1", chunk.current,
+                                        chunk.token_count * plan->expanded_width,
+                                        result->final_expanded_digest))
+        rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
+                                        "transformer expanded digest derivation failed");
     if (rc == YVEX_OK &&
-        (!transformer_values_digest("yvex.transformer.final-expanded.v1", chunk.current,
-                                    chunk.token_count * plan->expanded_width,
-                                    result->final_expanded_digest) ||
-         !transformer_values_digest("yvex.transformer.normalized-hidden.v1",
-                                    output->normalized_hidden, output_count,
-                                    result->normalized_hidden_digest)))
+        !transformer_values_digest("yvex.transformer.normalized-hidden.v1",
+                                   output->normalized_hidden, output_count,
+                                   result->normalized_hidden_digest))
         rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                         "transformer output digest derivation failed");
-    if (rc == YVEX_OK) {
-        yvex_sha256 hash;
-        unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-        yvex_sha256_init(&hash);
-        if (!yvex_sha256_update_text(&hash, "yvex.runtime.transformer.execution.v2") ||
-            !yvex_sha256_update_text(&hash, plan->transformer_plan_identity) ||
-            !yvex_sha256_update_text(&hash, result->input_identity) ||
-            !yvex_sha256_update_text(&hash, result->normalized_hidden_digest) ||
-            !yvex_sha256_update_text(&hash, result->persistent_state_digest) ||
-            !yvex_sha256_update_u64(&hash, request->phase) ||
-            !yvex_sha256_update_u64(&hash, request->backend) ||
-            !yvex_sha256_update_u64(&hash, request->chunk_tokens) ||
-            !yvex_sha256_final(&hash, digest))
-            rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
-                                            "transformer execution identity failed");
-        else yvex_sha256_hex(digest, result->execution_identity);
-    }
+    if (rc == YVEX_OK)
+        rc = transformer_execution_identity(plan, request, result, err);
     if (pthread_mutex_lock(&context->mutex) == 0) {
         context->busy = 0;
         if (rc == YVEX_OK) context->execution_count++;
@@ -1158,7 +1216,6 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
     if (rc == YVEX_OK) result->completed = 1;
     return rc;
 }
-
 /* Purpose: release transformer context resources in reverse ownership order.
  * Inputs: idle context owner. Effects: closes MoE and frees weights/scratch/mutex.
  * Failure: typed retryable dependent cleanup refusal. Boundary: does not close model/session. */
@@ -1219,14 +1276,12 @@ int yvex_runtime_transformer_context_close(yvex_runtime_transformer_context **co
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: adapt one transformer context to the typed cleanup-lease protocol. */
 static int transformer_runtime_cleanup(void **opaque, yvex_error *err)
 {
     return yvex_runtime_transformer_context_close(
         (yvex_runtime_transformer_context **)opaque, err);
 }
-
 /* Purpose: publish one operator refusal without converting the domain status. */
 static void transformer_operator_refuse(yvex_transformer_operator_result *result,
                                         const yvex_error *err)
@@ -1236,7 +1291,6 @@ static void transformer_operator_refuse(yvex_transformer_operator_result *result
                         err && yvex_error_is_set(err) ? yvex_error_message(err)
                                                      : "transformer execution refused");
 }
-
 /* Purpose: execute one production transformer request through operator-owned resources.
  * Inputs: exact artifact/binding/token paths, backend, capacity, and budgets.
  * Effects: opens one model/session/context, executes, closes, and publishes typed facts.
@@ -1265,7 +1319,6 @@ int yvex_transformer_operator_execute(const yvex_transformer_operator_request *r
     yvex_error primary = {0};
     unsigned long long output_count;
     int rc, cleanup_rc, adopted = 0;
-
     if (result) memset(result, 0, sizeof(*result));
     if (!request || !result || !retained_cleanup || *retained_cleanup ||
         !request->target || !request->artifact_path || !request->runtime_binding_path ||

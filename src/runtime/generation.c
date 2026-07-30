@@ -8,20 +8,17 @@
  * Effects: commits prompt and ordinary generated tokens to KV and publishes incrementally decoded text.
  * Failure: retains exact sampled/model/text partial progress and does not fabricate rollback across owners. */
 #include <yvex/internal/generation.h>
-
+#include <yvex/internal/profile.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <yvex/internal/core.h>
 #include <yvex/internal/graph_state.h>
-
 #define GENERATION_LIFECYCLE_ACTIVE 1u
 #define GENERATION_LIFECYCLE_CLOSING 2u
 #define GENERATION_LIFECYCLE_CLOSED 6u
-
 struct yvex_runtime_generation_context {
     yvex_runtime_model *model;
     yvex_runtime_execution_session *session;
@@ -45,7 +42,6 @@ struct yvex_runtime_generation_context {
     unsigned long long execution_count, failure_count, cancellation_count;
     int drain_mutex_ready, drain_condition_ready, continuation_allowed;
 };
-
 /* Purpose: publish one stable generation refusal without mutating lower owners. */
 static int generation_refuse(yvex_error *err, yvex_status status,
                              const char *reason)
@@ -53,7 +49,6 @@ static int generation_refuse(yvex_error *err, yvex_status status,
     yvex_error_set(err, status, "runtime.generation", reason);
     return status;
 }
-
 /* Purpose: finish one canonical SHA-256 identity. Inputs: live hash and output.
  * Effects: consumes the hash. Failure: returns false. Boundary: canonical identity helper. */
 static int generation_hash_finish(yvex_sha256 *hash,
@@ -64,7 +59,134 @@ static int generation_hash_finish(yvex_sha256 *hash,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-
+/* Purpose: map the existing trace-depth contract onto one bounded profile cost class. */
+static yvex_runtime_profile_mode generation_profile_mode(yvex_runtime_trace_policy policy)
+{
+    static const yvex_runtime_profile_mode modes[] = {
+        YVEX_RUNTIME_PROFILE_OFF, YVEX_RUNTIME_PROFILE_SUMMARY,
+        YVEX_RUNTIME_PROFILE_STAGES, YVEX_RUNTIME_PROFILE_DETAILED};
+    return policy <= YVEX_RUNTIME_TRACE_FULL ? modes[policy] : YVEX_RUNTIME_PROFILE_OFF;
+}
+/* Purpose: derive one path-free workload identity before prompt execution.
+ * Inputs: sealed generation context, exact turn request, and digest output.
+ * Effects: hashes immutable request facts without reading model payloads or mutating the turn.
+ * Failure: malformed text/messages/provider identities publish no digest.
+ * Boundary: workload identity is profiling evidence, not generation-plan identity. */
+static int generation_workload_identity(
+    const yvex_runtime_generation_context *context,
+    const yvex_runtime_generation_turn_request *turn,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    const yvex_runtime_generation_request *request = turn ? turn->prompt : NULL;
+    yvex_sha256 hash;
+    unsigned long long index;
+    if (!context || !turn || !request || !output) return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.profile.workload.v1") ||
+        !yvex_sha256_update_text(&hash, context->plan.generation_plan_identity) ||
+        !yvex_sha256_update_u64(&hash, request->kind) ||
+        !yvex_sha256_update_u64(&hash, turn->maximum_new_tokens) ||
+        !yvex_sha256_update_u64(&hash, turn->committed_prefix_token_count)) return 0;
+    for (index = 0ull; index < turn->committed_prefix_token_count; ++index)
+        if (!yvex_sha256_update_u64(&hash, turn->committed_prefix_token_ids[index])) return 0;
+    if (request->kind == YVEX_GENERATION_INPUT_TEXT) {
+        if (!request->text || request->text_bytes > SIZE_MAX ||
+            !yvex_sha256_update_u64(&hash, request->text_bytes) ||
+            !yvex_sha256_update(&hash, request->text, (size_t)request->text_bytes)) return 0;
+    } else if (request->kind == YVEX_GENERATION_INPUT_PROVIDER) {
+        if (!request->provider_request || !request->provider_request->sealed ||
+            !yvex_sha256_hex_valid(request->provider_request->request_identity) ||
+            !yvex_sha256_update_text(&hash, request->provider_request->request_identity)) return 0;
+    } else {
+        if (!request->messages || !request->message_count ||
+            !yvex_sha256_update_u64(&hash, request->message_count)) return 0;
+        for (index = 0ull; index < request->message_count; ++index) {
+            const yvex_prompt_message *message = &request->messages[index];
+            if ((!message->content && message->content_len) || message->content_len > SIZE_MAX ||
+                !yvex_sha256_update_u64(&hash, message->role) ||
+                !yvex_sha256_update_u64(&hash, message->content_len) ||
+                !yvex_sha256_update(&hash, message->content, (size_t)message->content_len)) return 0;
+        }
+    }
+    return generation_hash_finish(&hash, output);
+}
+/* Purpose: add one nonzero duration without manufacturing clock resolution. */
+static int generation_profile_phase(yvex_runtime_profile_record *profile,
+                                    yvex_runtime_profile_phase phase,
+                                    unsigned long long elapsed, yvex_error *err)
+{
+    return !profile || profile->mode == YVEX_RUNTIME_PROFILE_OFF || !elapsed
+               ? YVEX_OK : runtime_profile_phase_add(profile, phase, elapsed, err);
+}
+/* Purpose: project one complete Transformer transaction into generation profile evidence.
+ * Inputs: mutable unsealed profile and one completed Transformer result.
+ * Effects: adds checked movement counters and already-measured stage durations.
+ * Failure: counter or duration overflow leaves the profile unsealed and returns typed failure.
+ * Boundary: projection neither synchronizes CUDA nor changes Transformer execution. */
+static int generation_profile_transformer(
+    yvex_runtime_profile_record *profile,
+    const yvex_runtime_transformer_result *value, yvex_error *err)
+{
+#define COUNTER(kind_, value_) do {                                                        \
+        if ((value_) != 0ull && runtime_profile_counter_add(                              \
+                profile, (kind_), (value_), err)                                           \
+                            != YVEX_OK) return yvex_error_code(err);                        \
+    } while (0)
+    if (!profile || profile->mode == YVEX_RUNTIME_PROFILE_OFF || !value || !value->completed)
+        return YVEX_OK;
+    COUNTER(YVEX_RUNTIME_PROFILE_H2D_BYTES, value->h2d_bytes);
+    COUNTER(YVEX_RUNTIME_PROFILE_D2H_BYTES, value->d2h_bytes);
+    COUNTER(YVEX_RUNTIME_PROFILE_D2D_BYTES, value->d2d_bytes);
+    COUNTER(YVEX_RUNTIME_PROFILE_UPLOADS, value->upload_count);
+    COUNTER(YVEX_RUNTIME_PROFILE_DOWNLOADS, value->download_count);
+    COUNTER(YVEX_RUNTIME_PROFILE_CACHE_HITS, value->cache_hits);
+    COUNTER(YVEX_RUNTIME_PROFILE_CACHE_MISSES, value->cache_misses);
+    COUNTER(YVEX_RUNTIME_PROFILE_EXPERT_SUBVIEWS, value->routed_experts * 3ull);
+    COUNTER(YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES, value->kernel_launches);
+    COUNTER(YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS, value->stream_synchronizations);
+    COUNTER(YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS, value->device_synchronizations);
+#undef COUNTER
+    if (generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_EMBEDDING,
+                                 value->embedding_ns, err) != YVEX_OK ||
+        generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_ATTENTION,
+                                 profile->backend == YVEX_BACKEND_KIND_CUDA
+                                     ? value->attention_device_ns : value->attention_ns,
+                                 err) != YVEX_OK ||
+        generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_MOE_TOTAL,
+                                 value->moe_ns, err) != YVEX_OK ||
+        generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_SYNCHRONIZATION_WAIT,
+                                 value->synchronization_ns, err) != YVEX_OK ||
+        generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_FINAL_NORMALIZATION,
+                                 value->final_ns, err) != YVEX_OK)
+        return yvex_error_code(err);
+    return YVEX_OK;
+}
+/* Purpose: project one completed decode transaction into movement and stage evidence.
+ * Inputs: mutable unsealed profile and one completed decode result.
+ * Effects: maps shared Transformer facts into the canonical profile vocabulary.
+ * Failure: malformed or overflowing evidence leaves the profile unsealed.
+ * Boundary: decode semantics and identities remain owned by the decode result. */
+static int generation_profile_decode(yvex_runtime_profile_record *profile,
+                                     const yvex_runtime_decode_step_result *value,
+                                     yvex_error *err)
+{
+    yvex_runtime_transformer_result projected = {0};
+    if (!value || !value->completed) return YVEX_OK;
+    projected.completed = 1;
+    projected.routed_experts = value->routed_experts;
+    projected.h2d_bytes = value->h2d_bytes; projected.d2h_bytes = value->d2h_bytes;
+    projected.d2d_bytes = value->d2d_bytes; projected.upload_count = value->upload_count;
+    projected.download_count = value->download_count;
+    projected.cache_hits = value->cache_hits; projected.cache_misses = value->cache_misses;
+    projected.kernel_launches = value->kernel_launches;
+    projected.stream_synchronizations = value->stream_synchronizations;
+    projected.device_synchronizations = value->device_synchronizations;
+    projected.embedding_ns = value->embedding_ns; projected.attention_ns = value->attention_ns;
+    projected.attention_device_ns = value->attention_device_ns;
+    projected.moe_ns = value->moe_ns; projected.final_ns = value->final_ns;
+    projected.synchronization_ns = value->synchronization_ns;
+    return generation_profile_transformer(profile, &projected, err);
+}
 /* Purpose: derive one explicit byte-span digest with no terminator semantics. */
 static int generation_bytes_digest(const char *domain, const unsigned char *bytes,
                                    unsigned long long count,
@@ -78,7 +200,6 @@ static int generation_bytes_digest(const char *domain, const unsigned char *byte
         (count && !yvex_sha256_update(&hash, bytes, (size_t)count))) return 0;
     return generation_hash_finish(&hash, output);
 }
-
 /* Purpose: derive the exact ordered committed-token prefix supplied by the session authority. */
 static int generation_prefix_identity(
     const unsigned int *tokens, unsigned long long count,
@@ -86,7 +207,6 @@ static int generation_prefix_identity(
 {
     yvex_sha256 hash;
     unsigned long long index;
-
     if ((!tokens && count) || !output)
         return 0;
     yvex_sha256_init(&hash);
@@ -98,7 +218,6 @@ static int generation_prefix_identity(
             return 0;
     return generation_hash_finish(&hash, output);
 }
-
 /* Purpose: inspect authoritative session state without owning KV storage. */
 static int generation_state_summary(
     const yvex_runtime_execution_session *session,
@@ -113,7 +232,6 @@ static int generation_state_summary(
                                  "persistent generation state is unavailable");
     return YVEX_OK;
 }
-
 /* Purpose: hash the exact stop-token set in caller order after canonical admission. */
 static int generation_stop_identity(
     const yvex_tokenizer_plan_summary *tokenizer,
@@ -133,7 +251,6 @@ static int generation_stop_identity(
         if (!yvex_sha256_update_u64(&hash, additional[index])) return 0;
     return generation_hash_finish(&hash, output);
 }
-
 /* Purpose: derive the immutable generation plan from lower-owner identities and bounded options.
  * Inputs: sealed plan/output. Effects: none. Failure: returns false.
  * Boundary: no native object memory participates. */
@@ -163,7 +280,6 @@ static int generation_plan_identity(
            yvex_sha256_update_text(&hash, plan->stop_policy_identity) &&
            generation_hash_finish(&hash, output);
 }
-
 /* Purpose: admit and copy one ordered bounded additional stop-token set.
  * Inputs: context/vocabulary. Effects: owns copied IDs. Failure: typed refusal.
  * Boundary: stop facts do not execute a generation loop. */
@@ -198,7 +314,6 @@ static int generation_stops_open(yvex_runtime_generation_context *context,
     context->options.additional_stop_token_ids = context->additional_stops;
     return YVEX_OK;
 }
-
 /* Purpose: seal all lower-owner compatibility facts into one generation plan.
  * Inputs: paired lower contexts. Effects: publishes immutable local plan. Failure: typed refusal.
  * Boundary: no artifact, binding, or family policy is rebuilt. */
@@ -257,7 +372,6 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
     context->plan = plan;
     return YVEX_OK;
 }
-
 /* Purpose: acquire exclusive execution admission against atomic close ownership. */
 static int generation_enter(yvex_runtime_generation_context *context,
                             yvex_error *err)
@@ -276,7 +390,6 @@ static int generation_enter(yvex_runtime_generation_context *context,
                                  ? "generation context is closing"
                                  : "generation context is already in use");
 }
-
 /* Purpose: release exclusive admission and wake the close owner after accounting.
  * Inputs: admitted context/status. Effects: updates counters/lifecycle. Failure: none.
  * Boundary: does not release context ownership. */
@@ -306,7 +419,6 @@ static void generation_leave(yvex_runtime_generation_context *context, int rc,
                                     ~GENERATION_LIFECYCLE_ACTIVE,
                                     memory_order_release);
 }
-
 /* Purpose: observe caller cancellation at a generation-owned safe point. */
 static int generation_cancelled(
     const yvex_runtime_generation_context *context, yvex_error *err)
@@ -317,7 +429,6 @@ static int generation_cancelled(
                                  "generation was cancelled");
     return YVEX_OK;
 }
-
 /* Purpose: open one generation context over exactly one borrowed model/session plane.
  * Inputs: sealed lower model/session and bounded immutable request options.
  * Effects: owns warm subordinate contexts, fixed logits/hidden workspaces, decoder, and token directory.
@@ -378,6 +489,9 @@ int yvex_runtime_generation_context_open(
     transformer_options.workspace_token_capacity = options->prefill_chunk_tokens;
     transformer_options.cancel_requested = options->cancel_requested;
     transformer_options.cancel_context = options->cancel_context;
+    transformer_options.evidence_level = options->trace_policy == YVEX_RUNTIME_TRACE_FULL
+                                             ? YVEX_ATTENTION_EVIDENCE_FULL
+                                             : YVEX_ATTENTION_EVIDENCE_NONE;
     rc = yvex_runtime_transformer_context_open(
         &context->transformer, model, session, &transformer_options, err);
     if (rc != YVEX_OK) goto failure;
@@ -475,7 +589,6 @@ failure:
     }
     return rc;
 }
-
 /* Purpose: return the immutable plan borrowed for the context lifetime.
  * Inputs: optional context. Effects: none. Failure: null context returns null.
  * Boundary: caller never owns the returned plan. */
@@ -484,7 +597,6 @@ const yvex_runtime_generation_plan_summary *yvex_runtime_generation_plan_summary
 {
     return context ? &context->plan : NULL;
 }
-
 /* Purpose: classify one sampled token against tokenizer and request-local stop facts. */
 static int generation_token_classify(
     const yvex_runtime_generation_context *context, unsigned int token,
@@ -500,7 +612,6 @@ static int generation_token_classify(
         if (context->additional_stops[index] == token) *additional_stop = 1;
     return rc;
 }
-
 /* Purpose: encode one exact request through the model-owned tokenizer without reconstructing prompt syntax.
  * Inputs: typed byte/message request. Effects: owns bounded rendered/encoded results. Failure: typed refusal.
  * Boundary: generation never interprets tokenizer algorithms or prompt templates. */
@@ -558,7 +669,6 @@ static int generation_encode_prompt(
                                "encoded prompt is empty or exceeds context capacity");
     return rc;
 }
-
 /* Purpose: execute exact prompt IDs as bounded prefill chunks and retain only the final chunk hidden rows.
  * Inputs: encoded prompt and stable context. Effects: commits chunks independently through Transformer prefill.
  * Failure: prior chunks remain committed and the failing chunk publishes no hidden/KV state.
@@ -569,7 +679,8 @@ static int generation_prefill(
     unsigned long long reusable_prefix, float **final_hidden,
     unsigned long long *final_hidden_count,
     yvex_runtime_transformer_result *final_result,
-    unsigned long long *completed_chunks, yvex_error *err)
+    unsigned long long *completed_chunks,
+    yvex_runtime_profile_record *profile, yvex_error *err)
 {
     const yvex_transformer_plan_summary *plan = yvex_transformer_plan_summary_get(
         yvex_runtime_transformer_context_plan(context->transformer));
@@ -585,8 +696,6 @@ static int generation_prefill(
                                  "generation turn requires one exact new prompt suffix token");
     suffix_count = encoded->tokens.len - reusable_prefix;
     maximum_chunk = context->options.prefill_chunk_tokens;
-    if (reusable_prefix && context->options.backend == YVEX_BACKEND_KIND_CUDA)
-        maximum_chunk = 1ull;
     if (maximum_chunk > suffix_count) maximum_chunk = suffix_count;
     if (!plan || !yvex_core_u64_mul(maximum_chunk, plan->hidden_width,
                                     &maximum_values) ||
@@ -635,6 +744,9 @@ static int generation_prefill(
                 context->transformer, input, &request, &output, &result, err);
         yvex_transformer_input_close(&input);
         if (rc == YVEX_OK) {
+            rc = generation_profile_transformer(profile, &result, err);
+        }
+        if (rc == YVEX_OK) {
             *final_result = result;
             *final_hidden_count = values;
             (*completed_chunks)++;
@@ -648,7 +760,6 @@ static int generation_prefill(
     yvex_core_free(buffer);
     return rc;
 }
-
 /* Purpose: derive one token-step identity from every authoritative published field.
  * Inputs: complete or partial token record. Effects: none. Failure: returns false.
  * Boundary: no pointer, padding, or native structure bytes participate. */
@@ -694,7 +805,6 @@ static int generation_token_identity(
            yvex_sha256_update_text(&hash, token->decoder_fragment_identity) &&
            generation_hash_finish(&hash, output);
 }
-
 /* Purpose: derive aggregate generated token IDs in exact sample order. */
 static int generation_tokens_identity(
     const yvex_runtime_generation_token_result *tokens,
@@ -712,7 +822,6 @@ static int generation_tokens_identity(
             return 0;
     return generation_hash_finish(&hash, output);
 }
-
 /* Purpose: derive one complete-or-partial generation execution identity field by field.
  * Inputs: aggregate and ordered tokens. Effects: none. Failure: returns false.
  * Boundary: no pointer, padding, or native structure bytes participate. */
@@ -767,7 +876,6 @@ static int generation_execution_identity(
             return 0;
     return generation_hash_finish(&hash, output);
 }
-
 /* Purpose: project and sample one complete logits row from the current admitted hidden producer.
  * Inputs: exact prefill/decode hidden evidence. Effects: advances RNG only on sample publication.
  * Failure: lower-owner refusal propagates. Boundary: does not append or decode the selected token. */
@@ -777,11 +885,13 @@ static int generation_project_sample(
     const float *prefill_hidden, unsigned long long prefill_hidden_count,
     const yvex_runtime_decode_step_result *decode,
     yvex_runtime_logits_row_result *logits_result,
-    yvex_runtime_sampling_result *sampling_result, yvex_error *err)
+    yvex_runtime_sampling_result *sampling_result,
+    yvex_runtime_profile_record *profile, yvex_error *err)
 {
     yvex_runtime_logits_source logits_source;
     yvex_runtime_sampling_source sampling_source;
     const char *stage = "normalized hidden admission";
+    unsigned long long started, completed;
     int rc;
     memset(logits_result, 0, sizeof(*logits_result));
     memset(sampling_result, 0, sizeof(*sampling_result));
@@ -795,9 +905,25 @@ static int generation_project_sample(
             context->hidden_count, err);
     if (rc == YVEX_OK) {
         stage = "complete vocabulary projection";
+        started = yvex_core_monotonic_ns();
         rc = yvex_runtime_logits_project(
             context->logits, &logits_source, context->options.backend,
             context->logits_row, context->logits_count, logits_result, err);
+        completed = yvex_core_monotonic_ns();
+        if (rc == YVEX_OK)
+            rc = generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_OUTPUT_HEAD,
+                                           completed - started, err);
+        if (rc == YVEX_OK && profile->mode != YVEX_RUNTIME_PROFILE_OFF &&
+            ((logits_result->h2d_bytes && runtime_profile_counter_add(
+                  profile, YVEX_RUNTIME_PROFILE_H2D_BYTES,
+                  logits_result->h2d_bytes, err) != YVEX_OK) ||
+             (logits_result->d2h_bytes && runtime_profile_counter_add(
+                  profile, YVEX_RUNTIME_PROFILE_D2H_BYTES,
+                  logits_result->d2h_bytes, err) != YVEX_OK) ||
+             (logits_result->kernel_launches && runtime_profile_counter_add(
+                  profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES,
+                  logits_result->kernel_launches, err) != YVEX_OK)))
+            rc = yvex_error_code(err);
     }
     if (rc == YVEX_OK) {
         stage = "sampling source admission";
@@ -807,14 +933,18 @@ static int generation_project_sample(
     }
     if (rc == YVEX_OK) {
         stage = "token selection";
+        started = yvex_core_monotonic_ns();
         rc = yvex_runtime_sampling_select(context->sampling, &sampling_source,
                                           sampling_result, err);
+        completed = yvex_core_monotonic_ns();
+        if (rc == YVEX_OK)
+            rc = generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_SAMPLING,
+                                           completed - started, err);
     }
     if (rc != YVEX_OK && !yvex_error_is_set(err))
         yvex_error_set(err, (yvex_status)rc, "runtime.generation.sample", stage);
     return rc;
 }
-
 /* Purpose: seal one sampled token as terminal without submitting it to model decode.
  * Inputs: classified sampled token. Effects: publishes terminal progress. Failure: typed refusal.
  * Boundary: EOS/stop selection never advances model state here. */
@@ -841,7 +971,6 @@ static int generation_terminal_token(
                                  "terminal token identity derivation failed");
     return YVEX_OK;
 }
-
 /* Purpose: feed one ordinary sampled token into exact decode, append, decoder, and text publication stages.
  * Inputs: sampled evidence, authoritative session state, fixed caller output, and ordinal.
  * Effects: commits one KV token, advances token state, and appends one complete UTF-8 fragment.
@@ -855,7 +984,7 @@ static int generation_commit_ordinary(
     yvex_runtime_decode_step_result *decode_result, yvex_error *err)
 {
     yvex_tokenizer_fragment fragment;
-    unsigned long long next_text;
+    unsigned long long next_text, started, completed;
     int rc;
     memset(&fragment, 0, sizeof(fragment));
     rc = yvex_token_sequence_transition(
@@ -875,11 +1004,22 @@ static int generation_commit_ordinary(
             token->decode_input_token_id = token->sampled_token_id;
         }
     }
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK) {
+        started = yvex_core_monotonic_ns();
         rc = yvex_runtime_decode_step(
             context->decode, token->ordinal, token->position_before,
             token->sampled_token_id, context->options.backend, context->hidden,
             context->hidden_count, decode_result, err);
+        completed = yvex_core_monotonic_ns();
+        if (rc == YVEX_OK)
+            rc = generation_profile_phase(
+                &result->profile,
+                result->decode_step_count ? YVEX_RUNTIME_PROFILE_SUBSEQUENT_DECODE
+                                          : YVEX_RUNTIME_PROFILE_FIRST_DECODE,
+                completed - started, err);
+        if (rc == YVEX_OK)
+            rc = generation_profile_decode(&result->profile, decode_result, err);
+    }
     if (rc == YVEX_OK) {
         rc = yvex_token_sequence_transition(
             context->sequence, sequence_ordinal, YVEX_TOKEN_APPEND_SUBMITTED,
@@ -896,9 +1036,16 @@ static int generation_commit_ordinary(
         result->decode_step_count++;
     }
     if (rc == YVEX_OK) rc = generation_cancelled(context, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK) {
+        started = yvex_core_monotonic_ns();
         rc = yvex_tokenizer_decoder_push(context->decoder,
                                          token->sampled_token_id, &fragment, err);
+        completed = yvex_core_monotonic_ns();
+        if (rc == YVEX_OK)
+            rc = generation_profile_phase(&result->profile,
+                                           YVEX_RUNTIME_PROFILE_DETOKENIZATION,
+                                           completed - started, err);
+    }
     if (rc == YVEX_OK) {
         token->detokenized = 1;
         token->suppressed = fragment.suppressed;
@@ -941,7 +1088,6 @@ static int generation_commit_ordinary(
                                "ordinary token identity derivation failed");
     return rc;
 }
-
 /* Purpose: finalize decoder state after a normal stop without publishing incomplete UTF-8.
  * Inputs: generation-local decoder. Effects: validates pending state. Failure: typed refusal.
  * Boundary: finish produces no separately unowned output bytes. */
@@ -958,7 +1104,6 @@ static int generation_decoder_finish(
     yvex_tokenizer_fragment_clear(&fragment);
     return rc;
 }
-
 /* Purpose: classify one lower-owner failure into the precise outer stop boundary. */
 static yvex_runtime_generation_stop_reason generation_failure_stop(
     int rc, int prompt_stage,
@@ -972,7 +1117,6 @@ static yvex_runtime_generation_stop_reason generation_failure_stop(
         return YVEX_GENERATION_STOP_OUTPUT_FAILURE;
     return YVEX_GENERATION_STOP_MODEL_FAILURE;
 }
-
 /* Purpose: finalize exact aggregate progress after success, cancellation, or lower-owner failure.
  * Inputs: mutable staged result, complete sampled rows, output prefix, and primary status.
  * Effects: snapshots authoritative KV/RNG state and seals field-wise identities.
@@ -1024,6 +1168,25 @@ static int generation_result_finish(
     result->first_incomplete_token = result->has_incomplete_token
                                          ? result->sampled_token_count - 1ull
                                          : result->sampled_token_count;
+    if (result->profile.schema_version == YVEX_RUNTIME_PROFILE_SCHEMA_V1) {
+        unsigned long long completed = yvex_core_monotonic_ns();
+        finish_rc = result->profile.mode == YVEX_RUNTIME_PROFILE_OFF
+                        ? YVEX_OK
+                        : runtime_profile_counter_add(
+                              &result->profile, YVEX_RUNTIME_PROFILE_GENERATED_TOKENS,
+                              result->model_committed_token_count, &secondary);
+        if (finish_rc == YVEX_OK && result->profile.mode != YVEX_RUNTIME_PROFILE_OFF &&
+            completed > result->profile.started_ns)
+            finish_rc = runtime_profile_phase_add(
+                &result->profile, YVEX_RUNTIME_PROFILE_TOTAL_GENERATION,
+                completed - result->profile.started_ns, &secondary);
+        if (finish_rc == YVEX_OK)
+            finish_rc = runtime_profile_finish(&result->profile, &secondary);
+        if (finish_rc != YVEX_OK && rc == YVEX_OK) {
+            rc = finish_rc;
+            if (err) *err = secondary;
+        }
+    }
     result->completed = rc == YVEX_OK;
     result->cancelled = rc == YVEX_ERR_CANCELLED;
     result->failed = rc != YVEX_OK && rc != YVEX_ERR_CANCELLED;
@@ -1058,7 +1221,6 @@ static int generation_result_finish(
         ((unsigned char *)text)[result->generated_text_bytes] = '\0';
     return rc;
 }
-
 /* Purpose: admit one continuation prefix and encode the exact next prompt before prefill.
  * Inputs: active context, turn contract, mutable tokenizer outputs, summary output, and result.
  * Effects: resets turn-local lower state, snapshots RNG/KV, encodes prompt, and copies admitted IDs.
@@ -1148,7 +1310,6 @@ static int generation_turn_prepare(
             encoded->tokens.len, turn->committed_prefix_token_count, err);
     return rc;
 }
-
 /* Purpose: execute one exact reusable generation turn over admitted lower owners.
  * Inputs: complete expected prompt, exact committed token prefix, and bounded output directories.
  * Effects: verifies/reuses existing KV, commits only the new prompt suffix, then generates in order.
@@ -1172,6 +1333,8 @@ int yvex_runtime_generation_turn_execute(
     float *prefill_hidden = NULL;
     unsigned long long prefill_values = 0ull, prefill_chunks = 0ull;
     unsigned long long turn_maximum = turn ? turn->maximum_new_tokens : 0ull;
+    unsigned long long started, completed;
+    char workload_identity[YVEX_SHA256_HEX_CAP];
     int rc, prompt_stage = 1, use_prefill = 1;
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !turn ||
@@ -1196,18 +1359,59 @@ int yvex_runtime_generation_turn_execute(
     result->requested_new_tokens = turn_maximum;
     yvex_runtime_identity_copy(result->generation_plan_identity,
                                context->plan.generation_plan_identity);
-    rc = generation_turn_prepare(context, turn, &encoded, &rendered,
-                                 &transformer, result, err);
+    rc = generation_workload_identity(context, turn, workload_identity)
+             ? runtime_profile_begin(
+                   &result->profile, generation_profile_mode(context->options.trace_policy),
+                   YVEX_RUNTIME_PROFILE_GENERATION, context->options.backend,
+                   context->model_view->binding->artifact_identity,
+                   context->model_view->binding->profile_identity,
+                   context->model_view->binding->identity,
+                   context->plan.runtime_model_identity,
+                   context->plan.generation_plan_identity, workload_identity, err)
+             : generation_refuse(err, YVEX_ERR_STATE,
+                                 "generation workload identity derivation failed");
+    started = yvex_core_monotonic_ns();
+    if (rc == YVEX_OK)
+        rc = generation_turn_prepare(context, turn, &encoded, &rendered,
+                                     &transformer, result, err);
+    completed = yvex_core_monotonic_ns();
+    if (rc == YVEX_OK)
+        rc = generation_profile_phase(
+            &result->profile,
+            request->kind == YVEX_GENERATION_INPUT_TEXT
+                ? YVEX_RUNTIME_PROFILE_TOKENIZER
+                : YVEX_RUNTIME_PROFILE_PROMPT_RENDERING,
+            completed - started, err);
+    if (rc == YVEX_OK && result->profile.mode != YVEX_RUNTIME_PROFILE_OFF) {
+        rc = runtime_profile_counter_add(
+            &result->profile, YVEX_RUNTIME_PROFILE_PROMPT_TOKENS,
+            result->prompt_token_count, err);
+        if (rc == YVEX_OK)
+            rc = runtime_profile_counter_add(
+                &result->profile, YVEX_RUNTIME_PROFILE_REUSED_TOKENS,
+                result->reusable_prefix_token_count, err);
+        if (rc == YVEX_OK)
+            rc = runtime_profile_counter_add(
+                &result->profile, YVEX_RUNTIME_PROFILE_NEW_PREFILL_TOKENS,
+                result->new_prefill_token_count, err);
+    }
     if (rc == YVEX_OK) prompt_stage = 0;
     if (rc == YVEX_OK && turn->progress_sink)
         rc = turn->progress_sink(
             turn->progress_context, YVEX_GENERATION_PROGRESS_PREFILL_STARTED,
             result->new_prefill_token_count, context->options.prefill_chunk_tokens,
             err);
+    started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK)
         rc = generation_prefill(context, &encoded,
                                 turn->committed_prefix_token_count, &prefill_hidden,
-                                &prefill_values, &prefill, &prefill_chunks, err);
+                                &prefill_values, &prefill, &prefill_chunks,
+                                &result->profile, err);
+    completed = yvex_core_monotonic_ns();
+    if (rc == YVEX_OK)
+        rc = generation_profile_phase(&result->profile,
+                                       YVEX_RUNTIME_PROFILE_TOTAL_PREFILL,
+                                       completed - started, err);
     result->prefill_chunk_count = prefill_chunks;
     if (rc == YVEX_OK && turn->progress_sink)
         rc = turn->progress_sink(
@@ -1234,7 +1438,7 @@ int yvex_runtime_generation_turn_execute(
                 context, use_prefill ? &prefill : NULL,
                 prefill_hidden, prefill_values,
                 use_prefill ? NULL : &last_decode,
-                &logits_result, &sample, err);
+                &logits_result, &sample, &result->profile, err);
         if (logits_result.completed) result->logits_projection_count++;
         if (rc != YVEX_OK) break;
         token = &tokens[result->sampled_token_count];
@@ -1270,9 +1474,15 @@ int yvex_runtime_generation_turn_execute(
                 context, token, sequence_ordinal, text, text_capacity,
                 result, &last_decode, err);
         if (rc == YVEX_OK && turn->fragment_sink && token->text_published) {
+            started = yvex_core_monotonic_ns();
             rc = turn->fragment_sink(
                 turn->fragment_context, token,
                 text + token->text_byte_offset, token->text_byte_count, err);
+            completed = yvex_core_monotonic_ns();
+            if (rc == YVEX_OK)
+                rc = generation_profile_phase(
+                    &result->profile, YVEX_RUNTIME_PROFILE_PROVIDER_PUBLICATION,
+                    completed - started, err);
             if (rc != YVEX_OK)
                 result->stop_reason = YVEX_GENERATION_STOP_OUTPUT_FAILURE;
         }
@@ -1301,8 +1511,6 @@ int yvex_runtime_generation_turn_execute(
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-
-
 /* Purpose: preserve the fresh one-shot entrypoint as a strict wrapper over reusable turn execution.
  * Inputs: one request on an empty session. Effects: delegates all generation semantics to the turn
  * owner. Failure: exact turn refusal. Boundary: this wrapper provides no parallel generation loop. */
@@ -1317,7 +1525,6 @@ int yvex_runtime_generation_execute(
     yvex_runtime_generation_turn_request turn;
     unsigned int *prompt_tokens;
     int rc;
-
     if (!context || context->options.context_capacity > SIZE_MAX / sizeof(unsigned int))
         return generation_refuse(err, YVEX_ERR_INVALID_ARG,
                                  "generation context is required");
@@ -1336,7 +1543,6 @@ int yvex_runtime_generation_execute(
     yvex_core_free(prompt_tokens);
     return rc;
 }
-
 /* Purpose: validate every authoritative aggregate and token field against canonical identities.
  * Inputs: sealed plan, complete sampled-row prefix, explicit text prefix, and published result.
  * Effects: none. Failure: refuses any structural, identity, ordering, or publication mutation.
@@ -1366,6 +1572,8 @@ int yvex_runtime_generation_result_validate(
         result->reusable_prefix_token_count > result->prompt_token_count ||
         result->new_prefill_token_count !=
             result->prompt_token_count - result->reusable_prefix_token_count ||
+        result->profile.schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V1 ||
+        runtime_profile_validate(&result->profile, NULL) != YVEX_OK ||
         !yvex_sha256_hex_valid(result->reusable_prefix_identity) ||
         strcmp(result->generation_plan_identity,
                plan->generation_plan_identity) != 0 ||
@@ -1460,7 +1668,6 @@ int yvex_runtime_generation_result_validate(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: inspect reusable generation-local resources without admitting concurrent execution.
  * Inputs: open context/output. Effects: briefly acquires admission. Failure: typed refusal.
  * Boundary: operator evidence consumes the copy; lifecycle authority stays local. */
@@ -1507,7 +1714,6 @@ static int generation_context_snapshot(
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-
 /* Purpose: transfer unique close ownership, block new entry, drain active execution, and release dependencies.
  * Inputs: unique context handle. Effects: closes lower contexts in dependency order and frees fixed workspace.
  * Failure: retains a retryable CLOSING owner. Boundary: caller aliases are invalid after close ownership transfer. */
@@ -1574,7 +1780,6 @@ int yvex_runtime_generation_context_close(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: return stable operator text for one typed stop reason. Inputs: reason enum.
  * Effects: none. Failure: unknown values map explicitly. Boundary: text owns no stop policy. */
 const char *yvex_runtime_generation_stop_reason_name(
@@ -1589,7 +1794,6 @@ const char *yvex_runtime_generation_stop_reason_name(
                ? names[(unsigned int)reason]
                : "unknown";
 }
-
 /* Purpose: adapt the generation context close ABI to retry-safe runtime cleanup leases. */
 static int generation_context_cleanup(void **opaque, yvex_error *err)
 {
@@ -1599,7 +1803,6 @@ static int generation_context_cleanup(void **opaque, yvex_error *err)
     if (opaque) *opaque = context;
     return rc;
 }
-
 /* Purpose: publish readiness only after the complete production composition validates.
  * Inputs: validated result/backend. Effects: sets bounded facts. Failure: none.
  * Boundary: per-execution facts do not promote the final top-level CLI. */
@@ -1625,7 +1828,6 @@ static void generation_operator_ready(yvex_generation_operator_result *result,
     result->generation_loop_ready = 1;
     result->generation_ready = 1;
 }
-
 /* Purpose: execute one operator-reachable prompt through the production generation API.
  * Inputs: exact artifact/binding, text/messages, backend, policy, budgets, and empty retained-cleanup slot.
  * Effects: opens one model/session, executes generation, retains result storage, and closes dependencies once.
@@ -1778,7 +1980,6 @@ int yvex_runtime_generation_operator_execute(
     }
     return rc;
 }
-
 /* Purpose: release caller-owned operator token/text directories without touching closed runtime state.
  * Inputs: optional result owner. Effects: frees and clears output pointers. Failure: none.
  * Boundary: model/session/context cleanup belongs to the runtime cleanup lease. */

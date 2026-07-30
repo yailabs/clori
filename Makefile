@@ -50,7 +50,7 @@
 	test-runtime-descriptor test-runtime-binding test-runtime-model-session \
 	test-runtime-residency test-runtime-phases test-runtime-envelope \
 	test-runtime-operator test-runtime-digests test-runtime-family-neutrality \
-	test-runtime-state test-runtime-prefill test-runtime-benchmark test-runtime-benchmark-chart \
+	test-runtime-state test-runtime-prefill test-runtime-profile test-runtime-benchmark test-runtime-benchmark-chart \
 	test-runtime-moe test-runtime-transformer test-runtime-decode test-runtime-logits \
 	test-runtime-sampling test-runtime-generation \
 	test-runtime-tokenizer \
@@ -86,7 +86,7 @@ CC ?= cc
 AR ?= ar
 NVCC ?= nvcc
 CUDA_HOME ?= /usr/local/cuda
-NVCCFLAGS ?=
+NVCCFLAGS ?= -O3
 CUDA_LDFLAGS ?=
 YVEX_CUDA_ARCH ?= auto
 NVCC_AVAILABLE := $(shell command -v $(NVCC) >/dev/null 2>&1 && echo yes || echo no)
@@ -114,7 +114,7 @@ YVEX_BUILD_IDENTITY ?= $(shell printf '%s\n' \
 	'nvccflags=$(NVCCFLAGS)' 'cuda-ldflags=$(CUDA_LDFLAGS)' 'cuda-arch=$(YVEX_CUDA_ARCH)' | \
 	sha256sum | cut -d' ' -f1)
 YVEX_BUILD_SOURCE_ROOT ?= $(shell pwd -P)
-CFLAGS ?= -std=c11 -Wall -Wextra -pedantic -Wstrict-prototypes \
+CFLAGS ?= -O3 -std=c11 -Wall -Wextra -pedantic -Wstrict-prototypes \
 	-Wmissing-prototypes -Wmissing-declarations -Wshadow -Wformat=2 \
 	-Wundef -Wvla -pthread
 DEPFLAGS ?= -MMD -MP
@@ -621,6 +621,9 @@ test-runtime-state: $(TEST_RUNNER)
 test-runtime-prefill: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_prefill $(TEST_RUNNER)
 
+test-runtime-profile: $(TEST_RUNNER)
+	YVEX_TEST_FILTER=runtime_profile $(TEST_RUNNER)
+
 test-runtime-moe: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_moe $(TEST_RUNNER)
 
@@ -758,6 +761,7 @@ test-runtime: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_moe $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_transformer $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_prefill $(TEST_RUNNER)
+	YVEX_TEST_FILTER=runtime_profile $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_state $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_benchmark $(TEST_RUNNER)
 	@! YVEX_TEST_FILTER=__unknown_runtime_test__ $(TEST_RUNNER) >/dev/null 2>&1

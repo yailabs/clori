@@ -11,16 +11,13 @@
  * Failure: typed refusal publishes no partial frame, session, or false readiness. */
 #ifndef YVEX_SERVER_H
 #define YVEX_SERVER_H
-
 #include <yvex/artifact.h>
 #include <yvex/backend.h>
 #include <yvex/core.h>
 #include <yvex/provider.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 #define YVEX_LOCAL_PROTOCOL_VERSION 2u
 #define YVEX_SERVER_SESSION_NAME_CAP 64u
 #define YVEX_SERVER_ID_CAP 65u
@@ -28,10 +25,8 @@ extern "C" {
 #define YVEX_SERVER_FRAGMENT_CAP 4096u
 #define YVEX_SERVER_SOCKET_PATH_CAP 512u
 #define YVEX_SERVER_FRAME_MAX_BYTES 1048576u
-
 typedef struct yvex_server yvex_server;
 typedef struct yvex_client yvex_client;
-
 typedef enum {
     YVEX_SERVER_STATUS_CONFIGURED = 0,
     YVEX_SERVER_STATUS_STARTING,
@@ -40,19 +35,16 @@ typedef enum {
     YVEX_SERVER_STATUS_STOPPED,
     YVEX_SERVER_STATUS_FAILED
 } yvex_server_status;
-
 typedef enum {
     YVEX_SERVER_TRACE_SUMMARY = 0,
     YVEX_SERVER_TRACE_STAGES,
     YVEX_SERVER_TRACE_TOKENS,
     YVEX_SERVER_TRACE_FULL
 } yvex_server_trace_level;
-
 typedef enum {
     YVEX_SERVER_CONSOLE_OFF = 0,
     YVEX_SERVER_CONSOLE_RAW
 } yvex_server_console_kind;
-
 typedef enum {
     YVEX_SERVER_SESSION_CREATED = 0,
     YVEX_SERVER_SESSION_READY,
@@ -64,7 +56,6 @@ typedef enum {
     YVEX_SERVER_SESSION_CLOSED,
     YVEX_SERVER_SESSION_FAILED
 } yvex_server_session_state;
-
 typedef enum {
     YVEX_SERVER_EVENT_PROCESS_START = 0,
     YVEX_SERVER_EVENT_TELEMETRY_READY,
@@ -91,6 +82,7 @@ typedef enum {
     YVEX_SERVER_EVENT_GENERATION_FIRST_TOKEN,
     YVEX_SERVER_EVENT_GENERATION_FRAGMENT,
     YVEX_SERVER_EVENT_GENERATION_PROGRESS,
+    YVEX_SERVER_EVENT_GENERATION_PROFILE,
     YVEX_SERVER_EVENT_GENERATION_COMPLETED,
     YVEX_SERVER_EVENT_GENERATION_CANCELLED,
     YVEX_SERVER_EVENT_GENERATION_FAILED,
@@ -99,7 +91,6 @@ typedef enum {
     YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_START,
     YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE
 } yvex_server_event_kind;
-
 typedef enum {
     YVEX_SERVER_SEVERITY_DEBUG = 0,
     YVEX_SERVER_SEVERITY_INFO,
@@ -107,7 +98,6 @@ typedef enum {
     YVEX_SERVER_SEVERITY_ERROR,
     YVEX_SERVER_SEVERITY_FATAL
 } yvex_server_event_severity;
-
 typedef struct {
     unsigned int schema_version;
     unsigned long long sequence, wall_time_ns, monotonic_time_ns, process_id;
@@ -127,7 +117,6 @@ typedef struct {
     char variant_identity[YVEX_SHA256_HEX_CAP];
     char event_identity[YVEX_SHA256_HEX_CAP];
 } yvex_server_event;
-
 typedef struct {
     unsigned int schema_version;
     unsigned long long uptime_ns, model_open_count, model_close_count;
@@ -142,7 +131,6 @@ typedef struct {
     unsigned long long failed_requests, cancelled_requests;
     unsigned long long telemetry_dropped;
 } yvex_server_metrics;
-
 typedef struct {
     const char *artifact_path;
     const char *runtime_binding_path;
@@ -158,7 +146,6 @@ typedef struct {
     yvex_server_console_kind console;
     int trace_content;
 } yvex_server_options;
-
 typedef struct {
     unsigned int schema_version;
     yvex_server_status status;
@@ -173,7 +160,6 @@ typedef struct {
     yvex_server_metrics metrics;
     int runtime_ready, generation_ready, public_server_ready;
 } yvex_server_summary;
-
 typedef enum {
     YVEX_CLIENT_OP_HANDSHAKE = 0,
     YVEX_CLIENT_OP_RUNTIME_STATUS,
@@ -193,7 +179,6 @@ typedef enum {
     YVEX_CLIENT_OP_ARTIFACT_SHOW,
     YVEX_CLIENT_OP_ARTIFACT_VERIFY
 } yvex_client_operation;
-
 typedef enum {
     YVEX_CLIENT_MESSAGE_ACK = 0,
     YVEX_CLIENT_MESSAGE_ERROR,
@@ -205,7 +190,6 @@ typedef enum {
     YVEX_CLIENT_MESSAGE_FRAGMENT,
     YVEX_CLIENT_MESSAGE_TURN_COMPLETE
 } yvex_client_message_kind;
-
 typedef enum {
     YVEX_CLIENT_FAILURE_NONE = 0,
     YVEX_CLIENT_FAILURE_INVALID_REQUEST,
@@ -219,7 +203,6 @@ typedef enum {
     YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE,
     YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT
 } yvex_client_failure_class;
-
 typedef struct {
     unsigned int schema_version;
     yvex_client_operation operation;
@@ -235,7 +218,6 @@ typedef struct {
     int trace_content;
     const yvex_provider_request *provider_request;
 } yvex_client_request;
-
 typedef struct {
     unsigned int schema_version;
     yvex_client_message_kind kind;
@@ -267,7 +249,6 @@ typedef struct {
     yvex_server_summary runtime;
     yvex_server_event event;
 } yvex_client_message;
-
 int yvex_server_create(yvex_server **out, const yvex_server_options *options,
                        yvex_error *err);
 int yvex_server_start(yvex_server *server, yvex_error *err);
@@ -284,7 +265,6 @@ int yvex_server_event_validate(const yvex_server_event *event, yvex_error *err);
 const char *yvex_server_event_kind_name(yvex_server_event_kind kind);
 const char *yvex_server_session_state_name(yvex_server_session_state state);
 void yvex_server_close(yvex_server **server);
-
 int yvex_client_connect(yvex_client **out, const char *socket_path,
                         yvex_error *err);
 int yvex_client_timeout_set(yvex_client *client,
@@ -317,7 +297,6 @@ int yvex_protocol_message_decode(const unsigned char *input,
                                  yvex_error *err);
 int yvex_server_socket_path(char output[YVEX_SERVER_SOCKET_PATH_CAP],
                             yvex_error *err);
-
 #ifdef __cplusplus
 }
 #endif

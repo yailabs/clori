@@ -252,7 +252,7 @@ typedef struct yvex_runtime_model yvex_runtime_model;
 typedef struct yvex_runtime_execution_session yvex_runtime_execution_session;
 typedef struct yvex_runtime_cleanup_lease yvex_runtime_cleanup_lease;
 /* Resident encoded full-model pack shared read-only by execution sessions. */
-#define YVEX_RUNTIME_RESIDENCY_SCHEMA_V3 3u
+#define YVEX_RUNTIME_RESIDENCY_SCHEMA_V4 4u
 typedef enum {
     YVEX_RUNTIME_RESIDENCY_FAILURE_NONE = 0,
     YVEX_RUNTIME_RESIDENCY_FAILURE_INVALID_ARGUMENT,
@@ -280,13 +280,12 @@ typedef struct {
     unsigned int schema_version;
     int sealed, attached, host_ready, host_locked, cuda_ready, invalidated;
     int model_complete, core_complete, envelope_complete, output_head_complete;
-    unsigned long long generation, expected_model_binding_count, model_binding_count;
-    unsigned long long expected_core_binding_count, expected_envelope_binding_count;
-    unsigned long long core_binding_count, envelope_binding_count, binding_count;
-    unsigned long long expected_output_head_binding_count, output_head_binding_count;
-    unsigned long long output_head_encoded_bytes, accelerator_encoded_bytes;
-    unsigned long long encoded_bytes, host_resident_bytes, device_resident_bytes;
-    unsigned long long cuda_upload_bytes, cuda_upload_count;
+    unsigned long long generation, expected_model_binding_count, model_binding_count, expected_core_binding_count;
+    unsigned long long expected_envelope_binding_count, core_binding_count, envelope_binding_count, binding_count;
+    unsigned long long expected_output_head_binding_count, output_head_binding_count, output_head_encoded_bytes;
+    unsigned long long accelerator_encoded_bytes, encoded_bytes, host_resident_bytes, device_resident_bytes;
+    unsigned long long cuda_addressable_bytes, cuda_upload_bytes, cuda_upload_count, cuda_host_registration_count;
+    unsigned long long cuda_managed_bytes, cuda_managed_allocation_count;
     unsigned long long cold_artifact_read_calls, cold_artifact_bytes_read;
     unsigned long long resident_read_calls, resident_bytes_read;
     unsigned long long qtype_binding_counts[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];

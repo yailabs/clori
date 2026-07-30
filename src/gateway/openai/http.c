@@ -7,19 +7,16 @@
  * Inputs: accepted loopback socket descriptors and explicit response bytes.
  * Effects: reads/writes one connection and allocates at most the admitted body extent.
  * Failure: malformed, oversized, timed-out, or incomplete messages publish no partial request. */
-
 #define _POSIX_C_SOURCE 200809L
-
 #include "src/gateway/openai/private.h"
-
 #include <errno.h>
 #include <limits.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
-
 /* Purpose: write one complete response span without SIGPIPE.
  * Inputs: connected descriptor, explicit bytes/count, and error output.
  * Effects: advances the socket until every admitted byte is sent.
@@ -42,7 +39,6 @@ static int write_all(int fd, const void *bytes, size_t count,
     }
     return YVEX_OK;
 }
-
 /* Purpose: parse one bounded decimal Content-Length without coercion. */
 static int content_length(const char *text, unsigned long long *value)
 {
@@ -58,7 +54,6 @@ static int content_length(const char *text, unsigned long long *value)
     *value = parsed;
     return 1;
 }
-
 /* Purpose: compare one HTTP header name without accepting prefix aliases. */
 static int header_name(const char *line, size_t name_count, const char *name)
 {
@@ -72,7 +67,6 @@ static int header_name(const char *line, size_t name_count, const char *name)
     }
     return 1;
 }
-
 /* Purpose: admit one exact HTTP/1.1 request line and unique bounded headers.
  * Inputs: mutable complete header bytes and request output.
  * Effects: splits validated lines and records method/path/content length.
@@ -138,7 +132,6 @@ malformed:
                    "malformed bounded HTTP/1.1 request");
     return YVEX_ERR_FORMAT;
 }
-
 /* Purpose: read one complete bounded request, including bytes already received after the headers.
  * Inputs: connected descriptor, cleared request output, and error output.
  * Effects: allocates and publishes one complete admitted request body.
@@ -200,7 +193,6 @@ malformed:
                    "bytes beyond Content-Length are refused");
     return YVEX_ERR_FORMAT;
 }
-
 /* Purpose: release one admitted request body and erase parser facts.
  * Inputs: one request that may own body storage.
  * Effects: frees the body and clears all parsed fields.
@@ -212,7 +204,6 @@ void openai_http_request_clear(openai_http_request *request)
     free(request->body);
     memset(request, 0, sizeof(*request));
 }
-
 /* Purpose: map one admitted status code to a fixed HTTP reason. */
 static const char *status_reason(int status)
 {
@@ -231,7 +222,6 @@ static const char *status_reason(int status)
     default: return "Error";
     }
 }
-
 /* Purpose: send one complete JSON response with explicit close semantics.
  * Inputs: client descriptor, admitted status, JSON bytes/count, and error output.
  * Effects: writes headers and the complete response body.
@@ -255,7 +245,6 @@ int openai_http_json(int fd, int status, const unsigned char *body,
         return yvex_error_code(err);
     return write_all(fd, body, (size_t)count, err);
 }
-
 /* Purpose: start one non-buffered local SSE response.
  * Inputs: client descriptor and error output.
  * Effects: commits one HTTP 200 event-stream header block.
@@ -272,7 +261,6 @@ int openai_http_sse_begin(int fd, yvex_error *err)
         "X-YVEX-OpenAI-Profile: " OPENAI_COMPAT_PROFILE "\r\n\r\n";
     return write_all(fd, header, sizeof(header) - 1u, err);
 }
-
 /* Purpose: write one exact SSE record without mixing terminal prose.
  * Inputs: descriptor, optional event name, explicit JSON bytes/count, and error output.
  * Effects: writes one complete event/data record in order.
@@ -294,7 +282,6 @@ int openai_http_sse_event(int fd, const char *event,
         return yvex_error_code(err);
     return YVEX_OK;
 }
-
 /* Purpose: terminate a Chat Completions stream with the specified protocol sentinel.
  * Inputs: descriptor and error output.
  * Effects: writes exactly one data [DONE] SSE record.
@@ -303,4 +290,51 @@ int openai_http_sse_event(int fd, const char *event,
 int openai_http_sse_done(int fd, yvex_error *err)
 {
     return write_all(fd, "data: [DONE]\n\n", 14u, err);
+}
+/* Purpose: wait boundedly for an HTTP peer to close without consuming request bytes.
+ * Inputs: connected descriptor, millisecond ceiling, closed output, and error output.
+ * Effects: observes peer readiness only and publishes one exact half/full-close fact.
+ * Failure: interrupted waits retry; invalid descriptors or poll failures return typed I/O errors.
+ * Boundary: transport liveness only; cancellation and generation state remain caller-owned. */
+int openai_http_peer_wait(int fd, unsigned int milliseconds, int *closed,
+                          yvex_error *err)
+{
+    struct pollfd peer;
+    int ready;
+    if (fd < 0 || !closed || milliseconds > 60000u) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "gateway.http.peer",
+                       "connected HTTP peer and bounded wait are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    *closed = 0;
+    peer.fd = fd;
+    peer.events = POLLIN;
+    peer.revents = 0;
+    do {
+        ready = poll(&peer, 1u, (int)milliseconds);
+    } while (ready < 0 && errno == EINTR);
+    if (ready < 0) {
+        yvex_error_set(err, YVEX_ERR_IO, "gateway.http.peer",
+                       "HTTP peer liveness wait failed");
+        return YVEX_ERR_IO;
+    }
+    if (!ready) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (peer.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+        *closed = 1;
+    } else if (peer.revents & POLLIN) {
+        unsigned char byte;
+        ssize_t count = recv(fd, &byte, 1u, MSG_PEEK | MSG_DONTWAIT);
+        if (count == 0)
+            *closed = 1;
+        else if (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+            yvex_error_set(err, YVEX_ERR_IO, "gateway.http.peer",
+                           "HTTP peer liveness probe failed");
+            return YVEX_ERR_IO;
+        }
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
 }

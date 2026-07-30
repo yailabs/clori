@@ -10,13 +10,11 @@
  * Inputs: Driver discovery results, device selection, and caller-owned backend result storage.
  * Effects: Creates or tears down only CUDA Driver resources owned by the backend.
  * Failure: Returns typed CUDA admission or cleanup failures without publishing partial readiness. */
-
 #include "src/backend/cuda/private.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 /* Purpose: Translate operator input into the canonical typed parse device index value without ambiguous aliases.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
@@ -26,7 +24,6 @@ static int parse_device_index(const char *text, int *out, yvex_error *err)
 {
     long value = 0;
     const char *p;
-
     if (!out) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.parse_device", "out is required");
         return YVEX_ERR_INVALID_ARG;
@@ -51,14 +48,12 @@ static int parse_device_index(const char *text, int *out, yvex_error *err)
     *out = (int)value;
     return YVEX_OK;
 }
-
 /* Purpose: report whether deterministic timing fault injection selects one event operation. */
 static int cuda_timing_failure_matches(const char *stage)
 {
     const char *selected = getenv("YVEX_TEST_CUDA_EVENT_FAILURE");
     return selected && stage && strcmp(selected, stage) == 0;
 }
-
 /* Purpose: create one reusable event pair before a backend enters warm execution.
  * Inputs: admitted live backend.
  * Effects: installs context-owned start and stop events.
@@ -69,7 +64,6 @@ static int cuda_timing_open(yvex_backend *backend, yvex_error *err)
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_driver *driver;
     int rc;
-
     if (!state) return YVEX_ERR_INVALID_ARG;
     driver = &state->driver;
     if (!driver->cuEventCreate || !driver->cuEventRecord ||
@@ -102,7 +96,6 @@ static int cuda_timing_open(yvex_backend *backend, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: release the reusable event pair before its CUDA context becomes invalid.
  * Inputs: live backend context.
  * Effects: destroys only its owned events.
@@ -113,7 +106,6 @@ static int cuda_timing_close(yvex_backend *backend, yvex_error *err)
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_driver *driver;
     int rc;
-
     if (!state || (!state->timing_start && !state->timing_stop)) return YVEX_OK;
     driver = &state->driver;
     rc = yvex_cuda_set_current(backend, "cuda.timing.close", err);
@@ -145,7 +137,6 @@ static int cuda_timing_close(yvex_backend *backend, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: begin, finish, or discard one interval through the reusable CUDA event pair.
  * Inputs: live backend, action, exact stream, optional elapsed output, and diagnostic stage.
  * Effects: changes only timing ownership and publishes device elapsed nanoseconds on finish.
@@ -159,7 +150,6 @@ int yvex_cuda_timing(yvex_backend *backend, CUstream stream,
     float milliseconds = 0.0f;
     double nanoseconds;
     int rc;
-
     if (elapsed_ns) *elapsed_ns = 0ull;
     if (!state || action > YVEX_CUDA_TIMING_DISCARD) return YVEX_ERR_INVALID_ARG;
     if (action == YVEX_CUDA_TIMING_DISCARD) {
@@ -222,7 +212,6 @@ int yvex_cuda_timing(yvex_backend *backend, CUstream stream,
     if (rc == YVEX_OK) *elapsed_ns = (unsigned long long)(nanoseconds + 0.5);
     return rc;
 }
-
 /* Purpose: discharge CUDA ownership in dependency order for checked backend close.
  * Inputs: an exclusively owned backend whose context remains live until every child is released.
  * Effects: releases deferred allocations, graphs, module, context, Driver, and implementation state.
@@ -233,7 +222,6 @@ static int cuda_close(yvex_backend *backend, yvex_error *err)
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_driver *driver;
     int rc;
-
     if (!backend || !state) {
         yvex_error_clear(err);
         return YVEX_OK;
@@ -251,6 +239,20 @@ static int cuda_close(yvex_backend *backend, yvex_error *err)
     rc = yvex_cuda_kernel_bundle_close(backend, err);
     if (rc != YVEX_OK)
         return rc;
+    if (state->registered_host) {
+        if (!driver->cuMemHostUnregister) {
+            yvex_error_set(err, YVEX_ERR_STATE, "cuda.residency.unregister",
+                           "CUDA host registration release is unavailable");
+            return YVEX_ERR_STATE;
+        }
+        rc = yvex_cuda_status(driver,
+                              driver->cuMemHostUnregister(state->registered_host),
+                              "cuda.residency.unregister", err);
+        if (rc != YVEX_OK) return rc;
+        state->registered_host = NULL;
+        state->registered_device = 0ull;
+        state->registered_bytes = 0ull;
+    }
     if (state->context && !state->context_borrowed) {
         if (!driver->cuCtxDestroy_v2) {
             yvex_error_set(err, YVEX_ERR_STATE, "cuda.context.destroy",
@@ -273,7 +275,6 @@ static int cuda_close(yvex_backend *backend, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: Implement the canonical memory stats mechanism owned by the CUDA backend boundary. */
 static int cuda_memory_stats(const yvex_backend *backend,
                              yvex_backend_memory_stats *out,
@@ -288,14 +289,12 @@ static int cuda_memory_stats(const yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: Implement the canonical device info mechanism owned by the CUDA backend boundary. */
 static int cuda_device_info(const yvex_backend *backend,
                             yvex_backend_device_info *out,
                             yvex_error *err)
 {
     int rc;
-
     if (!backend || !out) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.device_info",
                        "backend and out are required");
@@ -309,13 +308,11 @@ static int cuda_device_info(const yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: Implement the canonical sync mechanism owned by the CUDA backend boundary. */
 static int cuda_sync(yvex_backend *backend, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     int rc;
-
     if (!backend || !state) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.sync", "backend is required");
         return YVEX_ERR_INVALID_ARG;
@@ -326,7 +323,6 @@ static int cuda_sync(yvex_backend *backend, yvex_error *err)
     }
     return yvex_cuda_status(&state->driver, state->driver.cuCtxSynchronize(), "cuda.sync", err);
 }
-
 /* Purpose: allocate one page-locked session staging arena for captured transfers.
  * Inputs: live CUDA backend, nonzero byte extent, and caller-owned output.
  * Effects: owns one Driver allocation until the matching backend callback releases it.
@@ -337,7 +333,6 @@ static int cuda_host_workspace_alloc(yvex_backend *backend, size_t bytes,
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     int rc;
-
     if (out) *out = NULL;
     if (!state || !out || !bytes || !state->driver.cuMemHostAlloc) {
         yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.host_workspace.alloc",
@@ -351,7 +346,6 @@ static int cuda_host_workspace_alloc(yvex_backend *backend, size_t bytes,
                               "cuda.host_workspace.alloc", err);
     return rc;
 }
-
 /* Purpose: release only a page-locked staging arena owned by this CUDA backend.
  * Inputs: live CUDA backend and its owned page-locked base; null is idempotent.
  * Effects: returns the exact Driver allocation and owns no caller-provided storage.
@@ -363,7 +357,6 @@ static int cuda_host_workspace_free(yvex_backend *backend, unsigned char **base,
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     const char *injected = getenv("YVEX_TEST_CUDA_CLEANUP_FAILURE");
     int rc;
-
     if (!base || !*base) return YVEX_OK;
     if (!state || !state->driver.cuMemFreeHost) {
         yvex_error_set(err, YVEX_ERR_STATE, "cuda.host_workspace.free",
@@ -388,12 +381,118 @@ static int cuda_host_workspace_free(yvex_backend *backend, unsigned char **base,
     }
     return rc;
 }
-
+/* Purpose: make one immutable arena CUDA-addressable without duplicating imported host bytes.
+ * Inputs: descriptor and optional verified host storage. Effects: imports or allocates CPU-visible CUDA storage.
+ * Failure: registration/allocation refusal publishes no tensor. Boundary: runtime alone seals imported bytes. */
+static int cuda_resident_alloc(yvex_backend *backend, const yvex_backend_tensor_desc *desc,
+                               yvex_device_tensor **out, unsigned char **host, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_device_tensor *tensor = NULL;
+    unsigned char *imported = host ? *host : NULL;
+    CUdeviceptr pointer = 0ull;
+    unsigned int index;
+    int rc;
+    if (out) *out = NULL;
+    if (!backend || !state || !desc || !out || !host || !desc->name || desc->rank == 0u ||
+        desc->rank > YVEX_TENSOR_MAX_DIMS || desc->bytes == 0ull ||
+        desc->bytes > (unsigned long long)SIZE_MAX || state->context_borrowed ||
+        !backend->device_info.unified_addressing ||
+        (imported && (!state->driver.cuMemHostRegister_v2 ||
+                      !state->driver.cuMemHostGetDevicePointer_v2 ||
+                      !state->driver.cuMemHostUnregister || state->registered_host)) ||
+        (!imported && (!backend->device_info.managed_memory ||
+                       !state->driver.cuMemAllocManaged))) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.residency.alloc",
+                       "one valid imported-host or managed CUDA residency is required");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    for (index = 0u; index < desc->rank; ++index) {
+        if (desc->dims[index] == 0ull) {
+            yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.residency.alloc",
+                           "managed allocation dimensions must be non-zero");
+            return YVEX_ERR_INVALID_ARG;
+        }
+    }
+    if (!imported) {
+        rc = yvex_backend_memory_can_add(
+            backend, desc->bytes, "CUDA managed", "cuda.residency.alloc", err);
+        if (rc != YVEX_OK) return rc;
+    }
+    tensor = (yvex_device_tensor *)calloc(1u, sizeof(*tensor));
+    if (tensor) tensor->name = yvex_core_strdup(desc->name);
+    if (!tensor || !tensor->name) {
+        free(tensor);
+        yvex_error_set(err, YVEX_ERR_NOMEM, "cuda.residency.alloc",
+                       "managed tensor metadata allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    rc = yvex_cuda_set_current(backend, "cuda.residency.alloc", err);
+    if (rc == YVEX_OK && imported && getenv("YVEX_TEST_CUDA_HOST_REGISTER_FAILURE")) {
+        yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.residency.register",
+                       "injected CUDA host registration failure");
+        rc = YVEX_ERR_BACKEND;
+    } else if (rc == YVEX_OK && !imported &&
+               getenv("YVEX_TEST_CUDA_MANAGED_ALLOC_FAILURE")) {
+        yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.residency.alloc",
+                       "injected managed allocation failure");
+        rc = YVEX_ERR_BACKEND;
+    }
+    if (rc == YVEX_OK && imported) {
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemHostRegister_v2(
+                imported, (size_t)desc->bytes, YVEX_CUDA_MEMHOSTREGISTER_DEVICEMAP),
+            "cuda.residency.register", err);
+        if (rc == YVEX_OK) {
+            state->registered_host = imported;
+            state->registered_bytes = desc->bytes;
+            rc = yvex_cuda_status(
+                &state->driver,
+                state->driver.cuMemHostGetDevicePointer_v2(&pointer, imported, 0u),
+                "cuda.residency.address", err);
+            if (rc == YVEX_OK) state->registered_device = pointer;
+        }
+    } else if (rc == YVEX_OK) {
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemAllocManaged(
+                &pointer, (size_t)desc->bytes, YVEX_CUDA_MEM_ATTACH_GLOBAL),
+            "cuda.residency.alloc", err);
+    }
+    if (rc != YVEX_OK) {
+        if (state->registered_host && state->driver.cuMemHostUnregister &&
+            state->driver.cuMemHostUnregister(state->registered_host) == YVEX_CUDA_SUCCESS) {
+            state->registered_host = NULL;
+            state->registered_device = 0ull;
+            state->registered_bytes = 0ull;
+        }
+        free(tensor->name);
+        free(tensor);
+        return rc;
+    }
+    tensor->owner = backend;
+    tensor->owner_id = backend->tensor_id_next++;
+    tensor->dtype = desc->dtype;
+    tensor->rank = desc->rank;
+    for (index = 0u; index < desc->rank; ++index) tensor->dims[index] = desc->dims[index];
+    tensor->bytes = desc->bytes;
+    tensor->data = (unsigned char *)(uintptr_t)pointer;
+    tensor->host_data = imported ? imported : tensor->data;
+    tensor->host_accessible = 1;
+    tensor->is_written = imported != NULL;
+    if (!imported) backend_memory_acquire(backend, desc->bytes);
+    *out = tensor;
+    *host = tensor->host_data;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
 static const yvex_backend_vtable cuda_vtable = {
     cuda_close,
     cuda_memory_stats,
     cuda_device_info,
     yvex_cuda_tensor_alloc,
+    cuda_resident_alloc,
     yvex_cuda_tensor_free,
     yvex_cuda_tensor_write,
     yvex_cuda_tensor_read,
@@ -409,7 +508,6 @@ static const yvex_backend_vtable cuda_vtable = {
     cuda_host_workspace_alloc,
     cuda_host_workspace_free,
 };
-
 /* Purpose: retain one live lease before a shared CUDA backend copies owner resources.
  * Inputs: a stable outer owner reference whose lifecycle has not entered close.
  * Effects: atomically increments only the packed live-child count.
@@ -418,7 +516,6 @@ static const yvex_backend_vtable cuda_vtable = {
 static int shared_owner_acquire(yvex_backend *owner, yvex_error *err)
 {
     unsigned long long desired, observed;
-
     if (!owner || owner->resource_owner != owner ||
         owner->status == YVEX_BACKEND_STATUS_FAILED) {
         yvex_error_set(err, YVEX_ERR_STATE, "backend.shared.acquire",
@@ -443,7 +540,6 @@ static int shared_owner_acquire(yvex_backend *owner, yvex_error *err)
         }
     }
 }
-
 /* Purpose: roll back one fully initialized CUDA-open candidate without losing retry ownership.
  * Inputs: caller output, owned candidate, primary status/error, and diagnostic output.
  * Effects: closes the candidate or returns its failed cleanup owner to the caller.
@@ -455,7 +551,6 @@ static int cuda_open_rollback(yvex_backend **out, yvex_backend **backend,
 {
     yvex_error cleanup;
     int cleanup_status;
-
     yvex_error_clear(&cleanup);
     cleanup_status = yvex_backend_close_checked(backend, &cleanup);
     if (cleanup_status != YVEX_OK) {
@@ -466,7 +561,6 @@ static int cuda_open_rollback(yvex_backend **out, yvex_backend **backend,
     if (err) *err = primary;
     return primary_status;
 }
-
 /* Purpose: Construct the admitted open impl state only after its identities and resources are valid.
  * Inputs: A validated configuration, checked resource limits, and caller-owned result storage.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
@@ -479,20 +573,17 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
 {
     yvex_backend *backend = NULL;
     yvex_cuda_backend_state *state = NULL;
-    int device_index = 0, device_count = 0, unified = 0, managed = 0;
+    int device_index = 0, device_count = 0, unified = 0, managed = 0, can_map_host = 0;
     size_t global_bytes = 0;
     int rc;
-
     if (!out) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "yvex_backend_open_cuda_impl",
                        "out is required");
         return YVEX_ERR_INVALID_ARG;
     }
     *out = NULL;
-
     rc = parse_device_index(device, &device_index, err);
     if (rc != YVEX_OK) return rc;
-
     backend = (yvex_backend *)calloc(1, sizeof(*backend));
     state = (yvex_cuda_backend_state *)calloc(1, sizeof(*state));
     if (!backend || !state) {
@@ -508,7 +599,6 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
     backend->impl = state;
     backend->resource_owner = backend;
     atomic_init(&backend->lifecycle, 0ull);
-
     rc = yvex_cuda_driver_load(&state->driver, err);
     if (rc != YVEX_OK) goto failed;
     rc = yvex_cuda_status(&state->driver, state->driver.cuInit(0),
@@ -531,16 +621,19 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
         rc = YVEX_ERR_INVALID_ARG;
         goto failed;
     }
-
     rc = yvex_cuda_status(&state->driver, state->driver.cuDeviceGet(&state->device, device_index),
                           "yvex_backend_open_cuda_impl", err);
     if (rc == YVEX_OK) {
+        (void)state->driver.cuDeviceGetAttribute(
+            &can_map_host, YVEX_CUDA_DEVICE_ATTRIBUTE_CAN_MAP_HOST_MEMORY, state->device);
         rc = yvex_cuda_status(&state->driver,
-                              state->driver.cuCtxCreate_v2(&state->context, 0, state->device),
+                              state->driver.cuCtxCreate_v2(
+                                  &state->context,
+                                  can_map_host ? YVEX_CUDA_CTX_MAP_HOST : 0u,
+                                  state->device),
                               "yvex_backend_open_cuda_impl", err);
     }
     if (rc != YVEX_OK) goto failed;
-
     state->device_index = device_index;
     (void)state->driver.cuDriverGetVersion(&state->driver_version);
     (void)state->driver.cuDeviceGetName(backend->device_name_storage,
@@ -556,7 +649,6 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
     (void)state->driver.cuDeviceGetAttribute(&managed,
                                              YVEX_CUDA_DEVICE_ATTRIBUTE_MANAGED_MEMORY,
                                              state->device);
-
     backend->status = YVEX_BACKEND_STATUS_CONTEXT_READY;
     backend->stats.memory_limit_bytes = memory_limit_bytes;
     backend->tensor_id_next = 1;
@@ -567,10 +659,8 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
     backend->device_info.unified_addressing = unified != 0;
     backend->device_info.managed_memory = managed != 0;
     (void)yvex_cuda_refresh_memory_info(backend, err);
-
     rc = cuda_timing_open(backend, err);
     if (rc != YVEX_OK) goto failed;
-
     rc = yvex_cuda_kernel_bundle_admit(backend, err);
     if (rc == YVEX_OK) {
         backend->status = YVEX_BACKEND_STATUS_READY;
@@ -581,7 +671,6 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
     } else {
         yvex_error_clear(err);
     }
-
     *out = backend;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -589,7 +678,6 @@ failed:
     return cuda_open_rollback(out, &backend, rc,
                               err ? *err : (yvex_error){0}, err);
 }
-
 /* Purpose: create session-local CUDA state that borrows one model-owned context.
  * Inputs: live CUDA owner and an exact session allocation budget.
  * Effects: owns a separate kernel module, graph registry, streams, and memory counters.
@@ -604,7 +692,6 @@ int yvex_backend_open_shared_cuda(yvex_backend **out,
     yvex_backend *backend;
     yvex_cuda_backend_state *state;
     int rc;
-
     if (out) *out = NULL;
     if (!out || !context_owner || context_owner->kind != YVEX_BACKEND_KIND_CUDA ||
         context_owner->resource_owner != context_owner) {
@@ -638,7 +725,6 @@ int yvex_backend_open_shared_cuda(yvex_backend **out,
     owner = yvex_cuda_state(context_owner);
     if (!owner || !owner->context || owner->context_borrowed) {
         yvex_error primary;
-
         yvex_error_set(&primary, YVEX_ERR_STATE, "cuda.shared.open",
                        "owning CUDA context became unavailable");
         return cuda_open_rollback(out, &backend, YVEX_ERR_STATE, primary, err);

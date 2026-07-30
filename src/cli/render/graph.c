@@ -16,6 +16,7 @@
 #include <yvex/internal/decode.h>
 #include <yvex/internal/generation.h>
 #include <yvex/internal/logits.h>
+#include <yvex/internal/profile.h>
 #include <yvex/internal/sampling.h>
 static const char *const literal_lines_0[] = {
     "usage: yvex graph attention prepare --target TARGET",
@@ -1496,6 +1497,25 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                                 yvex_runtime_generation_stop_reason_name(run->stop_reason), 1);
         yvex_cli_json_field_bool(fp, "generation_ready", result->generation_ready, 1);
         yvex_cli_json_field_bool(fp, "cli_generate_ready", result->cli_generate_ready, 1);
+        if (yvex_cli_out_writef(fp,
+                "  \"profile\": {\"schema\":%u,\"mode\":\"%s\",\"identity\":\"%s\","
+                "\"phases_ns\":{", run->profile.schema_version,
+                runtime_profile_mode_name(run->profile.mode),
+                run->profile.profile_identity) < 0) return YVEX_ERR_IO;
+        for (index = 0ull; index < YVEX_RUNTIME_PROFILE_PHASE_COUNT; ++index)
+            if (yvex_cli_out_writef(fp, "\"%s\":%llu%s",
+                    runtime_profile_phase_name((yvex_runtime_profile_phase)index),
+                    run->profile.phase_ns[index],
+                    index + 1ull == YVEX_RUNTIME_PROFILE_PHASE_COUNT ? "" : ",") < 0)
+                return YVEX_ERR_IO;
+        yvex_cli_out_puts(fp, "},\"counters\":{");
+        for (index = 0ull; index < YVEX_RUNTIME_PROFILE_COUNTER_COUNT; ++index)
+            if (yvex_cli_out_writef(fp, "\"%s\":%llu%s",
+                    runtime_profile_counter_name((yvex_runtime_profile_counter)index),
+                    run->profile.counters[index],
+                    index + 1ull == YVEX_RUNTIME_PROFILE_COUNTER_COUNT ? "" : ",") < 0)
+                return YVEX_ERR_IO;
+        yvex_cli_out_puts(fp, "}},\n");
         yvex_cli_out_puts(fp, "  \"generated_tokens\": [\n");
         for (index = 0ull; index < result->token_count; ++index) {
             const yvex_runtime_generation_token_result *token = &result->tokens[index];

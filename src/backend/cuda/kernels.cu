@@ -9,20 +9,14 @@
  * Inputs: Validated device buffers, dimensions, and numeric parameters supplied by host launch owners.
  * Effects: Writes only the kernel output ranges assigned to each launched thread.
  * Failure: Host admission rejects invalid geometry; kernels assume the validated launch contract. */
-
 #include <yvex/qtype.h>
-
-/* Purpose: Compute the bounded embed F32 primitive under the declared dtype and shape contract.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
-extern "C" __global__ void yvex_embed_f32(const float *embedding,
-                                          const unsigned int *token_ids,
-                                          float *out,
-                                          unsigned long long hidden_size,
-                                          unsigned long long vocab_size,
-                                          unsigned long long token_count)
+/* Purpose: embed admitted token IDs from an F32 vocabulary matrix.
+ * Inputs: bounded IDs and geometry. Effects: writes only assigned output elements.
+ * Failure: invalid geometry writes nothing. Boundary: host admission owns typed refusal. */
+extern "C" __global__ void yvex_embed_f32(
+    const float *embedding, const unsigned int *token_ids, float *out,
+    unsigned long long hidden_size, unsigned long long vocab_size,
+    unsigned long long token_count)
 {
     unsigned long long idx =
         ((unsigned long long)blockIdx.x * (unsigned long long)blockDim.x) +
@@ -32,7 +26,6 @@ extern "C" __global__ void yvex_embed_f32(const float *embedding,
     unsigned long long dim;
     unsigned int token_id;
     const unsigned long long max_ull = ~0ull;
-
     if (!embedding || !token_ids || !out ||
         hidden_size == 0ull || vocab_size == 0ull || token_count == 0ull ||
         hidden_size > max_ull / token_count ||
@@ -43,29 +36,21 @@ extern "C" __global__ void yvex_embed_f32(const float *embedding,
     if (idx >= total) {
         return;
     }
-
     token_index = idx / hidden_size;
     dim = idx % hidden_size;
     token_id = token_ids[token_index];
     if ((unsigned long long)token_id >= vocab_size) {
         return;
     }
-
     out[idx] = embedding[((unsigned long long)token_id * hidden_size) + dim];
 }
-
-/* Purpose: Implement the canonical F16 bits to float mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: decode F16 bits. Inputs: one u16. Effects: none. Failure: none. Boundary: CUDA device helper. */
 static __device__ float f16_bits_to_float(unsigned int h)
 {
     unsigned int sign = (h & 0x8000u) << 16;
     unsigned int exp = (h >> 10) & 0x1fu;
     unsigned int mant = h & 0x03ffu;
     unsigned int raw;
-
     if (exp == 0u) {
         if (mant == 0u) {
             raw = sign;
@@ -85,57 +70,39 @@ static __device__ float f16_bits_to_float(unsigned int h)
     }
     return __uint_as_float(raw);
 }
-
-/* Purpose: Retrieve qtype load u16 from admitted immutable or owned state.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
-static __device__ unsigned int qtype_load_u16(
-    const unsigned char *bytes)
+/* Purpose: load LE u16. Inputs: two encoded bytes. Effects: none. Failure: none. Boundary: device helper. */
+static __device__ unsigned int qtype_load_u16(const unsigned char *bytes)
 {
     return (unsigned int)bytes[0] | ((unsigned int)bytes[1] << 8);
 }
-
-/* Purpose: Retrieve qtype load u32 from admitted immutable or owned state.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
-static __device__ unsigned int qtype_load_u32(
-    const unsigned char *bytes)
+/* Purpose: load LE u32. Inputs: four encoded bytes. Effects: none. Failure: none. Boundary: device helper. */
+static __device__ unsigned int qtype_load_u32(const unsigned char *bytes)
 {
     return (unsigned int)bytes[0] |
            ((unsigned int)bytes[1] << 8) |
            ((unsigned int)bytes[2] << 16) |
            ((unsigned int)bytes[3] << 24);
 }
-
 /* Purpose: Implement the canonical bF16 bits to float mechanism owned by the CUDA backend boundary. */
 static __device__ float bf16_bits_to_float(unsigned int bits)
 {
     return __uint_as_float(bits << 16);
 }
-
 /* Purpose: Publish one F32 activation at the canonical BF16 RNE boundary. */
 static __device__ float float_to_bf16_rne(float value)
 {
     unsigned int bits = __float_as_uint(value);
     unsigned int upper = bits >> 16;
     unsigned int lower = bits & 0xffffu;
-
     if ((bits & 0x7f800000u) == 0x7f800000u &&
         (bits & 0x007fffffu) != 0u)
         return __uint_as_float((upper | 0x0040u) << 16);
     if (lower > 0x8000u || (lower == 0x8000u && (upper & 1u))) upper++;
     return __uint_as_float(upper << 16);
 }
-
-/* Purpose: publish one attention activation vector at the canonical BF16 RNE boundary.
- * Inputs: one finite F32 vector, its exact element count, and shared device status.
- * Effects: rounds each admitted element in place through the versioned attention boundary.
- * Failure: records malformed storage or non-finite input in shared device status.
- * Boundary: generic attention numeric ingress; family composition selects when it applies. */
+/* Purpose: round a finite activation vector through the canonical BF16 RNE boundary.
+ * Inputs: exact F32 extent. Effects: updates values in place after device-status admission.
+ * Failure: malformed or non-finite input records status. Boundary: family policy stays outside. */
 extern "C" __global__ void yvex_attention_bf16_round(
     float *values, unsigned long long count, int *status)
 {
@@ -143,7 +110,6 @@ extern "C" __global__ void yvex_attention_bf16_round(
         (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
         (unsigned long long)threadIdx.x;
     float value;
-
     if (!status || index >= count || *status != 0) return;
     if (!values) {
         atomicCAS(status, 0, 2);
@@ -156,14 +122,12 @@ extern "C" __global__ void yvex_attention_bf16_round(
     }
     values[index] = float_to_bf16_rne(value);
 }
-
 /* Purpose: Implement the canonical e8m0 bits to float mechanism owned by the CUDA backend boundary. */
 static __device__ float e8m0_bits_to_float(unsigned int bits)
 {
     if (bits == 0xffu) return __uint_as_float(0x7fc00000u);
     return __uint_as_float(bits == 0u ? 0x00400000u : bits << 23);
 }
-
 /* Purpose: Implement the canonical mxfp4 code to float mechanism owned by the CUDA backend boundary. */
 static __device__ float mxfp4_code_to_float(unsigned int code)
 {
@@ -180,7 +144,6 @@ static __device__ float mxfp4_code_to_float(unsigned int code)
     }
     return code & 8u ? -magnitude : magnitude;
 }
-
 /* Pinned compatible IQ2_XXS magnitude-grid identities. */
 static __device__ __constant__ unsigned short iq2_xxs_grid[256] = {
     0,     2,     5,     8,     10,    17,    20,    32,    34,    40,    42,
@@ -208,7 +171,6 @@ static __device__ __constant__ unsigned short iq2_xxs_grid[256] = {
     37888, 37922, 37956, 38225, 39041, 39200, 40962, 41040, 41093, 41225, 41472,
     42008, 43088, 43268
 };
-
 /* Purpose: reconstruct one even-parity IQ2 sign mask without a lookup table. */
 static __device__ unsigned int iq2_xxs_signs(unsigned int low)
 {
@@ -217,13 +179,7 @@ static __device__ unsigned int iq2_xxs_signs(unsigned int low)
     while (value) { parity ^= value & 1u; value >>= 1u; }
     return low | (parity << 7u);
 }
-
-/* Directly reconstructs one element without materializing an F32 tensor. */
-/* Purpose: Implement the canonical qtype value mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: decode qtype value. Inputs: encoded index/type. Effects: none. Failure: NaN. Boundary: device helper. */
 static __device__ float qtype_value(const unsigned char *encoded,
                                          unsigned long long index,
                                          unsigned int qtype)
@@ -302,23 +258,15 @@ static __device__ float qtype_value(const unsigned char *encoded,
     }
     return __uint_as_float(0x7fc00000u);
 }
-
-/* Bounded qtype arithmetic proof: encoded row times one F32 vector. */
-/* Purpose: Implement the canonical qtype row dot mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: prove one encoded row dot directly on CUDA.
+ * Inputs: admitted encoded elements and F32 vector. Effects: publishes one scalar.
+ * Failure: host admission owns malformed geometry. Boundary: this is not model execution. */
 extern "C" __global__ void yvex_qtype_row_dot(
-    const unsigned char *encoded,
-    const float *vector,
-    unsigned long long elements,
-    unsigned int qtype,
-    float *out)
+    const unsigned char *encoded, const float *vector,
+    unsigned long long elements, unsigned int qtype, float *out)
 {
     unsigned long long index;
     double sum = 0.0;
-
     if (blockIdx.x != 0u || threadIdx.x != 0u || !encoded || !vector ||
         !out || elements == 0ull) return;
     for (index = 0ull; index < elements; ++index)
@@ -326,18 +274,13 @@ extern "C" __global__ void yvex_qtype_row_dot(
                (double)vector[index];
     out[0] = (float)sum;
 }
-
-/* Purpose: Compute the bounded embed F16 to F32 primitive under the declared dtype and shape contract.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
-extern "C" __global__ void yvex_embed_f16_to_f32(const unsigned short *embedding,
-                                                 const unsigned int *token_ids,
-                                                 float *out,
-                                                 unsigned long long hidden_size,
-                                                 unsigned long long vocab_size,
-                                                 unsigned long long token_count)
+/* Purpose: embed admitted token IDs while decoding an F16 vocabulary matrix.
+ * Inputs: bounded IDs and geometry. Effects: writes only assigned F32 output elements.
+ * Failure: invalid geometry writes nothing. Boundary: host admission owns typed refusal. */
+extern "C" __global__ void yvex_embed_f16_to_f32(
+    const unsigned short *embedding, const unsigned int *token_ids, float *out,
+    unsigned long long hidden_size, unsigned long long vocab_size,
+    unsigned long long token_count)
 {
     unsigned long long idx =
         ((unsigned long long)blockIdx.x * (unsigned long long)blockDim.x) +
@@ -347,7 +290,6 @@ extern "C" __global__ void yvex_embed_f16_to_f32(const unsigned short *embedding
     unsigned long long dim;
     unsigned int token_id;
     const unsigned long long max_ull = ~0ull;
-
     if (!embedding || !token_ids || !out ||
         hidden_size == 0ull || vocab_size == 0ull || token_count == 0ull ||
         hidden_size > max_ull / token_count ||
@@ -358,27 +300,20 @@ extern "C" __global__ void yvex_embed_f16_to_f32(const unsigned short *embedding
     if (idx >= total) {
         return;
     }
-
     token_index = idx / hidden_size;
     dim = idx % hidden_size;
     token_id = token_ids[token_index];
     if ((unsigned long long)token_id >= vocab_size) {
         return;
     }
-
     out[idx] = f16_bits_to_float((unsigned int)embedding[((unsigned long long)token_id * hidden_size) + dim]);
 }
-
-/* Purpose: Compute the bounded rms norm F32 weight F32 primitive under the declared dtype and shape contract.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
-extern "C" __global__ void yvex_rms_norm_f32_weight_f32(const float *input,
-                                                        const float *weight,
-                                                        float *out,
-                                                        unsigned long long hidden_size,
-                                                        float epsilon)
+/* Purpose: apply RMSNorm with admitted F32 weights.
+ * Inputs: bounded vector, weights, and epsilon. Effects: publishes one normalized vector.
+ * Failure: invalid launch geometry writes nothing. Boundary: family policy remains outside. */
+extern "C" __global__ void yvex_rms_norm_f32_weight_f32(
+    const float *input, const float *weight, float *out,
+    unsigned long long hidden_size, float epsilon)
 {
     extern __shared__ float scratch[];
     unsigned int tid = threadIdx.x;
@@ -386,7 +321,6 @@ extern "C" __global__ void yvex_rms_norm_f32_weight_f32(const float *input,
     unsigned long long i;
     float sum = 0.0f;
     float inv_rms;
-
     if (!input || !weight || !out || hidden_size == 0ull || epsilon <= 0.0f) {
         return;
     }
@@ -396,30 +330,23 @@ extern "C" __global__ void yvex_rms_norm_f32_weight_f32(const float *input,
     }
     scratch[tid] = sum;
     __syncthreads();
-
     for (unsigned int offset = blockDim.x >> 1; offset > 0; offset >>= 1) {
         if (tid < offset) {
             scratch[tid] += scratch[tid + offset];
         }
         __syncthreads();
     }
-
     inv_rms = rsqrtf((scratch[0] / (float)hidden_size) + epsilon);
     for (i = (unsigned long long)tid; i < hidden_size; i += (unsigned long long)stride) {
         out[i] = input[i] * inv_rms * weight[i];
     }
 }
-
-/* Purpose: Compute the bounded rms norm F32 weight F16 primitive under the declared dtype and shape contract.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
-extern "C" __global__ void yvex_rms_norm_f32_weight_f16(const float *input,
-                                                        const unsigned short *weight,
-                                                        float *out,
-                                                        unsigned long long hidden_size,
-                                                        float epsilon)
+/* Purpose: apply RMSNorm while decoding admitted F16 weights.
+ * Inputs: bounded vector, weights, and epsilon. Effects: publishes one normalized vector.
+ * Failure: invalid launch geometry writes nothing. Boundary: family policy remains outside. */
+extern "C" __global__ void yvex_rms_norm_f32_weight_f16(
+    const float *input, const unsigned short *weight, float *out,
+    unsigned long long hidden_size, float epsilon)
 {
     extern __shared__ float scratch[];
     unsigned int tid = threadIdx.x;
@@ -427,7 +354,6 @@ extern "C" __global__ void yvex_rms_norm_f32_weight_f16(const float *input,
     unsigned long long i;
     float sum = 0.0f;
     float inv_rms;
-
     if (!input || !weight || !out || hidden_size == 0ull || epsilon <= 0.0f) {
         return;
     }
@@ -437,30 +363,23 @@ extern "C" __global__ void yvex_rms_norm_f32_weight_f16(const float *input,
     }
     scratch[tid] = sum;
     __syncthreads();
-
     for (unsigned int offset = blockDim.x >> 1; offset > 0; offset >>= 1) {
         if (tid < offset) {
             scratch[tid] += scratch[tid + offset];
         }
         __syncthreads();
     }
-
     inv_rms = rsqrtf((scratch[0] / (float)hidden_size) + epsilon);
     for (i = (unsigned long long)tid; i < hidden_size; i += (unsigned long long)stride) {
         out[i] = input[i] * inv_rms * f16_bits_to_float((unsigned int)weight[i]);
     }
 }
-
-/* Purpose: Compute the bounded rope F32 primitive under the declared dtype and shape contract.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
-extern "C" __global__ void yvex_rope_f32(const float *input,
-                                         float *out,
-                                         unsigned long long head_dim,
-                                         unsigned long long position,
-                                         float inverse_root)
+/* Purpose: apply bounded causal RoPE to one F32 activation.
+ * Inputs: admitted position/base/head geometry. Effects: writes assigned pairs only.
+ * Failure: malformed geometry writes nothing. Boundary: host and family owners retain policy. */
+extern "C" __global__ void yvex_rope_f32(
+    const float *input, float *out, unsigned long long head_dim,
+    unsigned long long position, float inverse_root)
 {
     unsigned long long pair =
         ((unsigned long long)blockIdx.x * (unsigned long long)blockDim.x) +
@@ -475,7 +394,6 @@ extern "C" __global__ void yvex_rope_f32(const float *input,
     float cosine;
     float even;
     float odd;
-
     if (!input || !out || head_dim < 2ull || (head_dim & 1ull) != 0ull) {
         return;
     }
@@ -495,18 +413,12 @@ extern "C" __global__ void yvex_rope_f32(const float *input,
     out[even_index] = (even * cosine) - (odd * sine);
     out[odd_index] = (even * sine) + (odd * cosine);
 }
-
-/* Purpose: Compute the bounded matmul F32 primitive under the declared dtype and shape contract.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
-extern "C" __global__ void yvex_matmul_f32(const float *input,
-                                           const float *weight,
-                                           float *out,
-                                           unsigned long long m,
-                                           unsigned long long k,
-                                           unsigned long long n)
+/* Purpose: project admitted F32 rows without selecting model topology.
+ * Inputs: bounded matrix geometry. Effects: writes one scalar per assigned output index.
+ * Failure: malformed geometry writes nothing. Boundary: host admission owns refusal. */
+extern "C" __global__ void yvex_matmul_f32(
+    const float *input, const float *weight, float *out,
+    unsigned long long m, unsigned long long k, unsigned long long n)
 {
     unsigned long long idx =
         ((unsigned long long)blockIdx.x * (unsigned long long)blockDim.x) +
@@ -517,7 +429,6 @@ extern "C" __global__ void yvex_matmul_f32(const float *input,
     unsigned long long inner;
     float sum = 0.0f;
     const unsigned long long max_ull = ~0ull;
-
     if (!input || !weight || !out || m == 0ull || k == 0ull || n == 0ull ||
         m > max_ull / n || k > max_ull / n) {
         return;
@@ -533,24 +444,15 @@ extern "C" __global__ void yvex_matmul_f32(const float *input,
     }
     out[idx] = sum;
 }
-
-/* Purpose: Compute the bounded mlp F32 primitive under the declared dtype and shape contract.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
-extern "C" __global__ void yvex_mlp_f32(const float *input,
-                                        const float *gate_weight,
-                                        const float *up_weight,
-                                        const float *down_weight,
-                                        float *intermediate,
-                                        float *out,
-                                        unsigned long long batch,
-                                        unsigned long long hidden_dim,
-                                        unsigned long long ffn_dim,
-                                        unsigned long long expert_count,
-                                        unsigned long long expert_id,
-                                        int routed_expert_mode)
+/* Purpose: execute one bounded dense F32 gate/up/SwiGLU/down primitive.
+ * Inputs: admitted dense geometry. Effects: publishes only its requested batch output.
+ * Failure: invalid geometry writes nothing. Boundary: this primitive owns no model policy. */
+extern "C" __global__ void yvex_mlp_f32(
+    const float *input, const float *gate_weight, const float *up_weight,
+    const float *down_weight, float *intermediate, float *out,
+    unsigned long long batch, unsigned long long hidden_dim,
+    unsigned long long ffn_dim, unsigned long long expert_count,
+    unsigned long long expert_id, int routed_expert_mode)
 {
     unsigned long long row;
     unsigned long long j;
@@ -562,7 +464,6 @@ extern "C" __global__ void yvex_mlp_f32(const float *input,
     unsigned long long output_total;
     unsigned long long index;
     const unsigned long long max_ull = ~0ull;
-
     if (blockIdx.x != 0) {
         return;
     }
@@ -586,7 +487,6 @@ extern "C" __global__ void yvex_mlp_f32(const float *input,
         up_offset = gate_offset;
         down_offset = expert_id * down_elements;
     }
-
     intermediate_total = batch * ffn_dim;
     output_total = batch * hidden_dim;
     for (index = (unsigned long long)threadIdx.x;
@@ -595,7 +495,6 @@ extern "C" __global__ void yvex_mlp_f32(const float *input,
         float gate_sum = 0.0f;
         float up_sum = 0.0f;
         float silu;
-
         row = index / ffn_dim;
         j = index % ffn_dim;
         for (h = 0; h < hidden_dim; ++h) {
@@ -607,12 +506,10 @@ extern "C" __global__ void yvex_mlp_f32(const float *input,
         intermediate[index] = silu * up_sum;
     }
     __syncthreads();
-
     for (index = (unsigned long long)threadIdx.x;
          index < output_total;
          index += (unsigned long long)blockDim.x) {
         float sum = 0.0f;
-
         row = index / hidden_dim;
         h = index % hidden_dim;
         for (j = 0; j < ffn_dim; ++j) {
@@ -622,23 +519,14 @@ extern "C" __global__ void yvex_mlp_f32(const float *input,
         out[index] = sum;
     }
 }
-
-/* Purpose: Compute the bounded attention F32 primitive under the declared dtype and shape contract.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
-extern "C" __global__ void yvex_attention_f32(const float *query,
-                                              const float *keys,
-                                              const float *values,
-                                              float *score_scratch,
-                                              float *probability_scratch,
-                                              float *out,
-                                              unsigned long long seq_len,
-                                              unsigned long long position,
-                                              unsigned long long head_dim,
-                                              float scale,
-                                              int causal)
+/* Purpose: execute bounded scalar-reference attention on CUDA.
+ * Inputs: admitted query/history/mask geometry. Effects: publishes one head output.
+ * Failure: invalid geometry writes nothing. Boundary: optimized family attention is separate. */
+extern "C" __global__ void yvex_attention_f32(
+    const float *query, const float *keys, const float *values,
+    float *score_scratch, float *probability_scratch, float *out,
+    unsigned long long seq_len, unsigned long long position,
+    unsigned long long head_dim, float scale, int causal)
 {
     unsigned long long visible_count;
     unsigned long long i;
@@ -646,7 +534,6 @@ extern "C" __global__ void yvex_attention_f32(const float *query,
     float max_score = 0.0f;
     float sum_exp = 0.0f;
     __shared__ int softmax_valid;
-
     if (blockIdx.x != 0) {
         return;
     }
@@ -655,7 +542,6 @@ extern "C" __global__ void yvex_attention_f32(const float *query,
         seq_len > (~0ull) / head_dim) {
         return;
     }
-
     visible_count = causal ? position + 1ull : seq_len;
     for (i = (unsigned long long)threadIdx.x;
          i < seq_len;
@@ -673,7 +559,6 @@ extern "C" __global__ void yvex_attention_f32(const float *query,
         score_scratch[i] = score;
     }
     __syncthreads();
-
     if (threadIdx.x == 0) {
         max_score = score_scratch[0];
         for (i = 1ull; i < visible_count; ++i) {
@@ -699,7 +584,6 @@ extern "C" __global__ void yvex_attention_f32(const float *query,
         }
     }
     __syncthreads();
-
     for (d = (unsigned long long)threadIdx.x;
          d < head_dim;
          d += (unsigned long long)blockDim.x) {
@@ -712,15 +596,217 @@ extern "C" __global__ void yvex_attention_f32(const float *query,
         out[d] = value;
     }
 }
-
-/* Direct encoded matrix/vector projection used by admitted production paths.
- * Each block owns one output row and never materializes a
- * decoded weight matrix. */
-/* Purpose: Implement the canonical qtype matvec mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: reduce one encoded row against one BF16-boundary activation within one warp.
+ * Inputs: admitted row, vector, and qtype. Effects: returns one deterministic FP32 warp result.
+ * Failure: malformed or non-finite input records status. Boundary: no host result is published. */
+static __device__ float qtype_warp_dot(const unsigned char *row, const float *vector,
+                                       unsigned long long width, unsigned int qtype,
+                                       int *status)
+{
+    unsigned int lane = threadIdx.x & 31u;
+    float sum = 0.0f;
+    if (!row || !vector || !width) {
+        if (!lane) atomicCAS(status, 0, 2);
+    } else for (unsigned long long i = lane; i < width; i += 32ull) {
+        float weight = qtype_value(row, i, qtype);
+        float value = float_to_bf16_rne(vector[i]);
+        if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
+        else sum = fmaf(weight, value, sum);
+    }
+    for (unsigned int offset = 16u; offset; offset >>= 1u)
+        sum += __shfl_down_sync(0xffffffffu, sum, offset);
+    return sum;
+}
+#define YVEX_CUDA_Q8_K_BLOCK 256ull
+#define YVEX_CUDA_Q8_K_BYTES 292ull
+/* Purpose: quantize activation rows. Inputs: finite rows/geometry. Effects: writes Q8_K rows.
+ * Failure: records invalid input. Boundary: execution-only CUDA activation codec. */
+extern "C" __global__ void yvex_q8_quantize(
+    unsigned char *encoded, const float *values, unsigned long long width,
+    unsigned long long rows, int *status)
+{
+    __shared__ float absolute[256];
+    __shared__ float signed_value[256];
+    __shared__ float inverse_scale;
+    unsigned long long blocks = width / YVEX_CUDA_Q8_K_BLOCK;
+    unsigned long long task = blockIdx.x;
+    unsigned long long row = blocks ? task / blocks : rows;
+    unsigned long long block_index = blocks ? task % blocks : 0ull;
+    unsigned int thread = threadIdx.x;
+    unsigned char *block;
+    float value;
+    if (!status || *status || !encoded || !values || !blocks || row >= rows ||
+        thread >= 256u) return;
+    block = encoded + (row * blocks + block_index) * YVEX_CUDA_Q8_K_BYTES;
+    value = values[row * width + block_index * YVEX_CUDA_Q8_K_BLOCK + thread];
+    if (!isfinite(value)) atomicCAS(status, 0, 1);
+    absolute[thread] = fabsf(value);
+    signed_value[thread] = value;
+    __syncthreads();
+    for (unsigned int stride = 128u; stride; stride >>= 1u) {
+        if (thread < stride && absolute[thread + stride] > absolute[thread]) {
+            absolute[thread] = absolute[thread + stride];
+            signed_value[thread] = signed_value[thread + stride];
+        }
+        __syncthreads();
+    }
+    if (!thread) {
+        inverse_scale = absolute[0] == 0.0f ? 0.0f : -127.0f / signed_value[0];
+        *(float *)block = inverse_scale == 0.0f ? 0.0f : 1.0f / inverse_scale;
+    }
+    __syncthreads();
+    {
+        int quantized = inverse_scale == 0.0f ? 0 : __float2int_rn(inverse_scale * value);
+        quantized = quantized > 127 ? 127 : quantized < -128 ? -128 : quantized;
+        block[4u + thread] = (unsigned char)(quantized & 255);
+    }
+    __syncthreads();
+    if (thread < 16u) {
+        int sum = 0;
+        for (unsigned int i = 0u; i < 16u; ++i) {
+            unsigned int raw = block[4u + thread * 16u + i];
+            sum += raw <= 127u ? (int)raw : (int)raw - 256;
+        }
+        *(short *)(block + 260u + thread * 2u) = (short)sum;
+    }
+}
+/* Purpose: load one signed Q8_K block sum without relying on host structure layout. */
+static __device__ int q8_k_sum(const unsigned char *block, unsigned int index)
+{
+    unsigned int raw = qtype_load_u16(block + 260u + index * 2u);
+    return raw <= 32767u ? (int)raw : (int)raw - 65536;
+}
+/* Purpose: dot sixteen packed two-bit values with sixteen signed activation bytes. */
+static __device__ int q2_k_dot16(const unsigned char *weight,
+                                 const unsigned char *activation, unsigned int shift)
+{
+    int sum = 0;
+#pragma unroll
+    for (unsigned int i = 0u; i < 16u; i += 4u) {
+        int packed = (int)((qtype_load_u32(weight + i) >> shift) & 0x03030303u);
+        sum = __dp4a(packed, (int)qtype_load_u32(activation + i), sum);
+    }
+    return sum;
+}
+/* Purpose: pack four signed IQ2 levels from the canonical magnitude grid. */
+static __device__ int iq2_xxs_i8x4(unsigned short grid, unsigned int start,
+                                   unsigned int signs)
+{
+    unsigned int packed = 0u;
+#pragma unroll
+    for (unsigned int i = 0u; i < 4u; ++i) {
+        unsigned int code = (grid >> (2u * (start + i))) & 3u;
+        int level = code == 0u ? 8 : code == 1u ? 25 : 43;
+        if (signs & (1u << (start + i))) level = -level;
+        packed |= ((unsigned int)level & 255u) << (8u * i);
+    }
+    return (int)packed;
+}
+/* Purpose: IQ2/Q8 dot. Inputs: two blocks. Effects: none. Failure: NaN. Boundary: device helper. */
+static __device__ float iq2_xxs_q8_k_dot(const unsigned char *weight,
+                                         const unsigned char *activation)
+{
+    float weight_scale = f16_bits_to_float(qtype_load_u16(weight));
+    float activation_scale = __uint_as_float(qtype_load_u32(activation));
+    int total = 0;
+#pragma unroll
+    for (unsigned int group = 0u; group < 8u; ++group) {
+        unsigned int grids = qtype_load_u32(weight + 2u + group * 8u);
+        unsigned int sign_scale = qtype_load_u32(weight + 6u + group * 8u);
+        int group_sum = 0;
+#pragma unroll
+        for (unsigned int subgroup = 0u; subgroup < 4u; ++subgroup) {
+            unsigned int grid_index = (grids >> (8u * subgroup)) & 255u;
+            unsigned int signs = iq2_xxs_signs(
+                (sign_scale >> (7u * subgroup)) & 127u);
+            unsigned short grid = iq2_xxs_grid[grid_index];
+            const unsigned char *q8 = activation + 4u + group * 32u + subgroup * 8u;
+            group_sum = __dp4a(iq2_xxs_i8x4(grid, 0u, signs),
+                                (int)qtype_load_u32(q8), group_sum);
+            group_sum = __dp4a(iq2_xxs_i8x4(grid, 4u, signs),
+                                (int)qtype_load_u32(q8 + 4u), group_sum);
+        }
+        total += group_sum * (int)(2u * (sign_scale >> 28u) + 1u);
+    }
+    return 0.125f * weight_scale * activation_scale * (float)total;
+}
+/* Purpose: Q2/Q8 dot. Inputs: two blocks. Effects: none. Failure: NaN. Boundary: device helper. */
+static __device__ float q2_k_q8_k_dot(const unsigned char *weight,
+                                      const unsigned char *activation)
+{
+    const unsigned char *scales = weight;
+    const unsigned char *quantized = weight + 16u;
+    const unsigned char *q8 = activation + 4u;
+    float activation_scale = __uint_as_float(qtype_load_u32(activation));
+    int minimum_sum = 0, dot = 0, scale_index = 0;
+    for (unsigned int i = 0u; i < 16u; ++i)
+        minimum_sum += q8_k_sum(activation, i) * (int)(scales[i] >> 4u);
+#pragma unroll
+    for (unsigned int half = 0u; half < 2u; ++half) {
+        unsigned int shift = 0u;
+#pragma unroll
+        for (unsigned int group = 0u; group < 4u; ++group) {
+            dot += (int)(scales[scale_index++] & 15u) * q2_k_dot16(quantized, q8, shift);
+            dot += (int)(scales[scale_index++] & 15u) *
+                   q2_k_dot16(quantized + 16u, q8 + 16u, shift);
+            shift += 2u;
+            q8 += 32u;
+        }
+        quantized += 32u;
+    }
+    return activation_scale * f16_bits_to_float(qtype_load_u16(weight + 80u)) *
+               (float)dot -
+           activation_scale * f16_bits_to_float(qtype_load_u16(weight + 82u)) *
+               (float)minimum_sum;
+}
+/* Purpose: dot one Q8_0 weight span of 256 values with one Q8_K block. */
+static __device__ float q8_0_q8_k_dot(const unsigned char *weight,
+                                      const unsigned char *activation)
+{
+    float activation_scale = __uint_as_float(qtype_load_u32(activation));
+    float total = 0.0f;
+#pragma unroll
+    for (unsigned int block = 0u; block < 8u; ++block) {
+        const unsigned char *q8_0 = weight + block * 34u;
+        int dot = 0;
+#pragma unroll
+        for (unsigned int i = 0u; i < 32u; i += 4u)
+            dot = __dp4a((int)qtype_load_u32(q8_0 + 2u + i),
+                         (int)qtype_load_u32(activation + 4u + block * 32u + i), dot);
+        total = fmaf(f16_bits_to_float(qtype_load_u16(q8_0)) * activation_scale,
+                     (float)dot, total);
+    }
+    return total;
+}
+/* Purpose: select the admitted encoded-weight/Q8_K dot without family or preset policy. */
+static __device__ float qtype_q8_k_dot(const unsigned char *weight,
+                                       const unsigned char *activation,
+                                       unsigned int qtype)
+{
+    if (qtype == YVEX_GGUF_QTYPE_IQ2_XXS) return iq2_xxs_q8_k_dot(weight, activation);
+    if (qtype == YVEX_GGUF_QTYPE_Q2_K) return q2_k_q8_k_dot(weight, activation);
+    if (qtype == YVEX_GGUF_QTYPE_Q8_0) return q8_0_q8_k_dot(weight, activation);
+    return __uint_as_float(0x7fc00000u);
+}
+/* Purpose: reduce one encoded row against a Q8_K activation within one warp. */
+static __device__ float q8_warp_dot(const unsigned char *weight,
+                                    const unsigned char *activation,
+                                    unsigned long long blocks,
+                                    unsigned long long weight_block,
+                                    unsigned int qtype)
+{
+    unsigned int lane = threadIdx.x & 31u;
+    float sum = 0.0f;
+    for (unsigned long long block = lane; block < blocks; block += 32ull)
+        sum += qtype_q8_k_dot(weight + block * weight_block,
+                             activation + block * YVEX_CUDA_Q8_K_BYTES, qtype);
+    for (unsigned int offset = 16u; offset; offset >>= 1u)
+        sum += __shfl_down_sync(0xffffffffu, sum, offset);
+    return sum;
+}
+/* Purpose: project an encoded matrix without materializing decoded weights.
+ * Inputs: exact rows and vector. Effects: one block publishes one output row.
+ * Failure: sets device status. Boundary: canonical qtype matvec kernel. */
 extern "C" __global__ void yvex_qtype_matvec(
     const unsigned char *encoded,
     unsigned long long row_bytes,
@@ -728,17 +814,17 @@ extern "C" __global__ void yvex_qtype_matvec(
     unsigned long long start_row,
     unsigned long long row_count,
     unsigned int qtype,
-    const float *vector,
+    const void *vector,
+    int q8_input,
     float *out,
     int output_bf16,
     int *status)
 {
-    extern __shared__ double partial[];
-    unsigned long long row = (unsigned long long)blockIdx.x;
-    unsigned int lane = threadIdx.x;
-    double sum = 0.0;
+    unsigned int lane = threadIdx.x & 31u;
+    unsigned int warp = threadIdx.x >> 5u;
+    unsigned long long row = (unsigned long long)blockIdx.x * 8ull + warp;
     const unsigned char *row_data;
-
+    float sum;
     if (!status) return;
     if (*status != 0 || row >= row_count) return;
     if (!encoded || !vector || !out || !row_bytes || !row_width) {
@@ -746,44 +832,31 @@ extern "C" __global__ void yvex_qtype_matvec(
         return;
     }
     row_data = encoded + (start_row + row) * row_bytes;
-    for (unsigned long long i = (unsigned long long)lane; i < row_width;
-         i += (unsigned long long)blockDim.x) {
-        float weight = qtype_value(row_data, i, qtype);
-        float value = float_to_bf16_rne(vector[i]);
-        if (!isfinite(weight) || !isfinite(value)) {
-            atomicCAS(status, 0, 1);
-            continue;
+    if (q8_input) {
+        unsigned long long blocks = row_width / YVEX_CUDA_Q8_K_BLOCK;
+        if (!blocks || row_bytes % blocks) {
+            if (!lane) atomicCAS(status, 0, 2);
+            return;
         }
-        sum += (double)weight * (double)value;
-    }
-    partial[lane] = sum;
-    __syncthreads();
-    for (unsigned int offset = blockDim.x >> 1; offset; offset >>= 1) {
-        if (lane < offset) partial[lane] += partial[lane + offset];
-        __syncthreads();
-    }
+        sum = q8_warp_dot(row_data, (const unsigned char *)vector, blocks,
+                          row_bytes / blocks, qtype);
+    } else
+        sum = qtype_warp_dot(row_data, (const float *)vector, row_width, qtype, status);
     if (lane == 0u) {
-        if (!isfinite(partial[0])) atomicCAS(status, 0, 1);
+        if (!isfinite(sum)) atomicCAS(status, 0, 1);
         else {
-            float value = (float)partial[0];
+            float value = sum;
             if (!isfinite(value)) atomicCAS(status, 0, 1);
             else out[row] = output_bf16 ? float_to_bf16_rne(value) : value;
         }
     }
 }
-
-/* Decodes one admitted scalar tensor directly into F32 device storage. */
-/* Purpose: Decode deepseek decode according to its pinned numeric representation.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: decode one admitted scalar tensor directly into F32 device storage.
+ * Inputs: exact qtype storage and count. Effects: writes assigned output elements.
+ * Failure: device status records invalid numerics. Boundary: topology remains host-owned. */
 extern "C" __global__ void yvex_deepseek_decode(
-    const unsigned char *encoded,
-    unsigned long long count,
-    unsigned int qtype,
-    float *out,
-    int *status)
+    const unsigned char *encoded, unsigned long long count,
+    unsigned int qtype, float *out, int *status)
 {
     unsigned long long index =
         (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
@@ -798,20 +871,12 @@ extern "C" __global__ void yvex_deepseek_decode(
     if (!isfinite(value)) atomicCAS(status, 0, 1);
     else out[index] = value;
 }
-
-/* Applies one exact weighted RMS normalization in-place. */
-/* Purpose: Implement the canonical deepseek weighted norm mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: apply exact weighted RMS normalization in place.
+ * Inputs: admitted vectors, weights, and epsilon. Effects: publishes canonical BF16 rows.
+ * Failure: device status records invalid numerics. Boundary: family scheduling remains outside. */
 extern "C" __global__ void yvex_deepseek_weighted_norm(
-    float *values,
-    unsigned long long count,
-    const unsigned char *weight,
-    unsigned int weight_qtype,
-    double epsilon,
-    int *status)
+    float *values, unsigned long long count, const unsigned char *weight,
+    unsigned int weight_qtype, double epsilon, int *status)
 {
     unsigned int lane = threadIdx.x;
     double mean = 0.0;
@@ -848,19 +913,12 @@ extern "C" __global__ void yvex_deepseek_weighted_norm(
         values[i] = float_to_bf16_rne(published);
     }
 }
-
-/* Applies unweighted per-head query normalization. */
-/* Purpose: Implement the canonical deepseek unit norm mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: apply unweighted per-head query normalization.
+ * Inputs: exact head geometry. Effects: updates admitted activation rows in place.
+ * Failure: device status records invalid numerics. Boundary: family scheduling remains outside. */
 extern "C" __global__ void yvex_deepseek_unit_norm(
-    float *values,
-    unsigned long long vector_count,
-    unsigned long long vector_width,
-    double epsilon,
-    int *status)
+    float *values, unsigned long long vector_count,
+    unsigned long long vector_width, double epsilon, int *status)
 {
     extern __shared__ double partial[];
     unsigned long long vector_index = (unsigned long long)blockIdx.x;
@@ -902,19 +960,11 @@ extern "C" __global__ void yvex_deepseek_unit_norm(
         else vector[i] = float_to_bf16_rne(published);
     }
 }
-
-/* Purpose: Implement the canonical deepseek yarn frequency mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: derive YaRN frequency. Inputs: admitted geometry. Effects: none. Failure: NaN. Boundary: device helper. */
 static __device__ double deepseek_yarn_frequency(
-    unsigned long long pair,
-    unsigned long long rope_dims,
-    unsigned long long theta,
-    unsigned long long scaling_factor,
-    unsigned long long original_context,
-    unsigned long long beta_fast,
+    unsigned long long pair, unsigned long long rope_dims,
+    unsigned long long theta, unsigned long long scaling_factor,
+    unsigned long long original_context, unsigned long long beta_fast,
     unsigned long long beta_slow)
 {
     const double pi = 3.14159265358979323846264338327950288;
@@ -942,26 +992,16 @@ static __device__ double deepseek_yarn_frequency(
     }
     return frequency;
 }
-
-/* Applies the admitted partial RoPE/YaRN equation to independent vectors. */
-/* Purpose: Compute the bounded deepseek rope primitive under the declared dtype and shape contract.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: apply the admitted partial RoPE/YaRN equation to independent vectors.
+ * Inputs: exact rotary geometry. Effects: updates assigned BF16-compatible pairs in place.
+ * Failure: device status records non-finite output. Boundary: host owns family admission. */
 extern "C" __global__ void yvex_deepseek_rope(
-    float *values,
-    unsigned long long vector_count,
-    unsigned long long vector_width,
-    unsigned long long rope_dims,
-    unsigned long long token_position,
-    unsigned long long theta,
-    unsigned long long scaling_factor,
-    unsigned long long original_context,
-    unsigned long long beta_fast,
-    unsigned long long beta_slow,
-    int inverse,
-    int *status)
+    float *values, unsigned long long vector_count,
+    unsigned long long vector_width, unsigned long long rope_dims,
+    unsigned long long token_position, unsigned long long theta,
+    unsigned long long scaling_factor, unsigned long long original_context,
+    unsigned long long beta_fast, unsigned long long beta_slow,
+    int inverse, int *status)
 {
     unsigned long long pair =
         (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
@@ -1007,12 +1047,7 @@ extern "C" __global__ void yvex_deepseek_rope(
         values[offset + 1ull] = float_to_bf16_rne(published_right);
     }
 }
-
-/* Purpose: Decode deepseek fp8 decode according to its pinned numeric representation.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: decode FP8. Inputs: one code. Effects: none. Failure: none. Boundary: pinned device codec. */
 static __device__ float deepseek_fp8_decode(unsigned int code)
 {
     unsigned int sign = code & 0x80u;
@@ -1026,19 +1061,13 @@ static __device__ float deepseek_fp8_decode(unsigned int code)
         : ldexpf(1.0f + (float)mantissa / 8.0f, (int)exponent - 7);
     return sign ? -value : value;
 }
-
-/* Purpose: Encode deepseek fp8 encode according to its pinned deterministic representation.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: encode FP8. Inputs: finite value. Effects: none. Failure: none. Boundary: pinned device codec. */
 static __device__ unsigned int deepseek_fp8_encode(float value)
 {
     float magnitude = fabsf(value);
     float best_error = INFINITY;
     unsigned int best = 0u;
     int negative = signbit(value);
-
     if (!isfinite(value)) return negative ? 0xffu : 0x7fu;
     if (magnitude > 448.0f) magnitude = 448.0f;
     for (unsigned int code = 0u; code < 0x7fu; ++code) {
@@ -1051,12 +1080,7 @@ static __device__ unsigned int deepseek_fp8_encode(float value)
     }
     return negative ? best | 0x80u : best;
 }
-
-/* Purpose: Decode deepseek fp4 decode according to its pinned numeric representation.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: decode FP4. Inputs: one code. Effects: none. Failure: none. Boundary: pinned device codec. */
 static __device__ float deepseek_fp4_decode(unsigned int code)
 {
     const float table[8] = {0.0f, 0.5f, 1.0f, 1.5f,
@@ -1064,12 +1088,7 @@ static __device__ float deepseek_fp4_decode(unsigned int code)
     float value = table[code & 7u];
     return (code & 8u) ? -value : value;
 }
-
-/* Purpose: Encode deepseek fp4 encode according to its pinned deterministic representation.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: encode FP4. Inputs: finite value. Effects: none. Failure: none. Boundary: pinned device codec. */
 static __device__ unsigned int deepseek_fp4_encode(float value)
 {
     const float table[8] = {0.0f, 0.5f, 1.0f, 1.5f,
@@ -1077,7 +1096,6 @@ static __device__ unsigned int deepseek_fp4_encode(float value)
     float magnitude = fabsf(value);
     float best_error;
     unsigned int best = 0u;
-
     if (isnan(value)) return signbit(value) ? 8u : 0u;
     if (magnitude > 6.0f) magnitude = 6.0f;
     best_error = magnitude;
@@ -1091,7 +1109,6 @@ static __device__ unsigned int deepseek_fp4_encode(float value)
     }
     return signbit(value) ? best | 8u : best;
 }
-
 /* Purpose: Encode one positive power-of-two activation scale as UE8M0.
  * Inputs: One finite positive device scalar selected by the activation block.
  * Effects: Returns only the canonical scale code; mutates no device state.
@@ -1101,7 +1118,6 @@ static __device__ unsigned int deepseek_e8m0_encode(float value)
 {
     int exponent;
     float fraction;
-
     if (!isfinite(value) || value <= 0.0f) return 0xffu;
     fraction = frexpf(value, &exponent);
     if (fraction > 0.5f) exponent++;
@@ -1110,34 +1126,23 @@ static __device__ unsigned int deepseek_e8m0_encode(float value)
     if (exponent > 254) return 254u;
     return (unsigned int)exponent;
 }
-
 /* Purpose: Implement the canonical deepseek power two ceil mechanism owned by the CUDA backend boundary. */
 static __device__ float deepseek_power_two_ceil(float value)
 {
     int exponent;
     float fraction;
-
     if (!isfinite(value) || value <= 0.0f) return 0.0f;
     fraction = frexpf(value, &exponent);
     if (fraction > 0.5f) exponent++;
     return ldexpf(1.0f, exponent - 1);
 }
-
-/* Executes Hadamard plus FP8/FP4 UE8M0 fake quantization entirely on device.
- * One block owns one vector so stage ordering is explicit and deterministic. */
-/* Purpose: Implement the canonical deepseek activation mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: execute Hadamard plus pinned FP8/FP4 UE8M0 fake quantization on device.
+ * Inputs: one admitted vector per block. Effects: transforms it in deterministic stage order.
+ * Failure: device status records invalid geometry/numerics. Boundary: family policy stays outside. */
 extern "C" __global__ void yvex_deepseek_activation(
-    float *values,
-    unsigned long long vector_count,
-    unsigned long long vector_width,
-    unsigned long long block_width,
-    unsigned int quantization,
-    int hadamard,
-    int *status)
+    float *values, unsigned long long vector_count,
+    unsigned long long vector_width, unsigned long long block_width,
+    unsigned int quantization, int hadamard, int *status)
 {
     unsigned long long vector_index = (unsigned long long)blockIdx.x;
     if (!status) return;
@@ -1209,28 +1214,18 @@ extern "C" __global__ void yvex_deepseek_activation(
         }
     }
 }
-
 /* Purpose: execute the DeepSeek mHC ingress after the encoded function projection.
  * Inputs: one residual token, decoded coefficients, exact geometry, and status.
  * Effects: writes BF16 core input plus private post/Sinkhorn coefficients on device.
  * Failure: atomically records malformed geometry or non-finite arithmetic.
  * Boundary: device attention-envelope work only; no host completion or FFN/MoE. */
 extern "C" __global__ void yvex_deepseek_mhc_pre(
-    float *residual,
-    const float *linear_mix,
-    const float *scale,
-    const float *base,
-    unsigned long long streams,
-    unsigned long long stream_width,
-    unsigned long long mixing_rows,
-    unsigned long long sinkhorn_iterations,
-    double rms_epsilon,
-    double mhc_epsilon,
-    double post_multiplier,
-    float *collapsed,
-    float *post,
-    float *combination,
-    int *status)
+    float *residual, const float *linear_mix, const float *scale,
+    const float *base, unsigned long long streams,
+    unsigned long long stream_width, unsigned long long mixing_rows,
+    unsigned long long sinkhorn_iterations, double rms_epsilon,
+    double mhc_epsilon, double post_multiplier, float *collapsed,
+    float *post, float *combination, int *status)
 {
     if (!status || blockIdx.x != 0u || threadIdx.x != 0u || *status != 0)
         return;
@@ -1329,21 +1324,15 @@ extern "C" __global__ void yvex_deepseek_mhc_pre(
         collapsed[lane] = float_to_bf16_rne(collapsed[lane]);
     }
 }
-
 /* Purpose: execute the immediate mHC attention egress on device.
  * Inputs: core output, original residual, ingress coefficients, and geometry.
  * Effects: writes one expanded BF16 post-attention activation.
  * Failure: atomically records malformed geometry or non-finite arithmetic.
  * Boundary: completes the attention envelope and stops before FFN/MoE. */
 extern "C" __global__ void yvex_deepseek_mhc_post(
-    const float *core,
-    const float *residual,
-    const float *post,
-    const float *combination,
-    unsigned long long streams,
-    unsigned long long stream_width,
-    float *output,
-    int *status)
+    const float *core, const float *residual, const float *post,
+    const float *combination, unsigned long long streams,
+    unsigned long long stream_width, float *output, int *status)
 {
     unsigned long long index =
         (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
@@ -1365,7 +1354,6 @@ extern "C" __global__ void yvex_deepseek_mhc_post(
     if (!isfinite(published)) atomicCAS(status, 0, 1);
     else output[index] = float_to_bf16_rne(published);
 }
-
 /* Purpose: collapse the final mHC streams and apply transformer-owned RMSNorm.
  * Inputs: device-resident expanded rows and exact decoded final weights.
  * Effects: writes one normalized hidden row per block after finite checks.
@@ -1442,30 +1430,16 @@ extern "C" __global__ void yvex_deepseek_transformer_final(
         else row[index] = value;
     }
 }
-
-/* Executes one complete ratio-4 or ratio-128 compressor transition on device. */
-/* Purpose: Implement the canonical deepseek rolling mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: execute one admitted ratio-4 or ratio-128 compressor transition on device.
+ * Inputs: exact candidate/history ranges. Effects: writes only transaction-local outputs.
+ * Failure: device status records malformed state. Boundary: host owns publication and rollback. */
 extern "C" __global__ void yvex_deepseek_rolling(
-    const float *before_kv,
-    const float *before_score,
-    const float *token_kv,
-    const float *token_score,
-    const float *ape,
-    float *after_kv,
-    float *after_score,
-    float *compressed,
-    unsigned long long ratio,
-    unsigned long long head_dim,
-    unsigned long long state_width,
-    unsigned long long state_slots,
-    unsigned long long cursor,
-    int overlap,
-    int emit,
-    int *status)
+    const float *before_kv, const float *before_score,
+    const float *token_kv, const float *token_score, const float *ape,
+    float *after_kv, float *after_score, float *compressed,
+    unsigned long long ratio, unsigned long long head_dim,
+    unsigned long long state_width, unsigned long long state_slots,
+    unsigned long long cursor, int overlap, int emit, int *status)
 {
     unsigned int thread = threadIdx.x;
     unsigned long long extent;
@@ -1555,36 +1529,21 @@ extern "C" __global__ void yvex_deepseek_rolling(
         }
     }
 }
-
-/* Scores and ranks the complete CSA candidate set on device. */
-/* Purpose: Implement the canonical deepseek topk mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: score and rank the complete admitted CSA candidate set on device.
+ * Inputs: exact candidate geometry. Effects: writes deterministic selected indexes and counts.
+ * Failure: device status records invalid state. Boundary: host owns transaction publication. */
 extern "C" __global__ void yvex_deepseek_topk(
-    const float *index_query,
-    const float *index_weights,
-    const float *history_indexer,
-    const unsigned long long *history_positions,
-    unsigned long long history_count,
-    unsigned long long history_stride,
-    const float *current_indexer,
-    const unsigned long long *current_positions,
-    unsigned long long current_count,
-    unsigned long long current_stride,
-    unsigned long long heads,
-    unsigned long long head_dim,
-    unsigned long long ratio,
-    unsigned long long query_position,
-    unsigned long long k,
-    unsigned long long *selected,
-    unsigned long long *selected_positions,
-    unsigned long long *selected_count,
-    unsigned long long *valid_count,
-    float *scores,
-    unsigned long long *valid_indexes,
-    int *status)
+    const float *index_query, const float *index_weights,
+    const float *history_indexer, const unsigned long long *history_positions,
+    unsigned long long history_count, unsigned long long history_stride,
+    const float *current_indexer, const unsigned long long *current_positions,
+    unsigned long long current_count, unsigned long long current_stride,
+    unsigned long long heads, unsigned long long head_dim,
+    unsigned long long ratio, unsigned long long query_position,
+    unsigned long long k, unsigned long long *selected,
+    unsigned long long *selected_positions, unsigned long long *selected_count,
+    unsigned long long *valid_count, float *scores,
+    unsigned long long *valid_indexes, int *status)
 {
     unsigned long long total;
     if (!status) return;
@@ -1674,7 +1633,6 @@ extern "C" __global__ void yvex_deepseek_topk(
     *selected_count = chosen;
     *valid_count = valid;
 }
-
 /* Purpose: execute exact hash/learned routing and noaux top-k. Inputs: typed router values.
  * Effects: writes device selection. Failure: sets device status. Boundary: CUDA MoE kernel. */
 extern "C" __global__ void yvex_moe_route(
@@ -1744,7 +1702,102 @@ extern "C" __global__ void yvex_moe_route(
         weights[rank] = (float)value;
     }
 }
-
+/* Purpose: execute selected gate/up rows and limited SwiGLU without host routing.
+ * Inputs: device-selected experts, encoded aggregate matrices, and normalized activation.
+ * Effects: writes one BF16 intermediate row per selected expert. Failure: sets status.
+ * Boundary: one block owns one selected expert/intermediate row. */
+extern "C" __global__ void yvex_moe_grouped_up(
+    const unsigned char *gate, unsigned long long gate_row_bytes,
+    unsigned long long gate_expert_bytes, unsigned int gate_qtype,
+    const unsigned char *up, unsigned long long up_row_bytes,
+    unsigned long long up_expert_bytes, unsigned int up_qtype,
+    const unsigned long long *selected, unsigned long long topk,
+    unsigned long long expert_count, const unsigned char *input,
+    unsigned long long input_extent, int q8_input,
+    unsigned long long intermediate_width,
+    double limit, float *intermediate, int *status)
+{
+    unsigned int lane = threadIdx.x & 31u;
+    unsigned long long pair = (unsigned long long)blockIdx.x * 8ull +
+                              (unsigned long long)(threadIdx.x >> 5u);
+    unsigned long long rank = pair / intermediate_width;
+    unsigned long long row = pair % intermediate_width;
+    if (!status || *status || rank >= topk) return;
+    unsigned long long expert = selected ? selected[rank] : ~0ull;
+    if (!gate || !up || !input || !intermediate || expert >= expert_count ||
+        !gate_row_bytes || !up_row_bytes || !input_extent || !intermediate_width ||
+        !isfinite(limit) || limit <= 0.0) {
+        if (!lane) atomicCAS(status, 0, 2);
+        return;
+    }
+    const unsigned char *gate_row = gate + expert * gate_expert_bytes + row * gate_row_bytes;
+    const unsigned char *up_row = up + expert * up_expert_bytes + row * up_row_bytes;
+    float g = 0.0f, u = 0.0f;
+    if (q8_input) {
+        if (gate_row_bytes % input_extent || up_row_bytes % input_extent) {
+            if (!lane) atomicCAS(status, 0, 2);
+            return;
+        }
+        g = q8_warp_dot(gate_row, input, input_extent,
+                        gate_row_bytes / input_extent, gate_qtype);
+        u = q8_warp_dot(up_row, input, input_extent,
+                        up_row_bytes / input_extent, up_qtype);
+    } else {
+        g = qtype_warp_dot(gate_row, (const float *)input, input_extent, gate_qtype, status);
+        u = qtype_warp_dot(up_row, (const float *)input, input_extent, up_qtype, status);
+    }
+    if (!lane && !*status) {
+        g = fminf(g, (float)limit); u = fmaxf((float)-limit, fminf(u, (float)limit));
+        float silu = g >= 0.0f ? g / (1.0f + expf(-g)) : g * expf(g) / (1.0f + expf(g));
+        float value = float_to_bf16_rne(silu * u);
+        if (!isfinite(value)) atomicCAS(status, 0, 1);
+        else intermediate[rank * intermediate_width + row] = value;
+    }
+}
+/* Purpose: execute selected down rows and ordered route accumulation without host dispatch.
+ * Inputs: device selections/weights, encoded aggregate down matrix, and grouped intermediates.
+ * Effects: publishes one routed BF16-compatible output row. Failure: sets status.
+ * Boundary: one block owns one hidden output row and preserves selected-rank order. */
+extern "C" __global__ void yvex_moe_grouped_down(
+    const unsigned char *down, unsigned long long row_bytes,
+    unsigned long long expert_bytes, unsigned int qtype,
+    const unsigned long long *selected, const float *weights,
+    unsigned long long topk, unsigned long long expert_count,
+    const unsigned char *intermediate, unsigned long long intermediate_extent,
+    int q8_input,
+    unsigned long long hidden, float *routed, int *status)
+{
+    unsigned int lane = threadIdx.x & 31u;
+    unsigned long long row = (unsigned long long)blockIdx.x * 8ull +
+                             (unsigned long long)(threadIdx.x >> 5u);
+    float total = 0.0f;
+    if (!status || *status || row >= hidden) return;
+    if (!down || !selected || !weights || !intermediate || !routed ||
+        !row_bytes || !intermediate_extent || !topk ||
+        (q8_input && row_bytes % intermediate_extent)) {
+        if (!lane) atomicCAS(status, 0, 2);
+        return;
+    }
+    for (unsigned long long rank = 0ull; rank < topk; ++rank) {
+        unsigned long long expert = selected[rank];
+        if (expert >= expert_count) { if (!lane) atomicCAS(status, 0, 2); return; }
+        const unsigned char *weight = down + expert * expert_bytes + row * row_bytes;
+        float dot = 0.0f;
+        if (q8_input) {
+            const unsigned char *activation = intermediate + rank * intermediate_extent *
+                                              YVEX_CUDA_Q8_K_BYTES;
+            dot = q8_warp_dot(weight, activation, intermediate_extent,
+                              row_bytes / intermediate_extent, qtype);
+        } else
+            dot = qtype_warp_dot(weight, (const float *)intermediate +
+                rank * intermediate_extent, intermediate_extent, qtype, status);
+        if (!lane && !*status) {
+            float value = float_to_bf16_rne(dot);
+            total = __fadd_rn(total, __fmul_rn(value, weights[rank]));
+        }
+    }
+    if (!lane && !*status) routed[row] = total;
+}
 /* Purpose: apply limited SiLU/SwiGLU. Inputs: finite gate/up values and limit.
  * Effects: writes device output. Failure: sets device status. Boundary: CUDA MoE kernel. */
 extern "C" __global__ void yvex_moe_swiglu(
@@ -1764,7 +1817,6 @@ extern "C" __global__ void yvex_moe_swiglu(
     if (!isfinite(value)) atomicCAS(status, 0, 1);
     else output[index] = value;
 }
-
 /* Purpose: accumulate one expert output. Inputs: finite device values and weight.
  * Effects: updates device aggregate. Failure: sets device status. Boundary: CUDA MoE kernel. */
 extern "C" __global__ void yvex_moe_accumulate(
@@ -1781,15 +1833,9 @@ extern "C" __global__ void yvex_moe_accumulate(
     if (!isfinite(value)) atomicCAS(status, 0, 1);
     else aggregate[index] = value;
 }
-
-/* Executes sparse/local masking, stable softmax and value reduction on device.
- * One block owns one query head and retains the versioned scalar lane/candidate
- * order; selected compressed indexes originate only from device top-k. */
-/* Purpose: Implement the canonical deepseek reduce mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+/* Purpose: execute admitted sparse/local masking, stable softmax, and value reduction.
+ * Inputs: one admitted block per query head. Effects: publishes the versioned ordered result.
+ * Failure: device status records invalid state. Boundary: selected indexes come only from top-k. */
 extern "C" __global__ void yvex_deepseek_reduce(
     const float *query,
     const float *history_local,

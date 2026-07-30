@@ -10,9 +10,12 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
-
+#include <string.h>
+#include <sys/mman.h>
 #include <yvex/api.h>
-
+#include <yvex/qtype.h>
+#include <yvex/internal/backend.h>
+#include <yvex/internal/moe.h>
 #include "tests/test.h"
 
 /* Contract: checks one exact CUDA variant and its admitted bundle/function facts. */
@@ -76,11 +79,237 @@ static int assert_bundle_rollback(const char *failure,
     return 0;
 }
 
+typedef struct {
+    float *arena;
+    unsigned long long used, device_base;
+} moe_fixture_weights;
+/* Purpose: append one exact F32 matrix to the CUDA-addressable fixture arena. */
+static void moe_fixture_weight(moe_fixture_weights *fixture,
+                               yvex_moe_weight_view *view, yvex_tensor_role role,
+                               unsigned long long rows, unsigned long long width,
+                               const float *values)
+{
+    unsigned long long count = rows * width;
+    float *destination = fixture->arena + fixture->used;
+    memcpy(destination, values, (size_t)count * sizeof(*values));
+    memset(view, 0, sizeof(*view));
+    view->tensor_id = fixture->used + 1ull;
+    view->expert_index = YVEX_MOE_NO_TENSOR;
+    view->role = role;
+    view->qtype = YVEX_GGUF_QTYPE_F32;
+    view->encoded = (const unsigned char *)destination;
+    view->encoded_bytes = (size_t)count * sizeof(*values);
+    view->row_bytes = width * sizeof(*values);
+    view->row_width = width;
+    view->row_count = rows;
+    view->device_address = fixture->device_base + fixture->used * sizeof(*values);
+    fixture->used += count;
+}
+/* Purpose: project one selected expert from an aggregate direct-address weight view. */
+static yvex_moe_weight_view moe_fixture_expert(const yvex_moe_weight_view *aggregate,
+                                               unsigned long long expert,
+                                               unsigned long long rows)
+{
+    yvex_moe_weight_view view = *aggregate;
+    unsigned long long bytes = rows * aggregate->row_bytes;
+    view.expert_index = expert;
+    view.encoded += expert * bytes;
+    view.device_address += expert * bytes;
+    view.encoded_bytes = (size_t)bytes;
+    view.row_count = rows;
+    return view;
+}
+/* Purpose: bind one caller-owned publication set to a focused MoE result. */
+static void moe_fixture_result(yvex_moe_layer_result *result, float combined[2],
+                               float routed[2], float shared[2], float post[1],
+                               float combination[1])
+{
+    memset(result, 0, sizeof(*result));
+    result->combined_output = combined;
+    result->combined_capacity = 2ull;
+    result->routed_output = routed;
+    result->routed_capacity = 2ull;
+    result->shared_output = shared;
+    result->shared_capacity = 2ull;
+    result->post = post;
+    result->post_capacity = 1ull;
+    result->combination = combination;
+    result->combination_capacity = 1ull;
+}
+/* Purpose: prove grouped direct-address MoE is numerically identical to audit dispatch. */
+static int assert_grouped_moe(yvex_backend *backend)
+{
+    static const float mhc_function[] = {1.0f, 0.0f, 0.0f, 1.0f, 0.5f, 0.5f};
+    static const float three_ones[] = {1.0f, 1.0f, 1.0f};
+    static const float three_zeroes[] = {0.0f, 0.0f, 0.0f};
+    static const float identity[] = {1.0f, 0.0f, 0.0f, 1.0f};
+    static const float routed[] = {1.0f, 0.0f, 0.0f, 1.0f,
+                                   0.0f, 1.0f, 1.0f, 0.0f};
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *anchor = NULL, *input = NULL, *normal_output = NULL;
+    yvex_device_tensor *audit_output = NULL, *workspace = NULL;
+    yvex_backend_moe_execution *execution = NULL;
+    yvex_moe_layer_plan layer = {0};
+    yvex_moe_layer_job job = {0};
+    yvex_moe_layer_result normal, audit;
+    yvex_moe_weight_view selected[3];
+    moe_fixture_weights fixture = {0};
+    yvex_error err;
+    float host_input[2] = {1.0f, 0.5f};
+    float normal_device[2], audit_device[2];
+    float combined[2], routed_output[2], shared_output[2], post[1], combination[1];
+    unsigned long long address = 0ull, expert;
+    int rc;
+    memset(&descriptor, 0, sizeof(descriptor));
+    descriptor.name = "grouped-moe-anchor";
+    descriptor.dtype = YVEX_DTYPE_I8;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = descriptor.bytes = 128ull * sizeof(*fixture.arena);
+    YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+                         backend, &descriptor, &anchor,
+                         (unsigned char **)&fixture.arena, &err) == YVEX_OK,
+                     "allocate grouped MoE managed fixture");
+    memset(fixture.arena, 0, (size_t)descriptor.bytes);
+    YVEX_TEST_ASSERT(yvex_backend_resident_attach(
+                         backend, (const unsigned char *)fixture.arena,
+                         128ull * sizeof(*fixture.arena), anchor, 7ull, &err) == YVEX_OK &&
+                         yvex_backend_resident_resolve(
+                             backend, (const unsigned char *)fixture.arena,
+                             128ull * sizeof(*fixture.arena), &address) ==
+                             YVEX_BACKEND_RESIDENT_HIT,
+                     "register grouped MoE fixture once");
+    fixture.device_base = address;
+    layer.schema_version = YVEX_MOE_PLAN_SCHEMA_V1;
+    layer.router_class = YVEX_MOE_ROUTER_LEARNED_HIDDEN_STATE;
+    layer.scoring = YVEX_MOE_SCORING_SQRT_SOFTPLUS;
+    layer.topk_policy = YVEX_MOE_TOPK_NOAUX_TC;
+    layer.activation = YVEX_MOE_ACTIVATION_SILU;
+    layer.hidden_width = layer.expanded_width = 2ull;
+    layer.residual_streams = 1ull;
+    layer.mhc_mixing_rows = 3ull;
+    layer.mhc_sinkhorn_iterations = 1ull;
+    layer.routed_experts = 2ull;
+    layer.shared_experts = layer.experts_per_token = 1ull;
+    layer.expert_intermediate_width = layer.shared_intermediate_width = 2ull;
+    layer.correction_bias_width = 2ull;
+    layer.rms_epsilon = layer.mhc_epsilon = 0.00001;
+    layer.mhc_post_multiplier = layer.routed_scaling_factor = 1.0;
+    layer.activation_limit = 10.0;
+    layer.requires_correction_bias = layer.normalize_topk_probabilities = 1;
+    job.layer = &layer;
+    job.expanded_input = host_input;
+    job.token_id_present = 1;
+    job.evidence_level = YVEX_ATTENTION_EVIDENCE_SUMMARY;
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_MHC_FUNCTION],
+                       YVEX_TENSOR_ROLE_HC_FFN_FUNCTION, 3ull, 2ull, mhc_function);
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_MHC_SCALE],
+                       YVEX_TENSOR_ROLE_HC_FFN_SCALE, 1ull, 3ull, three_ones);
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_MHC_BASE],
+                       YVEX_TENSOR_ROLE_HC_FFN_BASE, 1ull, 3ull, three_zeroes);
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_FFN_NORM],
+                       YVEX_TENSOR_ROLE_FFN_NORM, 1ull, 2ull, three_ones);
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTER],
+                       YVEX_TENSOR_ROLE_MOE_ROUTER, 2ull, 2ull, identity);
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTER_BIAS],
+                       YVEX_TENSOR_ROLE_MOE_ROUTER_BIAS, 1ull, 2ull, three_zeroes);
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE],
+                       YVEX_TENSOR_ROLE_MOE_EXPERT_GATE, 4ull, 2ull, routed);
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTED_UP],
+                       YVEX_TENSOR_ROLE_MOE_EXPERT_UP, 4ull, 2ull, routed);
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_ROUTED_DOWN],
+                       YVEX_TENSOR_ROLE_MOE_EXPERT_DOWN, 4ull, 2ull, routed);
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_SHARED_GATE],
+                       YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_GATE, 2ull, 2ull, identity);
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_SHARED_UP],
+                       YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_UP, 2ull, 2ull, identity);
+    moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_SHARED_DOWN],
+                       YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_DOWN, 2ull, 2ull, identity);
+#define ALLOCATE_TENSOR(OWNER_, NAME_, BYTES_)                                             \
+    do {                                                                                   \
+        memset(&descriptor, 0, sizeof(descriptor));                                        \
+        descriptor.name = (NAME_);                                                         \
+        descriptor.dtype = YVEX_DTYPE_F32;                                                 \
+        descriptor.rank = 1u;                                                              \
+        descriptor.dims[0] = (BYTES_) / sizeof(float);                                    \
+        descriptor.bytes = (BYTES_);                                                       \
+        YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &(OWNER_), &err) == \
+                             YVEX_OK,                                                       \
+                         "allocate grouped MoE device tensor");                           \
+    } while (0)
+    ALLOCATE_TENSOR(input, "grouped-moe-input", sizeof(host_input));
+    ALLOCATE_TENSOR(normal_output, "grouped-moe-normal", sizeof(host_input));
+    ALLOCATE_TENSOR(audit_output, "grouped-moe-audit", sizeof(host_input));
+    ALLOCATE_TENSOR(workspace, "grouped-moe-workspace", YVEX_MOE_CUDA_WORKSPACE_BYTES);
+#undef ALLOCATE_TENSOR
+    YVEX_TEST_ASSERT(yvex_backend_tensor_write(
+                         backend, input, host_input, sizeof(host_input), &err) == YVEX_OK &&
+                         yvex_backend_workspace_attach(backend, workspace, 1ull, &err) == YVEX_OK,
+                     "prepare grouped MoE device input and workspace");
+    job.device_input = input;
+    job.device_output = normal_output;
+    moe_fixture_result(&normal, combined, routed_output, shared_output, post, combination);
+    rc = yvex_backend_moe_begin(&execution, backend, &job, &normal, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_moe_add_expert(
+            execution, &job.weights[YVEX_MOE_WEIGHT_SHARED_GATE],
+            &job.weights[YVEX_MOE_WEIGHT_SHARED_UP],
+            &job.weights[YVEX_MOE_WEIGHT_SHARED_DOWN], 1.0f, 1, &err);
+    if (rc == YVEX_OK) rc = yvex_backend_moe_finish(execution, &normal, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK &&
+                         yvex_backend_moe_close(&execution, &err) == YVEX_OK &&
+                         yvex_backend_tensor_read(backend, normal_output, normal_device,
+                                                  sizeof(normal_device), &err) == YVEX_OK,
+                     "execute grouped direct-address MoE");
+    job.evidence_level = YVEX_ATTENTION_EVIDENCE_FULL;
+    job.device_output = audit_output;
+    moe_fixture_result(&audit, combined, routed_output, shared_output, post, combination);
+    rc = yvex_backend_moe_begin(&execution, backend, &job, &audit, &err);
+    expert = audit.router.selected_experts[0];
+    selected[0] = moe_fixture_expert(
+        &job.weights[YVEX_MOE_WEIGHT_ROUTED_GATE], expert, 2ull);
+    selected[1] = moe_fixture_expert(
+        &job.weights[YVEX_MOE_WEIGHT_ROUTED_UP], expert, 2ull);
+    selected[2] = moe_fixture_expert(
+        &job.weights[YVEX_MOE_WEIGHT_ROUTED_DOWN], expert, 2ull);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_moe_add_expert(execution, &selected[0], &selected[1],
+                                         &selected[2], audit.router.selected_weights[0],
+                                         0, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_moe_add_expert(
+            execution, &job.weights[YVEX_MOE_WEIGHT_SHARED_GATE],
+            &job.weights[YVEX_MOE_WEIGHT_SHARED_UP],
+            &job.weights[YVEX_MOE_WEIGHT_SHARED_DOWN], 1.0f, 1, &err);
+    if (rc == YVEX_OK) rc = yvex_backend_moe_finish(execution, &audit, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK &&
+                         yvex_backend_moe_close(&execution, &err) == YVEX_OK &&
+                         yvex_backend_tensor_read(backend, audit_output, audit_device,
+                                                  sizeof(audit_device), &err) == YVEX_OK,
+                     "execute audit selected-expert MoE");
+    YVEX_TEST_ASSERT(memcmp(normal_device, audit_device, sizeof(normal_device)) == 0 &&
+                         normal.router.selected_experts[0] ==
+                             audit.router.selected_experts[0] &&
+                         normal.upload_count == 0ull &&
+                         normal.device_to_host_bytes < audit.device_to_host_bytes &&
+                         normal.device_synchronizations == 1ull,
+                     "grouped and audit MoE agree with reduced movement and synchronization");
+    yvex_backend_workspace_detach(backend);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &audit_output, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &normal_output, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+                         yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &anchor, &err) == YVEX_OK,
+                     "release grouped MoE fixture ownership");
+    return 0;
+}
 int yvex_cuda_test_info(void)
 {
     yvex_backend *backend = NULL;
     yvex_backend_options options;
     yvex_backend_device_info info;
+    yvex_backend_tensor_desc descriptor;
+    yvex_device_tensor *resident = NULL;
     yvex_error err;
     static const char *attention_symbols[] = {
         "yvex_attention_bf16_round",
@@ -95,8 +324,9 @@ int yvex_cuda_test_info(void)
         "yvex_deepseek_reduce"
     };
     size_t symbol_index;
+    unsigned char *imported = NULL, *mapped = NULL;
+    unsigned long long mapped_address = 0ull;
     int rc;
-
     memset(&options, 0, sizeof(options));
     options.kind = YVEX_BACKEND_KIND_CUDA;
     rc = yvex_backend_open(&backend, &options, &err);
@@ -113,13 +343,59 @@ int yvex_cuda_test_info(void)
     YVEX_TEST_ASSERT(info.global_memory_bytes > 0, "global memory nonzero");
     YVEX_TEST_ASSERT(info.total_memory_bytes > 0, "total memory nonzero");
 
+    memset(&descriptor, 0, sizeof(descriptor));
+    descriptor.name = "cuda-addressable-host-fixture";
+    descriptor.dtype = YVEX_DTYPE_I8;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = descriptor.bytes = 4096ull;
+    YVEX_TEST_ASSERT(posix_memalign((void **)&imported, 4096u, 4096u) == 0,
+                     "allocate page-aligned imported host residency");
+    memset(imported, 0x3c, 4096u);
+    YVEX_TEST_ASSERT(mlock(imported, 4096u) == 0,
+                     "lock imported host residency before CUDA registration");
+    mapped = imported;
+    YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+                         backend, &descriptor, &resident, &mapped, &err) == YVEX_OK &&
+                         mapped == imported,
+                     "register existing host residency without replacement");
+    YVEX_TEST_ASSERT(yvex_backend_resident_attach(
+                         backend, mapped, 4096ull, resident, 1ull, &err) == YVEX_OK &&
+                         yvex_backend_resident_resolve(
+                             backend, mapped, 4096ull, &mapped_address) ==
+                             YVEX_BACKEND_RESIDENT_HIT && mapped_address != 0ull,
+                     "resolve registered host residency to its CUDA address");
+    YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+                     "unregister imported host residency exactly once");
+    YVEX_TEST_ASSERT(munlock(imported, 4096u) == 0,
+                     "unlock imported host residency after CUDA unregister");
+    free(imported);
+    imported = mapped = NULL;
+    YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+                         backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
+                     "allocate exact managed residency");
+    memset(mapped, 0x5a, 4096u);
+    rc = yvex_backend_resident_attach(backend, mapped, 4096ull, resident, 1ull, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK &&
+                         yvex_backend_resident_resolve(
+                             backend, mapped, 4096ull, &mapped_address) ==
+                             YVEX_BACKEND_RESIDENT_HIT && mapped_address != 0ull,
+                     "attach one direct managed CUDA range");
+    rc = yvex_backend_resident_attach(backend, mapped, 4096ull, resident, 1ull, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE, "duplicate managed attachment refuses");
+    rc = yvex_backend_resident_detach(backend, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+                     "release exact CUDA managed residency");
+    mapped = NULL;
+    YVEX_TEST_ASSERT(assert_grouped_moe(backend) == 0,
+                     "grouped direct-address MoE matches audit execution");
     for (rc = 0; rc < (int)YVEX_BACKEND_VARIANT_COUNT; ++rc) {
         YVEX_TEST_ASSERT(assert_supported_variant(
                              backend, (yvex_backend_operation_variant)rc) == 0,
                          "all advertised CUDA variants are exact");
     }
     yvex_backend_close(backend);
-
     YVEX_TEST_ASSERT(assert_bundle_rollback(
                          "module",
                          YVEX_BACKEND_CAPABILITY_REASON_KERNEL_BUNDLE_REJECTED,
@@ -139,7 +415,6 @@ int yvex_cuda_test_info(void)
                              YVEX_BACKEND_VARIANT_ATTENTION_ENCODED) == 0,
                          "each encoded-attention symbol is atomically required");
     }
-
     backend = NULL;
     rc = yvex_backend_open(&backend, &options, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "CUDA bundle admission retries after rollback");

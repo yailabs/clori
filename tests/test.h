@@ -82,6 +82,7 @@ int yvex_test_runtime_tokenizer(void);
 int yvex_test_runtime_moe(void);
 int yvex_test_runtime_transformer(void);
 int yvex_test_runtime_prefill(void);
+int yvex_test_runtime_profile(void);
 int yvex_test_runtime_state(void);
 int yvex_test_runtime_benchmark(void);
 int yvex_test_safetensors_header(void);

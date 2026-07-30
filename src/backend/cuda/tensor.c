@@ -10,13 +10,11 @@
  * Inputs: A ready backend, typed tensor descriptors, checked byte ranges, and host buffers.
  * Effects: Mutates only owned device allocation state and admitted transfer destinations.
  * Failure: Allocation, transfer, synchronization, and cleanup failures preserve coherent accounting. */
-
 #include "src/backend/cuda/private.h"
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
 /* Purpose: Reserve budgeted storage for tensor alloc with checked size accounting.
  * Inputs: A validated configuration, checked resource limits, and caller-owned result storage.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
@@ -35,7 +33,6 @@ int yvex_cuda_tensor_alloc(yvex_backend *backend,
     unsigned int i;
     int cleanup_rc;
     int rc;
-
     memset(&work, 0, sizeof(work));
     if (!backend || !state || !out) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.tensor_alloc",
@@ -43,7 +40,6 @@ int yvex_cuda_tensor_alloc(yvex_backend *backend,
         return YVEX_ERR_INVALID_ARG;
     }
     *out = NULL;
-
     rc = yvex_cuda_deferred_release_drain(backend, err);
     if (rc != YVEX_OK)
         return rc;
@@ -71,7 +67,6 @@ int yvex_cuda_tensor_alloc(yvex_backend *backend,
                                "cuda.tensor_alloc.zero_sync", err);
     if (rc != YVEX_OK)
         goto allocation_failure;
-
     tensor = (yvex_device_tensor *)calloc(1, sizeof(*tensor));
     if (!tensor) {
         yvex_error_set(err, YVEX_ERR_NOMEM, "cuda.tensor_alloc",
@@ -87,7 +82,6 @@ int yvex_cuda_tensor_alloc(yvex_backend *backend,
         rc = YVEX_ERR_NOMEM;
         goto allocation_failure;
     }
-
     tensor->owner = backend;
     tensor->owner_id = backend->tensor_id_next++;
     tensor->dtype = desc->dtype;
@@ -99,13 +93,10 @@ int yvex_cuda_tensor_alloc(yvex_backend *backend,
     tensor->data = (unsigned char *)(uintptr_t)ptr;
     work.count = 0u;
     work.current_bytes = 0ull;
-
     (void)yvex_cuda_refresh_memory_info(backend, err);
-
     *out = tensor;
     yvex_error_clear(err);
     return YVEX_OK;
-
 allocation_failure:
     if (err)
         primary_error = *err;
@@ -117,7 +108,6 @@ allocation_failure:
         *err = primary_error;
     return rc;
 }
-
 /* Purpose: Release the resources owned by tensor free without changing borrowed inputs.
  * Inputs: An owned object that may be null or already released where its lifecycle permits.
  * Effects: Releases only resources owned by the supplied object and leaves it reset or unusable.
@@ -130,7 +120,6 @@ int yvex_cuda_tensor_free(yvex_backend *backend,
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     CUdeviceptr pointer;
     int rc;
-
     if (!backend || !state || !tensor || !backend_tensor_owner_is(backend, tensor)) {
         yvex_error_set(err, YVEX_ERR_STATE, "cuda.tensor_free",
                        "tensor does not belong to this backend");
@@ -141,9 +130,26 @@ int yvex_cuda_tensor_free(yvex_backend *backend,
         return rc;
     }
     pointer = yvex_cuda_tensor_ptr(tensor);
-    rc = yvex_cuda_temporary_free(backend, YVEX_BACKEND_VARIANT_TENSOR_ALLOC,
-                                  &pointer, tensor->bytes, 0,
-                                  "cuda.tensor_free", err);
+    if (tensor->host_data && state->registered_host == tensor->host_data &&
+        state->registered_device == pointer && state->registered_bytes == tensor->bytes) {
+        rc = state->driver.cuMemHostUnregister
+                 ? yvex_cuda_status(&state->driver,
+                                    state->driver.cuMemHostUnregister(tensor->host_data),
+                                    "cuda.tensor_free.registered", err)
+                 : YVEX_ERR_STATE;
+        if (rc == YVEX_ERR_STATE)
+            yvex_error_set(err, rc, "cuda.tensor_free.registered",
+                           "CUDA host registration release is unavailable");
+        if (rc == YVEX_OK) {
+            state->registered_host = NULL;
+            state->registered_device = 0ull;
+            state->registered_bytes = 0ull;
+        }
+    } else {
+        rc = yvex_cuda_temporary_free(backend, YVEX_BACKEND_VARIANT_TENSOR_ALLOC,
+                                      &pointer, tensor->bytes, 0,
+                                      "cuda.tensor_free", err);
+    }
     if (rc != YVEX_OK) {
         return rc;
     }
@@ -154,7 +160,6 @@ int yvex_cuda_tensor_free(yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: Publish tensor write only within its admitted destination range.
  * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
  * Effects: Mutates only the admitted destination or transaction after every precondition passes.
@@ -169,7 +174,6 @@ int yvex_cuda_tensor_write(yvex_backend *backend,
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     int rc = yvex_backend_tensor_rw_validate(
         "yvex_backend_tensor_write", backend, tensor, len, err);
-
     if (rc != YVEX_OK) {
         return rc;
     }
@@ -198,7 +202,6 @@ int yvex_cuda_tensor_write(yvex_backend *backend,
     tensor->is_written = 1;
     return YVEX_OK;
 }
-
 /* Purpose: Retrieve tensor read from admitted immutable or owned state.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
@@ -213,7 +216,6 @@ int yvex_cuda_tensor_read(yvex_backend *backend,
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     int rc = yvex_backend_tensor_rw_validate(
         "yvex_backend_tensor_read", backend, tensor, len, err);
-
     if (rc != YVEX_OK) {
         return rc;
     }
@@ -236,7 +238,6 @@ int yvex_cuda_tensor_read(yvex_backend *backend,
     return yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_TENSOR_READ,
                                  "yvex_backend_tensor_read", err);
 }
-
 /* Purpose: Copy tensor copy between compatible admitted ranges without changing semantic identity.
  * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
  * Effects: Mutates only the admitted destination or transaction after every precondition passes.
@@ -249,7 +250,6 @@ int yvex_cuda_tensor_copy(yvex_backend *backend,
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     int rc;
-
     rc = yvex_backend_tensor_copy_validate(
         backend, dst, src, "yvex_backend_tensor_copy", err);
     if (rc != YVEX_OK) {

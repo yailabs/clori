@@ -183,6 +183,9 @@ static int test_provider_telemetry(void)
     yvex_error err;
     char json[4096];
     int rc;
+    YVEX_TEST_ASSERT_STREQ(
+        yvex_server_event_kind_name(YVEX_SERVER_EVENT_GENERATION_PROFILE),
+        "generation.profile", "generation profile event spelling");
     message.role = YVEX_PROVIDER_ROLE_USER;
     message.content.bytes = text;
     message.content.count = sizeof(text) - 1u;

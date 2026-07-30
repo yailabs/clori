@@ -91,14 +91,12 @@ static void graph_capture_restore(yvex_backend_cuda_graph *graph,
     graph->state = graph->capture_origin_state;
     graph->reason = reason;
 }
-
 /* Purpose: make owned launch resources immediately unavailable before fallible cleanup. */
 static void graph_poison(yvex_backend_cuda_graph *graph)
 {
     graph->state = YVEX_BACKEND_CUDA_GRAPH_INVALIDATED;
     graph->reason = YVEX_BACKEND_CUDA_GRAPH_REASON_NONE;
 }
-
 /* Purpose: retain one failed lifecycle reason while preserving the existing typed error. */
 static void graph_mark_failed(yvex_backend_cuda_graph *graph,
                               yvex_backend_cuda_graph_reason reason)
@@ -106,14 +104,12 @@ static void graph_mark_failed(yvex_backend_cuda_graph *graph,
     graph->state = YVEX_BACKEND_CUDA_GRAPH_FAILED;
     graph->reason = reason;
 }
-
 /* Purpose: publish one typed CUDA graph refusal that does not mutate lifecycle state. */
 static int graph_reject(yvex_error *err, int code, const char *where, const char *message)
 {
     yvex_error_set(err, code, where, message);
     return code;
 }
-
 /* Purpose: publish one exact lifecycle refusal without duplicating state mutation policy. */
 static int graph_fail(yvex_backend_cuda_graph *graph, yvex_backend_cuda_graph_state state,
                       yvex_backend_cuda_graph_reason reason, int code, const char *where,
@@ -124,7 +120,6 @@ static int graph_fail(yvex_backend_cuda_graph *graph, yvex_backend_cuda_graph_st
     yvex_error_set(err, code, where, message);
     return code;
 }
-
 /* Purpose: poison one retained Driver resource after cleanup cannot discharge ownership. */
 static int graph_cleanup_result(yvex_backend_cuda_graph *graph, int rc)
 {
@@ -134,7 +129,6 @@ static int graph_cleanup_result(yvex_backend_cuda_graph *graph, int rc)
     }
     return rc;
 }
-
 /* Purpose: publish an injected cleanup failure through the canonical poisoned state. */
 static int graph_cleanup_fail(yvex_backend_cuda_graph *graph, const char *where,
                               const char *message, yvex_error *err)
@@ -224,7 +218,7 @@ static const char *kernel_function_identity(const yvex_cuda_backend_state *state
     MATCH(embed_function); MATCH(embed_f16_function); MATCH(rms_norm_f32_function);
     MATCH(rms_norm_f16_function); MATCH(rope_function); MATCH(matmul_function);
     MATCH(qtype_row_dot_function); MATCH(attention_bf16_round_function);
-    MATCH(qtype_matvec_function);
+    MATCH(qtype_matvec_function); MATCH(q8_quantize_function);
     MATCH(deepseek_decode_function); MATCH(deepseek_weighted_norm_function);
     MATCH(deepseek_unit_norm_function); MATCH(deepseek_rope_function);
     MATCH(deepseek_activation_function); MATCH(deepseek_mhc_pre_function);
@@ -1197,7 +1191,6 @@ int yvex_cuda_graph_kernel_update(yvex_backend *backend,
     yvex_cuda_kernel_node_params node_params;
     char identity[YVEX_SHA256_HEX_BYTES];
     int rc;
-
     rc = backend_dispatch_admit(backend, stage, err);
     if (rc != YVEX_OK) return rc;
     if (!graph || !graph->exec || !function || !params ||
@@ -1869,7 +1862,6 @@ int yvex_backend_cuda_attention_graph_registry_apply(
     unsigned long long count = 0ull;
     int result = YVEX_OK;
     int rc;
-
     if (!state || !affected || action < YVEX_BACKEND_CUDA_GRAPH_REGISTRY_UPDATE ||
         action > YVEX_BACKEND_CUDA_GRAPH_REGISTRY_RELEASE) {
         return graph_reject(

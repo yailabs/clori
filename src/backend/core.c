@@ -1573,22 +1573,22 @@ int yvex_backend_validate_mlp(const yvex_backend *backend,
     return YVEX_OK;
 }
 /* Purpose: attach one stable host/device residency mapping to a backend execution context.
- * Inputs: host arena plus a tensor owned by this backend or its exact retained context owner.
- * Effects: records a borrowed immutable mapping; the tensor owner retains physical ownership.
- * Failure: rejects wrong owner relation, extent, generation, or an existing mapping.
- * Boundary: maps bytes only and does not infer tensors, qtypes, or family topology. */
+ * Inputs: exact owned CPU-visible tensor. Effects: records one borrowed immutable mapping.
+ * Failure: identity or lifecycle mismatch refuses. Boundary: mapping infers no model semantics. */
 int yvex_backend_resident_attach(yvex_backend *backend, const unsigned char *host_base,
                                  unsigned long long bytes,
                                  const yvex_device_tensor *device_tensor,
                                  unsigned long long generation, yvex_error *err)
 {
+    yvex_backend *owner;
+    unsigned long long address = 0ull;
     if (!backend || backend_cleanup_only(backend) ||
         backend->kind != YVEX_BACKEND_KIND_CUDA ||
         backend->status == YVEX_BACKEND_STATUS_FAILED || !host_base || !bytes ||
         !device_tensor ||
         (!backend_tensor_owner_is(backend, device_tensor) &&
          backend->resource_owner != device_tensor->owner) ||
-        device_tensor->bytes < bytes || !device_tensor->data || !generation) {
+        !device_tensor->bytes || !device_tensor->data || !generation) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "backend.residency.attach",
                        "same-owner or exact context-owner CUDA tensor is required");
         return YVEX_ERR_INVALID_ARG;
@@ -1598,28 +1598,43 @@ int yvex_backend_resident_attach(yvex_backend *backend, const unsigned char *hos
                        "backend residency mapping is already attached");
         return YVEX_ERR_STATE;
     }
+    owner = backend->resource_owner ? backend->resource_owner : backend;
+    if (owner == backend && device_tensor->host_accessible &&
+        device_tensor->bytes >= bytes && device_tensor->host_data == host_base) {
+        address = (unsigned long long)(uintptr_t)device_tensor->data;
+    } else if (owner != backend && owner->resident_host_base == host_base &&
+               owner->resident_host_bytes >= bytes &&
+               owner->resident_generation == generation && owner->resident_device_address) {
+        address = owner->resident_device_address;
+    } else {
+        yvex_error_set(err, YVEX_ERR_STATE, "backend.residency.attach",
+                       "backend has no matching CPU-visible resident arena");
+        return YVEX_ERR_STATE;
+    }
     backend->resident_host_base = host_base;
     backend->resident_host_bytes = bytes;
     backend->resident_device_tensor = device_tensor;
-    backend->resident_device_address = (unsigned long long)(uintptr_t)device_tensor->data;
+    backend->resident_device_address = address;
     backend->resident_generation = generation;
     yvex_error_clear(err);
     return YVEX_OK;
 }
 /* Purpose: detach one borrowed residency mapping before its device tensor is released.
- * Inputs: owning backend or null.
- * Effects: clears only the backend's borrowed host/device mapping facts.
- * Failure: null is a harmless no-op.
- * Boundary: does not free the device tensor or host arena. */
-void yvex_backend_resident_detach(yvex_backend *backend)
+ * Inputs: owning backend. Effects: clears only borrowed host/device mapping facts.
+ * Failure: null is harmless. Boundary: neither tensor nor host arena is released. */
+int yvex_backend_resident_detach(yvex_backend *backend, yvex_error *err)
 {
-    if (!backend)
-        return;
+    if (!backend) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
     backend->resident_host_base = NULL;
     backend->resident_host_bytes = 0ull;
     backend->resident_device_tensor = NULL;
     backend->resident_device_address = 0ull;
     backend->resident_generation = 0ull;
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 /* Purpose: translate one borrowed host subrange into its stable resident device address.
  * Inputs: backend mapping and exact host byte range.

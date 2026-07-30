@@ -9,9 +9,7 @@
  * Effects: owns one model, listener, worker, queue, session registry, and connection set.
  * Failure: never publishes READY before all owners exist and cleans stale local endpoints. */
 #define _GNU_SOURCE
-
 #include "src/server/private.h"
-
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -27,13 +25,10 @@
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
-
 #include <yvex/internal/core.h>
-
 #define SERVER_SCHEMA_V1 1u
 #define SERVER_TELEMETRY_CAPACITY 4096u
 #define SERVER_CLIENT_CAPACITY 64u
-
 typedef struct server_work_item {
     yvex_client_request request;
     char request_id[YVEX_SERVER_ID_CAP];
@@ -46,12 +41,10 @@ typedef struct server_work_item {
     pthread_cond_t condition;
     yvex_error error;
 } server_work_item;
-
 typedef struct {
     struct yvex_server *server;
     int fd, active, subscriber;
 } server_client_slot;
-
 struct yvex_server {
     pthread_mutex_t state_mutex, queue_mutex, clients_mutex;
     pthread_cond_t queue_condition, clients_condition;
@@ -63,6 +56,7 @@ struct yvex_server {
     char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
     char lock_path[YVEX_SERVER_SOCKET_PATH_CAP];
     yvex_runtime_model *model;
+    yvex_runtime_execution_session *warm_session;
     server_telemetry *telemetry;
     server_session_registry *sessions;
     server_work_item **queue;
@@ -76,7 +70,6 @@ struct yvex_server {
     int clients_mutex_ready, clients_condition_ready;
     int finish_started, finish_completed;
 };
-
 /* Purpose: publish one host-local typed refusal. */
 static int server_refuse(yvex_error *err, yvex_status status,
                          const char *reason)
@@ -84,7 +77,6 @@ static int server_refuse(yvex_error *err, yvex_status status,
     yvex_error_set(err, status, "server.host", reason);
     return status;
 }
-
 /* Purpose: project one lower typed status into a stable local-protocol refusal class.
  * Inputs: authoritative YVEX status. Effects: none.
  * Failure: unknown failures become internal rather than an application input claim.
@@ -105,7 +97,6 @@ static yvex_client_failure_class failure_class_from_status(int status)
     default: return YVEX_CLIENT_FAILURE_INTERNAL;
     }
 }
-
 /* Purpose: admit only same-UID peers to the private local runtime protocol.
  * Inputs: accepted Unix socket. Effects: reads kernel-authenticated peer credentials.
  * Failure: missing, malformed, or foreign credentials refuse the connection only.
@@ -127,7 +118,6 @@ static int peer_validate(int fd, yvex_error *err)
                          "local peer credential validation is unavailable");
 #endif
 }
-
 /* Purpose: return one monotonic timestamp for queue-wait evidence. */
 static unsigned long long server_monotonic_ns(void)
 {
@@ -136,7 +126,13 @@ static unsigned long long server_monotonic_ns(void)
     return (unsigned long long)value.tv_sec * 1000000000ull +
            (unsigned long long)value.tv_nsec;
 }
-
+/* Purpose: convert one checked monotonic interval into fractional seconds. */
+static double server_elapsed_seconds(unsigned long long start,
+                                     unsigned long long end)
+{
+    if (!start || end < start) return 0.0;
+    return (double)(end - start) / 1000000000.0;
+}
 /* Purpose: copy and validate host options before any external resource opens.
  * Inputs: allocated host, immutable options, and error output. Effects: owns bounded option copies.
  * Failure: refuses missing, unbounded, or invalid transport facts. Boundary: no model or socket opens. */
@@ -188,7 +184,6 @@ static int server_options_admit(yvex_server *server,
     server->options.socket_path = server->socket_path;
     return YVEX_OK;
 }
-
 /* Purpose: initialize the host synchronization set with partial-cleanup flags.
  * Inputs: allocated host and error output. Effects: creates three mutexes and two conditions.
  * Failure: returns at the first failed primitive; close consumes flags. Boundary: no worker starts. */
@@ -216,7 +211,6 @@ static int server_synchronization_open(yvex_server *server, yvex_error *err)
     server->clients_condition_ready = 1;
     return YVEX_OK;
 }
-
 /* Purpose: allocate one configured host without opening its model or listener.
  * Inputs: owner output and bounded options. Effects: allocates queue, clients, telemetry, and locks.
  * Failure: closes every partial owner and returns the first cause. Boundary: status stays CONFIGURED. */
@@ -280,7 +274,6 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: validate/create the private socket directory without following a symlink. */
 static int socket_directory_prepare(const char *socket_path, yvex_error *err)
 {
@@ -302,7 +295,6 @@ static int socket_directory_prepare(const char *socket_path, yvex_error *err)
                              "local runtime directory is not private to this user");
     return YVEX_OK;
 }
-
 /* Purpose: remove only an owner-validated stale socket and refuse live or foreign endpoints.
  * Inputs: absolute socket path. Effects: probes and may unlink an owned dead socket.
  * Failure: refuses live, foreign, non-socket, or uninspectable paths. Boundary: lock ownership is external. */
@@ -335,7 +327,6 @@ static int stale_socket_clear(const char *path, yvex_error *err)
                              "owned stale socket could not be removed");
     return YVEX_OK;
 }
-
 /* Purpose: publish one private singleton Unix socket after acquiring its lock.
  * Inputs: configured host and error output. Effects: creates the directory, lock, socket, and listener.
  * Failure: removes partial socket ownership and preserves the causal refusal. Boundary: local UID only. */
@@ -388,7 +379,6 @@ static int listener_open(yvex_server *server, yvex_error *err)
     server->listen_fd = fd;
     return YVEX_OK;
 }
-
 /* Purpose: send one worker response while recording whether any publication occurred. */
 static int work_emit(void *opaque, const yvex_client_message *message,
                      yvex_error *err)
@@ -398,7 +388,6 @@ static int work_emit(void *opaque, const yvex_client_message *message,
     if (rc == YVEX_OK) item->response_sent = 1;
     return rc;
 }
-
 /* Purpose: publish one compact typed error over the protocol. */
 static int protocol_error(int fd, const yvex_client_request *request,
                           int status, yvex_client_failure_class failure_class,
@@ -420,7 +409,6 @@ static int protocol_error(int fd, const yvex_client_request *request,
                         reason ? reason : "request failed");
     return yvex_server_protocol_send(fd, &message, err);
 }
-
 /* Purpose: dequeue and execute all graph-mutating requests on exactly one worker.
  * Inputs: started host. Effects: mutates session/model state and completes queued work items.
  * Failure: publishes typed item errors and continues until shutdown. Boundary: transport threads never execute. */
@@ -483,6 +471,62 @@ static void *model_worker_main(void *opaque)
     }
     return NULL;
 }
+/* Purpose: establish immutable CUDA residency before the listener can publish READY.
+ * Inputs: one host-owned model and configured device budget.
+ * Effects: builds the model-owned CUDA pack once and closes only the temporary shared lease.
+ * Failure: retains a failed cleanup lease on the host and publishes no readiness.
+ * Boundary: this prepares immutable model resources; it creates no conversation or KV session. */
+static int server_cuda_prepare(yvex_server *server,
+                               yvex_runtime_residency_summary *summary,
+                               yvex_error *err)
+{
+    const yvex_runtime_model_view *view = server && server->model
+                                              ? yvex_runtime_model_view_get(server->model)
+                                              : NULL;
+    yvex_runtime_execution_session *session = NULL;
+    yvex_runtime_session_open_request request;
+    yvex_runtime_model_failure failure;
+    yvex_runtime_session_summary session_summary;
+    yvex_error primary, cleanup;
+    int rc, cleanup_rc;
+    if (!server || !summary || !view || !view->residency)
+        return server_refuse(err, YVEX_ERR_STATE,
+                             "runtime residency is unavailable during startup");
+    if (server->options.backend != YVEX_BACKEND_KIND_CUDA)
+        return yvex_runtime_residency_snapshot(view->residency, summary,
+                                               NULL, NULL, err);
+    memset(&request, 0, sizeof(request));
+    memset(&failure, 0, sizeof(failure));
+    request.backend = YVEX_BACKEND_KIND_CUDA;
+    request.maximum_host_bytes = server->options.maximum_host_bytes;
+    request.maximum_device_bytes = server->options.maximum_device_bytes;
+    rc = yvex_runtime_session_open(&session, server->model, &request,
+                                   &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_session_summary_copy(session, &session_summary, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_residency_snapshot(view->residency, summary,
+                                             NULL, NULL, err);
+    primary = err ? *err : (yvex_error){0};
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_runtime_session_close(&session, &cleanup);
+    if (cleanup_rc != YVEX_OK) {
+        server->warm_session = session;
+        if (err) *err = cleanup;
+        return cleanup_rc;
+    }
+    if (rc != YVEX_OK) {
+        if (err) *err = primary;
+        return rc;
+    }
+    if (!summary->cuda_ready ||
+        (!summary->cuda_upload_count && !summary->cuda_host_registration_count))
+        return server_refuse(err, YVEX_ERR_STATE,
+                             "CUDA residency did not complete before readiness");
+    if (err) *err = primary;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
 
 /* Purpose: open the model once, then sessions, worker, and listener before READY.
  * Inputs: one CONFIGURED host. Effects: opens immutable runtime, registry, worker, and UDS ownership.
@@ -494,6 +538,8 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     yvex_runtime_model_summary model;
     yvex_runtime_residency_summary residency;
     const yvex_runtime_model_view *view;
+    unsigned long long startup_started, cuda_started = 0u, startup_completed;
+    double cuda_seconds = 0.0, startup_seconds;
     int rc;
     if (!server || !server->state_mutex_ready ||
         pthread_mutex_lock(&server->state_mutex) != 0)
@@ -506,6 +552,7 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     }
     server->summary.status = YVEX_SERVER_STATUS_STARTING;
     (void)pthread_mutex_unlock(&server->state_mutex);
+    startup_started = server_monotonic_ns();
     (void)yvex_server_telemetry_emit(
         server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_START,
         YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
@@ -528,9 +575,13 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     if (rc == YVEX_OK && (!view || !view->residency))
         rc = server_refuse(err, YVEX_ERR_STATE,
                            "runtime model did not publish immutable residency");
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_residency_snapshot(view->residency, &residency,
-                                             NULL, NULL, err);
+    if (rc == YVEX_OK) {
+        cuda_started = server_monotonic_ns();
+        rc = server_cuda_prepare(server, &residency, err);
+        if (rc == YVEX_OK)
+            cuda_seconds = server_elapsed_seconds(cuda_started,
+                                                  server_monotonic_ns());
+    }
     if (rc == YVEX_OK) {
         yvex_server_telemetry_identities(server->telemetry,
                                     model.runtime_model_identity,
@@ -550,14 +601,21 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
             server->telemetry, YVEX_SERVER_EVENT_MATERIALIZATION_COMPLETE,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
             residency.host_resident_bytes, residency.device_resident_bytes,
-            residency.binding_count, 0.0, 0.0, err);
+            residency.binding_count,
+            model.lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_MATERIALIZATION_OPEN],
+            0.0, err);
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_emit(
             server->telemetry, YVEX_SERVER_EVENT_RESIDENCY_READY,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
             residency.host_resident_bytes, residency.device_resident_bytes,
-            residency.cuda_upload_count, 0.0, 0.0, err);
+            residency.cuda_upload_count,
+            model.lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_RESIDENCY] + cuda_seconds,
+            0.0, err);
     if (rc == YVEX_OK) {
+        startup_completed = server_monotonic_ns();
+        startup_seconds = server_elapsed_seconds(startup_started,
+                                                 startup_completed);
         yvex_runtime_identity_copy(server->summary.runtime_model_identity,
                                    model.runtime_model_identity);
         yvex_runtime_identity_copy(server->summary.runtime_binding_identity,
@@ -570,7 +628,7 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
             server->telemetry, YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "startup",
             model.artifact_bytes_hashed, residency.host_resident_bytes,
-            residency.device_resident_bytes, model.total_seconds, 0.0, err);
+            residency.device_resident_bytes, startup_seconds, 0.0, err);
     }
     if (rc == YVEX_OK)
         rc = yvex_server_sessions_open(
@@ -604,10 +662,10 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
             server->telemetry, YVEX_SERVER_EVENT_RUNTIME_READY,
             YVEX_SERVER_SEVERITY_INFO, NULL, NULL, NULL, "runtime",
             1u, server->options.context_capacity, server->options.backend,
-            model.total_seconds, 0.0, err);
+            server_elapsed_seconds(startup_started, server_monotonic_ns()),
+            0.0, err);
     return rc;
 }
-
 /* Purpose: enqueue one request pointer while its transport thread retains stack ownership.
  * Inputs: started host and initialized work item. Effects: appends to the bounded queue and signals worker.
  * Failure: refuses stopping or full queue without publication. Boundary: caller waits before destroying item. */
@@ -657,7 +715,6 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
     (void)pthread_mutex_unlock(&server->queue_mutex);
     return YVEX_OK;
 }
-
 /* Purpose: copy authoritative runtime status into one protocol message. */
 static int status_message(yvex_server *server,
                           const yvex_client_request *request,
@@ -670,7 +727,6 @@ static int status_message(yvex_server *server,
     message->request_number = request->request_number;
     return yvex_server_get_summary(server, &message->runtime, err);
 }
-
 /* Purpose: stream one filtered projection of the canonical telemetry sequence.
  * Inputs: host, connected descriptor, subscription request, and error output. Effects: writes protocol events.
  * Failure: returns transport or telemetry refusal. Boundary: filtering never changes event identities. */
@@ -711,7 +767,6 @@ static int event_subscription(yvex_server *server, int fd,
     }
     return rc;
 }
-
 /* Purpose: wait for worker completion while converting peer loss into generation cancellation.
  * Inputs: host, queued stack-owned item, and connection descriptor. Effects: requests cancellation
  * after a detected hangup but retains the item until the worker releases it.
@@ -753,7 +808,6 @@ static int client_wait_work(yvex_server *server, server_work_item *item,
     if (item->status != YVEX_OK) *err = item->error;
     return item->status;
 }
-
 /* Purpose: process one local client connection without executing model work in this thread.
  * Inputs: reserved connection slot. Effects: reads frames, submits work, streams replies, then releases slot.
  * Failure: sends one bounded error when possible and always closes the descriptor. Boundary: worker owns mutation. */
@@ -876,7 +930,6 @@ static void *client_main(void *opaque)
     (void)pthread_mutex_unlock(&server->clients_mutex);
     return NULL;
 }
-
 /* Purpose: reserve one bounded connection slot and launch a detached transport thread.
  * Inputs: host, accepted descriptor, and error output. Effects: records ownership and creates one thread.
  * Failure: rolls back the slot when capacity or thread creation fails. Boundary: close waits on slot state. */
@@ -1026,7 +1079,12 @@ int yvex_server_finish(yvex_server *server, yvex_error *err)
         rc = cleanup_rc;
         primary = cleanup;
     }
-    if (server->model) {
+    cleanup_rc = yvex_runtime_session_close(&server->warm_session, &cleanup);
+    if (cleanup_rc != YVEX_OK && rc == YVEX_OK) {
+        rc = cleanup_rc;
+        primary = cleanup;
+    }
+    if (server->model && !server->warm_session) {
         yvex_runtime_model_close(&server->model);
         yvex_server_telemetry_model_closed(server->telemetry);
     }

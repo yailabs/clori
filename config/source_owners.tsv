@@ -16,6 +16,7 @@ include/yvex/internal/logits.h	runtime	runtime.logits	generic	private	internal-a
 include/yvex/internal/sampling.h	runtime	runtime.sampling	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/graph.h	graph	graph.internal	generic	private	internal-abi	runtime,backend,cli	interface	none
 include/yvex/internal/moe.h	graph	graph.moe	generic	private	internal-abi	graph,runtime,backend,cli,tests	interface	none
+include/yvex/internal/profile.h	runtime	runtime.profile	generic	private	internal-abi	runtime,backend,cli,tests	interface	none
 include/yvex/internal/gguf.h	gguf	gguf.internal	generic	private	internal-abi	artifact,model,quant	interface	none
 include/yvex/internal/gguf_writer.h	gguf	gguf.writer	generic	private	internal-abi	artifact,quant	interface	none
 include/yvex/internal/io.h	io	io.internal	generic	private	internal-abi	repository	interface	none

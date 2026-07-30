@@ -9,21 +9,16 @@
  * Failure: the failing step publishes nothing while all earlier successful steps remain authoritative. */
 #ifndef INCLUDE_YVEX_INTERNAL_DECODE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_DECODE_H_INCLUDED
-
 #include <yvex/internal/transformer.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 #define YVEX_RUNTIME_DECODE_SCHEMA_V1 1u
-
 typedef enum {
     YVEX_RUNTIME_DECODE_STATUS_NONE = 0,
     YVEX_RUNTIME_DECODE_STATUS_COMPLETE,
     YVEX_RUNTIME_DECODE_STATUS_PARTIAL
 } yvex_runtime_decode_status;
-
 typedef struct {
     unsigned int schema_version;
     int completed;
@@ -34,6 +29,10 @@ typedef struct {
     unsigned long long layers_executed, swa_layers, csa_layers, hca_layers;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
+    unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
+    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
+    unsigned long long synchronization_ns;
     char embedding_digest[YVEX_SHA256_HEX_CAP];
     char routing_digest[YVEX_SHA256_HEX_CAP];
     char layer_digest[YVEX_SHA256_HEX_CAP];
@@ -42,7 +41,6 @@ typedef struct {
     char transformer_execution_identity[YVEX_SHA256_HEX_CAP];
     char decode_step_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_decode_step_result;
-
 typedef struct {
     unsigned int schema_version;
     yvex_runtime_decode_status status;
@@ -53,31 +51,30 @@ typedef struct {
     unsigned long long layers_executed, swa_layers, csa_layers, hca_layers;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
+    unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
+    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
+    unsigned long long synchronization_ns;
     char input_identity[YVEX_SHA256_HEX_CAP];
     char aggregate_hidden_digest[YVEX_SHA256_HEX_CAP];
     char aggregate_state_digest[YVEX_SHA256_HEX_CAP];
     char decode_execution_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_decode_result;
-
 typedef struct {
     unsigned long long maximum_steps;
     int (*cancel_requested)(void *context);
     void *cancel_context;
 } yvex_runtime_decode_options;
-
 typedef struct {
     yvex_backend_kind backend;
 } yvex_runtime_decode_request;
-
 typedef struct {
     float *normalized_hidden;
     unsigned long long normalized_hidden_capacity;
     yvex_runtime_decode_step_result *steps;
     unsigned long long step_capacity;
 } yvex_runtime_decode_output;
-
 typedef struct yvex_runtime_decode_context yvex_runtime_decode_context;
-
 int yvex_runtime_decode_context_open(
     yvex_runtime_decode_context **out,
     yvex_runtime_transformer_context *transformer,
@@ -104,7 +101,6 @@ int yvex_runtime_decode_result_identity(
     const yvex_runtime_decode_result *result,
     const yvex_runtime_decode_step_result *steps,
     char output[YVEX_SHA256_HEX_CAP]);
-
 typedef struct {
     const char *target, *artifact_path, *runtime_binding_path, *input_path;
     yvex_backend_kind backend;
@@ -113,7 +109,6 @@ typedef struct {
     int (*cancel_requested)(void *context);
     void *cancel_context;
 } yvex_decode_operator_request;
-
 typedef struct {
     int completed;
     char status[32], command[64], target[128], family[32], backend[16], phase[16];
@@ -132,14 +127,12 @@ typedef struct {
     int generation_ready, model_behavior_evaluation_ready;
     int full_model_benchmark_ready, release_qualification_ready;
 } yvex_decode_operator_result;
-
 int yvex_runtime_decode_operator_execute(
     const yvex_decode_operator_request *request,
     yvex_decode_operator_result *result,
     yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err);
 void yvex_runtime_decode_operator_result_release(
     yvex_decode_operator_result *result);
-
 #ifdef __cplusplus
 }
 #endif

@@ -7,12 +7,10 @@
  * Inputs: Dynamic-loader state, an ordinal, and caller-owned device fact storage.
  * Effects: Owns only the loaded driver handle and queried device/context facts.
  * Failure: Missing symbols, devices, or context admission fail closed with complete cleanup. */
-
 #include "src/backend/cuda/private.h"
 #include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
-
 /* Purpose: Retrieve load symbol from admitted immutable or owned state.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
@@ -28,7 +26,6 @@ static int load_symbol(void *library, void **slot, const char *name, yvex_error 
     }
     return YVEX_OK;
 }
-
 /* Purpose: resolve one optional Driver entrypoint without affecting eager admission.
  * Inputs: Loaded Driver library, destination slot, primary symbol, and optional alias.
  * Effects: Writes only the destination function slot.
@@ -44,14 +41,12 @@ static void load_optional_symbol(void *library,
         *slot = dlsym(library, fallback);
     }
 }
-
 #define YVEX_LOAD_REQUIRED(driver, field) \
     do { \
         if (load_symbol((driver)->library, (void **)&((driver)->field), #field, err) != YVEX_OK) { \
             return YVEX_ERR_UNSUPPORTED; \
         } \
     } while (0)
-
 /* Purpose: Retrieve driver load from admitted immutable or owned state.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
@@ -63,7 +58,6 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.driver_load", "driver is required");
         return YVEX_ERR_INVALID_ARG;
     }
-
     memset(driver, 0, sizeof(*driver));
     driver->library = dlopen("libcuda.so.1", RTLD_NOW | RTLD_LOCAL);
     if (!driver->library) {
@@ -74,7 +68,6 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
                        "CUDA driver library is not available");
         return YVEX_ERR_UNSUPPORTED;
     }
-
     YVEX_LOAD_REQUIRED(driver, cuInit);
     YVEX_LOAD_REQUIRED(driver, cuDriverGetVersion);
     YVEX_LOAD_REQUIRED(driver, cuDeviceGetCount);
@@ -89,6 +82,7 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
     YVEX_LOAD_REQUIRED(driver, cuCtxSynchronize);
     YVEX_LOAD_REQUIRED(driver, cuMemGetInfo_v2);
     YVEX_LOAD_REQUIRED(driver, cuMemAlloc_v2);
+    YVEX_LOAD_REQUIRED(driver, cuMemAllocManaged);
     YVEX_LOAD_REQUIRED(driver, cuMemFree_v2);
     YVEX_LOAD_REQUIRED(driver, cuMemsetD8_v2);
     YVEX_LOAD_REQUIRED(driver, cuMemcpyHtoD_v2);
@@ -100,7 +94,6 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
     YVEX_LOAD_REQUIRED(driver, cuLaunchKernel);
     YVEX_LOAD_REQUIRED(driver, cuGetErrorName);
     YVEX_LOAD_REQUIRED(driver, cuGetErrorString);
-
     load_optional_symbol(driver->library, (void **)&driver->cuStreamCreate,
                          "cuStreamCreate", NULL);
     load_optional_symbol(driver->library, (void **)&driver->cuStreamDestroy_v2,
@@ -148,6 +141,12 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
                          "cuMemHostAlloc", NULL);
     load_optional_symbol(driver->library, (void **)&driver->cuMemFreeHost,
                          "cuMemFreeHost", NULL);
+    load_optional_symbol(driver->library, (void **)&driver->cuMemHostRegister_v2,
+                         "cuMemHostRegister_v2", "cuMemHostRegister");
+    load_optional_symbol(driver->library, (void **)&driver->cuMemHostGetDevicePointer_v2,
+                         "cuMemHostGetDevicePointer_v2", "cuMemHostGetDevicePointer");
+    load_optional_symbol(driver->library, (void **)&driver->cuMemHostUnregister,
+                         "cuMemHostUnregister", NULL);
     load_optional_symbol(driver->library, (void **)&driver->cuEventCreate,
                          "cuEventCreate", NULL);
     load_optional_symbol(driver->library, (void **)&driver->cuEventRecord,
@@ -158,11 +157,9 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
                          "cuEventElapsedTime_v2", "cuEventElapsedTime");
     load_optional_symbol(driver->library, (void **)&driver->cuEventDestroy_v2,
                          "cuEventDestroy_v2", "cuEventDestroy");
-
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: Retrieve driver unload from admitted immutable or owned state.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
@@ -178,7 +175,6 @@ void yvex_cuda_driver_unload(yvex_cuda_driver *driver)
     }
     memset(driver, 0, sizeof(*driver));
 }
-
 /* Purpose: Implement the canonical state mechanism owned by the CUDA backend boundary.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
@@ -188,7 +184,6 @@ yvex_cuda_backend_state *yvex_cuda_state(const yvex_backend *backend)
 {
     return backend ? (yvex_cuda_backend_state *)backend->impl : NULL;
 }
-
 /* Purpose: Publish set current only within its admitted destination range.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
@@ -197,7 +192,6 @@ yvex_cuda_backend_state *yvex_cuda_state(const yvex_backend *backend)
 int yvex_cuda_set_current(const yvex_backend *backend, const char *where, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
-
     if (!state) {
         yvex_error_set(err, YVEX_ERR_STATE, where ? where : "cuda.set_current",
                        "CUDA backend state is missing");
@@ -206,7 +200,6 @@ int yvex_cuda_set_current(const yvex_backend *backend, const char *where, yvex_e
     return yvex_cuda_status(&state->driver, state->driver.cuCtxSetCurrent(state->context),
                             where ? where : "cuda.set_current", err);
 }
-
 /* Purpose: Implement the canonical refresh memory info mechanism owned by the CUDA backend boundary.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
@@ -218,7 +211,6 @@ int yvex_cuda_refresh_memory_info(yvex_backend *backend, yvex_error *err)
     size_t free_bytes = 0;
     size_t total_bytes = 0;
     int rc;
-
     if (!backend || !state) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.memory_info",
                        "CUDA backend is required");
@@ -241,7 +233,6 @@ int yvex_cuda_refresh_memory_info(yvex_backend *backend, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: Implement the canonical tensor ptr mechanism owned by the CUDA backend boundary.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
  * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.

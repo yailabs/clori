@@ -9,18 +9,14 @@
  * Failure: stale identity, invalid geometry, cancellation, or numerical failure publishes no chunk state/output. */
 #ifndef INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
-
 #include <yvex/internal/moe.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 #define YVEX_TRANSFORMER_PLAN_SCHEMA_V1 1u
 #define YVEX_TRANSFORMER_INPUT_SCHEMA_V1 1u
 #define YVEX_TRANSFORMER_INPUT_SUFFIX ".yvex-transformer-input"
 #define YVEX_TRANSFORMER_WEIGHT_COUNT 5u
-
 typedef enum {
     YVEX_TRANSFORMER_INITIAL_REPEAT_STREAMS = 0
 } yvex_transformer_initial_policy;
@@ -34,7 +30,6 @@ typedef enum {
     YVEX_TRANSFORMER_WEIGHT_FINAL_SCALE,
     YVEX_TRANSFORMER_WEIGHT_OUTPUT_NORM
 } yvex_transformer_weight_slot;
-
 typedef struct yvex_transformer_family_policy {
     unsigned int schema_version;
     yvex_transformer_initial_policy initial_policy;
@@ -44,19 +39,16 @@ typedef struct yvex_transformer_family_policy {
     double mhc_epsilon, output_norm_epsilon;
     int attention_then_moe, deferred_ffn_post, final_norm_after_head;
 } yvex_transformer_family_policy;
-
 typedef struct {
     unsigned long long tensor_id, row_width, row_count, encoded_bytes;
     yvex_tensor_role role;
     unsigned int qtype;
 } yvex_transformer_weight_binding;
-
 typedef struct {
     unsigned long long ordinal, layer_index;
     char moe_layer_identity[YVEX_SHA256_HEX_CAP];
     char layer_identity[YVEX_SHA256_HEX_CAP];
 } yvex_transformer_layer_plan;
-
 typedef struct {
     unsigned int schema_version;
     unsigned long long family_adapter_id, family_adapter_version;
@@ -76,7 +68,6 @@ typedef struct {
     char transformer_plan_identity[YVEX_SHA256_HEX_CAP];
     yvex_transformer_weight_binding weights[YVEX_TRANSFORMER_WEIGHT_COUNT];
 } yvex_transformer_plan_summary;
-
 typedef struct {
     yvex_transformer_family_policy policy;
     unsigned long long family_adapter_id, family_adapter_version;
@@ -85,7 +76,6 @@ typedef struct {
     const char *runtime_numeric_identity, *runtime_descriptor_identity;
     yvex_transformer_weight_binding weights[YVEX_TRANSFORMER_WEIGHT_COUNT];
 } yvex_transformer_plan_facts;
-
 typedef struct yvex_transformer_plan yvex_transformer_plan;
 int yvex_transformer_plan_build(yvex_transformer_plan **out,
                                 const yvex_transformer_plan_facts *facts,
@@ -101,7 +91,6 @@ int yvex_transformer_plan_seal(yvex_transformer_plan_summary *summary,
 const yvex_transformer_plan_summary *yvex_transformer_plan_summary_get(
     const yvex_transformer_plan *plan);
 void yvex_transformer_plan_close(yvex_transformer_plan **plan);
-
 typedef struct {
     unsigned int schema_version;
     unsigned long long token_start, token_count, vocabulary_size, payload_bytes;
@@ -133,7 +122,6 @@ const yvex_transformer_input_summary *yvex_transformer_input_summary_get(
     const yvex_transformer_input *input);
 const unsigned int *yvex_transformer_input_token_ids(const yvex_transformer_input *input);
 void yvex_transformer_input_close(yvex_transformer_input **input);
-
 int yvex_transformer_initial_residual(const yvex_transformer_plan *plan,
                                       const float *embedding, unsigned long long token_count,
                                       float *expanded, yvex_error *err);
@@ -158,7 +146,6 @@ int yvex_backend_transformer_cuda_final(
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, double epsilon, double mhc_epsilon,
     yvex_device_tensor *output, yvex_error *err);
-
 typedef struct yvex_runtime_transformer_context yvex_runtime_transformer_context;
 typedef enum {
     YVEX_TRANSFORMER_PHASE_PREFILL = 0,
@@ -169,6 +156,7 @@ typedef struct {
     unsigned long long workspace_token_capacity;
     int (*cancel_requested)(void *context);
     void *cancel_context;
+    yvex_attention_evidence_level evidence_level;
 } yvex_runtime_transformer_options;
 typedef struct {
     unsigned long long chunk_tokens;
@@ -180,6 +168,10 @@ typedef struct {
     unsigned long long layer_ordinal, token_count;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
+    unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
+    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
+    unsigned long long synchronization_ns;
     char routing_digest[YVEX_SHA256_HEX_CAP];
     char expanded_digest[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
@@ -197,6 +189,10 @@ typedef struct {
     unsigned long long swa_layers, csa_layers, hca_layers;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
+    unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
+    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
+    unsigned long long synchronization_ns;
     char input_identity[YVEX_SHA256_HEX_CAP];
     char embedding_digest[YVEX_SHA256_HEX_CAP];
     char routing_digest[YVEX_SHA256_HEX_CAP];
@@ -233,7 +229,6 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
                                      yvex_error *err);
 int yvex_runtime_transformer_context_close(yvex_runtime_transformer_context **context,
                                            yvex_error *err);
-
 typedef struct {
     const char *target, *artifact_path, *runtime_binding_path, *input_path;
     yvex_backend_kind backend;
@@ -262,7 +257,6 @@ int yvex_transformer_operator_execute(const yvex_transformer_operator_request *r
                                       yvex_transformer_operator_result *result,
                                       yvex_runtime_cleanup_lease **retained_cleanup,
                                       yvex_error *err);
-
 #ifdef __cplusplus
 }
 #endif

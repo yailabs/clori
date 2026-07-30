@@ -1,22 +1,19 @@
 /* Owner: CUDA MoE execution.
- * Owns: selected-expert device staging, admitted MoE kernel launches, synchronization, and cleanup.
+ * Owns: direct encoded-weight execution, admitted MoE kernel launches, synchronization, and cleanup.
  * Does not own: family routing policy, artifact addressing, runtime sessions, CPU fallback, or CLI evidence.
- * Invariants: CUDA requests execute all numerical stages on device and upload selected expert subviews only.
+ * Invariants: production weights remain directly addressable and success follows device completion.
  * Boundary: backend execution consumes a typed MoE job and never reconstructs model topology.
  * Purpose: execute one DeepSeek-selected MoE layer with canonical qtype kernels on CUDA.
  * Inputs: admitted encoded fixed/selected weights, expanded activation, and exact family plan facts.
- * Effects: uses stable workspace ranges, transfers selected bytes, and publishes output after synchronization.
+ * Effects: uses stable workspace ranges and publishes only evidence requested by the caller.
  * Failure: copy, launch, status, or cleanup failure publishes no successful result. */
 #include <yvex/internal/moe.h>
-
 #include "src/backend/cuda/private.h"
-
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-
 #define MOE_CUDA_BLOCK 256u
-
+#define MOE_CUDA_ROWS_PER_BLOCK 8u
 struct yvex_backend_moe_execution {
     yvex_backend *backend;
     yvex_cuda_backend_state *state;
@@ -28,17 +25,18 @@ struct yvex_backend_moe_execution {
     CUdeviceptr mix, scale, base, logits, scores, selected, weights;
     CUdeviceptr gate, up, intermediate, expert, routed, shared, combined, weight_buffer, route_aux;
     size_t weight_buffer_bytes, route_aux_bytes;
-    int host_status, finished;
-    unsigned long long h2d, d2h, subviews, uploads;
+    int host_status, finished, grouped_selected;
+    unsigned long long h2d, d2h, subviews, uploads, downloads, direct_weights;
+    unsigned long long d2d, device_synchronizations, started_ns, ingress_ns, routing_ns;
+    unsigned long long routed_ns, shared_ns, synchronization_ns;
 };
-
+static int moe_cuda_add_selected(yvex_backend_moe_execution *execution, yvex_error *err);
 /* Purpose: publish one CUDA MoE refusal through the typed backend owner. */
 static int moe_cuda_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "cuda.moe", reason);
     return status;
 }
-
 /* Purpose: project one graph weight view into the existing encoded CUDA matvec ABI. */
 static yvex_backend_attention_weight moe_cuda_weight(const yvex_moe_weight_view *weight)
 {
@@ -53,7 +51,6 @@ static yvex_backend_attention_weight moe_cuda_weight(const yvex_moe_weight_view 
     out.present = weight->encoded && weight->encoded_bytes != 0u;
     return out;
 }
-
 /* Purpose: allocate one stable range. Inputs: workspace, extent, and optional source.
  * Effects: advances workspace. Failure: typed backend error. Boundary: CUDA MoE scratch. */
 static int moe_cuda_allocate(yvex_backend_moe_execution *execution, CUdeviceptr *out,
@@ -63,14 +60,13 @@ static int moe_cuda_allocate(yvex_backend_moe_execution *execution, CUdeviceptr 
     return execution->ops->allocate(&execution->work, out, bytes, source, zero, stage,
                                     &execution->failure, err);
 }
-
 /* Purpose: upload one encoded weight. Inputs: admitted view and stable staging range.
  * Effects: replaces staged bytes. Failure: typed bound/transfer error. Boundary: CUDA MoE weight. */
 static int moe_cuda_upload(yvex_backend_moe_execution *execution,
                            const yvex_moe_weight_view *weight,
                            const char *stage, yvex_error *err)
 {
-    int rc;
+    int rc = YVEX_OK;
     if (!weight || !weight->encoded || !weight->encoded_bytes ||
         weight->encoded_bytes > execution->weight_buffer_bytes)
         return moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
@@ -84,7 +80,29 @@ static int moe_cuda_upload(yvex_backend_moe_execution *execution,
     }
     return rc;
 }
-
+/* Purpose: resolve one model-resident weight directly or stage only an explicit fallback view.
+ * Inputs: admitted weight view and stable fallback range.
+ * Effects: publishes a device address and accounts direct reuse versus transfer.
+ * Failure: malformed mapped address or fallback upload publishes no usable pointer.
+ * Boundary: production runtime views are direct; focused backend fixtures may exercise staging. */
+static int moe_cuda_weight_address(yvex_backend_moe_execution *execution,
+                                   const yvex_moe_weight_view *weight,
+                                   CUdeviceptr *device, const char *stage,
+                                   yvex_error *err)
+{
+    int rc;
+    if (!device) return moe_cuda_refuse(err, YVEX_ERR_INVALID_ARG,
+                                        "CUDA MoE weight address output is required");
+    *device = 0ull;
+    if (weight && weight->device_address) {
+        *device = (CUdeviceptr)weight->device_address;
+        execution->direct_weights++;
+        return YVEX_OK;
+    }
+    rc = moe_cuda_upload(execution, weight, stage, err);
+    if (rc == YVEX_OK) *device = execution->weight_buffer;
+    return rc;
+}
 /* Purpose: execute one encoded matrix-vector product from the reusable weight range. */
 static int moe_cuda_matvec(yvex_backend_moe_execution *execution,
                            const yvex_moe_weight_view *weight, CUdeviceptr input,
@@ -92,15 +110,15 @@ static int moe_cuda_matvec(yvex_backend_moe_execution *execution,
                            const char *stage, yvex_error *err)
 {
     yvex_backend_attention_weight encoded = moe_cuda_weight(weight);
-    int rc = moe_cuda_upload(execution, weight, stage, err);
+    CUdeviceptr device_weight = 0ull;
+    int rc = moe_cuda_weight_address(execution, weight, &device_weight, stage, err);
     return rc == YVEX_OK
                ? execution->ops->matvec(&execution->work, &encoded,
-                                         execution->weight_buffer, 0ull,
+                                         device_weight, 0ull,
                                          weight->row_count, input, output, round_bf16,
                                          execution->status, stage, &execution->failure, err)
                : rc;
 }
-
 /* Purpose: decode one coefficient vector. Inputs: encoded view and output range.
  * Effects: writes device coefficients. Failure: typed CUDA error. Boundary: CUDA qtype execution. */
 static int moe_cuda_decode(yvex_backend_moe_execution *execution,
@@ -108,33 +126,39 @@ static int moe_cuda_decode(yvex_backend_moe_execution *execution,
                            const char *stage, yvex_error *err)
 {
     yvex_backend_attention_weight encoded = moe_cuda_weight(weight);
-    int rc = moe_cuda_upload(execution, weight, stage, err);
+    CUdeviceptr device_weight = 0ull;
+    int rc = moe_cuda_weight_address(execution, weight, &device_weight, stage, err);
     return rc == YVEX_OK
                ? execution->ops->decode(&execution->work, &encoded,
-                                         execution->weight_buffer, 0ull,
+                                         device_weight, 0ull,
                                          weight->row_width, output, execution->status,
                                          stage, &execution->failure, err)
                : rc;
 }
-
-/* Purpose: synchronize one CUDA MoE phase and reject device status atomically. */
+/* Purpose: measure and validate one existing outer CUDA MoE synchronization. Inputs: live execution and stage.
+ * Effects: records its status download and wait. Failure: typed transfer/device error. Boundary: adds no sync. */
 static int moe_cuda_sync_status(yvex_backend_moe_execution *execution,
                                 const char *stage, yvex_error *err)
 {
-    int rc = execution->ops->download(&execution->work, &execution->host_status,
-                                      execution->status, sizeof(execution->host_status),
-                                      stage, &execution->failure, err);
-    if (rc == YVEX_OK)
+    unsigned long long started = 0ull, completed = 0ull;
+    int rc = execution->ops->download(
+        &execution->work, &execution->host_status, execution->status,
+        sizeof(execution->host_status), stage, &execution->failure, err);
+    if (rc == YVEX_OK) {
+        execution->downloads++;
+        execution->d2h += sizeof(execution->host_status);
+        started = yvex_core_monotonic_ns();
         rc = yvex_cuda_synchronize(execution->backend,
-                                   YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-                                   stage, err);
-    execution->d2h += sizeof(execution->host_status);
+            YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, stage, err);
+        completed = yvex_core_monotonic_ns();
+        execution->device_synchronizations++;
+        if (completed > started) execution->synchronization_ns += completed - started;
+    }
     if (rc == YVEX_OK && execution->host_status)
         rc = moe_cuda_refuse(err, YVEX_ERR_BACKEND,
                              "CUDA MoE kernel reported invalid or non-finite numerics");
     return rc;
 }
-
 /* Purpose: allocate per-layer stable ranges. Inputs: sealed job and workspace.
  * Effects: fixes device addresses. Failure: typed capacity error. Boundary: CUDA MoE workspace. */
 static int moe_cuda_ranges(yvex_backend_moe_execution *execution, yvex_error *err)
@@ -142,10 +166,18 @@ static int moe_cuda_ranges(yvex_backend_moe_execution *execution, yvex_error *er
     const yvex_moe_layer_plan *layer = execution->job->layer;
     size_t hidden = (size_t)layer->hidden_width * sizeof(float);
     size_t expanded = (size_t)layer->expanded_width * sizeof(float);
-    size_t intermediate = (size_t)layer->shared_intermediate_width * sizeof(float);
+    unsigned long long grouped_count = layer->expert_intermediate_width *
+                                       layer->experts_per_token;
+    size_t intermediate;
     size_t routed = (size_t)layer->routed_experts * sizeof(float);
     size_t selected = (size_t)layer->experts_per_token * sizeof(unsigned long long);
     size_t selected_weights = (size_t)layer->experts_per_token * sizeof(float);
+    if (grouped_count < layer->shared_intermediate_width)
+        grouped_count = layer->shared_intermediate_width;
+    if (grouped_count > SIZE_MAX / sizeof(float))
+        return moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
+                               "CUDA MoE intermediate extent overflowed");
+    intermediate = (size_t)grouped_count * sizeof(float);
     int rc = moe_cuda_allocate(execution, &execution->status, sizeof(int), NULL, 1,
                                "cuda.moe.status", err);
 #define RANGE(member_, bytes_, source_, zero_, stage_)                                      \
@@ -190,11 +222,11 @@ static int moe_cuda_ranges(yvex_backend_moe_execution *execution, yvex_error *er
                                     expanded) : (CUresult)1;
         rc = yvex_cuda_status(&execution->state->driver, copied,
                               "cuda.moe.device-input", err);
+        if (rc == YVEX_OK) execution->d2d += expanded;
     }
     if (rc == YVEX_OK && !execution->job->device_input) execution->h2d += expanded;
     return rc;
 }
-
 /* Purpose: execute mHC FFN ingress and RMS norm. Inputs: typed layer weights and activation.
  * Effects: writes device input state. Failure: typed kernel error. Boundary: CUDA MoE preparation. */
 static int moe_cuda_prepare_input(yvex_backend_moe_execution *execution, yvex_error *err)
@@ -202,6 +234,7 @@ static int moe_cuda_prepare_input(yvex_backend_moe_execution *execution, yvex_er
     const yvex_moe_layer_job *job = execution->job;
     const yvex_moe_layer_plan *layer = job->layer;
     yvex_backend_attention_weight norm = moe_cuda_weight(&job->weights[YVEX_MOE_WEIGHT_FFN_NORM]);
+    CUdeviceptr norm_weight = 0ull;
     unsigned long long streams = layer->residual_streams, width = layer->hidden_width;
     int rc = moe_cuda_matvec(execution, &job->weights[YVEX_MOE_WEIGHT_MHC_FUNCTION],
                              execution->expanded, execution->mix, 0,
@@ -225,17 +258,17 @@ static int moe_cuda_prepare_input(yvex_backend_moe_execution *execution, yvex_er
                                     &execution->failure, err);
     }
     if (rc == YVEX_OK &&
-        (rc = moe_cuda_upload(execution, &job->weights[YVEX_MOE_WEIGHT_FFN_NORM],
-                              "cuda.moe.norm-weight", err)) == YVEX_OK)
+        (rc = moe_cuda_weight_address(execution, &job->weights[YVEX_MOE_WEIGHT_FFN_NORM],
+                                      &norm_weight, "cuda.moe.norm-weight", err)) == YVEX_OK)
         rc = execution->ops->weighted_norm(
             &execution->work, execution->normalized, layer->hidden_width, &norm,
-            execution->weight_buffer, layer->rms_epsilon, execution->status,
+            norm_weight, layer->rms_epsilon, execution->status,
             "cuda.moe.ffn-norm", &execution->failure, err);
     return rc;
 }
-
 /* Purpose: execute routing. Inputs: prepared state and typed router policy.
- * Effects: publishes selection after sync. Failure: typed numeric error. Boundary: CUDA MoE router. */
+ * Effects: keeps selection device-side for grouped serving or publishes audit selection.
+ * Failure: typed numeric error. Boundary: CUDA MoE router. */
 static int moe_cuda_route(yvex_backend_moe_execution *execution,
                           yvex_moe_layer_result *result, yvex_error *err)
 {
@@ -273,11 +306,17 @@ static int moe_cuda_route(yvex_backend_moe_execution *execution,
         hash = execution->route_aux;
         execution->h2d += layer->experts_per_token * sizeof(*host_selected);
     } else {
-        rc = execution->ops->initialize(&execution->work, execution->route_aux,
-                                        aux->encoded_bytes, aux->encoded, 0,
-                                        "cuda.moe.router-bias", &execution->failure, err);
-        bias = execution->route_aux;
-        execution->h2d += aux->encoded_bytes;
+        if (aux->device_address) {
+            bias = (CUdeviceptr)aux->device_address;
+            execution->direct_weights++;
+        } else {
+            rc = execution->ops->initialize(&execution->work, execution->route_aux,
+                                            aux->encoded_bytes, aux->encoded, 0,
+                                            "cuda.moe.router-bias", &execution->failure, err);
+            bias = execution->route_aux;
+            execution->h2d += aux->encoded_bytes;
+            execution->uploads++;
+        }
     }
     if (rc == YVEX_OK) {
         void *params[] = {
@@ -295,21 +334,26 @@ static int moe_cuda_route(yvex_backend_moe_execution *execution,
         if (rc == YVEX_OK)                                                                 \
             rc = execution->ops->download(&execution->work, (target_), (source_),          \
                                           (bytes_), (stage_), &execution->failure, err);    \
-        if (rc == YVEX_OK) execution->d2h += (bytes_);                                     \
+        if (rc == YVEX_OK) { execution->d2h += (bytes_); execution->downloads++; }          \
     } while (0)
-    DOWNLOAD(result->router.router_logits, execution->logits,
-             (size_t)layer->routed_experts * sizeof(float), "cuda.moe.logits-download");
-    DOWNLOAD(result->router.router_scores, execution->scores,
-             (size_t)layer->routed_experts * sizeof(float), "cuda.moe.scores-download");
-    DOWNLOAD(result->router.selected_experts, execution->selected,
-             (size_t)layer->experts_per_token * sizeof(unsigned long long),
-             "cuda.moe.selected-download");
-    DOWNLOAD(result->router.selected_weights, execution->weights,
-             (size_t)layer->experts_per_token * sizeof(float), "cuda.moe.weights-download");
+    if (!job->device_output || job->evidence_level == YVEX_ATTENTION_EVIDENCE_FULL) {
+        DOWNLOAD(result->router.router_logits, execution->logits,
+                 (size_t)layer->routed_experts * sizeof(float), "cuda.moe.logits-download");
+        DOWNLOAD(result->router.router_scores, execution->scores,
+                 (size_t)layer->routed_experts * sizeof(float), "cuda.moe.scores-download");
+    }
+    if (!execution->grouped_selected) {
+        DOWNLOAD(result->router.selected_experts, execution->selected,
+                 (size_t)layer->experts_per_token * sizeof(unsigned long long),
+                 "cuda.moe.selected-download");
+        DOWNLOAD(result->router.selected_weights, execution->weights,
+                 (size_t)layer->experts_per_token * sizeof(float),
+                 "cuda.moe.weights-download");
+    }
 #undef DOWNLOAD
-    return rc == YVEX_OK ? moe_cuda_sync_status(execution, "cuda.moe.route-sync", err) : rc;
+    return rc == YVEX_OK && !execution->grouped_selected
+               ? moe_cuda_sync_status(execution, "cuda.moe.route-sync", err) : rc;
 }
-
 /* Purpose: begin one CUDA MoE layer. Inputs: admitted backend job and result storage.
  * Effects: owns work and publishes routing. Failure: closes partial work. Boundary: backend lifecycle. */
 int yvex_backend_moe_begin(yvex_backend_moe_execution **out, yvex_backend *backend,
@@ -341,10 +385,17 @@ int yvex_backend_moe_begin(yvex_backend_moe_execution **out, yvex_backend *backe
     execution->state = yvex_cuda_state(backend);
     execution->ops = yvex_cuda_attention_operations_get();
     execution->job = job;
+    execution->started_ns = yvex_core_monotonic_ns();
     execution->work.backend = backend;
     execution->work.state = execution->state;
     execution->work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+    execution->grouped_selected = job->device_output &&
+        job->evidence_level != YVEX_ATTENTION_EVIDENCE_FULL &&
+        job->weights[YVEX_MOE_WEIGHT_ROUTED_GATE].device_address &&
+        job->weights[YVEX_MOE_WEIGHT_ROUTED_UP].device_address &&
+        job->weights[YVEX_MOE_WEIGHT_ROUTED_DOWN].device_address;
     if (!execution->state || !execution->state->moe_route_function ||
+        !execution->state->q8_quantize_function ||
         !execution->state->moe_swiglu_function || !execution->state->moe_accumulate_function) {
         rc = moe_cuda_refuse(err, YVEX_ERR_UNSUPPORTED, "CUDA MoE kernel bundle is unavailable");
         goto fail;
@@ -364,7 +415,14 @@ int yvex_backend_moe_begin(yvex_backend_moe_execution **out, yvex_backend *backe
     backend_workspace_reset(backend);
     rc = moe_cuda_ranges(execution, err);
     if (rc == YVEX_OK) rc = moe_cuda_prepare_input(execution, err);
-    if (rc == YVEX_OK) rc = moe_cuda_route(execution, result, err);
+    if (rc == YVEX_OK) {
+        unsigned long long routed_started = yvex_core_monotonic_ns();
+        execution->ingress_ns = routed_started - execution->started_ns;
+        rc = moe_cuda_route(execution, result, err);
+        if (rc == YVEX_OK) execution->routing_ns = yvex_core_monotonic_ns() - routed_started;
+    }
+    if (rc == YVEX_OK && execution->grouped_selected)
+        rc = moe_cuda_add_selected(execution, err);
     if (rc != YVEX_OK) goto fail;
     *out = execution;
     return YVEX_OK;
@@ -372,7 +430,124 @@ fail:
     (void)yvex_backend_moe_close(&execution, NULL);
     return rc;
 }
-
+/* Purpose: execute all routed experts from the device selection without host dispatch.
+ * Inputs: grouped-capable execution with aggregate encoded views. Effects: publishes routed output.
+ * Failure: missing stable addresses or malformed geometry refuses. Boundary: normal CUDA serving. */
+static int moe_cuda_add_selected(yvex_backend_moe_execution *execution, yvex_error *err)
+{
+    const yvex_moe_layer_job *job = execution ? execution->job : NULL;
+    const yvex_moe_layer_plan *layer = job ? job->layer : NULL;
+    const yvex_moe_weight_view *gate, *up, *down;
+    unsigned long long gate_expert_bytes, up_expert_bytes, down_expert_bytes;
+    unsigned long long hidden_blocks, intermediate_blocks, quantize_tasks;
+    unsigned long long started;
+    int q8_input;
+    int rc = YVEX_OK;
+    if (!execution || !layer || execution->finished || !execution->grouped_selected ||
+        !execution->state->moe_grouped_up_function ||
+        !execution->state->moe_grouped_down_function)
+        return moe_cuda_refuse(err, YVEX_ERR_UNSUPPORTED,
+                               "CUDA grouped selected-expert execution is unavailable");
+    gate = &job->weights[YVEX_MOE_WEIGHT_ROUTED_GATE];
+    up = &job->weights[YVEX_MOE_WEIGHT_ROUTED_UP];
+    down = &job->weights[YVEX_MOE_WEIGHT_ROUTED_DOWN];
+    if (!gate->row_bytes || !up->row_bytes || !down->row_bytes ||
+        gate->row_count != layer->routed_experts * layer->expert_intermediate_width ||
+        up->row_count != gate->row_count ||
+        down->row_count != layer->routed_experts * layer->hidden_width ||
+        gate->row_width != layer->hidden_width || up->row_width != layer->hidden_width ||
+        down->row_width != layer->expert_intermediate_width)
+        return moe_cuda_refuse(err, YVEX_ERR_FORMAT,
+                               "CUDA grouped selected-expert geometry is incompatible");
+    gate_expert_bytes = gate->row_bytes * layer->expert_intermediate_width;
+    up_expert_bytes = up->row_bytes * layer->expert_intermediate_width;
+    down_expert_bytes = down->row_bytes * layer->hidden_width;
+    q8_input = layer->hidden_width % 256ull == 0ull &&
+        layer->expert_intermediate_width % 256ull == 0ull &&
+        (gate->qtype == YVEX_GGUF_QTYPE_IQ2_XXS || gate->qtype == YVEX_GGUF_QTYPE_Q2_K ||
+         gate->qtype == YVEX_GGUF_QTYPE_Q8_0) &&
+        (up->qtype == YVEX_GGUF_QTYPE_IQ2_XXS || up->qtype == YVEX_GGUF_QTYPE_Q2_K ||
+         up->qtype == YVEX_GGUF_QTYPE_Q8_0) &&
+        (down->qtype == YVEX_GGUF_QTYPE_IQ2_XXS || down->qtype == YVEX_GGUF_QTYPE_Q2_K ||
+         down->qtype == YVEX_GGUF_QTYPE_Q8_0);
+    hidden_blocks = q8_input ? layer->hidden_width / 256ull : layer->hidden_width;
+    intermediate_blocks = q8_input ? layer->expert_intermediate_width / 256ull :
+                          layer->expert_intermediate_width;
+    quantize_tasks = intermediate_blocks * layer->experts_per_token;
+    if (q8_input && (hidden_blocks > UINT_MAX || quantize_tasks > UINT_MAX))
+        return moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
+                               "CUDA grouped Q8 activation grid exceeds launch bounds");
+    started = yvex_core_monotonic_ns();
+    if (q8_input) {
+        unsigned long long one = 1ull;
+        void *params[] = {&execution->gate, &execution->normalized,
+                          (void *)&layer->hidden_width, &one, &execution->status};
+        rc = execution->ops->launch(&execution->work,
+            execution->state->q8_quantize_function, (unsigned int)hidden_blocks,
+            MOE_CUDA_BLOCK, 0u, params, "cuda.moe.input-q8",
+            &execution->failure, err);
+    }
+    if (rc == YVEX_OK) {
+        CUdeviceptr gate_address = (CUdeviceptr)gate->device_address;
+        CUdeviceptr up_address = (CUdeviceptr)up->device_address;
+        unsigned int gate_qtype = gate->qtype, up_qtype = up->qtype;
+        unsigned long long rows = layer->experts_per_token *
+                                  layer->expert_intermediate_width;
+        unsigned long long blocks = (rows + MOE_CUDA_ROWS_PER_BLOCK - 1ull) /
+                                    MOE_CUDA_ROWS_PER_BLOCK;
+        void *params[] = {&gate_address, (void *)&gate->row_bytes, &gate_expert_bytes,
+                          &gate_qtype, &up_address, (void *)&up->row_bytes, &up_expert_bytes,
+                          &up_qtype, &execution->selected,
+                          (void *)&layer->experts_per_token, (void *)&layer->routed_experts,
+                          q8_input ? &execution->gate : &execution->normalized,
+                          &hidden_blocks, &q8_input,
+                          (void *)&layer->expert_intermediate_width,
+                          (void *)&layer->activation_limit, &execution->intermediate,
+                          &execution->status};
+        if (blocks > UINT_MAX)
+            return moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
+                                   "CUDA grouped gate/up grid exceeds launch bounds");
+        rc = execution->ops->launch(&execution->work,
+            execution->state->moe_grouped_up_function, (unsigned int)blocks,
+            MOE_CUDA_BLOCK, 0u, params,
+            "cuda.moe.grouped-up", &execution->failure, err);
+    }
+    if (rc == YVEX_OK && q8_input) {
+        void *params[] = {&execution->up, &execution->intermediate,
+                          (void *)&layer->expert_intermediate_width,
+                          (void *)&layer->experts_per_token, &execution->status};
+        rc = execution->ops->launch(&execution->work,
+            execution->state->q8_quantize_function, (unsigned int)quantize_tasks,
+            MOE_CUDA_BLOCK, 0u, params, "cuda.moe.intermediate-q8",
+            &execution->failure, err);
+    }
+    if (rc == YVEX_OK) {
+        CUdeviceptr down_address = (CUdeviceptr)down->device_address;
+        unsigned int qtype = down->qtype;
+        void *params[] = {&down_address, (void *)&down->row_bytes, &down_expert_bytes,
+                          &qtype, &execution->selected, &execution->weights,
+                          (void *)&layer->experts_per_token, (void *)&layer->routed_experts,
+                          q8_input ? &execution->up : &execution->intermediate,
+                          &intermediate_blocks, &q8_input,
+                          (void *)&layer->hidden_width, &execution->routed,
+                          &execution->status};
+        unsigned long long blocks = (layer->hidden_width + MOE_CUDA_ROWS_PER_BLOCK - 1ull) /
+                                    MOE_CUDA_ROWS_PER_BLOCK;
+        if (blocks > UINT_MAX)
+            return moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
+                                   "CUDA grouped down grid exceeds launch bounds");
+        rc = execution->ops->launch(&execution->work,
+            execution->state->moe_grouped_down_function,
+            (unsigned int)blocks, MOE_CUDA_BLOCK, 0u, params, "cuda.moe.grouped-down",
+            &execution->failure, err);
+    }
+    if (rc == YVEX_OK) {
+        execution->direct_weights += 3ull;
+        execution->subviews += layer->experts_per_token * 3ull;
+        execution->routed_ns += yvex_core_monotonic_ns() - started;
+    }
+    return rc;
+}
 /* Purpose: execute one selected expert. Inputs: exact gate/up/down views and route weight.
  * Effects: accumulates device output. Failure: typed kernel error. Boundary: backend MoE compute. */
 int yvex_backend_moe_add_expert(yvex_backend_moe_execution *execution,
@@ -385,6 +560,7 @@ int yvex_backend_moe_add_expert(yvex_backend_moe_execution *execution,
                                            ? execution->job->layer : NULL;
     unsigned long long width;
     unsigned int grid;
+    unsigned long long started = yvex_core_monotonic_ns();
     int rc;
     if (!execution || !layer || !gate || !up || !down || execution->finished ||
         gate->row_count != up->row_count || down->row_width != gate->row_count ||
@@ -420,10 +596,11 @@ int yvex_backend_moe_add_expert(yvex_backend_moe_execution *execution,
     }
     if (rc == YVEX_OK) {
         execution->subviews += shared ? 0ull : 3ull;
+        if (shared) execution->shared_ns += yvex_core_monotonic_ns() - started;
+        else execution->routed_ns += yvex_core_monotonic_ns() - started;
     }
     return rc;
 }
-
 /* Purpose: publish one complete CUDA MoE output. Inputs: complete execution and result storage.
  * Effects: downloads typed result. Failure: publishes no success. Boundary: backend transaction. */
 int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
@@ -477,17 +654,28 @@ int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
                                           (bytes_), (stage_), &execution->failure, err);    \
         if (rc == YVEX_OK) execution->d2h += (bytes_);                                     \
     } while (0)
-    DOWNLOAD(result->combined_output, execution->combined,
-             (size_t)layer->hidden_width * sizeof(float), "cuda.moe.output-download");
-    DOWNLOAD(result->routed_output, execution->routed,
-             (size_t)layer->hidden_width * sizeof(float), "cuda.moe.routed-download");
-    DOWNLOAD(result->shared_output, execution->shared,
-             (size_t)layer->hidden_width * sizeof(float), "cuda.moe.shared-download");
-    DOWNLOAD(result->post, execution->post,
-             (size_t)layer->residual_streams * sizeof(float), "cuda.moe.post-download");
-    DOWNLOAD(result->combination, execution->combination,
-             (size_t)layer->residual_streams * layer->residual_streams * sizeof(float),
-             "cuda.moe.combination-download");
+    if (execution->grouped_selected) {
+        DOWNLOAD(result->router.selected_experts, execution->selected,
+                 (size_t)layer->experts_per_token * sizeof(unsigned long long),
+                 "cuda.moe.selected-publication");
+        DOWNLOAD(result->router.selected_weights, execution->weights,
+                 (size_t)layer->experts_per_token * sizeof(float),
+                 "cuda.moe.weights-publication");
+    }
+    if (!execution->job->device_output ||
+        execution->job->evidence_level == YVEX_ATTENTION_EVIDENCE_FULL) {
+        DOWNLOAD(result->combined_output, execution->combined,
+                 (size_t)layer->hidden_width * sizeof(float), "cuda.moe.output-download");
+        DOWNLOAD(result->routed_output, execution->routed,
+                 (size_t)layer->hidden_width * sizeof(float), "cuda.moe.routed-download");
+        DOWNLOAD(result->shared_output, execution->shared,
+                 (size_t)layer->hidden_width * sizeof(float), "cuda.moe.shared-download");
+        DOWNLOAD(result->post, execution->post,
+                 (size_t)layer->residual_streams * sizeof(float), "cuda.moe.post-download");
+        DOWNLOAD(result->combination, execution->combination,
+                 (size_t)layer->residual_streams * layer->residual_streams * sizeof(float),
+                 "cuda.moe.combination-download");
+    }
 #undef DOWNLOAD
     if (rc == YVEX_OK) rc = moe_cuda_sync_status(execution, "cuda.moe.finish-sync", err);
     if (rc != YVEX_OK) return rc;
@@ -496,11 +684,21 @@ int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
     result->device_to_host_bytes += execution->d2h;
     result->kernel_launches += execution->work.launches;
     result->upload_count += execution->uploads;
+    result->download_count += execution->downloads;
+    result->cache_hits += execution->direct_weights;
+    result->cache_misses += execution->uploads;
+    result->device_to_device_bytes += execution->d2d;
+    result->device_synchronizations += execution->device_synchronizations;
+    result->synchronization_ns += execution->synchronization_ns;
+    result->ingress_ns += execution->ingress_ns;
+    result->routing_ns += execution->routing_ns;
+    result->routed_ns += execution->routed_ns;
+    result->shared_ns += execution->shared_ns;
+    result->total_ns += yvex_core_monotonic_ns() - execution->started_ns;
     execution->finished = 1;
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: release one CUDA MoE transaction. Inputs: owned execution handle.
  * Effects: frees work on success. Failure: retains retryable ownership. Boundary: backend cleanup. */
 int yvex_backend_moe_close(yvex_backend_moe_execution **execution, yvex_error *err)

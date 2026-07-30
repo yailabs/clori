@@ -164,6 +164,124 @@ static int quant_cuda_parity(yvex_backend *backend,
     return 0;
 }
 
+/* Purpose: reproduce the execution-only Q8_K activation codec without CUDA implementation reuse. */
+static void quant_q8_reference(const float input[512], float output[512])
+{
+    unsigned int block;
+    for (block = 0u; block < 2u; ++block) {
+        unsigned int index, maximum = 0u;
+        float absolute = 0.0f, inverse;
+        for (index = 0u; index < 256u; ++index) {
+            float candidate = fabsf(input[block * 256u + index]);
+            if (candidate > absolute) {
+                absolute = candidate;
+                maximum = index;
+            }
+        }
+        inverse = absolute == 0.0f ? 0.0f :
+                  -127.0f / input[block * 256u + maximum];
+        for (index = 0u; index < 256u; ++index) {
+            int quantized = inverse == 0.0f ? 0 :
+                            (int)nearbyintf(inverse * input[block * 256u + index]);
+            if (quantized > 127) quantized = 127;
+            if (quantized < -128) quantized = -128;
+            output[block * 256u + index] = inverse == 0.0f ? 0.0f :
+                                                   (float)quantized / inverse;
+        }
+    }
+}
+
+/* Proves the production Q8_K-activation matvec against independent CPU arithmetic. */
+static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
+{
+    enum { ROWS = 3, WIDTH = 512 };
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *resident = NULL, *input = NULL, *output = NULL;
+    unsigned char *mapped = NULL, *row = NULL;
+    float source[ROWS * WIDTH], vector[WIDTH], q8_vector[WIDTH];
+    float exact[ROWS], expected[ROWS], actual[ROWS];
+    yvex_quant_failure failure;
+    yvex_error err;
+    size_t row_bytes = 0u;
+    unsigned long long launches = 0ull, index;
+    unsigned int row_index;
+    int rc;
+
+    for (index = 0ull; index < WIDTH; ++index)
+        vector[index] = (float)((int)(index % 29ull) - 14) / 13.0f;
+    quant_q8_reference(vector, q8_vector);
+    for (index = 0ull; index < ROWS * WIDTH; ++index)
+        source[index] = (float)((int)((index * 7ull + 3ull) % 41ull) - 20) /
+                        (float)(2ull + index % 11ull);
+    for (row_index = 0u; row_index < ROWS; ++row_index) {
+        size_t current_bytes = 0u;
+        YVEX_TEST_ASSERT(quant_cuda_encode_row(
+                             qtype, source + row_index * WIDTH, WIDTH,
+                             &row, &current_bytes),
+                         "Q8 activation matvec row encodes");
+        if (!row_index) row_bytes = current_bytes;
+        YVEX_TEST_ASSERT(current_bytes == row_bytes,
+                         "Q8 activation matvec rows share exact geometry");
+        if (!mapped) {
+            descriptor.name = "q8_activation_encoded";
+            descriptor.dtype = YVEX_DTYPE_I8;
+            descriptor.rank = 1u;
+            descriptor.dims[0] = descriptor.bytes = ROWS * row_bytes;
+            YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+                                 backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
+                             "Q8 activation resident matrix allocates");
+        }
+        memcpy(mapped + row_index * row_bytes, row, row_bytes);
+        free(row);
+        row = NULL;
+        YVEX_TEST_ASSERT(yvex_quant_cpu_dot(
+                             qtype, mapped + row_index * row_bytes, row_bytes,
+                             vector, WIDTH, &exact[row_index], &failure, &err) == YVEX_OK &&
+                         yvex_quant_cpu_dot(
+                             qtype, mapped + row_index * row_bytes, row_bytes,
+                             q8_vector, WIDTH, &expected[row_index], &failure, &err) == YVEX_OK,
+                         "Q8 activation CPU reference succeeds");
+    }
+    YVEX_TEST_ASSERT(yvex_backend_resident_attach(
+                         backend, mapped, descriptor.bytes, resident, 11ull, &err) == YVEX_OK,
+                     "Q8 activation resident matrix attaches");
+    descriptor.name = "q8_activation_input";
+    descriptor.dtype = YVEX_DTYPE_F32;
+    descriptor.dims[0] = WIDTH;
+    descriptor.bytes = sizeof(vector);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_write(
+                             backend, input, vector, sizeof(vector), &err) == YVEX_OK,
+                     "Q8 activation input uploads once");
+    descriptor.name = "q8_activation_output";
+    descriptor.dims[0] = ROWS;
+    descriptor.bytes = sizeof(actual);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &output, &err) == YVEX_OK,
+                     "Q8 activation output allocates");
+    rc = yvex_backend_cuda_encoded_matvec(
+        backend, mapped, descriptor.bytes ? ROWS * row_bytes : 0u, qtype,
+        ROWS, WIDTH, row_bytes, input, output, &launches, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && launches == 2ull &&
+                         yvex_backend_tensor_read(
+                             backend, output, actual, sizeof(actual), &err) == YVEX_OK,
+                     "Q8 activation production matvec launches quantize plus projection");
+    for (row_index = 0u; row_index < ROWS; ++row_index) {
+        double difference = fabs((double)actual[row_index] - expected[row_index]);
+        double exact_difference = fabs((double)actual[row_index] - exact[row_index]);
+        double approximation = 0.1 * (1.0 + fabs((double)exact[row_index]));
+        YVEX_TEST_ASSERT(difference <= 1e-5 * (1.0 + fabs((double)expected[row_index])),
+                         "Q8 activation CUDA matvec matches independent codec reference");
+        YVEX_TEST_ASSERT(exact_difference <= approximation,
+                         "Q8 activation matvec remains within bounded execution approximation");
+    }
+    YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+                     "Q8 activation matvec releases all CUDA ownership");
+    return 0;
+}
+
 /* Proves typed geometry, alignment, capability, and failure cleanup refusals. */
 static int quant_cuda_refusals(const yvex_backend_options *options)
 {
@@ -316,6 +434,12 @@ int yvex_cuda_test_quant_qtype(void)
                 yvex_gguf_qtype_name(cases[index].qtype),
                 maximum_difference, maximum_relative_difference);
     }
+    YVEX_TEST_ASSERT(quant_cuda_q8_matvec(backend, YVEX_GGUF_QTYPE_Q8_0) == 0,
+                     "Q8_0 production Q8 activation matvec");
+    YVEX_TEST_ASSERT(quant_cuda_q8_matvec(backend, YVEX_GGUF_QTYPE_Q2_K) == 0,
+                     "Q2_K production Q8 activation matvec");
+    YVEX_TEST_ASSERT(quant_cuda_q8_matvec(backend, YVEX_GGUF_QTYPE_IQ2_XXS) == 0,
+                     "IQ2_XXS production Q8 activation matvec");
     yvex_backend_close(backend);
     return quant_cuda_refusals(&options);
 }

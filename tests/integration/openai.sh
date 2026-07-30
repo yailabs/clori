@@ -108,11 +108,30 @@ timeout_status=$(curl -sS -o "$root/timeout.json" -w '%{http_code}' \
     -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"TIMEOUT"}],"temperature":0}')
 test "$timeout_status" = 504
 
+# A vanished HTTP consumer must trigger the typed daemon cancellation path
+# before the gateway accepts another request.
+if curl --max-time 0.2 -fsS -N -H 'Content-Type: application/json' \
+    "$base/v1/chat/completions" \
+    -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"DISCONNECT"}],"temperature":0,"stream":true}' \
+    >"$root/disconnect.sse" 2>"$root/disconnect.err"; then
+    echo 'disconnect fixture unexpectedly completed' >&2
+    exit 1
+fi
+attempt=0
+while test "$attempt" -lt 100; do
+    grep -q '^generation.cancel ' "$root/host.err" && break
+    attempt=$((attempt + 1))
+    sleep 0.02
+done
+test "$attempt" -lt 100
+curl -fsS "$base/health" >"$root/health-after-disconnect.json"
+
 python3 - "$root" <<'PY'
 import json, pathlib, sys
 root=pathlib.Path(sys.argv[1])
 health=json.load(open(root/'health.json'))
 assert health == {'status':'ok','gateway':'ready','yvexd':'ready','profile':'yvex.openai.compat.v1'}
+assert json.load(open(root/'health-after-disconnect.json')) == health
 models=json.load(open(root/'models.json'))
 assert models['object']=='list' and models['data'][0]['id']=='deepseek-v4-flash'
 assert json.load(open(root/'model.json'))['id']=='deepseek-v4-flash'

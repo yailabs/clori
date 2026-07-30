@@ -8,9 +8,7 @@
  * Effects: client APIs own one AF_UNIX descriptor; codecs mutate only caller-owned buffers.
  * Failure: malformed, oversized, foreign-owned, or partial frames publish no typed message. */
 #define _POSIX_C_SOURCE 200809L
-
 #include "src/server/private.h"
-
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
@@ -22,13 +20,11 @@
 #include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
-
 #define FRAME_HEADER_BYTES 12u
 #define FRAME_KIND_REQUEST 1u
 #define FRAME_KIND_MESSAGE 2u
 #define TLV_HEADER_BYTES 8u
 #define TLV_U64_BYTES 8u
-
 enum {
     TAG_OPERATION = 1,
     TAG_REQUEST_NUMBER,
@@ -112,26 +108,21 @@ enum {
     TAG_EVENT_EXTERNAL_CORRELATION_ID,
     TAG_FAILURE_CLASS
 };
-
 typedef struct {
     unsigned char *data;
     unsigned long long capacity, count;
 } wire_writer;
-
 typedef struct {
     const unsigned char *data;
     unsigned long long count, offset;
     uint64_t seen[2];
 } wire_reader;
-
 struct yvex_client {
     int fd;
 };
-
 _Static_assert(sizeof(double) == 8u, "local protocol requires binary64 double");
 _Static_assert(TAG_FAILURE_CLASS < 128u,
                "known protocol tags must fit the duplicate-field set");
-
 /* Purpose: publish one protocol refusal without preserving parser-local state. */
 static int protocol_refuse(yvex_error *err, yvex_status status,
                            const char *reason)
@@ -139,14 +130,12 @@ static int protocol_refuse(yvex_error *err, yvex_status status,
     yvex_error_set(err, status, "server.protocol", reason);
     return status;
 }
-
 /* Purpose: encode one 16-bit integer in canonical network byte order. */
 static void put_u16(unsigned char *out, uint16_t value)
 {
     out[0] = (unsigned char)(value >> 8u);
     out[1] = (unsigned char)value;
 }
-
 /* Purpose: encode one 32-bit integer in canonical network byte order. */
 static void put_u32(unsigned char *out, uint32_t value)
 {
@@ -155,7 +144,6 @@ static void put_u32(unsigned char *out, uint32_t value)
     out[2] = (unsigned char)(value >> 8u);
     out[3] = (unsigned char)value;
 }
-
 /* Purpose: encode one 64-bit integer in canonical network byte order. */
 static void put_u64(unsigned char *out, uint64_t value)
 {
@@ -163,20 +151,17 @@ static void put_u64(unsigned char *out, uint64_t value)
     for (index = 0u; index < 8u; ++index)
         out[index] = (unsigned char)(value >> (56u - 8u * index));
 }
-
 /* Purpose: decode one canonical 16-bit integer. */
 static uint16_t get_u16(const unsigned char *input)
 {
     return (uint16_t)(((uint16_t)input[0] << 8u) | input[1]);
 }
-
 /* Purpose: decode one canonical 32-bit integer. */
 static uint32_t get_u32(const unsigned char *input)
 {
     return ((uint32_t)input[0] << 24u) | ((uint32_t)input[1] << 16u) |
            ((uint32_t)input[2] << 8u) | input[3];
 }
-
 /* Purpose: decode one canonical 64-bit integer. */
 static uint64_t get_u64(const unsigned char *input)
 {
@@ -186,7 +171,6 @@ static uint64_t get_u64(const unsigned char *input)
         value = (value << 8u) | input[index];
     return value;
 }
-
 /* Purpose: append one bounded field to a canonical TLV stream.
  * Inputs: writer, tag, explicit bytes, and extent. Effects: advances output on success.
  * Failure: returns false on capacity or invalid span. Boundary: caller owns schema/tag semantics. */
@@ -210,7 +194,6 @@ static int writer_field(wire_writer *writer, unsigned int tag,
     writer->count = required;
     return 1;
 }
-
 /* Purpose: append one canonical integer field.
  * Inputs: writer, tag, and integer. Effects: appends a fixed-width TLV.
  * Failure: returns false when output capacity is exhausted. Boundary: no native byte order leaks. */
@@ -221,7 +204,6 @@ static int writer_u64(wire_writer *writer, unsigned int tag,
     put_u64(bytes, value);
     return writer_field(writer, tag, bytes, sizeof(bytes));
 }
-
 /* Purpose: append one canonical binary64 field.
  * Inputs: writer, tag, and finite-or-schema-admitted value. Effects: appends canonical IEEE bytes.
  * Failure: returns false on output exhaustion. Boundary: field policy remains with the message owner. */
@@ -231,7 +213,6 @@ static int writer_double(wire_writer *writer, unsigned int tag, double value)
     memcpy(&bits, &value, sizeof(bits));
     return writer_u64(writer, tag, bits);
 }
-
 /* Purpose: append one explicit-length text field without terminator semantics.
  * Inputs: writer, tag, text bytes, and extent. Effects: appends one bounded TLV.
  * Failure: returns false on invalid span or capacity. Boundary: wire length, not strlen, is authoritative. */
@@ -242,7 +223,6 @@ static int writer_text(wire_writer *writer, unsigned int tag,
            writer_field(writer, tag, text,
                         (unsigned long long)strlen(text));
 }
-
 /* Purpose: consume one TLV while rejecting duplicate known tags.
  * Inputs: reader and field outputs. Effects: advances cursor and marks the tag observed.
  * Failure: returns false for truncation, duplicate tags, or invalid tag range. Boundary: payload remains borrowed. */
@@ -273,7 +253,6 @@ static int reader_next(wire_reader *reader, unsigned int *tag,
     reader->offset += length;
     return 1;
 }
-
 /* Purpose: decode one exact unsigned 64-bit field.
  * Inputs: field bytes, length, and output. Effects: writes output on exact geometry.
  * Failure: returns false for any noncanonical length. Boundary: no implicit narrowing. */
@@ -285,7 +264,6 @@ static int reader_u64(const unsigned char *bytes, unsigned long long count,
     *value = get_u64(bytes);
     return 1;
 }
-
 /* Purpose: decode one exact canonical binary64 field.
  * Inputs: field bytes, length, and output. Effects: writes reconstructed value.
  * Failure: returns false for any noncanonical length. Boundary: semantic finiteness is checked by caller. */
@@ -300,7 +278,6 @@ static int reader_double(const unsigned char *bytes, unsigned long long count,
     memcpy(value, &bits, sizeof(bits));
     return 1;
 }
-
 /* Purpose: copy one bounded wire text field and append a process-local terminator.
  * Inputs: destination/capacity and wire bytes/extent. Effects: writes text plus trailing NUL.
  * Failure: returns false on absent or oversized spans. Boundary: wire extent remains semantic authority. */
@@ -314,7 +291,6 @@ static int reader_text(const unsigned char *bytes, unsigned long long count,
     output[count] = '\0';
     return 1;
 }
-
 /* Purpose: encode one request field by field for server-independent transport.
  * Inputs: admitted request, output bytes/capacity, and count/error outputs. Effects: writes canonical payload.
  * Failure: publishes zero count for schema, span, or capacity refusal. Boundary: adds no outer frame. */
@@ -381,7 +357,6 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: decode one complete request transactionally and own only its prompt copy.
  * Inputs: payload bytes/extent, request output, prompt-owner output, and error output. Effects: may allocate prompt.
  * Failure: frees partial prompt and clears outputs. Boundary: unknown or duplicate executable fields refuse. */
@@ -397,7 +372,7 @@ int yvex_protocol_request_decode(const unsigned char *input,
     yvex_provider_request *provider = NULL;
     unsigned char *prompt = NULL;
     const unsigned char *bytes;
-    unsigned long long count, value;
+    unsigned long long count, value = 0ull;
     unsigned int tag;
     int next, valid = 1, have_operation = 0;
     if (owned_prompt) *owned_prompt = NULL;
@@ -474,7 +449,6 @@ int yvex_protocol_request_decode(const unsigned char *input,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: append the fixed process metrics vector within one typed blob.
  * Inputs: writer and authoritative metrics snapshot. Effects: appends canonical counters in schema order.
  * Failure: returns false on capacity exhaustion. Boundary: metrics meaning is owned by telemetry. */
@@ -499,7 +473,6 @@ static int writer_metrics(wire_writer *writer, const yvex_server_metrics *metric
     return writer_field(writer, TAG_METRICS, bytes,
                         sizeof(values) / sizeof(values[0]) * 8u);
 }
-
 /* Purpose: decode the exact process metrics vector.
  * Inputs: field bytes/extent and metrics output. Effects: replaces the output on exact geometry.
  * Failure: returns false on length mismatch. Boundary: does not infer missing metrics. */
@@ -531,7 +504,6 @@ static int reader_metrics(const unsigned char *bytes, unsigned long long count,
     }
     return 1;
 }
-
 /* Purpose: encode one server message with explicit field ownership.
  * Inputs: admitted message, output bytes/capacity, and count/error outputs. Effects: writes canonical payload.
  * Failure: publishes zero count for invalid schema, fields, event identity, or capacity. Boundary: no frame I/O. */
@@ -646,7 +618,6 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: decode one message-level protocol field outside runtime/event snapshots.
  * Inputs: candidate, tag, explicit field bytes/count, and kind-presence output.
  * Effects: writes exactly one recognized message field.
@@ -656,7 +627,7 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
                               const unsigned char *bytes,
                               unsigned long long count, int *have_kind)
 {
-    unsigned long long value;
+    unsigned long long value = 0ull;
     int valid = 1;
 #define BASE_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
     switch (tag) {
@@ -761,7 +732,6 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
 #undef BASE_U64
     return valid ? 1 : -1;
 }
-
 /* Purpose: decode one authoritative runtime-summary field from a server message.
  * Inputs: candidate, tag, and explicit field bytes/count.
  * Effects: writes one recognized runtime summary field.
@@ -772,7 +742,7 @@ static int message_runtime_field(yvex_client_message *candidate,
                                  const unsigned char *bytes,
                                  unsigned long long count)
 {
-    unsigned long long value;
+    unsigned long long value = 0ull;
     int valid = 1;
 #define RUNTIME_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
     switch (tag) {
@@ -817,7 +787,6 @@ static int message_runtime_field(yvex_client_message *candidate,
 #undef RUNTIME_U64
     return valid ? 1 : -1;
 }
-
 /* Purpose: decode one authoritative typed-event field from a server message.
  * Inputs: candidate, tag, and explicit field bytes/count.
  * Effects: writes one recognized event field for later identity validation.
@@ -894,7 +863,6 @@ static int message_event_field(yvex_client_message *candidate,
 #undef EVENT_U64
     return valid ? 1 : -1;
 }
-
 /* Purpose: validate and publish one fully decoded server-message candidate.
  * Inputs: candidate, parse state, destination, and error output. Effects: copies candidate on success.
  * Failure: refuses malformed fields or invalid event identity. Boundary: no frame or socket ownership. */
@@ -913,7 +881,6 @@ static int message_publish(const yvex_client_message *candidate, int next,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: decode one complete server message transactionally.
  * Inputs: payload bytes/extent, message output, and error output. Effects: replaces output on success.
  * Failure: clears output and refuses malformed, duplicate, or invalid authoritative fields. Boundary: no socket I/O. */
@@ -946,7 +913,6 @@ int yvex_protocol_message_decode(const unsigned char *input,
     }
     return message_publish(&candidate, next, valid, have_kind, message, err);
 }
-
 /* Purpose: read or write a complete byte span while preserving the first I/O error.
  * Inputs: socket descriptor, mutable byte span/count, direction, and error output.
  * Effects: advances the exact span until complete.
@@ -973,7 +939,6 @@ static int transfer_all(int fd, void *buffer, size_t count, int writing,
     }
     return YVEX_OK;
 }
-
 /* Purpose: apply or clear one bounded local-protocol socket I/O timeout.
  * Inputs: connected client, milliseconds where zero clears the timeout, and error output.
  * Effects: updates both receive and send timeout policy on the owned descriptor.
@@ -998,7 +963,6 @@ int yvex_client_timeout_set(yvex_client *client,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: send one canonical framed payload. */
 static int frame_send(int fd, unsigned int kind, const unsigned char *payload,
                       unsigned long long count, yvex_error *err)
@@ -1015,7 +979,6 @@ static int frame_send(int fd, unsigned int kind, const unsigned char *payload,
     return count ? transfer_all(fd, (void *)payload, (size_t)count, 1, err)
                  : YVEX_OK;
 }
-
 /* Purpose: receive one expected canonical frame into owned bounded bytes.
  * Inputs: connected descriptor, expected kind, payload/count outputs, and error output.
  * Effects: allocates payload. Failure: frees partial ownership and refuses invalid frames or I/O.
@@ -1053,7 +1016,6 @@ static int frame_receive(int fd, unsigned int expected_kind,
     *count = length;
     return YVEX_OK;
 }
-
 /* Purpose: resolve the canonical local Unix-socket path without creating filesystem state.
  * Inputs: caller path output and error output. Effects: reads XDG_RUNTIME_DIR or selects private fallback.
  * Failure: refuses oversized or unsafe environment paths. Boundary: directory creation belongs to host. */
@@ -1077,7 +1039,6 @@ int yvex_server_socket_path(char output[YVEX_SERVER_SOCKET_PATH_CAP],
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: connect one thin client only to an owner-validated private Unix socket.
  * Inputs: owner output, optional path, and error output. Effects: opens and authenticates one descriptor.
  * Failure: closes partial ownership and refuses mode, owner, symlink, or connect mismatch. Boundary: local UID only. */
@@ -1157,7 +1118,6 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: encode and send one typed request without retaining caller spans.
  * Inputs: connected client, immutable request, and error output. Effects: allocates a bounded payload and writes frame.
  * Failure: frees payload and returns encode or I/O refusal. Boundary: does not wait for a response. */
@@ -1185,7 +1145,6 @@ int yvex_client_send(yvex_client *client, const yvex_client_request *request,
     free(payload);
     return rc;
 }
-
 /* Purpose: receive and decode one complete server message.
  * Inputs: connected client, message output, and error output. Effects: allocates then frees one frame payload.
  * Failure: returns frame or message refusal without partial message authority. Boundary: one frame per call. */
@@ -1204,7 +1163,6 @@ int yvex_client_receive(yvex_client *client, yvex_client_message *message,
     free(payload);
     return rc;
 }
-
 /* Purpose: close one thin-client descriptor and clear unique ownership.
  * Inputs: unique client-owner pointer. Effects: closes descriptor, frees allocation, and stores NULL.
  * Failure: close errors are intentionally secondary in this destructor. Boundary: no daemon/session close. */
@@ -1218,7 +1176,6 @@ void yvex_client_close(yvex_client **client)
     free(*client);
     *client = NULL;
 }
-
 /* Purpose: receive and decode one server-side request frame.
  * Inputs: connected descriptor, request/prompt outputs, and error output. Effects: may allocate prompt ownership.
  * Failure: frees frame storage and preserves transactional decode refusal. Boundary: host consumes private ABI. */
@@ -1236,7 +1193,6 @@ int yvex_server_protocol_receive(int fd, yvex_client_request *request,
     free(payload);
     return rc;
 }
-
 /* Purpose: encode and send one server-side response frame.
  * Inputs: connected descriptor, immutable message, and error output. Effects: writes one bounded frame.
  * Failure: returns canonical encode or I/O refusal. Boundary: host consumes private ABI. */

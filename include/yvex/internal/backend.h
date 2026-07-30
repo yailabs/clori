@@ -161,13 +161,14 @@ typedef struct {
 int yvex_backend_attention_execute(yvex_backend *backend, const yvex_backend_attention_job *job,
                                    yvex_backend_attention_output *output,
                                    yvex_backend_attention_failure *failure, yvex_error *err);
-/* Private contract. */
 typedef struct yvex_backend_vtable {
     int (*close)(yvex_backend *backend, yvex_error *err);
     int (*memory_stats)(const yvex_backend *backend, yvex_backend_memory_stats *out, yvex_error *err);
     int (*device_info)(const yvex_backend *backend, yvex_backend_device_info *out, yvex_error *err);
     int (*tensor_alloc)(yvex_backend *backend, const yvex_backend_tensor_desc *desc,
                         yvex_device_tensor **out, yvex_error *err);
+    int (*resident_alloc)(yvex_backend *backend, const yvex_backend_tensor_desc *desc,
+                          yvex_device_tensor **out, unsigned char **host, yvex_error *err);
     int (*tensor_free)(yvex_backend *backend, yvex_device_tensor *tensor, yvex_error *err);
     int (*tensor_write)(yvex_backend *backend, yvex_device_tensor *tensor, const void *src,
                         unsigned long long len, yvex_error *err);
@@ -217,12 +218,10 @@ struct yvex_backend {
     void *impl;
     struct yvex_backend *resource_owner;
     _Atomic unsigned long long lifecycle;
-    unsigned long long tensor_id_next;
+    unsigned long long tensor_id_next, resident_host_bytes;
     const unsigned char *resident_host_base;
-    unsigned long long resident_host_bytes;
     const yvex_device_tensor *resident_device_tensor;
-    unsigned long long resident_device_address;
-    unsigned long long resident_generation;
+    unsigned long long resident_device_address, resident_generation;
     const void *state_residency_context;
     yvex_backend_state_resolve_fn state_residency_resolve;
     unsigned long long state_residency_generation;
@@ -285,8 +284,8 @@ struct yvex_device_tensor {
     unsigned int rank;
     unsigned long long dims[YVEX_TENSOR_MAX_DIMS];
     unsigned long long bytes;
-    unsigned char *data;
-    int is_written;
+    unsigned char *data, *host_data;
+    int is_written, host_accessible;
 };
 /* Purpose: prove exact F32 storage geometry for one backend-owned tensor view. */
 static inline int backend_tensor_f32_elements(const yvex_device_tensor *tensor,
@@ -362,7 +361,7 @@ typedef struct {
 int yvex_backend_resident_attach(yvex_backend *backend, const unsigned char *host_base,
                                  unsigned long long bytes, const yvex_device_tensor *device_tensor,
                                  unsigned long long generation, yvex_error *err);
-void yvex_backend_resident_detach(yvex_backend *backend);
+int yvex_backend_resident_detach(yvex_backend *backend, yvex_error *err);
 int yvex_backend_resident_resolve(const yvex_backend *backend, const unsigned char *host,
                                   unsigned long long bytes, unsigned long long *device_address);
 int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
@@ -592,8 +591,7 @@ typedef struct {
 } yvex_backend_report_fact;
 int yvex_backend_report_build(const yvex_backend_report_request *request,
                               yvex_backend_report *report, yvex_error *err);
-const char *yvex_backend_bundle_admission_name(
-    yvex_backend_bundle_admission admission);
+const char *yvex_backend_bundle_admission_name(yvex_backend_bundle_admission admission);
 #ifdef __cplusplus
 }
 #endif

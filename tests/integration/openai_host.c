@@ -6,6 +6,7 @@
 #include "src/server/private.h"
 
 #include <errno.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,9 @@
 
 static volatile sig_atomic_t stopped;
 static unsigned long long sessions_created, sessions_closed;
+static int listener_fd = -1;
+
+static int serve_connection(int fd, yvex_error *err);
 
 /* Purpose: request deterministic fake-host shutdown. */
 static void stop_handler(int signal_number)
@@ -139,6 +143,28 @@ static int send_generation(int fd, const yvex_client_request *request,
     }
     message_base(&message, YVEX_CLIENT_MESSAGE_TURN_STARTED, request);
     rc = yvex_server_protocol_send(fd, &message, err);
+    if (rc == YVEX_OK && request_contains(provider, "DISCONNECT")) {
+        struct pollfd listener = {.fd = listener_fd, .events = POLLIN};
+        int ready;
+        do {
+            ready = poll(&listener, 1u, 2000);
+        } while (ready < 0 && errno == EINTR);
+        if (ready > 0 && (listener.revents & POLLIN)) {
+            int cancellation = accept(listener_fd, NULL, NULL);
+            if (cancellation >= 0) {
+                rc = serve_connection(cancellation, err);
+                close(cancellation);
+            }
+        }
+        if (rc == YVEX_OK) {
+            message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
+            message.status = YVEX_ERR_CANCELLED;
+            message.failure_class = YVEX_CLIENT_FAILURE_CLIENT_CANCELLED;
+            strcpy(message.reason, "HTTP disconnect cancellation admitted");
+            rc = yvex_server_protocol_send(fd, &message, err);
+        }
+        return rc;
+    }
     for (index = 0u; provider && index < provider->message_count; ++index)
         if (provider->messages[index].role == YVEX_PROVIDER_ROLE_TOOL)
             has_tool_result = 1;
@@ -228,10 +254,16 @@ static int serve_connection(int fd, yvex_error *err)
             fprintf(stderr, "session.close %s\n", request.session_name);
             fflush(stderr);
         }
+        if (request.operation == YVEX_CLIENT_OP_GENERATION_CANCEL) {
+            fprintf(stderr, "generation.cancel %s\n", request.session_name);
+            fflush(stderr);
+        }
         message_base(&message,
                      request.operation == YVEX_CLIENT_OP_SESSION_LIST
                          ? YVEX_CLIENT_MESSAGE_SESSION_LIST
-                         : YVEX_CLIENT_MESSAGE_SESSION,
+                         : request.operation == YVEX_CLIENT_OP_GENERATION_CANCEL
+                               ? YVEX_CLIENT_MESSAGE_ACK
+                               : YVEX_CLIENT_MESSAGE_SESSION,
                      &request);
         rc = yvex_server_protocol_send(fd, &message, err);
     }
@@ -256,6 +288,7 @@ int main(int argc, char **argv)
     (void)sigaction(SIGINT, &action, NULL);
     listener = socket(AF_UNIX, SOCK_STREAM, 0);
     if (listener < 0) return 1;
+    listener_fd = listener;
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     strcpy(address.sun_path, argv[1]);
@@ -276,6 +309,7 @@ int main(int argc, char **argv)
         if (rc) break;
     }
     close(listener);
+    listener_fd = -1;
     fprintf(stderr, "session.summary created=%llu closed=%llu\n",
             sessions_created, sessions_closed);
     unlink(argv[1]);

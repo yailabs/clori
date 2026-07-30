@@ -10,7 +10,6 @@
  * Inputs: Owned CUDA tensors, checked operation geometry, and immutable numeric parameters.
  * Effects: Launches work and marks output written only after successful synchronization.
  * Failure: Any admission, launch, or sync failure leaves output uncommitted. */
-
 #include "src/backend/cuda/private.h"
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/transformer.h>
@@ -20,9 +19,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
 #define CUDA_ATTENTION_BLOCK 256u
-
+#define CUDA_QTYPE_MATVEC_ROWS 8u
 /* Purpose: initialize one stable device range synchronously or on the active capture stream.
  * Inputs: live work owner, exact device range, and either source bytes or zero policy.
  * Effects: performs eager initialization or enqueues one capturable copy/memset node.
@@ -33,7 +31,6 @@ static int cuda_work_initialize(yvex_cuda_work *work, CUdeviceptr target,
                                 const char *stage, yvex_error *err)
 {
     CUstream stream;
-
     if (!source && !zero) return YVEX_OK;
     if (!work || !work->state || !target || !bytes) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, stage,
@@ -62,7 +59,6 @@ static int cuda_work_initialize(yvex_cuda_work *work, CUdeviceptr target,
                : work->state->driver.cuMemsetD8_v2(target, 0u, bytes),
         stage, err);
 }
-
 /* Purpose: acquire and initialize one range from a stable workspace or owned device allocation.
  * Inputs: initialized work owner, byte extent, initialization policy, and typed failure output.
  * Effects: tracks one range and advances exact current/peak device-byte accounting.
@@ -81,7 +77,6 @@ int yvex_cuda_work_allocate(yvex_cuda_work *work,
     unsigned long long next;
     int acquired;
     int rc;
-
     if (failure)
         *failure = YVEX_CUDA_WORK_FAILURE_NONE;
     if (!work || !work->backend || !work->state || !out || !bytes ||
@@ -155,7 +150,6 @@ int yvex_cuda_work_allocate(yvex_cuda_work *work,
         *failure = YVEX_CUDA_WORK_FAILURE_COPY;
     return rc;
 }
-
 /* Purpose: release every owned CUDA work range in reverse acquisition order.
  * Inputs: initialized or partially initialized work owner.
  * Effects: frees only non-workspace ranges and clears exact ownership/accounting.
@@ -165,7 +159,6 @@ int yvex_cuda_work_cleanup(yvex_cuda_work *work, yvex_error *err)
 {
     yvex_error cleanup;
     int result = YVEX_OK;
-
     if (!work) {
         yvex_error_clear(err);
         return YVEX_OK;
@@ -202,7 +195,6 @@ int yvex_cuda_work_cleanup(yvex_cuda_work *work, yvex_error *err)
         yvex_error_clear(err);
     return result;
 }
-
 /* Purpose: launch one admitted kernel through eager or active graph-capture stream ownership.
  * Inputs: initialized work owner, admitted function, geometry, and kernel parameter array.
  * Effects: enqueues one kernel and counts direct launches outside capture.
@@ -218,7 +210,6 @@ static int cuda_work_launch(yvex_cuda_work *work,
                             yvex_error *err)
 {
     int rc;
-
     if (!work || !work->backend) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, stage, "CUDA work owner is required");
         return YVEX_ERR_INVALID_ARG;
@@ -233,7 +224,6 @@ static int cuda_work_launch(yvex_cuda_work *work,
         work->launches++;
     return rc;
 }
-
 /* Purpose: record one typed CUDA attention primitive refusal.
  * Inputs: optional failure storage, code, stage, evidence, status, and message.
  * Effects: resets failure detail and writes the canonical error.
@@ -258,7 +248,6 @@ static int attention_fail(yvex_backend_attention_failure *failure,
     yvex_error_set(err, status, stage, message);
     return status;
 }
-
 /* Purpose: advance one exact attention transfer counter with checked byte arithmetic. */
 static int attention_account_transfer(
     unsigned long long count, size_t width, unsigned long long *total,
@@ -276,7 +265,6 @@ static int attention_account_transfer(
     *total = next;
     return YVEX_OK;
 }
-
 /* Purpose: acquire one bounded CUDA attention work range.
  * Inputs: work owner, size, initialization policy, stage, and failure storage.
  * Effects: allocates, tracks, and initializes one range.
@@ -296,7 +284,6 @@ static int attention_allocate(yvex_cuda_work *work,
     yvex_backend_attention_failure_code code;
     const char *message;
     int rc;
-
     if (injected && strcmp(injected, "allocation") == 0)
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_ALLOCATION, stage, bytes,
@@ -329,7 +316,6 @@ static int attention_allocate(yvex_cuda_work *work,
             work->backend->workspace_bytes);
     return rc;
 }
-
 /* Purpose: initialize an already allocated attention range inside eager or captured execution.
  * Inputs: live work owner, exact range, initialization policy, and typed failure storage.
  * Effects: performs or captures one H2D copy/memset without allocating the range.
@@ -343,7 +329,6 @@ static int attention_initialize(yvex_cuda_work *work, CUdeviceptr target,
 {
     const char *injected = getenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
     int rc;
-
     if (!work || !work->backend)
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull,
@@ -362,7 +347,6 @@ static int attention_initialize(yvex_cuda_work *work, CUdeviceptr target,
         failure, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull, err,
         (yvex_status)rc, "CUDA attention range initialization failed");
 }
-
 /* Purpose: copy one device result into stable host staging inside eager or captured execution.
  * Inputs: live work owner, pinned/stable host target, exact device range, and failure storage.
  * Effects: performs eager D2H or captures one D2H node into the active graph stream.
@@ -377,7 +361,6 @@ static int attention_download(yvex_cuda_work *work, void *target,
     const char *injected = getenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
     CUstream stream;
     int rc;
-
     if (!work || !work->state || !target || !source || !bytes)
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull,
@@ -407,7 +390,6 @@ static int attention_download(yvex_cuda_work *work, void *target,
         failure, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull, err,
         (yvex_status)rc, "CUDA attention staged output copy failed");
 }
-
 /* Purpose: launch one admitted generic attention kernel.
  * Inputs: work owner, function, launch geometry, parameters, and failure storage.
  * Effects: enqueues work and advances eager launch accounting.
@@ -425,7 +407,6 @@ static int attention_launch(yvex_cuda_work *work,
 {
     const char *injected = getenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
     int rc;
-
     if (!work || !work->backend)
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_LAUNCH, stage, 1ull, 0ull,
@@ -447,7 +428,6 @@ static int attention_launch(yvex_cuda_work *work,
             err, (yvex_status)rc, "CUDA attention kernel launch failed");
     return YVEX_OK;
 }
-
 /* Purpose: publish one finite activation vector at the admitted BF16 RNE boundary.
  * Inputs: device values, exact count, shared status, and typed failure storage.
  * Effects: enqueues one capturable in-place rounding kernel.
@@ -473,7 +453,6 @@ static int attention_round_bf16(
             CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
-
 /* Purpose: execute one encoded attention matrix-vector product directly on device.
  * Inputs: admitted weight slice, vector, output, rounding policy, and status range.
  * Effects: enqueues direct encoded computation.
@@ -492,6 +471,7 @@ static int attention_matvec(yvex_cuda_work *work,
                                yvex_backend_attention_failure *failure,
                                yvex_error *err)
 {
+    int q8_path, q8_input = 0;
     if (!weight || !weight->present || !device_weight || !vector || !out ||
         !rows || start_row > weight->row_count ||
         rows > weight->row_count - start_row || rows > UINT_MAX)
@@ -499,20 +479,65 @@ static int attention_matvec(yvex_cuda_work *work,
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             weight ? weight->row_count : 0ull, start_row + rows, err,
             YVEX_ERR_BOUNDS, "CUDA attention matvec geometry is invalid");
+    q8_path = weight->row_width % 256ull == 0ull &&
+              (weight->qtype == YVEX_GGUF_QTYPE_IQ2_XXS ||
+               weight->qtype == YVEX_GGUF_QTYPE_Q2_K ||
+               weight->qtype == YVEX_GGUF_QTYPE_Q8_0);
+    if (q8_path) {
+        unsigned long long blocks = weight->row_width / 256ull, quantized_bytes;
+        CUdeviceptr quantized;
+        int rc;
+        if (blocks > UINT_MAX || blocks > ULLONG_MAX / 292ull)
+            return attention_fail(
+                failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
+                UINT_MAX, blocks, err, YVEX_ERR_BOUNDS,
+                "CUDA Q8 activation geometry is invalid");
+        quantized_bytes = blocks * 292ull;
+        rc = YVEX_OK;
+        if (quantized_bytes > work->q8_capacity) {
+            rc = yvex_cuda_work_allocate(work, &work->q8_input,
+                                         (size_t)quantized_bytes, NULL, 0,
+                                         "cuda.q8-activation", NULL, err);
+            if (rc == YVEX_OK) work->q8_capacity = quantized_bytes;
+        }
+        quantized = work->q8_input;
+        if (rc == YVEX_OK) {
+            unsigned long long one = 1ull;
+            void *params[] = {&quantized, &vector, (void *)&weight->row_width,
+                              &one, &status};
+            rc = attention_launch(work, work->state->q8_quantize_function,
+                                  (unsigned int)blocks, CUDA_ATTENTION_BLOCK, 0u,
+                                  params, "cuda.q8-activation", failure, err);
+        }
+        if (rc == YVEX_OK) {
+            q8_input = 1;
+            void *params[] = {
+                &device_weight, (void *)&weight->row_bytes,
+                (void *)&weight->row_width, &start_row, &rows,
+                (void *)&weight->qtype, &quantized, &q8_input, &out,
+                &output_bf16, &status
+            };
+            unsigned int grid = (unsigned int)((rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
+                                               CUDA_QTYPE_MATVEC_ROWS);
+            rc = attention_launch(work, work->state->qtype_matvec_function,
+                                  grid, CUDA_ATTENTION_BLOCK, 0u, params, stage,
+                                  failure, err);
+        }
+        return rc;
+    }
     {
         void *params[] = {
             &device_weight, (void *)&weight->row_bytes,
             (void *)&weight->row_width, &start_row, &rows,
-            (void *)&weight->qtype, &vector, &out, &output_bf16, &status
+            (void *)&weight->qtype, &vector, &q8_input, &out, &output_bf16, &status
         };
+        unsigned int grid = (unsigned int)((rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
+                                           CUDA_QTYPE_MATVEC_ROWS);
         return attention_launch(
             work, work->state->qtype_matvec_function,
-            (unsigned int)rows, CUDA_ATTENTION_BLOCK,
-            CUDA_ATTENTION_BLOCK * (unsigned int)sizeof(double), params, stage,
-            failure, err);
+            grid, CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
-
 /* Purpose: decode one admitted encoded attention row on device.
  * Inputs: weight, row, element count, output, status, and failure storage.
  * Effects: enqueues bounded reference decoding.
@@ -531,7 +556,6 @@ static int attention_decode(yvex_cuda_work *work,
 {
     CUdeviceptr encoded;
     unsigned int grid;
-
     if (!weight || !weight->present || row >= weight->row_count ||
         count != weight->row_width ||
         count > UINT_MAX * (unsigned long long)CUDA_ATTENTION_BLOCK)
@@ -551,7 +575,6 @@ static int attention_decode(yvex_cuda_work *work,
             CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
-
 /* Purpose: apply one learned RMS normalization to device values.
  * Inputs: values, exact weight row, epsilon, status, and failure storage.
  * Effects: enqueues in-place normalization.
@@ -579,7 +602,6 @@ static int attention_weighted_norm(
             1u, 0u, params, stage, failure, err);
     }
 }
-
 /* Purpose: unit-normalize one or more device vectors.
  * Inputs: values, vector geometry, epsilon, status, and failure storage.
  * Effects: enqueues in-place normalization.
@@ -609,7 +631,6 @@ static int attention_unit_norm(yvex_cuda_work *work,
             failure, err);
     }
 }
-
 /* Purpose: apply or invert one admitted RoPE/YaRN position transform.
  * Inputs: vector geometry, absolute position, immutable policy, and status.
  * Effects: enqueues in-place rotation.
@@ -629,7 +650,6 @@ static int attention_rope(yvex_cuda_work *work,
 {
     unsigned long long total;
     unsigned int grid;
-
     if (!position || !position->rope_dimensions ||
         position->rope_dimensions > width ||
         vectors > ULLONG_MAX / (position->rope_dimensions / 2ull))
@@ -658,7 +678,6 @@ static int attention_rope(yvex_cuda_work *work,
             CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
-
 /* Purpose: apply one admitted activation fake-quantization policy on device.
  * Inputs: vectors, geometry, policy, status, and failure storage.
  * Effects: conditionally enqueues in-place fake quantization.
@@ -687,7 +706,6 @@ static int attention_activation(
             (unsigned int)vectors, 1u, 0u, params, stage, failure, err);
     }
 }
-
 /* Purpose: validate the family-neutral encoded-attention request envelope.
  * Inputs: immutable request, caller output views, and failure storage.
  * Effects: reads only.
@@ -777,7 +795,6 @@ static int attention_validate_job(yvex_backend_attention_job *job,
             err, YVEX_ERR_FORMAT, "CUDA attention evidence level is invalid");
     return YVEX_OK;
 }
-
 /* Purpose: validate one encoded matrix against exact CUDA qtype geometry.
  * Inputs: immutable encoded weight and expected logical rows and width.
  * Effects: reads canonical qtype capability only.
@@ -812,7 +829,6 @@ static int attention_validate_weight(const yvex_backend_attention_weight *weight
             reason ? reason : "CUDA attention encoded weight capability is unavailable");
     return YVEX_OK;
 }
-
 /* Purpose: validate one reusable activation-quantization policy for CUDA execution.
  * Inputs: immutable policy, exact vector width, stage, and failure storage.
  * Effects: reads only.
@@ -833,7 +849,6 @@ static int attention_validate_activation(
             "CUDA attention activation policy and width are incompatible");
     return YVEX_OK;
 }
-
 /* Purpose: validate one immutable rolling-state view against exact request geometry.
  * Inputs: request, prior state, required ratio/head/overlap, and extent output.
  * Effects: publishes the checked state extent only.
@@ -865,7 +880,6 @@ static int attention_validate_rolling(
             "CUDA attention rolling-state geometry is invalid");
     return YVEX_OK;
 }
-
 /* Purpose: prove disjoint representable host spans.
  * Inputs: immutable write/read span inventories.
  * Effects: none.
@@ -907,7 +921,6 @@ static int attention_spans_disjoint(const yvex_cuda_host_span *writes,
     }
     return 1;
 }
-
 /* Purpose: prove disjoint representable attention input and output spans.
  * Inputs: immutable job, transfer inventory, and checked history extents.
  * Effects: none.
@@ -953,7 +966,6 @@ static int attention_validate_alias(
 #undef READ
     return attention_spans_disjoint(writes, transfer_count, reads, read_count);
 }
-
 /* Purpose: honor request cancellation without abandoning pending device work.
  * Inputs: backend, immutable request, stage, pending-work fact, and failure storage.
  * Effects: synchronizes only when cancellation observes pending CUDA work.
@@ -983,7 +995,6 @@ static int attention_cancel(yvex_backend *backend,
         err, YVEX_ERR_CANCELLED,
         "CUDA attention execution was cancelled before publication");
 }
-
 /* Purpose: acquire one exact reusable host-staging span for attention execution.
  * Inputs: backend, extent, graph pinning policy, injected-failure fact, and outputs.
  * Effects: borrows one session-owned span and reports whether prior use exists.
@@ -1029,7 +1040,6 @@ static int attention_stage_acquire(
             "CUDA graph attention requires page-locked stable host staging");
     return YVEX_OK;
 }
-
 /* Purpose: bind one aligned host-staging span and advance its checked cursor. */
 static int attention_stage_range(unsigned char *base, size_t *cursor,
                                  unsigned long long count, size_t width, void **out)
@@ -1047,7 +1057,6 @@ static int attention_stage_range(unsigned char *base, size_t *cursor,
     *cursor = aligned + bytes;
     return 1;
 }
-
 /* Purpose: derive and bind the complete generic attention host-staging layout.
  * Inputs: upload/transfer catalogs, CSA count slots, optional base, and extent output.
  * Effects: binds every staging pointer and publishes the total aligned extent.
@@ -1079,7 +1088,6 @@ static int attention_stage_layout(
     *total = cursor;
     return 1;
 }
-
 /* Purpose: expose the single private encoded-attention operation boundary.
  * Inputs: none.
  * Effects: none; returns immutable process-lifetime methods.
@@ -1100,7 +1108,6 @@ const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void)
     };
     return &operations;
 }
-
 /* Contract: converts a non-zero one-dimensional launch extent without truncation. */
 /* Purpose: Implement the canonical grid 1d mechanism owned by the CUDA backend boundary.
  * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
@@ -1114,7 +1121,6 @@ static int cuda_grid_1d(unsigned long long elements,
                         yvex_error *err)
 {
     unsigned long long blocks;
-
     if (!out || block_size == 0u || elements == 0ull) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, where,
                        "CUDA launch extent and block size must be non-zero");
@@ -1129,7 +1135,6 @@ static int cuda_grid_1d(unsigned long long elements,
     *out = (unsigned int)blocks;
     return YVEX_OK;
 }
-
 /* Purpose: Execute the typed op embed operation over already admitted buffers.
  * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
  * Effects: Mutates only the admitted destination or transaction after every precondition passes.
@@ -1159,9 +1164,7 @@ int yvex_cuda_op_embed(yvex_backend *backend,
     yvex_error cleanup_error;
     int cleanup_rc;
     int rc;
-
     memset(&work, 0, sizeof(work));
-
     if (!state) {
         yvex_error_set(err, YVEX_ERR_STATE, "yvex_backend_op_embed",
                        "CUDA backend state is missing");
@@ -1201,7 +1204,6 @@ int yvex_cuda_op_embed(yvex_backend *backend,
                        "token id buffer is too large");
         return YVEX_ERR_BOUNDS;
     }
-
     rc = yvex_cuda_set_current(backend, "yvex_backend_op_embed", err);
     if (rc != YVEX_OK) {
         return rc;
@@ -1214,7 +1216,6 @@ int yvex_cuda_op_embed(yvex_backend *backend,
                                  "cuda.embed.token_alloc", &work_failure, err);
     if (rc != YVEX_OK)
         goto cleanup;
-
     rc = cuda_grid_1d(total_elements, block_size, &grid_size,
                       "cuda.embed.grid", err);
     if (rc != YVEX_OK)
@@ -1250,7 +1251,6 @@ cleanup:
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: lower one sealed family-neutral workspace recipe to a checked byte extent.
  * Inputs: pointer-free semantic components with explicit alignment and token scaling.
  * Effects: publishes one exact upper bound; performs no allocation or family inference.
@@ -1263,7 +1263,6 @@ int yvex_backend_attention_workspace_required_from_recipe(
     yvex_attention_workspace_recipe candidate;
     unsigned long long cursor = 0ull;
     unsigned int index;
-
     if (required_bytes) *required_bytes = 0ull;
     if (!recipe || !required_bytes || !yvex_sha256_hex_valid(recipe->identity)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.attention.workspace",
@@ -1284,7 +1283,6 @@ int yvex_backend_attention_workspace_required_from_recipe(
         unsigned long long scale =
             component->scales_with_tokens ? recipe->token_capacity : 1ull;
         unsigned long long mask = component->alignment - 1ull;
-
         if (!component->scales_with_tokens &&
             component->kind >= YVEX_ATTENTION_WORKSPACE_MAIN_ROLLING_VALUES &&
                  component->kind <= YVEX_ATTENTION_WORKSPACE_INDEXER_ROLLING_SCORES &&
@@ -1305,7 +1303,6 @@ overflow:
                    "attention workspace recipe overflowed backend address space");
     return YVEX_ERR_BOUNDS;
 }
-
 /* Purpose: Execute the typed op rms norm operation over already admitted buffers.
  * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
  * Effects: Mutates only the admitted destination or transaction after every precondition passes.
@@ -1328,7 +1325,6 @@ int yvex_cuda_op_rms_norm(yvex_backend *backend,
     void *params[5];
     yvex_backend_operation_variant variant;
     int rc;
-
     if (!state) {
         yvex_error_set(err, YVEX_ERR_STATE, "yvex_backend_op_rms_norm",
                        "CUDA backend state is missing");
@@ -1363,7 +1359,6 @@ int yvex_cuda_op_rms_norm(yvex_backend *backend,
     if (rc != YVEX_OK) {
         return rc;
     }
-
     rc = yvex_cuda_set_current(backend, "yvex_backend_op_rms_norm", err);
     if (rc != YVEX_OK) {
         return rc;
@@ -1376,7 +1371,6 @@ int yvex_cuda_op_rms_norm(yvex_backend *backend,
     params[2] = &out_ptr;
     params[3] = &hidden_size;
     params[4] = &epsilon;
-
     rc = yvex_cuda_launch(backend, variant,
                           weight->dtype == YVEX_DTYPE_F16
                               ? state->rms_norm_f16_function
@@ -1393,7 +1387,6 @@ int yvex_cuda_op_rms_norm(yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: Execute the typed op rope operation over already admitted buffers.
  * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
  * Effects: Mutates only the admitted destination or transaction after every precondition passes.
@@ -1416,7 +1409,6 @@ int yvex_cuda_op_rope(yvex_backend *backend,
     float inverse_root;
     void *params[5];
     int rc;
-
     if (!state) {
         yvex_error_set(err, YVEX_ERR_STATE, "yvex_backend_op_rope",
                        "CUDA backend state is missing");
@@ -1459,7 +1451,6 @@ int yvex_cuda_op_rope(yvex_backend *backend,
                        "RoPE input/output bytes must match F32 head_dim");
         return YVEX_ERR_BOUNDS;
     }
-
     rc = yvex_cuda_set_current(backend, "yvex_backend_op_rope", err);
     if (rc != YVEX_OK) {
         return rc;
@@ -1477,7 +1468,6 @@ int yvex_cuda_op_rope(yvex_backend *backend,
     params[2] = &head_dim;
     params[3] = &position;
     params[4] = &inverse_root;
-
     rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ROPE_F32,
                           state->rope_function, grid_size, block_size, 0,
                           params, "cuda.rope.launch", err);
@@ -1492,7 +1482,6 @@ int yvex_cuda_op_rope(yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: Execute the typed op matmul operation over already admitted buffers.
  * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
  * Effects: Mutates only the admitted destination or transaction after every precondition passes.
@@ -1516,7 +1505,6 @@ int yvex_cuda_op_matmul(yvex_backend *backend,
     unsigned int grid_size;
     void *params[6];
     int rc;
-
     if (!state) {
         yvex_error_set(err, YVEX_ERR_STATE, "yvex_backend_op_matmul",
                        "CUDA backend state is missing");
@@ -1533,7 +1521,6 @@ int yvex_cuda_op_matmul(yvex_backend *backend,
     if (rc != YVEX_OK) {
         return rc;
     }
-
     rc = yvex_cuda_set_current(backend, "yvex_backend_op_matmul", err);
     if (rc != YVEX_OK) {
         return rc;
@@ -1553,7 +1540,6 @@ int yvex_cuda_op_matmul(yvex_backend *backend,
     params[3] = &m;
     params[4] = &k;
     params[5] = &n;
-
     rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_MATMUL_F32,
                           state->matmul_function, grid_size, block_size, 0,
                           params, "cuda.matmul.launch", err);
@@ -1568,7 +1554,6 @@ int yvex_cuda_op_matmul(yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: Execute the typed op mlp operation over already admitted buffers.
  * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
  * Effects: Mutates only the admitted destination or transaction after every precondition passes.
@@ -1601,7 +1586,6 @@ int yvex_cuda_op_mlp(yvex_backend *backend,
     void *params[12];
     yvex_backend_operation_variant variant;
     int rc;
-
     if (!state) {
         yvex_error_set(err, YVEX_ERR_STATE, "yvex_backend_op_mlp",
                        "CUDA backend state is missing");
@@ -1624,7 +1608,6 @@ int yvex_cuda_op_mlp(yvex_backend *backend,
     if (rc != YVEX_OK) {
         return rc;
     }
-
     rc = yvex_cuda_set_current(backend, "yvex_backend_op_mlp", err);
     if (rc != YVEX_OK) {
         return rc;
@@ -1650,7 +1633,6 @@ int yvex_cuda_op_mlp(yvex_backend *backend,
     params[9] = &expert_count;
     params[10] = &expert_id;
     params[11] = &routed;
-
     rc = yvex_cuda_launch(backend, variant, state->mlp_function,
                           1, block_size, 0, params, "cuda.mlp.launch", err);
     if (rc == YVEX_OK) {
@@ -1664,7 +1646,6 @@ int yvex_cuda_op_mlp(yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: Execute the typed op attention operation over already admitted buffers.
  * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
  * Effects: Mutates only the admitted destination or transaction after every precondition passes.
@@ -1697,7 +1678,6 @@ int yvex_cuda_op_attention(yvex_backend *backend,
     void *params[11];
     yvex_backend_operation_variant variant;
     int rc;
-
     if (!state) {
         yvex_error_set(err, YVEX_ERR_STATE, "yvex_backend_op_attention",
                        "CUDA backend state is missing");
@@ -1726,7 +1706,6 @@ int yvex_cuda_op_attention(yvex_backend *backend,
     if (rc != YVEX_OK) {
         return rc;
     }
-
     rc = yvex_cuda_set_current(backend, "yvex_backend_op_attention", err);
     if (rc != YVEX_OK) {
         return rc;
@@ -1748,7 +1727,6 @@ int yvex_cuda_op_attention(yvex_backend *backend,
     params[8] = &head_dim;
     params[9] = &scale;
     params[10] = &causal_flag;
-
     rc = yvex_cuda_launch(backend, variant, state->attention_function,
                           1, block_size, 0, params,
                           "cuda.attention.launch", err);
@@ -1764,7 +1742,6 @@ int yvex_cuda_op_attention(yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: return one typed CUDA transformer refusal. */
 static int cuda_transformer_refuse(yvex_error *err, yvex_status status,
                                    const char *where, const char *reason)
@@ -1772,7 +1749,6 @@ static int cuda_transformer_refuse(yvex_error *err, yvex_status status,
     yvex_error_set(err, status, where, reason);
     return status;
 }
-
 /* Purpose: decode selected encoded embedding rows and initialize repeated mHC streams on CUDA.
  * Inputs: one backend-owned encoded bundle plus exact token/hidden/stream geometry.
  * Effects: writes device embedding and expanded tensors; allocates only transaction scratch.
@@ -1858,7 +1834,6 @@ int yvex_backend_transformer_cuda_initial(
     if (rc == YVEX_OK) { embedding->is_written = 1; expanded->is_written = 1; yvex_error_clear(err); }
     return rc;
 }
-
 /* Purpose: execute final mHC collapse and RMSNorm over the retained CUDA residual state.
  * Inputs: exact backend-owned expanded state and decoded transformer-global weights.
  * Effects: publishes one normalized device hidden tensor after synchronization.
@@ -1924,7 +1899,6 @@ int yvex_backend_transformer_cuda_final(
     if (rc == YVEX_OK) { output->is_written = 1; yvex_error_clear(err); }
     return rc;
 }
-
 /* Purpose: validate an exact backend-owned F32 activation input/output pair.
  * Inputs: live backend, tensors, and required element extents. Effects: none.
  * Failure: returns false without publishing a capability. Boundary: CUDA activation transport. */
@@ -1937,7 +1911,6 @@ int yvex_cuda_activation_views_valid(yvex_backend *backend,
            backend_tensor_f32_elements(input, input_elements) &&
            backend_tensor_f32_elements(output, output_elements);
 }
-
 /* Purpose: resolve one admitted activation tensor. Inputs: backend/tensor. Effects: none.
  * Failure: returns zero for foreign ownership. Boundary: opaque Driver API pointer only. */
 CUdeviceptr yvex_cuda_activation_pointer(
@@ -1945,7 +1918,6 @@ CUdeviceptr yvex_cuda_activation_pointer(
 {
     return backend_tensor_owner_is(backend, tensor) ? (CUdeviceptr)tensor->data : 0ull;
 }
-
 /* Purpose: copy a completed F32 activation into one stable backend-owned view.
  * Inputs: live backend, source pointer, output tensor, exact extent, and failure stage.
  * Effects: enqueues or performs one D2D copy; marks output only after copy admission.

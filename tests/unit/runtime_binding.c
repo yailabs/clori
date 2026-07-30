@@ -2759,7 +2759,7 @@ static int test_runtime_cuda_session_cleanup_retry(
     yvex_backend_options options;
     yvex_backend_tensor_desc descriptor;
     yvex_backend_memory_stats stats;
-    unsigned char host[32] = {0};
+    unsigned char *host = NULL;
     unsigned long long first_address = 0ull, second_address = 0ull;
     yvex_error err;
     int ready, rc;
@@ -2778,11 +2778,12 @@ static int test_runtime_cuda_session_cleanup_retry(
     descriptor.name = "shared-runtime-residency";
     descriptor.dtype = YVEX_DTYPE_I8;
     descriptor.rank = 1u;
-    descriptor.dims[0] = descriptor.bytes = sizeof(host);
+    descriptor.dims[0] = descriptor.bytes = 32ull;
     YVEX_TEST_ASSERT(
         yvex_backend_open(&owner, &options, &err) == YVEX_OK &&
-            yvex_backend_tensor_alloc(owner, &descriptor, &weights, &err) == YVEX_OK &&
-            yvex_backend_tensor_write(owner, weights, host, sizeof(host), &err) == YVEX_OK &&
+            owner->vtable->resident_alloc(owner, &descriptor, &weights, &host, &err) == YVEX_OK &&
+            yvex_backend_resident_attach(
+                owner, host, descriptor.bytes, weights, 1ull, &err) == YVEX_OK &&
             yvex_backend_open_shared_cuda(&first, owner, 0ull, &err) == YVEX_OK &&
             yvex_backend_open_shared_cuda(&second, owner, 0ull, &err) == YVEX_OK,
         "one CUDA owner opens two isolated shared-context sessions");
@@ -2790,42 +2791,46 @@ static int test_runtime_cuda_session_cleanup_retry(
     YVEX_TEST_ASSERT(
         yvex_backend_tensor_alloc(first, &descriptor, &session_weights, &err) == YVEX_OK &&
             yvex_backend_resident_attach(
-                second, host, sizeof(host), session_weights, 1ull, &err) ==
+                second, host, descriptor.bytes, session_weights, 1ull, &err) ==
                 YVEX_ERR_INVALID_ARG &&
             yvex_backend_tensor_release(first, &session_weights, &err) == YVEX_OK,
         "one session cannot lend its device tensor to another session");
     descriptor.name = "shared-runtime-residency";
     YVEX_TEST_ASSERT(
-        yvex_backend_resident_attach(first, host, sizeof(host), weights, 1ull, &err) == YVEX_OK &&
-            yvex_backend_resident_attach(second, host, sizeof(host), weights, 1ull, &err) == YVEX_OK &&
-            yvex_backend_resident_resolve(first, host, sizeof(host), &first_address) ==
+        yvex_backend_resident_attach(first, host, descriptor.bytes, weights, 1ull, &err) == YVEX_OK &&
+            yvex_backend_resident_attach(second, host, descriptor.bytes, weights, 1ull, &err) == YVEX_OK &&
+            yvex_backend_resident_resolve(first, host, descriptor.bytes, &first_address) ==
                 YVEX_BACKEND_RESIDENT_HIT &&
-            yvex_backend_resident_resolve(second, host, sizeof(host), &second_address) ==
+            yvex_backend_resident_resolve(second, host, descriptor.bytes, &second_address) ==
                 YVEX_BACKEND_RESIDENT_HIT &&
             first_address == second_address && first_address != 0ull && first != second,
         "both sessions resolve the same stable read-only device range through isolated state");
     rc = yvex_backend_tensor_release(owner, &weights, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE && weights &&
                          yvex_backend_resident_resolve(
-                             first, host, sizeof(host), &first_address) ==
+                             first, host, descriptor.bytes, &first_address) ==
                              YVEX_BACKEND_RESIDENT_HIT &&
                          yvex_backend_resident_resolve(
-                             second, host, sizeof(host), &second_address) ==
+                             second, host, descriptor.bytes, &second_address) ==
                              YVEX_BACKEND_RESIDENT_HIT &&
                          first_address == second_address,
                      "model owner cannot release resident bytes while sessions borrow them");
-    yvex_backend_resident_detach(first);
+    YVEX_TEST_ASSERT(yvex_backend_resident_detach(first, &err) == YVEX_OK,
+                     "first borrowed resident mapping detaches");
     YVEX_TEST_ASSERT(yvex_backend_close_checked(&first, &err) == YVEX_OK && !first &&
                          yvex_backend_resident_resolve(
-                             second, host, sizeof(host), &second_address) ==
+                             second, host, descriptor.bytes, &second_address) ==
                              YVEX_BACKEND_RESIDENT_HIT && second_address == first_address,
                      "first session close leaves the owner pack valid for the second");
     YVEX_TEST_ASSERT(yvex_backend_get_memory_stats(owner, &stats, &err) == YVEX_OK &&
                          stats.allocation_count == 1ull,
                      "model owner uploads one resident allocation for both sessions");
-    yvex_backend_resident_detach(second);
+    YVEX_TEST_ASSERT(yvex_backend_resident_detach(second, &err) == YVEX_OK,
+                     "second borrowed resident mapping detaches");
     YVEX_TEST_ASSERT(yvex_backend_close_checked(&second, &err) == YVEX_OK && !second,
                      "second isolated session closes without releasing owner bytes");
+    YVEX_TEST_ASSERT(yvex_backend_resident_detach(owner, &err) == YVEX_OK,
+                     "model owner detaches after all session mappings");
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_CLEANUP_FAILURE", "tensor-alloc", 1) == 0,
                      "inject model-owned CUDA residency release failure");
     rc = yvex_backend_tensor_release(owner, &weights, &err);

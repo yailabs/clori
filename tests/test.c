@@ -173,6 +173,7 @@ static int run_runtime_console(void)
     if (run_test("runtime_moe", yvex_test_runtime_moe) != 0) return 1;
     if (run_test("runtime_transformer", yvex_test_runtime_transformer) != 0) return 1;
     if (run_test("runtime_prefill", yvex_test_runtime_prefill) != 0) return 1;
+    if (run_test("runtime_profile", yvex_test_runtime_profile) != 0) return 1;
     if (run_test("runtime_state", yvex_test_runtime_state) != 0) return 1;
     return 0;
 }

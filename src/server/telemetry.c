@@ -8,9 +8,7 @@
  * Effects: appends/coalesces events, updates metrics, and wakes subscribers.
  * Failure: critical event publication refuses; overwritten low-priority history increments drops. */
 #define _POSIX_C_SOURCE 200809L
-
 #include "src/server/private.h"
-
 #include <limits.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -20,11 +18,8 @@
 #include <sys/resource.h>
 #include <time.h>
 #include <unistd.h>
-
 #include <yvex/internal/core.h>
-
 #define TELEMETRY_SCHEMA_V2 2u
-
 struct server_telemetry {
     pthread_mutex_t mutex;
     pthread_cond_t condition;
@@ -38,9 +33,7 @@ struct server_telemetry {
     unsigned long long active_subscribers;
     int mutex_ready, condition_ready, closing;
 };
-
 static int event_identity(yvex_server_event *event);
-
 /* Purpose: seal and append one event while the telemetry lifecycle gate is held. */
 static int event_append_locked(server_telemetry *telemetry,
                                yvex_server_event *event)
@@ -54,7 +47,6 @@ static int event_append_locked(server_telemetry *telemetry,
     telemetry->events[slot] = *event;
     return 1;
 }
-
 /* Purpose: append one finite binary64 value through explicit canonical bits.
  * Inputs: hash state and numeric value. Effects: extends the hash with canonical bytes.
  * Failure: returns false for non-finite input or hash failure. Boundary: never hashes native padding. */
@@ -64,7 +56,6 @@ static int hash_double(yvex_sha256 *hash, double value)
     memcpy(&bits, &value, sizeof(bits));
     return yvex_sha256_update_u64(hash, bits);
 }
-
 /* Purpose: return nanoseconds for one admitted clock without overflow for realistic uptime. */
 static unsigned long long time_ns(clockid_t clock)
 {
@@ -74,7 +65,6 @@ static unsigned long long time_ns(clockid_t clock)
     return (unsigned long long)value.tv_sec * 1000000000ull +
            (unsigned long long)value.tv_nsec;
 }
-
 /* Purpose: derive one event identity field by field.
  * Inputs: complete typed event and identity output. Effects: writes a canonical SHA-256 identity.
  * Failure: returns false for invalid numeric or hash input. Boundary: timestamps participate as event facts. */
@@ -113,7 +103,6 @@ static int event_identity(yvex_server_event *event)
     yvex_sha256_hex(digest, event->event_identity);
     return 1;
 }
-
 /* Purpose: allocate the only process event and metrics authority.
  * Inputs: owner output, bounded capacity, optional clocks/context, and error output. Effects: allocates ring and locks.
  * Failure: closes partial synchronization and publishes no owner. Boundary: no renderer or runtime host is created. */
@@ -173,7 +162,6 @@ int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capaci
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: publish one authoritative event into the bounded global sequence.
  * Inputs: telemetry, typed facts, identities, counters, timing, and error output. Effects: seals and appends one event.
  * Failure: refuses invalid ownership or identity derivation. Boundary: content bytes are excluded by schema. */
@@ -280,7 +268,6 @@ int yvex_server_telemetry_emit_provider(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: publish one native event without application-provider correlation.
  * Inputs: typed server facts and error output. Effects: appends one identity-sealed event.
  * Failure: forwards the authoritative telemetry refusal. Boundary: provider fields remain empty. */
@@ -298,7 +285,6 @@ int yvex_server_telemetry_emit(server_telemetry *telemetry,
         telemetry, kind, severity, session_id, request_id, turn_id, phase,
         value_a, value_b, value_c, seconds, rate, NULL, err);
 }
-
 /* Purpose: read the first retained event after a cursor, optionally waiting for publication.
  * Inputs: telemetry, sequence cursor, wait policy, event output, and error output. Effects: may wait and copies event.
  * Failure: refuses closed authority or stale cursor beyond retained history. Boundary: no subscriber-owned queue. */
@@ -345,7 +331,6 @@ int yvex_server_telemetry_next(server_telemetry *telemetry,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: copy current process metrics from the same authority as events.
  * Inputs: telemetry, metrics output, and error output. Effects: briefly locks and writes snapshot.
  * Failure: refuses absent ownership. Boundary: operational metrics are not benchmark evidence. */
@@ -390,7 +375,6 @@ int yvex_server_telemetry_metrics_copy(server_telemetry *telemetry,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: bind admitted model identities before runtime-ready publication.
  * Inputs: telemetry and exact model/artifact/variant identities. Effects: records immutable process facts.
  * Failure: none for admitted fixed-size identities. Boundary: callers authenticate identities before binding. */
@@ -411,7 +395,6 @@ void yvex_server_telemetry_identities(server_telemetry *telemetry,
                         variant_identity ? variant_identity : "");
     (void)pthread_mutex_unlock(&telemetry->mutex);
 }
-
 /* Purpose: account one process-lifetime model admission.
  * Inputs: telemetry, mapped/resident bytes, and elapsed startup time. Effects: updates exact process counters.
  * Failure: none after telemetry admission. Boundary: count does not itself establish model correctness. */
@@ -433,7 +416,6 @@ void yvex_server_telemetry_model_opened(server_telemetry *telemetry,
     telemetry->metrics.output_head_upload_count = uploads;
     (void)pthread_mutex_unlock(&telemetry->mutex);
 }
-
 /* Purpose: account the single process-lifetime model discharge.
  * Inputs: telemetry owner. Effects: increments model-close count under lock.
  * Failure: none for absent telemetry. Boundary: does not close model resources. */
@@ -443,7 +425,6 @@ void yvex_server_telemetry_model_closed(server_telemetry *telemetry)
     telemetry->metrics.model_close_count++;
     (void)pthread_mutex_unlock(&telemetry->mutex);
 }
-
 /* Purpose: raise process-resident resource evidence from one authoritative runtime session.
  * Inputs: host/device high-water extents and upload count. Effects: updates monotonic metrics.
  * Failure: absent telemetry is ignored. Boundary: values remain operational, not benchmark evidence. */
@@ -461,7 +442,6 @@ void yvex_server_telemetry_resources(server_telemetry *telemetry,
         telemetry->metrics.output_head_upload_count = uploads;
     (void)pthread_mutex_unlock(&telemetry->mutex);
 }
-
 /* Purpose: replace authoritative bounded queue occupancy facts.
  * Inputs: telemetry, current depth, and capacity. Effects: updates queue gauges and peak.
  * Failure: none for absent telemetry. Boundary: queue enforcement belongs to host. */
@@ -474,7 +454,6 @@ void yvex_server_telemetry_queue(server_telemetry *telemetry,
     telemetry->metrics.queue_capacity = capacity;
     (void)pthread_mutex_unlock(&telemetry->mutex);
 }
-
 /* Purpose: account exact session registry membership transitions.
  * Inputs: telemetry, signed active delta, and created fact. Effects: updates session counters.
  * Failure: clamps impossible negative gauges. Boundary: registry remains session authority. */
@@ -488,7 +467,6 @@ void yvex_server_telemetry_session(server_telemetry *telemetry, int active_delta
     if (created) telemetry->metrics.total_sessions++;
     (void)pthread_mutex_unlock(&telemetry->mutex);
 }
-
 /* Purpose: account exact request lifecycle transitions.
  * Inputs: telemetry, signed active delta, and terminal classification. Effects: updates request counters.
  * Failure: clamps impossible negative gauges. Boundary: request state remains host authority. */
@@ -504,7 +482,6 @@ void yvex_server_telemetry_request(server_telemetry *telemetry, int active_delta
     telemetry->metrics.cancelled_requests += cancelled != 0;
     (void)pthread_mutex_unlock(&telemetry->mutex);
 }
-
 /* Purpose: transfer and release the sole telemetry owner after waking subscribers.
  * Inputs: unique owner pointer. Effects: marks closed, wakes readers, destroys synchronization, and frees ring.
  * Failure: cleanup errors are secondary in this destructor. Boundary: caller pointer becomes NULL. */
@@ -528,7 +505,6 @@ void yvex_server_telemetry_close(server_telemetry **telemetry)
     free(owner);
     *telemetry = NULL;
 }
-
 /* Purpose: return one stable event spelling shared by raw and operational renderers.
  * Inputs: event enumeration. Effects: none. Failure: returns unknown for unsupported value.
  * Boundary: spelling cannot create event capability. */
@@ -543,13 +519,12 @@ const char *yvex_server_event_kind_name(yvex_server_event_kind kind)
         "request.received", "request.queued", "request.started",
         "tokenizer.completed", "prefill.started", "prefill.progress",
         "prefill.completed", "generation.first_token", "generation.fragment",
-        "generation.progress", "generation.completed", "generation.cancelled",
-        "generation.failed", "client.disconnected", "telemetry.dropped",
+        "generation.progress", "generation.profile", "generation.completed",
+        "generation.cancelled", "generation.failed", "client.disconnected", "telemetry.dropped",
         "runtime.shutdown.start", "runtime.shutdown.complete"};
     return (unsigned int)kind < sizeof(names) / sizeof(names[0])
                ? names[kind] : "unknown";
 }
-
 /* Purpose: return one stable session-state spelling.
  * Inputs: session-state enumeration. Effects: none. Failure: returns unknown for unsupported value.
  * Boundary: state transitions remain session-owned. */
@@ -561,7 +536,6 @@ const char *yvex_server_session_state_name(yvex_server_session_state state)
     return (unsigned int)state < sizeof(names) / sizeof(names[0])
                ? names[state] : "unknown";
 }
-
 /* Purpose: independently recompute one event identity before client or renderer use.
  * Inputs: event and error output. Effects: none beyond temporary hashing.
  * Failure: refuses schema, sequence, name, or identity mismatch. Boundary: no event repair occurs. */
@@ -594,7 +568,6 @@ int yvex_server_event_validate(const yvex_server_event *event, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Purpose: render one typed event as a bounded privacy-preserving JSONL record.
  * Inputs: validated event, output bytes/capacity, and error output. Effects: writes one newline-terminated object.
  * Failure: refuses invalid identity or insufficient output capacity. Boundary: content is absent from schema. */

@@ -925,8 +925,8 @@ static int runtime_session_attach_cuda_residency(
     session->summary.resident_encoded_bytes = summary.encoded_bytes;
     session->summary.host_resident_bytes = summary.host_resident_bytes;
     session->summary.device_resident_bytes = summary.device_resident_bytes;
-    session->summary.upload_bytes = *uploaded ? summary.device_resident_bytes : 0ull;
-    session->summary.upload_count = *uploaded ? 1ull : 0ull;
+    session->summary.upload_bytes = *uploaded ? summary.cuda_upload_bytes : 0ull;
+    session->summary.upload_count = *uploaded ? summary.cuda_upload_count : 0ull;
     session->summary.residency_generation = summary.generation;
     yvex_runtime_identity_copy(session->summary.residency_identity, summary.residency_identity);
     session->summary.peak_device_bytes = summary.device_resident_bytes;
@@ -991,7 +991,7 @@ static int runtime_session_capabilities_bind(
         device.kind == YVEX_BACKEND_KIND_CUDA && device.compute_capability_major > 0 &&
         residency.core_binding_count == session->model->summary.attention_binding_count &&
         session->summary.resident_binding_count == residency.binding_count &&
-        session->summary.device_resident_bytes > 0ull;
+        residency.cuda_addressable_bytes > 0ull;
     workspace_ready = session->summary.host_workspace_owned && session->summary.host_workspace_pinned &&
                       session->summary.host_workspace_bytes && session->workspace &&
                       session->summary.device_workspace_bytes;
@@ -1102,7 +1102,8 @@ static int runtime_session_resources_release(yvex_runtime_execution_session *ses
     yvex_attention_workspace_close(&session->attention_workspace);
     session->view.attention_workspace = session->attention_workspace;
     if (session->backend) {
-        yvex_backend_resident_detach(session->backend);
+        rc = yvex_backend_resident_detach(session->backend, err);
+        if (rc != YVEX_OK) return rc;
         rc = runtime_session_workspace_discard(session, err);
         if (rc != YVEX_OK) return rc;
         rc = yvex_backend_close_checked(&session->backend, &cleanup);
