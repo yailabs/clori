@@ -4,7 +4,7 @@
      role="img" aria-labelledby="title desc"
      shape-rendering="geometricPrecision">
   <title id="title">YVEX logo</title>
-  <desc id="desc">YVEX mark with an open metallic ring, gold diagonal, four-point star, and wordmark.</desc>
+  <desc id="desc">YVEX mark with a complete metallic ring, centered gold diagonal, four-point star, and wordmark.</desc>
 
   <defs>
     <linearGradient id="ringMetal" gradientUnits="userSpaceOnUse"
@@ -17,7 +17,7 @@
     </linearGradient>
 
     <linearGradient id="gold" gradientUnits="userSpaceOnUse"
-                    x1="56" y1="452" x2="456" y2="44">
+                    x1="46" y1="440" x2="466" y2="20">
       <stop offset="0" stop-color="#76501a"/>
       <stop offset="0.18" stop-color="#b98228"/>
       <stop offset="0.48" stop-color="#f1c14f"/>
@@ -45,35 +45,32 @@
     </style>
   </defs>
 
-  <!-- Two precise arcs leave intentional breaks aligned with the gold diagonal. -->
-  <g fill="none" stroke-linecap="round">
-    <path d="M 390.0 125.4 A 170 170 0 0 1 146.7 360.2
-             M 121.9 334.7 A 170 170 0 0 1 365.3 99.8"
-          class="ring-shadow" stroke-width="9"/>
-    <path d="M 390.0 125.4 A 170 170 0 0 1 146.7 360.2
-             M 121.9 334.7 A 170 170 0 0 1 365.3 99.8"
-          stroke="url(#ringMetal)" stroke-width="5.8"/>
-    <path d="M 390.0 125.4 A 170 170 0 0 1 146.7 360.2
-             M 121.9 334.7 A 170 170 0 0 1 365.3 99.8"
-          class="ring-highlight" stroke-width="0.9"/>
-  </g>
-
-  <!-- Crisp diagonal: no raster blur, so the edge remains clean at README size. -->
-  <path d="M 49 458 L 458 49" fill="none" stroke="#4e3412"
+  <!-- The diagonal is exactly centered on the planet and star at (256, 230). -->
+  <path d="M 46 440 L 466 20" fill="none" stroke="#4e3412"
         stroke-width="6.2" stroke-linecap="round" opacity="0.38"/>
-  <path d="M 49 458 L 458 49" fill="none" stroke="url(#gold)"
+  <path d="M 46 440 L 466 20" fill="none" stroke="url(#gold)"
         stroke-width="4.2" stroke-linecap="round"/>
-  <path d="M 53 454 L 454 53" fill="none" class="slash-highlight"
+  <path d="M 50 436 L 462 24" fill="none" class="slash-highlight"
         stroke-width="0.7" stroke-linecap="round"/>
+
+  <!-- A complete circle is rendered above the diagonal, so its contour never breaks. -->
+  <g fill="none">
+    <circle cx="256" cy="230" r="170"
+            class="ring-shadow" stroke-width="9"/>
+    <circle cx="256" cy="230" r="170"
+            stroke="url(#ringMetal)" stroke-width="5.8"/>
+    <circle cx="256" cy="230" r="170"
+            class="ring-highlight" stroke-width="0.9"/>
+  </g>
 
   <!-- Four-point star, kept broad enough to remain legible below 200 CSS pixels. -->
   <path d="M 256 106
            C 258 173 261 207 272 218
-           C 283 227 322 229 378 230
-           C 322 232 283 234 272 243
-           C 262 254 259 287 256 354
-           C 253 287 250 254 240 243
-           C 229 234 190 232 134 230
+           C 283 227 322 229 380 230
+           C 322 231 283 233 272 242
+           C 261 253 258 287 256 354
+           C 254 287 251 253 240 242
+           C 229 233 190 231 132 230
            C 190 229 229 227 240 218
            C 251 207 254 173 256 106 Z"
         class="star"/>
