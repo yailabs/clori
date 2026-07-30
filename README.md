@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.svg" alt="YVEX logo" width="300">
+</p>
+
 # YVEX
 
 YVEX is a native C/CUDA model compiler and local inference runtime for

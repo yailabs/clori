@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="480" height="600" viewBox="240 275 480 600"
+     role="img" aria-labelledby="title desc">
+  <title id="title">YVEX logo</title>
+  <desc id="desc">YVEX mark with an open ring, gold diagonal, star, and wordmark.</desc>
+
+  <defs>
+    <linearGradient id="ringMetal" gradientUnits="userSpaceOnUse" x1="304" y1="375" x2="598" y2="681">
+      <stop offset="0" stop-color="#898a8d"/>
+      <stop offset="0.22" stop-color="#7d7e81"/>
+      <stop offset="0.52" stop-color="#858689"/>
+      <stop offset="0.78" stop-color="#77787b"/>
+      <stop offset="1" stop-color="#88898c"/>
+    </linearGradient>
+
+    <linearGradient id="slashGold" gradientUnits="userSpaceOnUse" x1="251" y1="743" x2="708" y2="287">
+      <stop offset="0" stop-color="#86601f"/>
+      <stop offset="0.13" stop-color="#b18133"/>
+      <stop offset="0.45" stop-color="#c8983c"/>
+      <stop offset="0.53" stop-color="#d2a342"/>
+      <stop offset="0.67" stop-color="#bd8d35"/>
+      <stop offset="0.90" stop-color="#ae7d30"/>
+      <stop offset="1" stop-color="#72531f"/>
+    </linearGradient>
+
+    <radialGradient id="starGold" gradientUnits="userSpaceOnUse" cx="461" cy="529" r="121">
+      <stop offset="0" stop-color="#ffd51b"/>
+      <stop offset="0.12" stop-color="#ffc400"/>
+      <stop offset="0.42" stop-color="#d89909"/>
+      <stop offset="0.76" stop-color="#9c6d16"/>
+      <stop offset="1" stop-color="#4f3a20" stop-opacity="0.25"/>
+    </radialGradient>
+
+    <radialGradient id="starCore" gradientUnits="userSpaceOnUse" cx="461" cy="529" r="25">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.70" stop-color="#fffef1"/>
+      <stop offset="0.88" stop-color="#fff5a6"/>
+      <stop offset="1" stop-color="#ffc400"/>
+    </radialGradient>
+
+    <linearGradient id="wordGray" gradientUnits="userSpaceOnUse" x1="0" y1="806" x2="0" y2="857">
+      <stop offset="0" stop-color="#48494a"/>
+      <stop offset="0.18" stop-color="#555657"/>
+      <stop offset="0.76" stop-color="#565758"/>
+      <stop offset="1" stop-color="#474849"/>
+    </linearGradient>
+
+    <linearGradient id="wordGold" gradientUnits="userSpaceOnUse" x1="0" y1="806" x2="0" y2="857">
+      <stop offset="0" stop-color="#8f692d"/>
+      <stop offset="0.22" stop-color="#a87d32"/>
+      <stop offset="0.72" stop-color="#9a7130"/>
+      <stop offset="1" stop-color="#795a2d"/>
+    </linearGradient>
+
+    <filter id="softEdge" x="-12%" y="-12%" width="124%" height="124%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="1.45"/>
+    </filter>
+    <filter id="tinyGlow" x="-18%" y="-18%" width="136%" height="136%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="1.8"/>
+    </filter>
+  </defs>
+
+  <!-- Anello aperto: centro 453,529; raggio orizzontale 176; raggio verticale 175. -->
+  <g fill="none" stroke-linecap="butt">
+    <path d="M 598.91 431.12 A 176 175 0 0 1 357.20 675.78
+             M 314.31 636.74 A 176 175 0 0 1 556.45 387.42"
+          stroke="#202022" stroke-width="12" opacity="0.72" filter="url(#softEdge)"/>
+    <path d="M 598.91 431.12 A 176 175 0 0 1 357.20 675.78
+             M 314.31 636.74 A 176 175 0 0 1 556.45 387.42"
+          stroke="url(#ringMetal)" stroke-width="7.3"/>
+    <path d="M 598.91 431.12 A 176 175 0 0 1 357.20 675.78
+             M 314.31 636.74 A 176 175 0 0 1 556.45 387.42"
+          stroke="#b9babc" stroke-width="1.05" opacity="0.20"/>
+  </g>
+
+  <!-- Diagonale rastremata, ricavata dalla linea dello screenshot. -->
+  <path d="M 249.30 744.58
+           C 275 716 330 659 380 609
+           C 500 489 620 370 650 341
+           C 680 311 700 291 709.05 285.98
+           C 700 299 680 319 650 348
+           C 600 398 450 548 300 698
+           C 275 723 260 739 249.30 744.58 Z"
+        fill="#7b571d" opacity="0.24" filter="url(#softEdge)"/>
+  <path d="M 249.30 744.58
+           C 275 716 330 659 380 609
+           C 500 489 620 370 650 341
+           C 680 311 700 291 709.05 285.98
+           C 700 299 680 319 650 348
+           C 600 398 450 548 300 698
+           C 275 723 260 739 249.30 744.58 Z"
+        fill="url(#slashGold)"/>
+
+  <!-- Bagliore a quattro punte. -->
+  <path d="M 461.05 402.30
+           C 462.10 466.0 462.90 505.7 470.50 519.70
+           C 478.70 526.40 516.20 527.40 570.70 528.75
+           C 515.70 530.15 478.80 531.30 470.45 538.20
+           C 463.30 551.90 462.40 585.10 461.00 636.40
+           C 459.45 584.70 458.70 551.70 451.40 538.15
+           C 442.80 531.15 405.20 530.10 349.25 528.70
+           C 405.00 527.35 442.55 526.25 451.40 519.75
+           C 458.80 506.10 459.60 466.20 461.05 402.30 Z"
+        fill="#c38e08" opacity="0.28" filter="url(#tinyGlow)"/>
+  <path d="M 461.05 402.30
+           C 462.10 466.0 462.90 505.7 470.50 519.70
+           C 478.70 526.40 516.20 527.40 570.70 528.75
+           C 515.70 530.15 478.80 531.30 470.45 538.20
+           C 463.30 551.90 462.40 585.10 461.00 636.40
+           C 459.45 584.70 458.70 551.70 451.40 538.15
+           C 442.80 531.15 405.20 530.10 349.25 528.70
+           C 405.00 527.35 442.55 526.25 451.40 519.75
+           C 458.80 506.10 459.60 466.20 461.05 402.30 Z"
+        fill="url(#starGold)"/>
+  <path d="M 461.00 505.15
+           C 463.45 517.10 466.25 524.35 477.25 528.85
+           C 466.25 533.30 463.45 540.70 461.00 552.70
+           C 458.55 540.70 455.70 533.30 444.70 528.85
+           C 455.70 524.35 458.55 517.10 461.00 505.15 Z"
+        fill="url(#starCore)"/>
+
+  <!-- Logotipo convertito interamente in tracciati: nessuna dipendenza da font. -->
+  <g>
+    <path d="M 282.85 806.55 L 292.25 806.55 L 310.85 829.75
+             L 329.55 806.55 L 338.65 806.55 L 314.65 835.35
+             L 314.65 857.25 L 307.05 857.25 L 307.05 835.35 Z"
+          fill="url(#wordGray)"/>
+
+    <path d="M 376.85 806.75 L 386.15 806.75 L 403.95 847.85
+             L 421.05 806.75 L 430.15 806.75 L 408.05 857.15
+             L 399.55 857.15 Z"
+          fill="url(#wordGold)"/>
+
+    <path d="M 475.25 806.65 L 519.55 806.65 L 519.55 813.55
+             L 482.65 813.55 L 482.65 827.40 L 515.55 827.40
+             L 515.55 833.55 L 482.65 833.55 L 482.65 849.65
+             L 519.55 849.65 L 519.55 857.15 L 475.25 857.15 Z"
+          fill="url(#wordGray)"/>
+
+    <path d="M 567.45 806.70 L 578.10 806.70 L 593.70 827.05
+             L 609.60 806.70 L 619.20 806.70 L 598.65 831.85
+             L 619.25 857.20 L 608.85 857.20 L 593.55 836.75
+             L 578.10 857.20 L 567.35 857.20 L 588.55 831.75 Z"
+          fill="url(#wordGray)"/>
+  </g>
+</svg>
