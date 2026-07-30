@@ -184,10 +184,10 @@ changes. Do not use an all-files stage operation in a mixed worktree.
 
 ## Current Product Boundary
 
-`../../PROJECT.md` alone owns current project state and sequencing.
+`../../ROADMAP.md` alone owns current project state and sequencing.
 `../v010-release-doctrine.md` defines gate semantics, while `deepseek.md`
 defines the current operator boundary.
 
 This common runbook contains no model run because model-specific hosted
 operation belongs to `deepseek.md`; project support state remains in
-`../../PROJECT.md`.
+`../../ROADMAP.md`.

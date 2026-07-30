@@ -3,7 +3,7 @@
 This runbook owns first startup and routine operation of the installed local
 runtime host and clients. It begins with explicit artifact and binding inputs;
 configured model defaults are an optional convenience after that path works.
-It is not a capability ledger: consult [`PROJECT.md`](../PROJECT.md) for current
+It is not a capability ledger: consult [`ROADMAP.md`](../ROADMAP.md) for current
 gates.
 
 ## Prerequisites

@@ -60,7 +60,7 @@ generation smoke.
 
 These are complete artifacts, but none is yet a supported model artifact.
 Evaluation, the release-path full-model benchmark, release-profile selection,
-and release qualification remain incomplete as recorded in `PROJECT.md`. The
+and release qualification remain incomplete as recorded in `ROADMAP.md`. The
 DS4-like candidate is not promoted to the release profile by size or execution
 smoke alone.
 
@@ -133,7 +133,7 @@ evidence must be named by the specific proof and must not be promoted to model
 support.
 
 The canonical decommission obligations and consuming milestones are recorded in
-`PROJECT.md`. This policy does not retain an artifact card or historical
+`ROADMAP.md`. This policy does not retain an artifact card or historical
 validation catalogue for those files.
 
 ## Repository Guardrail

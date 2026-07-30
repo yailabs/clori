@@ -1,0 +1,58 @@
+name: Bug report
+description: Report an incorrect, unsafe, or misleading implemented behavior.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Read AGENTS.md and ROADMAP.md before filing. Do not include model payloads, prompts, responses, credentials, or private paths.
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: State the exact command/API boundary, result, and failure identity.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected contract
+      description: Link the owning code or contract and describe the expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include bounded commands and sanitized inputs. Do not attach model or runtime evidence assets.
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: YVEX commit
+      placeholder: 40-character commit identity
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Compiler, backend, device, and relevant build profile without private paths.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Ownership and impact
+      description: Name the likely owner, downstream consumer, and whether this appears to block the active roadmap boundary.
+    validations:
+      required: true
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Evidence hygiene
+      options:
+        - label: I removed credentials, prompts, generated responses, model files, bindings, traces, and machine-private paths.
+          required: true

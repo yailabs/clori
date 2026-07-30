@@ -21,7 +21,7 @@ reject_text() {
 }
 
 for file in \
-  README.md AGENTS.md PROJECT.md MODEL_ARTIFACTS.md NOTICE.md \
+  README.md AGENTS.md ROADMAP.md CONTRIBUTING.md MODEL_ARTIFACTS.md NOTICE.md \
   docs/api.md docs/contract.md docs/model-families.md \
   docs/operator-runbook.md docs/openai-compatibility.md \
   docs/cli-output-architecture.md \
@@ -31,19 +31,22 @@ for file in \
   docs/diagrams/physical_compilation.mmd docs/diagrams/physical_compilation.svg \
   docs/diagrams/runtime_host_sessions.mmd docs/diagrams/runtime_host_sessions.svg \
   docs/diagrams/autoregressive_execution.mmd docs/diagrams/autoregressive_execution.svg \
+  docs/decisions/README.md docs/decisions/0001-public-project-control.md \
+  docs/milestones/command-architecture.md docs/milestones/runtime-console-repl.md \
   docs/runbooks/README.md docs/runbooks/deepseek.md docs/runbooks/common.md
 do
   require_file "$file"
 done
 
 test ! -e docs/spine.md || fail 'obsolete project-control path exists'
+test ! -e PROJECT.md || fail 'retired monolithic project ledger exists'
 test ! -e docs/runbooks/glm.md || fail 'unsupported GLM runbook remains'
 test "$(find docs/runbooks -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')" -eq 3 ||
   fail 'unexpected runbook count'
 
 for text in \
-  '`PROJECT.md` is the sole project-control authority.' \
-  'is exactly one active milestone and exactly one Active Next.' \
+  '`ROADMAP.md` is the sole live macro project-control authority.' \
+  'macro milestone and exactly one Active Next.' \
   '### Progression admissibility' \
   '### Six-pass vertical iteration' \
   '### Quality and evaluation taxonomy' \
@@ -78,7 +81,8 @@ require_text README.md './yvex chat --session main'
 require_text README.md './yvex run "Explain attention in one sentence."'
 require_text README.md './yvex runtime status --json'
 require_text README.md './yvex runtime stop'
-require_text README.md '[`PROJECT.md`](PROJECT.md)'
+require_text README.md '[`ROADMAP.md`](ROADMAP.md)'
+require_text README.md '[Contributing](CONTRIBUTING.md)'
 require_text README.md 'a public or remote production server'
 reject_text README.md 'Active Next:'
 reject_text README.md 'YVEX is release-ready'
@@ -192,24 +196,29 @@ test -z "$(find docs/diagrams -maxdepth 1 -type f \
   \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' \) -print -quit)" ||
   fail 'architecture diagrams retain a raster text asset'
 
-require_text PROJECT.md 'V010.RUNTIME.CLIENT.REFOUNDATION.0'
-require_text PROJECT.md 'V010.DOCS.README.PRODUCT.0'
-require_text PROJECT.md 'V010.CLI.DEEPSEEK.GENERATE.0: superseded'
-require_text PROJECT.md 'Active Next: V010.PROJECT.CONTROL.PUBLIC.0'
-require_text PROJECT.md 'V010.OPERATOR.COMMAND.CONSOLE.0: superseded'
-require_text PROJECT.md 'V010.OPERATOR.COMMAND.ARCHITECTURE.0: blocked'
-require_text PROJECT.md 'V010.OPERATOR.REPL.CONSOLE.0: blocked'
-test -f docs/milestones/command-architecture.md || fail 'missing command-architecture milestone contract'
-test -f docs/milestones/runtime-console-repl.md || fail 'missing runtime-console REPL milestone contract'
-require_text PROJECT.md 'model_behavior_evaluation_ready=0'
-require_text PROJECT.md 'release_qualification_ready=0'
+require_text ROADMAP.md '# YVEX Roadmap'
+require_text ROADMAP.md 'Active Next: V010.OPERATOR.COMMAND.ARCHITECTURE.0'
+require_text ROADMAP.md '| `V010.PROJECT.CONTROL.PUBLIC.0` | `complete` |'
+require_text ROADMAP.md '| `V010.OPERATOR.COMMAND.CONSOLE.0` | `superseded` |'
+require_text ROADMAP.md '| `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `active` |'
+require_text ROADMAP.md '| `V010.OPERATOR.REPL.CONSOLE.0` | `blocked` |'
+require_text ROADMAP.md 'model_behavior_evaluation_ready=0'
+require_text ROADMAP.md 'release_qualification_ready=0'
+require_text CONTRIBUTING.md '# Contributing to YVEX'
+require_text CONTRIBUTING.md '## Commit and pull request'
+require_text docs/decisions/README.md '# Architecture Decision Records'
+require_text docs/decisions/0001-public-project-control.md '# 0001 — Public project control'
+require_file .github/ISSUE_TEMPLATE/bug_report.yml
+require_file .github/ISSUE_TEMPLATE/engineering_change.yml
+require_file .github/ISSUE_TEMPLATE/config.yml
+require_file .github/pull_request_template.md
 
 require_text MODEL_ARTIFACTS.md 'Tensor proof artifact'
 require_text MODEL_ARTIFACTS.md 'Complete model artifact'
 require_text MODEL_ARTIFACTS.md 'Supported model artifact'
 
 if grep -nE '\b(qa_ready|qa_passed)[[:space:]]*=[[:space:]]*1\b' \
-  src/*.c src/*/*.c include/yvex/*.h include/yvex/internal/*.h PROJECT.md README.md \
+  src/*.c src/*/*.c include/yvex/*.h include/yvex/internal/*.h ROADMAP.md README.md \
   2>/dev/null; then
   fail 'generic QA fact attempts to promote capability'
 fi
@@ -264,4 +273,4 @@ fi
 test ! -e ./yvex-dev || fail 'retired yvex-dev executable remains'
 test ! -e ./yvex-openai || fail 'retired yvex-openai executable remains'
 
-sh tests/test_project_ledger.sh
+sh tests/test_project_control.sh

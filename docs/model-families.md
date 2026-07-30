@@ -14,7 +14,7 @@ logits, sampling, and generation code.
 This document is the technical architecture contract for family integration. It
 does not record delivery rows, active-next decisions, release gates, command
 proof history, implementation ledgers, or diagnostic progress. Product scope,
-track state, and current truth belong in `PROJECT.md`.
+track state, and current truth belong in `ROADMAP.md`.
 
 ## Integration Thesis
 
@@ -1408,7 +1408,7 @@ Practical failure modes include:
 ## Non-Claims
 
 This document does not promote support for any model family; current capability
-belongs only to `PROJECT.md`. The admitted DeepSeek vertical does not establish
+belongs only to `ROADMAP.md`. The admitted DeepSeek vertical does not establish
 dense-family support, a second MoE family, public serving, model evaluation,
 full-model benchmark performance, or release readiness. Runtime-local attention
 benchmark/profile evidence and its identity-bound SVG documentation snapshots

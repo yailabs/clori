@@ -36,7 +36,7 @@ system implements any capability.
 The reference model below is projected onto the current YVEX process and
 execution boundaries for orientation. The normative architecture remains the
 planes, identities, lifecycles, and invariants defined in this document;
-[`PROJECT.md`](../PROJECT.md) alone records which YVEX capabilities are
+[`ROADMAP.md`](../ROADMAP.md) alone records which YVEX capabilities are
 currently admitted.
 
 ![Physical model compilation from verified source snapshot to an identity-bound physical variant.](diagrams/physical_compilation.svg)
@@ -990,7 +990,7 @@ architecture above. It owns the external engineering baseline and maps
 primary papers, specifications, and implementation references to YVEX owners.
 It does not own project
 state, milestone state, dependency order, capability claims, or Active Next;
-those belong only to `../PROJECT.md`.
+those belong only to `../ROADMAP.md`.
 
 References identify proven decomposition, exact model behavior, container
 rules, numerical contracts, and independent comparison points. YVEX still owns

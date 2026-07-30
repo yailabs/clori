@@ -12,7 +12,7 @@ not record delivery progress or create capability.
   and operator-local cleanup boundaries.
 
 Normative family architecture lives in `../model-families.md`. Project control
-and current sequencing live only in `../../PROJECT.md`.
+and current sequencing live only in `../../ROADMAP.md`.
 
 ## Rules
 

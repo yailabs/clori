@@ -1,0 +1,62 @@
+name: Engineering change
+description: Propose one bounded implementation change against a real consumer.
+title: "change: "
+body:
+  - type: markdown
+    attributes:
+      value: Proposals must start from current implementation evidence and one semantic owner. Hypothetical capability scaffolding is not admitted.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and evidence
+      description: Describe the current behavior and cite the code, tests, audit, or measured evidence that establishes the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Owning boundary
+      description: Name the semantic owner, affected interfaces, and downstream consumer.
+    validations:
+      required: true
+  - type: textarea
+    id: after_state
+    attributes:
+      label: Executable after-state
+      description: State the operator/API path, lifecycle, side effects, refusal, and cleanup behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Acceptance and tests
+      description: List positive, failure, cleanup, conformance, and live evidence required in proportion to the boundary.
+    validations:
+      required: true
+  - type: textarea
+    id: non_claims
+    attributes:
+      label: Non-claims
+      description: State explicitly which higher capabilities remain unsupported.
+    validations:
+      required: true
+  - type: dropdown
+    id: roadmap
+    attributes:
+      label: Roadmap relation
+      options:
+        - Active milestone
+        - Blocked successor
+        - Deferred depth with admitted trigger
+        - Independent defect repair
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Boundary checks
+      options:
+        - label: This does not introduce a compatibility executable, duplicate runtime, duplicate registry, or unsupported family abstraction.
+          required: true
+        - label: Any new file/header/subsystem boundary is explicitly justified and authorized where AGENTS.md requires it.
+          required: true

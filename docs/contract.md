@@ -3,7 +3,7 @@
 This document defines observable runtime behavior: ownership, admission,
 publication, refusal, cleanup and capability claims. The installed C surface is
 mapped in [docs/api.md](api.md).
-Project state and dependency order are defined only by `PROJECT.md`.
+Project state and dependency order are defined only by `ROADMAP.md`.
 
 The rule is simple: each runtime result identifies the immutable facts it
 consumed, the mutable owner it changed, the exact execution boundary it crossed
@@ -187,7 +187,7 @@ or rebuild Transformation IR, quantization plans or writer plans.
 
 These are implementation facts, not a runtime progress ladder. Current
 milestone state, dependency order and the active boundary remain defined only by
-`PROJECT.md`.
+`ROADMAP.md`.
 
 ## Artifact Admission Contract
 

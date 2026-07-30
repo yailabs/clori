@@ -1,7 +1,7 @@
 # DeepSeek-V4-Flash Local Runtime
 
 DeepSeek-V4-Flash is the first complete hosted YVEX vertical. Exact current
-identities, variants, and gates live in [`PROJECT.md`](../../PROJECT.md).
+identities, variants, and gates live in [`ROADMAP.md`](../../ROADMAP.md).
 
 ## Product path
 

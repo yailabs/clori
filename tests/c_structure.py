@@ -1243,7 +1243,10 @@ class Audit:
 
     def stale_path_violations(self) -> list[str]:
         errors: list[str] = []
-        documents = [ROOT / name for name in ("AGENTS.md", "PROJECT.md", "README.md")]
+        documents = [
+            ROOT / name
+            for name in ("AGENTS.md", "ROADMAP.md", "CONTRIBUTING.md", "README.md")
+        ]
         documents.extend((ROOT / "docs").rglob("*.md"))
         expression = re.compile(r"`((?:src|include|tests|config)/[^` ]+)`")
         for document in documents:

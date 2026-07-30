@@ -247,7 +247,7 @@ paths. `CORE_SRCS` does not include `src/cli/input`, `src/cli/commands`,
 
 This audit remains the point-in-time inventory of control-plane/domain
 ownership residue. It is not a product progress map. Its historical topology
-row IDs are supporting architecture evidence in `PROJECT.md`, not primary
+row IDs are supporting architecture evidence in Git history, not primary
 release tracks. Current state and consuming milestones are owned only by that
 project ledger; these findings do not advance artifact or runtime gates.
 
@@ -273,7 +273,7 @@ major source/generation/KV/sampling/graph/model-target mixed-cell surfaces, but
 global topology closure is still blocked. The highest-risk residue is direct
 operator output and CLI-shaped command/report ownership in `src/model`,
 `src/runtime`, `src/artifact`, `src/gguf`, `src/backend`, `src/tokenizer`, and
-provider/account modules. `PROJECT.md` owns when each finding is removed or
+provider/account modules. `ROADMAP.md` owns when each finding is removed or
 absorbed; this audit does not set Active Next.
 
 ## Follow-up: TOPOLOGY.CELL.MODEL_ARTIFACTS.0

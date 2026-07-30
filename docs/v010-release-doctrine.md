@@ -5,7 +5,7 @@ Status: normative release contract
 
 ## Authority
 
-`PROJECT.md` owns the v0.1.0 product target and active execution sequence. This
+`ROADMAP.md` owns the v0.1.0 product target and active execution sequence. This
 document owns the meaning and closure rules of the release gates. The two
 documents must change together when release scope changes.
 
@@ -105,7 +105,7 @@ dependency reopens every downstream gate that relies on it.
 
 ## Gate State Ownership
 
-`PROJECT.md` is the sole owner of current gate state, milestone state,
+`ROADMAP.md` is the sole owner of current gate state, milestone state,
 dependencies, and Active Next. This doctrine defines what evidence closes each
 gate but does not reproduce the live sequence.
 
@@ -142,6 +142,6 @@ YVEX does not currently claim:
 
 Changing the exact source, full target, DGX Spark CUDA backend, generation
 definition, or required gates requires an explicit scope row plus coordinated
-changes to `PROJECT.md`, this doctrine, focused guards, target facts, and
+changes to `ROADMAP.md`, this doctrine, focused guards, target facts, and
 operator acceptance. A report, command, candidate table, or public claim cannot
 change release scope implicitly.

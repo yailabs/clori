@@ -465,9 +465,23 @@ unless a changed executable contract or guard requires them.
 
 ## 11. Project control and closure
 
-`PROJECT.md` is the sole project-control authority. Stable milestone IDs do
-not disappear or silently change owner. Rank and state remain distinct. There
-is exactly one active milestone and exactly one Active Next.
+`ROADMAP.md` is the sole live macro project-control authority. It owns current
+milestone state, dependency order, release-gate state, explicit non-claims, and
+the single Active Next. Stable milestone IDs do not disappear, get reassigned,
+or silently change owner. A successor or supersession record names structural
+change explicitly.
+
+GitHub issues own bounded implementation problems and acceptance criteria.
+Pull requests own delivery diffs and validation evidence. Decision records
+under `docs/decisions/` own durable architectural and doctrine choices.
+Technical contracts, runbooks, audits, issues, pull requests, boards, and
+decision records do not override the roadmap. There is exactly one active
+macro milestone and exactly one Active Next.
+
+Completed historical rows need not remain in a live wall. Git history and
+frozen audits preserve their exact evidence. Current open obligations and
+stable IDs remain visible in the roadmap, and a project-control change updates
+the roadmap atomically with the accepted implementation evidence.
 
 A closure that changes ownership reports before/after files and counts, semantic
 owners, private/public/global symbols, family budget, naming violations,

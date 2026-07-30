@@ -6,7 +6,7 @@ lifetime; it does not turn an internal runtime boundary into a public
 compatibility promise.
 
 Runtime behavior is governed by [the runtime contract](contract.md). Project
-state and decommission obligations in `PROJECT.md` remain authoritative.
+state and decommission obligations in `ROADMAP.md` remain authoritative.
 
 ## Header Tiers
 

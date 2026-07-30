@@ -74,7 +74,7 @@
 	test-artifact-live-structure test-artifact-live test-transform-ir-live-plan \
 	test-source-payload-live-plan test-source-payload-live test-gguf-artifact-abi \
 	test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural \
-	test-project-ledger test-docs-surface test-surface test-source-ownership \
+	test-project-control test-docs-surface test-surface test-source-ownership \
 	test-repository-layout test-architecture-boundaries smoke check check-docs \
 	check-guardrails clean
 
@@ -430,7 +430,7 @@ REPL_PTY_TEST := tests/repl_pty.sh
 CLIENT_REFOUNDATION_LIVE_TEST := tests/live/client_refoundation.sh
 OPENAI_INTEGRATION_TEST := tests/integration/openai.sh
 
-CURRENT_DOCS := README.md AGENTS.md PROJECT.md MODEL_ARTIFACTS.md NOTICE.md \
+CURRENT_DOCS := README.md AGENTS.md ROADMAP.md CONTRIBUTING.md MODEL_ARTIFACTS.md NOTICE.md \
 	docs/api.md docs/contract.md docs/model-families.md \
 	docs/operator-runbook.md docs/openai-compatibility.md \
 	docs/cli-output-architecture.md \
@@ -439,7 +439,7 @@ CURRENT_DOCS := README.md AGENTS.md PROJECT.md MODEL_ARTIFACTS.md NOTICE.md \
 
 info:
 	@echo "yvex: native C/CUDA verified-artifact inference system"
-	@echo "project_control: PROJECT.md"
+	@echo "project_control: ROADMAP.md"
 	@echo "interface: local client/protocol plus engine library ABI"
 	@echo "library: libyvex.a"
 	@echo "client: ./yvex run|chat|runtime|session|graph|artifact|quant|tokenizer"
@@ -1401,8 +1401,8 @@ test-layout: $(LIBYVEX) $(YVEX_BIN) $(TEST_REFERENCE_OBJS) tests/test_source_lay
 test-code-natural: tests/test_code_natural.sh
 	sh tests/test_code_natural.sh
 
-test-project-ledger: tests/test_project_ledger.sh PROJECT.md
-	sh tests/test_project_ledger.sh
+test-project-control: tests/test_project_control.sh ROADMAP.md CONTRIBUTING.md
+	sh tests/test_project_control.sh
 
 test-docs-surface: tests/test_docs_surface.sh
 	sh tests/test_docs_surface.sh
@@ -1424,7 +1424,7 @@ test-architecture-boundaries: $(LIBYVEX) $(YVEX_BIN) $(YVEXD_BIN) $(TEST_REFEREN
 
 smoke: test-cli
 
-check: check-docs check-guardrails lib cli server test test-cuda-no-nvcc test-gguf-artifact-abi test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural test-project-ledger test-docs-surface test-surface test-source-ownership test-repository-layout test-architecture-boundaries smoke
+check: check-docs check-guardrails lib cli server test test-cuda-no-nvcc test-gguf-artifact-abi test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural test-project-control test-docs-surface test-surface test-source-ownership test-repository-layout test-architecture-boundaries smoke
 	@echo "yvex check: ok"
 
 $(LIBYVEX): $(CORE_OBJS)
@@ -1573,7 +1573,9 @@ check-docs:
 	@test -f README.md
 	@test -f NOTICE.md
 	@test -f AGENTS.md
-	@test -f PROJECT.md
+	@test -f ROADMAP.md
+	@test -f CONTRIBUTING.md
+	@test ! -e PROJECT.md
 	@test -f MODEL_ARTIFACTS.md
 	@test ! -e docs/spine.md
 	@test -f docs/api.md
@@ -1598,14 +1600,14 @@ check-docs:
 		! -name system-target.md \
 		! -name reference-architecture.md \
 		-print | grep .
-	@grep -F "YVEX Project Control" PROJECT.md >/dev/null
-	@grep -F "## 7. Track Registry And Dashboard" PROJECT.md >/dev/null
-	@grep -F "## 8. First-Class Milestone Roadmap" PROJECT.md >/dev/null
-	@grep -F "## 9. Complete Track/Wave Ledger" PROJECT.md >/dev/null
+	@grep -F "YVEX Roadmap" ROADMAP.md >/dev/null
+	@grep -F "## Current sequence" ROADMAP.md >/dev/null
+	@grep -F "Active Next: V010.OPERATOR.COMMAND.ARCHITECTURE.0" ROADMAP.md >/dev/null
+	@grep -F "Contributing to YVEX" CONTRIBUTING.md >/dev/null
 	@grep -E '^# YVEX$$' README.md >/dev/null
 	@grep -F "Transformation IR" README.md >/dev/null
-	@grep -F "PROJECT.md" README.md >/dev/null
-	@sh tests/test_project_ledger.sh >/dev/null
+	@grep -F "ROADMAP.md" README.md >/dev/null
+	@sh tests/test_project_control.sh >/dev/null
 	@grep -F "YVEX System Target" docs/system-target.md >/dev/null
 	@grep -F "Reference Architecture for Verified Transformer Inference" \
 		docs/reference-architecture.md >/dev/null

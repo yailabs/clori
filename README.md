@@ -21,7 +21,7 @@ Start here:
 - [Product topology](#product-topology) for the process and binary boundaries.
 - [What YVEX guarantees](#what-yvex-guarantees) for the execution contract.
 - [Documentation](#documentation) for operator, architecture, and API detail.
-- [`PROJECT.md`](PROJECT.md) for the sole live capability and roadmap authority.
+- [`ROADMAP.md`](ROADMAP.md) for current milestones, gates, and non-claims.
 
 ## Run YVEX
 
@@ -252,8 +252,9 @@ host. YVEX does not call that GPU-resident end-to-end generation.
 
 No physical variant is selected as the release profile merely because it is
 smaller or executable. Evaluation and the full-model benchmark own that later
-decision. Exact artifacts, sizes, identities, and current gates are recorded in
-[`MODEL_ARTIFACTS.md`](MODEL_ARTIFACTS.md) and [`PROJECT.md`](PROJECT.md).
+decision. Exact artifact terminology and admission live in
+[`MODEL_ARTIFACTS.md`](MODEL_ARTIFACTS.md); current gates live in
+[`ROADMAP.md`](ROADMAP.md).
 
 ## Build
 
@@ -325,8 +326,10 @@ and hygiene workflow is in the [common runbook](docs/runbooks/common.md).
 
 ### Track YVEX
 
-- [Project state](PROJECT.md): the sole live milestone, capability, gate, and
+- [Project roadmap](ROADMAP.md): the sole live milestone, gate, non-claim, and
   Active Next authority.
+- [Contributing](CONTRIBUTING.md): issue, change, validation, and pull-request
+  workflow.
 - [Release doctrine](docs/v010-release-doctrine.md): v0.1 gate meanings and
   closure rules.
 
