@@ -1101,7 +1101,7 @@ int yvex_source_render_json(FILE *fp, const yvex_source_report *report)
 static void render_usage(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex source manifest report --family deepseek|qwen|gemma --release v0.1.0 [options]\n");
+        "usage: yvex compile source manifest report --family deepseek|qwen|gemma --release v0.1.0 [options]\n");
 }
 
 /* Purpose: Render source render help from typed facts (`yvex_source_render_help`).

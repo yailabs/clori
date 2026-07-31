@@ -452,10 +452,10 @@ int parse_models_bound_option(const char *command, int arg_count, char **args, i
  * Effects: Writes through CLI I/O only.
  * Failure: Typed refusal; outputs remain defined.
  * Boundary: No capability policy. */
-void print_model_registry_entry_cli(const yvex_model_registry_entry *entry, int selected) {
+void print_model_registry_entry_cli(const yvex_model_registry_entry *entry) {
     if (!entry)
         return;
-    yvex_cli_out_writef(stdout, "%c    %-46s %-10s %-22s %5llu %13llu  %s\n", selected ? '*' : '-',
+    yvex_cli_out_writef(stdout, "%-46s %-10s %-22s %5llu %13llu  %s\n",
                         entry->alias ? entry->alias : "", entry->family ? entry->family : "",
                         entry->artifact_class ? entry->artifact_class : "", entry->tensor_count,
                         entry->known_tensor_bytes, entry->selected_embedding_ready ? "yes" : "no");
@@ -466,12 +466,11 @@ void print_model_registry_entry_cli(const yvex_model_registry_entry *entry, int 
  * Effects: Writes through CLI I/O only.
  * Failure: Typed refusal; outputs remain defined.
  * Boundary: No capability policy. */
-void print_model_registry_entry_audit(const yvex_model_registry_entry *entry, int selected) {
+void print_model_registry_entry_audit(const yvex_model_registry_entry *entry) {
     if (!entry)
         return;
     yvex_cli_out_writef(stdout, "model: %s\n", entry->alias ? entry->alias : "");
     yvex_cli_out_writef(stdout, "path: %s\n", entry->path ? entry->path : "");
-    yvex_cli_out_writef(stdout, "selected: %s\n", selected ? "true" : "false");
     yvex_cli_out_writef(stdout, "family: %s\n", entry->family ? entry->family : "");
     yvex_cli_out_writef(stdout, "model_name: %s\n", entry->model ? entry->model : "");
     yvex_cli_out_writef(stdout, "scope: %s\n", entry->scope ? entry->scope : "");

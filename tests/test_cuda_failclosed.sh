@@ -39,7 +39,7 @@ if grep -E 'yvex_(attention|graph)|cpu_(chunk|probe|reference)' \
 fi
 
 set +e
-"$YVEX_BIN" evidence backend cuda >"$OUT_DIR/backend.out" 2>"$OUT_DIR/backend.err"
+"$YVEX_BIN" inspect backend cuda >"$OUT_DIR/backend.out" 2>"$OUT_DIR/backend.err"
 rc=$?
 set -e
 
@@ -71,7 +71,7 @@ contains "$OUT_DIR/backend.out" "encoded-attention: unsupported (kernel-bundle-a
 contains "$OUT_DIR/backend.out" "status: backend-capabilities"
 
 set +e
-"$YVEX_BIN" graph attention execute --target deepseek4-v4-flash --backend cuda \
+"$YVEX_BIN" execute attention run --target deepseek4-v4-flash --backend cuda \
     --runtime-binding "$OUT_DIR/missing.yvex-runtime-binding" \
     --artifact "$OUT_DIR/missing.gguf" --output json \
     >"$OUT_DIR/graph.out" 2>"$OUT_DIR/graph.err"

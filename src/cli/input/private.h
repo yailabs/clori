@@ -12,6 +12,7 @@
 
 #include "src/cli/io/private.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <yvex/artifact.h>
 #include <yvex/core.h>
@@ -31,6 +32,26 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+struct yvex_operator_descriptor;
+
+#define YVEX_OPERATOR_ARGUMENT_MAX 16u
+
+typedef struct {
+    int help_requested;
+    char message[384];
+    char *argument_storage;
+    const char *arguments[YVEX_OPERATOR_ARGUMENT_MAX];
+    size_t argument_count;
+} yvex_cli_operator_invocation;
+
+int yvex_cli_operator_argv_parse(const struct yvex_operator_descriptor *operation,
+                                 int argc, char **argv, size_t consumed,
+                                 yvex_cli_operator_invocation *out);
+int yvex_cli_operator_slash_parse(const struct yvex_operator_descriptor *operation,
+                                  const char *text,
+                                  yvex_cli_operator_invocation *out);
+void yvex_cli_operator_invocation_close(yvex_cli_operator_invocation *invocation);
 
 /* Shared CLI command, parser, and diagnostic rendering contract. */
 int cli_backend_name_valid(const char *name);

@@ -1029,7 +1029,7 @@ int yvex_runtime_moe_operator_execute(const yvex_moe_operator_request *request,
         if (result) runtime_moe_operator_refuse(result, err);
         return rc;
     }
-    yvex_core_text_copy(result->command, sizeof(result->command), "graph moe execute");
+    yvex_core_text_copy(result->command, sizeof(result->command), "execute moe");
     yvex_core_text_copy(result->target, sizeof(result->target), request->target);
     yvex_core_text_copy(result->backend, sizeof(result->backend),
                         request->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu");
@@ -1083,7 +1083,7 @@ int yvex_runtime_moe_operator_execute(const yvex_moe_operator_request *request,
     if (rc == YVEX_OK)
         rc = yvex_runtime_moe_execute(context, input, &output, &result->execution, err);
     if (rc == YVEX_OK) {
-        yvex_core_text_copy(result->command, sizeof(result->command), "graph moe execute");
+        yvex_core_text_copy(result->command, sizeof(result->command), "execute moe");
         yvex_core_text_copy(result->target, sizeof(result->target), request->target);
         yvex_core_text_copy(result->family, sizeof(result->family),
                             model_view->adapter->family_name);

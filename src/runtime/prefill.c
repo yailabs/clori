@@ -1261,7 +1261,7 @@ static int activation_prefill_operator_publish(
             err, YVEX_ERR_STATE,
             "activation prefill operator facts are incomplete");
     yvex_core_text_copy(
-        result->command, sizeof(result->command), "graph attention execute");
+        result->command, sizeof(result->command), "execute attention run");
     yvex_core_text_copy(
         result->target, sizeof(result->target), request->target);
     yvex_core_text_copy(

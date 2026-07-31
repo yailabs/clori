@@ -10,10 +10,14 @@
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 
+#include <build_commit.h>
+#include <operator/registry.h>
+#include "src/cli/input/private.h"
 #include "src/cli/private.h"
 
 #include <yvex/server.h>
 
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -39,7 +43,6 @@ typedef struct {
     double temperature, top_p, min_p, typical_p;
     int stochastic, seed_present;
 } client_turn_options;
-
 typedef struct {
     char session[YVEX_SERVER_SESSION_NAME_CAP];
     atomic_int done, interrupts, force_exit;
@@ -47,12 +50,10 @@ typedef struct {
     sigset_t previous_mask;
     int ready;
 } client_turn_signals;
-
 typedef struct {
     char *entry[CLIENT_REPL_HISTORY_MAX];
     size_t count;
 } client_repl_history;
-
 typedef struct {
     char name[YVEX_SERVER_SESSION_NAME_CAP];
     char artifact[PATH_MAX];
@@ -61,31 +62,319 @@ typedef struct {
     char backend[8];
     unsigned long long context;
 } client_model_config;
-
 static volatile sig_atomic_t repl_signal_state;
-
-/* Purpose: print the complete compact product grammar without diagnostic catalog walls. */
-static void print_help(FILE *output)
+static int console_status(const char *session_name);
+/* Purpose: emit one bounded string as deterministic JSON without terminal control bytes. */
+static void discovery_json_string(FILE *output, const char *value)
 {
-    fprintf(output,
-            "YVEX local inference\n\n"
-            "  yvex                         enter chat\n"
-            "  yvex chat [--session NAME] [--max-new-tokens N]\n"
-            "                               interactive client\n"
-            "  yvex run [options] TEXT     one streamed turn\n"
-            "  yvex runtime start|stop|status|watch|trace\n"
-            "  yvex session new|list|show|attach|detach|reset|close\n"
-            "  yvex model list|use|show\n"
-            "  yvex artifact show|verify|metadata|tensors|materialize|emit ...\n"
-            "  yvex graph ...\n"
-            "  yvex quant preset|plan|emit|summarize|explain|policy|imatrix ...\n"
-            "  yvex tokenizer show|encode|decode|prompt ...\n"
-            "  yvex source manifest|native ...\n"
-            "  yvex tensor map|collection ...\n"
-            "  yvex evidence target|model|moe|backend|cuda ...\n"
-            "  yvex help | version\n");
+    const unsigned char *cursor = (const unsigned char *)value;
+    fputc('"', output);
+    while (*cursor) {
+        unsigned char byte = *cursor++;
+        if (byte == '"' || byte == '\\') fprintf(output, "\\%c", (int)byte);
+        else if (byte == '\b') fputs("\\b", output);
+        else if (byte == '\f') fputs("\\f", output);
+        else if (byte == '\n') fputs("\\n", output);
+        else if (byte == '\r') fputs("\\r", output);
+        else if (byte == '\t') fputs("\\t", output);
+        else if (byte < 0x20u) fprintf(output, "\\u%04x", (unsigned int)byte);
+        else fputc((int)byte, output);
+    }
+    fputc('"', output);
+}
+/* Purpose: project one delimiter-normalized generated list without exposing its C storage form.
+ * Inputs: output stream, generated metadata, and delimiter. Effects: writes one JSON array.
+ * Failure: bounds each member before rendering. Boundary: discovery formatting only. */
+static void discovery_json_list(FILE *output, const char *value, int delimiter)
+{
+    const char *cursor = value;
+    int first = 1;
+    fputc('[', output);
+    if (strcmp(value, "none")) {
+        while (*cursor) {
+            const char *end = strchr(cursor, delimiter);
+            size_t extent = end ? (size_t)(end - cursor) : strlen(cursor);
+            char item[512];
+            if (extent >= sizeof(item)) extent = sizeof(item) - 1u;
+            memcpy(item, cursor, extent);
+            item[extent] = '\0';
+            if (!first) fputc(',', output);
+            discovery_json_string(output, item);
+            first = 0;
+            if (!end) break;
+            cursor = end + 1;
+        }
+    }
+    fputc(']', output);
+}
+/* Purpose: name one generated classification for human and machine discovery. */
+static const char *visibility_name(yvex_operator_visibility visibility)
+{
+    switch (visibility) {
+    case YVEX_OPERATOR_VISIBILITY_PRODUCT_DEFAULT: return "product-default";
+    case YVEX_OPERATOR_VISIBILITY_PRODUCT_ADVANCED: return "product-advanced";
+    case YVEX_OPERATOR_VISIBILITY_ENGINEERING: return "engineering";
+    case YVEX_OPERATOR_VISIBILITY_AUTOMATION: return "automation";
+    case YVEX_OPERATOR_VISIBILITY_API_ONLY: return "API-only";
+    case YVEX_OPERATOR_VISIBILITY_TEST_ONLY: return "test-only";
+    case YVEX_OPERATOR_VISIBILITY_REMOVED: return "removed";
+    }
+    return "unknown";
+}
+/* Purpose: name one architectural plane without making it a command namespace. */
+static const char *plane_name(yvex_operator_plane plane)
+{
+    static const char *const names[] = {
+        "Compile", "Execute", "Inspect", "Integrate", "Profile", "Run", "System"};
+    return (unsigned int)plane < sizeof(names) / sizeof(names[0]) ? names[plane]
+                                                                  : "Unknown";
+}
+/* Purpose: name one mechanically separated adapter lane. */
+static const char *lane_name(yvex_operator_lane lane)
+{
+    switch (lane) {
+    case YVEX_OPERATOR_LANE_RUNTIME_CLIENT: return "runtime-client";
+    case YVEX_OPERATOR_LANE_OFFLINE_ENGINE: return "offline-engine";
+    case YVEX_OPERATOR_LANE_DAEMON_ENTRYPOINT: return "daemon-entrypoint";
+    case YVEX_OPERATOR_LANE_REPL_LOCAL: return "REPL-local";
+    case YVEX_OPERATOR_LANE_API_ONLY: return "API-only";
+    case YVEX_OPERATOR_LANE_TEST_ONLY: return "test-only";
+    }
+    return "unknown";
+}
+/* Purpose: test whether a descriptor lies below one requested help namespace. */
+static int descriptor_has_prefix(const yvex_operator_descriptor *descriptor,
+                                 size_t count, const char *const *path)
+{
+    size_t index;
+    if (count > descriptor->command_word_count) return 0;
+    for (index = 0u; index < count; ++index)
+        if (strcmp(path[index], descriptor->command_words[index])) return 0;
+    return 1;
+}
+/* Purpose: render compact usage syntax owned by one exact leaf descriptor. */
+static void render_leaf_usage(FILE *output,
+                              const yvex_operator_descriptor *descriptor)
+{
+    size_t index;
+    fprintf(output, "usage: yvex %s", descriptor->command_path);
+    for (index = 0u; index < descriptor->argument_count; ++index) {
+        const yvex_operator_argument_descriptor *argument = &descriptor->arguments[index];
+        if (!strcmp(argument->multiplicity, "many"))
+            fprintf(output, " [%s ...]", argument->name);
+        else if (argument->required)
+            fprintf(output, " %s", argument->name);
+        else
+            fprintf(output, " [%s]", argument->name);
+    }
+    if (descriptor->flag_count) fputs(" [options]", output);
+    fputc('\n', output);
+}
+/* Purpose: render detailed help metadata owned by one exact leaf descriptor. */
+static void render_leaf_help(const yvex_operator_descriptor *descriptor)
+{
+    size_t index;
+    render_leaf_usage(stdout, descriptor);
+    printf("\n%s\n\noperation: %s\nplane: %s\nvisibility: %s\nlane: %s\n",
+           descriptor->summary, descriptor->operation_id, plane_name(descriptor->plane),
+           visibility_name(descriptor->visibility), lane_name(descriptor->lane));
+    if (descriptor->flag_count) {
+        puts("\noptions:");
+        for (index = 0u; index < descriptor->flag_count; ++index) {
+            const yvex_operator_flag_descriptor *flag = &descriptor->flags[index];
+            printf("  %-24s%s%s\n", flag->name, flag->takes_value ? " VALUE" : "",
+                   strcmp(flag->aliases, "none") ? "  (alias available)" : "");
+        }
+    }
+}
+/* Purpose: publish one registry-owned leaf usage line after parser refusal.
+ * Inputs: one admitted operation descriptor. Effects: writes one stderr usage line.
+ * Failure: none after descriptor admission. Boundary: rendering cannot alter parser status. */
+void yvex_client_render_usage_error(const yvex_operator_descriptor *operation)
+{
+    render_leaf_usage(stderr, operation);
+}
+/* Purpose: emit admitted aliases for one discovery operation record. */
+static void render_discovery_aliases(size_t operation_index)
+{
+    size_t index;
+    int first = 1;
+    fputc('[', stdout);
+    for (index = 0u; index < yvex_operator_alias_count; ++index) {
+        if (yvex_operator_aliases[index].operation_index != operation_index) continue;
+        if (!first) fputc(',', stdout);
+        discovery_json_string(stdout, yvex_operator_aliases[index].path);
+        first = 0;
+    }
+    fputc(']', stdout);
+}
+/* Purpose: emit one immutable argument schema for command or slash discovery.
+ * Inputs: generated argument array and extent. Effects: writes one JSON array to stdout.
+ * Failure: none after registry validation. Boundary: descriptors remain the sole authority. */
+static void render_discovery_arguments(
+    const yvex_operator_argument_descriptor *arguments, size_t count)
+{
+    size_t index;
+#define JSON_ARGUMENT_FIELD(name, value) \
+    do { fputs("\"" name "\":", stdout); discovery_json_string(stdout, (value)); } while (0)
+    fputc('[', stdout);
+    for (index = 0u; index < count; ++index) {
+        const yvex_operator_argument_descriptor *argument = &arguments[index];
+        if (index) fputc(',', stdout);
+        fputc('{', stdout); JSON_ARGUMENT_FIELD("name", argument->name);
+        fputc(',', stdout); JSON_ARGUMENT_FIELD("type", argument->value_type);
+        printf(",\"required\":%s,", argument->required ? "true" : "false");
+        JSON_ARGUMENT_FIELD("multiplicity", argument->multiplicity);
+        fputc(',', stdout); JSON_ARGUMENT_FIELD("range", argument->range);
+        fputs(",\"enum_values\":", stdout);
+        discovery_json_list(stdout, argument->enum_values, '|');
+        fputc(',', stdout);
+        JSON_ARGUMENT_FIELD("completion_provider", argument->completion_provider);
+        fputc(',', stdout);
+        JSON_ARGUMENT_FIELD("sensitive_display", argument->sensitive_display);
+        fputc(',', stdout); JSON_ARGUMENT_FIELD("validator", argument->validator);
+        fputc('}', stdout);
+    }
+    fputc(']', stdout);
+#undef JSON_ARGUMENT_FIELD
+}
+/* Purpose: emit one complete descriptor record in discovery schema v1.
+ * Inputs: descriptor index and immutable descriptor. Effects: writes one JSON object to stdout.
+ * Failure: none after registry validation. Boundary: rendering adds no command semantics. */
+static void render_discovery_operation(size_t operation_index,
+                                       const yvex_operator_descriptor *descriptor)
+{
+    size_t index;
+#define JSON_FIELD(name, value) \
+    do { fputs("\"" name "\":", stdout); discovery_json_string(stdout, (value)); } while (0)
+    fputc('{', stdout);
+    printf("\"schema_version\":%u,", descriptor->schema_version);
+    JSON_FIELD("operation_id", descriptor->operation_id);
+    fputc(',', stdout); JSON_FIELD("command_path", descriptor->command_path);
+    fputs(",\"aliases\":", stdout); render_discovery_aliases(operation_index);
+    fputc(',', stdout); JSON_FIELD("visibility", visibility_name(descriptor->visibility));
+    fputc(',', stdout); JSON_FIELD("plane", plane_name(descriptor->plane));
+    fputc(',', stdout); JSON_FIELD("lane", lane_name(descriptor->lane));
+    fputc(',', stdout); JSON_FIELD("summary", descriptor->summary);
+    fputs(",\"arguments\":", stdout);
+    render_discovery_arguments(descriptor->arguments, descriptor->argument_count);
+    fputs(",\"slash_arguments\":", stdout);
+    render_discovery_arguments(descriptor->slash_arguments,
+                               descriptor->slash_argument_count);
+    fputs(",\"flags\":[", stdout);
+    for (index = 0u; index < descriptor->flag_count; ++index) {
+        const yvex_operator_flag_descriptor *flag = &descriptor->flags[index];
+        if (index) fputc(',', stdout);
+        fputc('{', stdout); JSON_FIELD("name", flag->name);
+        fputs(",\"aliases\":", stdout); discovery_json_list(stdout, flag->aliases, '|');
+        fputc(',', stdout); JSON_FIELD("type", flag->value_type);
+        printf(",\"takes_value\":%s,", flag->takes_value ? "true" : "false");
+        printf("\"required\":%s,", flag->required ? "true" : "false");
+        JSON_FIELD("multiplicity", flag->multiplicity);
+        fputc(',', stdout); JSON_FIELD("default_provider", flag->default_provider);
+        fputc(',', stdout); JSON_FIELD("range", flag->range);
+        fputs(",\"enum_values\":", stdout); discovery_json_list(stdout, flag->enum_values, '|');
+        fputs(",\"conflicts\":", stdout); discovery_json_list(stdout, flag->conflicts, '|');
+        fputs(",\"dependencies\":", stdout);
+        discovery_json_list(stdout, flag->dependencies, '|');
+        fputc(',', stdout); JSON_FIELD("environment", flag->environment);
+        fputc(',', stdout); JSON_FIELD("config", flag->config);
+        fputc(',', stdout); JSON_FIELD("protocol_field", flag->protocol_field);
+        fputc(',', stdout); JSON_FIELD("output_interaction", flag->output_interaction);
+        fputc(',', stdout); JSON_FIELD("deprecation", flag->deprecation);
+        fputc(',', stdout); JSON_FIELD("validator", flag->validator);
+        fputc('}', stdout);
+    }
+    fputs("],\"default_providers\":", stdout);
+    discovery_json_list(stdout, descriptor->default_providers, '|');
+    fputs(",\"validators\":", stdout);
+    discovery_json_list(stdout, descriptor->validator_ids, '|');
+    fputs(",\"input_schema\":", stdout); discovery_json_string(stdout, descriptor->input_schema);
+    fputs(",\"result_schema\":", stdout); discovery_json_string(stdout, descriptor->result_schema);
+    fputs(",\"side_effects\":", stdout); discovery_json_string(stdout, descriptor->side_effects);
+    fputs(",\"tty_policy\":", stdout); discovery_json_string(stdout, descriptor->tty_policy);
+    fputs(",\"requirements\":{", stdout); JSON_FIELD("daemon", descriptor->daemon_requirement);
+    fputc(',', stdout); JSON_FIELD("model", descriptor->model_requirement);
+    fputc(',', stdout); JSON_FIELD("artifact", descriptor->artifact_requirement);
+    fputc(',', stdout); JSON_FIELD("backend", descriptor->backend_requirement);
+    fputs("},\"output_schemas\":[", stdout); discovery_json_string(stdout, descriptor->result_schema);
+    fputs("],\"adapter_id\":", stdout); discovery_json_string(stdout, descriptor->adapter_id);
+    fputs(",\"renderer_id\":", stdout); discovery_json_string(stdout, descriptor->renderer_id);
+    fputs(",\"completion_provider\":", stdout);
+    discovery_json_string(stdout, descriptor->completion_provider);
+    fputs(",\"projections\":{\"cli\":", stdout);
+    fputs(descriptor->cli_projection ? "true" : "false", stdout);
+    fputs(",\"slash\":", stdout); discovery_json_string(stdout, descriptor->slash_projection);
+    fputs(",\"protocol\":", stdout); discovery_json_string(stdout, descriptor->protocol_operation);
+    fputs(",\"future_tui\":", stdout); discovery_json_string(stdout, descriptor->future_tui_projection);
+    fputs("},\"deprecation\":", stdout); discovery_json_string(stdout, descriptor->deprecation_state);
+    fputs(",\"superseded_by\":", stdout);
+    discovery_json_list(stdout, descriptor->superseded_by, '|');
+    fputs(",\"test_owner\":", stdout); discovery_json_string(stdout, descriptor->test_owner);
+    fputs(",\"documentation_owner\":", stdout);
+    discovery_json_string(stdout, descriptor->documentation_owner);
+    fputc('}', stdout);
+#undef JSON_FIELD
 }
 
+/* Purpose: emit deterministic machine discovery from compiled immutable descriptors. */
+static void render_discovery_json(void)
+{
+    size_t index;
+    fputs("{\"schema\":", stdout); discovery_json_string(stdout, YVEX_COMMAND_DISCOVERY_SCHEMA);
+    fputs(",\"registry_identity\":", stdout); discovery_json_string(stdout, yvex_operator_registry_identity);
+    fputs(",\"build_commit\":", stdout); discovery_json_string(stdout, YVEX_BUILD_COMMIT);
+    fputs(",\"operations\":[", stdout);
+    for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+        if (index) fputc(',', stdout);
+        render_discovery_operation(index, &yvex_operator_descriptors[index]);
+    }
+    fputs("]}\n", stdout);
+}
+/* Purpose: render root, namespace, leaf, or machine help from the compiled registry.
+ * Inputs: requested path plus visibility and JSON policy. Effects: writes stdout or one refusal.
+ * Failure: returns parser status for an unknown help path. Boundary: immutable discovery only. */
+int yvex_client_render_help_path(size_t path_count, const char *const *path,
+                                 int advanced, int json)
+{
+    const yvex_operator_descriptor *exact = NULL;
+    size_t index, matches = 0u;
+    if (json) {
+        render_discovery_json();
+        return 0;
+    }
+    for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+        const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
+        if (!descriptor->cli_projection || !descriptor_has_prefix(descriptor, path_count, path))
+            continue;
+        if (descriptor->command_word_count == path_count) exact = descriptor;
+        matches++;
+    }
+    if (!matches) {
+        fprintf(stderr, "yvex: unknown help path");
+        for (index = 0u; index < path_count; ++index) fprintf(stderr, " %s", path[index]);
+        fputc('\n', stderr);
+        return 2;
+    }
+    if (exact && matches == 1u) {
+        render_leaf_help(exact);
+        return 0;
+    }
+    puts(path_count ? "YVEX command namespace\n" : "YVEX local inference\n");
+    for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+        const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
+        int visible = path_count != 0u ||
+                      descriptor->visibility == YVEX_OPERATOR_VISIBILITY_PRODUCT_DEFAULT ||
+                      (advanced && (descriptor->visibility == YVEX_OPERATOR_VISIBILITY_PRODUCT_ADVANCED ||
+                                    descriptor->visibility == YVEX_OPERATOR_VISIBILITY_ENGINEERING));
+        if (descriptor->cli_projection && visible &&
+            descriptor_has_prefix(descriptor, path_count, path))
+            printf("  yvex %-42s %s%s\n", descriptor->command_path, descriptor->summary,
+                   descriptor->visibility == YVEX_OPERATOR_VISIBILITY_ENGINEERING ? " [engineering]" : "");
+    }
+    if (!advanced) puts("\nUse `yvex help --advanced` for advanced and engineering commands.");
+    return 0;
+}
 /* Purpose: report one missing/refusing daemon consistently. */
 static int client_error(const yvex_error *err)
 {
@@ -95,7 +384,6 @@ static int client_error(const yvex_error *err)
                         "--runtime-binding BINDING`\n");
     return 1;
 }
-
 /* Purpose: initialize neutral greedy facts and a client-local correlation number.
  * Inputs: request storage and operation. Effects: resets and populates caller storage.
  * Failure: none. Boundary: the daemon remains authority for execution identities. */
@@ -103,28 +391,40 @@ static void request_init(yvex_client_request *request,
                          yvex_client_operation operation)
 {
     static unsigned long long next_request = 1u;
+    yvex_provider_request defaults;
+    yvex_provider_request_default(&defaults);
     memset(request, 0, sizeof(*request));
     request->schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     request->operation = operation;
     request->request_number = next_request++;
-    request->maximum_new_tokens = 128u;
-    request->temperature = 1.0;
-    request->top_p = 1.0;
-    request->typical_p = 1.0;
+    request->maximum_new_tokens = defaults.maximum_output_tokens;
+    request->stochastic = defaults.sampling.stochastic;
+    request->seed_present = defaults.sampling.seed_present;
+    request->seed = defaults.sampling.seed;
+    request->temperature = defaults.sampling.temperature;
+    request->top_k = defaults.sampling.top_k;
+    request->top_p = defaults.sampling.top_p;
+    request->min_p = defaults.sampling.min_p;
+    request->typical_p = defaults.sampling.typical_p;
 }
-
 /* Purpose: initialize the explicit neutral greedy product policy.
  * Inputs: caller-owned policy storage. Effects: replaces its prior contents.
  * Failure: none. Boundary: does not seal or execute a sampling policy. */
 static void turn_options_init(client_turn_options *options)
 {
+    yvex_provider_request defaults;
+    yvex_provider_request_default(&defaults);
     memset(options, 0, sizeof(*options));
-    options->maximum_new_tokens = 128u;
-    options->temperature = 1.0;
-    options->top_p = 1.0;
-    options->typical_p = 1.0;
+    options->maximum_new_tokens = defaults.maximum_output_tokens;
+    options->stochastic = defaults.sampling.stochastic;
+    options->seed_present = defaults.sampling.seed_present;
+    options->seed = defaults.sampling.seed;
+    options->temperature = defaults.sampling.temperature;
+    options->top_k = defaults.sampling.top_k;
+    options->top_p = defaults.sampling.top_p;
+    options->min_p = defaults.sampling.min_p;
+    options->typical_p = defaults.sampling.typical_p;
 }
-
 /* Purpose: parse one unsigned client option with explicit zero admission.
  * Inputs: terminated text, output, and zero policy. Effects: writes output on success.
  * Failure: returns false on range, syntax, or policy error. Boundary: no domain admission. */
@@ -138,7 +438,6 @@ static int parse_u64(const char *text, unsigned long long *value, int allow_zero
     *value = parsed;
     return 1;
 }
-
 /* Purpose: parse one finite binary64 client policy value.
  * Inputs: terminated text and output. Effects: writes output on success.
  * Failure: returns false for malformed or non-finite text. Boundary: policy ranges are checked later. */
@@ -152,7 +451,6 @@ static int parse_double(const char *text, double *value)
     *value = parsed;
     return 1;
 }
-
 /* Purpose: connect, send one typed request, and retain the socket for streaming.
  * Inputs: client output, immutable request, and error output. Effects: opens a local connection.
  * Failure: closes partial ownership and returns the first protocol error. Boundary: no engine call. */
@@ -164,7 +462,6 @@ static int request_open(yvex_client **client,
     if (rc != YVEX_OK) yvex_client_close(client);
     return rc;
 }
-
 /* Purpose: request cancellation over a separate connection while the stream remains owned. */
 static int cancellation_request(const char *session)
 {
@@ -181,7 +478,6 @@ static int cancellation_request(const char *session)
     yvex_client_close(&client);
     return rc == YVEX_OK && message.kind == YVEX_CLIENT_MESSAGE_ACK;
 }
-
 /* Purpose: translate the first SIGINT into cancellation and later SIGINT into REPL exit.
  * Inputs: one live turn signal state. Effects: sends cancellation and updates atomic flags.
  * Failure: retries transient cancellation connection failure until the turn ends. Boundary: signal thread only. */
@@ -208,7 +504,6 @@ static void *turn_signal_main(void *opaque)
     }
     return NULL;
 }
-
 /* Purpose: transfer SIGINT ownership to one bounded cancellation coordinator.
  * Inputs: state storage and exact session name. Effects: blocks signals and starts one thread.
  * Failure: leaves coordination disabled if mask or thread setup fails. Boundary: no generation mutation. */
@@ -231,7 +526,6 @@ static void turn_signals_open(client_turn_signals *state,
     else
         (void)pthread_sigmask(SIG_SETMASK, &state->previous_mask, NULL);
 }
-
 /* Purpose: finish cancellation coordination and restore the caller signal policy.
  * Inputs: initialized coordinator state. Effects: joins its thread and restores the mask.
  * Failure: returns the observed interrupt class. Boundary: owns no daemon cancellation state. */
@@ -335,25 +629,67 @@ static void render_status(const yvex_server_summary *status, int json)
            (double)status->metrics.current_rss_bytes / 1073741824.0);
 }
 
-/* Purpose: request and render one runtime status response. */
-static int runtime_status(int json)
+/* Purpose: fetch one authoritative runtime status response without local reconstruction. */
+static int runtime_summary_fetch(yvex_server_summary *summary, yvex_error *err)
 {
     yvex_client_request request;
     yvex_client_message message;
     yvex_client *client = NULL;
-    yvex_error err;
     int rc;
     request_init(&request, YVEX_CLIENT_OP_RUNTIME_STATUS);
-    rc = request_open(&client, &request, &err);
-    if (rc == YVEX_OK) rc = yvex_client_receive(client, &message, &err);
+    rc = request_open(&client, &request, err);
+    if (rc == YVEX_OK) rc = yvex_client_receive(client, &message, err);
     if (rc == YVEX_OK && message.kind == YVEX_CLIENT_MESSAGE_STATUS)
-        render_status(&message.runtime, json);
+        *summary = message.runtime;
     else if (rc == YVEX_OK) {
-        yvex_error_set(&err, YVEX_ERR_FORMAT, "client.status",
+        yvex_error_set(err, YVEX_ERR_FORMAT, "client.status",
                        "daemon returned an unexpected response");
         rc = YVEX_ERR_FORMAT;
     }
     yvex_client_close(&client);
+    return rc;
+}
+
+/* Purpose: request and render one complete runtime status response. */
+static int runtime_status(int json)
+{
+    yvex_server_summary summary;
+    yvex_error err;
+    int rc = runtime_summary_fetch(&summary, &err);
+    if (rc == YVEX_OK) render_status(&summary, json);
+    return rc == YVEX_OK ? 0 : client_error(&err);
+}
+
+/* Purpose: render only identities of the model actually open in the daemon. */
+static int runtime_model(void)
+{
+    yvex_server_summary summary;
+    yvex_error err;
+    int rc = runtime_summary_fetch(&summary, &err);
+    if (rc == YVEX_OK) {
+        printf("live runtime model\n  target     %s\n  backend    %s\n"
+               "  model      %s\n  variant    %s\n  artifact   %s\n  binding    %s\n",
+               summary.target_id, summary.backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu",
+               summary.runtime_model_identity, summary.physical_variant_identity,
+               summary.artifact_identity, summary.runtime_binding_identity);
+    }
+    return rc == YVEX_OK ? 0 : client_error(&err);
+}
+
+/* Purpose: render only daemon-authoritative placement and process memory facts. */
+static int runtime_memory(void)
+{
+    yvex_server_summary summary;
+    yvex_error err;
+    int rc = runtime_summary_fetch(&summary, &err);
+    if (rc == YVEX_OK) {
+        printf("runtime memory\n  resident host    %llu bytes\n"
+               "  resident device  %llu bytes\n  mapped artifact  %llu bytes\n"
+               "  RSS              %llu bytes\n  peak RSS         %llu bytes\n",
+               summary.metrics.resident_host_bytes, summary.metrics.resident_device_bytes,
+               summary.metrics.mapped_artifact_bytes, summary.metrics.current_rss_bytes,
+               summary.metrics.peak_rss_bytes);
+    }
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
 
@@ -371,10 +707,10 @@ static void render_engine_event(const yvex_server_event *event)
     fflush(stdout);
 }
 
-/* Purpose: subscribe to raw JSONL or the compact operational event view.
- * Inputs: raw-versus-engine choice. Effects: opens a subscription and streams stdout.
+/* Purpose: subscribe to watch, human trace, or canonical JSONL trace projection.
+ * Inputs: zero watch, one human trace, or two JSON trace. Effects: streams stdout.
  * Failure: returns concise protocol refusal after closing the client. Boundary: one event authority. */
-static int runtime_events(int raw)
+static int runtime_events(int projection)
 {
     yvex_client_request request;
     yvex_client_message message;
@@ -382,18 +718,17 @@ static int runtime_events(int raw)
     yvex_error err;
     char json[2048];
     int rc;
-    request_init(&request, raw ? YVEX_CLIENT_OP_RUNTIME_TRACE
-                               : YVEX_CLIENT_OP_RUNTIME_WATCH);
-    request.trace_level = raw ? YVEX_SERVER_TRACE_FULL
-                              : YVEX_SERVER_TRACE_STAGES;
+    request_init(&request, projection ? YVEX_CLIENT_OP_RUNTIME_TRACE
+                                      : YVEX_CLIENT_OP_RUNTIME_WATCH);
+    request.trace_level = projection ? YVEX_SERVER_TRACE_FULL
+                                     : YVEX_SERVER_TRACE_STAGES;
     rc = request_open(&client, &request, &err);
     while (rc == YVEX_OK) {
         rc = yvex_client_receive(client, &message, &err);
         if (rc != YVEX_OK) break;
         if (message.kind != YVEX_CLIENT_MESSAGE_EVENT) continue;
-        if (!raw) render_engine_event(&message.event);
-        else if (yvex_server_event_json(&message.event, json, sizeof(json),
-                                        &err) == YVEX_OK) {
+        if (projection < 2) render_engine_event(&message.event);
+        else if (yvex_server_event_json(&message.event, json, sizeof(json), &err) == YVEX_OK) {
             fputs(json, stdout);
             fflush(stdout);
         }
@@ -433,7 +768,7 @@ static int administration(yvex_client_operation operation,
             printf("%-20s %-10s position=%llu turns=%llu\n",
                    message.session_name,
                    yvex_server_session_state_name(message.session_state),
-                   message.final_position, message.generated_tokens);
+                   message.final_position, message.turn_count);
         else if (message.kind == YVEX_CLIENT_MESSAGE_ACK) {
             if (!render_mode)
                 printf("%s\n", message.reason[0] ? message.reason : "ok");
@@ -770,6 +1105,125 @@ static int repl_switch_session(char current[YVEX_SERVER_SESSION_NAME_CAP],
     return 1;
 }
 
+/* Purpose: resolve one slash spelling from the compiled command registry. */
+static const yvex_operator_descriptor *slash_descriptor(const char *line,
+                                                         const char **argument)
+{
+    const char *end = strchr(line, ' ');
+    size_t extent = end ? (size_t)(end - line) : strlen(line), index;
+    *argument = end ? end + 1 : NULL;
+    while (*argument && **argument == ' ') (*argument)++;
+    if (*argument && !**argument) *argument = NULL;
+    for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+        const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
+        if (strcmp(descriptor->slash_projection, "none") &&
+            strlen(descriptor->slash_projection) == extent &&
+            !memcmp(descriptor->slash_projection, line, extent))
+            return descriptor;
+    }
+    return NULL;
+}
+
+/* Purpose: render the canonical slash projection catalog without a second help list. */
+static void repl_catalog_help(void)
+{
+    size_t index;
+    puts("commands:");
+    for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+        const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
+        if (strcmp(descriptor->slash_projection, "none"))
+            printf("  %-12s %s\n", descriptor->slash_projection, descriptor->summary);
+    }
+}
+
+/* Purpose: execute one registry-selected slash adapter over existing typed operations.
+ * Inputs: slash line, current attachment, and generated-name counter. Effects: bounded admin action.
+ * Failure: invalid arguments leave attachment and daemon state unchanged. Boundary: no string dispatch. */
+static int repl_command(const char *line, char current[YVEX_SERVER_SESSION_NAME_CAP],
+                        unsigned long long *generated_session)
+{
+    const yvex_operator_descriptor *descriptor;
+    yvex_cli_operator_invocation invocation;
+    const char *argument;
+    char generated[YVEX_SERVER_SESSION_NAME_CAP];
+    int result = 1, status;
+    if (line[0] != '/') return 0;
+    descriptor = slash_descriptor(line, &argument);
+    if (!descriptor) {
+        printf("unknown command: %.*s\n", (int)(strchr(line, ' ') ?
+               (size_t)(strchr(line, ' ') - line) : strlen(line)), line);
+        return 1;
+    }
+    status = yvex_cli_operator_slash_parse(descriptor, argument, &invocation);
+    if (status) {
+        printf("invalid arguments for %s: %s\n", descriptor->slash_projection,
+               invocation.message);
+        yvex_cli_operator_invocation_close(&invocation);
+        return 1;
+    }
+    argument = invocation.argument_count ? invocation.arguments[0] : NULL;
+    if (descriptor->lane == YVEX_OPERATOR_LANE_REPL_LOCAL) {
+        result = descriptor->repl_adapter == YVEX_OPERATOR_REPL_QUIT ? 2 : 1;
+        yvex_cli_operator_invocation_close(&invocation);
+        return result;
+    }
+    switch (descriptor->runtime_adapter) {
+    case YVEX_OPERATOR_RUNTIME_HELP:
+        if (invocation.argument_count)
+            (void)yvex_client_render_help_path(invocation.argument_count,
+                                                invocation.arguments, 0, 0);
+        else
+            repl_catalog_help();
+        break;
+    case YVEX_OPERATOR_RUNTIME_CONSOLE_STATUS:
+        (void)console_status(current);
+        break;
+    case YVEX_OPERATOR_RUNTIME_RUNTIME_STATUS:
+        (void)runtime_status(0);
+        break;
+    case YVEX_OPERATOR_RUNTIME_RUNTIME_MODEL:
+        (void)runtime_model();
+        break;
+    case YVEX_OPERATOR_RUNTIME_RUNTIME_MEMORY:
+        (void)runtime_memory();
+        break;
+    case YVEX_OPERATOR_RUNTIME_SESSION_LIST:
+        (void)administration(YVEX_CLIENT_OP_SESSION_LIST, NULL, 1);
+        break;
+    case YVEX_OPERATOR_RUNTIME_SESSION_SHOW:
+        (void)administration(YVEX_CLIENT_OP_SESSION_SHOW, argument ? argument : current, 0);
+        break;
+    case YVEX_OPERATOR_RUNTIME_SESSION_NEW:
+        if (!argument) {
+            (void)snprintf(generated, sizeof(generated), "chat-%llu", (*generated_session)++);
+            argument = generated;
+        }
+        (void)repl_switch_session(current, argument, 1);
+        break;
+    case YVEX_OPERATOR_RUNTIME_SESSION_ATTACH:
+        (void)repl_switch_session(current, argument, 0);
+        break;
+    case YVEX_OPERATOR_RUNTIME_SESSION_DETACH:
+        result = 2;
+        break;
+    case YVEX_OPERATOR_RUNTIME_SESSION_RESET:
+        (void)administration(YVEX_CLIENT_OP_SESSION_RESET, current, 0);
+        break;
+    case YVEX_OPERATOR_RUNTIME_SESSION_CLOSE:
+        (void)administration(YVEX_CLIENT_OP_SESSION_CLOSE, current, 0);
+        result = 3;
+        break;
+    case YVEX_OPERATOR_RUNTIME_SESSION_CANCEL:
+        puts(cancellation_request(current) ? "cancel requested" : "no active turn");
+        break;
+    default:
+        puts("command unavailable in this console");
+        break;
+    }
+    yvex_cli_operator_invocation_close(&invocation);
+    return result;
+}
+
 /* Purpose: run the bounded terminal REPL over one daemon-owned session.
  * Inputs: exact session name and terminal input. Effects: attaches, streams turns, then detaches.
  * Failure: refuses non-TTY use and preserves daemon session state. Boundary: slash commands stay small. */
@@ -816,58 +1270,15 @@ static int chat(const char *session_name, unsigned long long maximum_new_tokens)
             free(line);
             continue;
         }
-        if (!strcmp(line, "/quit")) {
+        if (line[0] == '/') {
+            int command = repl_command(line, current, &generated_session);
             free(line);
-            break;
-        }
-        if (!strcmp(line, "/help")) {
-            puts("/new [name]  /sessions  /attach NAME  /status  /reset  /cancel  /detach  /close  /quit");
-            free(line);
+            if (command == 3) {
+                closed = 1;
+                break;
+            }
+            if (command == 2) break;
             continue;
-        }
-        if (!strcmp(line, "/sessions")) {
-            (void)administration(YVEX_CLIENT_OP_SESSION_LIST, NULL, 1);
-            free(line);
-            continue;
-        }
-        if (!strcmp(line, "/status")) {
-            (void)runtime_status(0);
-            free(line);
-            continue;
-        }
-        if (!strcmp(line, "/reset")) {
-            (void)administration(YVEX_CLIENT_OP_SESSION_RESET, current, 0);
-            free(line);
-            continue;
-        }
-        if (!strcmp(line, "/cancel")) {
-            puts(cancellation_request(current) ? "cancel requested" : "no active turn");
-            free(line);
-            continue;
-        }
-        if (!strncmp(line, "/new", 4u) && (!line[4] || line[4] == ' ')) {
-            char generated[YVEX_SERVER_SESSION_NAME_CAP];
-            const char *next = line[4] ? line + 5 : generated;
-            if (!line[4])
-                (void)snprintf(generated, sizeof(generated), "chat-%llu", generated_session++);
-            (void)repl_switch_session(current, next, 1);
-            free(line);
-            continue;
-        }
-        if (!strncmp(line, "/attach ", 8u)) {
-            (void)repl_switch_session(current, line + 8, 0);
-            free(line);
-            continue;
-        }
-        if (!strcmp(line, "/detach")) {
-            free(line);
-            break;
-        }
-        if (!strcmp(line, "/close")) {
-            (void)administration(YVEX_CLIENT_OP_SESSION_CLOSE, current, 0);
-            free(line);
-            closed = 1;
-            break;
         }
         repl_history_push(&history, line);
         if (generation_turn(current, (const unsigned char *)line,
@@ -891,8 +1302,11 @@ static int chat(const char *session_name, unsigned long long maximum_new_tokens)
 static int chat_command(int argc, char **argv)
 {
     const char *session = "main";
-    unsigned long long maximum_new_tokens = 128u;
+    yvex_provider_request defaults;
+    unsigned long long maximum_new_tokens;
     int index, saw_session = 0, saw_maximum = 0;
+    yvex_provider_request_default(&defaults);
+    maximum_new_tokens = defaults.maximum_output_tokens;
     for (index = 2; index < argc; ++index) {
         if (!strcmp(argv[index], "--session") && !saw_session && index + 1 < argc) {
             session = argv[++index];
@@ -906,35 +1320,6 @@ static int chat_command(int argc, char **argv)
         }
     }
     return chat(session, maximum_new_tokens);
-}
-
-/* Purpose: dispatch the compact session namespace without exposing protocol details.
- * Inputs: process argv. Effects: sends one typed administration operation.
- * Failure: returns parser or daemon status. Boundary: no session registry exists in the client. */
-static int session_command(int argc, char **argv)
-{
-    const char *action = argc > 2 ? argv[2] : NULL;
-    const char *name = argc > 3 ? argv[3] : NULL;
-    if (!action) return 2;
-    if (!strcmp(action, "new")) {
-        if (argc > 4) return 2;
-        return administration(YVEX_CLIENT_OP_SESSION_NEW, name, 0);
-    }
-    if (!strcmp(action, "list")) {
-        if (argc != 3) return 2;
-        return administration(YVEX_CLIENT_OP_SESSION_LIST, NULL, 1);
-    }
-    if (!name || argc != 4) {
-        fprintf(stderr, "yvex: session %s requires NAME\n", action);
-        return 2;
-    }
-    if (!strcmp(action, "show")) return administration(YVEX_CLIENT_OP_SESSION_SHOW, name, 0);
-    if (!strcmp(action, "attach")) return administration(YVEX_CLIENT_OP_SESSION_ATTACH, name, 0);
-    if (!strcmp(action, "detach")) return administration(YVEX_CLIENT_OP_SESSION_DETACH, name, 0);
-    if (!strcmp(action, "reset")) return administration(YVEX_CLIENT_OP_SESSION_RESET, name, 0);
-    if (!strcmp(action, "close")) return administration(YVEX_CLIENT_OP_SESSION_CLOSE, name, 0);
-    fprintf(stderr, "yvex: unknown session action: %s\n", action);
-    return 2;
 }
 
 /* Purpose: parse and execute one complete one-shot policy without inferring strategy.
@@ -1163,38 +1548,58 @@ static int model_config_read(client_model_config *config)
 }
 
 /* Purpose: parse and atomically select one explicit model alias for the next daemon start.
- * Inputs: product model-use argv. Effects: writes only private client configuration.
+ * Inputs: product model-select argv. Effects: writes only private client configuration.
  * Failure: incomplete or malformed facts refuse without replacing the prior selection.
  * Boundary: does not open, verify, materialize, or switch a running model. */
-static int model_use_command(int argc, char **argv)
+static int model_select_command(int argc, char **argv)
 {
     client_model_config config;
+    unsigned int seen = 0u;
     int index;
     memset(&config, 0, sizeof(config));
-    if (argc < 8 || !argv[3][0] || strlen(argv[3]) >= sizeof(config.name) ||
+    if (argc < 14 || !argv[3][0] || strlen(argv[3]) >= sizeof(config.name) ||
         snprintf(config.name, sizeof(config.name), "%s", argv[3]) <= 0)
         return 2;
-    (void)snprintf(config.target, sizeof(config.target), "%s", "deepseek4-v4-flash");
-    (void)snprintf(config.backend, sizeof(config.backend), "%s", "cuda");
-    config.context = 4096u;
     for (index = 4; index < argc; ++index) {
-        if (!strcmp(argv[index], "--artifact") && index + 1 < argc &&
-            strlen(argv[index + 1]) < sizeof(config.artifact))
-            (void)snprintf(config.artifact, sizeof(config.artifact), "%s", argv[++index]);
-        else if (!strcmp(argv[index], "--runtime-binding") && index + 1 < argc &&
-                 strlen(argv[index + 1]) < sizeof(config.binding))
-            (void)snprintf(config.binding, sizeof(config.binding), "%s", argv[++index]);
-        else if (!strcmp(argv[index], "--target") && index + 1 < argc &&
-                 strlen(argv[index + 1]) < sizeof(config.target))
-            (void)snprintf(config.target, sizeof(config.target), "%s", argv[++index]);
-        else if (!strcmp(argv[index], "--backend") && index + 1 < argc &&
-                 strlen(argv[index + 1]) < sizeof(config.backend))
-            (void)snprintf(config.backend, sizeof(config.backend), "%s", argv[++index]);
-        else if (!strcmp(argv[index], "--context") && index + 1 < argc) {
+        if (!strcmp(argv[index], "--artifact") && !(seen & 1u) && index + 1 < argc &&
+            strlen(argv[index + 1]) < sizeof(config.artifact)) {
+            if (snprintf(config.artifact, sizeof(config.artifact), "%s",
+                         argv[++index]) <= 0)
+                return 2;
+            seen |= 1u;
+        }
+        else if (!strcmp(argv[index], "--runtime-binding") && !(seen & 2u) &&
+                 index + 1 < argc &&
+                 strlen(argv[index + 1]) < sizeof(config.binding)) {
+            if (snprintf(config.binding, sizeof(config.binding), "%s",
+                         argv[++index]) <= 0)
+                return 2;
+            seen |= 2u;
+        }
+        else if (!strcmp(argv[index], "--target") && !(seen & 4u) &&
+                 index + 1 < argc &&
+                 strlen(argv[index + 1]) < sizeof(config.target)) {
+            if (snprintf(config.target, sizeof(config.target), "%s",
+                         argv[++index]) <= 0)
+                return 2;
+            seen |= 4u;
+        }
+        else if (!strcmp(argv[index], "--backend") && !(seen & 8u) &&
+                 index + 1 < argc &&
+                 strlen(argv[index + 1]) < sizeof(config.backend)) {
+            if (snprintf(config.backend, sizeof(config.backend), "%s",
+                         argv[++index]) <= 0)
+                return 2;
+            seen |= 8u;
+        }
+        else if (!strcmp(argv[index], "--context") && !(seen & 16u) &&
+                 index + 1 < argc) {
             if (!parse_u64(argv[++index], &config.context, 0)) return 2;
+            seen |= 16u;
         } else return 2;
     }
-    if (!config.name[0] || config.artifact[0] != '/' || config.binding[0] != '/' ||
+    if (seen != 31u || !config.name[0] || config.artifact[0] != '/' ||
+        config.binding[0] != '/' ||
         (strcmp(config.backend, "cpu") && strcmp(config.backend, "cuda")) ||
         !config.target[0])
         return 2;
@@ -1215,8 +1620,9 @@ static int model_config_show(void)
     if (!model_config_read(&config)) {
         fprintf(stderr,
                 "yvex: no selected model\n"
-                "hint: use `yvex model use NAME --artifact FILE "
-                "--runtime-binding FILE`\n");
+                "hint: use `yvex model select NAME --artifact FILE "
+                "--runtime-binding FILE --target TARGET --backend cpu|cuda "
+                "--context TOKENS`\n");
         return 1;
     }
     printf("%-20s backend=%s context=%llu\n  artifact=%s\n  binding=%s\n",
@@ -1276,7 +1682,10 @@ static int runtime_start(int argc, char **argv)
     if (argc > 3) return exec_sibling("yvexd", argc, argv, 3);
     if (!model_config_read(&config)) {
         fprintf(stderr,
-                "yvex: no selected model\nhint: use `yvex model use NAME --artifact FILE --runtime-binding FILE`\n");
+                "yvex: no selected model\n"
+                "hint: use `yvex model select NAME --artifact FILE "
+                "--runtime-binding FILE --target TARGET --backend cpu|cuda "
+                "--context TOKENS`\n");
         return 1;
     }
     (void)snprintf(context, sizeof(context), "%llu", config.context);
@@ -1295,61 +1704,292 @@ static int runtime_start(int argc, char **argv)
     return exec_sibling_vector("yvexd", arguments);
 }
 
-/* Purpose: dispatch only the runtime-client lane of the unified yvex grammar.
- * Inputs: process argv not claimed by the offline route table. Effects: selects one protocol/admin path.
- * Failure: returns stable parser or runtime status. Boundary: it cannot enter an offline engine handler. */
-int yvex_client_dispatch(int argc, char **argv)
+/* Purpose: render registry-owned help arguments after generic syntax admission. */
+static int help_command(int argc, char **argv, size_t consumed)
 {
-    const char *command = argc > 1 ? argv[1] : "chat";
-    if (!strcmp(command, "help") || !strcmp(command, "--help") ||
-        !strcmp(command, "-h")) {
-        if (!strcmp(command, "help") && argc != 2) {
-            fprintf(stderr, "yvex: unknown help topic: %s\n", argv[2]);
-            return 2;
+    const char *path[16];
+    size_t count = 0u, index;
+    int advanced = 0, json = 0;
+    for (index = consumed + 1u; index < (size_t)argc; ++index) {
+        if (!strcmp(argv[index], "--advanced")) advanced = 1;
+        else if (!strcmp(argv[index], "--json")) json = 1;
+        else if (strcmp(argv[index], "--help") && strcmp(argv[index], "-h")) {
+            if (count == sizeof(path) / sizeof(path[0])) return 2;
+            path[count++] = argv[index];
         }
-        print_help(stdout);
-        return 0;
     }
-    if (!strcmp(command, "version") || !strcmp(command, "--version")) {
-        printf("yvex %s protocol=%u\n", yvex_version_string(),
-               YVEX_LOCAL_PROTOCOL_VERSION);
-        return 0;
-    }
-    if (!strcmp(command, "chat")) {
-        return chat_command(argc, argv);
-    }
-    if (!strcmp(command, "run")) {
-        return run_command(argc, argv);
-    }
-    if (!strcmp(command, "runtime")) {
-        const char *action = argc > 2 ? argv[2] : NULL;
-        if (!action) return 2;
-        if (!strcmp(action, "start")) return runtime_start(argc, argv);
-        if (!strcmp(action, "status")) {
-            if (argc != 3 && !(argc == 4 && !strcmp(argv[3], "--json"))) return 2;
-            return runtime_status(argc == 4);
-        }
-        if (!strcmp(action, "watch")) {
-            if (argc != 3) return 2;
-            return runtime_events(0);
-        }
-        if (!strcmp(action, "trace")) {
-            if (argc != 3 && !(argc == 4 && !strcmp(argv[3], "--follow"))) return 2;
-            return runtime_events(1);
-        }
-        if (!strcmp(action, "stop")) {
-            if (argc != 3) return 2;
-            return administration(YVEX_CLIENT_OP_RUNTIME_STOP, NULL, 0);
-        }
+    if (json && (advanced || count)) {
+        fprintf(stderr, "yvex: help --json is the complete deterministic discovery document\n");
         return 2;
     }
-    if (!strcmp(command, "session")) return session_command(argc, argv);
-    if (!strcmp(command, "model")) {
-        if (argc == 3 && (!strcmp(argv[2], "show") || !strcmp(argv[2], "list")))
-            return model_config_show();
-        if (argc >= 4 && !strcmp(argv[2], "use")) return model_use_command(argc, argv);
-        return 2;
+    return yvex_client_render_help_path(count, path, advanced, json);
+}
+
+enum { COMPLETION_CANDIDATE_CAP = 256, COMPLETION_TEXT_CAP = 128 };
+
+typedef struct {
+    char text[COMPLETION_CANDIDATE_CAP][COMPLETION_TEXT_CAP];
+    size_t count;
+} completion_candidates;
+/* Purpose: admit only operator-visible descriptors to generated interactive completion. */
+static int completion_visible(const yvex_operator_descriptor *descriptor)
+{
+    return descriptor->cli_projection &&
+           descriptor->visibility != YVEX_OPERATOR_VISIBILITY_REMOVED &&
+           descriptor->visibility != YVEX_OPERATOR_VISIBILITY_API_ONLY &&
+           descriptor->visibility != YVEX_OPERATOR_VISIBILITY_TEST_ONLY;
+}
+
+/* Purpose: compare one command prefix against one immutable descriptor path. */
+static int completion_prefix_matches(const yvex_operator_descriptor *descriptor,
+                                     size_t count, const char *const *words)
+{
+    size_t index;
+    if (count > descriptor->command_word_count) return 0;
+    for (index = 0u; index < count; ++index)
+        if (strcmp(descriptor->command_words[index], words[index])) return 0;
+    return 1;
+}
+/* Purpose: append one unique shell-safe registry token to a bounded completion set. */
+static void completion_add(completion_candidates *candidates, const char *value)
+{
+    const unsigned char *cursor = (const unsigned char *)value;
+    size_t index;
+    if (!value[0] || strlen(value) >= COMPLETION_TEXT_CAP) return;
+    while (*cursor) {
+        if (!(isalnum(*cursor) || strchr("._:/@+-", *cursor))) return;
+        cursor++;
     }
-    fprintf(stderr, "yvex: unknown command: %s\nhint: use `yvex help`\n", command);
+    for (index = 0u; index < candidates->count; ++index)
+        if (!strcmp(candidates->text[index], value)) return;
+    if (candidates->count >= COMPLETION_CANDIDATE_CAP) return;
+    (void)snprintf(candidates->text[candidates->count], COMPLETION_TEXT_CAP, "%s", value);
+    candidates->count++;
+}
+
+/* Purpose: append each member of one generated pipe-delimited metadata set. */
+static void completion_add_metadata(completion_candidates *candidates, const char *values)
+{
+    const char *cursor = values;
+    if (!strcmp(values, "none")) return;
+    while (*cursor) {
+        const char *end = strchr(cursor, '|');
+        size_t extent = end ? (size_t)(end - cursor) : strlen(cursor);
+        char item[COMPLETION_TEXT_CAP];
+        if (extent < sizeof(item)) {
+            memcpy(item, cursor, extent);
+            item[extent] = '\0';
+            completion_add(candidates, item);
+        }
+        if (!end) break;
+        cursor = end + 1;
+    }
+}
+/* Purpose: collect subcommands, flags, aliases, and enum values for one exact prefix.
+ * Inputs: immutable command prefix and compiled descriptors. Effects: none.
+ * Failure: omits unsafe or over-capacity candidates. Boundary: no dynamic provider is invoked. */
+static completion_candidates completion_collect(size_t prefix_count,
+                                                const char *const *prefix)
+{
+    completion_candidates candidates = {{{0}}, 0u};
+    size_t descriptor_index;
+    for (descriptor_index = 0u; descriptor_index < yvex_operator_descriptor_count;
+         ++descriptor_index) {
+        const yvex_operator_descriptor *descriptor =
+            &yvex_operator_descriptors[descriptor_index];
+        size_t index;
+        if (!completion_visible(descriptor) ||
+            !completion_prefix_matches(descriptor, prefix_count, prefix))
+            continue;
+        if (descriptor->command_word_count > prefix_count) {
+            completion_add(&candidates, descriptor->command_words[prefix_count]);
+            continue;
+        }
+        for (index = 0u; index < descriptor->flag_count; ++index) {
+            completion_add(&candidates, descriptor->flags[index].name);
+            completion_add_metadata(&candidates, descriptor->flags[index].aliases);
+        }
+        for (index = 0u; index < descriptor->argument_count; ++index)
+            completion_add_metadata(&candidates, descriptor->arguments[index].enum_values);
+    }
+    return candidates;
+}
+
+/* Purpose: emit one shell case label and its finite registry-derived candidate vocabulary. */
+static void completion_emit_case(FILE *output, const char *shell,
+                                 size_t prefix_count, const char *const *prefix)
+{
+    completion_candidates candidates = completion_collect(prefix_count, prefix);
+    size_t index;
+    if (!candidates.count) return;
+    if (!strcmp(shell, "fish")) fputs("    case '", output);
+    else fputs("    '", output);
+    for (index = 0u; index < prefix_count; ++index)
+        fprintf(output, "%s%s", index ? " " : "", prefix[index]);
+    if (!strcmp(shell, "fish")) fputs("'\n      set candidates", output);
+    else fputs("') candidates='", output);
+    for (index = 0u; index < candidates.count; ++index)
+        fprintf(output, " %s", candidates.text[index]);
+    if (!strcmp(shell, "fish")) fputc('\n', output);
+    else fputs(" ' ;;\n", output);
+}
+/* Purpose: emit every unique command-prefix case from immutable compiled descriptors.
+ * Inputs: output stream and shell grammar. Effects: writes deterministic completion cases.
+ * Failure: none after registry validation. Boundary: does not execute completion providers. */
+static void completion_emit_cases(FILE *output, const char *shell)
+{
+    size_t descriptor_index, prefix_count, prior;
+    for (descriptor_index = 0u; descriptor_index < yvex_operator_descriptor_count;
+         ++descriptor_index) {
+        const yvex_operator_descriptor *descriptor =
+            &yvex_operator_descriptors[descriptor_index];
+        if (!completion_visible(descriptor)) continue;
+        for (prefix_count = 0u; prefix_count <= descriptor->command_word_count;
+             ++prefix_count) {
+            int seen = 0;
+            for (prior = 0u; prior < descriptor_index && !seen; ++prior) {
+                const yvex_operator_descriptor *candidate =
+                    &yvex_operator_descriptors[prior];
+                if (completion_visible(candidate) &&
+                    candidate->command_word_count >= prefix_count &&
+                    completion_prefix_matches(candidate, prefix_count,
+                                              descriptor->command_words))
+                    seen = 1;
+            }
+            if (!seen)
+                completion_emit_case(output, shell, prefix_count,
+                                     descriptor->command_words);
+        }
+    }
+}
+/* Purpose: generate one context-aware shell completion script from compiled descriptors.
+ * Inputs: admitted completion command arguments. Effects: writes a script or stderr refusal.
+ * Failure: returns parser status for unsupported shell. Boundary: completion never executes a model. */
+static int completion_command(int argc, char **argv, size_t consumed)
+{
+    const char *shell = consumed + 1u < (size_t)argc ? argv[consumed + 1u] : NULL;
+    if (!shell) return 2;
+    if (!strcmp(shell, "bash")) {
+        fputs("_yvex_complete() {\n"
+              "  local cur=${COMP_WORDS[COMP_CWORD]} path='' candidates=''\n"
+              "  if (( COMP_CWORD > 1 )); then "
+              "path=${COMP_WORDS[*]:1:$((COMP_CWORD-1))}; fi\n"
+              "  case \"$path\" in\n", stdout);
+        completion_emit_cases(stdout, shell);
+        fputs("  esac\n  COMPREPLY=( $(compgen -W \"$candidates\" -- \"$cur\") )\n"
+              "}\ncomplete -F _yvex_complete yvex\n", stdout);
+        return 0;
+    }
+    if (!strcmp(shell, "zsh")) {
+        fputs("#compdef yvex\n_yvex_complete() {\n"
+              "  local path='' candidates=''\n"
+              "  if (( CURRENT > 2 )); then path=${(j: :)words[2,$((CURRENT-1))]}; fi\n"
+              "  case \"$path\" in\n", stdout);
+        completion_emit_cases(stdout, shell);
+        fputs("  esac\n  compadd -- ${(z)candidates}\n}\ncompdef _yvex_complete yvex\n", stdout);
+        return 0;
+    }
+    if (!strcmp(shell, "fish")) {
+        fputs("function __yvex_candidates\n"
+              "  set -l tokens (commandline -opc)\n"
+              "  set -e tokens[1]\n"
+              "  set -l path (string join ' ' $tokens)\n"
+              "  set -l candidates\n"
+              "  switch $path\n", stdout);
+        completion_emit_cases(stdout, shell);
+        fputs("  end\n  printf '%s\\n' $candidates\nend\n"
+              "complete -c yvex -f -a '(__yvex_candidates)'\n", stdout);
+        return 0;
+    }
+    fprintf(stderr, "yvex: completion shell must be bash, zsh, or fish\n");
+    return 2;
+}
+/* Purpose: retrieve and render one server-composed console snapshot for the attached session.
+ * Inputs: selected session name. Effects: performs one protocol request and writes compact output.
+ * Failure: returns typed connection or response status. Boundary: no client-composed state truth. */
+static int console_status(const char *session_name)
+{
+    yvex_client_request request;
+    yvex_client_message message;
+    yvex_client *client = NULL;
+    yvex_error err;
+    int rc;
+    request_init(&request, YVEX_CLIENT_OP_CONSOLE_STATUS);
+    (void)snprintf(request.session_name, sizeof(request.session_name), "%s", session_name);
+    rc = request_open(&client, &request, &err);
+    if (rc == YVEX_OK) rc = yvex_client_receive(client, &message, &err);
+    if (rc == YVEX_OK && message.kind == YVEX_CLIENT_MESSAGE_CONSOLE_STATUS) {
+        printf("runtime %s · model %s · backend %s\n"
+               "session %s · %s · position %llu · turns %llu · context %llu/%llu",
+               message.console.runtime_ready ? "ready" : "not ready",
+               message.console.live_model_identity,
+               message.console.backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu",
+               message.console.session_name,
+               message.console.attached ? "attached" : "detached",
+               message.console.position, message.console.turn_count,
+               message.console.context_used, message.console.context_capacity);
+        if (message.console.kv_used_available)
+            printf(" · KV %llu bytes\n", message.console.kv_used_bytes);
+        else
+            puts(" · KV unavailable");
+    } else if (rc == YVEX_OK) {
+        yvex_error_set(&err, YVEX_ERR_FORMAT, "client.console-status",
+                       "daemon returned an unexpected console status response");
+        rc = YVEX_ERR_FORMAT;
+    }
+    yvex_client_close(&client);
+    return rc == YVEX_OK ? 0 : client_error(&err);
+}
+
+/* Purpose: dispatch one generated runtime adapter without command-string comparisons.
+ * Inputs: one admitted runtime-client descriptor and original argv. Effects: typed client operation.
+ * Failure: stable parser, configuration, connection, or protocol status. Boundary: no engine fallback. */
+int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
+                         char **argv, size_t consumed)
+{
+    const char *name = consumed + 1u < (size_t)argc ? argv[consumed + 1u] : NULL;
+    switch (operation->runtime_adapter) {
+    case YVEX_OPERATOR_RUNTIME_CHAT: return chat_command(argc, argv);
+    case YVEX_OPERATOR_RUNTIME_RUN: return run_command(argc, argv);
+    case YVEX_OPERATOR_RUNTIME_RUNTIME_START: return runtime_start(argc, argv);
+    case YVEX_OPERATOR_RUNTIME_RUNTIME_STATUS:
+        return runtime_status(argc > 3 && !strcmp(argv[3], "--json"));
+    case YVEX_OPERATOR_RUNTIME_RUNTIME_MODEL: return runtime_model();
+    case YVEX_OPERATOR_RUNTIME_RUNTIME_MEMORY: return runtime_memory();
+    case YVEX_OPERATOR_RUNTIME_RUNTIME_WATCH: return runtime_events(0);
+    case YVEX_OPERATOR_RUNTIME_RUNTIME_TRACE:
+        return runtime_events(argc > 3 && !strcmp(argv[3], "--json") ? 2 : 1);
+    case YVEX_OPERATOR_RUNTIME_RUNTIME_STOP:
+        return administration(YVEX_CLIENT_OP_RUNTIME_STOP, NULL, 0);
+    case YVEX_OPERATOR_RUNTIME_SESSION_NEW:
+        return administration(YVEX_CLIENT_OP_SESSION_NEW, name, 0);
+    case YVEX_OPERATOR_RUNTIME_SESSION_LIST:
+        return administration(YVEX_CLIENT_OP_SESSION_LIST, NULL, 1);
+    case YVEX_OPERATOR_RUNTIME_SESSION_SHOW:
+        return administration(YVEX_CLIENT_OP_SESSION_SHOW, name, 0);
+    case YVEX_OPERATOR_RUNTIME_SESSION_ATTACH:
+        return administration(YVEX_CLIENT_OP_SESSION_ATTACH, name, 0);
+    case YVEX_OPERATOR_RUNTIME_SESSION_DETACH:
+        return administration(YVEX_CLIENT_OP_SESSION_DETACH, name, 0);
+    case YVEX_OPERATOR_RUNTIME_SESSION_RESET:
+        return administration(YVEX_CLIENT_OP_SESSION_RESET, name, 0);
+    case YVEX_OPERATOR_RUNTIME_SESSION_CLOSE:
+        return administration(YVEX_CLIENT_OP_SESSION_CLOSE, name, 0);
+    case YVEX_OPERATOR_RUNTIME_SESSION_CANCEL:
+        puts(cancellation_request(name) ? "cancel requested" : "no active turn");
+        return 0;
+    case YVEX_OPERATOR_RUNTIME_MODEL_SELECTED: return model_config_show();
+    case YVEX_OPERATOR_RUNTIME_MODEL_SELECT: return model_select_command(argc, argv);
+    case YVEX_OPERATOR_RUNTIME_HELP: return help_command(argc, argv, consumed);
+    case YVEX_OPERATOR_RUNTIME_COMPLETION: return completion_command(argc, argv, consumed);
+    case YVEX_OPERATOR_RUNTIME_VERSION:
+        printf("yvex %s protocol=%u registry=%s commit=%s\n", yvex_version_string(),
+               YVEX_LOCAL_PROTOCOL_VERSION, yvex_operator_registry_identity,
+               YVEX_BUILD_COMMIT);
+        return 0;
+    case YVEX_OPERATOR_RUNTIME_CONSOLE_STATUS: return console_status(name ? name : "main");
+    case YVEX_OPERATOR_RUNTIME_COUNT: break;
+    }
+    fprintf(stderr, "yvex: unbound runtime adapter: %s\n", operation->adapter_id);
     return 2;
 }

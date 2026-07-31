@@ -138,6 +138,9 @@ typedef struct {
     int completed;
 } yvex_provider_output;
 
+void yvex_provider_sampling_default(yvex_provider_sampling *sampling);
+void yvex_provider_request_default(yvex_provider_request *request);
+
 const char *yvex_provider_role_name(yvex_provider_role role);
 const char *yvex_provider_finish_name(yvex_provider_finish_class finish);
 

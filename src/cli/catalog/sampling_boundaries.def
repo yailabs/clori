@@ -1,6 +1,0 @@
-"bounded sampling is not real vocabulary sampling"
-"bounded sampling is not full model generation"
-"bounded sampling does not append tokens"
-"bounded sampling does not implement stochastic sampling"
-"bounded sampling is not benchmark evidence"
-"bounded sampling is not release readiness"

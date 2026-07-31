@@ -248,39 +248,47 @@ fi
 if rg -n "$backend_digest_alias_pattern" src/runtime src/cli; then
     fail "deprecated output_digest acquired backend-specific semantics"
 fi
-if rg -n '"output_digest"|^[[:space:]]*output_digest[[:space:]]*$' \
-    src/cli/render/graph.c src/cli/catalog/graph_fields.def; then
+if rg -n '"output_digest"' src/cli/render/graph.c; then
     fail "deprecated output_digest remains exposed by the operator surface"
 fi
 if rg -w output_digest include/yvex/internal/runtime.h src/runtime/graph.c >/dev/null; then
     fail "deprecated output_digest remains in the runtime result contract"
 fi
 
-# Every typed attention renderer key is registered exactly once in the
-# machine-readable graph field catalog. The catalog may retain fields owned by
-# other graph reports, but it cannot omit or duplicate an operator fact.
-attention_render_fields=$(
-    sed -nE 's/.*ATTENTION_(FIELD|TIMING|BENCHMARK_FIELD)\("([^"]+)".*/\2/p' \
-        src/cli/render/graph.c | LC_ALL=C sort -u
-)
-attention_catalog_duplicates=$(
-    LC_ALL=C sort src/cli/catalog/graph_fields.def | uniq -d
-)
-[ -z "$attention_catalog_duplicates" ] || {
-    printf '%s\n' "$attention_catalog_duplicates" >&2
-    fail "graph field catalog contains duplicate keys"
-}
-attention_catalog_missing=$(
-    printf '%s\n' "$attention_render_fields" |
-        while IFS= read -r field; do
-            rg -x -F "$field" src/cli/catalog/graph_fields.def >/dev/null ||
-                printf '%s\n' "$field"
-        done
-)
-[ -z "$attention_catalog_missing" ] || {
-    printf '%s\n' "$attention_catalog_missing" >&2
-    fail "attention renderer field is absent from the graph field catalog"
-}
+# Typed attention facts remain at their renderer owner. A key may appear in
+# distinct report projections, but no historical .def catalog shadows them.
+attention_render_fields=$(sed -nE \
+    's/.*ATTENTION_(FIELD|TIMING|BENCHMARK_FIELD)\("([^"]+)".*/\2/p' \
+    src/cli/render/graph.c | wc -l)
+[ "$attention_render_fields" -gt 0 ] || fail "attention renderer has no typed fields"
+
+# The command system has one reviewable source and one generated immutable
+# projection. No route table, slash catalog, or retired executable is a second
+# semantic authority.
+[ -f config/operator/registry.json ] || fail "canonical operator registry is missing"
+[ -f tools/generate_operator_registry.py ] || fail "operator registry generator is missing"
+[ -f build/generated/operator/registry.c ] || fail "generated operator descriptors are missing"
+[ -f build/obj/generated/operator/registry.o ] || fail "compiled operator descriptors are missing"
+[ ! -d src/cli/catalog ] || fail "orphan CLI catalogs remain"
+registry_sources=$(find config -type f -name '*registry*.json' -path '*/operator/*' | wc -l)
+[ "$registry_sources" -eq 1 ] || fail "operator command registry source count is not one"
+if rg -n 'offline_routes|runtime_routes|command_routes' src/cli; then
+    fail "handwritten command route table remains"
+fi
+if rg -n 'strcmp\([^,]+,[[:space:]]*"/(help|status|runtime|model|memory|sessions|session|new|attach|detach|reset|close|cancel)' \
+    src/cli; then
+    fail "independent slash-command semantic parser remains"
+fi
+if rg -n 'yvex-dev|yvex-openai|"eval"|"bench"' config/operator/registry.json; then
+    fail "operator registry exposes retired or unavailable products"
+fi
+if nm -u build/obj/generated/operator/registry.o | grep . >/dev/null; then
+    fail "generated operator descriptors depend on executable behavior"
+fi
+if rg -n 'yvex_(artifact|backend|generation|graph|protocol|runtime|server)_|malloc\(|fopen\(' \
+    build/generated/operator/registry.c; then
+    fail "generated operator descriptors contain domain logic or resource behavior"
+fi
 
 for reachability_contract in \
     '### Executable reachability' \

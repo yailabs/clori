@@ -11,6 +11,7 @@
 #include "src/server/private.h"
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,8 +75,15 @@ enum {
     TAG_SESSION_COUNT,
     TAG_RUNTIME_REQUEST_COUNT,
     TAG_RUNTIME_FLAGS,
+    TAG_PREFILL_CHUNK_TOKENS,
+    TAG_RUNTIME_MAXIMUM_NEW_TOKENS,
+    TAG_RUNTIME_MAXIMUM_OUTPUT_BYTES,
+    TAG_RUNTIME_MAXIMUM_SESSIONS,
     TAG_METRICS = 80,
     TAG_OPENAI_PORT,
+    TAG_RUNTIME_QUEUE_CAPACITY,
+    TAG_RUNTIME_OPENAI_TIMEOUT,
+    TAG_RUNTIME_TRACE_LEVEL,
     TAG_EVENT_SEQUENCE = 96,
     TAG_EVENT_WALL_TIME,
     TAG_EVENT_MONOTONIC_TIME,
@@ -107,7 +115,29 @@ enum {
     TAG_EVENT_PROVIDER_ADAPTER,
     TAG_EVENT_PROVIDER_REQUEST_ID,
     TAG_EVENT_EXTERNAL_CORRELATION_ID,
-    TAG_FAILURE_CLASS
+    TAG_FAILURE_CLASS,
+    TAG_TURN_COUNT,
+    TAG_CONTEXT_USED,
+    TAG_KV_USED_BYTES,
+    TAG_GENERATION_PHASE,
+    TAG_CANCELLATION_CLASS,
+    TAG_STREAM_CHANNEL,
+    TAG_PUBLICATION_SECONDS,
+    TAG_MESSAGE_AVAILABILITY_FLAGS,
+    TAG_CONSOLE_FLAGS,
+    TAG_CONSOLE_BACKEND,
+    TAG_CONSOLE_SESSION_STATE,
+    TAG_CONSOLE_POSITION,
+    TAG_CONSOLE_TURN_COUNT,
+    TAG_CONSOLE_CONTEXT_CAPACITY,
+    TAG_CONSOLE_CONTEXT_USED,
+    TAG_CONSOLE_KV_USED_BYTES,
+    TAG_CONSOLE_PHASE,
+    TAG_CONSOLE_CANCELLATION,
+    TAG_CONSOLE_LIVE_MODEL_ID,
+    TAG_CONSOLE_VARIANT_ID,
+    TAG_CONSOLE_SESSION_NAME,
+    TAG_CONSOLE_SELECTED_MODEL_ID
 };
 typedef struct {
     unsigned char *data;
@@ -116,13 +146,13 @@ typedef struct {
 typedef struct {
     const unsigned char *data;
     unsigned long long count, offset;
-    uint64_t seen[2];
+    uint64_t seen[3];
 } wire_reader;
 struct yvex_client {
     int fd;
 };
 _Static_assert(sizeof(double) == 8u, "local protocol requires binary64 double");
-_Static_assert(TAG_FAILURE_CLASS < 128u,
+_Static_assert(TAG_CONSOLE_SELECTED_MODEL_ID < 192u,
                "known protocol tags must fit the duplicate-field set");
 /* Purpose: publish one protocol refusal without preserving parser-local state. */
 static int protocol_refuse(yvex_error *err, yvex_status status,
@@ -211,6 +241,7 @@ static int writer_u64(wire_writer *writer, unsigned int tag,
 static int writer_double(wire_writer *writer, unsigned int tag, double value)
 {
     uint64_t bits;
+    if (!isfinite(value)) return 0;
     memcpy(&bits, &value, sizeof(bits));
     return writer_u64(writer, tag, bits);
 }
@@ -238,11 +269,13 @@ static int reader_next(wire_reader *reader, unsigned int *tag,
         reader->count - reader->offset < TLV_HEADER_BYTES)
         return -1;
     *tag = get_u16(reader->data + reader->offset);
+    if (get_u16(reader->data + reader->offset + 2u) != 0u)
+        return -1;
     length = get_u32(reader->data + reader->offset + 4u);
     reader->offset += TLV_HEADER_BYTES;
     if (length > reader->count - reader->offset)
         return -1;
-    if (*tag < 128u) {
+    if (*tag < 192u) {
         word = *tag / 64u;
         bit = *tag % 64u;
         if (reader->seen[word] & (UINT64_C(1) << bit))
@@ -277,7 +310,7 @@ static int reader_double(const unsigned char *bytes, unsigned long long count,
         return 0;
     bits = canonical;
     memcpy(value, &bits, sizeof(bits));
-    return 1;
+    return isfinite(*value);
 }
 /* Purpose: copy one bounded wire text field and append a process-local terminator.
  * Inputs: destination/capacity and wire bytes/extent. Effects: writes text plus trailing NUL.
@@ -309,7 +342,15 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
     if (byte_count) *byte_count = 0u;
     if (!request || !output || !byte_count ||
         request->schema_version != YVEX_LOCAL_PROTOCOL_VERSION ||
-        request->operation > YVEX_CLIENT_OP_ARTIFACT_VERIFY ||
+        (int)request->operation < (int)YVEX_CLIENT_OP_HANDSHAKE ||
+        request->operation > YVEX_CLIENT_OP_CONSOLE_STATUS ||
+        (int)request->trace_level < (int)YVEX_SERVER_TRACE_SUMMARY ||
+        request->trace_level > YVEX_SERVER_TRACE_FULL ||
+        (request->stochastic != 0 && request->stochastic != 1) ||
+        (request->seed_present != 0 && request->seed_present != 1) ||
+        (request->trace_content != 0 && request->trace_content != 1) ||
+        !isfinite(request->temperature) || !isfinite(request->top_p) ||
+        !isfinite(request->min_p) || !isfinite(request->typical_p) ||
         request->prompt_bytes > YVEX_SERVER_FRAME_MAX_BYTES ||
         (!request->prompt && request->prompt_bytes) ||
         (request->prompt_bytes && request->provider_request))
@@ -388,7 +429,7 @@ int yvex_protocol_request_decode(const unsigned char *input,
         switch (tag) {
         case TAG_OPERATION:
             valid = reader_u64(bytes, count, &value) &&
-                    value <= YVEX_CLIENT_OP_ARTIFACT_VERIFY;
+                    value <= YVEX_CLIENT_OP_CONSOLE_STATUS;
             candidate.operation = (yvex_client_operation)value;
             have_operation = valid;
             break;
@@ -434,7 +475,7 @@ int yvex_protocol_request_decode(const unsigned char *input,
                         bytes, count, &provider, err) == YVEX_OK);
             candidate.provider_request = provider;
             break;
-        default: break;
+        default: valid = 0; break;
         }
     }
     if (next < 0 || !valid || !have_operation ||
@@ -509,6 +550,85 @@ static int reader_metrics(const unsigned char *bytes, unsigned long long count,
     }
     return 1;
 }
+/* Purpose: admit every message enum, boolean, timing, and availability relation before publication.
+ * Inputs: one fully assembled client message. Effects: none.
+ * Failure: returns false for invalid or contradictory wire facts.
+ * Boundary: validates protocol shape without inventing server semantics. */
+static int message_fields_valid(const yvex_client_message *message)
+{
+#define ENUM_VALID(value, first, last) \
+    ((int)(value) >= (int)(first) && (value) <= (last))
+#define BOOL_VALID(value) ((value) == 0 || (value) == 1)
+    return ENUM_VALID(message->kind, YVEX_CLIENT_MESSAGE_ACK,
+                      YVEX_CLIENT_MESSAGE_CONSOLE_STATUS) &&
+           ENUM_VALID(message->failure_class, YVEX_CLIENT_FAILURE_NONE,
+                      YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT) &&
+           ENUM_VALID(message->generation_phase, YVEX_CLIENT_PHASE_UNAVAILABLE,
+                      YVEX_CLIENT_PHASE_FAILED) &&
+           ENUM_VALID(message->cancellation_class, YVEX_CLIENT_CANCELLATION_NONE,
+                      YVEX_CLIENT_CANCELLATION_FAILED) &&
+           ENUM_VALID(message->stream_channel, YVEX_CLIENT_STREAM_UNSPECIFIED,
+                      YVEX_CLIENT_STREAM_CONTROL_EVENT) &&
+           ENUM_VALID(message->session_state, YVEX_SERVER_SESSION_CREATED,
+                      YVEX_SERVER_SESSION_FAILED) &&
+           ENUM_VALID(message->provider_output_kind,
+                      YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
+                      YVEX_PROVIDER_OUTPUT_ERROR) &&
+           ENUM_VALID(message->provider_finish, YVEX_PROVIDER_FINISH_STOP,
+                      YVEX_PROVIDER_FINISH_FAILED) &&
+           message->stop_reason <= YVEX_GENERATION_STOP_OUTPUT_FAILURE &&
+           ENUM_VALID(message->runtime.status, YVEX_SERVER_STATUS_CONFIGURED,
+                      YVEX_SERVER_STATUS_FAILED) &&
+           ENUM_VALID(message->runtime.backend, YVEX_BACKEND_KIND_CPU,
+                      YVEX_BACKEND_KIND_ROCM) &&
+           ENUM_VALID(message->runtime.trace_level, YVEX_SERVER_TRACE_SUMMARY,
+                      YVEX_SERVER_TRACE_FULL) &&
+           ENUM_VALID(message->console.backend, YVEX_BACKEND_KIND_CPU,
+                      YVEX_BACKEND_KIND_ROCM) &&
+           ENUM_VALID(message->console.session_state, YVEX_SERVER_SESSION_CREATED,
+                      YVEX_SERVER_SESSION_FAILED) &&
+           ENUM_VALID(message->console.generation_phase,
+                      YVEX_CLIENT_PHASE_UNAVAILABLE, YVEX_CLIENT_PHASE_FAILED) &&
+           ENUM_VALID(message->console.cancellation_class,
+                      YVEX_CLIENT_CANCELLATION_NONE,
+                      YVEX_CLIENT_CANCELLATION_FAILED) &&
+           ENUM_VALID(message->event.kind, YVEX_SERVER_EVENT_PROCESS_START,
+                      YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE) &&
+           ENUM_VALID(message->event.severity, YVEX_SERVER_SEVERITY_DEBUG,
+                      YVEX_SERVER_SEVERITY_FATAL) &&
+           BOOL_VALID(message->kv_used_available) &&
+           BOOL_VALID(message->publication_timing_available) &&
+           BOOL_VALID(message->runtime.runtime_ready) &&
+           BOOL_VALID(message->runtime.generation_ready) &&
+           BOOL_VALID(message->runtime.public_server_ready) &&
+           BOOL_VALID(message->runtime.openai_listener_enabled) &&
+           BOOL_VALID(message->runtime.openai_listener_ready) &&
+           BOOL_VALID(message->runtime.explicit_reasoning_channel_supported) &&
+           BOOL_VALID(message->console.runtime_ready) &&
+           BOOL_VALID(message->console.session_available) &&
+           BOOL_VALID(message->console.attached) &&
+           BOOL_VALID(message->console.cancel_requested) &&
+           BOOL_VALID(message->console.kv_used_available) &&
+           BOOL_VALID(message->console.progress_available) &&
+           BOOL_VALID(message->console.selected_model_available) &&
+           BOOL_VALID(message->console.explicit_reasoning_channel_supported) &&
+           isfinite(message->queue_seconds) &&
+           isfinite(message->prefill_seconds) &&
+           isfinite(message->first_token_seconds) &&
+           isfinite(message->decode_seconds) && isfinite(message->prefill_rate) &&
+           isfinite(message->decode_rate) &&
+           isfinite(message->publication_seconds) &&
+           isfinite(message->event.seconds) && isfinite(message->event.rate) &&
+           (message->kv_used_available || message->kv_used_bytes == 0u) &&
+           (message->publication_timing_available ||
+            message->publication_seconds == 0.0) &&
+           (message->console.kv_used_available ||
+            message->console.kv_used_bytes == 0u) &&
+           (message->console.selected_model_available ||
+            message->console.selected_model_identity[0] == '\0');
+#undef BOOL_VALID
+#undef ENUM_VALID
+}
 /* Purpose: encode one server message with explicit field ownership.
  * Inputs: admitted message, output bytes/capacity, and count/error outputs. Effects: writes canonical payload.
  * Failure: publishes zero count for invalid schema, fields, event identity, or capacity. Boundary: no frame I/O. */
@@ -524,14 +644,32 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
         (message && message->runtime.generation_ready ? 2u : 0u) |
         (message && message->runtime.public_server_ready ? 4u : 0u) |
         (message && message->runtime.openai_listener_enabled ? 8u : 0u) |
-        (message && message->runtime.openai_listener_ready ? 16u : 0u);
+        (message && message->runtime.openai_listener_ready ? 16u : 0u) |
+        (message && message->runtime.explicit_reasoning_channel_supported ? 32u : 0u);
+    unsigned long long message_flags =
+        (message && message->kv_used_available ? 1u : 0u) |
+        (message && message->publication_timing_available ? 2u : 0u);
+    unsigned long long console_flags =
+        (message && message->console.runtime_ready ? 1u : 0u) |
+        (message && message->console.session_available ? 2u : 0u) |
+        (message && message->console.attached ? 4u : 0u) |
+        (message && message->console.cancel_requested ? 8u : 0u) |
+        (message && message->console.kv_used_available ? 16u : 0u) |
+        (message && message->console.progress_available ? 32u : 0u) |
+        (message && message->console.selected_model_available ? 64u : 0u) |
+        (message && message->console.explicit_reasoning_channel_supported ? 128u : 0u);
     if (byte_count) *byte_count = 0u;
     if (!message || !output || !byte_count ||
         message->schema_version != YVEX_LOCAL_PROTOCOL_VERSION ||
-        message->kind > YVEX_CLIENT_MESSAGE_TURN_COMPLETE ||
+        !message_fields_valid(message) ||
+        (message->kind == YVEX_CLIENT_MESSAGE_CONSOLE_STATUS &&
+         message->console.schema_version != 1u) ||
         message->byte_count > sizeof(message->bytes))
         return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
                                "complete bounded server message is required");
+    if (message->kind == YVEX_CLIENT_MESSAGE_EVENT &&
+        yvex_server_event_validate(&message->event, err) != YVEX_OK)
+        return yvex_error_code(err);
 #define WRITE_U64(tag, field) writer_u64(&writer, tag, (unsigned long long)(field))
     if (!WRITE_U64(TAG_MESSAGE_KIND, message->kind) ||
         !WRITE_U64(TAG_STATUS, (uint32_t)(int32_t)message->status) ||
@@ -545,13 +683,22 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
         !WRITE_U64(TAG_PREFILL_TOKENS, message->prefill_tokens) ||
         !WRITE_U64(TAG_GENERATED_TOKENS, message->generated_tokens) ||
         !WRITE_U64(TAG_FINAL_POSITION, message->final_position) ||
+        !WRITE_U64(TAG_TURN_COUNT, message->turn_count) ||
+        !WRITE_U64(TAG_CONTEXT_USED, message->context_used) ||
+        !WRITE_U64(TAG_KV_USED_BYTES, message->kv_used_bytes) ||
         !writer_double(&writer, TAG_QUEUE_SECONDS, message->queue_seconds) ||
         !writer_double(&writer, TAG_PREFILL_SECONDS, message->prefill_seconds) ||
         !writer_double(&writer, TAG_FIRST_TOKEN_SECONDS, message->first_token_seconds) ||
         !writer_double(&writer, TAG_DECODE_SECONDS, message->decode_seconds) ||
         !writer_double(&writer, TAG_PREFILL_RATE, message->prefill_rate) ||
         !writer_double(&writer, TAG_DECODE_RATE, message->decode_rate) ||
+        !writer_double(&writer, TAG_PUBLICATION_SECONDS,
+                       message->publication_seconds) ||
         !WRITE_U64(TAG_STOP_REASON, message->stop_reason) ||
+        !WRITE_U64(TAG_GENERATION_PHASE, message->generation_phase) ||
+        !WRITE_U64(TAG_CANCELLATION_CLASS, message->cancellation_class) ||
+        !WRITE_U64(TAG_STREAM_CHANNEL, message->stream_channel) ||
+        !WRITE_U64(TAG_MESSAGE_AVAILABILITY_FLAGS, message_flags) ||
         !WRITE_U64(TAG_SESSION_STATE, message->session_state) ||
         !writer_text(&writer, TAG_SESSION_IDENTITY,
                      message->session_identity) ||
@@ -587,8 +734,44 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
         !WRITE_U64(TAG_SESSION_COUNT, message->runtime.session_count) ||
         !WRITE_U64(TAG_RUNTIME_REQUEST_COUNT, message->runtime.request_count) ||
         !WRITE_U64(TAG_RUNTIME_FLAGS, runtime_flags) ||
+        !WRITE_U64(TAG_PREFILL_CHUNK_TOKENS,
+                   message->runtime.prefill_chunk_tokens) ||
+        !WRITE_U64(TAG_RUNTIME_MAXIMUM_NEW_TOKENS,
+                   message->runtime.maximum_new_tokens) ||
+        !WRITE_U64(TAG_RUNTIME_MAXIMUM_OUTPUT_BYTES,
+                   message->runtime.maximum_output_bytes) ||
+        !WRITE_U64(TAG_RUNTIME_MAXIMUM_SESSIONS,
+                   message->runtime.maximum_sessions) ||
         !WRITE_U64(TAG_OPENAI_PORT, message->runtime.openai_port) ||
+        !WRITE_U64(TAG_RUNTIME_QUEUE_CAPACITY,
+                   message->runtime.request_queue_capacity) ||
+        !WRITE_U64(TAG_RUNTIME_OPENAI_TIMEOUT,
+                   message->runtime.openai_timeout_ms) ||
+        !WRITE_U64(TAG_RUNTIME_TRACE_LEVEL, message->runtime.trace_level) ||
         !writer_metrics(&writer, &message->runtime.metrics) ||
+        !WRITE_U64(TAG_CONSOLE_FLAGS, console_flags) ||
+        !WRITE_U64(TAG_CONSOLE_BACKEND, message->console.backend) ||
+        !WRITE_U64(TAG_CONSOLE_SESSION_STATE,
+                   message->console.session_state) ||
+        !WRITE_U64(TAG_CONSOLE_POSITION, message->console.position) ||
+        !WRITE_U64(TAG_CONSOLE_TURN_COUNT, message->console.turn_count) ||
+        !WRITE_U64(TAG_CONSOLE_CONTEXT_CAPACITY,
+                   message->console.context_capacity) ||
+        !WRITE_U64(TAG_CONSOLE_CONTEXT_USED,
+                   message->console.context_used) ||
+        !WRITE_U64(TAG_CONSOLE_KV_USED_BYTES,
+                   message->console.kv_used_bytes) ||
+        !WRITE_U64(TAG_CONSOLE_PHASE, message->console.generation_phase) ||
+        !WRITE_U64(TAG_CONSOLE_CANCELLATION,
+                   message->console.cancellation_class) ||
+        !writer_text(&writer, TAG_CONSOLE_LIVE_MODEL_ID,
+                     message->console.live_model_identity) ||
+        !writer_text(&writer, TAG_CONSOLE_VARIANT_ID,
+                     message->console.physical_variant_identity) ||
+        !writer_text(&writer, TAG_CONSOLE_SESSION_NAME,
+                     message->console.session_name) ||
+        !writer_text(&writer, TAG_CONSOLE_SELECTED_MODEL_ID,
+                     message->console.selected_model_identity) ||
         !WRITE_U64(TAG_EVENT_SEQUENCE, message->event.sequence) ||
         !WRITE_U64(TAG_EVENT_WALL_TIME, message->event.wall_time_ns) ||
         !WRITE_U64(TAG_EVENT_MONOTONIC_TIME, message->event.monotonic_time_ns) ||
@@ -641,7 +824,7 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
     switch (tag) {
     case TAG_MESSAGE_KIND:
         valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
+                value <= YVEX_CLIENT_MESSAGE_CONSOLE_STATUS;
         candidate->kind = (yvex_client_message_kind)value;
         *have_kind = valid;
         break;
@@ -674,6 +857,9 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
     case TAG_PREFILL_TOKENS: valid = BASE_U64(candidate->prefill_tokens); break;
     case TAG_GENERATED_TOKENS: valid = BASE_U64(candidate->generated_tokens); break;
     case TAG_FINAL_POSITION: valid = BASE_U64(candidate->final_position); break;
+    case TAG_TURN_COUNT: valid = BASE_U64(candidate->turn_count); break;
+    case TAG_CONTEXT_USED: valid = BASE_U64(candidate->context_used); break;
+    case TAG_KV_USED_BYTES: valid = BASE_U64(candidate->kv_used_bytes); break;
     case TAG_QUEUE_SECONDS: valid = reader_double(bytes, count, &candidate->queue_seconds); break;
     case TAG_PREFILL_SECONDS: valid = reader_double(bytes, count, &candidate->prefill_seconds); break;
     case TAG_FIRST_TOKEN_SECONDS:
@@ -682,11 +868,40 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
     case TAG_DECODE_SECONDS: valid = reader_double(bytes, count, &candidate->decode_seconds); break;
     case TAG_PREFILL_RATE: valid = reader_double(bytes, count, &candidate->prefill_rate); break;
     case TAG_DECODE_RATE: valid = reader_double(bytes, count, &candidate->decode_rate); break;
+    case TAG_PUBLICATION_SECONDS:
+        valid = reader_double(bytes, count, &candidate->publication_seconds);
+        break;
     case TAG_STOP_REASON:
-        valid = reader_u64(bytes, count, &value) && value <= UINT_MAX;
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_GENERATION_STOP_OUTPUT_FAILURE;
         if (valid) candidate->stop_reason = (unsigned int)value;
         break;
-    case TAG_SESSION_STATE: valid = BASE_U64(candidate->session_state); break;
+    case TAG_GENERATION_PHASE:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_CLIENT_PHASE_FAILED;
+        if (valid) candidate->generation_phase = (yvex_client_generation_phase)value;
+        break;
+    case TAG_CANCELLATION_CLASS:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_CLIENT_CANCELLATION_FAILED;
+        if (valid)
+            candidate->cancellation_class = (yvex_client_cancellation_class)value;
+        break;
+    case TAG_STREAM_CHANNEL:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_CLIENT_STREAM_CONTROL_EVENT;
+        if (valid) candidate->stream_channel = (yvex_client_stream_channel)value;
+        break;
+    case TAG_MESSAGE_AVAILABILITY_FLAGS:
+        valid = reader_u64(bytes, count, &value) && !(value & ~3u);
+        candidate->kv_used_available = (value & 1u) != 0u;
+        candidate->publication_timing_available = (value & 2u) != 0u;
+        break;
+    case TAG_SESSION_STATE:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_SESSION_FAILED;
+        if (valid) candidate->session_state = (yvex_server_session_state)value;
+        break;
     case TAG_SESSION_IDENTITY:
         valid = reader_text(bytes, count, candidate->session_identity,
                             sizeof(candidate->session_identity));
@@ -710,12 +925,14 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
     case TAG_PROVIDER_OUTPUT_KIND:
         valid = reader_u64(bytes, count, &value) &&
                 value <= YVEX_PROVIDER_OUTPUT_ERROR;
-        candidate->provider_output_kind = (yvex_provider_output_kind)value;
+        if (valid)
+            candidate->provider_output_kind = (yvex_provider_output_kind)value;
         break;
     case TAG_PROVIDER_FINISH:
         valid = reader_u64(bytes, count, &value) &&
                 value <= YVEX_PROVIDER_FINISH_FAILED;
-        candidate->provider_finish = (yvex_provider_finish_class)value;
+        if (valid)
+            candidate->provider_finish = (yvex_provider_finish_class)value;
         break;
     case TAG_COMPLETION_TOKENS: valid = BASE_U64(candidate->completion_tokens); break;
     case TAG_TOTAL_TOKENS: valid = BASE_U64(candidate->total_tokens); break;
@@ -754,8 +971,16 @@ static int message_runtime_field(yvex_client_message *candidate,
     int valid = 1;
 #define RUNTIME_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
     switch (tag) {
-    case TAG_RUNTIME_STATUS: valid = RUNTIME_U64(candidate->runtime.status); break;
-    case TAG_RUNTIME_BACKEND: valid = RUNTIME_U64(candidate->runtime.backend); break;
+    case TAG_RUNTIME_STATUS:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_STATUS_FAILED;
+        if (valid) candidate->runtime.status = (yvex_server_status)value;
+        break;
+    case TAG_RUNTIME_BACKEND:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_BACKEND_KIND_ROCM;
+        if (valid) candidate->runtime.backend = (yvex_backend_kind)value;
+        break;
     case TAG_SOCKET_PATH:
         valid = reader_text(bytes, count, candidate->runtime.socket_path,
                             sizeof(candidate->runtime.socket_path));
@@ -783,22 +1008,127 @@ static int message_runtime_field(yvex_client_message *candidate,
     case TAG_CONTEXT_CAPACITY: valid = RUNTIME_U64(candidate->runtime.context_capacity); break;
     case TAG_SESSION_COUNT: valid = RUNTIME_U64(candidate->runtime.session_count); break;
     case TAG_RUNTIME_REQUEST_COUNT: valid = RUNTIME_U64(candidate->runtime.request_count); break;
+    case TAG_PREFILL_CHUNK_TOKENS:
+        valid = RUNTIME_U64(candidate->runtime.prefill_chunk_tokens);
+        break;
+    case TAG_RUNTIME_MAXIMUM_NEW_TOKENS:
+        valid = RUNTIME_U64(candidate->runtime.maximum_new_tokens);
+        break;
+    case TAG_RUNTIME_MAXIMUM_OUTPUT_BYTES:
+        valid = RUNTIME_U64(candidate->runtime.maximum_output_bytes);
+        break;
+    case TAG_RUNTIME_MAXIMUM_SESSIONS:
+        valid = RUNTIME_U64(candidate->runtime.maximum_sessions);
+        break;
+    case TAG_RUNTIME_QUEUE_CAPACITY:
+        valid = RUNTIME_U64(candidate->runtime.request_queue_capacity);
+        break;
+    case TAG_RUNTIME_OPENAI_TIMEOUT:
+        valid = RUNTIME_U64(candidate->runtime.openai_timeout_ms);
+        break;
+    case TAG_RUNTIME_TRACE_LEVEL:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_TRACE_FULL;
+        if (valid) candidate->runtime.trace_level = (yvex_server_trace_level)value;
+        break;
     case TAG_OPENAI_PORT:
         valid = reader_u64(bytes, count, &value) && value <= 65535u;
         if (valid) candidate->runtime.openai_port = (unsigned short)value;
         break;
     case TAG_RUNTIME_FLAGS:
-        valid = reader_u64(bytes, count, &value) && !(value & ~31u);
+        valid = reader_u64(bytes, count, &value) && !(value & ~63u);
         candidate->runtime.runtime_ready = (value & 1u) != 0u;
         candidate->runtime.generation_ready = (value & 2u) != 0u;
         candidate->runtime.public_server_ready = (value & 4u) != 0u;
         candidate->runtime.openai_listener_enabled = (value & 8u) != 0u;
         candidate->runtime.openai_listener_ready = (value & 16u) != 0u;
+        candidate->runtime.explicit_reasoning_channel_supported =
+            (value & 32u) != 0u;
         break;
     case TAG_METRICS: valid = reader_metrics(bytes, count, &candidate->runtime.metrics); break;
     default: return 0;
     }
 #undef RUNTIME_U64
+    return valid ? 1 : -1;
+}
+
+/* Purpose: decode one server-composed console-status field.
+ * Inputs: message candidate and one exact TLV. Effects: updates only the typed console snapshot.
+ * Failure: returns negative for malformed recognized fields and zero for unrelated fields.
+ * Boundary: unavailable facts remain represented by explicit flags rather than inferred values. */
+static int message_console_field(yvex_client_message *candidate,
+                                 unsigned int tag,
+                                 const unsigned char *bytes,
+                                 unsigned long long count)
+{
+    unsigned long long value = 0u;
+    int valid = 1;
+#define CONSOLE_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
+    switch (tag) {
+    case TAG_CONSOLE_FLAGS:
+        valid = reader_u64(bytes, count, &value) && !(value & ~255u);
+        candidate->console.runtime_ready = (value & 1u) != 0u;
+        candidate->console.session_available = (value & 2u) != 0u;
+        candidate->console.attached = (value & 4u) != 0u;
+        candidate->console.cancel_requested = (value & 8u) != 0u;
+        candidate->console.kv_used_available = (value & 16u) != 0u;
+        candidate->console.progress_available = (value & 32u) != 0u;
+        candidate->console.selected_model_available = (value & 64u) != 0u;
+        candidate->console.explicit_reasoning_channel_supported =
+            (value & 128u) != 0u;
+        break;
+    case TAG_CONSOLE_BACKEND:
+        valid = reader_u64(bytes, count, &value) && value <= YVEX_BACKEND_KIND_ROCM;
+        if (valid) candidate->console.backend = (yvex_backend_kind)value;
+        break;
+    case TAG_CONSOLE_SESSION_STATE:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_SESSION_FAILED;
+        if (valid) candidate->console.session_state = (yvex_server_session_state)value;
+        break;
+    case TAG_CONSOLE_POSITION: valid = CONSOLE_U64(candidate->console.position); break;
+    case TAG_CONSOLE_TURN_COUNT: valid = CONSOLE_U64(candidate->console.turn_count); break;
+    case TAG_CONSOLE_CONTEXT_CAPACITY:
+        valid = CONSOLE_U64(candidate->console.context_capacity);
+        break;
+    case TAG_CONSOLE_CONTEXT_USED:
+        valid = CONSOLE_U64(candidate->console.context_used);
+        break;
+    case TAG_CONSOLE_KV_USED_BYTES:
+        valid = CONSOLE_U64(candidate->console.kv_used_bytes);
+        break;
+    case TAG_CONSOLE_PHASE:
+        valid = reader_u64(bytes, count, &value) && value <= YVEX_CLIENT_PHASE_FAILED;
+        if (valid) candidate->console.generation_phase = (yvex_client_generation_phase)value;
+        break;
+    case TAG_CONSOLE_CANCELLATION:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_CLIENT_CANCELLATION_FAILED;
+        if (valid)
+            candidate->console.cancellation_class =
+                (yvex_client_cancellation_class)value;
+        break;
+    case TAG_CONSOLE_LIVE_MODEL_ID:
+        valid = reader_text(bytes, count, candidate->console.live_model_identity,
+                            sizeof(candidate->console.live_model_identity));
+        break;
+    case TAG_CONSOLE_VARIANT_ID:
+        valid = reader_text(bytes, count,
+                            candidate->console.physical_variant_identity,
+                            sizeof(candidate->console.physical_variant_identity));
+        break;
+    case TAG_CONSOLE_SESSION_NAME:
+        valid = reader_text(bytes, count, candidate->console.session_name,
+                            sizeof(candidate->console.session_name));
+        break;
+    case TAG_CONSOLE_SELECTED_MODEL_ID:
+        valid = reader_text(bytes, count,
+                            candidate->console.selected_model_identity,
+                            sizeof(candidate->console.selected_model_identity));
+        break;
+    default: return 0;
+    }
+#undef CONSOLE_U64
     return valid ? 1 : -1;
 }
 /* Purpose: decode one authoritative typed-event field from a server message.
@@ -819,8 +1149,16 @@ static int message_event_field(yvex_client_message *candidate,
     case TAG_EVENT_WALL_TIME: valid = EVENT_U64(candidate->event.wall_time_ns); break;
     case TAG_EVENT_MONOTONIC_TIME: valid = EVENT_U64(candidate->event.monotonic_time_ns); break;
     case TAG_EVENT_PROCESS_ID: valid = EVENT_U64(candidate->event.process_id); break;
-    case TAG_EVENT_KIND: valid = EVENT_U64(candidate->event.kind); break;
-    case TAG_EVENT_SEVERITY: valid = EVENT_U64(candidate->event.severity); break;
+    case TAG_EVENT_KIND:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE;
+        if (valid) candidate->event.kind = (yvex_server_event_kind)value;
+        break;
+    case TAG_EVENT_SEVERITY:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_SEVERITY_FATAL;
+        if (valid) candidate->event.severity = (yvex_server_event_severity)value;
+        break;
     case TAG_EVENT_SESSION_ID:
         valid = reader_text(bytes, count, candidate->event.session_id,
                             sizeof(candidate->event.session_id));
@@ -915,6 +1253,7 @@ int yvex_protocol_message_decode(const unsigned char *input,
     memset(&candidate, 0, sizeof(candidate));
     candidate.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     candidate.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    candidate.console.schema_version = 1u;
     candidate.event.schema_version = YVEX_RUNTIME_EVENT_SCHEMA_VERSION;
     while ((next = reader_next(&reader, &tag, &bytes, &count)) > 0 && valid) {
         int field = message_base_field(&candidate, tag, bytes, count,
@@ -922,8 +1261,10 @@ int yvex_protocol_message_decode(const unsigned char *input,
         if (!field)
             field = message_runtime_field(&candidate, tag, bytes, count);
         if (!field)
+            field = message_console_field(&candidate, tag, bytes, count);
+        if (!field)
             field = message_event_field(&candidate, tag, bytes, count);
-        if (field < 0) valid = 0;
+        if (field <= 0) valid = 0;
     }
     return message_publish(&candidate, next, valid, have_kind, message, err);
 }
@@ -1010,11 +1351,13 @@ static int frame_receive(int fd, unsigned int expected_kind,
     if (rc != YVEX_OK) return rc;
     length = get_u32(header + 8u);
     if (memcmp(header, "YVXP", 4u) != 0 ||
-        get_u16(header + 4u) != YVEX_LOCAL_PROTOCOL_VERSION ||
         get_u16(header + 6u) != expected_kind ||
         length > YVEX_SERVER_FRAME_MAX_BYTES)
         return protocol_refuse(err, YVEX_ERR_FORMAT,
                                "local protocol frame header is invalid");
+    if (get_u16(header + 4u) != YVEX_LOCAL_PROTOCOL_VERSION)
+        return protocol_refuse(err, YVEX_ERR_FORMAT,
+                               "local protocol version is incompatible; version 4 is required");
     if (length) {
         bytes = malloc(length);
         if (!bytes)
@@ -1061,6 +1404,7 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
 {
     yvex_client_request handshake;
     yvex_client_message response;
+    yvex_provider_sampling sampling;
     yvex_client *client;
     struct sockaddr_un address;
     struct stat info;
@@ -1106,21 +1450,22 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
         return yvex_error_code(err);
     }
     memset(&handshake, 0, sizeof(handshake));
+    yvex_provider_sampling_default(&sampling);
     handshake.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     handshake.operation = YVEX_CLIENT_OP_HANDSHAKE;
-    handshake.temperature = 1.0;
-    handshake.top_p = 1.0;
-    handshake.typical_p = 1.0;
+    handshake.temperature = sampling.temperature;
+    handshake.top_p = sampling.top_p;
+    handshake.typical_p = sampling.typical_p;
     if (yvex_client_send(client, &handshake, err) != YVEX_OK ||
         yvex_client_receive(client, &response, err) != YVEX_OK ||
         response.kind != YVEX_CLIENT_MESSAGE_ACK ||
-        response.status != YVEX_OK || strcmp(response.reason, "protocol-v3") != 0) {
+        response.status != YVEX_OK || strcmp(response.reason, "protocol-v4") != 0) {
         (void)close(client->fd);
         memset(client, 0, sizeof(*client));
         free(client);
         if (yvex_error_code(err) == YVEX_OK)
             yvex_error_set(err, YVEX_ERR_FORMAT, "server.protocol.handshake",
-                           "daemon did not admit local protocol version 3");
+                           "daemon did not admit local protocol version 4");
         return yvex_error_code(err);
     }
     if (yvex_client_timeout_set(client, 0u, err) != YVEX_OK) {

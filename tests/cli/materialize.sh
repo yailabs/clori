@@ -32,6 +32,6 @@ contains "$OUT_DIR/materialize_cpu.out" "status: weights-materialized"
 
 "$YVEX_BIN" artifact materialize --help >"$OUT_DIR/help_materialize.out" 2>"$OUT_DIR/help_materialize.err" ||
     fail "help materialize exited non-zero"
-contains "$OUT_DIR/help_materialize.out" "usage: yvex artifact materialize --model FILE_OR_ALIAS"
+contains "$OUT_DIR/help_materialize.out" "operation: artifact.materialize"
 
 echo "cli materialize smoke: ok"

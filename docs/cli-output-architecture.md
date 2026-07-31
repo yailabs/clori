@@ -22,28 +22,30 @@ yvex
 yvex chat [--session NAME] [--max-new-tokens N]
 yvex run [options] TEXT
 
-yvex runtime start|stop|status|watch|trace
-yvex session new|list|show|attach|detach|reset|close
-yvex model list|use|show
-yvex artifact show|verify|metadata|tensors|materialize|emit ...
-yvex graph ...
-yvex quant preset|plan|emit|summarize|explain|policy|imatrix ...
-yvex tokenizer show|encode|decode|prompt ...
-yvex source manifest|native ...
-yvex tensor map|collection ...
-yvex evidence target|model|moe|backend|cuda ...
-yvex help
+yvex runtime start|stop|status|model|memory|watch|trace
+yvex session new|list|show|attach|detach|reset|close|cancel
+yvex model list|show|selected|select
+yvex compile ...
+yvex artifact show|verify|materialize
+yvex help [PATH...]
+yvex help --advanced
+yvex help --json
+yvex completion bash|zsh|fish
 yvex version
 ```
 
 The runtime-facing lane has no dependency edge to engine execution. Direct
-graph, materialization, tokenizer, metadata, tensor-map, and target-report
-operations enter a separately guarded finite offline lane in the same ELF. No
-deprecated, hidden, or forwarding aliases exist.
+component execution, materialization, tokenizer conformance, metadata,
+tensor-map, and target-report operations enter a separately guarded finite
+offline lane in the same ELF. Retired top-level namespaces refuse with a
+migration hint and never execute hidden aliases.
 
-`model use NAME --artifact FILE --runtime-binding FILE` atomically records one
-private XDG selection for a later `runtime start`; it never opens the model and
-cannot hot-switch a running daemon.
+`model select NAME --artifact FILE --runtime-binding FILE --target TARGET
+--backend BACKEND --context TOKENS` atomically records one complete private XDG
+selection for a later `runtime start`; it never opens the model and cannot
+hot-switch a running daemon. `model list` and `model show` inspect registry
+entries, `model selected` reads the inert selection, and `runtime model` reads
+the model actually open in `yvexd`.
 
 `yvex` and `yvex chat` require a TTY. `yvex run` is the noninteractive one-shot
 form. A missing daemon produces one concise refusal plus the exact runtime-start
@@ -59,19 +61,35 @@ not persisted and never becomes telemetry content.
 Direct engineering capability is grouped by semantic owner:
 
 ```text
-yvex graph ...
-yvex artifact show|verify|metadata|tensors|materialize|emit ...
-yvex quant preset|plan|emit|summarize|explain|policy|imatrix ...
-yvex tokenizer show|encode|decode|prompt ...
-yvex source manifest|native ...
-yvex tensor map|collection ...
-yvex runtime input|context ...
-yvex evidence target|model|moe|backend|cuda ...
+yvex compile source|map|quant|emit ...
+yvex artifact show|verify|materialize
+yvex inspect source|artifact|tensor|tokenizer|target|model|context ...
+yvex inspect backend|qtype|quant|attention|moe ...
+yvex execute input|tokenizer|artifact|attention|moe|transformer|model ...
+yvex profile attention ...
+yvex system paths|accounts|cuda
 ```
 
-This is a nested offline lane, not a renamed flat registry or a second process.
-Its handlers may link engine owners, while runtime-client handlers continue to
-cross the local protocol.
+This is a visibility-aware finite offline lane, not a renamed developer
+namespace or a second process. Its handlers may link engine owners, while
+runtime-client handlers continue to cross the local protocol. Default help
+stays compact; `yvex help --advanced` exposes supported advanced and
+engineering leaves.
+
+## Canonical operation authority
+
+`config/operator/registry.json` is the strict
+`yvex.operator.registry.v1` source for operation IDs, paths, visibility,
+arguments, flags, requirements, projections, and stable adapter IDs. A bounded
+build-time generator validates the source and emits immutable static C
+descriptors plus a content identity under `build/generated/operator/`. The
+product parses no mutable registry file at runtime.
+
+The compiled descriptors drive path resolution, syntax admission, human help,
+`yvex.command.discovery.v1`, shell completion, and the slash catalog consumed
+by the transitional REPL. Generated data contains no callbacks, domain logic,
+protocol serialization, allocation, or mutable runtime state. Domain owners
+retain semantic validation and defaults.
 
 ## Canonical projections
 
@@ -96,10 +114,12 @@ shutdown facts. It excludes content and per-token rows by default.
 
 ### Raw stream
 
-`yvexd --console raw` and `yvex runtime trace` serialize the same event
-sequence as JSONL. Raw means complete event records, not tensor, hidden, logits,
-KV, or memory dumps. Text content is excluded unless `--trace-content` is
-explicitly enabled at the host.
+`yvexd --console raw` and `yvex runtime trace --json` serialize the same event
+sequence as JSONL. `yvex runtime trace` currently uses the transitional human
+projection; the mature semantic trace renderer belongs to the runtime-console
+milestone. Raw means complete event records, not tensor, hidden, logits, KV, or
+memory dumps. Text content is excluded unless `--trace-content` is explicitly
+enabled at the host.
 
 ### Machine status
 
@@ -148,7 +168,7 @@ while lifecycle and terminal events remain explicit.
 - Daemon fatal process diagnostic: stderr.
 
 All views respect `NO_COLOR`, TTY detection, explicit byte lengths, and Unicode
-boundaries supplied by the tokenizer decoder.
+boundaries supplied by the execute tokenizer decoder.
 
 ## Non-claims
 

@@ -111,7 +111,7 @@ python3 - "$root" <<'PY'
 import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 health = json.load(open(root / 'health.json'))
-assert health['gateway'] == 'ready' and health['yvexd'] == 'ready'
+assert health['adapter'] == 'ready' and health['yvexd'] == 'ready'
 chat = json.load(open(root / 'chat.json'))
 assert chat['object'] == 'chat.completion' and chat['usage']['total_tokens'] >= 1
 assert chat['choices'][0]['finish_reason'] in ('stop', 'length')

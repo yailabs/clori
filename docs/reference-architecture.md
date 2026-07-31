@@ -547,6 +547,15 @@ prompt-family semantics, sessions, KV, generation, cancellation, telemetry,
 and model metrics. The adapter therefore opens no second model or artifact,
 owns no persistent sequence state, and cannot execute application tools.
 
+Operator syntax is a projection of semantic operations, not an execution
+authority. YVEX binds one stable operation identity to command, slash,
+protocol, and future console projections through immutable generated
+descriptors. The registry can own spelling, arguments, visibility, and
+requirements, but it cannot own domain defaults, arithmetic, resources,
+serialization, or lifecycle. Runtime-client and finite offline-engine
+projections remain mechanically separate even when one executable presents
+both.
+
 ## 11. Transactional State
 
 Persistent state is any information required to continue inference without

@@ -60,130 +60,68 @@ expect_nonzero() {
     [ "$actual" -ne 0 ] || fail "expected nonzero status: $*"
 }
 
-"$YVEX_BIN" graph --help >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
-"$YVEX_BIN" graph attention --help >"$OUT_DIR/attention-help.out" \
+"$YVEX_BIN" help --advanced >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
+"$YVEX_BIN" help execute attention --advanced >"$OUT_DIR/attention-help.out" \
     2>"$OUT_DIR/attention-help.err"
-"$YVEX_BIN" graph attention execute --help >"$OUT_DIR/execute-help.out" \
+"$YVEX_BIN" execute attention run --help >"$OUT_DIR/execute-help.out" \
     2>"$OUT_DIR/execute-help.err"
-"$YVEX_BIN" graph moe execute --help >"$OUT_DIR/moe-help.out" \
+"$YVEX_BIN" execute moe --help >"$OUT_DIR/moe-help.out" \
     2>"$OUT_DIR/moe-help.err"
-"$YVEX_BIN" graph transformer execute --help >"$OUT_DIR/transformer-help.out" \
+"$YVEX_BIN" execute transformer run --help >"$OUT_DIR/transformer-help.out" \
     2>"$OUT_DIR/transformer-help.err"
-"$YVEX_BIN" graph transformer decode --help >"$OUT_DIR/decode-help.out" \
+"$YVEX_BIN" execute transformer decode --help >"$OUT_DIR/decode-help.out" \
     2>"$OUT_DIR/decode-help.err"
-"$YVEX_BIN" graph transformer logits --help >"$OUT_DIR/logits-help.out" \
+"$YVEX_BIN" execute transformer logits --help >"$OUT_DIR/logits-help.out" \
     2>"$OUT_DIR/logits-help.err"
-"$YVEX_BIN" graph transformer sample --help >"$OUT_DIR/sample-help.out" \
+"$YVEX_BIN" execute transformer sample --help >"$OUT_DIR/sample-help.out" \
     2>"$OUT_DIR/sample-help.err"
-"$YVEX_BIN" graph transformer generate --help >"$OUT_DIR/generate-help.out" \
+"$YVEX_BIN" execute transformer generate --help >"$OUT_DIR/generate-help.out" \
     2>"$OUT_DIR/generate-help.err"
-for action in prepare describe capabilities plan execute compare; do
-    "$YVEX_BIN" graph attention "$action" --help \
-        >"$OUT_DIR/$action-help.out" 2>"$OUT_DIR/$action-help.err"
-    contains "$OUT_DIR/$action-help.out" "graph attention $action"
-done
-for action in "state inspect" "state validate" "state exercise" \
-              "residency inspect" capture replay "cuda-graph list" \
-              "cuda-graph inspect" "cuda-graph warmup" "cuda-graph update" \
-              "cuda-graph invalidate" "cuda-graph release" \
-              trace profile benchmark "benchmark compare" qualify; do
-    # shellcheck disable=SC2086
-    "$YVEX_BIN" graph attention $action --help \
-        >"$OUT_DIR/action-help.out" 2>"$OUT_DIR/action-help.err"
-    contains "$OUT_DIR/action-help.out" "graph attention"
-done
-contains "$OUT_DIR/help.out" "yvex graph attention execute --target deepseek4-v4-flash"
-contains "$OUT_DIR/help.out" "--backend cpu|cuda"
-contains "$OUT_DIR/help.out" "--compare-backends"
-contains "$OUT_DIR/help.out" "--scope quick|full"
-contains "$OUT_DIR/help.out" "graph attention prepare"
-contains "$OUT_DIR/help.out" "graph attention describe"
-contains "$OUT_DIR/help.out" "graph attention capabilities"
-contains "$OUT_DIR/help.out" "graph attention plan"
-contains "$OUT_DIR/help.out" "graph attention compare"
-contains "$OUT_DIR/help.out" "graph attention state inspect|validate|exercise"
-contains "$OUT_DIR/help.out" \
-    "graph attention cuda-graph list|inspect|warmup|update|invalidate|release"
-contains "$OUT_DIR/help.out" "graph attention trace|profile|benchmark|qualify"
-contains "$OUT_DIR/help.out" "graph attention benchmark compare"
-contains "$OUT_DIR/help.out" "--runtime-binding FILE"
-contains "$OUT_DIR/help.out" "--runtime-binding-dir DIR"
-contains "$OUT_DIR/help.out" "--source DIR --source-manifest FILE"
-contains "$OUT_DIR/help.out" "--physical-variant-plan FILE"
-contains "$OUT_DIR/help.out" "--quant-preset NAME|--quant-policy FILE"
-contains "$OUT_DIR/help.out" "--imatrix-manifest FILE"
-contains "$OUT_DIR/help.out" "--models-root DIR"
-contains "$OUT_DIR/help.out" "--phase prefill|decode|mixed|verify"
-contains "$OUT_DIR/help.out" "--mode eager|piecewise|full|auto"
-contains "$OUT_DIR/help.out" "--operation-scope core|envelope|release-attention-set"
-contains "$OUT_DIR/help.out" "--tokens N"
-contains "$OUT_DIR/help.out" "--warmup N"
-contains "$OUT_DIR/help.out" "--repeat N"
-contains "$OUT_DIR/help.out" "--trace-level none|summary|stages|full"
-contains "$OUT_DIR/help.out" "--max-host-bytes N"
-contains "$OUT_DIR/help.out" "--max-device-bytes N"
-contains "$OUT_DIR/help.out" "--require-mode"
-contains "$OUT_DIR/help.out" "reserved controls refuse until their typed runtime owners exist"
-contains "$OUT_DIR/help.out" "--input tensor-file"
-contains "$OUT_DIR/help.out" "--input-file FILE"
-contains "$OUT_DIR/help.out" "--chunk-tokens N"
-contains "$OUT_DIR/help.out" "--context-capacity N"
-contains "$OUT_DIR/help.out" "--capture-bucket ID"
-contains "$OUT_DIR/help.out" "--baseline FILE"
-contains "$OUT_DIR/help.out" "--current FILE"
-contains "$OUT_DIR/help.out" "--max-regression-bps N"
-contains "$OUT_DIR/help.out" "--write-baseline"
-contains "$OUT_DIR/help.out" "--chart PATH.svg"
-contains "$OUT_DIR/help.out" "--output normal|table|audit|json|csv"
-contains "$OUT_DIR/help.out" "not prompt execution"
-contains "$OUT_DIR/attention-help.out" "yvex graph attention execute"
-contains "$OUT_DIR/execute-help.out" "yvex graph attention execute"
-contains "$OUT_DIR/moe-help.out" "yvex graph moe execute"
-contains "$OUT_DIR/moe-help.out" "--input tensor-file --input-file FILE"
-contains "$OUT_DIR/moe-help.out" "token IDs are numeric routing input"
-contains "$OUT_DIR/transformer-help.out" "yvex graph transformer execute"
-contains "$OUT_DIR/transformer-help.out" "--input token-ids --input-file FILE"
-contains "$OUT_DIR/transformer-help.out" "do not establish tokenizer, logits, decode, or generation"
-contains "$OUT_DIR/decode-help.out" "yvex graph transformer decode"
-contains "$OUT_DIR/decode-help.out" "--prefill-tokens N --prefill-chunk-tokens N"
-contains "$OUT_DIR/logits-help.out" "yvex graph transformer logits"
-contains "$OUT_DIR/logits-help.out" "complete raw vocabulary logits do not establish sampling or generation"
-contains "$OUT_DIR/sample-help.out" "yvex graph transformer sample"
-contains "$OUT_DIR/sample-help.out" "selected token IDs are not appended"
-contains "$OUT_DIR/generate-help.out" "yvex graph transformer generate"
-contains "$OUT_DIR/generate-help.out" "--max-new-tokens N"
+contains "$OUT_DIR/help.out" "yvex execute attention run"
+contains "$OUT_DIR/help.out" "yvex inspect attention plan"
+contains "$OUT_DIR/help.out" "yvex profile attention component"
+contains "$OUT_DIR/help.out" "yvex execute transformer generate"
+contains "$OUT_DIR/attention-help.out" "yvex execute attention run"
+contains "$OUT_DIR/execute-help.out" "operation: execute.graph.attention.execute"
+contains "$OUT_DIR/moe-help.out" "operation: execute.graph.moe.execute"
+contains "$OUT_DIR/transformer-help.out" "operation: execute.graph.transformer.execute"
+contains "$OUT_DIR/decode-help.out" "operation: execute.graph.transformer.decode"
+contains "$OUT_DIR/logits-help.out" "operation: execute.graph.transformer.logits"
+contains "$OUT_DIR/sample-help.out" "operation: execute.graph.transformer.sample"
+contains "$OUT_DIR/generate-help.out" "operation: execute.graph.transformer.generate"
+contains "$OUT_DIR/generate-help.out" "--max-new-tokens"
 
-expect_status 2 "$YVEX_BIN" graph attention prepare --target deepseek4-v4-flash \
+expect_status 2 "$YVEX_BIN" execute attention prepare --target deepseek4-v4-flash \
     --quant-preset deepseek-v4-flash-ds4-like-q2-v1 \
     >"$OUT_DIR/variant-missing-plan.out" 2>"$OUT_DIR/variant-missing-plan.err"
 contains "$OUT_DIR/variant-missing-plan.err" \
     "variant policy and imatrix require --physical-variant-plan"
 
-expect_status 2 "$YVEX_BIN" graph attention prepare --target deepseek4-v4-flash \
+expect_status 2 "$YVEX_BIN" execute attention prepare --target deepseek4-v4-flash \
     --physical-variant-plan /tmp/missing.plan \
     >"$OUT_DIR/variant-missing-policy.out" 2>"$OUT_DIR/variant-missing-policy.err"
 contains "$OUT_DIR/variant-missing-policy.err" \
-    "--physical-variant-plan requires a quant policy or preset"
+    "--physical-variant-plan requires a compile quant policy or preset"
 
-expect_status 2 "$YVEX_BIN" graph attention describe --target deepseek4-v4-flash \
+expect_status 2 "$YVEX_BIN" inspect attention describe --target deepseek4-v4-flash \
     --physical-variant-plan /tmp/missing.plan --quant-preset source-faithful \
     >"$OUT_DIR/variant-wrong-action.out" 2>"$OUT_DIR/variant-wrong-action.err"
 contains "$OUT_DIR/variant-wrong-action.err" \
-    "physical-variant options require graph attention prepare"
+    "physical-variant options require execute attention prepare"
 
-expect_status 2 "$YVEX_BIN" graph transformer generate \
+expect_status 2 "$YVEX_BIN" execute transformer generate \
     >"$OUT_DIR/generate-missing.out" 2>"$OUT_DIR/generate-missing.err"
 contains "$OUT_DIR/generate-missing.err" \
-    "graph transformer generate requires target, artifact, runtime binding, backend, prompt, and context capacity"
+    "execute transformer generate requires target, artifact, runtime binding, backend, prompt, and context capacity"
 
-expect_status 2 "$YVEX_BIN" graph transformer generate --target deepseek4-v4-flash \
+expect_status 2 "$YVEX_BIN" execute transformer generate --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --text hi --max-new-tokens 1 --context-capacity 3 \
     --prefill-chunk-tokens 1 --strategy stochastic --progress off --output json \
     >"$OUT_DIR/generate-seed.out" 2>"$OUT_DIR/generate-seed.err"
 contains "$OUT_DIR/generate-seed.err" "stochastic strategy parameters are invalid"
 
-expect_status 3 "$YVEX_BIN" graph transformer generate --target deepseek4-v4-flash \
+expect_status 3 "$YVEX_BIN" execute transformer generate --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --text hi --max-new-tokens 1 --context-capacity 3 \
     --prefill-chunk-tokens 1 --strategy greedy --progress off --output json \
@@ -192,19 +130,19 @@ python3 - "$OUT_DIR/generate-refusal.json" <<'PY'
 import json
 import sys
 result = json.load(open(sys.argv[1], encoding="utf-8"))
-assert result["command"] == "graph transformer generate"
+assert result["command"] == "execute transformer generate"
 assert result["status"] == "refused"
 assert not result["generation_ready"] and not result["cli_generate_ready"]
 assert result["generated_tokens"] == []
 PY
 contains "$OUT_DIR/generate-refusal.err" "runtime binding open failed"
 
-expect_status 2 "$YVEX_BIN" graph transformer sample \
+expect_status 2 "$YVEX_BIN" execute transformer sample \
     >"$OUT_DIR/sample-missing.out" 2>"$OUT_DIR/sample-missing.err"
 contains "$OUT_DIR/sample-missing.err" \
     "decode/logits/sample requires target, artifact, runtime binding, backend, token input, prefill split, and context capacity"
 
-expect_status 2 "$YVEX_BIN" graph transformer sample --target deepseek4-v4-flash \
+expect_status 2 "$YVEX_BIN" execute transformer sample --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --input token-ids --input-file /tmp/missing.input \
     --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
@@ -212,7 +150,7 @@ expect_status 2 "$YVEX_BIN" graph transformer sample --target deepseek4-v4-flash
     >"$OUT_DIR/sample-seed.out" 2>"$OUT_DIR/sample-seed.err"
 contains "$OUT_DIR/sample-seed.err" "stochastic strategy parameters are invalid"
 
-expect_status 3 "$YVEX_BIN" graph transformer sample --target deepseek4-v4-flash \
+expect_status 3 "$YVEX_BIN" execute transformer sample --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --input token-ids --input-file /tmp/missing.input \
     --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
@@ -223,19 +161,19 @@ python3 - "$OUT_DIR/sample-refusal.json" <<'PY'
 import json
 import sys
 result = json.load(open(sys.argv[1], encoding="utf-8"))
-assert result["command"] == "graph transformer sample"
+assert result["command"] == "execute transformer sample"
 assert result["status"] == "refused"
 assert not result["sampling_ready"] and not result["generation_ready"]
 assert result["selected_tokens"] == []
 PY
 contains "$OUT_DIR/sample-refusal.err" "runtime binding open failed"
 
-expect_status 2 "$YVEX_BIN" graph transformer logits \
+expect_status 2 "$YVEX_BIN" execute transformer logits \
     >"$OUT_DIR/logits-missing.out" 2>"$OUT_DIR/logits-missing.err"
 contains "$OUT_DIR/logits-missing.err" \
     "decode/logits/sample requires target, artifact, runtime binding, backend, token input, prefill split, and context capacity"
 
-expect_status 3 "$YVEX_BIN" graph transformer logits --target deepseek4-v4-flash \
+expect_status 3 "$YVEX_BIN" execute transformer logits --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --input token-ids --input-file /tmp/missing.input \
     --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
@@ -245,19 +183,19 @@ python3 - "$OUT_DIR/logits-refusal.json" <<'PY'
 import json
 import sys
 result = json.load(open(sys.argv[1], encoding="utf-8"))
-assert result["command"] == "graph transformer logits"
+assert result["command"] == "execute transformer logits"
 assert result["status"] == "refused"
 assert not result["logits_ready"] and not result["sampling_ready"]
 assert result["rows"] == []
 PY
 contains "$OUT_DIR/logits-refusal.err" "runtime binding open failed"
 
-expect_status 2 "$YVEX_BIN" graph transformer decode \
+expect_status 2 "$YVEX_BIN" execute transformer decode \
     >"$OUT_DIR/decode-missing.out" 2>"$OUT_DIR/decode-missing.err"
 contains "$OUT_DIR/decode-missing.err" \
     "decode/logits/sample requires target, artifact, runtime binding, backend, token input, prefill split, and context capacity"
 
-expect_status 3 "$YVEX_BIN" graph transformer decode --target deepseek4-v4-flash \
+expect_status 3 "$YVEX_BIN" execute transformer decode --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --input token-ids --input-file /tmp/missing.input \
     --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
@@ -267,7 +205,7 @@ python3 - "$OUT_DIR/decode-refusal.json" <<'PY'
 import json
 import sys
 result = json.load(open(sys.argv[1], encoding="utf-8"))
-assert result["command"] == "graph transformer decode"
+assert result["command"] == "execute transformer decode"
 assert result["status"] == "refused"
 assert result["phase"] == "decode"
 assert not result["model_decode_ready"] and not result["generation_ready"]
@@ -275,7 +213,7 @@ assert result["steps"] == []
 PY
 contains "$OUT_DIR/decode-refusal.err" "runtime binding open failed"
 
-expect_status 3 "$YVEX_BIN" graph transformer decode --target deepseek4-v4-flash \
+expect_status 3 "$YVEX_BIN" execute transformer decode --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --input token-ids --input-file /tmp/missing.input \
     --prefill-tokens 1 --prefill-chunk-tokens 1 --context-capacity 3 \
@@ -286,54 +224,54 @@ import csv
 import sys
 rows = list(csv.reader(open(sys.argv[1], encoding="utf-8", newline="")))
 assert rows[0] == ["field", "value"]
-assert ["command", "graph transformer decode"] in rows
+assert ["command", "execute transformer decode"] in rows
 assert ["model_decode_ready", "false"] in rows
 assert all(not row[0].startswith("step.") for row in rows[1:])
 PY
 contains "$OUT_DIR/decode-refusal-csv.err" "runtime binding open failed"
 
-expect_status 2 "$YVEX_BIN" graph transformer execute \
+expect_status 2 "$YVEX_BIN" execute transformer run \
     >"$OUT_DIR/transformer-missing.out" 2>"$OUT_DIR/transformer-missing.err"
 contains "$OUT_DIR/transformer-missing.err" \
     "requires target, artifact, runtime binding, backend, token input, chunk tokens, and context capacity"
 
-expect_status 2 "$YVEX_BIN" graph transformer execute --target deepseek4-v4-flash \
+expect_status 2 "$YVEX_BIN" execute transformer run --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --phase decode --input token-ids --input-file /tmp/missing.input \
     --chunk-tokens 1 --context-capacity 1 --progress off --output json \
     >"$OUT_DIR/transformer-phase.out" 2>"$OUT_DIR/transformer-phase.err"
 contains "$OUT_DIR/transformer-phase.err" "supports only --phase prefill"
 
-expect_status 3 "$YVEX_BIN" graph transformer execute --target deepseek4-v4-flash \
+expect_status 3 "$YVEX_BIN" execute transformer run --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --phase prefill --input token-ids --input-file /tmp/missing.input \
     --chunk-tokens 1 --context-capacity 1 --progress off --output csv \
     >"$OUT_DIR/transformer-refusal.csv" 2>"$OUT_DIR/transformer-refusal.err"
 contains "$OUT_DIR/transformer-refusal.csv" "field,value"
-contains "$OUT_DIR/transformer-refusal.csv" '"command","graph transformer execute"'
+contains "$OUT_DIR/transformer-refusal.csv" '"command","execute transformer run"'
 contains "$OUT_DIR/transformer-refusal.csv" '"status","refused"'
 contains "$OUT_DIR/transformer-refusal.err" "runtime binding open failed"
 
-expect_status 2 "$YVEX_BIN" graph moe execute \
+expect_status 2 "$YVEX_BIN" execute moe \
     >"$OUT_DIR/moe-missing-options.out" 2>"$OUT_DIR/moe-missing-options.err"
 contains "$OUT_DIR/moe-missing-options.err" \
     "requires target, artifact, runtime binding, backend, and tensor-file input"
 
-expect_status 2 "$YVEX_BIN" graph moe execute --target deepseek4-v4-flash \
+expect_status 2 "$YVEX_BIN" execute moe --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --input canonical --input-file /tmp/missing.input \
     --scope full --progress off --output json \
     >"$OUT_DIR/moe-input-class.out" 2>"$OUT_DIR/moe-input-class.err"
 contains "$OUT_DIR/moe-input-class.err" "requires --input tensor-file"
 
-expect_status 2 "$YVEX_BIN" graph moe execute --target deepseek4-v4-flash \
+expect_status 2 "$YVEX_BIN" execute moe --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --input tensor-file --input-file /tmp/missing.input \
     --scope quick --progress off --output json \
     >"$OUT_DIR/moe-scope.out" 2>"$OUT_DIR/moe-scope.err"
 contains "$OUT_DIR/moe-scope.err" "supports only --scope full"
 
-expect_status 3 "$YVEX_BIN" graph moe execute --target deepseek4-v4-flash \
+expect_status 3 "$YVEX_BIN" execute moe --target deepseek4-v4-flash \
     --artifact /tmp/missing.gguf --runtime-binding /tmp/missing.binding \
     --backend cpu --input tensor-file --input-file /tmp/missing.input \
     --scope full --progress off --output json \
@@ -344,88 +282,88 @@ python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); \
     and not r["generation_ready"]' "$OUT_DIR/moe-runtime-refusal.json"
 contains "$OUT_DIR/moe-runtime-refusal.err" "runtime binding open failed"
 
-expect_status 2 "$YVEX_BIN" graph attention qualify \
+expect_status 2 "$YVEX_BIN" profile attention qualify \
     --target deepseek4-v4-flash \
     >"$OUT_DIR/qualify-backend.out" 2>"$OUT_DIR/qualify-backend.err"
 contains "$OUT_DIR/qualify-backend.err" "requires --backend cpu|cuda"
 
-expect_status 2 "$YVEX_BIN" graph attention benchmark compare \
+expect_status 2 "$YVEX_BIN" profile attention compare \
     --baseline "$OUT_DIR/missing-baseline.yvex-benchmark" \
     >"$OUT_DIR/benchmark-compare-paths.out" 2>"$OUT_DIR/benchmark-compare-paths.err"
 contains "$OUT_DIR/benchmark-compare-paths.err" "requires --baseline FILE and --current FILE"
 
-expect_status 2 "$YVEX_BIN" graph attention benchmark \
+expect_status 2 "$YVEX_BIN" profile attention component \
     --target deepseek4-v4-flash --backend cpu \
     --max-regression-bps 0 \
     >"$OUT_DIR/benchmark-threshold-owner.out" 2>"$OUT_DIR/benchmark-threshold-owner.err"
 contains "$OUT_DIR/benchmark-threshold-owner.err" \
-    "regression thresholds require graph attention benchmark compare"
+    "regression thresholds require profile attention compare"
 
 expect_status 2 "$YVEX_BIN" graph attention \
     >"$OUT_DIR/missing-action.out" 2>"$OUT_DIR/missing-action.err"
-contains "$OUT_DIR/missing-action.err" "graph attention requires an action"
+contains "$OUT_DIR/missing-action.err" "removed command: graph"
 
 expect_status 2 "$YVEX_BIN" graph attention inspect \
     >"$OUT_DIR/unknown-action.out" 2>"$OUT_DIR/unknown-action.err"
-contains "$OUT_DIR/unknown-action.err" "unknown graph attention action: inspect"
+contains "$OUT_DIR/unknown-action.err" "removed command: graph"
 
-expect_status 2 "$YVEX_BIN" graph attention execute --backend cpu \
+expect_status 2 "$YVEX_BIN" execute attention run --backend cpu \
     >"$OUT_DIR/missing-target.out" 2>"$OUT_DIR/missing-target.err"
 contains "$OUT_DIR/missing-target.err" "requires --target TARGET"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --compare-backends \
     >"$OUT_DIR/backend-conflict.out" 2>"$OUT_DIR/backend-conflict.err"
 contains "$OUT_DIR/backend-conflict.err" "cannot be combined with --backend"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --probe fixture \
     >"$OUT_DIR/probe-refusal.out" 2>"$OUT_DIR/probe-refusal.err"
 contains "$OUT_DIR/probe-refusal.err" "unsupported attention probe: fixture"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --scope reduced \
     >"$OUT_DIR/scope-refusal.out" 2>"$OUT_DIR/scope-refusal.err"
 contains "$OUT_DIR/scope-refusal.err" "unsupported attention scope: reduced"
 
-expect_status 2 "$YVEX_BIN" graph attention capabilities \
+expect_status 2 "$YVEX_BIN" inspect attention capabilities \
     --target deepseek4-v4-flash --output json \
     >"$OUT_DIR/capability-backend.out" 2>"$OUT_DIR/capability-backend.err"
 contains "$OUT_DIR/capability-backend.err" "requires --backend cpu|cuda"
 
-expect_status 2 "$YVEX_BIN" graph attention plan \
+expect_status 2 "$YVEX_BIN" inspect attention plan \
     --target deepseek4-v4-flash --backend metal --output json \
     >"$OUT_DIR/plan-backend.out" 2>"$OUT_DIR/plan-backend.err"
 contains "$OUT_DIR/plan-backend.err" "unknown backend kind: metal"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --phase generation \
     >"$OUT_DIR/phase-refusal.out" 2>"$OUT_DIR/phase-refusal.err"
 contains "$OUT_DIR/phase-refusal.err" "unsupported attention phase: generation"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --mode fallback \
     >"$OUT_DIR/mode-refusal.out" 2>"$OUT_DIR/mode-refusal.err"
 contains "$OUT_DIR/mode-refusal.err" "unsupported attention mode: fallback"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --operation-scope transformer \
     >"$OUT_DIR/operation-scope.out" 2>"$OUT_DIR/operation-scope.err"
 contains "$OUT_DIR/operation-scope.err" "unsupported attention operation scope: transformer"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --scope quick \
     --operation-scope release-attention-set \
     >"$OUT_DIR/release-scope.out" 2>"$OUT_DIR/release-scope.err"
 contains "$OUT_DIR/release-scope.err" \
     "release attention set requires complete unfiltered layer coverage"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --trace-level everything \
     >"$OUT_DIR/trace-refusal.out" 2>"$OUT_DIR/trace-refusal.err"
 contains "$OUT_DIR/trace-refusal.err" "unsupported attention trace level: everything"
 
-expect_status 3 "$YVEX_BIN" graph attention trace \
+expect_status 3 "$YVEX_BIN" profile attention trace \
     --target deepseek4-v4-flash --backend cpu --trace-level stages \
     --runtime-binding "$OUT_DIR/missing-stage-trace.yvex-runtime-binding" \
     >"$OUT_DIR/stage-trace.out" 2>"$OUT_DIR/stage-trace.err"
@@ -435,22 +373,22 @@ for control in "--layer-start 0 --layer-count 2" \
                "--local-capacity 0" \
                "--compressed-capacity 0" "--indexer-capacity 0"; do
     # shellcheck disable=SC2086
-    expect_status 2 "$YVEX_BIN" graph attention execute \
+    expect_status 2 "$YVEX_BIN" execute attention run \
         --target deepseek4-v4-flash --backend cpu $control \
         >"$OUT_DIR/control-refusal.out" 2>"$OUT_DIR/control-refusal.err"
     contains "$OUT_DIR/control-refusal.err" "unavailable until"
 done
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --input tensor-file \
     >"$OUT_DIR/input-file-required.out" 2>"$OUT_DIR/input-file-required.err"
 contains "$OUT_DIR/input-file-required.err" \
     "--input tensor-file and --input-file are required together"
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --input-file "$OUT_DIR/missing.activations" \
     >"$OUT_DIR/input-class-required.out" 2>"$OUT_DIR/input-class-required.err"
 contains "$OUT_DIR/input-class-required.err" \
     "--input tensor-file and --input-file are required together"
-expect_status 3 "$YVEX_BIN" graph attention execute \
+expect_status 3 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --phase prefill --mode eager \
     --scope full --operation-scope core --input tensor-file \
     --input-file "$OUT_DIR/missing.activations" --chunk-tokens 1 \
@@ -458,83 +396,85 @@ expect_status 3 "$YVEX_BIN" graph attention execute \
     --runtime-binding "$OUT_DIR/missing-input.yvex-runtime-binding" \
     >"$OUT_DIR/input-runtime-refusal.out" 2>"$OUT_DIR/input-runtime-refusal.err"
 contains "$OUT_DIR/input-runtime-refusal.err" "runtime binding"
-expect_status 3 "$YVEX_BIN" graph attention execute \
+expect_status 3 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --layer 0 \
     --runtime-binding "$OUT_DIR/missing-layer.yvex-runtime-binding" \
     >"$OUT_DIR/layer.out" 2>"$OUT_DIR/layer.err"
 contains "$OUT_DIR/layer.err" "runtime binding"
-expect_status 3 "$YVEX_BIN" graph attention state exercise \
+expect_status 3 "$YVEX_BIN" execute attention state exercise \
     --target deepseek4-v4-flash --backend cpu --class csa --history-tokens 4 --tokens 2 \
     --runtime-binding "$OUT_DIR/missing-state.yvex-runtime-binding" \
     >"$OUT_DIR/state-selection.out" 2>"$OUT_DIR/state-selection.err"
 contains "$OUT_DIR/state-selection.err" "runtime binding"
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --capture-bucket decode-1 \
     >"$OUT_DIR/capture-bucket-refusal.out" 2>"$OUT_DIR/capture-bucket-refusal.err"
 contains "$OUT_DIR/capture-bucket-refusal.err" \
     "--capture-bucket requires CUDA piecewise, full, or auto mode"
 
-expect_status 2 "$YVEX_BIN" graph attention capture \
+expect_status 2 "$YVEX_BIN" execute attention capture \
     --target deepseek4-v4-flash --mode eager \
     >"$OUT_DIR/capture-eager.out" 2>"$OUT_DIR/capture-eager.err"
 contains "$OUT_DIR/capture-eager.err" \
     "CUDA graph actions require piecewise, full, or auto mode"
 
-expect_status 3 "$YVEX_BIN" graph attention capture \
+expect_status 3 "$YVEX_BIN" execute attention capture \
     --target deepseek4-v4-flash --mode piecewise --capture-bucket decode-1 \
     --runtime-binding "$OUT_DIR/missing-capture.yvex-runtime-binding" --output json \
     >"$OUT_DIR/capture-piecewise.json" 2>"$OUT_DIR/capture-piecewise.err"
 contains "$OUT_DIR/capture-piecewise.err" "runtime binding"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --baseline baseline.yvex-benchmark \
     >"$OUT_DIR/baseline-action.out" 2>"$OUT_DIR/baseline-action.err"
-contains "$OUT_DIR/baseline-action.err" "require graph attention benchmark or profile"
+contains "$OUT_DIR/baseline-action.err" "require profile attention component or profile"
 
-expect_status 2 "$YVEX_BIN" graph attention benchmark \
+expect_status 2 "$YVEX_BIN" profile attention component \
     --target deepseek4-v4-flash --backend cpu --write-baseline \
     >"$OUT_DIR/baseline-path.out" 2>"$OUT_DIR/baseline-path.err"
 contains "$OUT_DIR/baseline-path.err" "--write-baseline requires --baseline FILE"
 
-expect_status 2 "$YVEX_BIN" graph attention benchmark \
+expect_status 2 "$YVEX_BIN" profile attention component \
     --target deepseek4-v4-flash --backend cpu --chart benchmark.png \
     >"$OUT_DIR/chart-suffix.out" 2>"$OUT_DIR/chart-suffix.err"
 contains "$OUT_DIR/chart-suffix.err" "--chart path must end in .svg"
 
-expect_status 2 "$YVEX_BIN" graph attention benchmark \
+expect_status 2 "$YVEX_BIN" profile attention component \
     --target deepseek4-v4-flash --backend cpu --chart benchmark.svg \
     >"$OUT_DIR/chart-relative.out" 2>"$OUT_DIR/chart-relative.err"
 contains "$OUT_DIR/chart-relative.err" \
     "benchmark assets require canonical absolute paths outside the source repository"
 
-expect_status 2 "$YVEX_BIN" graph attention benchmark \
+expect_status 2 "$YVEX_BIN" profile attention component \
     --target deepseek4-v4-flash --backend cpu --chart "$PWD/benchmark.svg" \
     >"$OUT_DIR/chart-repository.out" 2>"$OUT_DIR/chart-repository.err"
 contains "$OUT_DIR/chart-repository.err" \
     "benchmark assets require canonical absolute paths outside the source repository"
 
-expect_status 2 "$YVEX_BIN" graph attention benchmark \
+expect_status 2 "$YVEX_BIN" profile attention component \
     --target deepseek4-v4-flash --backend cpu \
     --baseline benchmark.yvex-benchmark --write-baseline \
     >"$OUT_DIR/baseline-relative.out" 2>"$OUT_DIR/baseline-relative.err"
 contains "$OUT_DIR/baseline-relative.err" \
     "benchmark assets require canonical absolute paths outside the source repository"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --max-device-bytes 1 \
     >"$OUT_DIR/device-budget.out" 2>"$OUT_DIR/device-budget.err"
 contains "$OUT_DIR/device-budget.err" "--max-device-bytes requires a CUDA execution path"
 
-expect_status 3 "$YVEX_BIN" graph attention execute \
+expect_status 3 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --max-host-bytes 1 --require-mode \
     --runtime-binding "$OUT_DIR/missing-budget.yvex-runtime-binding" --output json \
     >"$OUT_DIR/budget-refusal.json" 2>"$OUT_DIR/budget-refusal.err"
 
-for action in "state exercise" capture replay "cuda-graph list" "cuda-graph inspect" \
-              "cuda-graph warmup" "cuda-graph update" "cuda-graph invalidate" \
-              "cuda-graph release"; do
+for path in "execute attention state exercise" "execute attention capture" \
+            "execute attention replay" "profile attention cuda-graph list" \
+            "profile attention cuda-graph inspect" "profile attention cuda-graph warmup" \
+            "profile attention cuda-graph update" "profile attention cuda-graph invalidate" \
+            "profile attention cuda-graph release"; do
     # shellcheck disable=SC2086
-    expect_status 3 "$YVEX_BIN" graph attention $action \
+    expect_status 3 "$YVEX_BIN" $path \
         --target deepseek4-v4-flash \
         --runtime-binding "$OUT_DIR/missing-action.yvex-runtime-binding" --output json \
         >"$OUT_DIR/action-refusal.json" 2>"$OUT_DIR/action-refusal.err"
@@ -546,47 +486,48 @@ with open(sys.argv[1], encoding="utf-8") as stream:
     result = json.load(stream)
 assert result["status"] == "refused"
 assert result["runtime_generation_ready"] is False
-assert result["command"].startswith("graph attention ")
 PY
 done
-for action in trace profile benchmark qualify; do
-    expect_status 3 "$YVEX_BIN" graph attention "$action" \
+for path in "profile attention trace" "profile attention run" \
+            "profile attention component" "profile attention qualify"; do
+    # shellcheck disable=SC2086
+    expect_status 3 "$YVEX_BIN" $path \
         --target deepseek4-v4-flash --backend cpu \
-        --runtime-binding "$OUT_DIR/missing-$action.yvex-runtime-binding" --output json \
+        --runtime-binding "$OUT_DIR/missing-profile.yvex-runtime-binding" --output json \
         >"$OUT_DIR/action-refusal.json" 2>"$OUT_DIR/action-refusal.err"
 done
 
-expect_status 3 "$YVEX_BIN" graph attention benchmark \
+expect_status 3 "$YVEX_BIN" profile attention component \
     --target deepseek4-v4-flash --backend cpu --warmup 1 --repeat 2 \
     --runtime-binding "$OUT_DIR/missing-benchmark.yvex-runtime-binding" --output csv \
     >"$OUT_DIR/benchmark-refusal.csv" 2>"$OUT_DIR/benchmark-refusal.err"
 contains "$OUT_DIR/benchmark-refusal.csv" 'field,value'
-contains "$OUT_DIR/benchmark-refusal.csv" '"command","graph attention benchmark"'
+contains "$OUT_DIR/benchmark-refusal.csv" '"command","profile attention component"'
 if rg 'benchmark_(path|baseline|cold_delta|chart)' "$OUT_DIR/benchmark-refusal.csv" \
     >"$OUT_DIR/benchmark-refusal-optionals.out"; then
     fail "refused CSV benchmark exposed unavailable baseline or chart fields"
 fi
 
 for phase in prefill decode; do
-    expect_status 3 "$YVEX_BIN" graph attention execute \
+    expect_status 3 "$YVEX_BIN" execute attention run \
         --target deepseek4-v4-flash --backend cpu --phase "$phase" \
         --runtime-binding "$OUT_DIR/missing-$phase.yvex-runtime-binding" --output json \
         >"$OUT_DIR/phase-$phase.json" 2>"$OUT_DIR/phase-$phase.err"
 done
 for phase in mixed verify; do
-    expect_status 5 "$YVEX_BIN" graph attention execute \
+    expect_status 5 "$YVEX_BIN" execute attention run \
         --target deepseek4-v4-flash --backend cpu --phase "$phase" \
         --runtime-binding "$OUT_DIR/missing-$phase.yvex-runtime-binding" --output json \
         >"$OUT_DIR/phase-$phase.json" 2>"$OUT_DIR/phase-$phase.err"
 done
 for mode in eager auto; do
-    expect_status 3 "$YVEX_BIN" graph attention execute \
+    expect_status 3 "$YVEX_BIN" execute attention run \
         --target deepseek4-v4-flash --backend cpu --mode "$mode" \
         --runtime-binding "$OUT_DIR/missing-$mode.yvex-runtime-binding" --output json \
         >"$OUT_DIR/mode-$mode.json" 2>"$OUT_DIR/mode-$mode.err"
 done
 for mode in piecewise full; do
-    expect_status 5 "$YVEX_BIN" graph attention execute \
+    expect_status 5 "$YVEX_BIN" execute attention run \
         --target deepseek4-v4-flash --backend cpu --mode "$mode" \
         --runtime-binding "$OUT_DIR/missing-$mode.yvex-runtime-binding" --output json \
         >"$OUT_DIR/mode-$mode.json" 2>"$OUT_DIR/mode-$mode.err"
@@ -594,7 +535,7 @@ done
 for operation_scope in core envelope release-attention-set; do
     coverage=quick
     if test "$operation_scope" = release-attention-set; then coverage=full; fi
-    expect_status 3 "$YVEX_BIN" graph attention execute \
+    expect_status 3 "$YVEX_BIN" execute attention run \
         --target deepseek4-v4-flash --backend cpu --scope "$coverage" \
         --operation-scope "$operation_scope" \
         --runtime-binding "$OUT_DIR/missing-$operation_scope.yvex-runtime-binding" --output json \
@@ -624,29 +565,29 @@ for path in paths:
         assert result["failure_code"] == "YVEX_ERR_IO"
 PY
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --tokens 0 \
     >"$OUT_DIR/token-refusal.out" 2>"$OUT_DIR/token-refusal.err"
 contains "$OUT_DIR/token-refusal.err" "--tokens requires a positive integer"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --repeat 0 \
     >"$OUT_DIR/repeat-refusal.out" 2>"$OUT_DIR/repeat-refusal.err"
 contains "$OUT_DIR/repeat-refusal.err" "--repeat requires a positive integer"
 
-expect_status 2 "$YVEX_BIN" graph attention execute \
+expect_status 2 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu \
     --runtime-binding "$OUT_DIR/one.yvex-runtime-binding" \
     --runtime-binding-dir "$OUT_DIR" \
     >"$OUT_DIR/binding-conflict.out" 2>"$OUT_DIR/binding-conflict.err"
 contains "$OUT_DIR/binding-conflict.err" "--runtime-binding conflicts with --runtime-binding-dir"
 
-expect_status 2 "$YVEX_BIN" graph attention compare \
+expect_status 2 "$YVEX_BIN" execute attention compare \
     --target deepseek4-v4-flash --backend cpu \
     >"$OUT_DIR/compare-backend.out" 2>"$OUT_DIR/compare-backend.err"
 contains "$OUT_DIR/compare-backend.err" "compare does not accept --backend"
 
-expect_status 3 "$YVEX_BIN" graph attention execute \
+expect_status 3 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu --phase prefill --mode eager \
     --operation-scope envelope --runtime-binding "$OUT_DIR/missing.yvex-runtime-binding" \
     --output json >"$OUT_DIR/missing-binding.json" 2>"$OUT_DIR/missing-binding.err"
@@ -671,7 +612,7 @@ for key in (
 PY
 
 printf 'stale-runtime-binding\n' >"$OUT_DIR/stale.yvex-runtime-binding"
-expect_status 4 "$YVEX_BIN" graph attention execute \
+expect_status 4 "$YVEX_BIN" execute attention run \
     --target deepseek4-v4-flash --backend cpu \
     --runtime-binding "$OUT_DIR/stale.yvex-runtime-binding" --output json \
     >"$OUT_DIR/stale-binding.json" 2>"$OUT_DIR/stale-binding.err"
@@ -690,7 +631,7 @@ PY
 mkdir "$OUT_DIR/ambiguous-bindings"
 printf one >"$OUT_DIR/ambiguous-bindings/one.yvex-runtime-binding"
 printf two >"$OUT_DIR/ambiguous-bindings/two.yvex-runtime-binding"
-expect_status 1 "$YVEX_BIN" graph attention describe \
+expect_status 1 "$YVEX_BIN" inspect attention describe \
     --target deepseek4-v4-flash \
     --runtime-binding-dir "$OUT_DIR/ambiguous-bindings" --output json \
     >"$OUT_DIR/ambiguous-binding.out" 2>"$OUT_DIR/ambiguous-binding.err"
@@ -724,7 +665,7 @@ assert "ATTENTION_PRESENCE_TEXT" in baseline_rule
 assert "delta_seconds" not in rules
 PY
 
-expect_status 5 "$YVEX_BIN" graph attention execute \
+expect_status 5 "$YVEX_BIN" execute attention run \
     --target qwen3-8b --backend cpu --scope quick --output json \
     >"$OUT_DIR/target-refusal.json" 2>"$OUT_DIR/target-refusal.err"
 contains "$OUT_DIR/target-refusal.err" "unsupported attention target: qwen3-8b"
@@ -758,7 +699,7 @@ if [ "${YVEX_ATTENTION_LIVE:-0}" = 1 ]; then
     mkdir "$BINDING_DIR"
 
     if YVEX_TEST_RUNTIME_BINDING_VALIDATE_FAILURE=1 \
-        "$YVEX_BIN" graph attention prepare --target deepseek4-v4-flash \
+        "$YVEX_BIN" execute attention prepare --target deepseek4-v4-flash \
             --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
             --runtime-binding-dir "$BINDING_DIR" --output json \
             >"$OUT_DIR/prepare-validation-failure.json" \
@@ -769,7 +710,7 @@ if [ "${YVEX_ATTENTION_LIVE:-0}" = 1 ]; then
         fail "runtime-binding validation failure retained a candidate or temporary file"
     fi
 
-    "$YVEX_BIN" graph attention prepare --target deepseek4-v4-flash \
+    "$YVEX_BIN" execute attention prepare --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding-dir "$BINDING_DIR" --output json \
         >"$OUT_DIR/prepare.json" 2>"$OUT_DIR/prepare.err"
@@ -779,7 +720,7 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     result = json.load(stream)
-assert result["command"] == "graph attention prepare"
+assert result["command"] == "execute attention prepare"
 assert result["status"] == "complete"
 assert len(result["runtime_binding_identity"]) == 64
 assert len(result["artifact_identity"]) == 64
@@ -794,7 +735,7 @@ PY
     esac
 
     run_quick_cpu() {
-        "$YVEX_BIN" graph attention execute --target deepseek4-v4-flash \
+        "$YVEX_BIN" execute attention run --target deepseek4-v4-flash \
             --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
             --runtime-binding "$BINDING" --backend cpu --probe canonical --scope quick \
             --phase prefill --mode eager --operation-scope envelope --tokens 2 --repeat 2 \
@@ -840,16 +781,16 @@ PY
         printf 'cli attention graph live: instrumented CPU production path ok\n'
     else
 
-    "$YVEX_BIN" graph attention describe --target deepseek4-v4-flash \
+    "$YVEX_BIN" inspect attention describe --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --output json \
         >"$OUT_DIR/describe.json" 2>"$OUT_DIR/describe.err"
-    "$YVEX_BIN" graph attention plan --target deepseek4-v4-flash \
+    "$YVEX_BIN" inspect attention plan --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding-dir "$BINDING_DIR" --backend cpu \
         --phase prefill --mode auto --operation-scope envelope --tokens 4 --output json \
         >"$OUT_DIR/plan.json" 2>"$OUT_DIR/plan.err"
-    "$YVEX_BIN" graph attention plan --target deepseek4-v4-flash \
+    "$YVEX_BIN" inspect attention plan --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cpu --layer 0 \
         --phase prefill --mode auto --operation-scope envelope --tokens 4 --output json \
@@ -868,8 +809,8 @@ with open(sys.argv[3], encoding="utf-8") as stream:
 with open(sys.argv[4], encoding="utf-8") as stream:
     planned_layer = json.load(stream)
 identity = prepared["runtime_binding_identity"]
-assert described["command"] == "graph attention describe"
-assert planned["command"] == "graph attention plan"
+assert described["command"] == "inspect attention describe"
+assert planned["command"] == "inspect attention plan"
 assert described["runtime_binding_identity"] == identity
 assert planned["runtime_binding_identity"] == identity
 assert planned["backend"] == "cpu"
@@ -888,7 +829,13 @@ assert planned_layer["execution_identity"] != planned["execution_identity"]
 PY
 
     for action in inspect validate; do
-        "$YVEX_BIN" graph attention state "$action" --target deepseek4-v4-flash \
+        if [ "$action" = inspect ]; then
+            command_path="inspect attention state"
+        else
+            command_path="execute attention state validate"
+        fi
+        # shellcheck disable=SC2086
+        "$YVEX_BIN" $command_path --target deepseek4-v4-flash \
             --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
             --runtime-binding "$BINDING" --output json \
             >"$OUT_DIR/state-$action.json" 2>"$OUT_DIR/state-$action.err"
@@ -912,7 +859,7 @@ assert inspected["state_validation_passed"] is False
 assert validated["state_validation_passed"] is True
 PY
 
-    "$YVEX_BIN" graph attention capabilities --target deepseek4-v4-flash \
+    "$YVEX_BIN" inspect attention capabilities --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cpu --output json \
         >"$OUT_DIR/capabilities.json" 2>"$OUT_DIR/capabilities.err"
@@ -922,7 +869,7 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     result = json.load(stream)
-assert result["command"] == "graph attention capabilities"
+assert result["command"] == "inspect attention capabilities"
 assert result["artifact_hash_passes"] == 1
 assert result["runtime_model_builds"] == 1
 assert result["runtime_descriptor_builds"] == 1
@@ -942,8 +889,13 @@ assert result["runtime_generation_ready"] is False
 PY
 
     for action in capabilities "residency inspect"; do
+        if [ "$action" = capabilities ]; then
+            command_path="inspect attention capabilities"
+        else
+            command_path="inspect attention residency"
+        fi
         # shellcheck disable=SC2086
-        "$YVEX_BIN" graph attention $action --target deepseek4-v4-flash \
+        "$YVEX_BIN" $command_path --target deepseek4-v4-flash \
             --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
             --runtime-binding "$BINDING" --backend cuda --output json \
             >"$OUT_DIR/cuda-${action%% *}.json" 2>"$OUT_DIR/cuda-${action%% *}.err"
@@ -978,17 +930,17 @@ for path in sys.argv[1:]:
     assert result["speculative_attention_ready"] is False
 PY
 
-    "$YVEX_BIN" graph attention trace --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention trace --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cpu --probe canonical --scope quick \
         --trace-level stages --output json \
         >"$OUT_DIR/trace-stages.json" 2>"$OUT_DIR/trace-stages.err"
-    "$YVEX_BIN" graph attention trace --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention trace --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cpu --probe canonical --scope quick \
         --trace-level summary --output json \
         >"$OUT_DIR/trace-summary.json" 2>"$OUT_DIR/trace-summary.err"
-    "$YVEX_BIN" graph attention trace --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention trace --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cpu --probe canonical --scope quick \
         --trace-level full --output json \
@@ -1031,7 +983,7 @@ with open(path, "r+b") as stream:
     stream.seek(96)
     stream.write(bytes([value[0] ^ 0x5A]))
 PY
-    expect_nonzero "$YVEX_BIN" graph attention execute \
+    expect_nonzero "$YVEX_BIN" execute attention run \
         --target deepseek4-v4-flash --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$OUT_DIR/stale-valid.yvex-runtime-binding" \
         --backend cpu --output json \
@@ -1049,12 +1001,12 @@ PY
 
     run_quick_cpu
 
-    "$YVEX_BIN" graph attention state exercise --target deepseek4-v4-flash \
+    "$YVEX_BIN" execute attention state exercise --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cpu --class csa \
         --history-tokens 2052 --tokens 2 --output json \
         >"$OUT_DIR/state-csa-513.json" 2>"$OUT_DIR/state-csa-513.err"
-    "$YVEX_BIN" graph attention state exercise --target deepseek4-v4-flash \
+    "$YVEX_BIN" execute attention state exercise --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cpu --class hca \
         --position 127 --tokens 2 --output json \
@@ -1068,7 +1020,7 @@ with open(sys.argv[1], encoding="utf-8") as stream:
 with open(sys.argv[2], encoding="utf-8") as stream:
     hca = json.load(stream)
 for result in (csa, hca):
-    assert result["command"] == "graph attention state exercise"
+    assert result["command"] == "execute attention state exercise"
     assert result["status"] == "complete"
     assert result["backend"] == "cpu"
     assert result["selected_mode"] == "eager"
@@ -1091,18 +1043,18 @@ assert hca["hca_layers_executed"] == 1
 assert hca["hca_ratio"] == 128
 PY
 
-    expect_status 3 "$YVEX_BIN" graph attention execute --target deepseek4-v4-flash \
+    expect_status 3 "$YVEX_BIN" execute attention run --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cpu --probe canonical --scope quick --output json \
         >/dev/full 2>"$OUT_DIR/render-failure.err"
     contains "$OUT_DIR/render-failure.err" "attention result rendering failed"
 
-    "$YVEX_BIN" graph attention execute --target deepseek4-v4-flash \
+    "$YVEX_BIN" execute attention run --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cpu --probe canonical --scope full \
         --phase decode --mode eager --operation-scope release-attention-set --output audit \
         >"$OUT_DIR/full-cpu-first.out" 2>"$OUT_DIR/full-cpu-first.err"
-    "$YVEX_BIN" graph attention execute --target deepseek4-v4-flash \
+    "$YVEX_BIN" execute attention run --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cpu --probe canonical --scope full \
         --phase decode --mode eager --operation-scope release-attention-set --output audit \
@@ -1115,7 +1067,7 @@ PY
     contains "$OUT_DIR/full-cpu-first.out" "csa_layers_executed: 21"
     contains "$OUT_DIR/full-cpu-first.out" "hca_layers_executed: 20"
 
-    "$YVEX_BIN" graph attention execute --target deepseek4-v4-flash \
+    "$YVEX_BIN" execute attention run --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope quick \
         --phase decode --mode eager --operation-scope core --output audit \
@@ -1133,7 +1085,7 @@ PY
     for mode in eager piecewise full; do
         trace_level=none
         if [ "$mode" = full ]; then trace_level=full; fi
-        "$YVEX_BIN" graph attention execute --target deepseek4-v4-flash \
+        "$YVEX_BIN" execute attention run --target deepseek4-v4-flash \
             --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
             --runtime-binding "$BINDING" --backend cuda --probe canonical --scope quick \
             --phase prefill --mode "$mode" --operation-scope envelope --tokens 4 --repeat 2 \
@@ -1150,7 +1102,7 @@ for path in sys.argv[1:]:
     with open(path, encoding="utf-8") as stream:
         results.append(json.load(stream))
 for result, mode in zip(results, ("eager", "piecewise", "full")):
-    assert result["command"] == "graph attention execute"
+    assert result["command"] == "execute attention run"
     assert result["status"] == "complete"
     assert result["backend"] == "cuda"
     assert result["phase"] == "prefill"
@@ -1203,20 +1155,20 @@ assert full["tensor_output_digest"] == piecewise["tensor_output_digest"]
 assert full["state_delta_digest"] == piecewise["state_delta_digest"]
 PY
 
-    "$YVEX_BIN" graph attention capture --target deepseek4-v4-flash \
+    "$YVEX_BIN" execute attention capture --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --mode full --probe canonical --scope quick \
         --output json >"$OUT_DIR/capture.json" 2>"$OUT_DIR/capture.err"
-    "$YVEX_BIN" graph attention capture --target deepseek4-v4-flash \
+    "$YVEX_BIN" execute attention capture --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --mode piecewise --probe canonical --scope quick \
         --output json >"$OUT_DIR/capture-piecewise.json" \
         2>"$OUT_DIR/capture-piecewise.err"
-    "$YVEX_BIN" graph attention replay --target deepseek4-v4-flash \
+    "$YVEX_BIN" execute attention replay --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --mode full --probe canonical --scope quick \
         --repeat 2 --output json >"$OUT_DIR/replay.json" 2>"$OUT_DIR/replay.err"
-    "$YVEX_BIN" graph attention cuda-graph warmup --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention cuda-graph warmup --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --mode full --probe canonical --scope quick \
         --warmup 2 --output json >"$OUT_DIR/graph-warmup.json" \
@@ -1279,24 +1231,24 @@ assert warmed["cuda_graph_capture_count"] == 3
 assert warmed["cuda_graph_replay_count"] == 9
 PY
 
-    "$YVEX_BIN" graph attention cuda-graph list --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention cuda-graph list --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --output json \
         >"$OUT_DIR/graph-list.json" 2>"$OUT_DIR/graph-list.err"
-    "$YVEX_BIN" graph attention cuda-graph inspect \
+    "$YVEX_BIN" profile attention cuda-graph inspect \
         --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --output json \
         >"$OUT_DIR/graph-inspect.json" 2>"$OUT_DIR/graph-inspect.err"
-    "$YVEX_BIN" graph attention cuda-graph update --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention cuda-graph update --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --output json \
         >"$OUT_DIR/graph-update.json" 2>"$OUT_DIR/graph-update.err"
-    "$YVEX_BIN" graph attention cuda-graph invalidate --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention cuda-graph invalidate --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --output json \
         >"$OUT_DIR/graph-invalidate.json" 2>"$OUT_DIR/graph-invalidate.err"
-    "$YVEX_BIN" graph attention cuda-graph release --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention cuda-graph release --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --output json \
         >"$OUT_DIR/graph-release.json" 2>"$OUT_DIR/graph-release.err"
@@ -1338,7 +1290,7 @@ assert released["cuda_graph_registry_count"] == 0
 assert released["cuda_graph_registry_affected_count"] == 3
 PY
 
-    "$YVEX_BIN" graph attention execute --target deepseek4-v4-flash \
+    "$YVEX_BIN" execute attention run --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope full \
         --phase decode --mode eager --operation-scope release-attention-set --output audit \
@@ -1348,13 +1300,13 @@ PY
     contains "$OUT_DIR/full-cuda.out" "kernel_launches:"
 
     YVEX_TEST_RUNTIME_AUTO_DISABLE_FULL=1 \
-        "$YVEX_BIN" graph attention execute --target deepseek4-v4-flash \
+        "$YVEX_BIN" execute attention run --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope full \
         --phase decode --mode auto --operation-scope release-attention-set \
         --output json >"$OUT_DIR/full-cuda-piecewise.json" \
         2>"$OUT_DIR/full-cuda-piecewise.err"
-    "$YVEX_BIN" graph attention execute --target deepseek4-v4-flash \
+    "$YVEX_BIN" execute attention run --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope full \
         --phase decode --mode full --operation-scope release-attention-set \
@@ -1394,7 +1346,7 @@ assert piecewise["selection_reason"] == (
 PY
 
     for mode in eager piecewise full; do
-        "$YVEX_BIN" graph attention compare --target deepseek4-v4-flash \
+        "$YVEX_BIN" execute attention compare --target deepseek4-v4-flash \
             --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
             --runtime-binding "$BINDING" --probe canonical --scope full \
             --phase decode --mode "$mode" --operation-scope release-attention-set \
@@ -1463,7 +1415,7 @@ for result, mode in zip(results, ("eager", "piecewise", "full")):
         assert result["cuda_graph_replay_count"] == 43
 PY
 
-    "$YVEX_BIN" graph attention profile --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention run --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope full \
         --phase decode --mode full --operation-scope release-attention-set \
@@ -1475,7 +1427,7 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     result = json.load(stream)
-assert result["command"] == "graph attention profile"
+assert result["command"] == "profile attention run"
 assert result["status"] == "complete"
 assert result["backend"] == "cuda"
 assert result["phase"] == "decode"
@@ -1522,7 +1474,7 @@ assert result["transformer_ready"] is False
 assert result["runtime_generation_ready"] is False
 PY
 
-    "$YVEX_BIN" graph attention qualify --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention qualify --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope full \
         --phase decode --mode full --operation-scope release-attention-set \
@@ -1534,7 +1486,7 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     result = json.load(stream)
-assert result["command"] == "graph attention qualify"
+assert result["command"] == "profile attention qualify"
 assert result["status"] == "complete"
 assert result["software_contract_status"] == "pass"
 assert result["numerical_conformance_status"] == "pass"
@@ -1564,7 +1516,7 @@ assert result["runtime_generation_ready"] is False
 PY
 
     CONTROL_ARTIFACT=$(printf '%s\001%s' "$OUT_DIR/missing-control" ".gguf")
-    expect_status 3 "$YVEX_BIN" graph attention execute \
+    expect_status 3 "$YVEX_BIN" execute attention run \
         --target deepseek4-v4-flash --models-root "$MODELS_ROOT" \
         --artifact "$CONTROL_ARTIFACT" --runtime-binding "$BINDING" \
         --backend cpu --scope quick --output json \
@@ -1582,7 +1534,7 @@ assert result["failure_where"]
 assert "layers_executed" not in result
 PY
 
-    "$YVEX_BIN" graph attention benchmark --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention component --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope quick \
         --phase decode --mode piecewise --operation-scope envelope \
@@ -1590,14 +1542,14 @@ PY
         --baseline "$OUT_DIR/attention.yvex-benchmark" --write-baseline \
         --progress off --output json \
         >"$OUT_DIR/benchmark-write.json" 2>"$OUT_DIR/benchmark-write.err"
-    "$YVEX_BIN" graph attention benchmark --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention component --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope quick \
         --phase decode --mode piecewise --operation-scope envelope \
         --position 384 --history-tokens 384 --warmup 0 --repeat 5 \
         --baseline "$OUT_DIR/attention.yvex-benchmark" --progress off --output json \
         >"$OUT_DIR/benchmark-compare.json" 2>"$OUT_DIR/benchmark-compare.err"
-    "$YVEX_BIN" graph attention benchmark --target deepseek4-v4-flash \
+    "$YVEX_BIN" profile attention component --target deepseek4-v4-flash \
         --models-root "$MODELS_ROOT" --artifact "$ARTIFACT" \
         --runtime-binding "$BINDING" --backend cuda --probe canonical --scope quick \
         --phase decode --mode piecewise --operation-scope envelope \
@@ -1605,7 +1557,7 @@ PY
         --baseline "$OUT_DIR/attention-short.yvex-benchmark" --write-baseline \
         --chart "$OUT_DIR/attention.svg" --progress off --output json \
         >"$OUT_DIR/benchmark-chart.json" 2>"$OUT_DIR/benchmark-chart.err"
-    "$YVEX_BIN" graph attention benchmark compare \
+    "$YVEX_BIN" profile attention compare \
         --baseline "$OUT_DIR/attention.yvex-benchmark" \
         --current "$OUT_DIR/attention.yvex-benchmark" \
         --max-regression-bps 0 \
@@ -1613,7 +1565,7 @@ PY
         --output json \
         >"$OUT_DIR/benchmark-file-compare.json" \
         2>"$OUT_DIR/benchmark-file-compare.err"
-    expect_status 1 "$YVEX_BIN" graph attention benchmark compare \
+    expect_status 1 "$YVEX_BIN" profile attention compare \
         --baseline "$OUT_DIR/attention.yvex-benchmark" \
         --current "$OUT_DIR/attention-short.yvex-benchmark" --output json \
         >"$OUT_DIR/benchmark-file-incompatible.json" \
@@ -1727,7 +1679,7 @@ assert len(fields["build_identity"]) == 64
 assert fields["device"] != "cpu"
 assert fields["cuda_build"] != "not-applicable"
 assert fields["benchmark_scope"] == "attention_component"
-assert file_compared["command"] == "graph attention benchmark compare"
+assert file_compared["command"] == "profile attention compare"
 assert file_compared["status"] == "complete"
 assert file_compared["benchmark_scope"] == "attention_component"
 assert file_compared["component_benchmark_status"] == "compared"
@@ -1745,7 +1697,7 @@ assert file_comparison_chart.is_file()
 assert hashlib.sha256(file_comparison_chart.read_bytes()).hexdigest() == (
     file_compared["benchmark_chart_identity"]
 )
-assert file_incompatible["command"] == "graph attention benchmark compare"
+assert file_incompatible["command"] == "profile attention compare"
 assert file_incompatible["status"] == "refused"
 assert file_incompatible["component_benchmark_status"] == "unavailable"
 assert file_incompatible["correctness_status"] == "not_evaluated"

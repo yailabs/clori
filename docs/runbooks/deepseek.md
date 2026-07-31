@@ -64,17 +64,17 @@ the application to execute. See the
 The engine-linked offline lane of `yvex` retains direct proof surfaces:
 
 ```sh
-./yvex graph attention prepare --help
-./yvex graph transformer execute --help
-./yvex graph transformer decode --help
-./yvex graph transformer logits --help
-./yvex graph transformer sample --help
-./yvex graph transformer generate --help
+./yvex execute attention prepare --help
+./yvex execute transformer run --help
+./yvex execute transformer decode --help
+./yvex execute transformer logits --help
+./yvex execute transformer sample --help
+./yvex execute transformer generate --help
 
-./yvex tokenizer show --help
-./yvex tokenizer encode --help
-./yvex quant preset --help
-./yvex quant plan --help
+./yvex inspect tokenizer --help
+./yvex execute tokenizer encode --help
+./yvex compile quant preset --help
+./yvex compile quant plan --help
 ./yvex artifact materialize --help
 ```
 

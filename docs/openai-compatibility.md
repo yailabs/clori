@@ -1,7 +1,7 @@
 # YVEX OpenAI Compatibility Profile v1
 
 `yvex.openai.compat.v1` is a bounded, local application-provider profile. It
-adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v3 and
+adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v4 and
 the existing `yvexd` model host. It is not a claim of full OpenAI API or OpenAI
 service equivalence.
 
@@ -18,7 +18,7 @@ Those moving interfaces do not expand this explicitly versioned YVEX subset.
 application or SDK
   -> loopback HTTP/1.1
   -> yvexd OpenAI adapter
-  -> provider-neutral request over YVEX protocol v3
+  -> provider-neutral request over YVEX protocol v4
   -> yvexd session and generation owners
 ```
 

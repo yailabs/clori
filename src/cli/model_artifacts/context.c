@@ -183,11 +183,11 @@ static const char *const literal_lines_9[] = {
     "cleanup_status: pass"};
 
 static const char *const literal_lines_10[] = { "Examples:",
-    "  yvex runtime context report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+    "  yvex inspect context report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
         "cpu --tokens 0,1,2,3",
-    "  yvex runtime context report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+    "  yvex inspect context report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
         "cpu --tokens 0,1,2,3 --chunk-size 2",
-    "  yvex runtime context report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+    "  yvex inspect context report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
         "cpu --tokens 0,1,2,3 --context-length 2\n"
 };
 
@@ -271,7 +271,7 @@ static int parse_context_options(int arg_count,
     if (arg_count < 3 || strcmp(args[2], "report") != 0) {
         yvex_cli_out_writef(stderr, "yvex: context requires report\n");
         yvex_cli_out_writef(stderr,
-            "usage: yvex runtime context report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend "
+            "usage: yvex inspect context report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend "
                 "cpu|cuda] [options]\n");
         return 2;
     }
@@ -868,7 +868,7 @@ int yvex_model_artifacts_surface_context_command(int arg_count, char **args)
 void yvex_model_artifacts_surface_context_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex runtime context report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend cpu|"
+        "usage: yvex inspect context report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend cpu|"
             "cuda] [--audit | --output normal|table|audit] [options]\n\n");
     yvex_cli_out_lines(fp, literal_lines_10, sizeof(literal_lines_10) / sizeof(literal_lines_10[0]));
     yvex_cli_out_writef(fp,

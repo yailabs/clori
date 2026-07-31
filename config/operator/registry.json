@@ -1,0 +1,6315 @@
+{
+  "audit_reconciliation": {
+    "baseline": "ec7dccede90c1a1efa87b4c2519c25b30d5e1733",
+    "command_overrides": {
+      "repl.status": [
+        "console.status"
+      ]
+    },
+    "removed_flags": [
+      {
+        "command_id": "cli.offline.artifact.verify",
+        "flag": "--model",
+        "rationale": "remove the hidden integrity-check grammar rewrite"
+      },
+      {
+        "command_id": "cli.offline.evidence.models",
+        "flag": "--force-sidecars",
+        "rationale": "remove a parsed but unconsumed option"
+      },
+      {
+        "command_id": "cli.offline.evidence.models",
+        "flag": "--no-use",
+        "rationale": "separate acquisition from selected startup state"
+      },
+      {
+        "command_id": "cli.yvex.runtime.trace",
+        "flag": "--follow",
+        "rationale": "trace is already a continuous subscription"
+      }
+    ]
+  },
+  "catalogs": {
+    "adapters": {
+      "REPL-local": [
+        "quit"
+      ],
+      "daemon-entrypoint": [
+        "host"
+      ],
+      "offline-engine": [
+        "accounts",
+        "backend",
+        "context",
+        "convert",
+        "cuda",
+        "detokenize",
+        "fullmodel",
+        "gguf_emit",
+        "gguf_template",
+        "graph",
+        "imatrix",
+        "input",
+        "inspect",
+        "integrity",
+        "materialize",
+        "materialize_gate",
+        "metadata",
+        "model_gate",
+        "model_target",
+        "models",
+        "moe",
+        "native_weights",
+        "paths",
+        "prompt",
+        "qtype_support",
+        "quant",
+        "quant_job",
+        "quant_policy",
+        "source_manifest",
+        "tensor_collection",
+        "tensor_map",
+        "tensors",
+        "tokenize",
+        "tokenizer"
+      ],
+      "runtime-client": [
+        "chat",
+        "completion",
+        "console_status",
+        "help",
+        "model_select",
+        "model_selected",
+        "run",
+        "runtime_memory",
+        "runtime_model",
+        "runtime_start",
+        "runtime_status",
+        "runtime_stop",
+        "runtime_trace",
+        "runtime_watch",
+        "session_attach",
+        "session_cancel",
+        "session_close",
+        "session_detach",
+        "session_list",
+        "session_new",
+        "session_reset",
+        "session_show",
+        "version"
+      ]
+    },
+    "completion_providers": [
+      "enum",
+      "filesystem",
+      "model-registry",
+      "none",
+      "session"
+    ],
+    "default_providers": [
+      "client.chat",
+      "client.run",
+      "none",
+      "provider.openai",
+      "runtime.configuration",
+      "server.limits"
+    ],
+    "protocol_operations": [
+      "console.status",
+      "generation.cancel",
+      "generation.turn",
+      "handshake",
+      "none",
+      "runtime.status",
+      "runtime.stop",
+      "runtime.trace",
+      "runtime.watch",
+      "session.attach",
+      "session.close",
+      "session.detach",
+      "session.list",
+      "session.new",
+      "session.reset",
+      "session.show"
+    ],
+    "renderers": [
+      "completion",
+      "discovery",
+      "human",
+      "human-or-json",
+      "none",
+      "stream"
+    ],
+    "validators": [
+      "syntax.delegated",
+      "syntax.enum",
+      "syntax.name",
+      "syntax.none",
+      "syntax.path",
+      "syntax.text",
+      "syntax.u64"
+    ]
+  },
+  "discovery_schema": "yvex.command.discovery.v1",
+  "flag_sets": {
+    "cli_offline_artifact_check": {
+      "booleans": [
+        "--audit",
+        "--no-graph",
+        "--no-materialize",
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--backend",
+        "--level",
+        "--models-root",
+        "--output",
+        "--registry",
+        "--report-dir"
+      ]
+    },
+    "cli_offline_artifact_emit": {
+      "booleans": [
+        "--overwrite"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--arch",
+        "--model-name",
+        "--out",
+        "--target-name",
+        "--target-qtype",
+        "--template",
+        "--tensor-name"
+      ]
+    },
+    "cli_offline_artifact_materialize": {
+      "booleans": [
+        "--require-all"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--allow-unsupported-dtype",
+        "--backend",
+        "--model"
+      ]
+    },
+    "cli_offline_artifact_materialize_gate": {
+      "booleans": [
+        "--require-cpu",
+        "--require-cuda"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--backend",
+        "--check-cleanup",
+        "--expect-bytes",
+        "--expect-dims",
+        "--expect-dtype",
+        "--expect-rank",
+        "--expect-tensor",
+        "--family",
+        "--label",
+        "--model",
+        "--repeat",
+        "--report-out",
+        "--scope",
+        "--sha256"
+      ]
+    },
+    "cli_offline_artifact_model_gate": {
+      "booleans": [
+        "--require-cpu",
+        "--require-cuda"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--backend",
+        "--expect-bytes",
+        "--expect-dims",
+        "--expect-dtype",
+        "--expect-rank",
+        "--expect-tensor",
+        "--family",
+        "--label",
+        "--model",
+        "--report-out",
+        "--sha256"
+      ]
+    },
+    "cli_offline_artifact_prepare": [
+      {
+        "name": "--models-root",
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
+        "conflicts": [
+          "--out-dir"
+        ],
+        "name": "--out",
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
+        "conflicts": [
+          "--out"
+        ],
+        "name": "--out-dir",
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
+        "enum_values": [
+          "normal",
+          "table",
+          "audit"
+        ],
+        "name": "--output",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "name": "--registry",
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
+        "name": "--source",
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
+        "name": "--audit",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "name": "--dry-run",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "name": "--json",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "name": "--no-register",
+        "takes_value": false,
+        "value_type": "boolean"
+      },
+      {
+        "name": "--overwrite",
+        "takes_value": false,
+        "value_type": "boolean"
+      }
+    ],
+    "cli_offline_artifact_registry": {
+      "booleans": [
+        "--audit",
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--family",
+        "--models-root",
+        "--output"
+      ]
+    },
+    "cli_offline_artifact_template": {
+      "booleans": [
+        "--require-all-template-tensors-in-native"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--native-source",
+        "--template"
+      ]
+    },
+    "cli_offline_artifact_verify": {
+      "booleans": [
+        "--audit",
+        "--require-token-embedding"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--backend",
+        "--expect-sha256",
+        "--output",
+        "--partial-token"
+      ]
+    },
+    "cli_offline_evidence_accounts": {
+      "booleans": [
+        "--audit",
+        "--device"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--add-to-git-credential",
+        "--cli",
+        "--git-protocol",
+        "--hostname",
+        "--interactive",
+        "--output",
+        "--required",
+        "--scopes",
+        "--skip-ssh-key",
+        "--token-env",
+        "--token-stdin",
+        "--web"
+      ]
+    },
+    "cli_offline_evidence_model": {
+      "booleans": [
+        "--audit",
+        "--dry-run",
+        "--include-blockers",
+        "--include-graph",
+        "--include-kv",
+        "--include-logits",
+        "--include-moe",
+        "--include-output",
+        "--include-placement",
+        "--include-roles",
+        "--plan-only",
+        "--require-collection",
+        "--require-role"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--backend",
+        "--fail-after-phase",
+        "--family",
+        "--format",
+        "--limit-bytes",
+        "--limit-tensors",
+        "--model",
+        "--output",
+        "--registry",
+        "--report-dir",
+        "--residency",
+        "--target"
+      ]
+    },
+    "cli_offline_evidence_moe": {
+      "booleans": [
+        "--audit",
+        "--include-blockers",
+        "--include-residency",
+        "--include-tensors"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--backend",
+        "--family",
+        "--model",
+        "--output",
+        "--registry"
+      ]
+    },
+    "cli_offline_evidence_paths": {
+      "booleans": [
+        "--audit",
+        "--create",
+        "--reset",
+        "--run"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--family",
+        "--kind",
+        "--models-root",
+        "--output",
+        "--project"
+      ]
+    },
+    "cli_offline_evidence_target": {
+      "booleans": [
+        "--audit",
+        "--include-backend",
+        "--include-blockers",
+        "--include-candidates",
+        "--include-critical-path",
+        "--include-examples",
+        "--include-hardware",
+        "--include-next",
+        "--include-pressure-targets",
+        "--include-requirements",
+        "--include-source",
+        "--json",
+        "--paths",
+        "--role-support",
+        "--roles",
+        "--strict"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--candidate",
+        "--check-output-contract",
+        "--gate",
+        "--models-root",
+        "--output",
+        "--release",
+        "--role",
+        "--source",
+        "--target"
+      ]
+    },
+    "cli_offline_graph_attention": {
+      "booleans": [
+        "--audit",
+        "--compare-backends",
+        "--json",
+        "--require-mode",
+        "--write-baseline"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--artifact",
+        "--backend",
+        "--baseline",
+        "--capture-bucket",
+        "--chart",
+        "--chunk-tokens",
+        "--class",
+        "--compressed-capacity",
+        "--context-capacity",
+        "--current",
+        "--history-tokens",
+        "--imatrix-manifest",
+        "--indexer-capacity",
+        "--input",
+        "--input-file",
+        "--layer",
+        "--layer-count",
+        "--layer-start",
+        "--local-capacity",
+        "--max-device-bytes",
+        "--max-host-bytes",
+        "--max-regression-bps",
+        "--mode",
+        "--models-root",
+        "--operation-scope",
+        "--output",
+        "--phase",
+        "--physical-variant-plan",
+        "--position",
+        "--probe",
+        "--progress",
+        "--quant-policy",
+        "--quant-preset",
+        "--repeat",
+        "--runtime-binding",
+        "--runtime-binding-dir",
+        "--scope",
+        "--source",
+        "--source-manifest",
+        "--target",
+        "--trace-level",
+        "--warmup",
+        "--tokens"
+      ]
+    },
+    "cli_offline_graph_moe": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--artifact",
+        "--backend",
+        "--input",
+        "--input-file",
+        "--max-device-bytes",
+        "--max-host-bytes",
+        "--output",
+        "--progress",
+        "--runtime-binding",
+        "--scope",
+        "--target"
+      ]
+    },
+    "cli_offline_graph_transformer": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--artifact",
+        "--backend",
+        "--chunk-tokens",
+        "--context-capacity",
+        "--input",
+        "--input-file",
+        "--max-device-bytes",
+        "--max-host-bytes",
+        "--max-new-tokens",
+        "--max-output-bytes",
+        "--min-p",
+        "--output",
+        "--phase",
+        "--prefill-chunk-tokens",
+        "--prefill-tokens",
+        "--progress",
+        "--runtime-binding",
+        "--seed",
+        "--strategy",
+        "--system",
+        "--target",
+        "--temperature",
+        "--text",
+        "--top-k",
+        "--top-p",
+        "--typical-p",
+        "--user"
+      ]
+    },
+    "cli_offline_model_acquire": {
+      "booleans": [
+        "--audit",
+        "--clear-stale-locks",
+        "--dry-run",
+        "--json",
+        "--no-manifest",
+        "--no-native-inventory",
+        "--no-progress"
+      ],
+      "repeatable_values": [
+        "--exclude",
+        "--include"
+      ],
+      "values": [
+        "--asset",
+        "--asset-name",
+        "--auth",
+        "--cli",
+        "--family",
+        "--github-source",
+        "--max-workers",
+        "--models-root",
+        "--name",
+        "--output",
+        "--progress",
+        "--provider",
+        "--release",
+        "--repo",
+        "--revision",
+        "--source",
+        "--tick-seconds",
+        "--timeout-seconds",
+        "--token-env"
+      ]
+    },
+    "cli_offline_model_acquisition_cleanup": {
+      "booleans": [
+        "--all-provider-cache",
+        "--audit",
+        "--dry-run",
+        "--failed-partials",
+        "--json",
+        "--logs",
+        "--receipts",
+        "--stale-locks",
+        "--yes"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--asset",
+        "--asset-name",
+        "--family",
+        "--github-source",
+        "--models-root",
+        "--name",
+        "--output",
+        "--provider",
+        "--release",
+        "--repo",
+        "--revision",
+        "--source"
+      ]
+    },
+    "cli_offline_model_acquisition_status": {
+      "booleans": [
+        "--audit",
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--asset",
+        "--asset-name",
+        "--family",
+        "--github-source",
+        "--models-root",
+        "--name",
+        "--output",
+        "--provider",
+        "--release",
+        "--repo",
+        "--revision",
+        "--source"
+      ]
+    },
+    "cli_offline_model_acquisition_stop": {
+      "booleans": [
+        "--audit",
+        "--dry-run",
+        "--force",
+        "--json",
+        "--match-provider-process"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--asset",
+        "--asset-name",
+        "--family",
+        "--github-source",
+        "--models-root",
+        "--name",
+        "--output",
+        "--provider",
+        "--release",
+        "--repo",
+        "--revision",
+        "--source",
+        "--timeout-seconds"
+      ]
+    },
+    "cli_offline_model_registry_add": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--alias",
+        "--calibration",
+        "--class",
+        "--family",
+        "--model",
+        "--path",
+        "--qprofile",
+        "--registry",
+        "--scope",
+        "--sha256",
+        "--support-level"
+      ]
+    },
+    "cli_offline_model_registry_read": {
+      "booleans": [
+        "--audit",
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--output",
+        "--registry"
+      ]
+    },
+    "cli_offline_model_registry_remove": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--registry"
+      ]
+    },
+    "cli_offline_model_registry_scan": {
+      "booleans": [
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--registry",
+        "--root"
+      ]
+    },
+    "cli_offline_quant_convert": {
+      "booleans": [
+        "--allow-unsupported-qtype",
+        "--overwrite"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--arch",
+        "--native-source",
+        "--out",
+        "--out-plan",
+        "--quant-policy",
+        "--target-qtype",
+        "--tensor"
+      ]
+    },
+    "cli_offline_quant_emit": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--imatrix-manifest",
+        "--models-root",
+        "--out",
+        "--plan",
+        "--policy",
+        "--preset",
+        "--source",
+        "--source-manifest",
+        "--target"
+      ]
+    },
+    "cli_offline_quant_explain": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--imatrix-manifest",
+        "--models-root",
+        "--plan",
+        "--policy",
+        "--preset",
+        "--role",
+        "--source",
+        "--source-manifest",
+        "--target",
+        "--tensor"
+      ]
+    },
+    "cli_offline_quant_imatrix": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--arch",
+        "--dataset",
+        "--format",
+        "--imatrix",
+        "--manifest",
+        "--name",
+        "--out",
+        "--producer",
+        "--status"
+      ]
+    },
+    "cli_offline_quant_job": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--arch",
+        "--command",
+        "--log",
+        "--manifest",
+        "--name",
+        "--native-source",
+        "--out",
+        "--out-gguf",
+        "--status",
+        "--template",
+        "--tool",
+        "--tool-path"
+      ]
+    },
+    "cli_offline_quant_plan": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--backend",
+        "--imatrix-manifest",
+        "--models-root",
+        "--out-plan",
+        "--policy",
+        "--preset",
+        "--source",
+        "--source-manifest",
+        "--target"
+      ]
+    },
+    "cli_offline_quant_policy": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--arch",
+        "--out",
+        "--policy",
+        "--template"
+      ]
+    },
+    "cli_offline_quant_preset": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--out"
+      ]
+    },
+    "cli_offline_quant_summarize": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--imatrix-manifest",
+        "--models-root",
+        "--plan",
+        "--policy",
+        "--preset",
+        "--role",
+        "--source",
+        "--source-manifest",
+        "--target",
+        "--tensor"
+      ]
+    },
+    "cli_offline_runtime_context": {
+      "booleans": [
+        "--audit",
+        "--include-attention",
+        "--include-blockers",
+        "--include-decode",
+        "--include-kv",
+        "--include-prefill",
+        "--tokens"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--backend",
+        "--chunk-size",
+        "--context-length",
+        "--family",
+        "--model",
+        "--output",
+        "--registry"
+      ]
+    },
+    "cli_offline_runtime_input": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--model",
+        "--text",
+        "--tokens"
+      ]
+    },
+    "cli_offline_source_manifest": {
+      "booleans": [
+        "--audit",
+        "--dry-run-log",
+        "--include-blockers",
+        "--include-config",
+        "--include-files",
+        "--include-next",
+        "--json",
+        "--strict"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--download-command",
+        "--download-log",
+        "--family",
+        "--hf-repo",
+        "--license",
+        "--local-path",
+        "--model-card",
+        "--models-root",
+        "--node",
+        "--out",
+        "--output",
+        "--pid-file",
+        "--release",
+        "--revision",
+        "--source",
+        "--status",
+        "--target",
+        "--tensor-limit"
+      ]
+    },
+    "cli_offline_source_native": {
+      "booleans": [
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--limit",
+        "--source",
+        "--tensor"
+      ]
+    },
+    "cli_offline_tensor_collection": {
+      "booleans": [
+        "--audit",
+        "--include-blockers",
+        "--include-dispatch",
+        "--include-experts",
+        "--include-residency",
+        "--include-router",
+        "--include-shared",
+        "--include-storage"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--backend",
+        "--collection",
+        "--family",
+        "--model",
+        "--output",
+        "--registry"
+      ]
+    },
+    "cli_offline_tensor_map": {
+      "booleans": [
+        "--json",
+        "--require-all-native-mapped",
+        "--require-all-template-matched"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--arch",
+        "--limit",
+        "--native-source",
+        "--template",
+        "--tensor"
+      ]
+    },
+    "cli_offline_tokenizer_decode": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--ids"
+      ]
+    },
+    "cli_offline_tokenizer_encode": {
+      "booleans": [
+        "--bos",
+        "--eos",
+        "--no-bos",
+        "--pieces"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--text"
+      ]
+    },
+    "cli_offline_tokenizer_prompt": {
+      "booleans": [
+        "--no-generation-prompt",
+        "--thinking",
+        "--tokens"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--assistant",
+        "--system",
+        "--tool",
+        "--user"
+      ]
+    },
+    "cli_yvex_chat": [
+      {
+        "default_provider": "client.chat",
+        "name": "--max-new-tokens",
+        "range": "1..18446744073709551615",
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
+        "name": "--session",
+        "takes_value": true,
+        "value_type": "name"
+      }
+    ],
+    "cli_yvex_model_use": [
+      {
+        "name": "--artifact",
+        "required": true,
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
+        "enum_values": [
+          "cpu",
+          "cuda"
+        ],
+        "name": "--backend",
+        "required": true,
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "name": "--context",
+        "range": "1..18446744073709551615",
+        "required": true,
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
+        "name": "--runtime-binding",
+        "required": true,
+        "takes_value": true,
+        "value_type": "path"
+      },
+      {
+        "name": "--target",
+        "required": true,
+        "takes_value": true,
+        "value_type": "name"
+      }
+    ],
+    "cli_yvex_run": [
+      {
+        "default_provider": "client.run",
+        "name": "--max-new-tokens",
+        "range": "1..18446744073709551615",
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
+        "default_provider": "client.run",
+        "name": "--min-p",
+        "takes_value": true,
+        "value_type": "number"
+      },
+      {
+        "default_provider": "client.run",
+        "name": "--seed",
+        "range": "0..18446744073709551615",
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
+        "name": "--session",
+        "takes_value": true,
+        "value_type": "name"
+      },
+      {
+        "default_provider": "client.run",
+        "enum_values": [
+          "greedy",
+          "stochastic"
+        ],
+        "name": "--strategy",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "default_provider": "client.run",
+        "name": "--temperature",
+        "takes_value": true,
+        "value_type": "number"
+      },
+      {
+        "default_provider": "client.run",
+        "name": "--top-k",
+        "range": "0..18446744073709551615",
+        "takes_value": true,
+        "value_type": "u64"
+      },
+      {
+        "default_provider": "client.run",
+        "name": "--top-p",
+        "takes_value": true,
+        "value_type": "number"
+      },
+      {
+        "default_provider": "client.run",
+        "name": "--typical-p",
+        "takes_value": true,
+        "value_type": "number"
+      }
+    ],
+    "cli_yvex_runtime_status": {
+      "booleans": [
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": []
+    },
+    "command_discovery": {
+      "booleans": [
+        "--advanced",
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": []
+    },
+    "daemon_yvexd": {
+      "booleans": [
+        "--trace-content",
+        "--version"
+      ],
+      "repeatable_values": [],
+      "values": [
+        "--backend",
+        "--console",
+        "--context",
+        "--max-new-tokens",
+        "--model",
+        "--openai",
+        "--openai-port",
+        "--openai-timeout-ms",
+        "--prefill-chunk",
+        "--runtime-binding",
+        "--socket",
+        "--target",
+        "--trace-level"
+      ]
+    },
+    "help": [
+      {
+        "aliases": [
+          "-h"
+        ],
+        "name": "--help",
+        "takes_value": false,
+        "value_type": "boolean"
+      }
+    ],
+    "runtime_trace": {
+      "booleans": [
+        "--json"
+      ],
+      "repeatable_values": [],
+      "values": []
+    }
+  },
+  "global_flag_sets": [
+    "help"
+  ],
+  "operation_defaults": {
+    "CLI_projection": true,
+    "TTY_policy": "optional",
+    "adapter_argv": [],
+    "aliases": [],
+    "arguments": [],
+    "artifact_requirement": "none",
+    "backend_requirement": "none",
+    "completion_provider": "none",
+    "daemon_requirement": "absent",
+    "default_providers": [],
+    "deprecation_state": "current",
+    "documentation_owner": "docs/operator-runbook.md",
+    "flag_sets": [],
+    "flags": [],
+    "future_TUI_projection": "catalogued",
+    "input_schema": "argv.v1",
+    "model_requirement": "none",
+    "protocol_operation": "none",
+    "renderer_id": "human",
+    "result_schema": "human.v1",
+    "schema_version": 1,
+    "side_effects": "read-only",
+    "slash_projection": "none",
+    "test_owner": "tests/client_cutover.sh",
+    "validator_ids": [
+      "syntax.delegated"
+    ]
+  },
+  "operations": [
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "artifact.status.projected",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Removed false artifact status facade.",
+      "superseded_by": [
+        "artifact.inspect"
+      ],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "artifact.verify.projected",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Removed false artifact verification facade.",
+      "superseded_by": [
+        "artifact.verify"
+      ],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "command.discovery.quant",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Absorbed by canonical namespace help.",
+      "superseded_by": [
+        "command.discovery"
+      ],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "console_status",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "console.status",
+      "protocol_operation": "console.status",
+      "renderer_id": "human",
+      "result_schema": "console.status.v1",
+      "side_effects": "read-only",
+      "slash_projection": "/status",
+      "summary": "Return one composed runtime and attached-session snapshot.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "console_status",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "console.context",
+      "protocol_operation": "console.status",
+      "renderer_id": "human",
+      "result_schema": "console.status.v1",
+      "side_effects": "read-only",
+      "slash_projection": "/context",
+      "summary": "Show authoritative context and KV use for the attached session.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "execute.graph",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Decomposed by direct execution, inspection, and profiling intent.",
+      "superseded_by": [
+        "execute.graph.attention.capture",
+        "execute.graph.attention.capabilities",
+        "execute.graph.attention.compare",
+        "execute.graph.attention.describe",
+        "execute.graph.attention.execute",
+        "execute.graph.attention.plan",
+        "execute.graph.attention.prepare",
+        "execute.graph.attention.replay",
+        "execute.graph.attention.residency.inspect",
+        "execute.graph.attention.state.exercise",
+        "execute.graph.attention.state.inspect",
+        "execute.graph.attention.state.validate",
+        "execute.graph.moe.execute",
+        "execute.graph.transformer.decode",
+        "execute.graph.transformer.execute",
+        "execute.graph.transformer.generate",
+        "execute.graph.transformer.logits",
+        "execute.graph.transformer.sample"
+      ],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Integrate",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/openai-compatibility.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "http.chat.completions",
+      "protocol_operation": "generation.turn",
+      "renderer_id": "none",
+      "result_schema": "provider.result.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Project OpenAI Chat Completions.",
+      "test_owner": "tests/integration/openai.sh",
+      "visibility": "API-only"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Integrate",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/openai-compatibility.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "http.health",
+      "protocol_operation": "runtime.status",
+      "renderer_id": "none",
+      "result_schema": "provider.result.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Project bounded OpenAI adapter health.",
+      "test_owner": "tests/integration/openai.sh",
+      "visibility": "API-only"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Integrate",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/openai-compatibility.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "http.models.list",
+      "protocol_operation": "runtime.status",
+      "renderer_id": "none",
+      "result_schema": "provider.result.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Project OpenAI-compatible model listing.",
+      "test_owner": "tests/integration/openai.sh",
+      "visibility": "API-only"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Integrate",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/openai-compatibility.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "http.models.show",
+      "protocol_operation": "runtime.status",
+      "renderer_id": "none",
+      "result_schema": "provider.result.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Project one OpenAI-compatible model.",
+      "test_owner": "tests/integration/openai.sh",
+      "visibility": "API-only"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Integrate",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/openai-compatibility.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "http.responses",
+      "protocol_operation": "generation.turn",
+      "renderer_id": "none",
+      "result_schema": "provider.result.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Project OpenAI Responses.",
+      "test_owner": "tests/integration/openai.sh",
+      "visibility": "API-only"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "model.registry",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Decomposed into distinct registry and acquisition operations.",
+      "superseded_by": [
+        "artifact.check",
+        "artifact.prepare",
+        "artifact.registry.list",
+        "artifact.registry.status",
+        "evidence.target",
+        "model.acquire",
+        "model.acquire.cleanup",
+        "model.acquire.resume",
+        "model.acquire.status",
+        "model.acquire.stop",
+        "model.list",
+        "model.registry.add",
+        "model.registry.remove",
+        "model.registry.scan",
+        "model.registry.verify",
+        "model.show"
+      ],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "model.status.projected",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Removed false model status facade.",
+      "superseded_by": [
+        "runtime.model"
+      ],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "model.use",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Superseded by complete selected startup configuration.",
+      "superseded_by": [
+        "model.select"
+      ],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Integrate",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/openai-compatibility.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "protocol.handshake",
+      "protocol_operation": "handshake",
+      "renderer_id": "none",
+      "result_schema": "provider.result.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Negotiate the exact private local protocol.",
+      "test_owner": "tests/integration/openai.sh",
+      "visibility": "API-only"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "quit",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "REPL-local",
+      "model_requirement": "none",
+      "operation_id": "repl.quit",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "client exit",
+      "slash_projection": "/quit",
+      "summary": "Exit the interactive client.",
+      "test_owner": "tests/repl_pty.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "host",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "daemon_yvexd"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "daemon-entrypoint",
+      "model_requirement": "none",
+      "operation_id": "runtime.host",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "persistent runtime host",
+      "slash_projection": "none",
+      "summary": "Host the sole resident model runtime.",
+      "test_owner": "tests/test_server.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "materialize"
+      ],
+      "adapter_id": "materialize",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "admitted-artifact",
+      "backend_requirement": "required",
+      "command_path": [
+        "artifact",
+        "materialize"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_artifact_materialize"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "artifact.materialize",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "allocates and validates finite materialization",
+      "slash_projection": "none",
+      "summary": "Materialize an admitted artifact for a backend.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "inspect"
+      ],
+      "adapter_id": "inspect",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "artifact",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "path"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "artifact",
+        "show"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "artifact.inspect",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect an admitted artifact.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "integrity",
+        "check",
+        "--model"
+      ],
+      "adapter_id": "integrity",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "artifact",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "path"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "artifact",
+        "verify"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_artifact_verify"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "artifact.verify",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Verify one artifact with one explicit grammar.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "chat",
+      "aliases": [
+        {
+          "deprecation": "current",
+          "path": []
+        }
+      ],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "chat"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [
+        "client.chat"
+      ],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_yvex_chat"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "generation.chat",
+      "protocol_operation": "generation.turn",
+      "renderer_id": "stream",
+      "result_schema": "human.v1",
+      "side_effects": "session and generation",
+      "slash_projection": "none",
+      "summary": "Enter retained interactive chat.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "prepare"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "compile",
+        "artifact",
+        "prepare"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_artifact_prepare"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "artifact.prepare",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "writes artifact",
+      "slash_projection": "none",
+      "summary": "Prepare a selected compilation artifact.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "gguf-emit"
+      ],
+      "adapter_id": "gguf_emit",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "emit",
+        "artifact"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_artifact_emit"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "artifact.emit.controlled",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "writes artifact",
+      "slash_projection": "none",
+      "summary": "Emit a controlled artifact fixture.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "gguf-template"
+      ],
+      "adapter_id": "gguf_template",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "emit",
+        "template"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_artifact_template"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "artifact.template",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "writes template",
+      "slash_projection": "none",
+      "summary": "Emit a deterministic artifact template.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "tensor-map"
+      ],
+      "adapter_id": "tensor_map",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "map"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_tensor_map"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "tensor.map",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "reads source metadata",
+      "slash_projection": "none",
+      "summary": "Map native tensors into artifact roles.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "convert"
+      ],
+      "adapter_id": "convert",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "quant",
+        "convert"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_quant_convert"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "quant.convert",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may write compilation output",
+      "slash_projection": "none",
+      "summary": "Convert selected tensors under explicit policy.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "quant",
+        "emit"
+      ],
+      "adapter_id": "quant",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "quant",
+        "emit"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_quant_emit"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "quant.emit",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may write compilation output",
+      "slash_projection": "none",
+      "summary": "Emit one planned physical variant.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "imatrix"
+      ],
+      "adapter_id": "imatrix",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "quant",
+        "imatrix"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_quant_imatrix"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "quant.imatrix",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may write compilation output",
+      "slash_projection": "none",
+      "summary": "Manage calibration-manifest evidence.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "quant-job"
+      ],
+      "adapter_id": "quant_job",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "quant",
+        "job"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_quant_job"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "quant.job",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may write compilation output",
+      "slash_projection": "none",
+      "summary": "Manage external quantization job manifests.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "quant",
+        "plan"
+      ],
+      "adapter_id": "quant",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "quant",
+        "plan"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_quant_plan"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "quant.plan",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may write compilation output",
+      "slash_projection": "none",
+      "summary": "Plan an identity-bound physical variant.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "quant-policy"
+      ],
+      "adapter_id": "quant_policy",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "quant",
+        "policy"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_quant_policy"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "quant.policy",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may write compilation output",
+      "slash_projection": "none",
+      "summary": "Inspect, validate, or derive quantization policy.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "quant",
+        "preset"
+      ],
+      "adapter_id": "quant",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "quant",
+        "preset"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_quant_preset"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "quant.preset",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may write compilation output",
+      "slash_projection": "none",
+      "summary": "Inspect or export a quantization preset.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "source-manifest"
+      ],
+      "adapter_id": "source_manifest",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "source",
+        "manifest"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_source_manifest"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "source.manifest",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may write source manifest",
+      "slash_projection": "none",
+      "summary": "Create or report source provenance.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "completion",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "enum_values": [
+            "bash",
+            "fish",
+            "zsh"
+          ],
+          "multiplicity": "one",
+          "name": "shell",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "enum"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "completion"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "none",
+      "operation_id": "command.completion",
+      "protocol_operation": "none",
+      "renderer_id": "completion",
+      "result_schema": "shell-completion.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Generate registry-driven shell completion.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "materialize-gate"
+      ],
+      "adapter_id": "materialize_gate",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "admitted-artifact",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "artifact",
+        "materialize-gate"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_artifact_materialize_gate"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "artifact.materialize.gate",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct execution",
+      "slash_projection": "none",
+      "summary": "Execute the bounded materialization gate.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "model-gate",
+        "check"
+      ],
+      "adapter_id": "model_gate",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "admitted-artifact",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "artifact",
+        "model-gate",
+        "check"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_artifact_model_gate"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "artifact.model.gate",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct execution",
+      "slash_projection": "none",
+      "summary": "Execute the bounded model gate.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "capture"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "attention",
+        "capture"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.capture",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute attention capture.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "compare"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "attention",
+        "compare"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.compare",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute attention compare.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "prepare"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "attention",
+        "prepare"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.prepare",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute attention prepare.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "replay"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "attention",
+        "replay"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.replay",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute attention replay.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "execute"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "attention",
+        "run"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.execute",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute attention run.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "state",
+        "exercise"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "attention",
+        "state",
+        "exercise"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.state.exercise",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute attention state exercise.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "state",
+        "validate"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "attention",
+        "state",
+        "validate"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.state.validate",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute attention state validate.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "input"
+      ],
+      "adapter_id": "input",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "execute",
+        "input"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_runtime_input"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "input.prepare",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct execution",
+      "slash_projection": "none",
+      "summary": "Construct bounded runtime input directly.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "moe",
+        "execute"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "runtime-binding",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "moe"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_moe"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.moe.execute",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute moe.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "detokenize"
+      ],
+      "adapter_id": "detokenize",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "execute",
+        "tokenizer",
+        "decode"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_tokenizer_decode"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "tokenizer.decode",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct execution",
+      "slash_projection": "none",
+      "summary": "Decode token IDs through the admitted tokenizer.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "tokenize"
+      ],
+      "adapter_id": "tokenize",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "execute",
+        "tokenizer",
+        "encode"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_tokenizer_encode"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "tokenizer.encode",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct execution",
+      "slash_projection": "none",
+      "summary": "Encode text through the admitted tokenizer.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "prompt"
+      ],
+      "adapter_id": "prompt",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "execute",
+        "tokenizer",
+        "prompt"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_tokenizer_prompt"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "tokenizer.prompt",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct execution",
+      "slash_projection": "none",
+      "summary": "Render one typed family prompt.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "transformer",
+        "decode"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "runtime-binding",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "transformer",
+        "decode"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_transformer"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.transformer.decode",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute transformer decode.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "transformer",
+        "generate"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "runtime-binding",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "transformer",
+        "generate"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_transformer"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.transformer.generate",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute transformer generate.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "transformer",
+        "logits"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "runtime-binding",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "transformer",
+        "logits"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_transformer"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.transformer.logits",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute transformer logits.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "transformer",
+        "execute"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "runtime-binding",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "transformer",
+        "run"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_transformer"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.transformer.execute",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute transformer run.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "transformer",
+        "sample"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "runtime-binding",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "transformer",
+        "sample"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_transformer"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.transformer.sample",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Execute transformer sample.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "help",
+      "aliases": [
+        {
+          "deprecation": "current",
+          "path": [
+            "--help"
+          ]
+        },
+        {
+          "deprecation": "current",
+          "path": [
+            "-h"
+          ]
+        }
+      ],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "path",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "help"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "command_discovery"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "none",
+      "operation_id": "command.discovery",
+      "protocol_operation": "none",
+      "renderer_id": "discovery",
+      "result_schema": "yvex.command.discovery.v1",
+      "side_effects": "read-only",
+      "slash_projection": "/help",
+      "summary": "Discover canonical commands and operations.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "check"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "artifact",
+        "check"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_artifact_check"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "artifact.check",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct checks",
+      "slash_projection": "none",
+      "summary": "Run bounded artifact checks.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "integrity",
+        "report",
+        "--model"
+      ],
+      "adapter_id": "integrity",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "artifact",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "path"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "artifact",
+        "integrity"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_artifact_verify"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "artifact.verify.report",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Render detailed artifact integrity evidence.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "metadata"
+      ],
+      "adapter_id": "metadata",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "inspect",
+        "artifact",
+        "metadata"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "artifact.metadata",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect artifact metadata.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "artifacts",
+        "list"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "artifact",
+        "registry"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_artifact_registry"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "artifact.registry.list",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "List discovered artifact candidates.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "artifacts",
+        "status"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "artifact",
+        "status"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_artifact_registry"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "artifact.registry.status",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Show one discovered artifact status.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "tensors"
+      ],
+      "adapter_id": "tensors",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "inspect",
+        "artifact",
+        "tensors"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "artifact.tensors",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect an artifact tensor directory.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "capabilities"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "inspect",
+        "attention",
+        "capabilities"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.capabilities",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Inspect attention capabilities.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "describe"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "inspect",
+        "attention",
+        "describe"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.describe",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Inspect attention describe.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "plan"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "inspect",
+        "attention",
+        "plan"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.plan",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Inspect attention plan.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "residency",
+        "inspect"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "inspect",
+        "attention",
+        "residency"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.residency.inspect",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Inspect attention residency.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "state",
+        "inspect"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "inspect",
+        "attention",
+        "state"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.state.inspect",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Inspect attention state.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "backend"
+      ],
+      "adapter_id": "backend",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "backend"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "system.backend",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect backend capability facts.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "context"
+      ],
+      "adapter_id": "context",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "context"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_runtime_context"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "context.report",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect offline context and KV requirements.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": false,
+      "adapter_argv": [],
+      "adapter_id": "none",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "removed",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "API-only",
+      "model_requirement": "none",
+      "operation_id": "evidence.model",
+      "protocol_operation": "none",
+      "renderer_id": "none",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Removed overloaded full-model evidence operation.",
+      "superseded_by": [
+        "inspect.model.full.report",
+        "inspect.model.full.materialization_plan",
+        "inspect.model.full.descriptor",
+        "inspect.model.full.family_runtime",
+        "execute.materialization.full_model"
+      ],
+      "test_owner": "tests/test_operator_registry.py",
+      "visibility": "removed"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "fullmodel",
+        "report"
+      ],
+      "adapter_id": "fullmodel",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "model",
+        "full",
+        "report"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_evidence_model"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "inspect.model.full.report",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect full-model inventory and coverage.",
+      "test_owner": "tests/cli/fullmodel.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "fullmodel",
+        "materialization-plan"
+      ],
+      "adapter_id": "fullmodel",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "model",
+        "full",
+        "materialization-plan"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_evidence_model"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "inspect.model.full.materialization_plan",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect the bounded full-model materialization plan.",
+      "test_owner": "tests/cli/fullmodel.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "fullmodel",
+        "descriptor"
+      ],
+      "adapter_id": "fullmodel",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "model",
+        "full",
+        "descriptor"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_evidence_model"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "inspect.model.full.descriptor",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect the admitted full-model descriptor.",
+      "test_owner": "tests/cli/fullmodel.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "fullmodel",
+        "family-runtime"
+      ],
+      "adapter_id": "fullmodel",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "model",
+        "full",
+        "family-runtime"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_evidence_model"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "inspect.model.full.family_runtime",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect family-specific runtime requirements.",
+      "test_owner": "tests/cli/fullmodel.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "fullmodel",
+        "materialize"
+      ],
+      "adapter_id": "fullmodel",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "model",
+        "materialize"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_evidence_model"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.materialization.full_model",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite materialization proof",
+      "slash_projection": "none",
+      "summary": "Execute bounded full-model materialization proof.",
+      "test_owner": "tests/cli/fullmodel.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "moe"
+      ],
+      "adapter_id": "moe",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "moe"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_evidence_moe"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "evidence.moe",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect MoE requirements and coverage.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "qtype-support"
+      ],
+      "adapter_id": "qtype_support",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "qtype"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "quant.qtype.support",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect canonical qtype capability support.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "quant",
+        "explain"
+      ],
+      "adapter_id": "quant",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "inspect",
+        "quant",
+        "decision"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_quant_explain"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "quant.explain",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Explain one quantization decision.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "quant",
+        "summarize"
+      ],
+      "adapter_id": "quant",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "inspect",
+        "quant",
+        "summary"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_quant_summarize"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "quant.summarize",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Summarize one quantization plan.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "native-weights"
+      ],
+      "adapter_id": "native_weights",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "inspect",
+        "source"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_source_native"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "source.native.inspect",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect native-weight metadata.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "model-target"
+      ],
+      "adapter_id": "model_target",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "target"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_evidence_target"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "evidence.target",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect target requirements and candidates.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "tensor-collection"
+      ],
+      "adapter_id": "tensor_collection",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "inspect",
+        "tensor",
+        "collection"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_tensor_collection"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "tensor.collection.report",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect tensor collection coverage.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "tokenizer"
+      ],
+      "adapter_id": "tokenizer",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "inspect",
+        "tokenizer"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "tokenizer.show",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Inspect tokenizer metadata.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "download"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "model",
+        "acquire"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_acquire"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "model.acquire",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "network and filesystem writes",
+      "slash_projection": "none",
+      "summary": "Acquire one model source.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "download",
+        "cleanup"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "model",
+        "acquisition",
+        "cleanup"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_acquisition_cleanup"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "model.acquire.cleanup",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "filesystem cleanup",
+      "slash_projection": "none",
+      "summary": "Clean bounded acquisition state.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "download",
+        "resume"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "model",
+        "acquisition",
+        "resume"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_acquire"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "model.acquire.resume",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "network and filesystem writes",
+      "slash_projection": "none",
+      "summary": "Resume one acquisition.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "download",
+        "status"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "model",
+        "acquisition",
+        "status"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_acquisition_status"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "model.acquire.status",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Show acquisition state.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "download",
+        "stop"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "model",
+        "acquisition",
+        "stop"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_acquisition_stop"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "model.acquire.stop",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "process cancellation",
+      "slash_projection": "none",
+      "summary": "Stop one acquisition.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "list"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "model",
+        "list"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_registry_read"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "model.list",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "List real local model registry entries.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "add"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "model",
+        "registry",
+        "add"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_registry_add"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "model.registry.add",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "writes registry",
+      "slash_projection": "none",
+      "summary": "Add one model registry entry.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "remove"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "model",
+        "registry",
+        "remove"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_registry_remove"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "model.registry.remove",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "writes registry",
+      "slash_projection": "none",
+      "summary": "Remove one model registry entry.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "scan"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "model",
+        "registry",
+        "scan"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_registry_scan"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "model.registry.scan",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may update registry",
+      "slash_projection": "none",
+      "summary": "Scan local model registry entries.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "verify"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "optional",
+      "command_path": [
+        "model",
+        "registry",
+        "verify"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_registry_read"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "model.registry.verify",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Verify one model registry entry.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "model_select",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "name",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "model",
+        "select"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_yvex_model_use"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "selected-config",
+      "operation_id": "model.select",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "writes selected startup configuration",
+      "slash_projection": "none",
+      "summary": "Select a complete startup configuration.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "model_selected",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "model",
+        "selected"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "selected-config",
+      "operation_id": "model.selected",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Show the selected startup configuration.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "models",
+        "inspect"
+      ],
+      "adapter_id": "models",
+      "aliases": [],
+      "architectural_plane": "Inspect",
+      "arguments": [
+        {
+          "completion_provider": "model-registry",
+          "multiplicity": "one",
+          "name": "name",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "model",
+        "show"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_model_registry_read"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "registry-model",
+      "operation_id": "model.show",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Show one real local model registry entry.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "benchmark",
+        "compare"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Profile",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "profile",
+        "attention",
+        "compare"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.benchmark.compare",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Profile attention compare.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "benchmark"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Profile",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "profile",
+        "attention",
+        "component"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.benchmark",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Profile attention component.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "cuda-graph",
+        "inspect"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Profile",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "profile",
+        "attention",
+        "cuda-graph",
+        "inspect"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.cuda_graph.inspect",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Profile attention cuda-graph inspect.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "cuda-graph",
+        "invalidate"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Profile",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "profile",
+        "attention",
+        "cuda-graph",
+        "invalidate"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.cuda_graph.invalidate",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Profile attention cuda-graph invalidate.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "cuda-graph",
+        "list"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Profile",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "profile",
+        "attention",
+        "cuda-graph",
+        "list"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.cuda_graph.list",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Profile attention cuda-graph list.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "cuda-graph",
+        "release"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Profile",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "profile",
+        "attention",
+        "cuda-graph",
+        "release"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.cuda_graph.release",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Profile attention cuda-graph release.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "cuda-graph",
+        "update"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Profile",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "profile",
+        "attention",
+        "cuda-graph",
+        "update"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.cuda_graph.update",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Profile attention cuda-graph update.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "cuda-graph",
+        "warmup"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Profile",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "profile",
+        "attention",
+        "cuda-graph",
+        "warmup"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.cuda_graph.warmup",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Profile attention cuda-graph warmup.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "qualify"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Profile",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "profile",
+        "attention",
+        "qualify"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.qualify",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Profile attention qualify.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "profile"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Profile",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "profile",
+        "attention",
+        "run"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.profile",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Profile attention run.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "attention",
+        "trace"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Profile",
+      "arguments": [],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "required",
+      "command_path": [
+        "profile",
+        "attention",
+        "trace"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_attention"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.attention.trace",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution",
+      "slash_projection": "none",
+      "summary": "Profile attention trace.",
+      "test_owner": "tests/test_cli.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "run",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "one",
+          "name": "prompt",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "run"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [
+        "client.run"
+      ],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_yvex_run"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "generation.turn",
+      "protocol_operation": "generation.turn",
+      "renderer_id": "stream",
+      "result_schema": "human.v1",
+      "side_effects": "session and generation",
+      "slash_projection": "none",
+      "summary": "Run one streamed daemon-backed turn.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "runtime_memory",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "runtime",
+        "memory"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "runtime.memory",
+      "protocol_operation": "runtime.status",
+      "renderer_id": "human-or-json",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "/memory",
+      "summary": "Show authoritative runtime memory facts.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "runtime_model",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "runtime",
+        "model"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "runtime.model",
+      "protocol_operation": "runtime.status",
+      "renderer_id": "human-or-json",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "/model",
+      "summary": "Show identities of the live runtime model.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "runtime_start",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "daemon-options",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "runtime",
+        "start"
+      ],
+      "daemon_requirement": "optional",
+      "default_providers": [
+        "runtime.configuration"
+      ],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "daemon_yvexd"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "none",
+      "operation_id": "runtime.start",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "executes daemon",
+      "slash_projection": "none",
+      "summary": "Start the resident runtime host.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "runtime_status",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "runtime",
+        "status"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_yvex_runtime_status"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "runtime.status",
+      "protocol_operation": "runtime.status",
+      "renderer_id": "human-or-json",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "/runtime",
+      "summary": "Show the authoritative runtime snapshot.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "runtime_stop",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "runtime",
+        "stop"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "none",
+      "operation_id": "runtime.stop",
+      "protocol_operation": "runtime.stop",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "daemon shutdown",
+      "slash_projection": "none",
+      "summary": "Stop the resident runtime host.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "runtime_trace",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "runtime",
+        "trace"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "runtime_trace"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "runtime.trace",
+      "protocol_operation": "runtime.trace",
+      "renderer_id": "stream",
+      "result_schema": "human.v1",
+      "side_effects": "continuous subscription",
+      "slash_projection": "none",
+      "summary": "Subscribe to detailed typed runtime events.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "runtime_watch",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "runtime",
+        "watch"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "runtime.watch",
+      "protocol_operation": "runtime.watch",
+      "renderer_id": "stream",
+      "result_schema": "human.v1",
+      "side_effects": "continuous subscription",
+      "slash_projection": "none",
+      "summary": "Subscribe to compact runtime events.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "session_attach",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "session",
+          "multiplicity": "one",
+          "name": "name",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "session",
+        "attach"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "session.attach",
+      "protocol_operation": "session.attach",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "attachment",
+      "slash_projection": "/attach",
+      "summary": "Attach the client to one session.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "session_cancel",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "session",
+          "multiplicity": "one",
+          "name": "name",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "session",
+        "cancel"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "generation.cancel",
+      "protocol_operation": "generation.cancel",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "requests cancellation",
+      "slash_arguments": [],
+      "slash_projection": "/cancel",
+      "summary": "Request cancellation of an active turn.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "session_close",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "session",
+          "multiplicity": "one",
+          "name": "name",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "session",
+        "close"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "session.close",
+      "protocol_operation": "session.close",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "closes session",
+      "slash_arguments": [],
+      "slash_projection": "/close",
+      "summary": "Close one session and its sequence state.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "session_detach",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "session",
+          "multiplicity": "one",
+          "name": "name",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "session",
+        "detach"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "session.detach",
+      "protocol_operation": "session.detach",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "attachment",
+      "slash_arguments": [],
+      "slash_projection": "/detach",
+      "summary": "Detach the client from one session.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "session_list",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "session",
+        "list"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "session.list",
+      "protocol_operation": "session.list",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "/sessions",
+      "summary": "List daemon-owned sessions.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "session_new",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "session",
+          "multiplicity": "optional",
+          "name": "name",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "session",
+        "new"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "session.new",
+      "protocol_operation": "session.new",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "creates session",
+      "slash_projection": "/new",
+      "summary": "Create a daemon-owned session.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "session_reset",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "session",
+          "multiplicity": "one",
+          "name": "name",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "session",
+        "reset"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "session.reset",
+      "protocol_operation": "session.reset",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "resets state",
+      "slash_arguments": [],
+      "slash_projection": "/reset",
+      "summary": "Reset one session and its sequence state.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "session_show",
+      "aliases": [],
+      "architectural_plane": "Run",
+      "arguments": [
+        {
+          "completion_provider": "session",
+          "multiplicity": "one",
+          "name": "name",
+          "required": true,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "session",
+        "show"
+      ],
+      "daemon_requirement": "required",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "runtime-model",
+      "operation_id": "session.show",
+      "protocol_operation": "session.show",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_arguments": [
+        {
+          "completion_provider": "session",
+          "multiplicity": "optional",
+          "name": "name",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "name"
+        }
+      ],
+      "slash_projection": "/session",
+      "summary": "Show one daemon-owned session.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "accounts"
+      ],
+      "adapter_id": "accounts",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "optional",
+      "command_path": [
+        "system",
+        "accounts"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_evidence_accounts"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "system.accounts",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may invoke provider login/logout",
+      "slash_projection": "none",
+      "summary": "Inspect or update provider account state.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "cuda-info"
+      ],
+      "adapter_id": "cuda",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "optional",
+      "command_path": [
+        "system",
+        "cuda"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "system.cuda",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may initialize CUDA capability probe",
+      "slash_projection": "none",
+      "summary": "Inspect CUDA capability.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "paths"
+      ],
+      "adapter_id": "paths",
+      "aliases": [],
+      "architectural_plane": "System",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "none",
+      "backend_requirement": "optional",
+      "command_path": [
+        "system",
+        "paths"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_evidence_paths"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "system.paths",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "may write path configuration",
+      "slash_projection": "none",
+      "summary": "Inspect or configure operator paths.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [],
+      "adapter_id": "version",
+      "aliases": [
+        {
+          "deprecation": "current",
+          "path": [
+            "--version"
+          ]
+        }
+      ],
+      "architectural_plane": "System",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "version"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [],
+      "input_schema": "argv.v1",
+      "lane": "runtime-client",
+      "model_requirement": "none",
+      "operation_id": "system.version",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Show product, protocol, and registry identities.",
+      "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    }
+  ],
+  "removed_paths": [
+    {
+      "hint": "use `yvex compile emit artifact`",
+      "path": [
+        "artifact",
+        "emit"
+      ]
+    },
+    {
+      "hint": "use `yvex execute artifact materialize-gate`",
+      "path": [
+        "artifact",
+        "materialize-gate"
+      ]
+    },
+    {
+      "hint": "use `yvex inspect artifact metadata`",
+      "path": [
+        "artifact",
+        "metadata"
+      ]
+    },
+    {
+      "hint": "use `yvex execute artifact model-gate check`",
+      "path": [
+        "artifact",
+        "model-gate"
+      ]
+    },
+    {
+      "hint": "use `yvex compile emit template`",
+      "path": [
+        "artifact",
+        "template"
+      ]
+    },
+    {
+      "hint": "use `yvex inspect artifact tensors`",
+      "path": [
+        "artifact",
+        "tensors"
+      ]
+    },
+    {
+      "hint": "use `yvex inspect`, `yvex model`, or `yvex system`",
+      "path": [
+        "evidence"
+      ]
+    },
+    {
+      "hint": "use `yvex inspect`, `yvex execute`, or `yvex profile`",
+      "path": [
+        "graph"
+      ]
+    },
+    {
+      "hint": "use `yvex model select` with complete startup facts",
+      "path": [
+        "model",
+        "use"
+      ]
+    },
+    {
+      "hint": "use `yvex compile quant` or `yvex inspect quant`",
+      "path": [
+        "quant"
+      ]
+    },
+    {
+      "hint": "use `yvex inspect context`",
+      "path": [
+        "runtime",
+        "context"
+      ]
+    },
+    {
+      "hint": "use `yvex execute input`",
+      "path": [
+        "runtime",
+        "input"
+      ]
+    },
+    {
+      "hint": "`yvex runtime trace` already streams until cancellation",
+      "path": [
+        "runtime",
+        "trace",
+        "--follow"
+      ]
+    },
+    {
+      "hint": "use `yvex compile source` or `yvex inspect source`",
+      "path": [
+        "source"
+      ]
+    },
+    {
+      "hint": "use `yvex compile map` or `yvex inspect tensor`",
+      "path": [
+        "tensor"
+      ]
+    },
+    {
+      "hint": "use `yvex inspect tokenizer` or `yvex execute tokenizer`",
+      "path": [
+        "tokenizer"
+      ]
+    }
+  ],
+  "schema": "yvex.operator.registry.v1",
+  "schema_version": 1
+}

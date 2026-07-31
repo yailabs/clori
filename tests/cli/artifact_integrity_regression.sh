@@ -259,13 +259,13 @@ meta = [
 )
 PY
 
-"$YVEX_BIN" artifact emit controlled \
+"$YVEX_BIN" compile emit artifact controlled \
   --out "$F16_MODEL" \
   --model-name integrity-regression-f16 \
   --arch deepseek \
   --target-qtype F16 \
   --overwrite >"$OUT_DIR/emit-f16.out" 2>"$OUT_DIR/emit-f16.err"
-"$YVEX_BIN" artifact emit controlled \
+"$YVEX_BIN" compile emit artifact controlled \
   --out "$F32_MODEL" \
   --model-name integrity-regression-f32 \
   --arch deepseek \
@@ -286,21 +286,21 @@ do
     name=${item%%:*}
     path=${item#*:}
     run_expect_fail "$name" integrity "status: artifact-integrity-fail" preflight false false not-needed \
-        "$YVEX_BIN" artifact verify check --model "$path"
+        "$YVEX_BIN" artifact verify "$path"
     contains "$OUT_DIR/$name.integrity.out" "integrity_status: fail"
 done
 
 run_reject_smoke bad-magic inspect "status: descriptor-only" \
     "$YVEX_BIN" artifact show "$BAD_MAGIC"
 run_reject_smoke bad-magic tensors "tensor_count:" \
-    "$YVEX_BIN" artifact tensors "$BAD_MAGIC"
+    "$YVEX_BIN" inspect artifact tensors "$BAD_MAGIC"
 run_expect_fail bad-magic materialize "status: materialization-integrity-fail" preflight false false not-needed \
     "$YVEX_BIN" artifact materialize --model "$BAD_MAGIC" --backend cpu
 contains "$OUT_DIR/bad-magic.materialize.out" "materialization_gate: fail"
 contains "$OUT_DIR/bad-magic.materialize.out" "materialization_phase: preflight"
 contains "$OUT_DIR/bad-magic.materialize.out" "allocation_attempted: false"
 
-if "$YVEX_BIN" artifact materialize-gate check \
+if "$YVEX_BIN" execute artifact materialize-gate check \
     --model "$BAD_MAGIC" \
     --label regression-bad-magic \
     --family test \
@@ -317,7 +317,7 @@ contains "$OUT_DIR/bad-magic.materialize-gate.report" "allocation_attempted: fal
 contains "$OUT_DIR/bad-magic.materialize-gate.report" "status: materialize-gate-fail"
 append_matrix_row bad-magic materialize-gate "status: materialize-gate-fail" preflight false false not-needed
 
-"$YVEX_BIN" evidence models add \
+"$YVEX_BIN" model registry add \
   --path "$F16_MODEL" \
   --alias "$ALIAS" \
   --support-level selected-tensor-materialized \
@@ -326,29 +326,29 @@ GOOD_SHA=$(awk '/^registered_sha256: / { print $2 }' "$OUT_DIR/models-add.out")
 test -n "$GOOD_SHA" || fail "missing registered sha"
 
 run_expect_pass identity-pass models-verify "status: models-identity-pass" identity false false not-needed \
-    "$YVEX_BIN" evidence models verify "$ALIAS" --registry "$REG" --audit
+    "$YVEX_BIN" model registry verify "$ALIAS" --registry "$REG" --audit
 contains "$OUT_DIR/identity-pass.models-verify.out" "identity_status: pass"
 contains "$OUT_DIR/identity-pass.models-verify.out" "metadata_status: pass"
 
 run_expect_fail expected-sha-mismatch integrity "status: artifact-integrity-fail" identity false false not-needed \
-    "$YVEX_BIN" artifact verify check --model "$F16_MODEL" --expect-sha256 "$BAD_SHA"
+    "$YVEX_BIN" artifact verify "$F16_MODEL" --expect-sha256 "$BAD_SHA"
 contains "$OUT_DIR/expected-sha-mismatch.integrity.out" "digest_status: fail"
 contains "$OUT_DIR/expected-sha-mismatch.integrity.out" "error_0_code: digest-mismatch"
 
 remove_digest_identity "$REG" "$OLD_REG"
 run_expect_fail old-registry-missing-digest models-verify "status: models-identity-missing" identity false false not-needed \
-    "$YVEX_BIN" evidence models verify "$ALIAS" --registry "$OLD_REG" --audit
+    "$YVEX_BIN" model registry verify "$ALIAS" --registry "$OLD_REG" --audit
 contains "$OUT_DIR/old-registry-missing-digest.models-verify.out" "identity_status: missing"
 
 cp "$F16_MODEL" "$STALE_MODEL"
-"$YVEX_BIN" evidence models add \
+"$YVEX_BIN" model registry add \
   --path "$STALE_MODEL" \
   --alias "$ALIAS" \
   --support-level selected-tensor-materialized \
   --registry "$STALE_REG" >"$OUT_DIR/stale-add.out" 2>"$OUT_DIR/stale-add.err"
 mutate_file_byte "$STALE_MODEL"
 run_expect_fail stale-alias models-verify "status: models-identity-fail" identity false false not-needed \
-    "$YVEX_BIN" evidence models verify "$ALIAS" --registry "$STALE_REG" --audit
+    "$YVEX_BIN" model registry verify "$ALIAS" --registry "$STALE_REG" --audit
 contains "$OUT_DIR/stale-alias.models-verify.out" "digest_status: fail"
 contains "$OUT_DIR/stale-alias.models-verify.out" "identity_status: fail"
 
@@ -360,13 +360,13 @@ contains "$OUT_DIR/stale-alias.materialize.out" "allocation_attempted: false"
 mutate_registry "$REG" "$DTYPE_REG" "primary_tensor_dtype" "F32"
 mutate_registry "$REG" "$DIMS_REG" "primary_tensor_dims" "[4,7]"
 mutate_registry "$REG" "$ARCH_REG" "architecture" "qwen"
-"$YVEX_BIN" artifact emit controlled \
+"$YVEX_BIN" compile emit artifact controlled \
   --out "$OUT_DIR/readiness-F32.gguf" \
   --model-name integrity-regression-readiness \
   --arch deepseek \
   --target-qtype F32 \
   --overwrite >"$OUT_DIR/readiness-emit.out" 2>"$OUT_DIR/readiness-emit.err"
-"$YVEX_BIN" evidence models add \
+"$YVEX_BIN" model registry add \
   --path "$OUT_DIR/readiness-F32.gguf" \
   --alias "$ALIAS" \
   --support-level selected-tensor-materialized \
@@ -383,7 +383,7 @@ do
     reg=$(printf '%s' "$item" | cut -d: -f2)
     issue=$(printf '%s' "$item" | cut -d: -f3)
     run_expect_fail "$name" models-verify "status: models-metadata-drift" metadata false false not-needed \
-        "$YVEX_BIN" evidence models verify "$ALIAS" --registry "$reg" --audit
+        "$YVEX_BIN" model registry verify "$ALIAS" --registry "$reg" --audit
     contains "$OUT_DIR/$name.models-verify.out" "metadata_status: fail"
     contains "$OUT_DIR/$name.models-verify.out" "$issue"
 done
@@ -406,7 +406,7 @@ contains "$OUT_DIR/materialize-injected.materialize.out" "cleanup_status: pass"
 run_expect_pass materialize-repeat materialize "status: weights-materialized" complete true false not-needed \
     "$YVEX_BIN" artifact materialize --model "$F16_MODEL" --backend cpu
 
-"$YVEX_BIN" artifact materialize-gate check \
+"$YVEX_BIN" execute artifact materialize-gate check \
   --model "$F16_MODEL" \
   --label regression-valid \
   --family deepseek \

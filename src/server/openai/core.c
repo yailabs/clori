@@ -99,7 +99,7 @@ static void result_clear(openai_generation_result *result)
 }
 /* Purpose: open one gateway protocol client with a bounded model-response timeout.
  * Inputs: gateway socket, client output, and error output.
- * Effects: authenticates protocol v3 and applies the configured send/receive ceiling.
+ * Effects: authenticates protocol v4 and applies the configured send/receive ceiling.
  * Failure: closes partial client ownership and preserves the typed timeout/refusal.
  * Boundary: bounds gateway waiting without changing daemon generation semantics. */
 static int client_connect(const openai_gateway *gateway, yvex_client **client,
@@ -331,7 +331,7 @@ static int session_operation(yvex_client *client, yvex_client_operation operatio
     }
     return rc;
 }
-/* Purpose: close one retained or ephemeral server session through protocol v3.
+/* Purpose: close one retained or ephemeral server session through protocol v4.
  * Inputs: gateway socket, exact session name, and error output.
  * Effects: opens one bounded client connection and transfers session cleanup to yvexd.
  * Failure: leaves the caller's mapping intact so cleanup can be retried or reported.
@@ -453,7 +453,7 @@ static int response_event_emit(openai_http_sink *sink,
  * Inputs: sink/IDs/time, terminal message, completed aggregate result, and error output.
  * Effects: seals text or arguments, item, and response in canonical order.
  * Failure: stops at the first incomplete socket event without claiming completion.
- * Boundary: all bytes and usage facts originate in protocol-v3 messages. */
+ * Boundary: all bytes and usage facts originate in protocol-v4 messages. */
 static int response_terminal_emit(openai_http_sink *sink, const char *id,
                                   const char *model,
                                   unsigned long long created,
@@ -785,7 +785,7 @@ static int handle_read(openai_gateway *gateway, int fd,
                        openai_endpoint endpoint, const char *requested_model)
 {
     static const unsigned char healthy[] =
-        "{\"status\":\"ok\",\"gateway\":\"ready\",\"yvexd\":\"ready\","
+        "{\"status\":\"ok\",\"adapter\":\"ready\",\"yvexd\":\"ready\","
         "\"profile\":\"" OPENAI_COMPAT_PROFILE "\"}";
     yvex_server_summary summary;
     unsigned char *json = NULL;

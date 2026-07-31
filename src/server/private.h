@@ -117,6 +117,10 @@ int yvex_server_sessions_execute(server_session_registry *registry,
                                     void *emit_context, yvex_error *err);
 int yvex_server_sessions_count(server_session_registry *registry,
                                   unsigned long long *count, yvex_error *err);
+int yvex_server_sessions_console_status(server_session_registry *registry,
+                                        const char *session_name,
+                                        yvex_console_status *status,
+                                        yvex_error *err);
 int yvex_server_sessions_cancel(server_session_registry *registry,
                                    const char *session_name,
                                    yvex_error *err);

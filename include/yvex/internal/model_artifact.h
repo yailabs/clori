@@ -70,7 +70,6 @@ typedef struct {
     int execution_ready;
 } yvex_model_registry_owned_entry;
 struct yvex_model_registry {
-    char *selected;
     yvex_model_registry_owned_entry *entries;
     unsigned long long count;
     unsigned long long cap;

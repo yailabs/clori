@@ -29,7 +29,7 @@ printf '{}\n' > "$MODEL_DIR/config.json"
 printf '{}\n' > "$MODEL_DIR/tokenizer.json"
 printf 'x' > "$MODEL_DIR/model-00001.safetensors"
 
-"$YVEX_BIN" source manifest create \
+"$YVEX_BIN" compile source manifest create \
   --hf-repo test-org/test-model \
   --revision test-rev \
   --license test-license \
@@ -46,7 +46,7 @@ grep '"status": "in-progress"' "$MANIFEST" >/dev/null || fail "missing status"
 grep 'model-00001.safetensors' "$MANIFEST" >/dev/null || fail "missing safetensors file"
 grep 'status: source-manifest-written' "$OUT_DIR/create.out" >/dev/null || fail "missing CLI status"
 
-if "$YVEX_BIN" source manifest create \
+if "$YVEX_BIN" compile source manifest create \
   --hf-repo test-org/test-model \
   --revision test-rev \
   --local-path "$MODEL_DIR" \
@@ -58,31 +58,31 @@ fi
 grep 'complete is verifier-owned' "$OUT_DIR/create-complete.err" >/dev/null || fail "complete refusal is not explicit"
 test ! -e "$OUT_DIR/unchecked-complete.json" || fail "complete refusal wrote a manifest"
 
-"$YVEX_BIN" source manifest report --family deepseek --release v0.1.0 \
+"$YVEX_BIN" compile source manifest report --family deepseek --release v0.1.0 \
   --models-root "$OUT_DIR/models" > "$OUT_DIR/deepseek.out"
 grep 'target: deepseek4-v4-flash' "$OUT_DIR/deepseek.out" >/dev/null || fail "missing canonical DeepSeek target"
 grep 'status: exact-source-blocked' "$OUT_DIR/deepseek.out" >/dev/null || fail "missing blocked source status"
 grep 'top_blocker: missing-source-path' "$OUT_DIR/deepseek.out" >/dev/null || fail "missing source refusal"
 grep 'next: V010.REBASE.DEEPSEEK.0' "$OUT_DIR/deepseek.out" >/dev/null || fail "wrong blocked handoff"
 
-"$YVEX_BIN" source manifest report --family deepseek --release v0.1.0 \
+"$YVEX_BIN" compile source manifest report --family deepseek --release v0.1.0 \
   --models-root "$OUT_DIR/models" --output table > "$OUT_DIR/deepseek-table.out"
 grep 'deepseek4-v4-flash' "$OUT_DIR/deepseek-table.out" >/dev/null || fail "table lost canonical target"
 grep 'blocked' "$OUT_DIR/deepseek-table.out" >/dev/null || fail "table lost verification state"
 grep 'top_blocker: missing-source-path' "$OUT_DIR/deepseek-table.out" >/dev/null || fail "table lost typed refusal"
 
-"$YVEX_BIN" source manifest report --family deepseek --release v0.1.0 \
+"$YVEX_BIN" compile source manifest report --family deepseek --release v0.1.0 \
   --models-root "$OUT_DIR/models" --audit > "$OUT_DIR/deepseek-audit.out"
 grep 'canonical_repository: deepseek-ai/DeepSeek-V4-Flash' "$OUT_DIR/deepseek-audit.out" >/dev/null || fail "audit lost repository identity"
 grep 'source_verification_status: blocked' "$OUT_DIR/deepseek-audit.out" >/dev/null || fail "audit lost verification state"
 grep 'blocker_0: missing-source-path' "$OUT_DIR/deepseek-audit.out" >/dev/null || fail "audit lost typed refusal"
 
-"$YVEX_BIN" source manifest report --family deepseek --release v0.1.0 \
+"$YVEX_BIN" compile source manifest report --family deepseek --release v0.1.0 \
   --models-root "$OUT_DIR/models" --output json > "$OUT_DIR/deepseek.json"
 jq -e '.target_id == "deepseek4-v4-flash" and .repository == "deepseek-ai/DeepSeek-V4-Flash" and .verification == "blocked" and .top_blocker == "missing-source-path" and .source_verification_blocker_count == 1 and .blocker_0 == "missing-source-path" and .next == "V010.REBASE.DEEPSEEK.0" and .artifact_status == "not-produced" and .runtime == "unsupported" and .generation == "unsupported" and .tensor_payload_loaded == false' "$OUT_DIR/deepseek.json" >/dev/null || fail "JSON source facts disagree"
 
 set +e
-"$YVEX_BIN" source manifest report --family deepseek --release v0.1.0 \
+"$YVEX_BIN" compile source manifest report --family deepseek --release v0.1.0 \
   --models-root "$OUT_DIR/models" --strict > "$OUT_DIR/deepseek-strict.out"
 strict_rc=$?
 set -e
@@ -232,19 +232,19 @@ for name in ("config.json", "tokenizer.json", "tokenizer_config.json",
         f"{revision}\n{oid}\n0\n", encoding="utf-8")
 PY
 
-"$YVEX_BIN" source manifest report --family deepseek --release v0.1.0 \
+"$YVEX_BIN" compile source manifest report --family deepseek --release v0.1.0 \
   --models-root "$VERIFIED_MODELS" > "$OUT_DIR/deepseek-fixture.out"
 grep 'status: exact-source-blocked' "$OUT_DIR/deepseek-fixture.out" >/dev/null || fail "non-upstream index fixture was promoted"
 grep 'inventory: upstream-index' "$OUT_DIR/deepseek-fixture.out" >/dev/null || fail "normal output lost inventory authority"
 grep 'top_blocker: upstream-index-identity-mismatch' "$OUT_DIR/deepseek-fixture.out" >/dev/null || fail "normal output lost upstream identity refusal"
 grep 'next: V010.REBASE.DEEPSEEK.0' "$OUT_DIR/deepseek-fixture.out" >/dev/null || fail "blocked fixture handoff is wrong"
 
-"$YVEX_BIN" source manifest report --family deepseek --release v0.1.0 \
+"$YVEX_BIN" compile source manifest report --family deepseek --release v0.1.0 \
   --models-root "$VERIFIED_MODELS" --output table > "$OUT_DIR/deepseek-fixture-table.out"
 grep 'upstream-index' "$OUT_DIR/deepseek-fixture-table.out" >/dev/null || fail "table output lost inventory authority"
 grep 'top_blocker: upstream-index-identity-mismatch' "$OUT_DIR/deepseek-fixture-table.out" >/dev/null || fail "table output lost upstream identity refusal"
 
-"$YVEX_BIN" source manifest report --family deepseek --release v0.1.0 \
+"$YVEX_BIN" compile source manifest report --family deepseek --release v0.1.0 \
   --models-root "$VERIFIED_MODELS" --audit > "$OUT_DIR/deepseek-fixture-audit.out"
 grep 'source_verification_status: blocked' "$OUT_DIR/deepseek-fixture-audit.out" >/dev/null || fail "audit output promoted the fixture"
 grep 'inventory_authority: upstream-index' "$OUT_DIR/deepseek-fixture-audit.out" >/dev/null || fail "audit output lost inventory authority"
@@ -253,25 +253,25 @@ grep 'header_scan_count: 1' "$OUT_DIR/deepseek-fixture-audit.out" >/dev/null || 
 grep 'release_qtype: unselected' "$OUT_DIR/deepseek-fixture-audit.out" >/dev/null || fail "source verification selected a qtype"
 grep 'generation: unsupported-full-model' "$OUT_DIR/deepseek-fixture-audit.out" >/dev/null || fail "source verification promoted generation"
 
-"$YVEX_BIN" source manifest report --family deepseek --release v0.1.0 \
+"$YVEX_BIN" compile source manifest report --family deepseek --release v0.1.0 \
   --models-root "$VERIFIED_MODELS" --output json > "$OUT_DIR/deepseek-fixture.json"
 jq -e '.verification == "blocked" and .inventory_authority == "upstream-index" and .upstream_index_identity_verified == false and .header_scan_count == 1 and .top_blocker == "upstream-index-identity-mismatch" and .next == "V010.REBASE.DEEPSEEK.0" and .shard_count == 1 and .header_shard_count == 1 and .header_tensor_count == 1 and .config_valid == true and .tokenizer_valid == true and .generation_config_valid == true and .shard_index_valid == true and .artifact_status == "not-produced" and .runtime == "unsupported" and .generation == "unsupported"' "$OUT_DIR/deepseek-fixture.json" >/dev/null || fail "blocked JSON source facts disagree"
 
 set +e
-"$YVEX_BIN" source manifest report --family deepseek --release v0.1.0 \
+"$YVEX_BIN" compile source manifest report --family deepseek --release v0.1.0 \
   --models-root "$VERIFIED_MODELS" --strict > "$OUT_DIR/deepseek-fixture-strict.out"
 fixture_strict_rc=$?
 set -e
 test "$fixture_strict_rc" -eq 5 || fail "non-upstream index fixture passed strict verification"
 
-if "$YVEX_BIN" source manifest report --family deepseek --release v0.1.0 \
+if "$YVEX_BIN" compile source manifest report --family deepseek --release v0.1.0 \
   --target deepseek4-v4-flash-selected-embed --models-root "$VERIFIED_MODELS" \
   > "$OUT_DIR/deepseek-selected-target.out" 2> "$OUT_DIR/deepseek-selected-target.err"; then
   fail "selected proof alias remained eligible for exact source verification"
 fi
 grep 'unsupported target' "$OUT_DIR/deepseek-selected-target.err" >/dev/null || fail "selected alias refusal is not explicit"
 
-if "$YVEX_BIN" source manifest report --family qwen --release v0.1.0 \
+if "$YVEX_BIN" compile source manifest report --family qwen --release v0.1.0 \
   --strict > "$OUT_DIR/qwen-strict.out" 2> "$OUT_DIR/qwen-strict.err"; then
   fail "strict exact-source mode was accepted for a non-release family"
 fi

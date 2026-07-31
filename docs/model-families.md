@@ -25,7 +25,7 @@ source tensor set
   -> source/config/tokenizer evidence
   -> native tensor inventory
   -> family architecture signature
-  -> tensor collection candidates
+  -> inspect tensor collection candidates
   -> canonical role mapping
   -> artifact contract
   -> artifact identity and integrity
@@ -74,7 +74,7 @@ behavior.
 | Model family | A repeated architecture pattern: tensor naming, block grammar, tokenizer behavior, attention layout, FFN/MoE structure, KV semantics, and runtime expectations. |
 | Model target | A concrete model/source instance inside a family, with size, source location, revision, tokenizer, config, license, and expected artifact class. |
 | Backend pressure | A field describing which backend questions a target stresses. It is not target identity. |
-| Source tensor set | The upstream tensor collection before YVEX conversion or artifact production. |
+| Source tensor set | The upstream inspect tensor collection before YVEX conversion or artifact production. |
 | Native tensor inventory | Header/config-level listing of native names, shapes, dtypes, shards, config facts, and tokenizer files. |
 | Architecture signature | The structured family/target facts required before role mapping and runtime planning can be meaningful. |
 | Tensor collection | A group of native tensors that appear to implement one architectural role family, such as attention, FFN, MoE experts, output, or tokenizer state. |
@@ -184,11 +184,11 @@ to prevent later runtime claims from floating above unexamined model bytes.
 Source and family evidence is a developer surface:
 
 ```sh
-./yvex evidence target inspect qwen3-8b
-./yvex evidence target tensor-map qwen3-8b --audit
-./yvex evidence target inspect gemma-4-12b-it
-./yvex source manifest report --family qwen --release v0.1.0 --audit
-./yvex evidence models download qwen3-8b --models-root "$HOME/lab/models"
+./yvex inspect target inspect qwen3-8b
+./yvex inspect target tensor-map qwen3-8b --audit
+./yvex inspect target inspect gemma-4-12b-it
+./yvex compile source manifest report --family qwen --release v0.1.0 --audit
+./yvex model acquire qwen3-8b --models-root "$HOME/lab/models"
 ```
 
 Detailed operator flow belongs in runbooks. Model Families owns architecture.
@@ -212,11 +212,11 @@ mark a release ready.
 
 Targets downloaded with `--repo ... --name ...` are downstream source targets
 when their download sidecars exist. Status, source reports, and prepare dry-runs
-use the downloaded target id, repository id, source path, source manifest, and
+use the downloaded target id, repository id, source path, compile source manifest, and
 native inventory sidecars instead of falling back to the static family profile.
 Prepare normal output stays compact for these blocked dynamic targets, while
 `--audit` preserves source, map, output-head, tokenizer, artifact, and blocker
-fields. Prepare may still refuse artifact production until tensor mapping,
+fields. Prepare may still refuse artifact production until compile mapping,
 output-head/tied-head policy, tokenizer mapping, and artifact paths exist.
 For dynamic Qwen/Gemma targets, `model-target tokenizer-map TARGET
 --models-root DIR` writes `reports/<family>/<target>.tokenizer-map.json`.
@@ -230,7 +230,7 @@ Qwen and Gemma are backend-neutral source-pressure lanes, not supported runtime
 families.
 
 `qwen3-8b` names a Qwen source target. It currently carries source target facts,
-a header-metadata-only model-class profile, and a header-only tensor collection
+a header-metadata-only model-class profile, and a header-only inspect tensor collection
 inventory, plus a header-derived tensor naming map for canonical YVEX role
 label candidates. Its Metal pressure is recorded as backend pressure because
 Qwen can force future unified-memory and backend lowering questions, but Metal
@@ -245,7 +245,7 @@ artifact planning. This is not Qwen runtime support.
 
 `gemma-4-12b-it` names a Gemma source target. It currently carries source
 target facts, a header-metadata-only model-class profile, and a header-only
-tensor collection inventory, plus a header-derived dense tensor naming map for
+inspect tensor collection inventory, plus a header-derived dense tensor naming map for
 canonical YVEX dense role-label candidates. Its CPU/CUDA baseline pressure is
 recorded as backend pressure because Gemma can force dense runtime and
 artifact-shape questions, but CUDA is not part of the target identity.
@@ -534,7 +534,7 @@ runtime-consumed:
 ```
 
 The current Qwen model-class profile is lexical/header-metadata-only. It does
-not map roles, validate complete tensor collections, or close runtime support.
+not map roles, validate complete inspect tensor collections, or close runtime support.
 
 ## Attention Class Contract
 
@@ -643,7 +643,7 @@ shape/rank/dtype constraints
 output-head policy
 KV metadata if stored
 RoPE/position metadata
-source manifest link
+compile source manifest link
 identity/digest status
 support level
 ```
@@ -671,7 +671,7 @@ target
 architecture class
 dense or sparse class
 layer structure
-tensor collections
+inspect tensor collections
 mapped tensor roles
 tokenizer facts
 attention layout
@@ -1005,9 +1005,9 @@ It must define:
 ```text
 architecture class
 layer structure
-native-to-canonical tensor mapping
-required tensor collections
-optional tensor collections
+native-to-canonical compile mapping
+required inspect tensor collections
+optional inspect tensor collections
 global tensors
 per-layer tensors
 per-expert tensors
@@ -1352,7 +1352,7 @@ as benchmark or serving targets.
 
 | Family | Candidate scale | Runtime reason | First architectural proof |
 | --- | --- | --- | --- |
-| DeepSeek | large MoE | Current sparse pressure target | MoE tensor collections and sparse layer proof |
+| DeepSeek | large MoE | Current sparse pressure target | MoE inspect tensor collections and sparse layer proof |
 | GLM | large MoE | Source and architecture pressure | expert inventory and source/config profile |
 | Qwen MoE | small to large MoE | Dense/sparse comparison inside one family | router and expert role map |
 | Llama MoE | large sparse/multimodal | Future sparse plus multimodal pressure | family classification report |
@@ -1421,7 +1421,7 @@ Qwen model-class profile is not Qwen runtime support.
 Gemma model-class profile is not Gemma runtime support.
 Tokenizer metadata mapping is not tokenizer runtime support.
 A downloaded source tree is not source readiness.
-A source manifest is not model execution.
+A compile source manifest is not model execution.
 A lexical tensor pattern is not a role map.
 A role map is not graph execution.
 A CUDA primitive is not CUDA runtime.

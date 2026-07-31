@@ -1331,7 +1331,7 @@ int yvex_transformer_operator_execute(const yvex_transformer_operator_request *r
         return rc;
     }
     yvex_core_text_copy(result->command, sizeof(result->command),
-                        "graph transformer execute");
+                        "execute transformer run");
     yvex_core_text_copy(result->target, sizeof(result->target), request->target);
     yvex_core_text_copy(result->backend, sizeof(result->backend),
                         request->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu");

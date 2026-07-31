@@ -143,6 +143,23 @@ closes sessions, closes the model once, and removes the private socket.
 For model selection through private XDG configuration instead of explicit start
 arguments, see the [operator runbook](docs/operator-runbook.md).
 
+### Command discovery
+
+The ordinary help view stays focused on chat, runtime, session, model,
+compilation, and artifact workflows. Advanced inspection and direct component
+operations are available without a separate developer binary:
+
+```sh
+./yvex help
+./yvex help --advanced
+./yvex help runtime trace
+./yvex completion bash
+```
+
+Automation uses `./yvex help --json`, whose
+`yvex.command.discovery.v1` document carries stable operation IDs and the
+compiled command-registry identity. Human help is not an automation schema.
+
 ## Product topology
 
 ![YVEX system overview: verified sources become an identity-bound artifact served by one long-lived runtime host to isolated sessions, CPU or CUDA execution, and local clients.](docs/diagrams/system_overview.svg)
@@ -158,13 +175,19 @@ The product separates process and linkage responsibilities:
 | --- | --- | --- |
 | `libyvex` | Compilation, artifact admission, runtime, backend, tokenizer, and generation domain owners | engine |
 | `yvexd` | One long-lived model host, bounded worker queue, session registry, local protocol, integrated loopback OpenAI listener, telemetry, and graceful shutdown | yes |
-| `yvex` | REPL, one-shot and administrative protocol client plus finite offline compiler, artifact, graph, tokenizer, quantization, and evidence operations | yes; offline lane only |
+| `yvex` | REPL, one-shot and administrative protocol client plus finite offline compile, artifact, inspect, execute, profile, and system operations | yes; offline lane only |
 
 Runtime-facing `yvex` routes cannot open a model, materialize weights, execute a
 Transformer, or run generation in-process. They communicate over a private,
-versioned Unix-domain socket. Offline engineering routes share the same
+version-4 Unix-domain protocol. Offline engineering routes share the same
 executable but retain separate dispatch and object dependencies; they are
 finite operations and never become a second persistent model host.
+
+One strict versioned registry is validated at build time and compiled into
+`yvex` as immutable C descriptors. It drives canonical paths, syntax admission,
+help, machine discovery, completion, and REPL slash projections without
+becoming a runtime-loaded policy file. Semantic defaults and capability
+validation remain with their domain owners.
 
 The runtime layers remain distinct:
 

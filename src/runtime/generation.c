@@ -1863,7 +1863,7 @@ int yvex_runtime_generation_operator_execute(
         return generation_refuse(err, YVEX_ERR_INVALID_ARG,
                                  "complete generation operator arguments are required");
     yvex_core_text_copy(result->command, sizeof(result->command),
-                        "graph transformer generate");
+                        "execute transformer generate");
     yvex_core_text_copy(result->target, sizeof(result->target), request->target);
     yvex_core_text_copy(result->backend, sizeof(result->backend),
                         request->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu");

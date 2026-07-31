@@ -78,7 +78,7 @@ expect_integrity_failure() {
     out="$OUT_DIR/$name.integrity.out"
     err="$OUT_DIR/$name.integrity.err"
 
-    if "$YVEX_BIN" artifact verify check --model "$path" "$@" >"$out" 2>"$err"; then
+    if "$YVEX_BIN" artifact verify "$path" "$@" >"$out" 2>"$err"; then
         fail "$name integrity unexpectedly passed"
     fi
     contains "$out" "integrity_status: fail"
@@ -96,7 +96,7 @@ exercise_structural_case() {
     run_reject "$name" inspect "status: descriptor-only" \
         "$YVEX_BIN" artifact show "$path"
     run_reject "$name" tensors "tensor_count:" \
-        "$YVEX_BIN" artifact tensors "$path"
+        "$YVEX_BIN" inspect artifact tensors "$path"
     run_reject "$name" materialize "status: weights-materialized" \
         "$YVEX_BIN" artifact materialize --model "$path" --backend cpu
 }
@@ -272,7 +272,7 @@ expect_integrity_failure missing-token-embd-weight \
 run_accept missing-token-embd-weight inspect "status: descriptor-only" \
     "$YVEX_BIN" artifact show tests/fixtures/gguf/valid-minimal.gguf
 run_accept missing-token-embd-weight tensors "tensor_count: 0" \
-    "$YVEX_BIN" artifact tensors tests/fixtures/gguf/valid-minimal.gguf
+    "$YVEX_BIN" inspect artifact tensors tests/fixtures/gguf/valid-minimal.gguf
 run_accept missing-token-embd-weight materialize "status: weights-partial" \
     "$YVEX_BIN" artifact materialize --model tests/fixtures/gguf/valid-minimal.gguf --backend cpu
 echo "cli artifact corruption: ok"

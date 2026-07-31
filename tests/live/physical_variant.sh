@@ -8,7 +8,7 @@ YVEX_BIN=${YVEX_BIN:-./yvex}
 OUT_DIR=${YVEX_TEST_OUT_DIR:-build/tests/physical-variant-refusal}
 : "${YVEX_DEEPSEEK_SOURCE:?DeepSeek source is required}"
 : "${YVEX_DEEPSEEK_MODELS_ROOT:?DeepSeek models root is required}"
-: "${YVEX_DEEPSEEK_SOURCE_MANIFEST:?DeepSeek source manifest is required}"
+: "${YVEX_DEEPSEEK_SOURCE_MANIFEST:?DeepSeek compile source manifest is required}"
 : "${YVEX_IMATRIX_PATH:?DeepSeek imatrix is required}"
 
 fail() {
@@ -20,7 +20,7 @@ expect_plan_refusal() {
     name=$1
     policy=$2
     set +e
-    "$YVEX_BIN" quant plan \
+    "$YVEX_BIN" compile quant plan \
         --target deepseek4-v4-flash \
         --source "$YVEX_DEEPSEEK_SOURCE" \
         --models-root "$YVEX_DEEPSEEK_MODELS_ROOT" \
@@ -39,7 +39,7 @@ expect_calibrated_plan_refusal() {
     name=$1
     policy=$2
     set +e
-    "$YVEX_BIN" quant plan \
+    "$YVEX_BIN" compile quant plan \
         --target deepseek4-v4-flash \
         --source "$YVEX_DEEPSEEK_SOURCE" \
         --models-root "$YVEX_DEEPSEEK_MODELS_ROOT" \
@@ -58,7 +58,7 @@ expect_calibrated_plan_refusal() {
 yvex_test_cleanup "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-"$YVEX_BIN" quant plan \
+"$YVEX_BIN" compile quant plan \
     --target deepseek4-v4-flash \
     --source "$YVEX_DEEPSEEK_SOURCE" \
     --models-root "$YVEX_DEEPSEEK_MODELS_ROOT" \

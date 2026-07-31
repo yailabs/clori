@@ -32,25 +32,25 @@ cat > "$OUT_DIR/policy.json" <<'JSON'
 }
 JSON
 
-"$YVEX_BIN" quant policy inspect --policy "$OUT_DIR/policy.json" > "$OUT_DIR/inspect.out" 2> "$OUT_DIR/inspect.err" || fail "inspect failed"
-grep 'quant policy: inspect' "$OUT_DIR/inspect.out" >/dev/null || fail "missing inspect heading"
+"$YVEX_BIN" compile quant policy inspect --policy "$OUT_DIR/policy.json" > "$OUT_DIR/inspect.out" 2> "$OUT_DIR/inspect.err" || fail "inspect failed"
+grep 'compile quant policy: inspect' "$OUT_DIR/inspect.out" >/dev/null || fail "missing inspect heading"
 grep 'selector=role:token_embedding qtype=Q8_0' "$OUT_DIR/inspect.out" >/dev/null || fail "missing role rule"
 grep 'requires_imatrix=yes' "$OUT_DIR/inspect.out" >/dev/null || fail "missing imatrix flag"
 
-"$YVEX_BIN" quant policy validate --policy "$OUT_DIR/policy.json" > "$OUT_DIR/validate.out" 2> "$OUT_DIR/validate.err" || fail "validate failed"
-grep 'quant policy: validate' "$OUT_DIR/validate.out" >/dev/null || fail "missing validate heading"
+"$YVEX_BIN" compile quant policy validate --policy "$OUT_DIR/policy.json" > "$OUT_DIR/validate.out" 2> "$OUT_DIR/validate.err" || fail "validate failed"
+grep 'compile quant policy: validate' "$OUT_DIR/validate.out" >/dev/null || fail "missing validate heading"
 grep 'status: quant-policy-' "$OUT_DIR/validate.out" >/dev/null || fail "missing validate status"
 
-"$YVEX_BIN" quant policy derive \
+"$YVEX_BIN" compile quant policy derive \
   --template tests/fixtures/gguf/valid-tokenizer-simple.gguf \
   --arch llama \
   --out "$OUT_DIR/derived.json" > "$OUT_DIR/derive.out" 2> "$OUT_DIR/derive.err" || fail "derive failed"
 test -f "$OUT_DIR/derived.json" || fail "derived policy missing"
-grep 'quant policy: derived' "$OUT_DIR/derive.out" >/dev/null || fail "missing derive heading"
+grep 'compile quant policy: derived' "$OUT_DIR/derive.out" >/dev/null || fail "missing derive heading"
 grep 'status: quant-policy-written' "$OUT_DIR/derive.out" >/dev/null || fail "missing derive status"
 
-"$YVEX_BIN" quant policy validate --policy "$OUT_DIR/derived.json" --template tests/fixtures/gguf/valid-tokenizer-simple.gguf > "$OUT_DIR/derived-validate.out" 2> "$OUT_DIR/derived-validate.err" || fail "derived validate failed"
+"$YVEX_BIN" compile quant policy validate --policy "$OUT_DIR/derived.json" --template tests/fixtures/gguf/valid-tokenizer-simple.gguf > "$OUT_DIR/derived-validate.out" 2> "$OUT_DIR/derived-validate.err" || fail "derived validate failed"
 grep 'status: quant-policy-' "$OUT_DIR/derived-validate.out" >/dev/null || fail "missing derived validate status"
 
-"$YVEX_BIN" quant policy --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help failed"
-grep 'usage: yvex quant policy' "$OUT_DIR/help.out" >/dev/null || fail "missing help"
+"$YVEX_BIN" compile quant policy --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help failed"
+grep 'usage: yvex compile quant policy' "$OUT_DIR/help.out" >/dev/null || fail "missing help"

@@ -1,6 +1,6 @@
 # YVEX Roadmap
 
-Date: 2026-07-30
+Date: 2026-07-31
 Status: living public project control
 Release target: v0.1.0
 
@@ -61,14 +61,14 @@ run, or a self-authored report cannot promote a capability by itself.
 | Order | Milestone | State | Owned after-state | Depends on |
 | ---: | --- | --- | --- | --- |
 | 1 | `V010.PROJECT.CONTROL.PUBLIC.0` | `complete` | Public roadmap, contribution workflow, issue/PR templates, decision records, compact open-work extraction, and project-control guards replace the retired monolithic ledger. | `V010.OPERATOR.SURFACE.AUDIT.0` |
-| 2 | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `active` | One versioned operation authority drives command paths, flags, defaults, validation, help, discovery, protocol projections, slash catalog, and command tests. | `V010.PROJECT.CONTROL.PUBLIC.0` |
-| 3 | `V010.OPERATOR.REPL.CONSOLE.0` | `blocked` | A mature daemon-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, watch, trace, cancellation, and explicit model-emitted reasoning channels. | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` |
+| 2 | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `complete` | One versioned operation authority drives command paths, flags, defaults, validation, help, discovery, protocol projections, slash catalog, and command tests. | `V010.PROJECT.CONTROL.PUBLIC.0` |
+| 3 | `V010.OPERATOR.REPL.CONSOLE.0` | `active` | A mature daemon-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, watch, trace, cancellation, and explicit model-emitted reasoning channels. | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` |
 | 4 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `blocked` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.OPERATOR.REPL.CONSOLE.0` |
 | 5 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
 | 6 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
 | 7 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
 
-Active Next: V010.OPERATOR.COMMAND.ARCHITECTURE.0
+Active Next: V010.OPERATOR.REPL.CONSOLE.0
 
 Detailed accepted contracts for the two immediate operator milestones are:
 
@@ -93,8 +93,9 @@ not a replacement historical ledger.
 | Source and compilation | The pinned DeepSeek source, tokenizer material, complete tensor coverage, Transformation IR, physical policy, qtypes, and deterministic GGUF emission have typed owners and identity-bound outputs. |
 | Artifact and admission | Complete source-faithful, Q8_0/Q2_K, and mixed IQ2_XXS/Q2_K artifacts exist outside Git; structural, payload, roundtrip, materialization, and binding admission are implemented. |
 | Runtime and generation | One authenticated model opens in `yvexd`; server-owned sessions retain exact KV and token state; the complete tokenizer-to-streamed-text path runs on CPU and the admitted mixed CUDA/host path. |
-| Application serving | Local protocol v3 and YVEX OpenAI Compatibility Profile v1 share one runtime, worker, queue, session registry, and telemetry authority. |
+| Application serving | Local protocol v4 and YVEX OpenAI Compatibility Profile v1 share one runtime, worker, queue, session registry, and telemetry authority. |
 | Product surface | `yvex` and `yvexd` are the only product executables. The former developer and OpenAI gateway executables are retired. |
+| Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Operator audit | The frozen post-cutover audit inventories 70 route-level commands, 426 command/flag pairs, 99 semantic operations, 10 slash commands, 14 protocol operations, 5 HTTP endpoints, and every Make/script/environment surface with zero unmatched categories. |
 | Performance | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` remains `partial`: startup and bounded profiling are accepted; warm decode remains below admission. |
 
@@ -104,24 +105,6 @@ Its tables describe baseline `ec7dccede90c1a1efa87b4c2519c25b30d5e1733` and
 are implementation input, not live command or project authority.
 
 ## Open work
-
-### Command architecture
-
-The current command grammar is transitional. Product dispatch, 39 offline
-adapter routes, slash dispatch, and human help are separate handwritten
-authorities. The active milestone must:
-
-- establish one canonical operation/argument/flag source;
-- preserve the protocol-only runtime-client lane;
-- distinguish selected model configuration from the live runtime model;
-- give `model list` and `model show` distinct truthful semantics;
-- dissolve provisional `evidence` and broad `graph` naming into owned concepts;
-- place quantization under compilation without hiding verification boundaries;
-- resolve three provisional protocol facades explicitly;
-- generate or validate CLI help, slash discovery, machine discovery,
-  documentation, and dispatch tests from the same facts; and
-- keep future `eval` and `bench` roles absent until their capability owners
-  close.
 
 ### Runtime console and REPL
 
@@ -180,8 +163,8 @@ is summarized here only to control progression.
 | verified source, architecture, mapping, transformation, quantization, artifact, integrity, materialization, runtime descriptor | complete for the admitted DeepSeek vertical and named physical variants |
 | CUDA transformer-to-text generation | complete for the admitted mixed CUDA/host execution contract |
 | long-lived runtime, sessions, streaming, and bounded local OpenAI compatibility | complete |
-| public command architecture | active |
-| mature runtime console | blocked |
+| public command architecture | complete |
+| mature runtime console | active |
 | warm GB10 performance admission | blocked; earlier work remains partial |
 | model behavior and quality evaluation | blocked |
 | full-model release benchmark | not measured |
@@ -190,6 +173,10 @@ is summarized here only to control progression.
 Machine-readable readiness facts retained for claim guards:
 
 ```text
+canonical_operation_registry_ready=1
+generated_command_descriptors_ready=1
+protocol_v4_ready=1
+mature_repl_console_ready=0
 model_behavior_evaluation_ready=0
 model_quality_evaluation_ready=0
 full_model_release_benchmark_ready=0
@@ -235,7 +222,6 @@ used for this cutover.
 
 YVEX does not currently claim:
 
-- canonical command taxonomy or normalized flags;
 - a mature REPL or TUI;
 - warm decode optimization or 5, 10, or 20 tokens/s admission;
 - model behavior or model quality evaluation;

@@ -105,8 +105,7 @@ int yvex_model_registry_write_json_file(const yvex_model_registry *registry,
         return YVEX_ERR_IO;
     }
     fprintf(fp, "{\n");
-    write_field(fp, "  ", "schema", "yvex.models.local.v1", 1);
-    write_field(fp, "  ", "selected", registry->selected ? registry->selected : "", 1);
+    write_field(fp, "  ", "schema", "yvex.models.local.v2", 1);
     fprintf(fp, "  \"models\": [\n");
     for (i = 0; i < registry->count; ++i) {
         const yvex_model_registry_owned_entry *e = &registry->entries[i];

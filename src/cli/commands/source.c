@@ -4,7 +4,7 @@
  * Invariants: adapter stays thin and does not hide domain behavior.
  * Boundary: command dispatch is not source verification or runtime readiness.
  * Purpose: bind source-manifest report CLI input to the typed source report API.
- * Inputs: argv from yvex source manifest report.
+ * Inputs: argv from yvex compile source manifest report.
  * Effects: renders source report output or parser errors.
  * Failure: returns parser, report-builder, or renderer exit codes. */
 #include "src/cli/input/private.h"
@@ -17,7 +17,7 @@
 #include <yvex/source.h>
 
 static const char *const literal_lines_0[] = {
-    "       yvex source manifest report --family deepseek|qwen|gemma --release v0.1.0 [options]\n",
+    "       yvex compile source manifest report --family deepseek|qwen|gemma --release v0.1.0 [options]\n",
     "Source manifest scans a local official-weight source directory and writes provenance JSON. It "
     "does "
     "not download, parse safetensors payloads, quantize, emit GGUF, materialize, or infer.\n",
@@ -156,7 +156,7 @@ static int source_cli_create_manifest(int argc, char **argv) {
         return print_yvex_error(&err, exit_code == 1 ? 3 : exit_code);
     }
 
-    yvex_cli_out_writef(stdout, "source manifest: written\n");
+    yvex_cli_out_writef(stdout, "compile source manifest: written\n");
     yvex_cli_out_writef(stdout, "repo: %s\n", options.repo);
     yvex_cli_out_writef(stdout, "revision: %s\n", options.revision);
     yvex_cli_out_writef(stdout, "local_path: %s\n", options.local_path);
@@ -169,7 +169,7 @@ static int source_cli_create_manifest(int argc, char **argv) {
     return 0;
 }
 
-/* Purpose: Orchestrate the typed source manifest command request (`yvex_source_manifest_command`).
+/* Purpose: Orchestrate the typed compile source manifest command request (`yvex_source_manifest_command`).
  * Inputs: Borrowed typed facts.
  * Effects: Mutates declared CLI state only.
  * Failure: Typed refusal; outputs remain defined.
@@ -182,12 +182,12 @@ int yvex_source_manifest_command(int argc, char **argv) {
 
     if (argc < 3) {
         yvex_cli_out_writef(stderr, "yvex: source-manifest requires a subcommand\n");
-        yvex_cli_out_writef(stderr, "usage: yvex source manifest create --hf-repo REPO --revision "
+        yvex_cli_out_writef(stderr, "usage: yvex compile source manifest create --hf-repo REPO --revision "
                                     "REV --local-path DIR --status "
                                     "STATUS --out FILE\n");
         yvex_cli_out_writef(
             stderr,
-            "       yvex source manifest report --family qwen --release v0.1.0 [options]\n");
+            "       yvex compile source manifest report --family qwen --release v0.1.0 [options]\n");
         return 2;
     }
 
@@ -207,13 +207,13 @@ int yvex_source_manifest_command(int argc, char **argv) {
     return 2;
 }
 
-/* Purpose: Render source manifest help from typed facts (`yvex_source_manifest_help`).
+/* Purpose: Render compile source manifest help from typed facts (`yvex_source_manifest_help`).
  * Inputs: Borrowed typed facts.
  * Effects: Writes through CLI I/O only.
  * Failure: Typed refusal; outputs remain defined.
  * Boundary: No capability policy. */
 void yvex_source_manifest_help(FILE *fp) {
-    yvex_cli_out_writef(fp, "usage: yvex source manifest create --hf-repo REPO --revision REV "
+    yvex_cli_out_writef(fp, "usage: yvex compile source manifest create --hf-repo REPO --revision REV "
                             "--local-path DIR --status STATUS "
                             "--out FILE [--license TEXT] [--model-card URL] [--node NAME] "
                             "[--dry-run-log FILE] [--download-log "
@@ -225,7 +225,8 @@ void yvex_source_manifest_help(FILE *fp) {
                             "normal|table|audit|json\n");
 }
 
-/* Purpose: Orchestrate the typed source manifest report command request (`yvex_source_manifest_report_command`).
+/* Purpose: Orchestrate the typed compile source manifest report command request
+ * (`yvex_source_manifest_report_command`).
  * Inputs: Borrowed typed facts.
  * Effects: Mutates declared CLI state only.
  * Failure: Typed refusal; outputs remain defined.

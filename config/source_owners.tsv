@@ -71,6 +71,7 @@ src/cli/input/backend.c	cli.input	cli.input.backend	generic	private	reusable-alg
 src/cli/input/graph.c	cli.input	cli.input.graph	generic	private	reusable-algorithm	cli.commands	implementation	none
 src/cli/input/model_artifacts.c	cli.input	cli.input.model_artifacts	generic	private	reusable-algorithm	cli.commands	implementation	none
 src/cli/input/model_target.c	cli.input	cli.input.model_target	generic	private	reusable-algorithm	cli.commands	implementation	none
+src/cli/input/operator.c	cli.input	cli.input.operator	generic	private	reusable-algorithm	cli.entrypoint+cli.io	implementation	none
 src/cli/input/private.h	cli.input	cli.input.private	generic	private	private-interface	cli.commands	interface	none
 src/cli/input/source.c	cli.input	cli.input.source	generic	private	reusable-algorithm	cli.commands	implementation	none
 src/cli/io/json.c	cli.io	cli.io.json	generic	private	bounded-parser	cli,render	implementation	none

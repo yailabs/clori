@@ -18,7 +18,7 @@ fail() {
 yvex_test_cleanup "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-"$YVEX_BIN" artifact emit controlled \
+"$YVEX_BIN" compile emit artifact controlled \
     --out "$OUT" \
     --model-name yvex-owned-gguf-test \
     --arch llama \
@@ -38,10 +38,10 @@ grep 'tensor_count: 1' "$OUT_DIR/inspect.out" >/dev/null || fail "missing inspec
 grep 'known_tensor_bytes: 128' "$OUT_DIR/inspect.out" >/dev/null || fail "missing inspect bytes"
 grep 'status: descriptor-only' "$OUT_DIR/inspect.out" >/dev/null || fail "missing inspect status"
 
-"$YVEX_BIN" artifact metadata "$OUT" > "$OUT_DIR/metadata.out" 2> "$OUT_DIR/metadata.err" || fail "metadata failed"
+"$YVEX_BIN" inspect artifact metadata "$OUT" > "$OUT_DIR/metadata.out" 2> "$OUT_DIR/metadata.err" || fail "metadata failed"
 grep 'metadata_count: 12' "$OUT_DIR/metadata.out" >/dev/null || fail "missing metadata count"
 
-"$YVEX_BIN" artifact tensors "$OUT" > "$OUT_DIR/tensors.out" 2> "$OUT_DIR/tensors.err" || fail "tensors failed"
+"$YVEX_BIN" inspect artifact tensors "$OUT" > "$OUT_DIR/tensors.out" 2> "$OUT_DIR/tensors.err" || fail "tensors failed"
 grep 'token_embd.weight' "$OUT_DIR/tensors.out" >/dev/null || fail "missing tensor name"
 grep 'dims=\[4,8\]' "$OUT_DIR/tensors.out" >/dev/null || fail "missing tensor dims"
 grep 'dtype=F32' "$OUT_DIR/tensors.out" >/dev/null || fail "missing tensor dtype"
@@ -53,5 +53,5 @@ grep 'bytes_materialized: 128' "$OUT_DIR/materialize-cpu.out" >/dev/null || fail
 grep 'execution_ready: false' "$OUT_DIR/materialize-cpu.out" >/dev/null || fail "missing execution false"
 grep 'status: weights-materialized' "$OUT_DIR/materialize-cpu.out" >/dev/null || fail "missing weights status"
 
-"$YVEX_BIN" artifact emit --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help failed"
-grep 'usage: yvex artifact emit' "$OUT_DIR/help.out" >/dev/null || fail "missing help usage"
+"$YVEX_BIN" compile emit artifact --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help failed"
+grep 'usage: yvex compile emit artifact' "$OUT_DIR/help.out" >/dev/null || fail "missing help usage"

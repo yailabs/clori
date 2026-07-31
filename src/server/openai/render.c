@@ -455,7 +455,7 @@ static int render_response_chunk(render_builder *builder, const char *id,
     return rc == YVEX_OK ? render_literal(builder, "}}", err) : rc;
 }
 
-/* Purpose: render one endpoint-specific SSE data object from a protocol-v3 message.
+/* Purpose: render one endpoint-specific SSE data object from a protocol-v4 message.
  * Inputs: endpoint, IDs/time, protocol message, initial flag, and output owner.
  * Effects: allocates and transfers one complete stream JSON object.
  * Failure: frees partial storage and leaves output null/count zero.

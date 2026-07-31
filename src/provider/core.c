@@ -29,6 +29,36 @@ typedef struct {
     size_t count, offset;
 } provider_reader;
 
+/* Purpose: initialize the one provider-neutral greedy sampling default.
+ * Inputs: caller-owned sampling storage. Effects: replaces its prior contents.
+ * Failure: none for a non-null output; null is ignored.
+ * Boundary: adapters may select another explicit policy but do not duplicate defaults. */
+void yvex_provider_sampling_default(yvex_provider_sampling *sampling)
+{
+    if (!sampling)
+        return;
+    memset(sampling, 0, sizeof(*sampling));
+    sampling->temperature = 1.0;
+    sampling->top_p = 1.0;
+    sampling->typical_p = 1.0;
+}
+
+/* Purpose: initialize one complete provider request policy without owning request payloads.
+ * Inputs: caller-owned request storage. Effects: replaces it with canonical neutral defaults.
+ * Failure: none for a non-null output; null is ignored.
+ * Boundary: model, messages, tools, stops, and adapter identity remain caller-supplied. */
+void yvex_provider_request_default(yvex_provider_request *request)
+{
+    if (!request)
+        return;
+    memset(request, 0, sizeof(*request));
+    request->schema_version = YVEX_PROVIDER_SCHEMA_V1;
+    request->response_format = YVEX_PROVIDER_RESPONSE_TEXT;
+    request->maximum_output_tokens = 128u;
+    request->tool_choice.kind = YVEX_PROVIDER_TOOL_CHOICE_AUTO;
+    yvex_provider_sampling_default(&request->sampling);
+}
+
 /* Purpose: map one provider role to its stable transport-neutral label.
  * Inputs: provider role enum. Effects: none.
  * Failure: returns null for unknown values.
@@ -594,7 +624,7 @@ static int write_text(provider_writer *writer, const char *text, size_t capacity
 
 /* Purpose: encode one sealed provider request in deterministic field order.
  * Inputs: validated request, output bytes/capacity/count, and error output.
- * Effects: publishes one complete canonical protocol-v3 provider payload.
+ * Effects: publishes one complete canonical provider payload for the protocol-v4 carrier.
  * Failure: reports bounds/validation failure and leaves byte count zero.
  * Boundary: native structures and pointer values never enter the wire. */
 int yvex_provider_request_wire_encode(const yvex_provider_request *request,

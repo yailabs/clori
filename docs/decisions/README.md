@@ -30,3 +30,4 @@ record superseded.
 | Record | Status | Decision |
 | --- | --- | --- |
 | [0001](0001-public-project-control.md) | accepted | Separate compact live project control from historical ledger evidence and issue/PR delivery workflow. |
+| [0002](0002-command-operation-registry.md) | accepted | Generate immutable command descriptors from one strict, versioned operation registry while preserving typed execution lanes. |

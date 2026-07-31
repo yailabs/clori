@@ -78,7 +78,7 @@ static int provider_text_stream_direct(const yvex_provider_request *request)
            request->stop_count == 0u && request->tool_count == 0u &&
            request->tool_choice.kind == YVEX_PROVIDER_TOOL_CHOICE_NONE;
 }
-/* Purpose: emit one already-committed provider output span through protocol v3. */
+/* Purpose: emit one already-committed provider output span through protocol v4. */
 static int provider_output_emit(turn_sink *sink,
                                 yvex_provider_output_kind kind,
                                 const unsigned char *bytes,
@@ -449,6 +449,8 @@ static int turn_fragment(void *opaque,
         message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
         message.kind = YVEX_CLIENT_MESSAGE_FRAGMENT;
         message.status = YVEX_OK;
+        message.generation_phase = YVEX_CLIENT_PHASE_DECODE;
+        message.stream_channel = YVEX_CLIENT_STREAM_FINAL_TEXT;
         message.request_number = sink->request->request_number;
         yvex_core_text_copy(message.session_name, sizeof(message.session_name),
                             sink->session->name);
@@ -524,7 +526,8 @@ static int session_message(server_message_emit emit, void *emit_context,
                             session->name);
         message.session_state = session->state;
         message.final_position = session->committed_count;
-        message.generated_tokens = session->turn_count;
+        message.turn_count = session->turn_count;
+        message.context_used = session->committed_count;
         yvex_runtime_identity_copy(message.session_identity,
                                    session->identity);
         yvex_runtime_identity_copy(message.turn_identity,
@@ -631,7 +634,7 @@ static unsigned long long provider_visible_bytes(
 }
 /* Purpose: emit one provider output span through bounded protocol fragments after complete admission.
  * Inputs: turn sink, output kind, bytes/count, optional call metadata, and error output.
- * Effects: emits ordered bounded protocol-v3 fragments after parsing succeeds.
+ * Effects: emits ordered bounded protocol-v4 fragments after parsing succeeds.
  * Failure: stops at the first sink error and reports no later fragment.
  * Boundary: all bytes are already model-committed and tokenizer-validated. */
 static int provider_output_emit(turn_sink *sink,
@@ -653,6 +656,11 @@ static int provider_output_emit(turn_sink *sink,
         message.status = YVEX_OK;
         message.request_number = sink->request->request_number;
         message.provider_output_kind = kind;
+        message.generation_phase = YVEX_CLIENT_PHASE_DECODE;
+        if (kind == YVEX_PROVIDER_OUTPUT_FUNCTION_CALL)
+            message.stream_channel = YVEX_CLIENT_STREAM_TOOL_CALL;
+        else
+            message.stream_channel = YVEX_CLIENT_STREAM_FINAL_TEXT;
         yvex_core_text_copy(message.session_name, sizeof(message.session_name),
                             sink->session->name);
         if (sink->request->provider_request) {
@@ -683,22 +691,18 @@ static int provider_output_emit(turn_sink *sink,
  * Effects: updates session evidence, sends completion/error, and emits one terminal event.
  * Failure: a send failure replaces success but never replaces an earlier generation error.
  * Boundary: published metrics derive from committed result counters, not rendered text inference. */
-static int session_turn_publish(server_session_registry *registry,
-                                server_session *session,
-                                const yvex_client_request *request,
-                                turn_sink *sink,
-                                const yvex_runtime_generation_result *result,
-                                int status, yvex_error *err)
+static int session_turn_publish(server_session_registry *registry, server_session *session,
+                                const yvex_client_request *request, turn_sink *sink,
+                                const yvex_runtime_generation_result *result, int status,
+                                yvex_error *err)
 {
     yvex_client_message completed;
     yvex_tokenizer_provider_result provider_result;
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(registry->model);
     yvex_runtime_session_summary runtime_summary;
-    unsigned long long now = monotonic_ns();
-    unsigned long long visible_count = result->generated_text_bytes;
+    unsigned long long now = monotonic_ns(), visible_count = result->generated_text_bytes;
     yvex_error secondary;
-    int stop_matched = 0;
-    int send_rc;
+    int stop_matched = 0, send_rc;
     memset(&provider_result, 0, sizeof(provider_result));
     if (status == YVEX_OK && request->provider_request) {
         visible_count = provider_visible_bytes(
@@ -770,7 +774,18 @@ static int session_turn_publish(server_session_registry *registry,
     if (status != YVEX_OK)
         completed.failure_class = turn_failure_class(status);
     completed.final_position = result->final_position;
+    completed.context_used = result->final_position;
+    completed.turn_count = session->turn_count;
     completed.stop_reason = result->stop_reason;
+    completed.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
+    completed.generation_phase = status == YVEX_OK
+                                     ? YVEX_CLIENT_PHASE_COMPLETE
+                                     : status == YVEX_ERR_CANCELLED
+                                           ? YVEX_CLIENT_PHASE_CANCELLED
+                                           : YVEX_CLIENT_PHASE_FAILED;
+    completed.cancellation_class =
+        status == YVEX_ERR_CANCELLED ? YVEX_CLIENT_CANCELLATION_COMPLETED
+                                     : YVEX_CLIENT_CANCELLATION_NONE;
     if (request->provider_request) {
         completed.provider_output_kind = YVEX_PROVIDER_OUTPUT_TERMINAL;
         if (status != YVEX_OK)
@@ -1045,6 +1060,8 @@ static int session_turn(server_session_registry *registry,
     started.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     started.kind = YVEX_CLIENT_MESSAGE_TURN_STARTED;
     started.status = YVEX_OK;
+    started.generation_phase = YVEX_CLIENT_PHASE_TOKENIZING;
+    started.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
     started.request_number = request->request_number;
     yvex_core_text_copy(started.session_name, sizeof(started.session_name),
                         session->name);
@@ -1297,6 +1314,57 @@ done:
     (void)pthread_mutex_unlock(&registry->mutex);
     return rc;
 }
+
+/* Purpose: capture one composed-console session slice under the sole registry authority.
+ * Inputs: registry, exact session name, and caller-initialized console snapshot.
+ * Effects: copies lifecycle, attachment, position, turn, context, and cancellation facts.
+ * Failure: unknown sessions or synchronization failure publish no partial session slice.
+ * Boundary: KV byte use and active micro-phase remain explicitly unavailable when not owned here. */
+int yvex_server_sessions_console_status(server_session_registry *registry,
+                                        const char *session_name,
+                                        yvex_console_status *status,
+                                        yvex_error *err)
+{
+    server_session *session;
+    if (!registry || !session_name || !status ||
+        pthread_mutex_lock(&registry->mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.session.console-status",
+                       "registry, session name, and status output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    session = session_find_locked(registry, session_name);
+    if (!session) {
+        (void)pthread_mutex_unlock(&registry->mutex);
+        yvex_error_set(err, YVEX_ERR_STATE, "server.session.console-status",
+                       "unknown session");
+        return YVEX_ERR_STATE;
+    }
+    status->schema_version = 1u;
+    status->session_available = 1;
+    status->attached = session->attached_clients != 0u;
+    status->cancel_requested = atomic_load_explicit(&session->cancel_requested,
+                                                    memory_order_acquire) != 0;
+    status->session_state = session->state;
+    status->position = session->committed_count;
+    status->turn_count = session->turn_count;
+    status->context_capacity = registry->options.context_capacity;
+    status->context_used = session->committed_count;
+    status->kv_used_available = 0;
+    status->progress_available = 0;
+    status->generation_phase = atomic_load_explicit(&session->active_turn,
+                                                     memory_order_acquire)
+                                   ? YVEX_CLIENT_PHASE_UNAVAILABLE
+                                   : YVEX_CLIENT_PHASE_IDLE;
+    status->cancellation_class = status->cancel_requested
+                                     ? YVEX_CLIENT_CANCELLATION_REQUESTED
+                                     : YVEX_CLIENT_CANCELLATION_NONE;
+    yvex_core_text_copy(status->session_name, sizeof(status->session_name),
+                        session->name);
+    (void)pthread_mutex_unlock(&registry->mutex);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 /* Purpose: atomically mark one active session cancelled from a transport thread.
  * Inputs: registry, session name, and error output. Effects: sets only the session cancellation flag.
  * Failure: refuses unknown or idle sessions. Boundary: lower owners observe it only at safe points. */

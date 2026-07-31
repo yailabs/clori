@@ -575,7 +575,6 @@ void yvex_model_registry_close(yvex_model_registry *registry)
     unsigned long long i;
 
     if (!registry) return;
-    free(registry->selected);
     for (i = 0; i < registry->count; ++i) {
         registry_owned_entry_clear(&registry->entries[i]);
     }
@@ -627,17 +626,6 @@ const yvex_model_registry_entry *yvex_model_registry_find(const yvex_model_regis
         }
     }
     return NULL;
-}
-
-/* Purpose: apply the canonical registry selected transformation and invariants.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
-const yvex_model_registry_entry *yvex_model_registry_selected(const yvex_model_registry *registry)
-{
-    if (!registry || !registry->selected || !registry->selected[0]) return NULL;
-    return yvex_model_registry_find(registry, registry->selected);
 }
 
 /* Purpose: register one registry add while preserving order and bounds.
@@ -698,44 +686,11 @@ int yvex_model_registry_remove(yvex_model_registry *registry,
             }
             registry->count--;
             memset(&registry->entries[registry->count], 0, sizeof(registry->entries[0]));
-            if (registry->selected && strcmp(registry->selected, alias) == 0) {
-                free(registry->selected);
-                registry->selected = NULL;
-            }
             return YVEX_OK;
         }
     }
     yvex_error_setf(err, YVEX_ERR_STATE, "model_registry_remove", "alias not found: %s", alias);
     return YVEX_ERR_STATE;
-}
-
-/* Purpose: apply the canonical registry select transformation and invariants.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
-int yvex_model_registry_select(yvex_model_registry *registry,
-                               const char *alias,
-                               yvex_error *err)
-{
-    char *copy;
-
-    if (!registry || !alias) {
-        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model_registry_select", "registry and alias are required");
-        return YVEX_ERR_INVALID_ARG;
-    }
-    if (!yvex_model_registry_find(registry, alias)) {
-        yvex_error_setf(err, YVEX_ERR_STATE, "model_registry_select", "alias not found: %s", alias);
-        return YVEX_ERR_STATE;
-    }
-    copy = yvex_core_strdup(alias);
-    if (!copy) {
-        yvex_error_set(err, YVEX_ERR_NOMEM, "model_registry_select", "selected alias allocation failed");
-        return YVEX_ERR_NOMEM;
-    }
-    free(registry->selected);
-    registry->selected = copy;
-    return YVEX_OK;
 }
 
 /* Purpose: publish registry save through the bounded output boundary.
@@ -761,11 +716,30 @@ int yvex_model_registry_save(const yvex_model_registry *registry,
     return yvex_model_registry_write_json_file(registry, path, err);
 }
 
-/* Purpose: form the bounded canonical split canonical stem without path drift.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
+/* Purpose: append one hyphen-delimited artifact-name component without truncation.
+ * Inputs: bounded output, used extent, and component. Effects: appends and terminates on success.
+ * Failure: returns false when the complete component and terminator do not fit.
+ * Boundary: preserves filename identity exactly rather than shortening an alias. */
+static int stem_alias_append(char *output, size_t capacity, size_t *used,
+                             const char *component)
+{
+    size_t separator = *used != 0u;
+    size_t extent = strlen(component);
+    if (*used >= capacity || separator >= capacity - *used ||
+        extent >= capacity - *used - separator)
+        return 0;
+    if (separator) output[(*used)++] = '-';
+    memcpy(output + *used, component, extent);
+    *used += extent;
+    output[*used] = '\0';
+    return 1;
+}
+
+/* Purpose: split one canonical artifact stem into identity-bearing registry components.
+ * Inputs: stem plus bounded outputs for every required artifact-name component.
+ * Effects: writes complete components and the derived alias on success.
+ * Failure: returns false for malformed, missing, or truncated components.
+ * Boundary: filename syntax supplies registry facts but cannot admit an artifact. */
 static int split_canonical_stem(const char *stem,
                                 char *family, size_t family_cap,
                                 char *model, size_t model_cap,
@@ -808,7 +782,13 @@ static int split_canonical_stem(const char *stem,
         if (n < 0 || (size_t)n >= (model_cap > pos ? model_cap - pos : 0)) return 0;
         pos += (size_t)n;
     }
-    snprintf(alias, alias_cap, "%s-%s-%s-%s", family, model, scope, artifact_class);
+    pos = 0u;
+    alias[0] = '\0';
+    if (!stem_alias_append(alias, alias_cap, &pos, family) ||
+        !stem_alias_append(alias, alias_cap, &pos, model) ||
+        !stem_alias_append(alias, alias_cap, &pos, scope) ||
+        !stem_alias_append(alias, alias_cap, &pos, artifact_class))
+        return 0;
     return strcmp(producer, "yvex") == 0 && strcmp(schema, "v1") == 0 &&
            family[0] && model[0] && scope[0] && artifact_class[0] &&
            qprofile[0] && calibration[0];
@@ -1133,15 +1113,11 @@ static int registry_parse_json(const char *path,
     }
     rc = read_file(path, &json, err);
     if (rc != YVEX_OK) return rc;
-    if (!strstr(json, "\"schema\"") || !strstr(json, "yvex.models.local.v1")) {
+    if (!strstr(json, "\"schema\"") ||
+        (!strstr(json, "yvex.models.local.v1") &&
+         !strstr(json, "yvex.models.local.v2"))) {
         free(json);
         yvex_error_set(err, YVEX_ERR_FORMAT, "model_registry_json", "registry schema missing or unsupported");
-        return YVEX_ERR_FORMAT;
-    }
-    registry->selected = extract_string_in(json, NULL, "selected");
-    if (!registry->selected) {
-        free(json);
-        yvex_error_set(err, YVEX_ERR_FORMAT, "model_registry_json", "malformed selected field");
         return YVEX_ERR_FORMAT;
     }
     models = strstr(json, "\"models\"");

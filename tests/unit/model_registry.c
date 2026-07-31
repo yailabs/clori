@@ -17,6 +17,33 @@ static int write_file(const char *path, const char *text)
     return fclose(fp) == 0;
 }
 
+static int file_contains(const char *path, const char *needle)
+{
+    FILE *fp = fopen(path, "rb");
+    char *bytes;
+    long extent;
+    int found;
+    if (!fp || fseek(fp, 0, SEEK_END) != 0 || (extent = ftell(fp)) < 0 ||
+        fseek(fp, 0, SEEK_SET) != 0) {
+        if (fp) (void)fclose(fp);
+        return 0;
+    }
+    bytes = malloc((size_t)extent + 1u);
+    if (!bytes) {
+        (void)fclose(fp);
+        return 0;
+    }
+    if (fread(bytes, 1u, (size_t)extent, fp) != (size_t)extent) {
+        free(bytes);
+        (void)fclose(fp);
+        return 0;
+    }
+    bytes[extent] = '\0';
+    found = strstr(bytes, needle) != NULL;
+    free(bytes);
+    return fclose(fp) == 0 && found;
+}
+
 static int test_alias_validation(void)
 {
     yvex_error err;
@@ -135,14 +162,12 @@ static int test_registry_lifecycle(void)
     YVEX_TEST_ASSERT(found != NULL, "find entry");
     YVEX_TEST_ASSERT_STREQ(found->path, model_path, "found path");
 
-    rc = yvex_model_registry_select(registry, "deepseek4-v4-flash-selected-embed", &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "select entry");
-    found = yvex_model_registry_selected(registry);
-    YVEX_TEST_ASSERT(found != NULL, "selected entry");
-    YVEX_TEST_ASSERT_STREQ(found->alias, "deepseek4-v4-flash-selected-embed", "selected alias");
-
     rc = yvex_model_registry_save(registry, registry_path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "save registry");
+    YVEX_TEST_ASSERT(file_contains(registry_path, "\"schema\": \"yvex.models.local.v2\""),
+                     "registry writer publishes schema v2");
+    YVEX_TEST_ASSERT(!file_contains(registry_path, "\"selected\":"),
+                     "registry writer has no selected startup state");
     yvex_model_registry_close(registry);
     registry = NULL;
 
@@ -150,8 +175,8 @@ static int test_registry_lifecycle(void)
     rc = yvex_model_registry_open(&registry, &options, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "reload registry");
     YVEX_TEST_ASSERT(yvex_model_registry_count(registry) == 1, "count after reload");
-    found = yvex_model_registry_selected(registry);
-    YVEX_TEST_ASSERT(found != NULL, "selected after reload");
+    found = yvex_model_registry_find(registry, "deepseek4-v4-flash-selected-embed");
+    YVEX_TEST_ASSERT(found != NULL, "entry after reload");
     YVEX_TEST_ASSERT_STREQ(found->support_level, "selected-tensor-materialized", "support after reload");
     YVEX_TEST_ASSERT_STREQ(found->primary_tensor_name, "token_embd.weight", "primary tensor after reload");
     YVEX_TEST_ASSERT_STREQ(found->primary_tensor_role, "token_embedding", "primary role after reload");
@@ -162,7 +187,6 @@ static int test_registry_lifecycle(void)
     rc = yvex_model_registry_remove(registry, "deepseek4-v4-flash-selected-embed", &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "remove entry");
     YVEX_TEST_ASSERT(yvex_model_registry_count(registry) == 0, "count after remove");
-    YVEX_TEST_ASSERT(yvex_model_registry_selected(registry) == NULL, "remove selected clears selected");
     yvex_model_registry_close(registry);
     (void)dir;
     return 0;

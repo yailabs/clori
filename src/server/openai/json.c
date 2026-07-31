@@ -895,13 +895,7 @@ int openai_json_admit(const openai_http_request *http,
                            "one bounded JSON request body is required");
     request = calloc(1u, sizeof(*request));
     if (!request) return YVEX_ERR_NOMEM;
-    request->schema_version = YVEX_PROVIDER_SCHEMA_V1;
-    request->response_format = YVEX_PROVIDER_RESPONSE_TEXT;
-    request->sampling.temperature = 1.0;
-    request->sampling.top_p = 1.0;
-    request->sampling.typical_p = 1.0;
-    request->maximum_output_tokens = 128u;
-    request->tool_choice.kind = YVEX_PROVIDER_TOOL_CHOICE_AUTO;
+    yvex_provider_request_default(request);
     request->external_correlation_id[0] = '\0';
     yvex_json_init(&json, (const char *)http->body, (size_t)http->body_count);
     if (!yvex_json_iter_begin(&json, &root, YVEX_JSON_COLLECTION_OBJECT)) {

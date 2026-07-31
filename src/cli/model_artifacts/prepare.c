@@ -81,7 +81,6 @@ typedef struct {
     int overwrite;
     int dry_run;
     int register_alias;
-    int use_alias;
 } yvex_cli_models_prepare_options;
 
 static const yvex_models_option_spec prepare_options[] = {
@@ -117,7 +116,6 @@ static int parse_models_prepare_options(int arg_count,
 
     memset(options, 0, sizeof(*options));
     options->register_alias = 1;
-    options->use_alias = 1;
     options->output_mode = YVEX_MODELS_OUTPUT_NORMAL;
     if (arg_count < 4) {
         yvex_cli_out_writef(stderr, "yvex: models prepare requires TARGET\n");
@@ -141,9 +139,6 @@ static int parse_models_prepare_options(int arg_count,
             options->output_mode = YVEX_MODELS_OUTPUT_AUDIT;
         } else if (strcmp(args[i], "--no-register") == 0) {
             options->register_alias = 0;
-            options->use_alias = 0;
-        } else if (strcmp(args[i], "--no-use") == 0) {
-            options->use_alias = 0;
         } else if (strcmp(args[i], "--json") == 0) {
             yvex_cli_out_writef(stderr,
                 "yvex: models prepare JSON output is unsupported; use --output normal|table|audit\n");
@@ -156,9 +151,6 @@ static int parse_models_prepare_options(int arg_count,
     if (options->out && options->out_dir) {
         yvex_cli_out_writef(stderr, "yvex: models prepare --out and --out-dir are mutually exclusive\n");
         return 2;
-    }
-    if (!options->register_alias) {
-        options->use_alias = 0;
     }
     return 0;
 }
@@ -190,7 +182,6 @@ static void print_prepare_common(const yvex_cli_models_prepare_options *options,
     yvex_cli_out_writef(stdout, "overwrite: %s\n", options->overwrite ? "true" : "false");
     yvex_cli_out_writef(stdout, "dry_run: %s\n", options->dry_run ? "true" : "false");
     yvex_cli_out_writef(stdout, "register: %s\n", options->register_alias ? "true" : "false");
-    yvex_cli_out_writef(stdout, "use_alias: %s\n", options->use_alias ? "true" : "false");
 }
 
 /* Purpose: Render print prepare dry run stages from typed facts (`print_prepare_dry_run_stages`).
@@ -198,7 +189,7 @@ static void print_prepare_common(const yvex_cli_models_prepare_options *options,
  * Effects: Writes through CLI I/O only.
  * Failure: Typed refusal; outputs remain defined.
  * Boundary: No capability policy. */
-static void print_prepare_dry_run_stages(int register_alias, int use_alias)
+static void print_prepare_dry_run_stages(int register_alias)
 {
     static const char *planned[] = {
         "resolve-paths",
@@ -218,7 +209,6 @@ static void print_prepare_dry_run_stages(int register_alias, int use_alias)
     }
     model_stage_print("registry-remove-existing", register_alias ? "planned" : "skipped");
     model_stage_print("registry-add", register_alias ? "planned" : "skipped");
-    model_stage_print("registry-use", use_alias ? "planned" : "skipped");
     model_stage_print("registry-verify", register_alias ? "planned" : "skipped");
 }
 
@@ -536,8 +526,7 @@ typedef struct {
  * Effects: Mutates declared CLI state only.
  * Failure: Typed refusal; outputs remain defined.
  * Boundary: No capability policy. */
-static int prepare_register_artifact(const yvex_cli_models_prepare_options *options,
-                                     const char *artifact_path,
+static int prepare_register_artifact(const char *artifact_path,
                                      const char *registry_path,
                                      const char *target_alias,
                                      yvex_error *err)
@@ -566,12 +555,6 @@ static int prepare_register_artifact(const yvex_cli_models_prepare_options *opti
     }
     if (rc == YVEX_OK) rc = yvex_model_registry_add(state.registry, &state.entry, err);
     if (rc == YVEX_OK) model_stage_print("registry-add", "pass");
-    if (rc == YVEX_OK && options->use_alias) {
-        rc = yvex_model_registry_select(state.registry, target_alias, err);
-        if (rc == YVEX_OK) model_stage_print("registry-use", "pass");
-    } else if (rc == YVEX_OK) {
-        model_stage_print("registry-use", "skipped");
-    }
     if (rc == YVEX_OK) rc = yvex_model_registry_save(state.registry, registry_path, err);
     if (rc == YVEX_OK) {
         registered = yvex_model_registry_find(state.registry, target_alias);
@@ -723,7 +706,7 @@ int yvex_models_prepare_surface_command(int arg_count, char **args)
                          manifest_path, plan_path, registry_path);
 
     if (options.dry_run) {
-        print_prepare_dry_run_stages(options.register_alias, options.use_alias);
+        print_prepare_dry_run_stages(options.register_alias);
         model_print_runtime_generation("not-performed");
         yvex_cli_out_writef(stdout, "status: model-prepare-dry-run\n");
         return 0;
@@ -805,13 +788,12 @@ int yvex_models_prepare_surface_command(int arg_count, char **args)
     yvex_cli_out_writef(stdout, "artifact_tensor_count: %llu\n", metadata_snapshot.entry.tensor_count);
 
     if (options.register_alias) {
-        rc = prepare_register_artifact(&options, artifact_path, registry_path,
+        rc = prepare_register_artifact(artifact_path, registry_path,
                                        target_alias, &err);
         if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
     } else {
         model_stage_print("registry-remove-existing", "skipped");
         model_stage_print("registry-add", "skipped");
-        model_stage_print("registry-use", "skipped");
         model_stage_print("registry-verify", "skipped");
     }
 

@@ -152,8 +152,48 @@ static int test_output_identity(void)
     return 0;
 }
 
+/* Purpose: prove provider callers share one complete semantic default policy. */
+static int test_request_defaults(void)
+{
+    yvex_provider_request request;
+    yvex_provider_sampling sampling;
+
+    memset(&request, 0xa5, sizeof(request));
+    yvex_provider_request_default(&request);
+    YVEX_TEST_ASSERT(request.schema_version == YVEX_PROVIDER_SCHEMA_V1,
+                     "provider default schema");
+    YVEX_TEST_ASSERT(request.response_format == YVEX_PROVIDER_RESPONSE_TEXT,
+                     "provider default response format");
+    YVEX_TEST_ASSERT(request.maximum_output_tokens == 128u,
+                     "provider default output limit");
+    YVEX_TEST_ASSERT(request.tool_choice.kind == YVEX_PROVIDER_TOOL_CHOICE_AUTO,
+                     "provider default tool choice");
+    YVEX_TEST_ASSERT(!request.sampling.stochastic && !request.sampling.seed_present,
+                     "provider default deterministic sampling");
+    YVEX_TEST_ASSERT(request.sampling.temperature == 1.0 &&
+                         request.sampling.top_p == 1.0 &&
+                         request.sampling.typical_p == 1.0,
+                     "provider default probability policy");
+    YVEX_TEST_ASSERT(request.sampling.top_k == 0u && request.sampling.min_p == 0.0,
+                     "provider default filters");
+    YVEX_TEST_ASSERT(request.messages == NULL && request.tools == NULL &&
+                         request.stop_strings == NULL && !request.sealed,
+                     "provider defaults own no payload");
+
+    memset(&sampling, 0xa5, sizeof(sampling));
+    yvex_provider_sampling_default(&sampling);
+    YVEX_TEST_ASSERT(!sampling.stochastic && !sampling.seed_present &&
+                         sampling.temperature == 1.0 && sampling.top_p == 1.0 &&
+                         sampling.typical_p == 1.0,
+                     "sampling default constructor");
+    yvex_provider_request_default(NULL);
+    yvex_provider_sampling_default(NULL);
+    return 0;
+}
+
 int yvex_test_provider(void)
 {
+    if (test_request_defaults() != 0) return 1;
     if (test_request_roundtrip() != 0) return 1;
     if (test_refusal() != 0) return 1;
     if (test_output_identity() != 0) return 1;

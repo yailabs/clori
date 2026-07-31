@@ -1,9 +1,0 @@
-graph construction is not transformer execution
-production attention probe is not prompt execution
-attention execution is not persistent KV
-attention execution is not generation
-primitive proof is not full graph runtime
-selected graph slice is not full model runtime
-backend capability is not generation readiness
-plan-only is not execution readiness
-CUDA primitive proof is not CUDA runtime generation

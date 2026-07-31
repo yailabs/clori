@@ -1,15 +1,17 @@
 /* Owner: src/cli/input
- * Owns: CLI grammar, option defaults, and parser validation for `yvex graph`.
+ * Owns: typed component argument adaptation below canonical registry paths.
  * Does not own: model reference resolution, artifact inspection, graph construction, backend probing, primitive
  *   execution, report building, rendering, stdout/stderr output, generation, eval, benchmark, or
  *   release decisions.
  * Invariants: this parser only reads borrowed argc/argv and fills a typed request.
  * Boundary: parsing graph options is not graph runtime support.
- * Purpose: provide cLI grammar, option defaults, and parser validation for `yvex graph`.
+ * Purpose: adapt registry-admitted inspect, execute, and profile arguments for graph owners.
  * Inputs: bounded command arguments and caller-owned typed request storage.
  * Effects: publishes request fields only after complete grammar validation.
  * Failure: invalid or ambiguous grammar leaves the request uncommitted. */
 #include "src/cli/input/private.h"
+
+#include <yvex/provider.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -30,7 +32,9 @@ static int graph_arg_errorf(yvex_error *err, const char *fmt, const char *value)
  * Inputs: caller-owned argument storage. Effects: replaces it with deterministic defaults.
  * Failure: none. Boundary: defaults neither resolve paths nor admit capabilities. */
 static void graph_args_defaults(yvex_graph_args *out) {
+    yvex_provider_sampling sampling;
     memset(out, 0, sizeof(*out));
+    yvex_provider_sampling_default(&sampling);
     out->attention.probe = "canonical";
     out->attention.coverage = "quick";
     out->attention.phase = "decode";
@@ -47,9 +51,11 @@ static void graph_args_defaults(yvex_graph_args *out) {
     out->transformer.input_class = "token-ids";
     out->transformer.progress = "off";
     out->transformer.strategy = "greedy";
-    out->transformer.temperature = 1.0;
-    out->transformer.top_p = 1.0;
-    out->transformer.typical_p = 1.0;
+    out->transformer.temperature = sampling.temperature;
+    out->transformer.top_p = sampling.top_p;
+    out->transformer.min_p = sampling.min_p;
+    out->transformer.typical_p = sampling.typical_p;
+    out->transformer.top_k = sampling.top_k;
     out->transformer.maximum_output_bytes = 1048576ull;
 }
 
@@ -364,7 +370,7 @@ static int graph_attention_controls_validate(const yvex_graph_args *out, yvex_er
     if (out->attention.regression_basis_points != ULLONG_MAX &&
         out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK_COMPARE)
         return graph_arg_error(
-            err, "yvex: regression thresholds require graph attention benchmark compare");
+            err, "yvex: regression thresholds require profile attention compare");
     if (out->attention.input_class && strcmp(out->attention.input_class, "tensor-file") != 0)
         return graph_arg_errorf(err, "yvex: unsupported attention input class: %s",
                                 out->attention.input_class);
@@ -377,7 +383,7 @@ static int graph_attention_controls_validate(const yvex_graph_args *out, yvex_er
          strcmp(out->attention.mode, "eager") != 0 ||
          strcmp(out->attention.coverage, "full") != 0))
         return graph_arg_error(
-            err, "yvex: tensor-file input requires graph attention execute --phase prefill --mode eager --scope full");
+            err, "yvex: tensor-file input requires execute attention run --phase prefill --mode eager --scope full");
     if ((out->attention.chunk_tokens || out->attention.context_capacity) &&
         !out->attention.input_class)
         return graph_arg_error(
@@ -401,12 +407,12 @@ static int graph_attention_controls_validate(const yvex_graph_args *out, yvex_er
         out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_STATE_EXERCISE &&
         out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK)
         return graph_attention_control_refuse(err, "--class",
-                                              "graph attention state exercise or benchmark");
+                                              "execute attention state exercise or benchmark");
     if ((out->attention.position_seen || out->attention.history_tokens_seen) &&
         out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_STATE_EXERCISE &&
         out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK)
         return graph_attention_control_refuse(err, "explicit history geometry",
-                                              "graph attention state exercise or benchmark");
+                                              "execute attention state exercise or benchmark");
     if (out->attention.position_seen && out->attention.history_tokens_seen &&
         out->attention.position != out->attention.history_tokens)
         return graph_arg_error(err, "yvex: --position and --history-tokens must agree");
@@ -421,12 +427,12 @@ static int graph_attention_controls_validate(const yvex_graph_args *out, yvex_er
         out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK_COMPARE)
         return graph_arg_error(err,
                                "yvex: --baseline, --write-baseline, and --chart require "
-                               "graph attention benchmark or profile");
+                               "profile attention component or profile");
     if (out->attention.write_baseline && !out->attention.baseline_path)
         return graph_arg_error(err, "yvex: --write-baseline requires --baseline FILE");
     if (out->attention.current_path &&
         out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK_COMPARE)
-        return graph_arg_error(err, "yvex: --current requires graph attention benchmark compare");
+        return graph_arg_error(err, "yvex: --current requires profile attention compare");
     if (out->attention.chart_path) {
         size_t length = strlen(out->attention.chart_path);
         if (length < 5u || strcmp(out->attention.chart_path + length - 4u, ".svg") != 0)
@@ -564,13 +570,13 @@ static int graph_parse_attention(int argc, char **argv, yvex_graph_args *out,
         out->attention.compare_backends == (out->attention.backend != NULL)) {
         graph_arg_error(err, out->attention.compare_backends
                                  ? "yvex: --compare-backends cannot be combined with --backend"
-                                 : "yvex: graph attention execute requires --backend cpu|cuda or "
+                                 : "yvex: execute attention run requires --backend cpu|cuda or "
                                    "--compare-backends");
         return YVEX_ERR_INVALID_ARG;
     }
     if (out->attention.action == YVEX_GRAPH_ATTENTION_ACTION_COMPARE &&
         out->attention.backend) {
-        return graph_arg_error(err, "yvex: graph attention compare does not accept --backend");
+        return graph_arg_error(err, "yvex: execute attention compare does not accept --backend");
     }
     if ((out->attention.action == YVEX_GRAPH_ATTENTION_ACTION_CAPABILITIES ||
          out->attention.action == YVEX_GRAPH_ATTENTION_ACTION_PLAN ||
@@ -627,15 +633,15 @@ static int graph_parse_attention(int argc, char **argv, yvex_graph_args *out,
          out->attention.imatrix_path || out->attention.physical_variant_plan_path) &&
         out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_PREPARE)
         return graph_arg_error(err,
-                               "yvex: physical-variant options require graph attention prepare");
+                               "yvex: physical-variant options require execute attention prepare");
     if ((out->attention.source_path || out->attention.source_manifest_path) &&
         out->attention.action != YVEX_GRAPH_ATTENTION_ACTION_PREPARE)
         return graph_arg_error(err,
-                               "yvex: source authority options require graph attention prepare");
+                               "yvex: source authority options require execute attention prepare");
     if (out->attention.physical_variant_plan_path &&
         !out->attention.quant_policy_path && !out->attention.quant_preset_name)
         return graph_arg_error(err,
-                               "yvex: --physical-variant-plan requires a quant policy or preset");
+                               "yvex: --physical-variant-plan requires a compile quant policy or preset");
     if ((out->attention.quant_policy_path || out->attention.quant_preset_name ||
          out->attention.imatrix_path) && !out->attention.physical_variant_plan_path)
         return graph_arg_error(err,
@@ -697,16 +703,16 @@ static int graph_parse_moe(int argc, char **argv, yvex_graph_args *out, yvex_err
     if (!out->moe.target || !out->moe.artifact_path || !out->moe.runtime_binding_path ||
         !out->moe.backend || !out->moe.input_class || !out->moe.input_file)
         return graph_arg_error(
-            err, "yvex: graph moe execute requires target, artifact, runtime binding, backend, "
+            err, "yvex: execute moe requires target, artifact, runtime binding, backend, "
                  "and tensor-file input");
     if (!cli_backend_name_valid(out->moe.backend))
         return graph_arg_errorf(err, "yvex: unknown backend kind: %s", out->moe.backend);
     if (strcmp(out->moe.input_class, "tensor-file") != 0)
-        return graph_arg_error(err, "yvex: graph moe execute requires --input tensor-file");
+        return graph_arg_error(err, "yvex: execute moe requires --input tensor-file");
     if (strcmp(out->moe.coverage, "full") != 0)
-        return graph_arg_error(err, "yvex: graph moe execute supports only --scope full");
+        return graph_arg_error(err, "yvex: execute moe supports only --scope full");
     if (strcmp(out->moe.progress, "off") != 0)
-        return graph_arg_error(err, "yvex: graph moe execute requires --progress off");
+        return graph_arg_error(err, "yvex: execute moe requires --progress off");
     if (out->moe.maximum_device_bytes && strcmp(out->moe.backend, "cpu") == 0)
         return graph_arg_error(err, "yvex: --max-device-bytes requires backend cuda");
     yvex_error_clear(err);
@@ -817,12 +823,12 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
         !out->transformer.context_capacity)
         return graph_arg_error(
             err, out->transformer.generate
-                     ? "yvex: graph transformer generate requires target, artifact, runtime binding, "
+                     ? "yvex: execute transformer generate requires target, artifact, runtime binding, "
                        "backend, prompt, and context capacity"
                  : (out->transformer.decode || out->transformer.logits || out->transformer.sample)
-                     ? "yvex: graph transformer decode/logits/sample requires target, artifact, runtime binding, "
+                     ? "yvex: execute transformer decode/logits/sample requires target, artifact, runtime binding, "
                        "backend, token input, prefill split, and context capacity"
-                     : "yvex: graph transformer execute requires target, artifact, runtime binding, "
+                     : "yvex: execute transformer run requires target, artifact, runtime binding, "
                        "backend, token input, chunk tokens, and context capacity");
     if (!cli_backend_name_valid(out->transformer.backend))
         return graph_arg_errorf(err, "yvex: unknown backend kind: %s", out->transformer.backend);
@@ -841,8 +847,8 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
           !out->transformer.prefill_chunk_tokens)))
         return graph_arg_error(
             err, (out->transformer.decode || out->transformer.logits || out->transformer.sample)
-                     ? "yvex: graph transformer decode/logits/sample requires prefill tokens and prefill chunk tokens"
-                     : "yvex: graph transformer execute requires chunk tokens");
+                     ? "yvex: execute transformer decode/logits/sample requires prefill tokens and prefill chunk tokens"
+                     : "yvex: execute transformer run requires chunk tokens");
     if (out->transformer.generate &&
         (!out->transformer.prefill_chunk_tokens ||
          !out->transformer.maximum_new_tokens ||
@@ -854,7 +860,7 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
     if (!out->transformer.generate &&
         (out->transformer.system || out->transformer.user || out->transformer.text ||
          out->transformer.maximum_new_tokens))
-        return graph_arg_error(err, "yvex: prompt generation options require graph transformer generate");
+        return graph_arg_error(err, "yvex: prompt generation options require execute transformer generate");
     if (out->transformer.sample || out->transformer.generate) {
         int stochastic = strcmp(out->transformer.strategy, "stochastic") == 0;
         int greedy = strcmp(out->transformer.strategy, "greedy") == 0;
@@ -874,7 +880,7 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
                out->transformer.seed_seen || out->transformer.temperature != 1.0 ||
                out->transformer.top_k || out->transformer.top_p != 1.0 ||
                out->transformer.min_p != 0.0 || out->transformer.typical_p != 1.0)
-        return graph_arg_error(err, "yvex: sampling options require graph transformer sample or generate");
+        return graph_arg_error(err, "yvex: sampling options require execute transformer sample or generate");
     if (out->transformer.maximum_device_bytes &&
         strcmp(out->transformer.backend, "cpu") == 0)
         return graph_arg_error(err, "yvex: --max-device-bytes requires backend cuda");

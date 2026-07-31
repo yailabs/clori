@@ -1,12 +1,12 @@
 #!/bin/sh
-# Purpose: prove one yvex dispatch surface, engineering-route absorption, and runtime-lane isolation.
+# Purpose: prove registry dispatch, final command placement, and runtime-lane isolation.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
 YVEX_CLIENT_LANE_OBJ=${YVEX_CLIENT_LANE_OBJ:-build/obj/src/cli/io/client.o}
 . tests/support/cleanup.sh
 
-root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-client-cutover.XXXXXX")
+root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-command-architecture.XXXXXX")
 config_root=$root/config-root
 mkdir -m 700 "$config_root"
 cleanup()
@@ -25,66 +25,122 @@ trap cleanup EXIT HUP INT TERM
 "$YVEX_BIN" help >"$root/help"
 for expected in \
     'yvex chat' \
-    'yvex runtime start|stop|status|watch|trace' \
-    'yvex graph' \
-    'yvex artifact show|verify|metadata' \
-    'yvex quant preset|plan|emit' \
-    'yvex tokenizer show|encode|decode|prompt' \
-    'yvex evidence target|model|moe|backend|cuda'
+    'yvex run' \
+    'yvex runtime status' \
+    'yvex session list' \
+    'yvex model selected' \
+    'yvex compile source manifest' \
+    'yvex compile quant plan' \
+    'yvex artifact verify' \
+    'yvex completion'
 do
     grep -F "$expected" "$root/help" >/dev/null
 done
-! grep -F 'yvex dev' "$root/help" >/dev/null
-! grep -F 'yvex-dev' "$root/help" >/dev/null
-! grep -F 'yvex-openai' "$root/help" >/dev/null
+for retired in 'yvex dev' 'yvex-dev' 'yvex-openai' 'yvex evidence' \
+    'yvex graph' 'yvex quant' 'yvex source' 'yvex tensor' 'yvex tokenizer'; do
+    ! grep -F "$retired" "$root/help" >/dev/null
+done
 
-# Every former engineering executable route is reached by the sole yvex dispatcher.
+"$YVEX_BIN" help --advanced >"$root/advanced"
+for expected in \
+    'yvex inspect artifact metadata' \
+    'yvex inspect source' \
+    'yvex execute tokenizer encode' \
+    'yvex execute attention run' \
+    'yvex profile attention run' \
+    'yvex system cuda'
+do
+    grep -F "$expected" "$root/advanced" >/dev/null
+done
+
+"$YVEX_BIN" help runtime trace >"$root/leaf-help"
+grep -F 'operation: runtime.trace' "$root/leaf-help" >/dev/null
+"$YVEX_BIN" help --json >"$root/discovery.json"
+python3 - "$root/discovery.json" <<'PY'
+import json, pathlib, sys
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert payload['schema'] == 'yvex.command.discovery.v1'
+assert len(payload['registry_identity']) == 64
+paths = {row['command_path'] for row in payload['operations'] if row['projections']['cli']}
+assert 'runtime status' in paths
+assert 'execute tokenizer encode' in paths
+assert not any(path.split(' ', 1)[0] in {
+    'evidence', 'graph', 'quant', 'source', 'tensor', 'tokenizer', 'eval', 'bench'
+} for path in paths)
+PY
+"$YVEX_BIN" completion bash >"$root/yvex.bash"
+bash -n "$root/yvex.bash"
+grep -F 'runtime' "$root/yvex.bash" >/dev/null
+grep -F -- '--backend' "$root/yvex.bash" >/dev/null
+
+# Every absorbed engineering capability has one registry-selected canonical route.
 for arguments in \
     'artifact show --help' \
     'artifact verify --help' \
-    'artifact metadata --help' \
-    'artifact tensors --help' \
     'artifact materialize --help' \
-    'artifact materialize-gate --help' \
-    'artifact model-gate --help' \
-    'artifact template --help' \
-    'artifact emit --help' \
-    'graph --help' \
-    'quant plan --help' \
-    'quant emit --help' \
-    'quant summarize --help' \
-    'quant explain --help' \
-    'quant policy --help' \
-    'quant imatrix --help' \
-    'quant job --help' \
-    'quant qtype --help' \
-    'quant convert --help' \
-    'runtime input --help' \
-    'runtime context --help' \
-    'tokenizer show --help' \
-    'tokenizer encode --help' \
-    'tokenizer decode --help' \
-    'tokenizer prompt --help' \
-    'source manifest --help' \
-    'source native --help' \
-    'tensor map --help' \
-    'tensor collection --help' \
-    'evidence target --help' \
-    'evidence model --help' \
-    'evidence moe --help' \
-    'evidence backend --help' \
-    'evidence cuda --help' \
-    'evidence accounts --help' \
-    'evidence paths --help' \
-    'evidence models --help'
+    'inspect artifact metadata --help' \
+    'inspect artifact tensors --help' \
+    'execute artifact materialize-gate --help' \
+    'execute artifact model-gate check --help' \
+    'compile emit template --help' \
+    'compile emit artifact --help' \
+    'inspect attention describe --help' \
+    'execute attention run --help' \
+    'profile attention run --help' \
+    'compile quant plan --help' \
+    'compile quant emit --help' \
+    'inspect quant summary --help' \
+    'inspect quant decision --help' \
+    'compile quant policy --help' \
+    'compile quant imatrix --help' \
+    'compile quant job --help' \
+    'inspect qtype --help' \
+    'compile quant convert --help' \
+    'execute input --help' \
+    'inspect context --help' \
+    'inspect tokenizer --help' \
+    'execute tokenizer encode --help' \
+    'execute tokenizer decode --help' \
+    'execute tokenizer prompt --help' \
+    'compile source manifest --help' \
+    'inspect source --help' \
+    'compile map --help' \
+    'inspect tensor collection --help' \
+    'inspect target --help' \
+    'inspect model full --help' \
+    'inspect moe --help' \
+    'inspect backend --help' \
+    'system cuda --help' \
+    'system accounts --help' \
+    'system paths --help' \
+    'model list --help'
 do
     # shellcheck disable=SC2086
     "$YVEX_BIN" $arguments >"$root/out" 2>"$root/err"
 done
-"$YVEX_BIN" quant preset list >"$root/out" 2>"$root/err"
 
-# The retired flat spellings remain unknown; no forwarding alias executes.
-for command in materialize quant-policy tokenizer metadata tensor-map model-target fullmodel; do
+# Removed namespaces refuse and provide migration direction without executing aliases.
+for command in evidence graph quant source tensor tokenizer; do
+    set +e
+    "$YVEX_BIN" "$command" >"$root/out" 2>"$root/err"
+    status=$?
+    set -e
+    test "$status" -eq 2
+    grep -F "removed command: $command" "$root/err" >/dev/null
+    grep -F 'hint:' "$root/err" >/dev/null
+done
+for arguments in 'runtime input' 'runtime context' 'runtime trace --follow'; do
+    set +e
+    # shellcheck disable=SC2086
+    "$YVEX_BIN" $arguments >"$root/out" 2>"$root/err"
+    status=$?
+    set -e
+    test "$status" -eq 2
+    grep -F 'removed command:' "$root/err" >/dev/null
+done
+
+# Retired flat spellings never forward to an offline adapter.
+for command in materialize quant-policy metadata tensor-map model-target fullmodel; do
     set +e
     "$YVEX_BIN" "$command" >"$root/out" 2>"$root/err"
     status=$?
@@ -93,7 +149,7 @@ for command in materialize quant-policy tokenizer metadata tensor-map model-targ
     grep -F "unknown command: $command" "$root/err" >/dev/null
 done
 
-# Artifact routes execute artifact owners, not the removed runtime-status facade.
+# Artifact routes execute artifact owners, not one removed runtime-status facade.
 set +e
 "$YVEX_BIN" artifact show "$root/missing.gguf" >"$root/out" 2>"$root/err"
 show_status=$?
@@ -130,17 +186,57 @@ do
     test "$status" -eq 2
 done
 
-XDG_CONFIG_HOME="$config_root" "$YVEX_BIN" model use current \
+# One registry-driven parser owns help bypass, types, ranges, duplicates, and relations.
+"$YVEX_BIN" model select -h >"$root/out" 2>"$root/err"
+grep -F 'operation: model.select' "$root/out" >/dev/null
+for arguments in \
+    'model select current --artifact /models/current.gguf --runtime-binding /bindings/current.binding --target deepseek4-v4-flash --backend bogus --context 4096' \
+    'model select current --artifact /models/current.gguf --runtime-binding /bindings/current.binding --target deepseek4-v4-flash --backend cuda --context 0' \
+    'model select current --artifact /models/current.gguf --runtime-binding /bindings/current.binding --target deepseek4-v4-flash --backend cuda --context 4096 --context 4096' \
+    'compile artifact prepare --out artifact.gguf --out-dir artifacts'
+do
+    set +e
+    # shellcheck disable=SC2086
+    "$YVEX_BIN" $arguments >"$root/out" 2>"$root/err"
+    status=$?
+    set -e
+    test "$status" -eq 2
+    grep -F 'usage: yvex' "$root/err" >/dev/null
+done
+set +e
+"$YVEX_BIN" runtime statu >"$root/out" 2>"$root/err"
+status=$?
+set -e
+test "$status" -eq 2
+grep -F 'did you mean `yvex runtime status`' "$root/err" >/dev/null
+
+# Selected startup configuration is explicit and remains distinct from live daemon state.
+set +e
+XDG_CONFIG_HOME="$config_root" "$YVEX_BIN" model select current \
+    --artifact /models/current.gguf >"$root/out" 2>"$root/err"
+status=$?
+set -e
+test "$status" -eq 2
+grep -F 'required flag missing' "$root/err" >/dev/null
+XDG_CONFIG_HOME="$config_root" "$YVEX_BIN" model select current \
     --artifact /models/current.gguf --runtime-binding /bindings/current.binding \
     --target deepseek4-v4-flash --backend cuda --context 4096 >"$root/out"
 grep -F 'selected model: current' "$root/out" >/dev/null
 test "$(stat -c '%a' "$config_root/yvex/model.conf")" = 600
-XDG_CONFIG_HOME="$config_root" "$YVEX_BIN" model show >"$root/out"
+XDG_CONFIG_HOME="$config_root" "$YVEX_BIN" model selected >"$root/out"
 grep -F 'backend=cuda context=4096' "$root/out" >/dev/null
+set +e
+XDG_CONFIG_HOME="$config_root" XDG_RUNTIME_DIR="$root/absent-runtime" \
+    "$YVEX_BIN" runtime model >"$root/out2" 2>"$root/err"
+status=$?
+set -e
+test "$status" -eq 1
+grep -F 'local runtime socket is absent' "$root/err" >/dev/null
+! grep -F '/models/current.gguf' "$root/out2" "$root/err" >/dev/null
 
-# The whole ELF intentionally links offline engine owners; the runtime-client object does not.
+# The whole ELF links finite offline owners; the runtime-client object has no engine edge.
 test -f "$YVEX_CLIENT_LANE_OBJ"
 ! nm -u "$YVEX_CLIENT_LANE_OBJ" | grep -E \
     'yvex_(runtime_model_open|artifact_materialize|runtime_transformer|runtime_generation_operator_execute|backend_cuda)' \
     >/dev/null
-printf 'test: client_cutover\n'
+printf 'test: client_command_architecture\n'

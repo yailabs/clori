@@ -14,6 +14,9 @@ claim.
 Current core areas:
 
 ```text
+config/operator/         canonical versioned command/operation registry source
+tools/                   bounded build-time registry generator and validators
+build/generated/operator generated immutable descriptor data, never tracked or installed
 src/cli/io/client.c      runtime-client lane, REPL, protocol projections
 src/daemon/              long-lived runtime-host entrypoint
 src/server/              protocol, worker, sessions, telemetry, host lifecycle and server adapters
@@ -34,7 +37,8 @@ src/runtime/             common immutable model, binding, execution sessions, st
 ## Target Tree Summary
 
 ```text
-product argv -> local protocol -> yvexd worker/session -> typed events/results -> client render
+registry JSON -> strict build validation -> immutable compiled descriptors -> yvex dispatch/help
+product argv -> protocol v4 -> yvexd worker/session -> typed events/results -> client render
 application -> OpenAI profile -> provider contract -> local protocol -> same yvexd worker/session
 developer argv -> nested owner route -> report/domain -> developer render -> cli/io
 
@@ -74,9 +78,13 @@ domain algorithms. No writer owns command output.
 
 ## Owner Rules
 
-- CLI input owns `argc/argv` parsing only.
-- CLI command adapters dispatch only.
-- CLI surfaces route command families only.
+- The operator-registry source owns operation IDs and projection metadata only.
+- Its build-time generator owns strict validation and deterministic immutable C
+  data emission; generated data owns no behavior.
+- CLI input owns registry-driven syntax admission and typed domain argument
+  adaptation only.
+- CLI command adapters dispatch one admitted lane only.
+- CLI surfaces resolve command families from compiled descriptors only.
 - CLI renderers format typed facts.
 - CLI IO writes operator bytes.
 - Explicit writer modules write local files only.
@@ -229,6 +237,9 @@ domain algorithms. No writer owns command output.
 
 | Layer | Owner |
 | --- | --- |
+| Canonical operation and command metadata | `config/operator/registry.json` |
+| Registry validation and deterministic C projection | `tools/generate_operator_registry.py` |
+| Generated immutable descriptor data | `build/generated/operator/*` |
 | Product entry, REPL and compact render | `src/cli/io/client.c` |
 | Runtime-host entry | `src/daemon/yvexd.c` |
 | Local protocol and host | `src/server/*` |

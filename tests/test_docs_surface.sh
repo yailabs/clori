@@ -32,6 +32,7 @@ for file in \
   docs/diagrams/runtime_host_sessions.mmd docs/diagrams/runtime_host_sessions.svg \
   docs/diagrams/autoregressive_execution.mmd docs/diagrams/autoregressive_execution.svg \
   docs/decisions/README.md docs/decisions/0001-public-project-control.md \
+  docs/decisions/0002-command-operation-registry.md \
   docs/milestones/command-architecture.md docs/milestones/runtime-console-repl.md \
   docs/runbooks/README.md docs/runbooks/deepseek.md docs/runbooks/common.md
 do
@@ -101,7 +102,9 @@ test "$readme_lines" -ge 200 || fail "README is too short to own the product ent
 for old in \
   './yvex materialize ' './yvex quant-policy ' \
   './yvex metadata ' './yvex tensor-map ' \
-  './yvex model-target ' './yvex fullmodel '
+  './yvex model-target ' './yvex fullmodel ' \
+  './yvex model use ' './yvex graph ' './yvex evidence ' \
+  './yvex quant ' './yvex source ' './yvex tensor ' './yvex tokenizer '
 do
   if grep -nF -- "$old" README.md docs/*.md docs/runbooks/*.md >/dev/null; then
     fail "public documentation retains old command: $old"
@@ -122,7 +125,8 @@ require_text docs/contract.md 'publishes bytes only after model commit'
 require_text docs/contract.md 'yvex.openai.compat.v1'
 require_text docs/contract.md 'Public HTTP exposure'
 require_text docs/api.md '`<yvex/server.h>` | local protocol, runtime host, sessions, telemetry'
-require_text docs/api.md '## Application Provider And Local Protocol v3'
+require_text docs/api.md '## Application Provider And Local Protocol v4'
+require_text docs/api.md '## Compiled Operator Registry Boundary'
 require_text docs/openai-compatibility.md '# YVEX OpenAI Compatibility Profile v1'
 require_text docs/openai-compatibility.md 'POST /v1/chat/completions'
 require_text docs/openai-compatibility.md 'POST /v1/responses'
@@ -146,15 +150,15 @@ case "$first_operator_command" in
 esac
 
 defaults_line=$(grep -nF '## Optional configured defaults' docs/operator-runbook.md | cut -d: -f1)
-model_use_line=$(grep -nF './yvex model use ' docs/operator-runbook.md | cut -d: -f1)
-test "$model_use_line" -gt "$defaults_line" ||
-  fail 'operator runbook promotes model use before optional configured defaults'
+model_select_line=$(grep -nF './yvex model select ' docs/operator-runbook.md | cut -d: -f1)
+test "$model_select_line" -gt "$defaults_line" ||
+  fail 'operator runbook promotes model selection before optional configured defaults'
 
 if grep -nE '\\[[:space:]]*$' docs/operator-runbook.md; then
   fail 'operator runbook contains a multiline shell continuation'
 fi
 
-require_text docs/runbooks/deepseek.md './yvex graph transformer generate --help'
+require_text docs/runbooks/deepseek.md './yvex execute transformer generate --help'
 require_text docs/runbooks/deepseek.md 'On turn two'
 require_text docs/reference-architecture.md '### 10.4 Hosted Runtime And Conversation Sessions'
 require_text docs/reference-architecture.md 'exact prefix'
@@ -197,17 +201,18 @@ test -z "$(find docs/diagrams -maxdepth 1 -type f \
   fail 'architecture diagrams retain a raster text asset'
 
 require_text ROADMAP.md '# YVEX Roadmap'
-require_text ROADMAP.md 'Active Next: V010.OPERATOR.COMMAND.ARCHITECTURE.0'
+require_text ROADMAP.md 'Active Next: V010.OPERATOR.REPL.CONSOLE.0'
 require_text ROADMAP.md '| `V010.PROJECT.CONTROL.PUBLIC.0` | `complete` |'
 require_text ROADMAP.md '| `V010.OPERATOR.COMMAND.CONSOLE.0` | `superseded` |'
-require_text ROADMAP.md '| `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `active` |'
-require_text ROADMAP.md '| `V010.OPERATOR.REPL.CONSOLE.0` | `blocked` |'
+require_text ROADMAP.md '| `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `complete` |'
+require_text ROADMAP.md '| `V010.OPERATOR.REPL.CONSOLE.0` | `active` |'
 require_text ROADMAP.md 'model_behavior_evaluation_ready=0'
 require_text ROADMAP.md 'release_qualification_ready=0'
 require_text CONTRIBUTING.md '# Contributing to YVEX'
 require_text CONTRIBUTING.md '## Commit and pull request'
 require_text docs/decisions/README.md '# Architecture Decision Records'
 require_text docs/decisions/0001-public-project-control.md '# 0001 — Public project control'
+require_text docs/decisions/0002-command-operation-registry.md '# 0002 — Canonical command and operation registry'
 require_file .github/ISSUE_TEMPLATE/bug_report.yml
 require_file .github/ISSUE_TEMPLATE/engineering_change.yml
 require_file .github/ISSUE_TEMPLATE/config.yml
@@ -250,14 +255,17 @@ done
 
 if test -x ./yvex; then
   client_help=$(./yvex --help)
-  printf '%s\n' "$client_help" | grep -F 'yvex run [options] TEXT' >/dev/null ||
+  printf '%s\n' "$client_help" | grep -F 'yvex run' >/dev/null ||
     fail 'built yvex help lacks one-shot client'
-  printf '%s\n' "$client_help" | grep -F 'yvex runtime start|stop|status|watch|trace' >/dev/null ||
+  printf '%s\n' "$client_help" | grep -F 'yvex runtime status' >/dev/null ||
     fail 'built yvex help lacks runtime administration'
-  printf '%s\n' "$client_help" | grep -F 'yvex session new|list|show|attach|detach|reset|close' >/dev/null ||
+  printf '%s\n' "$client_help" | grep -F 'yvex session cancel' >/dev/null ||
     fail 'built yvex help lacks session administration'
-  printf '%s\n' "$client_help" | grep -F 'yvex graph ...' >/dev/null ||
-    fail 'built yvex help lacks absorbed engineering operations'
+  printf '%s\n' "$client_help" | grep -F 'yvex compile quant plan' >/dev/null ||
+    fail 'built yvex help lacks canonical compilation operations'
+  if printf '%s\n' "$client_help" | grep -F 'yvex graph' >/dev/null; then
+    fail 'built yvex help exposes the retired graph namespace'
+  fi
 fi
 
 if test -x ./yvexd; then

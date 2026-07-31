@@ -1,6 +1,0 @@
-"minimal diagnostic KV is not real attention KV"
-"KV report is not runtime execution"
-"KV report is not decode readiness"
-"KV report is not logits readiness"
-"KV report is not generation readiness"
-"KV report is not benchmark evidence"

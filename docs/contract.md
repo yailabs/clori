@@ -105,17 +105,14 @@ The product command surface is compact and daemon-backed:
 yvex
 yvex chat
 yvex run
-yvex runtime start|stop|status|watch|trace
-yvex session new|list|show|attach|detach|reset|close
-yvex model list|use|show
-yvex artifact show|verify|metadata|tensors|materialize|emit ...
-yvex graph ...
-yvex quant preset|plan|emit|summarize|explain|policy|imatrix ...
-yvex tokenizer show|encode|decode|prompt ...
-yvex source manifest|native ...
-yvex tensor map|collection ...
-yvex evidence target|model|moe|backend|cuda ...
-yvex help
+yvex runtime start|stop|status|model|memory|watch|trace
+yvex session new|list|show|attach|detach|reset|close|cancel
+yvex model list|show|selected|select
+yvex compile ...
+yvex artifact show|verify|materialize
+yvex inspect|execute|profile|system ...
+yvex help [PATH...]|--advanced|--json
+yvex completion bash|zsh|fish
 yvex version
 ```
 
@@ -125,11 +122,20 @@ materialize weights, execute a Transformer, or compose generation in process.
 `yvex chat` use the REPL. Runtime and session administration consume typed
 protocol state rather than process-list or log scraping.
 
-Direct compiler, artifact, tokenizer, graph, and evidence operations live in a
-separate offline dispatch lane in the same `yvex` ELF. Those finite operations
-may open the engine for engineering proof, but they are not compatibility
-aliases or a second hosted model authority. The former flat public command
-registry is absent.
+Direct compiler, artifact, tokenizer, component-execution, profile, and system
+operations live in a separate offline dispatch lane in the same `yvex` ELF.
+Those finite operations may open the engine for engineering proof, but they
+close their resources before exit and are neither compatibility aliases nor a
+second hosted model authority. The old `evidence`, `graph`, `quant`, `source`,
+`tensor`, and `tokenizer` top-level paths are refusal-only migration hints.
+
+`config/operator/registry.json` is the sole versioned command and operation
+projection source. Deterministic generated static descriptors are compiled into
+`yvex`; the product never loads mutable command metadata at runtime. Those
+descriptors drive path resolution, syntax admission, help, machine discovery,
+shell completion, and slash projections. They carry no domain logic. Typed
+domain owners remain authoritative for semantic defaults, validation, effects,
+and lifecycle.
 
 Model selection is explicit. A private XDG configuration may record inert
 artifact, binding, backend, target, and context values for a later daemon start;
@@ -213,7 +219,7 @@ binds at least:
 - required tensor bindings, qtype and backend requirements;
 - physical compatibility and invalidation facts.
 
-The compiler-side `yvex graph attention prepare` action generates and publishes
+The compiler-side `yvex execute attention prepare` action generates and publishes
 the binding transactionally outside the repository. Runtime open independently
 parses the record and verifies every imported descriptor and plan against the
 exact artifact. A missing binding refuses with the preparation command; runtime
@@ -536,22 +542,23 @@ publication and output identity. A request never enters a smaller bucket.
 
 ### DeepSeek Offline Attention Operator Contract
 
-The offline command lane exposes direct engine execution through
-`yvex graph attention ...`.
+The offline command lane exposes direct engine execution through the canonical
+`yvex inspect attention ...`, `yvex execute attention ...`, and
+`yvex profile attention ...` projections.
 Representative execution is:
 
 ```sh
-./yvex graph attention execute --target deepseek4-v4-flash \
+./yvex execute attention run --target deepseek4-v4-flash \
   --runtime-binding /path/to/binding.yvex-runtime-binding \
   --backend cpu --phase prefill --mode eager \
   --operation-scope envelope --tokens 4 --probe canonical --output json
 
-./yvex graph attention execute --target deepseek4-v4-flash \
+./yvex execute attention run --target deepseek4-v4-flash \
   --runtime-binding /path/to/binding.yvex-runtime-binding \
   --backend cuda --phase decode --mode full \
   --operation-scope release-attention-set --probe canonical --output json
 
-./yvex graph attention execute --target deepseek4-v4-flash \
+./yvex execute attention run --target deepseek4-v4-flash \
   --runtime-binding /path/to/binding.yvex-runtime-binding \
   --backend cuda --phase prefill --mode eager --scope full \
   --operation-scope core --input tensor-file \
@@ -599,7 +606,7 @@ Machine-readable stdout contains no progress lines.
 YVEX keeps software testing, numerical conformance, runtime qualification,
 component benchmarking, model behavior evaluation, model quality evaluation,
 agent runtime evaluation, and release qualification as separate evidence
-classes. `graph attention qualify` exercises the installed production runtime;
+classes. `profile attention qualify` exercises the installed production runtime;
 it does not rebuild the repository or run source-tree sanitizers. Its typed
 result reports software-contract admission, numerical-conformance admission,
 runtime structural qualification, component-benchmark availability, and the
@@ -635,7 +642,7 @@ runtime binding, logical model, runtime numeric policy, runtime and semantic/
 executable/execution descriptors, residency, workspace, state layout, kernel
 bundle, machine, CPU/GPU, memory, device, driver, CUDA build, class, layer,
 phase, mode, scope, tokens, history, trace, bucket and iteration count.
-`graph attention benchmark compare` reopens two records independently and
+`profile attention compare` reopens two records independently and
 refuses at the first incompatible identity field. Workload compatibility
 deliberately excludes the commit so a regression lane can compare two builds
 while reporting both commit identities.
@@ -707,9 +714,16 @@ publishes bytes only after model commit, decoder commit and internal text
 commit. Disconnect or sink failure preserves committed partial state.
 
 The local protocol uses a private UID-owned Unix-domain socket, bounded frames,
-explicit v3 negotiation, typed provider messages/tools/results, typed refusal,
+explicit v4 negotiation, typed provider messages/tools/results, typed refusal,
 and deterministic cleanup. Provider correlation participates in runtime-event
 identity without exposing prompt or answer content.
+
+Version 4 removes the former model/artifact facade operations and adds the
+server-composed `console.status` result, runtime-configuration facts, exact turn
+timings, generation and cancellation classes, and typed stream-channel
+metadata. Unavailable selected-model, KV-byte, active-progress, publication
+timing, or explicit-reasoning facts remain marked unavailable. Version 3 is
+refused explicitly; no private pre-v0.1 compatibility decoder remains.
 
 The source-separated OpenAI adapter inside `yvexd` may expose the bounded
 `yvex.openai.compat.v1` profile over loopback HTTP/1.1. It opens no second model
@@ -720,7 +734,7 @@ the daemon model. Public HTTP exposure,
 authentication, TLS, full OpenAI/Anthropic compatibility, remote sessions and
 continuous batching remain unsupported.
 
-Protocol-v3 refusals include a typed application failure class. Bounded
+Protocol-v4 refusals include a typed application failure class. Bounded
 adapter transport expiry maps to timeout instead of being collapsed into a
 generic model or input error.
 

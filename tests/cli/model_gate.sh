@@ -10,13 +10,13 @@ fail() {
   exit 1
 }
 
-"$YVEX_BIN" artifact emit controlled \
+"$YVEX_BIN" compile emit artifact controlled \
   --out "$OUT_DIR/selected.gguf" \
   --model-name model-gate-test \
   --arch llama \
   --overwrite > "$OUT_DIR/emit.out"
 
-"$YVEX_BIN" artifact model-gate check \
+"$YVEX_BIN" execute artifact model-gate check \
   --model "$OUT_DIR/selected.gguf" \
   --label fixture-selected \
   --family llama \
@@ -33,7 +33,7 @@ grep 'status: model-gate-pass' "$OUT_DIR/report.txt" >/dev/null || fail "missing
 grep 'support_level: selected-tensor-materialized' "$OUT_DIR/report.txt" >/dev/null || fail "missing selected support"
 grep 'execution_ready: false' "$OUT_DIR/report.txt" >/dev/null || fail "execution_ready changed"
 
-if "$YVEX_BIN" artifact model-gate check \
+if "$YVEX_BIN" execute artifact model-gate check \
   --model "$OUT_DIR/selected.gguf" \
   --label bad-shape \
   --family llama \
@@ -48,5 +48,5 @@ if "$YVEX_BIN" artifact model-gate check \
 fi
 
 grep 'status: model-gate-fail' "$OUT_DIR/bad-report.txt" >/dev/null || fail "missing fail status"
-"$YVEX_BIN" artifact model-gate --help > "$OUT_DIR/help.out"
+"$YVEX_BIN" execute artifact model-gate --help > "$OUT_DIR/help.out"
 grep 'model-gate check' "$OUT_DIR/help.out" >/dev/null || fail "missing help"

@@ -52,6 +52,23 @@ The directory is the namespace. Before adding or moving production code:
 Prefer extending a strong existing owner over introducing a phase-shaped file,
 forwarding header, compatibility shell, or duplicate registry.
 
+Command and operation projection metadata has one source:
+`config/operator/registry.json`. When changing a command path, argument, flag,
+visibility, adapter, protocol projection, or slash projection, update that
+source and its owned tests; do not edit `build/generated/operator/registry.h`
+or `registry.c`. Validate deterministic generated products and the frozen audit
+mapping with:
+
+```sh
+make generate-operator-registry
+make check-operator-registry
+make test-operator-registry
+```
+
+The generated descriptors are compiled into `yvex`; the JSON source is not an
+installed runtime dependency. Domain defaults and semantic admission remain
+with their typed owners rather than being copied into the registry.
+
 Runtime-facing `yvex` commands remain protocol-only. Offline commands may call
 admitted engine APIs but must terminate and never become a second daemon.
 `yvexd` remains the only persistent model, session, KV, worker, and telemetry

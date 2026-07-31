@@ -78,7 +78,7 @@ static const char *quant_cli_value(int argc, char **argv, int *index)
 }
 
 /* Purpose: parse the common full-model physical-variant selector and path grammar.
- * Inputs: process argv beginning after `yvex quant ACTION`.
+ * Inputs: process argv reconstructed for one registry-admitted compilation or inspection action.
  * Effects: fills caller-owned borrowed option pointers.
  * Failure: unknown, duplicate-semantic, or value-less arguments refuse.
  * Boundary: parsing assigns no qtype and opens no source or artifact. */
@@ -165,7 +165,7 @@ static void quant_cli_context_close(quant_cli_context *context)
  * Inputs: optional imatrix path and an already-sealed transform summary.
  * Effects: opens one immutable mapped calibration owner in the context.
  * Failure: unsupported format, identity, or bounds leave the context releasable.
- * Boundary: component names and coverage remain validated by the quant plan owner. */
+ * Boundary: component names and coverage remain validated by the compile quant plan owner. */
 static int quant_cli_imatrix_open(quant_cli_context *context, const char *path,
                                   const yvex_transform_ir_summary *transform, yvex_error *err)
 {
@@ -290,7 +290,7 @@ static int quant_cli_context_open(quant_cli_context *context, const quant_cli_op
 }
 
 /* Purpose: render exact size, qtype, and identity facts from one sealed plan.
- * Inputs: one validated immutable quant plan.
+ * Inputs: one validated immutable compile quant plan.
  * Effects: writes bounded human-readable evidence to the canonical CLI output owner.
  * Failure: accepts no nullable plan and performs no domain mutation.
  * Boundary: rendered facts do not establish capability beyond the sealed plan. */
@@ -412,7 +412,7 @@ static int quant_cli_explain(const quant_cli_options *options, const yvex_quant_
         matches++;
     }
     if (!matches) {
-        yvex_cli_out_writef(stderr, "yvex: quant explain selector matched no terminal\n");
+        yvex_cli_out_writef(stderr, "yvex: inspect quant decision selector matched no terminal\n");
         return 1;
     }
     yvex_cli_out_writef(stdout, "matched_decisions: %llu\n", matches);
@@ -420,7 +420,7 @@ static int quant_cli_explain(const quant_cli_options *options, const yvex_quant_
 }
 
 /* Purpose: construct the complete writer plan from the exact resolved physical plan.
- * Inputs: a context retaining family lowering, verification, and the sealed quant plan.
+ * Inputs: a context retaining family lowering, verification, and the sealed compile quant plan.
  * Effects: allocates one caller-owned writer plan through the writer subsystem.
  * Failure: typed writer refusal leaves no usable plan in the output handle.
  * Boundary: neither this adapter nor the writer re-resolves policy rules. */
@@ -511,7 +511,7 @@ static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *c
 }
 
 /* Purpose: list, inspect, or transactionally export normal sealed preset policies.
- * Inputs: the bounded `quant preset` argv grammar.
+ * Inputs: the bounded `compile quant preset` argv grammar.
  * Effects: may render metadata or publish one policy JSON through the policy owner.
  * Failure: unknown presets, malformed grammar, or publication errors return nonzero.
  * Boundary: presets are ordinary policies and this adapter assigns no tensor qtype. */
@@ -548,7 +548,7 @@ static int quant_cli_preset(int argc, char **argv)
         yvex_quant_policy_close(policy);
         return rc == YVEX_OK ? 0 : quant_cli_fail("preset export", &err);
     }
-    yvex_cli_out_writef(stderr, "yvex: quant preset expects list, show NAME, or export NAME --out FILE\n");
+    yvex_cli_out_writef(stderr, "yvex: compile quant preset expects list, show NAME, or export NAME --out FILE\n");
     return 2;
 }
 
@@ -608,17 +608,17 @@ int yvex_quant_command(int arg_count, char **args)
 void yvex_quant_help(FILE *fp)
 {
     yvex_cli_out_writef(fp, "usage:\n");
-    yvex_cli_out_writef(fp, "  yvex quant preset list|show NAME|export NAME --out FILE\n");
+    yvex_cli_out_writef(fp, "  yvex compile quant preset list|show NAME|export NAME --out FILE\n");
     yvex_cli_out_writef(fp,
-                        "  yvex quant plan --target TARGET --source DIR --models-root DIR "
+                        "  yvex compile quant plan --target TARGET --source DIR --models-root DIR "
                         "--source-manifest FILE (--preset NAME|--policy FILE) [--imatrix-manifest FILE] "
                         "[--backend cpu|cuda] --out-plan FILE\n");
     yvex_cli_out_writef(fp,
-                        "  yvex quant emit --target TARGET --source DIR --models-root DIR "
+                        "  yvex compile quant emit --target TARGET --source DIR --models-root DIR "
                         "--source-manifest FILE (--preset NAME|--policy FILE) [--imatrix-manifest FILE] "
                         "--plan FILE --out FILE\n");
     yvex_cli_out_writef(fp,
-                        "  yvex quant summarize|explain [same source/policy options] --plan FILE "
+                        "  yvex inspect quant summary|explain [same source/policy options] --plan FILE "
                         "[--tensor NAME|--role ROLE]\n\n");
     yvex_cli_out_writef(fp,
                         "The plan is regenerated from source/policy authority before emit. "

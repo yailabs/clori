@@ -197,7 +197,7 @@ static int parse_moe_options(int arg_count,
     if (arg_count < 3 || strcmp(args[2], "report") != 0) {
         yvex_cli_out_writef(stderr, "yvex: moe requires report\n");
         yvex_cli_out_writef(stderr,
-            "usage: yvex evidence moe report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend cpu|"
+            "usage: yvex inspect moe report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend cpu|"
                 "cuda] [--registry FILE] [--include-tensors] [--include-residency] [--include-blockers]\n");
         return 2;
     }
@@ -499,7 +499,7 @@ static int moe_print_model_report(const yvex_cli_moe_options *options,
                           ? "router tensor is classified but router logits, top-k routing, expert "
                               "activation, dispatch, accumulation, graph integration, prefill integration, "
                               "and decode integration are unsupported"
-                          : "router tensor missing; expert tensor collection missing; router logits "
+                          : "router tensor missing; expert inspect tensor collection missing; router logits "
                               "unsupported; top-k routing unsupported; expert activation unsupported; expert "
                               "dispatch unsupported; expert accumulation unsupported";
     report.next_required_rows = router || present_roles > 0u
@@ -609,18 +609,18 @@ int yvex_model_artifacts_surface_moe_command(int arg_count, char **args)
 void yvex_model_artifacts_surface_moe_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex evidence moe report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend cpu|"
+        "usage: yvex inspect moe report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend cpu|"
             "cuda] [--registry FILE] [--audit | --output normal|table|audit] [--include-tensors] [--include-"
             "residency] [--include-blockers]\n");
     yvex_cli_out_writef(fp, "\nExamples:\n");
     yvex_cli_out_writef(fp,
-        "  yvex evidence moe report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+        "  yvex inspect moe report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
             "cpu --include-tensors --include-blockers\n");
     yvex_cli_out_writef(fp,
-        "  yvex evidence moe report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+        "  yvex inspect moe report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
             "cuda --include-residency\n");
     yvex_cli_out_writef(fp,
-        "  yvex evidence moe report --model glm-5.2-official-safetensors --family glm "
+        "  yvex inspect moe report --model glm-5.2-official-safetensors --family glm "
         "--backend cpu --include-blockers\n");
     yvex_cli_out_lines(fp, literal_pair_0, sizeof(literal_pair_0) / sizeof(literal_pair_0[0]));
     yvex_cli_out_writef(fp, "  Default output is compact. Use --audit for full diagnostic fields.\n");

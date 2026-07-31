@@ -195,9 +195,8 @@ int parse_models_bound_option(const char *command,
                               const yvex_models_option_spec *specs,
                               size_t spec_count,
                               int *handled);
-void print_model_registry_entry_cli(const yvex_model_registry_entry *entry, int selected);
-void print_model_registry_entry_audit(const yvex_model_registry_entry *entry,
-                                      int selected);
+void print_model_registry_entry_cli(const yvex_model_registry_entry *entry);
+void print_model_registry_entry_audit(const yvex_model_registry_entry *entry);
 void print_model_registry_scan_entry_cli(const yvex_model_registry_entry *entry);
 void dims_to_text(const unsigned long long *dims,
                   unsigned int rank,

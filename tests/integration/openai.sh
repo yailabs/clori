@@ -1,5 +1,5 @@
 #!/bin/sh
-# Purpose: exercise the production adapter modules over HTTP/SSE and the real local protocol v3.
+# Purpose: exercise the production adapter modules over HTTP/SSE and the real local protocol v4.
 set -eu
 
 YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}
@@ -130,7 +130,7 @@ python3 - "$root" <<'PY'
 import json, pathlib, sys
 root=pathlib.Path(sys.argv[1])
 health=json.load(open(root/'health.json'))
-assert health == {'status':'ok','gateway':'ready','yvexd':'ready','profile':'yvex.openai.compat.v1'}
+assert health == {'status':'ok','adapter':'ready','yvexd':'ready','profile':'yvex.openai.compat.v1'}
 assert json.load(open(root/'health-after-disconnect.json')) == health
 models=json.load(open(root/'models.json'))
 assert models['object']=='list' and models['data'][0]['id']=='deepseek-v4-flash'
@@ -211,4 +211,4 @@ closed=$(grep -c '^session.close ' "$root/host.err" || true)
 test "$created" -gt 0
 test "$created" = "$closed"
 
-echo 'OpenAI adapter integration: protocol-v3 Chat/Responses/SSE/tool/state/cleanup/refusal passed'
+echo 'OpenAI adapter integration: protocol-v4 Chat/Responses/SSE/tool/state/cleanup/refusal passed'

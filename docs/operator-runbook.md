@@ -176,14 +176,19 @@ After the explicit startup path succeeds, a private XDG configuration can store
 an inert model selection for shorter future starts:
 
 ```sh
-./yvex model use deepseek --artifact "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096
-./yvex model show
+./yvex model select deepseek --artifact "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --target deepseek4-v4-flash --backend cuda --context 4096
+./yvex model selected
+./yvex model list
 ./yvex runtime start
 ```
 
-`model use` does not admit an artifact, open a model, or change a running host.
-`yvexd` still authenticates the selected artifact and binding on every process
-start. Applying another selection requires a daemon restart.
+`model select` requires a complete startup configuration. It does not admit an
+artifact, open a model, or change a running host. `model selected` reads only
+that inert private selection; `model list` reads real registry entries; and
+`runtime model` reads the identities actually open in `yvexd`. These states may
+differ without being conflated. The daemon still authenticates the selected
+artifact and binding on every process start. Applying another selection
+requires a daemon restart.
 
 ## Local paths
 
@@ -219,6 +224,8 @@ fallback.
   fields are never ignored silently.
 
 DeepSeek-specific operation is documented in
-[`runbooks/deepseek.md`](runbooks/deepseek.md). Direct graph, tokenizer,
-artifact, and physical-compilation diagnostics use the offline `yvex` lane;
-they are not part of the normal hosted startup path.
+[`runbooks/deepseek.md`](runbooks/deepseek.md). Direct component execution,
+tokenizer conformance, artifact inspection, and physical-compilation
+diagnostics use the advanced `inspect`, `execute`, `profile`, and `system`
+surfaces in the finite offline lane. Discover them with
+`yvex help --advanced`; they are not part of the normal hosted startup path.

@@ -84,7 +84,7 @@ grep -F '"model_open_count":1' "$root/status.json" >/dev/null
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime watch >"$root/engine.log" &
 watch_pid=$!
-XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime trace --follow \
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime trace \
     >"$root/trace.jsonl" &
 trace_pid=$!
 

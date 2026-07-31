@@ -88,17 +88,11 @@ const yvex_model_registry_entry *yvex_model_registry_at(const yvex_model_registr
 const yvex_model_registry_entry *yvex_model_registry_find(const yvex_model_registry *registry,
                                                           const char *alias);
 
-const yvex_model_registry_entry *yvex_model_registry_selected(const yvex_model_registry *registry);
-
 int yvex_model_registry_add(yvex_model_registry *registry,
                             const yvex_model_registry_entry *entry,
                             yvex_error *err);
 
 int yvex_model_registry_remove(yvex_model_registry *registry,
-                               const char *alias,
-                               yvex_error *err);
-
-int yvex_model_registry_select(yvex_model_registry *registry,
                                const char *alias,
                                yvex_error *err);
 

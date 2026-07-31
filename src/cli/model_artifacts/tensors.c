@@ -13,7 +13,7 @@
 #include <string.h>
 
 static const char *const literal_pair_0[] = { "\ntensor-collection report:",
-    "  reports tensor collection requirements and coverage for the requested collection. The current "
+    "  reports inspect tensor collection requirements and coverage for the requested collection. The current "
         "implemented collection is moe."
 };
 
@@ -246,7 +246,7 @@ static const yvex_models_option_spec tensor_option_specs[] = {
      offsetof(yvex_cli_tensor_collection_options, output_mode)},
 };
 
-/* Purpose: Parse parse tensor collection options into typed CLI state (`parse_tensor_collection_options`).
+/* Purpose: Parse parse inspect tensor collection options into typed CLI state (`parse_tensor_collection_options`).
  * Inputs: Borrowed typed facts.
  * Effects: Mutates declared CLI state only.
  * Failure: Typed refusal; outputs remain defined.
@@ -270,7 +270,7 @@ static int parse_tensor_collection_options(int arg_count,
     if (arg_count < 3 || strcmp(args[2], "report") != 0) {
         yvex_cli_out_writef(stderr, "yvex: tensor-collection requires report\n");
         yvex_cli_out_writef(stderr,
-            "usage: yvex tensor collection report --model FILE_OR_ALIAS --collection moe [--family auto|"
+            "usage: yvex inspect tensor collection report --model FILE_OR_ALIAS --collection moe [--family auto|"
                 "deepseek|glm|qwen] [--backend cpu|cuda]\n");
         return 2;
     }
@@ -304,14 +304,14 @@ static int parse_tensor_collection_options(int arg_count,
     return 0;
 }
 
-/* Purpose: Compute tensor collection requested collection for its CLI invariant
+/* Purpose: Compute inspect tensor collection requested collection for its CLI invariant
  *   (`tensor_collection_requested_collection`). */
 static const char *tensor_collection_requested_collection(const yvex_cli_tensor_collection_options *options)
 {
     return options && options->collection && options->collection[0] ? options->collection : "unknown";
 }
 
-/* Purpose: Construct the owned tensor collection init report state (`tensor_collection_init_report`).
+/* Purpose: Construct the owned inspect tensor collection init report state (`tensor_collection_init_report`).
  * Inputs: Borrowed typed facts.
  * Effects: Mutates declared CLI state only.
  * Failure: Typed refusal; outputs remain defined.
@@ -336,7 +336,7 @@ static void tensor_collection_init_report(yvex_tensor_collection_report *report,
     report->include_blockers = options ? options->include_blockers : 0;
 }
 
-/* Purpose: Render tensor collection print report from typed facts (`tensor_collection_print_report`).
+/* Purpose: Render inspect tensor collection print report from typed facts (`tensor_collection_print_report`).
  * Inputs: Borrowed typed facts.
  * Effects: Writes through CLI I/O only.
  * Failure: Typed refusal; outputs remain defined.
@@ -367,7 +367,7 @@ static void tensor_collection_print_report(const yvex_tensor_collection_report *
     yvex_cli_out_lines(stdout, literal_pair_1, sizeof(literal_pair_1) / sizeof(literal_pair_1[0]));
 }
 
-/* Purpose: Render tensor collection print invalid argument report from typed facts
+/* Purpose: Render inspect tensor collection print invalid argument report from typed facts
  *   (`tensor_collection_print_invalid_argument_report`). */
 static int tensor_collection_print_invalid_argument_report(const yvex_cli_tensor_collection_options *options,
                                                            const char *status,
@@ -381,13 +381,13 @@ static int tensor_collection_print_invalid_argument_report(const yvex_cli_tensor
     report.model_resolved_path = "not-resolved";
     report.collection_stage = "report-only";
     report.router_logits_status = "unsupported";
-    report.blocked_rows = reason && reason[0] ? reason : "invalid tensor collection report argument";
+    report.blocked_rows = reason && reason[0] ? reason : "invalid inspect tensor collection report argument";
     report.next_required_rows = "valid-collection-moe";
     tensor_collection_print_report(&report);
     return 2;
 }
 
-/* Purpose: Render tensor collection print source only report from typed facts
+/* Purpose: Render inspect tensor collection print source only report from typed facts
  * (`tensor_collection_print_source_only_report`).
  * Inputs: Borrowed typed facts.
  * Effects: Writes through CLI I/O only.
@@ -441,7 +441,7 @@ static int tensor_collection_print_source_only_report(const yvex_cli_tensor_coll
     return 5;
 }
 
-/* Purpose: Render tensor collection print missing model report from typed facts
+/* Purpose: Render inspect tensor collection print missing model report from typed facts
  *   (`tensor_collection_print_missing_model_report`). */
 static int tensor_collection_print_missing_model_report(const yvex_cli_tensor_collection_options *options,
                                                         const char *reason)
@@ -464,7 +464,7 @@ static int tensor_collection_print_missing_model_report(const yvex_cli_tensor_co
     return 5;
 }
 
-/* Purpose: Render tensor collection print unsupported family report from typed facts
+/* Purpose: Render inspect tensor collection print unsupported family report from typed facts
  * (`tensor_collection_print_unsupported_family_report`).
  * Inputs: Borrowed typed facts.
  * Effects: Writes through CLI I/O only.
@@ -495,20 +495,21 @@ static int tensor_collection_print_unsupported_family_report(const yvex_cli_tens
     report.router_tensor_status = "unknown";
     report.expert_collection_status = "unknown";
     report.expert_role_status = "unknown";
-    report.blocked_rows = "requested family is not supported by MoE tensor collection report";
+    report.blocked_rows = "requested family is not supported by MoE inspect tensor collection report";
     report.next_required_rows = "V010.CLASS.0,V010.TENSOR.14,V010.TENSOR.15,V010.TENSOR.16,V010.TENSOR.17,"
         "family-specific-tensor-adapter";
     tensor_collection_print_report(&report);
     return 5;
 }
 
-/* Purpose: Compute tensor collection role status for its CLI invariant (`tensor_collection_role_status`). */
+/* Purpose: Compute inspect tensor collection role status for its CLI invariant (`tensor_collection_role_status`). */
 static const char *tensor_collection_role_status(const yvex_tensor_info *tensor)
 {
     return tensor ? "present" : "missing";
 }
 
-/* Purpose: Render tensor collection print model report from typed facts (`tensor_collection_print_model_report`).
+/* Purpose: Render inspect tensor collection print model report from typed facts
+ * (`tensor_collection_print_model_report`).
  * Inputs: Borrowed typed facts.
  * Effects: Writes through CLI I/O only.
  * Failure: Typed refusal; outputs remain defined.
@@ -653,7 +654,7 @@ static int tensor_collection_print_model_report(const yvex_cli_tensor_collection
     return 0;
 }
 
-/* Purpose: Orchestrate the typed model artifacts surface tensor collection command request
+/* Purpose: Orchestrate the typed model artifacts surface inspect tensor collection command request
  * (`yvex_model_artifacts_surface_tensor_collection_command`).
  * Inputs: Borrowed typed facts.
  * Effects: Mutates declared CLI state only.
@@ -731,7 +732,7 @@ int yvex_model_artifacts_surface_tensor_collection_command(int arg_count, char *
     return rc;
 }
 
-/* Purpose: Render model artifacts surface tensor collection help from typed facts
+/* Purpose: Render model artifacts surface inspect tensor collection help from typed facts
  * (`yvex_model_artifacts_surface_tensor_collection_help`).
  * Inputs: Borrowed typed facts.
  * Effects: Writes through CLI I/O only.
@@ -740,16 +741,16 @@ int yvex_model_artifacts_surface_tensor_collection_command(int arg_count, char *
 void yvex_model_artifacts_surface_tensor_collection_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-        "usage: yvex tensor collection report --model FILE_OR_ALIAS --collection moe [--family auto|"
+        "usage: yvex inspect tensor collection report --model FILE_OR_ALIAS --collection moe [--family auto|"
             "deepseek|glm|qwen] [--backend cpu|cuda] [--registry FILE] [--audit | --output normal|table|audit] "
             "[--include-router] [--include-experts] [--include-shared] [--include-dispatch] [--include-"
             "storage] [--include-residency] [--include-blockers]\n");
     yvex_cli_out_writef(fp, "\nExamples:\n");
     yvex_cli_out_writef(fp,
-        "  yvex tensor collection report --model deepseek4-v4-flash-selected-embed-rmsnorm --family "
+        "  yvex inspect tensor collection report --model deepseek4-v4-flash-selected-embed-rmsnorm --family "
             "deepseek --collection moe --backend cpu --include-router --include-experts --include-blockers\n");
     yvex_cli_out_writef(fp,
-        "  yvex tensor collection report --model glm-5.2-official-safetensors --family glm --collection "
+        "  yvex inspect tensor collection report --model glm-5.2-official-safetensors --family glm --collection "
             "moe --backend cpu --include-blockers\n");
     yvex_cli_out_lines(fp, literal_pair_0, sizeof(literal_pair_0) / sizeof(literal_pair_0[0]));
     yvex_cli_out_writef(fp, "  Default output is compact. Use --audit for full diagnostic fields.\n");

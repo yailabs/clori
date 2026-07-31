@@ -84,22 +84,6 @@ static const yvex_cli_field_spec registry_add_fields[] = {
                    selected_embedding_slice_bytes, NULL),
 };
 
-static const yvex_cli_field_spec registry_current_fields[] = {
-    REGISTRY_FIELD("selected", YVEX_CLI_FIELD_TEXT, alias, ""),
-    REGISTRY_FIELD("path", YVEX_CLI_FIELD_TEXT, path, ""),
-    REGISTRY_FIELD("registered_file_size", YVEX_CLI_FIELD_U64, file_size, NULL),
-    REGISTRY_FIELD("registered_sha256", YVEX_CLI_FIELD_TEXT, sha256, "absent"),
-    REGISTRY_FIELD("registered_format", YVEX_CLI_FIELD_TEXT, format, ""),
-    REGISTRY_FIELD("registered_architecture", YVEX_CLI_FIELD_TEXT, architecture, ""),
-    REGISTRY_FIELD("registered_tensor_count", YVEX_CLI_FIELD_U64, tensor_count, NULL),
-    REGISTRY_FIELD("registered_known_tensor_bytes", YVEX_CLI_FIELD_U64, known_tensor_bytes, NULL),
-    REGISTRY_FIELD("registered_primary_tensor", YVEX_CLI_FIELD_TEXT, primary_tensor_name, ""),
-    REGISTRY_FIELD("registered_primary_role", YVEX_CLI_FIELD_TEXT, primary_tensor_role, ""),
-    REGISTRY_FIELD("registered_primary_dtype", YVEX_CLI_FIELD_TEXT, primary_tensor_dtype, ""),
-    REGISTRY_FIELD("registered_primary_rank", YVEX_CLI_FIELD_U32, primary_tensor_rank, NULL),
-    REGISTRY_FIELD("registered_primary_dims", YVEX_CLI_FIELD_TEXT, primary_tensor_dims, ""),
-};
-
 static const yvex_cli_field_spec registry_inspect_fields[] = {
     REGISTRY_FIELD("alias", YVEX_CLI_FIELD_TEXT, alias, ""),
     REGISTRY_FIELD("path", YVEX_CLI_FIELD_TEXT, path, ""),
@@ -207,64 +191,61 @@ static const char *const literal_pair_1[] = { "gguf:",
 static const char *const literal_pair_2[] = { "boundary: selected-slice only, full-runtime generation unsupported",
     "status: models-inspect"};
 
-static const char *const literal_pair_3[] = { "selected: none",
-    "status: models-none"};
-
 static const char *const literal_pair_4[] = { "identity_status: recorded",
     "status: models-added"};
 
 static const char *const models_help_lines[] = {
-    "usage: yvex evidence models scan --root DIR [--registry FILE]",
-    "       yvex evidence models add --path FILE [--alias ALIAS] [--support-level LEVEL] [--registry FILE]",
-    "       yvex evidence models download TARGET [--models-root DIR] [--auth auto|required|never] [--dry-run] "
+    "usage: yvex model registry scan --root DIR [--registry FILE]",
+    "       yvex model registry add --path FILE [--alias ALIAS] [--support-level LEVEL] [--registry FILE]",
+    "       yvex model acquire TARGET [--models-root DIR] [--auth auto|required|never] [--dry-run] "
         "[--progress auto|live|plain|log|off] [--tick-seconds N] [--no-progress] [--audit | --output "
         "normal|table|audit]",
-    "       yvex evidence models download status TARGET [--models-root DIR] [--audit | --output "
+    "       yvex model acquisition status TARGET [--models-root DIR] [--audit | --output "
         "normal|table|audit]",
-    "       yvex evidence models download stop TARGET [--models-root DIR] [--force] [--timeout-seconds N] "
+    "       yvex model acquisition stop TARGET [--models-root DIR] [--force] [--timeout-seconds N] "
         "[--match-provider-process] [--dry-run] [--audit]",
-    "       yvex evidence models download resume TARGET [--models-root DIR] [--auth auto|required|never] "
+    "       yvex model acquisition resume TARGET [--models-root DIR] [--auth auto|required|never] "
         "[--progress auto|live|plain|log|off] [--tick-seconds N] [--clear-stale-locks] [--audit]",
-    "       yvex evidence models download cleanup TARGET [--models-root DIR] [--stale-locks] [--logs] "
+    "       yvex model acquisition cleanup TARGET [--models-root DIR] [--stale-locks] [--logs] "
         "[--receipts] [--failed-partials] [--all-provider-cache] [--dry-run] [--yes] [--audit]",
-    "       yvex evidence models download --repo OWNER/NAME --family deepseek|glm|qwen|gemma "
+    "       yvex model acquire --repo OWNER/NAME --family deepseek|glm|qwen|gemma "
         "[--name LOCAL_NAME] [--models-root DIR] [--auth auto|required|never] "
         "[--progress auto|live|plain|log|off]",
-    "       yvex evidence models download --provider github --repo OWNER/NAME [--release TAG] --asset GLOB "
+    "       yvex model acquire --provider github --repo OWNER/NAME [--release TAG] --asset GLOB "
         "[--models-root DIR] [--auth auto|required|never] [--progress auto|live|plain|log|off]",
-    "       yvex evidence models artifacts list [--models-root DIR] [--family deepseek|glm|qwen|gemma] "
+    "       yvex inspect artifact registry [--models-root DIR] [--family deepseek|glm|qwen|gemma] "
         "[--output normal|table|audit|json]",
-    "       yvex evidence models artifacts status TARGET [--models-root DIR] [--audit | --output "
+    "       yvex inspect artifact status TARGET [--models-root DIR] [--audit | --output "
         "normal|table|audit|json]",
-    "       yvex evidence models prepare TARGET [--overwrite] [--source DIR] [--out FILE | --out-dir DIR] "
-        "[--models-root DIR] [--registry FILE] [--dry-run] [--no-register] [--no-use] "
+    "       yvex compile artifact prepare TARGET [--overwrite] [--source DIR] [--out FILE | --out-dir DIR] "
+        "[--models-root DIR] [--registry FILE] [--dry-run] [--no-register] "
         "[--audit | --output normal|table|audit]",
-    "       yvex evidence models check TARGET [--backend cpu|cuda] [--level quick|runtime|full] "
+    "       yvex inspect artifact check TARGET [--backend cpu|cuda] [--level quick|runtime|full] "
         "[--models-root DIR] [--registry FILE] [--report-dir DIR] [--no-materialize] [--no-graph] "
         "[--audit | --output normal|table|audit]",
-    "       yvex evidence models list|current [--registry FILE] [--audit | --output normal|table|audit]",
-    "       yvex evidence models verify|inspect ALIAS [--registry FILE] [--audit | --output normal|table|audit]",
-    "       yvex evidence models use|remove ALIAS [--registry FILE]",
+    "       yvex model list [--registry FILE] [--audit | --output normal|table|audit]",
+    "       yvex model registry verify|inspect ALIAS [--registry FILE] [--audit | --output normal|table|audit]",
+    "       yvex model registry remove ALIAS [--registry FILE]",
     "\nExamples:",
-    "  yvex evidence models check deepseek4-v4-flash-selected-embed",
-    "  yvex evidence models download gemma-4-12b-it --models-root ~/lab/models --dry-run --audit",
-    "  yvex evidence models download status gemma-4-12b-it --models-root ~/lab/models --audit",
-    "  yvex evidence models download stop gemma-4-12b-it --models-root ~/lab/models --audit",
-    "  yvex evidence models download resume gemma-4-12b-it --models-root ~/lab/models --auth required "
+    "  yvex inspect artifact check deepseek4-v4-flash-selected-embed",
+    "  yvex model acquire gemma-4-12b-it --models-root ~/lab/models --dry-run --audit",
+    "  yvex model acquisition status gemma-4-12b-it --models-root ~/lab/models --audit",
+    "  yvex model acquisition stop gemma-4-12b-it --models-root ~/lab/models --audit",
+    "  yvex model acquisition resume gemma-4-12b-it --models-root ~/lab/models --auth required "
         "--progress live --tick-seconds 2 --audit",
-    "  yvex evidence models download cleanup gemma-4-12b-it --models-root ~/lab/models --stale-locks "
+    "  yvex model acquisition cleanup gemma-4-12b-it --models-root ~/lab/models --stale-locks "
         "--dry-run --audit",
-    "  yvex evidence models download gemma-4-12b-it --models-root ~/lab/models --auth required "
+    "  yvex model acquire gemma-4-12b-it --models-root ~/lab/models --auth required "
         "--progress live --tick-seconds 2 --audit",
-    "  yvex evidence models download qwen3-8b --models-root ~/lab/models --auth auto --audit",
-    "  yvex evidence models download status qwen3-32b --models-root ~/lab/models",
-    "  yvex evidence models artifacts list --models-root ~/lab/models --output table",
-    "  yvex evidence models artifacts status qwen3-6-35b-a3b --models-root ~/lab/models --audit",
-    "  yvex evidence models download --provider github --repo OWNER/REPO --release TAG --asset \"*.gguf\" "
+    "  yvex model acquire qwen3-8b --models-root ~/lab/models --auth auto --audit",
+    "  yvex model acquisition status qwen3-32b --models-root ~/lab/models",
+    "  yvex inspect artifact registry --models-root ~/lab/models --output table",
+    "  yvex inspect artifact status qwen3-6-35b-a3b --models-root ~/lab/models --audit",
+    "  yvex model acquire --provider github --repo OWNER/REPO --release TAG --asset \"*.gguf\" "
         "--models-root ~/lab/models --auth auto --audit",
-    "  yvex evidence models check deepseek4-v4-flash-selected-embed --backend cpu --level runtime",
-    "  yvex evidence models check deepseek4-v4-flash-selected-embed --backend cuda --level runtime --no-graph",
-    "  yvex evidence models check deepseek4-v4-flash-selected-embed --level full --report-dir build/reports",
+    "  yvex inspect artifact check deepseek4-v4-flash-selected-embed --backend cpu --level runtime",
+    "  yvex inspect artifact check deepseek4-v4-flash-selected-embed --backend cuda --level runtime --no-graph",
+    "  yvex inspect artifact check deepseek4-v4-flash-selected-embed --level full --report-dir build/reports",
     "\nModels manages the local alias registry, source tensor download sidecars, GGUF artifact discovery, "
         "selected artifact preparation, selected artifact checks, digest identity, and metadata drift facts "
         "for registered artifacts. Download uses the local accounts/provider preflight for Hugging Face and "
@@ -514,8 +495,6 @@ static int command_models_list(int arg_count, char **args)
     yvex_error err;
     const char *registry_path = NULL;
     yvex_models_output_mode output_mode = YVEX_MODELS_OUTPUT_NORMAL;
-    const yvex_model_registry_entry *selected;
-    char selected_alias[256];
     unsigned long long i;
     unsigned long long count;
     int rc;
@@ -525,16 +504,10 @@ static int command_models_list(int arg_count, char **args)
     if (rc != 0) return rc;
     rc = models_registry_open(&registry, registry_path, 1, &err);
     if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
-    selected = yvex_model_registry_selected(registry);
-    selected_alias[0] = '\0';
-    if (selected && selected->alias) {
-        snprintf(selected_alias, sizeof(selected_alias), "%s", selected->alias);
-    }
     count = yvex_model_registry_count(registry);
     if (output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
         yvex_cli_out_writef(stdout, "MODELS  count=%llu\n\n", count);
-        yvex_cli_out_writef(stdout, "%-3s  %-44s  %-10s  %-16s  %7s  %12s  %s\n",
-               "SEL",
+        yvex_cli_out_writef(stdout, "%-44s  %-10s  %-16s  %7s  %12s  %s\n",
                "ALIAS",
                "FAMILY",
                "CLASS",
@@ -543,8 +516,7 @@ static int command_models_list(int arg_count, char **args)
                "READY");
         for (i = 0; i < count; ++i) {
             const yvex_model_registry_entry *entry = yvex_model_registry_at(registry, i);
-            int is_selected = selected_alias[0] && entry && strcmp(selected_alias, entry->alias) == 0;
-            print_model_registry_entry_cli(entry, is_selected);
+            print_model_registry_entry_cli(entry);
         }
         yvex_cli_out_writef(stdout, "status: models-list\n");
         yvex_model_registry_close(registry);
@@ -553,94 +525,10 @@ static int command_models_list(int arg_count, char **args)
     yvex_cli_out_writef(stdout, "models: list\n");
     for (i = 0; i < count; ++i) {
         const yvex_model_registry_entry *entry = yvex_model_registry_at(registry, i);
-        int is_selected = selected_alias[0] && entry && strcmp(selected_alias, entry->alias) == 0;
-        print_model_registry_entry_audit(entry, is_selected);
+        print_model_registry_entry_audit(entry);
     }
     yvex_cli_out_writef(stdout, "count: %llu\n", count);
     yvex_cli_out_writef(stdout, "status: models-list\n");
-    yvex_model_registry_close(registry);
-    return 0;
-}
-
-/* Purpose: Orchestrate the typed command models use request (`command_models_use`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
-static int command_models_use(int arg_count, char **args)
-{
-    yvex_model_registry *registry = NULL;
-    yvex_error err;
-    const char *registry_path = NULL;
-    const char *alias;
-    int rc;
-
-    if (arg_count < 4) {
-        yvex_cli_out_writef(stderr, "yvex: models use requires ALIAS\n");
-        return 2;
-    }
-    alias = args[3];
-    rc = parse_models_registry_options(arg_count, args, 4, &registry_path, NULL);
-    if (rc != 0) return rc;
-    yvex_error_clear(&err);
-    rc = models_registry_open(&registry, registry_path, 1, &err);
-    if (rc == YVEX_OK) rc = yvex_model_registry_select(registry, alias, &err);
-    if (rc == YVEX_OK) rc = yvex_model_registry_save(registry, registry_path, &err);
-    if (rc != YVEX_OK) {
-        yvex_model_registry_close(registry);
-        return print_yvex_error(&err, exit_for_status(rc));
-    }
-    yvex_cli_out_writef(stdout, "models: use\n");
-    yvex_cli_out_writef(stdout, "selected: %s\n", alias);
-    yvex_cli_out_writef(stdout, "status: models-selected\n");
-    yvex_model_registry_close(registry);
-    return 0;
-}
-
-/* Purpose: Orchestrate the typed command models current request (`command_models_current`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
-static int command_models_current(int arg_count, char **args)
-{
-    yvex_model_registry *registry = NULL;
-    yvex_error err;
-    const char *registry_path = NULL;
-    yvex_models_output_mode output_mode = YVEX_MODELS_OUTPUT_NORMAL;
-    const yvex_model_registry_entry *selected;
-    int rc;
-
-    rc = parse_models_registry_options(arg_count, args, 3, &registry_path, &output_mode);
-    if (rc != 0) return rc;
-    yvex_error_clear(&err);
-    rc = models_registry_open(&registry, registry_path, 1, &err);
-    if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
-    selected = yvex_model_registry_selected(registry);
-    yvex_cli_out_writef(stdout, "models: current\n");
-    if (selected) {
-        if (output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
-            yvex_cli_out_writef(stdout, "selected: %s\n", selected->alias);
-            yvex_cli_out_writef(stdout, "path: %s\n", selected->path);
-            yvex_cli_out_writef(stdout, "execution_ready: %s\n", selected->execution_ready ? "true" : "false");
-            yvex_cli_out_writef(stdout, "status: models-current\n");
-            yvex_cli_out_writef(stdout, "hint: use --audit for registered digest and tensor fields\n");
-            yvex_model_registry_close(registry);
-            return 0;
-        }
-        (void)yvex_cli_out_fields(stdout, selected, registry_current_fields,
-                                  sizeof(registry_current_fields) /
-                                      sizeof(registry_current_fields[0]));
-        yvex_cli_out_writef(stdout, "metadata_status: %s\n",
-               selected->primary_tensor_name && selected->primary_tensor_name[0] ? "recorded" : "missing");
-        yvex_cli_out_kv_bool(stdout, "execution_ready", selected->execution_ready);
-        yvex_cli_out_writef(stdout, "status: models-current\n");
-    } else {
-        yvex_cli_out_lines(stdout, literal_pair_3, sizeof(literal_pair_3) / sizeof(literal_pair_3[0]));
-        if (output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
-            yvex_cli_out_writef(stdout, "hint: use 'yvex evidence models use ALIAS' to select a model\n");
-        }
-    }
     yvex_model_registry_close(registry);
     return 0;
 }
@@ -974,8 +862,6 @@ static const yvex_models_subcommand model_subcommands[] = {
     { "prepare", yvex_models_prepare_surface_command },
     { "check", yvex_models_check_surface_command },
     { "list", command_models_list },
-    { "use", command_models_use },
-    { "current", command_models_current },
     { "verify", command_models_verify },
     { "inspect", command_models_inspect },
     { "remove", command_models_remove }
@@ -996,7 +882,7 @@ static int command_models(int arg_count, char **args)
     }
     if (arg_count < 3) {
         yvex_cli_out_writef(stderr,
-            "yvex: models requires scan, add, download, artifacts, prepare, check, list, use, current, "
+            "yvex: models requires scan, add, download, artifacts, prepare, check, list, "
                 "verify, inspect, or remove\n");
         return 2;
     }

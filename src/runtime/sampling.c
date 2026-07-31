@@ -1456,7 +1456,7 @@ int yvex_runtime_sampling_operator_execute(
         return sampling_refuse(err, YVEX_ERR_INVALID_ARG,
                                "sampling operator request and empty cleanup output are required");
     yvex_core_text_copy(result->command, sizeof(result->command),
-                        "graph transformer sample");
+                        "execute transformer sample");
     yvex_core_text_copy(result->target, sizeof(result->target),
                         request->logits.target);
     yvex_core_text_copy(result->logits_backend, sizeof(result->logits_backend),

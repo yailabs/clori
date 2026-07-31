@@ -184,7 +184,7 @@ outside this API.
 ### Internal MoE Execution Boundary
 
 `include/yvex/internal/moe.h` owns the non-installed MoE plan, typed input,
-generic graph/backend execution packets, runtime context, and operator result.
+generic graph/backend execution packets, inspect context, and operator result.
 The plan imports immutable runtime descriptor and materialization facts for all
 43 layers; family policy enters through one registered projection callback.
 
@@ -305,10 +305,12 @@ decode, tokenize, stop, detokenize, or generate.
 ### Internal DeepSeek Attention Operator Boundary
 
 `yvex_graph_attention_operator_execute` is the non-installed typed adapter used
-by the offline `yvex graph attention ...` lane. It consumes a runtime binding, common runtime
-model/session, admitted external artifact, and either a canonical diagnostic
-probe or admitted tensor-file activation input. It never calls Make, a test
-executable, another process or the test-only oracle.
+by the offline `yvex execute attention ...` lane. Inspection and profiling of
+the same owner use the `yvex inspect attention ...` and
+`yvex profile attention ...` projections. The adapter consumes a runtime
+binding, common runtime model/session, admitted external artifact, and either a
+canonical diagnostic probe or admitted tensor-file activation input. It never
+calls Make, a test executable, another process or the test-only oracle.
 
 The operator distinguishes:
 
@@ -357,7 +359,22 @@ Every owned result publishes only after complete success and carries field-wise
 identities. These operations do not read weights, mutate KV, append sampled
 tokens to decode, or compose generation.
 
-## Application Provider And Local Protocol v3
+## Compiled Operator Registry Boundary
+
+The operator registry is a build-time, non-installed source contract rather
+than public C ABI. Strict `yvex.operator.registry.v1` JSON is validated and
+projected into immutable generated C descriptors compiled into `yvex`. The
+descriptors contain stable operation IDs, typed adapter enums, syntax,
+visibility, requirements, and transport projections. They contain no domain
+callbacks, arithmetic, resources, or protocol codecs.
+
+The generated registry header is consumed only by product command owners; it
+is not included by `<yvex/api.h>` or packaged as a mutable runtime dependency.
+Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
+objects remain protocol-only, while finite offline adapters may consume the
+non-installed engine interfaces already documented here.
+
+## Application Provider And Local Protocol v4
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. A sealed request binds the model, ordered typed messages, explicit
@@ -367,11 +384,19 @@ adapter correlation, and request identity. Clone and wire-decode publish only a
 complete owned request graph. The provider owner neither parses HTTP nor
 renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v3 carries the sealed provider request through the
+`<yvex/server.h>` protocol v4 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 function calls, usage, terminal completion, and failure. Typed events bind the
 provider adapter, provider-request identity, and external correlation ID while
 excluding prompt and output content.
+
+Protocol v4 removes the former model/artifact facade operations, adds a typed
+`console.status` snapshot, carries exact turn timing and cancellation classes,
+and labels published fragments with an explicit output channel. Facts that are
+not authoritative, including selected client configuration, active micro-phase,
+or KV byte use when unavailable, have explicit availability bits and are never
+fabricated. Version 3 frames refuse during the handshake; there is no private
+pre-v0.1 compatibility decoder.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
 queue capacity, timeout, incompatible state and unsupported input without
@@ -412,20 +437,20 @@ routes in the same ELF have separately guarded engine dependencies.
 The offline command lane provides the direct production consumer for the internal ABI:
 
 ```text
-yvex graph attention prepare
-yvex graph attention describe
-yvex graph attention capabilities
-yvex graph attention plan
-yvex graph attention execute
-yvex graph attention compare
-yvex graph attention state inspect|validate|exercise
-yvex graph attention residency inspect
-yvex graph attention capture|replay
-yvex graph attention cuda-graph list|inspect|warmup|update|invalidate|release
-yvex graph attention trace|profile|benchmark|qualify
-yvex graph attention benchmark compare
-yvex graph moe execute
-yvex graph transformer execute
+yvex execute attention prepare
+yvex inspect attention describe
+yvex inspect attention capabilities
+yvex inspect attention plan
+yvex execute attention run
+yvex execute attention compare
+yvex inspect attention state|validate|exercise
+yvex inspect attention residency
+yvex execute attention capture|replay
+yvex profile attention cuda-graph list|inspect|warmup|update|invalidate|release
+yvex profile attention trace|profile|benchmark|qualify
+yvex profile attention compare
+yvex execute moe
+yvex execute transformer run
 ```
 
 `prepare` is the compiler-side producer for an external runtime binding.
@@ -445,12 +470,12 @@ input, not prompt text. Production activation prefill instead selects
 reports `activation_prefill_ready` separately from
 `full_model_prefill_ready`.
 
-`graph moe execute` requires explicit artifact and runtime-binding paths,
+`execute moe` requires explicit artifact and runtime-binding paths,
 `--backend cpu|cuda`, `--input tensor-file`, `--input-file FILE`, `--scope
 full`, and `--progress off`. It calls the production runtime MoE API directly;
 it does not run a fixture, test executable, Make target, or second process.
 
-`graph transformer execute` requires explicit artifact, runtime binding, and a
+`execute transformer run` requires explicit artifact, runtime binding, and a
 schema-v1 `--input token-ids --input-file FILE`. It accepts `--backend
 cpu|cuda`, `--phase prefill`, positive chunk/context capacities, and
 `--progress off`. It calls the production transformer API directly and reports

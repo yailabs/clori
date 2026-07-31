@@ -1,5 +1,5 @@
 #!/bin/sh
-# Purpose: run pinned official SDKs against the production adapter and protocol-v3 fixture host.
+# Purpose: run pinned official SDKs against the production adapter and protocol-v4 fixture host.
 set -eu
 
 YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}

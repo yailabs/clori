@@ -66,15 +66,15 @@ PY
 yvex_test_cleanup "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-"$YVEX_BIN" artifact emit controlled \
+"$YVEX_BIN" compile emit artifact controlled \
   --out "$MODEL" \
   --model-name integrity-report-f16 \
   --arch deepseek \
   --target-qtype F16 \
   --overwrite >"$OUT_DIR/emit.out" 2>"$OUT_DIR/emit.err"
 
-"$YVEX_BIN" artifact verify report \
-  --model "$MODEL" \
+"$YVEX_BIN" inspect artifact integrity \
+  "$MODEL" \
   --backend cpu \
   --require-token-embedding \
   --partial-token 0 \
@@ -84,16 +84,16 @@ contains "$OUT_DIR/raw-backend-normal.out" "boundary: integrity gate only, gener
 contains "$OUT_DIR/raw-backend-normal.out" "status: integrity-report-pass"
 test "$(wc -l < "$OUT_DIR/raw-backend-normal.out")" -le 8
 
-"$YVEX_BIN" artifact verify report \
-  --model "$MODEL" \
+"$YVEX_BIN" inspect artifact integrity \
+  "$MODEL" \
   --backend cpu \
   --output nope \
   >"$OUT_DIR/raw-bad-output.out" 2>"$OUT_DIR/raw-bad-output.err" && \
   fail "bad integrity output mode unexpectedly passed" || true
 contains "$OUT_DIR/raw-bad-output.err" "unsupported output mode: nope"
 
-"$YVEX_BIN" artifact verify report \
-  --model "$MODEL" \
+"$YVEX_BIN" inspect artifact integrity \
+  "$MODEL" \
   --require-token-embedding \
   --partial-token 0 \
   --audit \
@@ -111,8 +111,8 @@ contains "$OUT_DIR/raw-pass.out" "execution_ready: false"
 contains "$OUT_DIR/raw-pass.out" "generation: unsupported"
 contains "$OUT_DIR/raw-pass.out" "status: integrity-report-pass"
 
-"$YVEX_BIN" artifact verify report \
-  --model "$MODEL" \
+"$YVEX_BIN" inspect artifact integrity \
+  "$MODEL" \
   --backend cpu \
   --require-token-embedding \
   --partial-token 0 \
@@ -123,14 +123,14 @@ contains "$OUT_DIR/raw-backend-pass.out" "materialization_preflight: pass"
 contains "$OUT_DIR/raw-backend-pass.out" "materialization_gate: pass"
 contains "$OUT_DIR/raw-backend-pass.out" "status: integrity-report-pass"
 
-"$YVEX_BIN" evidence models add \
+"$YVEX_BIN" model registry add \
   --path "$MODEL" \
   --alias "$ALIAS" \
   --support-level selected-tensor-materialized \
   --registry "$REG" >"$OUT_DIR/add.out" 2>"$OUT_DIR/add.err"
 
-YVEX_MODELS_REGISTRY="$REG" "$YVEX_BIN" artifact verify report \
-  --model "$ALIAS" \
+YVEX_MODELS_REGISTRY="$REG" "$YVEX_BIN" inspect artifact integrity \
+  "$ALIAS" \
   --backend cpu \
   --require-token-embedding \
   --partial-token 0 \
@@ -144,7 +144,7 @@ contains "$OUT_DIR/alias-pass.out" "readiness_status: pass"
 contains "$OUT_DIR/alias-pass.out" "support_level: selected-tensor-materialized"
 contains "$OUT_DIR/alias-pass.out" "status: integrity-report-pass"
 
-"$YVEX_BIN" artifact verify report --model tests/fixtures/gguf/bad-magic.gguf --audit \
+"$YVEX_BIN" inspect artifact integrity tests/fixtures/gguf/bad-magic.gguf --audit \
   >"$OUT_DIR/corrupt.out" 2>"$OUT_DIR/corrupt.err" && \
   fail "corrupt report unexpectedly passed" || true
 contains "$OUT_DIR/corrupt.out" "integrity_status: fail"
@@ -153,8 +153,8 @@ contains "$OUT_DIR/corrupt.out" "status: integrity-report-fail"
 
 cp "$REG" "$STALE_REG"
 mutate_file_byte "$MODEL"
-YVEX_MODELS_REGISTRY="$STALE_REG" "$YVEX_BIN" artifact verify report \
-  --model "$ALIAS" \
+YVEX_MODELS_REGISTRY="$STALE_REG" "$YVEX_BIN" inspect artifact integrity \
+  "$ALIAS" \
   --audit \
   >"$OUT_DIR/stale.out" 2>"$OUT_DIR/stale.err" && \
   fail "stale alias report unexpectedly passed" || true
@@ -163,7 +163,7 @@ contains "$OUT_DIR/stale.out" "digest_status: fail"
 contains "$OUT_DIR/stale.out" "report_status: fail"
 contains "$OUT_DIR/stale.out" "status: integrity-report-fail"
 
-"$YVEX_BIN" artifact emit controlled \
+"$YVEX_BIN" compile emit artifact controlled \
   --out "$MODEL" \
   --model-name integrity-report-f16 \
   --arch deepseek \
@@ -171,8 +171,8 @@ contains "$OUT_DIR/stale.out" "status: integrity-report-fail"
   --overwrite >"$OUT_DIR/emit-reset.out" 2>"$OUT_DIR/emit-reset.err"
 
 mutate_registry "$REG" "$DTYPE_REG" "primary_tensor_dtype" "F32"
-YVEX_MODELS_REGISTRY="$DTYPE_REG" "$YVEX_BIN" artifact verify report \
-  --model "$ALIAS" \
+YVEX_MODELS_REGISTRY="$DTYPE_REG" "$YVEX_BIN" inspect artifact integrity \
+  "$ALIAS" \
   --audit \
   >"$OUT_DIR/metadata-drift.out" 2>"$OUT_DIR/metadata-drift.err" && \
   fail "metadata drift report unexpectedly passed" || true
@@ -182,8 +182,8 @@ contains "$OUT_DIR/metadata-drift.out" "metadata_issue_0_code: primary-tensor-dt
 contains "$OUT_DIR/metadata-drift.out" "report_status: fail"
 contains "$OUT_DIR/metadata-drift.out" "status: integrity-report-fail"
 
-"$YVEX_BIN" artifact verify report \
-  --model tests/fixtures/gguf/valid-minimal.gguf \
+"$YVEX_BIN" inspect artifact integrity \
+  tests/fixtures/gguf/valid-minimal.gguf \
   --require-token-embedding \
   --partial-token 0 \
   --audit \

@@ -18,7 +18,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 3u
+#define YVEX_LOCAL_PROTOCOL_VERSION 4u
 #define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 2u
 #define YVEX_RUNTIME_METRICS_SCHEMA_VERSION 3u
 #define YVEX_SERVER_SESSION_NAME_CAP 64u
@@ -163,10 +163,15 @@ typedef struct {
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char physical_variant_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long context_capacity, session_count, request_count;
+    unsigned long long prefill_chunk_tokens, maximum_new_tokens;
+    unsigned long long maximum_output_bytes, maximum_sessions;
+    unsigned long long request_queue_capacity, openai_timeout_ms;
     unsigned short openai_port;
+    yvex_server_trace_level trace_level;
     yvex_server_metrics metrics;
     int runtime_ready, generation_ready, public_server_ready;
     int openai_listener_enabled, openai_listener_ready;
+    int explicit_reasoning_channel_supported;
 } yvex_server_summary;
 typedef enum {
     YVEX_CLIENT_OP_HANDSHAKE = 0,
@@ -183,9 +188,7 @@ typedef enum {
     YVEX_CLIENT_OP_SESSION_CLOSE,
     YVEX_CLIENT_OP_GENERATION_TURN,
     YVEX_CLIENT_OP_GENERATION_CANCEL,
-    YVEX_CLIENT_OP_MODEL_SHOW,
-    YVEX_CLIENT_OP_ARTIFACT_SHOW,
-    YVEX_CLIENT_OP_ARTIFACT_VERIFY
+    YVEX_CLIENT_OP_CONSOLE_STATUS
 } yvex_client_operation;
 typedef enum {
     YVEX_CLIENT_MESSAGE_ACK = 0,
@@ -196,7 +199,8 @@ typedef enum {
     YVEX_CLIENT_MESSAGE_EVENT,
     YVEX_CLIENT_MESSAGE_TURN_STARTED,
     YVEX_CLIENT_MESSAGE_FRAGMENT,
-    YVEX_CLIENT_MESSAGE_TURN_COMPLETE
+    YVEX_CLIENT_MESSAGE_TURN_COMPLETE,
+    YVEX_CLIENT_MESSAGE_CONSOLE_STATUS
 } yvex_client_message_kind;
 typedef enum {
     YVEX_CLIENT_FAILURE_NONE = 0,
@@ -211,6 +215,49 @@ typedef enum {
     YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE,
     YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT
 } yvex_client_failure_class;
+typedef enum {
+    YVEX_CLIENT_PHASE_UNAVAILABLE = 0,
+    YVEX_CLIENT_PHASE_IDLE,
+    YVEX_CLIENT_PHASE_QUEUED,
+    YVEX_CLIENT_PHASE_TOKENIZING,
+    YVEX_CLIENT_PHASE_PREFILL,
+    YVEX_CLIENT_PHASE_DECODE,
+    YVEX_CLIENT_PHASE_COMPLETE,
+    YVEX_CLIENT_PHASE_CANCELLED,
+    YVEX_CLIENT_PHASE_FAILED
+} yvex_client_generation_phase;
+typedef enum {
+    YVEX_CLIENT_CANCELLATION_NONE = 0,
+    YVEX_CLIENT_CANCELLATION_REQUESTED,
+    YVEX_CLIENT_CANCELLATION_COMPLETED,
+    YVEX_CLIENT_CANCELLATION_DISCONNECT,
+    YVEX_CLIENT_CANCELLATION_RUNTIME_SHUTDOWN,
+    YVEX_CLIENT_CANCELLATION_FAILED
+} yvex_client_cancellation_class;
+typedef enum {
+    YVEX_CLIENT_STREAM_UNSPECIFIED = 0,
+    YVEX_CLIENT_STREAM_FINAL_TEXT,
+    YVEX_CLIENT_STREAM_EXPLICIT_REASONING,
+    YVEX_CLIENT_STREAM_TOOL_CALL,
+    YVEX_CLIENT_STREAM_TOOL_RESULT,
+    YVEX_CLIENT_STREAM_CONTROL_EVENT
+} yvex_client_stream_channel;
+typedef struct {
+    unsigned int schema_version;
+    yvex_backend_kind backend;
+    yvex_server_session_state session_state;
+    yvex_client_generation_phase generation_phase;
+    yvex_client_cancellation_class cancellation_class;
+    unsigned long long position, turn_count, context_capacity, context_used;
+    unsigned long long kv_used_bytes;
+    char session_name[YVEX_SERVER_SESSION_NAME_CAP];
+    char live_model_identity[YVEX_SHA256_HEX_CAP];
+    char physical_variant_identity[YVEX_SHA256_HEX_CAP];
+    char selected_model_identity[YVEX_SHA256_HEX_CAP];
+    int runtime_ready, session_available, attached, cancel_requested;
+    int kv_used_available, progress_available, selected_model_available;
+    int explicit_reasoning_channel_supported;
+} yvex_console_status;
 typedef struct {
     unsigned int schema_version;
     yvex_client_operation operation;
@@ -237,10 +284,15 @@ typedef struct {
     unsigned char bytes[YVEX_SERVER_FRAGMENT_CAP];
     unsigned long long byte_count;
     unsigned long long prompt_tokens, reused_tokens, prefill_tokens;
-    unsigned long long generated_tokens, final_position;
+    unsigned long long generated_tokens, final_position, turn_count;
+    unsigned long long context_used, kv_used_bytes;
     double queue_seconds, prefill_seconds, first_token_seconds, decode_seconds;
-    double prefill_rate, decode_rate;
+    double prefill_rate, decode_rate, publication_seconds;
     unsigned int stop_reason;
+    yvex_client_generation_phase generation_phase;
+    yvex_client_cancellation_class cancellation_class;
+    yvex_client_stream_channel stream_channel;
+    int kv_used_available, publication_timing_available;
     yvex_server_session_state session_state;
     char session_identity[YVEX_SHA256_HEX_CAP];
     char turn_identity[YVEX_SHA256_HEX_CAP];
@@ -255,6 +307,7 @@ typedef struct {
     char tool_call_id[YVEX_PROVIDER_ID_CAP];
     char tool_name[YVEX_PROVIDER_TOOL_NAME_CAP];
     yvex_server_summary runtime;
+    yvex_console_status console;
     yvex_server_event event;
 } yvex_client_message;
 int yvex_server_create(yvex_server **out, const yvex_server_options *options,

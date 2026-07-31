@@ -269,6 +269,14 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     server->summary.status = YVEX_SERVER_STATUS_CONFIGURED;
     server->summary.backend = options->backend;
     server->summary.context_capacity = options->context_capacity;
+    server->summary.prefill_chunk_tokens = options->prefill_chunk_tokens;
+    server->summary.maximum_new_tokens = options->maximum_new_tokens;
+    server->summary.maximum_output_bytes = options->maximum_output_bytes;
+    server->summary.maximum_sessions = options->maximum_sessions;
+    server->summary.request_queue_capacity = options->request_queue_capacity;
+    server->summary.openai_timeout_ms = options->openai_timeout_ms;
+    server->summary.trace_level = options->trace_level;
+    server->summary.explicit_reasoning_channel_supported = 0;
     server->summary.openai_listener_enabled = options->openai_enabled;
     server->summary.openai_port = options->openai_enabled
                                       ? options->openai_port : 0u;
@@ -761,6 +769,42 @@ static int status_message(yvex_server *server,
     message->request_number = request->request_number;
     return yvex_server_get_summary(server, &message->runtime, err);
 }
+
+/* Purpose: compose runtime and session facts under their existing authoritative owners.
+ * Inputs: host, exact session-bearing request, and message output. Effects: snapshot copies only.
+ * Failure: unknown sessions or host state return typed refusal without a partial message.
+ * Boundary: selected client configuration and unavailable KV/progress facts are never fabricated. */
+static int console_status_message(yvex_server *server,
+                                  const yvex_client_request *request,
+                                  yvex_client_message *message,
+                                  yvex_error *err)
+{
+    yvex_server_summary summary;
+    int rc;
+    memset(message, 0, sizeof(*message));
+    rc = yvex_server_get_summary(server, &summary, err);
+    if (rc != YVEX_OK) return rc;
+    message->schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message->kind = YVEX_CLIENT_MESSAGE_CONSOLE_STATUS;
+    message->status = YVEX_OK;
+    message->request_number = request->request_number;
+    message->console.schema_version = 1u;
+    message->console.runtime_ready = summary.runtime_ready;
+    message->console.backend = summary.backend;
+    message->console.context_capacity = summary.context_capacity;
+    message->console.selected_model_available = 0;
+    message->console.explicit_reasoning_channel_supported =
+        summary.explicit_reasoning_channel_supported;
+    yvex_core_text_copy(message->console.live_model_identity,
+                        sizeof(message->console.live_model_identity),
+                        summary.runtime_model_identity);
+    yvex_core_text_copy(message->console.physical_variant_identity,
+                        sizeof(message->console.physical_variant_identity),
+                        summary.physical_variant_identity);
+    return yvex_server_sessions_console_status(server->sessions,
+                                               request->session_name,
+                                               &message->console, err);
+}
 /* Purpose: stream one filtered projection of the canonical telemetry sequence.
  * Inputs: host, connected descriptor, subscription request, and error output. Effects: writes protocol events.
  * Failure: returns transport or telemetry refusal. Boundary: filtering never changes event identities. */
@@ -861,12 +905,14 @@ static void *client_main(void *opaque)
         int rc = yvex_server_protocol_receive(
             fd, &request, &prompt, &provider, &err);
         if (rc != YVEX_OK) break;
-        if (request.operation == YVEX_CLIENT_OP_RUNTIME_STATUS ||
-            request.operation == YVEX_CLIENT_OP_MODEL_SHOW ||
-            request.operation == YVEX_CLIENT_OP_ARTIFACT_SHOW ||
-            request.operation == YVEX_CLIENT_OP_ARTIFACT_VERIFY) {
+        if (request.operation == YVEX_CLIENT_OP_RUNTIME_STATUS) {
             yvex_client_message message;
             rc = status_message(server, &request, &message, &err);
+            if (rc == YVEX_OK)
+                rc = yvex_server_protocol_send(fd, &message, &err);
+        } else if (request.operation == YVEX_CLIENT_OP_CONSOLE_STATUS) {
+            yvex_client_message message;
+            rc = console_status_message(server, &request, &message, &err);
             if (rc == YVEX_OK)
                 rc = yvex_server_protocol_send(fd, &message, &err);
         } else if (request.operation == YVEX_CLIENT_OP_RUNTIME_WATCH ||
@@ -906,7 +952,7 @@ static void *client_main(void *opaque)
             message.status = YVEX_OK;
             message.request_number = request.request_number;
             yvex_core_text_copy(message.reason, sizeof(message.reason),
-                                "protocol-v3");
+                                "protocol-v4");
             rc = yvex_server_protocol_send(fd, &message, &err);
         } else {
             server_work_item item;

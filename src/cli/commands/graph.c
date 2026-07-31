@@ -13,6 +13,7 @@
 #include "src/cli/io/private.h"
 #include "src/cli/model_artifacts/private.h"
 #include "src/cli/render/private.h"
+#include <operator/registry.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -193,7 +194,7 @@ typedef struct {
 
 static const yvex_graph_attention_operator_result benchmark_comparison_result_default = {
     .completed = 1, .status = "complete",
-    .command = "graph attention benchmark compare",
+    .command = "profile attention compare",
     .target = "not_applicable", .backend = "not_applicable",
     .scope = "attention_component", .operation_scope = "not_applicable",
     .phase = "not_applicable", .trace_policy = "none",
@@ -299,6 +300,43 @@ static const graph_attention_action *graph_attention_action_find(
                ? &graph_attention_actions[action]
                : &invalid;
 }
+/* Purpose: project one legacy graph adapter action through the compiled canonical registry.
+ * Inputs: a parser-admitted attention action. Effects: reads immutable descriptors only.
+ * Failure: returns a neutral non-command label when generated metadata is inconsistent.
+ * Boundary: the adapter does not maintain a second command-path table. */
+static const char *graph_attention_command_path(yvex_graph_attention_action action)
+{
+    const char *legacy_action = graph_attention_action_find(action)->name;
+    size_t descriptor_index;
+
+    for (descriptor_index = 0u; descriptor_index < yvex_operator_descriptor_count;
+         ++descriptor_index) {
+        const yvex_operator_descriptor *descriptor =
+            &yvex_operator_descriptors[descriptor_index];
+        char suffix[96] = {0};
+        size_t argument_index, used = 0u;
+
+        if (descriptor->lane != YVEX_OPERATOR_LANE_OFFLINE_ENGINE ||
+            descriptor->offline_adapter != YVEX_OPERATOR_OFFLINE_GRAPH ||
+            descriptor->adapter_argc < 3u ||
+            strcmp(descriptor->adapter_argv[0], "graph") != 0 ||
+            strcmp(descriptor->adapter_argv[1], "attention") != 0)
+            continue;
+        for (argument_index = 2u; argument_index < descriptor->adapter_argc;
+             ++argument_index) {
+            int count = snprintf(suffix + used, sizeof(suffix) - used, "%s%s",
+                                 used ? " " : "", descriptor->adapter_argv[argument_index]);
+            if (count < 0 || (size_t)count >= sizeof(suffix) - used) {
+                used = sizeof(suffix);
+                break;
+            }
+            used += (size_t)count;
+        }
+        if (used < sizeof(suffix) && strcmp(suffix, legacy_action) == 0)
+            return descriptor->command_path;
+    }
+    return "attention operation";
+}
 /* Purpose: Resolve exactly one immutable binding from an external registry directory.
  * Inputs: safely opened directory and caller-owned output.
  * Effects: reads directory entries only; never opens source/compiler assets.
@@ -316,7 +354,7 @@ static int graph_attention_binding_discover(const char *directory, char *output,
     directory_fd = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (directory_fd < 0) {
         yvex_error_set(err, YVEX_ERR_IO, "graph_attention_cli",
-                       "runtime binding is missing; run `yvex graph attention prepare`");
+                       "runtime binding is missing; run `yvex execute attention prepare`");
         return YVEX_ERR_IO;
     }
     stream = fdopendir(directory_fd);
@@ -353,7 +391,7 @@ static int graph_attention_binding_discover(const char *directory, char *output,
         yvex_error_set(err, count == 0u ? YVEX_ERR_IO : YVEX_ERR_STATE,
                        "graph_attention_cli",
                        count == 0u
-                           ? "runtime binding is missing; run `yvex graph attention prepare`"
+                           ? "runtime binding is missing; run `yvex execute attention prepare`"
                            : "runtime binding registry is ambiguous; use --runtime-binding FILE");
         return count == 0u ? YVEX_ERR_IO : YVEX_ERR_STATE;
     }
@@ -415,7 +453,7 @@ static int graph_attention_prepare_paths(const yvex_graph_args *args,
     if (rc == YVEX_OK && args->attention.quant_preset_name &&
         strlen(args->attention.quant_preset_name) >= sizeof(out->quant_preset_name)) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "graph_attention_cli",
-                       "quant preset name exceeds the bounded operator contract");
+                       "compile quant preset name exceeds the bounded operator contract");
         rc = YVEX_ERR_BOUNDS;
     }
     if (rc == YVEX_OK && args->attention.quant_preset_name)
@@ -720,7 +758,7 @@ static void graph_attention_prepare_result(
 {
     graph_attention_result_init(args, request, summary, binding_path, result);
     yvex_core_text_copy(result->command, sizeof(result->command),
-                              "graph attention prepare");
+                              "execute attention prepare");
     yvex_core_text_copy(result->backend, sizeof(result->backend), "not_applicable");
     yvex_core_text_copy(result->scope, sizeof(result->scope), "preparation");
 }
@@ -790,8 +828,8 @@ static void graph_attention_binding_result(
     yvex_graph_attention_operator_result *result)
 {
     graph_attention_result_init(args, request, binding, request->runtime_binding_path, result);
-    (void)snprintf(result->command, sizeof(result->command), "graph attention %s",
-                   graph_attention_action_find(args->attention.action)->name);
+    yvex_core_text_copy(result->command, sizeof(result->command),
+                        graph_attention_command_path(args->attention.action));
     yvex_core_text_copy(
         result->backend, sizeof(result->backend),
         args->attention.backend ? args->attention.backend : "not_applicable");
@@ -817,8 +855,13 @@ static int graph_attention_result_render(
     const yvex_graph_args *args, const yvex_graph_attention_operator_result *result,
     yvex_error *err)
 {
-    int rc = yvex_graph_attention_render(
-        yvex_cli_out_stdout(), args->render_mode, result);
+    yvex_graph_attention_operator_result projected = *result;
+    int rc;
+
+    yvex_core_text_copy(projected.command, sizeof(projected.command),
+                        graph_attention_command_path(args->attention.action));
+    rc = yvex_graph_attention_render(
+        yvex_cli_out_stdout(), args->render_mode, &projected);
 
     if (rc == YVEX_OK) rc = yvex_cli_out_flush(yvex_cli_out_stdout());
     if (rc != YVEX_OK)
@@ -1312,7 +1355,7 @@ static int graph_cli_transformer_execute(
         err, exit_for_status(YVEX_ERR_STATE));
 }
 
-/* Purpose: execute the typed prefill-to-decode command through one production runtime context.
+/* Purpose: execute the typed prefill-to-decode command through one production inspect context.
  * Inputs: parsed CLI facts. Effects: renders complete or partial evidence once.
  * Failure: typed exit while preserving the domain-owned partial result. Boundary: adapter only. */
 static int graph_cli_transformer_decode(

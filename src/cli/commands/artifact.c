@@ -31,7 +31,7 @@
 #define FIELD_COUNT(fields_) (sizeof(fields_) / sizeof((fields_)[0]))
 
 static const char *const literal_pair_0[] = {
-    "reason: current artifact metadata could not be parsed", "status: models-metadata-drift"};
+    "reason: current inspect artifact metadata could not be parsed", "status: models-metadata-drift"};
 
 static const char *const literal_pair_1[] = {"format: gguf", "status: unsupported"};
 
@@ -45,9 +45,9 @@ static const char inspect_help_text[] =
     "usage: yvex artifact show FILE_OR_ALIAS\n\nInspect parses a GGUF descriptor and prints a "
     "descriptor-only summary. It does not materialize weights or execute a graph.\n";
 static const char integrity_help_text[] =
-    "usage: yvex artifact verify check --model FILE_OR_ALIAS [--expect-sha256 HASH] "
+    "usage: yvex artifact verify FILE_OR_ALIAS [--expect-sha256 HASH] "
     "[--require-token-embedding] [--partial-token N]\n"
-    "       yvex artifact verify report --model FILE_OR_ALIAS [--backend cpu|cuda] "
+    "       yvex inspect artifact integrity FILE_OR_ALIAS [--backend cpu|cuda] "
     "[--expect-sha256 HASH] [--require-token-embedding] [--partial-token N] "
     "[--audit | --output normal|table|audit]\n"
     "\nIntegrity validates local GGUF structure, tensor accounting, digest identity when "
@@ -59,24 +59,24 @@ static const char materialize_help_text[] =
     "backend-owned storage after integrity preflight. It does not execute prefill, decode, "
     "sampling, generation, or inference.\n";
 static const char materialize_gate_help_text[] =
-    "usage: yvex artifact materialize-gate check --model FILE_OR_ALIAS --label LABEL --family FAMILY "
+    "usage: yvex execute artifact materialize-gate check --model FILE_OR_ALIAS --label LABEL --family FAMILY "
     "--scope selected-tensor --expect-tensor NAME --expect-rank N --expect-dims D1[,D2,D3] "
     "--expect-dtype DTYPE --expect-bytes BYTES [--sha256 HASH] [--backend cpu] [--backend cuda] "
     "[--require-cpu] [--require-cuda] [--repeat N] [--check-cleanup] [--report-out FILE]\n\n"
     "The materialization gate validates identity, tensor facts, repeated backend "
     "materialization, cleanup, and failure classes.\n";
 static const char metadata_help_text[] =
-    "usage: yvex artifact metadata FILE_OR_ALIAS\n\nMetadata prints parsed GGUF metadata key/value "
+    "usage: yvex inspect artifact metadata FILE_OR_ALIAS\n\nMetadata prints parsed GGUF metadata key/value "
     "summaries. Arrays are summarized.\n";
 static const char model_gate_help_text[] =
-    "usage: yvex artifact model-gate check --model FILE_OR_ALIAS --label LABEL --family FAMILY "
+    "usage: yvex execute artifact model-gate check --model FILE_OR_ALIAS --label LABEL --family FAMILY "
     "--expect-tensor NAME --expect-rank N --expect-dims D1[,D2,D3] --expect-dtype DTYPE "
     "--expect-bytes BYTES [--sha256 HASH] [--backend cpu] [--backend cuda] [--require-cpu] "
     "[--require-cuda] [--report-out FILE]\n\nModel gate checks selected tensor identity, "
     "expected tensor specs, and requested CPU/CUDA materialization without claiming full-model "
     "support.\n";
 static const char tensors_help_text[] =
-    "usage: yvex artifact tensors FILE_OR_ALIAS\n\nTensors prints YVEX tensor table rows with role, "
+    "usage: yvex inspect artifact tensors FILE_OR_ALIAS\n\nTensors prints YVEX tensor table rows with role, "
     "dtype, known storage bytes, and checked offsets.\n";
 
 #define INTEGRITY_FIELD(key_, kind_, member_, fallback_)                                            \
@@ -504,9 +504,9 @@ static int command_integrity(int arg_count, char **args) {
         yvex_cli_out_writef(stderr, "yvex: integrity requires check or report\n");
         yvex_cli_out_writef(
             stderr,
-            "usage: yvex artifact verify check --model FILE_OR_ALIAS [--expect-sha256 HASH] "
+            "usage: yvex artifact verify FILE_OR_ALIAS [--expect-sha256 HASH] "
             "[--require-token-"
-            "embedding] [--partial-token N] | yvex artifact verify report --model FILE_OR_ALIAS "
+            "embedding] [--partial-token N] | yvex inspect artifact integrity FILE_OR_ALIAS "
             "[--backend cpu|"
             "cuda] [--expect-sha256 HASH] [--require-token-embedding] [--partial-token N]\n");
         return 2;
@@ -622,7 +622,7 @@ static int command_metadata(int arg_count, char **args) {
             return 0;
         }
         yvex_cli_out_writef(stderr, "yvex: metadata requires exactly one FILE_OR_ALIAS\n");
-        yvex_cli_out_writef(stderr, "usage: yvex artifact metadata FILE_OR_ALIAS\n");
+        yvex_cli_out_writef(stderr, "usage: yvex inspect artifact metadata FILE_OR_ALIAS\n");
         return 2;
     }
     rc = artifact_view_open(&view, args[2], 0, 0, &err);
@@ -1835,7 +1835,7 @@ static int command_tensors(int arg_count, char **args) {
             return 0;
         }
         yvex_cli_out_writef(stderr, "yvex: tensors requires exactly one FILE_OR_ALIAS\n");
-        yvex_cli_out_writef(stderr, "usage: yvex artifact tensors FILE_OR_ALIAS\n");
+        yvex_cli_out_writef(stderr, "usage: yvex inspect artifact tensors FILE_OR_ALIAS\n");
         return 2;
     }
     rc = artifact_view_open(&view, args[2], 1, 0, &err);
