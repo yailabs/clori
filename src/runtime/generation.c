@@ -662,7 +662,8 @@ static int generation_encode_prompt(
 static int generation_prefill(
     yvex_runtime_generation_context *context,
     const yvex_tokenizer_encode_result *encoded,
-    unsigned long long reusable_prefix, float **final_hidden,
+    unsigned long long reusable_prefix,
+    const yvex_runtime_generation_turn_request *turn, float **final_hidden,
     unsigned long long *final_hidden_count,
     yvex_runtime_transformer_result *final_result,
     unsigned long long *completed_chunks,
@@ -737,6 +738,11 @@ static int generation_prefill(
             *final_hidden_count = values;
             (*completed_chunks)++;
             offset += count;
+            if (turn->progress_sink)
+                rc = turn->progress_sink(
+                    turn->progress_context,
+                    YVEX_GENERATION_PROGRESS_PREFILL_PROGRESS,
+                    offset, suffix_count, err);
         }
     }
     if (rc == YVEX_OK) {
@@ -1377,7 +1383,7 @@ int yvex_runtime_generation_turn_execute(
     started = yvex_core_monotonic_ns();
     if (rc == YVEX_OK)
         rc = generation_prefill(context, &encoded,
-                                turn->committed_prefix_token_count, &prefill_hidden,
+                                turn->committed_prefix_token_count, turn, &prefill_hidden,
                                 &prefill_values, &prefill, &prefill_chunks,
                                 &result->profile, err);
     completed = yvex_core_monotonic_ns();

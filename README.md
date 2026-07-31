@@ -134,9 +134,12 @@ One compiled operation registry drives command paths, syntax, help, JSON
 discovery, completion, and slash schemas without becoming a domain-policy
 owner.
 
-The current REPL is functional but transitional. A mature daemon-backed
-console with semantic progress, complete typed metrics, watch, and human trace
-is the next project boundary; current state is recorded only in
+The daemon-backed console uses one `yvex>` prompt, registry-derived slash
+commands, server-authored prefill progress, typed final metrics, semantic
+watch, and a detailed human trace. Ctrl-D exits cleanly even when discarding an
+unfinished line. Unsupported explicit-reasoning controls remain absent rather
+than inferring hidden reasoning.
+Live milestone and release-gate state remains only in
 [`ROADMAP.md`](ROADMAP.md).
 
 ## Documentation

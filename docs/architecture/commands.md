@@ -5,9 +5,8 @@ Status: current implemented architecture
 This document owns the implemented command, operation, and output-projection
 architecture. The former flat command catalog and selectable
 `normal|table|audit` layouts are retired; they are not compatibility surfaces.
-The final console presentation is deliberately excluded and belongs to the
-active [`V010.OPERATOR.REPL.CONSOLE.0`](../milestones/runtime-console-repl.md)
-boundary.
+The same typed operation and protocol facts drive the interactive console,
+semantic watch, human trace, and machine JSONL projections.
 
 ## Binary boundaries
 
@@ -106,7 +105,7 @@ product parses no mutable registry file at runtime.
 
 The compiled descriptors drive path resolution, syntax admission, human help,
 `yvex.command.discovery.v1`, shell completion, and the slash catalog consumed
-by the transitional REPL. Generated data contains no callbacks, domain logic,
+by the REPL. Generated data contains no callbacks, domain logic,
 protocol serialization, allocation, or mutable runtime state. Domain owners
 retain semantic validation and defaults.
 
@@ -114,12 +113,19 @@ retain semantic validation and defaults.
 
 ### Conversation
 
-The current REPL is a transitional projection over the canonical slash and
-protocol schemas. Its present role labels and compact turn summary are not the
-intended interface. The successor console will use one `yvex>` prompt, direct
-committed model output, semantic progress, and typed final metrics without
-changing operation ownership. Conversation output never includes raw events,
-logits, tensor facts, or capability walls.
+The REPL is a linear client attached to the already resident daemon. It renders
+one composed attachment block, uses the stable `yvex>` prompt, and streams
+committed model text without role labels. Prefill progress comes from sealed
+server events; the terminal result separately renders prompt/reuse/prefill,
+generation, TTFT, context, stop, and session facts from the typed protocol
+result. Conversation output never includes raw events, logits, tensor facts,
+or capability walls.
+
+The line editor owns bounded in-memory history, registry-derived slash
+completion, UTF-8 deletion, bracketed multiline paste, resize redraw, and
+terminal restoration. Ctrl-D at an idle prompt exits, discarding any unfinished
+line. Ctrl-C cancels an active turn; at an idle prompt it clears the line, and a
+second consecutive Ctrl-C exits.
 
 ### Compact status
 
@@ -129,21 +135,19 @@ It includes at most one blocker and one actionable hint.
 
 ### Operational stream
 
-`yvex runtime watch` subscribes to the typed event sequence. Its current
-renderer is transitional: it prints the event kind and generic numeric slots
-rather than a complete semantic interpretation. Those slot labels are not an
-operator contract. The successor console owns the compact semantic mapping for
-startup, queue, prefill, first token, decode, commit, stop, cancellation,
-failure, and shutdown. Content remains excluded by default.
+`yvex runtime watch` subscribes to the compact stage sequence and renders event
+meaning with semantic counter names for startup, queue, tokenization, prefill,
+generation, cancellation, failure, and shutdown. It omits trace sequence,
+severity, turn, and phase detail. Content remains excluded by default.
 
 ### Raw stream
 
 `yvexd --console raw` and `yvex runtime trace --json` serialize the same event
-sequence as JSONL. `yvex runtime trace` currently uses the transitional human
-projection; the mature semantic trace renderer belongs to the runtime-console
-milestone. Raw means complete event records, not tensor, hidden, logits, KV, or
-memory dumps. Text content is excluded unless `--trace-content` is explicitly
-enabled at the host.
+sequence as JSONL. `yvex runtime trace` is the detailed human projection: it
+adds sequence, severity, turn, phase, timing, rate, and the same semantic
+counter names used by watch. Raw means complete event records, not tensor,
+hidden, logits, KV, or memory dumps. Text content is excluded unless
+`--trace-content` is explicitly enabled at the host.
 
 ### Machine status
 

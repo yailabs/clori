@@ -329,6 +329,10 @@ static int test_message_roundtrip(void)
     source.console.progress_available = 1;
     source.console.selected_model_available = 1;
     source.console.explicit_reasoning_channel_supported = 1;
+    source.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    source.runtime.status = YVEX_SERVER_STATUS_READY;
+    source.runtime.backend = YVEX_BACKEND_KIND_CUDA;
+    strcpy(source.runtime.target_id, "deepseek-v4-flash");
     strcpy(source.console.session_name, "main");
     strcpy(source.console.live_model_identity,
            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -364,7 +368,8 @@ static int test_message_roundtrip(void)
                          decoded.console.kv_used_bytes == 8192u &&
                          decoded.console.generation_phase == YVEX_CLIENT_PHASE_DECODE &&
                          decoded.console.cancellation_class == YVEX_CLIENT_CANCELLATION_REQUESTED &&
-                         strcmp(decoded.console.session_name, "main") == 0,
+                         strcmp(decoded.console.session_name, "main") == 0 &&
+                         strcmp(decoded.runtime.target_id, "deepseek-v4-flash") == 0,
                      "console status facts roundtrip");
     rc = yvex_protocol_message_decode(frame, count - 1u, &decoded, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT, "truncated message refuses");

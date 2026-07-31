@@ -290,7 +290,7 @@ def check_project_control() -> None:
     if len(roadmap.splitlines()) > 350:
         fail("ROADMAP.md exceeds 350 lines")
     active_next = re.findall(r"^Active Next: (\S+)$", roadmap, flags=re.MULTILINE)
-    if active_next != ["V010.OPERATOR.REPL.CONSOLE.0"]:
+    if active_next != ["V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0"]:
         fail(f"unexpected Active Next: {active_next}")
     active_rows = re.findall(
         r"^\| \d+ \| `([^`]+)` \| `active` \|", roadmap, flags=re.MULTILINE
@@ -300,8 +300,8 @@ def check_project_control() -> None:
     required = {
         "V010.DOCS.INFORMATION.ARCHITECTURE.0": "complete",
         "V010.REPO.CODE.COMMENTARY.0": "complete",
-        "V010.OPERATOR.REPL.CONSOLE.0": "active",
-        "V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0": "blocked",
+        "V010.OPERATOR.REPL.CONSOLE.0": "complete",
+        "V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0": "active",
         "V010.EVAL.DEEPSEEK.0": "blocked",
         "V010.BENCH.DEEPSEEK.0": "not-measured",
         "V010.RELEASE.0": "blocked",
@@ -477,8 +477,12 @@ def check_content(rows: list[dict[str, str]]) -> None:
         if "unsupported runtime family" not in text:
             fail(f"{family} record does not state unsupported runtime stage")
 
-    if "transitional" not in readme or "mature daemon-backed" not in readme:
-        fail("README does not distinguish current and future console")
+    if "The daemon-backed console uses one `yvex>` prompt" not in readme:
+        fail("README does not describe the current daemon-backed console")
+    if "Ctrl-D exits cleanly" not in readme:
+        fail("README omits the current console EOF contract")
+    if "functional but transitional" in readme:
+        fail("README still describes the implemented console as transitional")
     if "hidden chain of thought" not in (ROOT / "docs/milestones/runtime-console-repl.md").read_text(
         encoding="utf-8"
     ):

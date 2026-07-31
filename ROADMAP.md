@@ -64,13 +64,13 @@ run, or a self-authored report cannot promote a capability by itself.
 | 2 | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `complete` | One versioned operation authority drives command paths, flags, defaults, validation, help, discovery, protocol projections, slash catalog, and command tests. | `V010.PROJECT.CONTROL.PUBLIC.0` |
 | 3 | `V010.DOCS.INFORMATION.ARCHITECTURE.0` | `complete` | One governed information architecture separates doctrine, reference and implemented architecture, family facts, contracts, operations, development policy, project control, decisions, audits, migrations, releases, and history. | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` |
 | 4 | `V010.REPO.CODE.COMMENTARY.0` | `complete` | Natural selective technical commentary replaces mandatory labeled prose across every governed first-party source while production lexical tokens remain unchanged. | `V010.DOCS.INFORMATION.ARCHITECTURE.0` |
-| 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `active` | A mature daemon-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, watch, trace, cancellation, and explicit model-emitted reasoning channels. | `V010.REPO.CODE.COMMENTARY.0` |
-| 6 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `blocked` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.OPERATOR.REPL.CONSOLE.0` |
+| 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `complete` | A mature daemon-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, watch, trace, and cancellation; explicit reasoning remains conditional on an admitted typed channel. | `V010.REPO.CODE.COMMENTARY.0` |
+| 6 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `active` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.OPERATOR.REPL.CONSOLE.0` |
 | 7 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
 | 8 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
 | 9 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
 
-Active Next: V010.OPERATOR.REPL.CONSOLE.0
+Active Next: V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
 
 Detailed accepted and successor contracts for the current sequence are:
 
@@ -102,6 +102,7 @@ not a replacement historical ledger.
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
 | Code commentary | Every governed first-party source follows the natural selective-commentary doctrine; the structural guard rejects obsolete templates and boilerplate while production lexical tokens remain unchanged. |
+| Runtime console | The daemon-backed `yvex>` console renders one composed attachment view, protocol-authored prefill progress, direct model output, typed final metrics, registry-derived slash discovery and completion, semantic watch, human trace, JSONL trace, server cancellation, and bounded terminal restoration including Ctrl-D. |
 | Operator audit | The frozen post-cutover audit inventories 70 route-level commands, 426 command/flag pairs, 99 semantic operations, 10 slash commands, 14 protocol operations, 5 HTTP endpoints, and every Make/script/environment surface with zero unmatched categories. |
 | Performance | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` remains `partial`: startup and bounded profiling are accepted; warm decode remains below admission. |
 
@@ -111,15 +112,6 @@ Its tables describe baseline `ec7dccede90c1a1efa87b4c2519c25b30d5e1733` and
 are implementation input, not live command or project authority.
 
 ## Open work
-
-### Runtime console and REPL
-
-The REPL is a client attached to an already resident daemon. Its successor must
-provide one concise attachment view, a stable `yvex>` prompt, semantic prefill
-and decode progress, complete final metrics, session/context/KV facts,
-visibility-aware slash commands, semantic watch, human trace, canonical JSONL
-trace, and bounded terminal behavior. It must never simulate model loading or
-expose hidden chain of thought.
 
 ### GB10 runtime optimization
 
@@ -170,8 +162,8 @@ is summarized here only to control progression.
 | CUDA transformer-to-text generation | complete for the admitted mixed CUDA/host execution contract |
 | long-lived runtime, sessions, streaming, and bounded local OpenAI compatibility | complete |
 | public command architecture | complete |
-| mature runtime console | active |
-| warm GB10 performance admission | blocked; earlier work remains partial |
+| mature runtime console | complete |
+| warm GB10 performance admission | active; earlier work remains partial |
 | model behavior and quality evaluation | blocked |
 | full-model release benchmark | not measured |
 | release qualification | blocked |
@@ -182,7 +174,10 @@ Machine-readable readiness facts retained for claim guards:
 canonical_operation_registry_ready=1
 generated_command_descriptors_ready=1
 protocol_v4_ready=1
-mature_repl_console_ready=0
+mature_repl_console_ready=1
+semantic_watch_renderer_ready=1
+human_trace_renderer_ready=1
+explicit_reasoning_renderer_ready=0
 model_behavior_evaluation_ready=0
 model_quality_evaluation_ready=0
 full_model_release_benchmark_ready=0
@@ -228,7 +223,8 @@ used for this cutover.
 
 YVEX does not currently claim:
 
-- a mature REPL or TUI;
+- a full-screen TUI or an explicit reasoning channel for a runtime profile that
+  does not advertise one;
 - warm decode optimization or 5, 10, or 20 tokens/s admission;
 - model behavior or model quality evaluation;
 - a release-grade full-model benchmark;

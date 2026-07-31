@@ -724,7 +724,8 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
             server->telemetry, YVEX_SERVER_EVENT_REQUEST_RECEIVED,
             YVEX_SERVER_SEVERITY_INFO, item->request.session_name,
             item->request_id, NULL, "queue", item->request.prompt_bytes,
-            0u, 0u, 0.0, 0.0, item->request.provider_request, err) != YVEX_OK) {
+            0u, 0u, 0.0, 0.0, item->request.provider_request, NULL,
+            err) != YVEX_OK) {
         (void)pthread_mutex_unlock(&server->queue_mutex);
         return yvex_error_code(err);
     }
@@ -739,7 +740,7 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
         YVEX_SERVER_SEVERITY_INFO, item->request.session_name,
         item->request_id, NULL, "queue", server->queue_count,
         server->queue_capacity, 0u, 0.0, 0.0,
-        item->request.provider_request, err);
+        item->request.provider_request, NULL, err);
     (void)pthread_cond_signal(&server->queue_condition);
     (void)pthread_mutex_unlock(&server->queue_mutex);
     return YVEX_OK;
@@ -771,6 +772,7 @@ static int console_status_message(yvex_server *server,
     message->kind = YVEX_CLIENT_MESSAGE_CONSOLE_STATUS;
     message->status = YVEX_OK;
     message->request_number = request->request_number;
+    message->runtime = summary;
     message->console.schema_version = 1u;
     message->console.runtime_ready = summary.runtime_ready;
     message->console.backend = summary.backend;

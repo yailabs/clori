@@ -397,7 +397,7 @@ static int turn_fragment(void *opaque,
             sink->request_id, sink->turn_id, "decode", token->ordinal,
             token->sampled_token_id, 0u,
             elapsed_seconds(sink->started_ns, sink->first_fragment_ns), 0.0,
-            sink->request->provider_request, err);
+            sink->request->provider_request, NULL, err);
     }
     if (sink->request->provider_request) {
         if (rc == YVEX_OK && provider_text_stream_direct(
@@ -412,7 +412,7 @@ static int turn_fragment(void *opaque,
                 YVEX_SERVER_SEVERITY_DEBUG, sink->session->name,
                 sink->request_id, sink->turn_id, "decode", token->ordinal,
                 byte_count, token->sampled_token_id, 0.0, 0.0,
-                sink->request->provider_request, err);
+                sink->request->provider_request, NULL, err);
         return rc;
     }
     while (rc == YVEX_OK &&
@@ -442,7 +442,7 @@ static int turn_fragment(void *opaque,
             YVEX_SERVER_SEVERITY_DEBUG, sink->session->name,
             sink->request_id, sink->turn_id, "decode", token->ordinal,
             byte_count, token->sampled_token_id, 0.0, 0.0,
-            sink->request->provider_request, err);
+            sink->request->provider_request, NULL, err);
     return rc;
 }
 
@@ -452,8 +452,11 @@ static int turn_progress(void *opaque,
                          unsigned long long value_b, yvex_error *err)
 {
     turn_sink *sink = opaque;
+    yvex_client_message message;
+    yvex_server_event event;
     yvex_server_event_kind event_kind;
     const char *phase;
+    int rc;
     if (kind == YVEX_GENERATION_PROGRESS_PROMPT_ACCEPTED) {
         event_kind = YVEX_SERVER_EVENT_TOKENIZER_COMPLETED;
         phase = "tokenizer";
@@ -461,22 +464,34 @@ static int turn_progress(void *opaque,
         sink->prefill_started_ns = monotonic_ns();
         event_kind = YVEX_SERVER_EVENT_PREFILL_STARTED;
         phase = "prefill";
+    } else if (kind == YVEX_GENERATION_PROGRESS_PREFILL_PROGRESS) {
+        event_kind = YVEX_SERVER_EVENT_PREFILL_PROGRESS;
+        phase = "prefill";
     } else {
         sink->prefill_completed_ns = monotonic_ns();
         event_kind = YVEX_SERVER_EVENT_PREFILL_COMPLETED;
         phase = "prefill";
     }
     {
-        double elapsed = kind == YVEX_GENERATION_PROGRESS_PREFILL_COMPLETED
-                             ? elapsed_seconds(sink->prefill_started_ns,
-                                               sink->prefill_completed_ns)
-                             : 0.0;
-        return yvex_server_telemetry_emit_provider(
+        unsigned long long now = kind == YVEX_GENERATION_PROGRESS_PREFILL_PROGRESS
+                                     ? monotonic_ns() : sink->prefill_completed_ns;
+        double elapsed = kind >= YVEX_GENERATION_PROGRESS_PREFILL_PROGRESS
+                             ? elapsed_seconds(sink->prefill_started_ns, now) : 0.0;
+        rc = yvex_server_telemetry_emit_provider(
             sink->registry->telemetry, event_kind,
             YVEX_SERVER_SEVERITY_INFO, sink->session->name,
             sink->request_id, sink->turn_id, phase, value_a, value_b, 0u,
             elapsed, elapsed > 0.0 ? (double)value_a / elapsed : 0.0,
-            sink->request->provider_request, err);
+            sink->request->provider_request, &event, err);
+        if (rc != YVEX_OK || sink->request->provider_request) return rc;
+        memset(&message, 0, sizeof(message));
+        message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+        message.kind = YVEX_CLIENT_MESSAGE_EVENT;
+        message.status = YVEX_OK;
+        message.request_number = sink->request->request_number;
+        message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
+        message.event = event;
+        return sink->emit(sink->emit_context, &message, err);
     }
 }
 
@@ -845,7 +860,7 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
         session->name, sink->request_id, sink->turn_id, "turn",
         result->model_committed_token_count, result->final_position,
         result->stop_reason, elapsed_seconds(sink->started_ns, now),
-        completed.decode_rate, request->provider_request, &secondary);
+        completed.decode_rate, request->provider_request, NULL, &secondary);
     yvex_tokenizer_provider_result_clear(&provider_result);
     return status;
 }
@@ -864,7 +879,7 @@ static int session_profile_publish(server_session_registry *registry,
         registry->telemetry, YVEX_SERVER_EVENT_GENERATION_PROFILE,                        \
         YVEX_SERVER_SEVERITY_DEBUG, session->name, sink->request_id, sink->turn_id,       \
         (phase_), (a_), (b_), (c_), (double)(nanoseconds_) / 1000000000.0, 0.0,           \
-        request->provider_request, err)
+        request->provider_request, NULL, err)
     if (!profile || profile->mode == YVEX_RUNTIME_PROFILE_OFF) return YVEX_OK;
     rc = PROFILE_EVENT("movement",
         profile->counters[YVEX_RUNTIME_PROFILE_H2D_BYTES],
@@ -1028,7 +1043,7 @@ static int session_turn(server_session_registry *registry,
                 ? request->provider_request->message_count
                 : request->prompt_bytes,
             session->committed_count, turn.maximum_new_tokens,
-            0.0, 0.0, request->provider_request, err);
+            0.0, 0.0, request->provider_request, NULL, err);
     memset(&result, 0, sizeof(result));
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_turn_execute(

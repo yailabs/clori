@@ -18,6 +18,9 @@ change. Git history preserves implementation chronology.
   cancellation, partial-progress truth, and one persistent model lifecycle.
 - Registry-driven command discovery, advanced help, JSON discovery, and Bash,
   Zsh, and Fish completion.
+- A daemon-backed `yvex>` console with composed attachment state, live prefill
+  progress, direct streamed output, typed turn metrics, registry-derived slash
+  completion, semantic watch/human trace, and clean Ctrl-C/Ctrl-D handling.
 
 ### Changed
 

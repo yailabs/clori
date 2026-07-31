@@ -167,7 +167,8 @@ int yvex_server_telemetry_emit_provider(
     const char *request_id, const char *turn_id, const char *phase,
     unsigned long long value_a, unsigned long long value_b,
     unsigned long long value_c, double seconds, double rate,
-    const yvex_provider_request *provider, yvex_error *err)
+    const yvex_provider_request *provider, yvex_server_event *emitted,
+    yvex_error *err)
 {
     yvex_server_event event;
     int ring_full;
@@ -259,6 +260,7 @@ int yvex_server_telemetry_emit_provider(
     } else if (ring_full && kind == YVEX_SERVER_EVENT_TELEMETRY_DROPPED) {
         telemetry->metrics.telemetry_dropped++;
     }
+    if (emitted) *emitted = event;
     (void)pthread_cond_broadcast(&telemetry->condition);
     (void)pthread_mutex_unlock(&telemetry->mutex);
     yvex_error_clear(err);
@@ -281,7 +283,7 @@ int yvex_server_telemetry_emit(server_telemetry *telemetry,
 {
     return yvex_server_telemetry_emit_provider(
         telemetry, kind, severity, session_id, request_id, turn_id, phase,
-        value_a, value_b, value_c, seconds, rate, NULL, err);
+        value_a, value_b, value_c, seconds, rate, NULL, NULL, err);
 }
 
 int yvex_server_telemetry_next(server_telemetry *telemetry,

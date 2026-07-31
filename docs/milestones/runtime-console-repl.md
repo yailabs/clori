@@ -4,14 +4,14 @@ Milestone: `V010.OPERATOR.REPL.CONSOLE.0`
 
 Track: `TRACK.OPERATOR`
 
-State: blocked
+Status authority: [`ROADMAP.md`](../../ROADMAP.md)
 
 Depends on: `V010.OPERATOR.COMMAND.ARCHITECTURE.0`
 
 Successor: `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0`
 
-This file is a future implementation contract. It does not establish console,
-reasoning-channel, terminal, or performance capability.
+This file records the accepted implementation boundary. It does not own live
+milestone state, reasoning-channel availability, or performance capability.
 
 ## Mission
 
@@ -25,9 +25,9 @@ defaults, and discovery supplied by
 
 ## Reference Inspection
 
-At milestone entry, pin and record the exact inspected commit of
-`antirez/ds4`. Inspect its CLI loop, help, line editing, progress rendering,
-explicit thinking rendering, interruption, and timing behavior.
+The DwarfStar CLI loop and help were inspected at pinned commit
+`80ebbc396aee40eedc1d829222f3362d10fa4c6c`, including line editing, progress,
+explicit thinking output, interruption, and timing behavior.
 
 Also inspect mature interaction patterns from `redis-cli`, the SQLite shell,
 PostgreSQL `psql`, and GDB or LLDB. Extract principles only:

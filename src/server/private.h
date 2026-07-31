@@ -55,7 +55,8 @@ int yvex_server_telemetry_emit_provider(
     const char *request_id, const char *turn_id, const char *phase,
     unsigned long long value_a, unsigned long long value_b,
     unsigned long long value_c, double seconds, double rate,
-    const yvex_provider_request *provider, yvex_error *err);
+    const yvex_provider_request *provider, yvex_server_event *emitted,
+    yvex_error *err);
 int yvex_server_telemetry_next(server_telemetry *telemetry,
                           unsigned long long after_sequence, int wait,
                           yvex_server_event *event, yvex_error *err);

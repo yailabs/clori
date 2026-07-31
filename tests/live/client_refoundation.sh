@@ -84,7 +84,7 @@ grep -F '"model_open_count":1' "$root/status.json" >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime watch >"$root/engine.log" &
 watch_pid=$!
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime trace \
-    >"$root/trace.jsonl" &
+    >"$root/trace.log" &
 trace_pid=$!
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new main >"$root/session.new"
@@ -111,7 +111,7 @@ repl_pid=$!
 exec 3>"$root/repl.input"
 attempt=0
 while test "$attempt" -lt 100; do
-    test -f "$root/repl.typescript" && grep -F 'you>' "$root/repl.typescript" >/dev/null && break
+    test -f "$root/repl.typescript" && grep -F 'yvex> ' "$root/repl.typescript" >/dev/null && break
     attempt=$((attempt + 1))
     sleep 0.1
 done
@@ -119,20 +119,23 @@ test "$attempt" -lt 100
 printf 'Hi\n' >&3
 attempt=0
 while test "$attempt" -lt 900; do
-    prompts=$(grep -o 'you>' "$root/repl.typescript" 2>/dev/null | wc -l)
+    prompts=$(grep -o 'yvex> ' "$root/repl.typescript" 2>/dev/null | wc -l)
     test "$prompts" -ge 2 && break
     kill -0 "$repl_pid" 2>/dev/null || break
     attempt=$((attempt + 1))
     sleep 0.1
 done
 test "$attempt" -lt 900
-printf '/quit\n' >&3
+printf '\004' >&3
 exec 3>&-
 wait "$repl_pid"
 repl_pid=
-grep -F 'YVEX · local runtime · session repl-live' "$root/repl.typescript" >/dev/null
-grep -F 'assistant>' "$root/repl.typescript" >/dev/null
-grep -F '1 generated' "$root/repl.typescript" >/dev/null
+grep -F 'runtime ready · attached to resident runtime' "$root/repl.typescript" >/dev/null
+grep -F 'session repl-live' "$root/repl.typescript" >/dev/null
+grep -F 'generation   1 tokens' "$root/repl.typescript" >/dev/null
+grep -F 'prefill      ' "$root/repl.typescript" >/dev/null
+! grep -F 'assistant>' "$root/repl.typescript" >/dev/null
+! grep -F 'you>' "$root/repl.typescript" >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show repl-live >"$root/repl.session"
 grep -F 'detached' "$root/repl.session" >/dev/null
 
@@ -187,9 +190,13 @@ trace_pid=
 grep -F '"kind":"runtime.ready"' "$root/raw.jsonl" >/dev/null
 grep -F '"kind":"runtime.shutdown.complete"' "$root/raw.jsonl" |
     grep -F '"a":1,"b":1' >/dev/null
-grep -F 'request.started' "$root/engine.log" >/dev/null
-grep -F 'generation.completed' "$root/engine.log" >/dev/null
-grep -F '"kind":"generation.completed"' "$root/trace.jsonl" >/dev/null
+grep -F 'request started' "$root/engine.log" >/dev/null
+grep -F 'generation completed' "$root/engine.log" >/dev/null
+grep -F 'request started' "$root/trace.log" >/dev/null
+grep -F 'generation completed' "$root/trace.log" >/dev/null
+grep -E '^#[0-9]+ (debug|info|warning|error|fatal)' "$root/trace.log" >/dev/null
+! grep -E '(^|[[:space:]])[ab]=' "$root/engine.log" >/dev/null
+! grep -E '(^|[[:space:]])[ab]=' "$root/trace.log" >/dev/null
 grep -F '"kind":"generation.cancelled"' "$root/raw.jsonl" |
     grep -F '"session":"cancel-live"' >/dev/null
 grep -F '"kind":"tokenizer.completed"' "$root/raw.jsonl" | grep -F '"a":14,"b":6' >/dev/null

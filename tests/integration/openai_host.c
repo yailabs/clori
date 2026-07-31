@@ -83,6 +83,104 @@ static int send_status(int fd, const yvex_client_request *request,
     return yvex_server_protocol_send(fd, &message, err);
 }
 
+static int send_console_status(int fd, const yvex_client_request *request,
+                               yvex_error *err)
+{
+    yvex_client_message message;
+    message_base(&message, YVEX_CLIENT_MESSAGE_CONSOLE_STATUS, request);
+    message.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.runtime.status = YVEX_SERVER_STATUS_READY;
+    message.runtime.runtime_ready = 1;
+    message.runtime.generation_ready = 1;
+    message.runtime.backend = YVEX_BACKEND_KIND_CUDA;
+    message.runtime.context_capacity = 4096u;
+    strcpy(message.runtime.target_id, "deepseek-v4-flash");
+    memset(message.runtime.runtime_model_identity, 'a', 64u);
+    message.runtime.runtime_model_identity[64] = '\0';
+    memset(message.runtime.physical_variant_identity, 'd', 64u);
+    message.runtime.physical_variant_identity[64] = '\0';
+    message.console.schema_version = 1u;
+    message.console.backend = YVEX_BACKEND_KIND_CUDA;
+    message.console.session_state = YVEX_SERVER_SESSION_READY;
+    message.console.generation_phase = YVEX_CLIENT_PHASE_IDLE;
+    message.console.context_capacity = 4096u;
+    message.console.runtime_ready = 1;
+    message.console.session_available = 1;
+    message.console.attached = 1;
+    strcpy(message.console.session_name, request->session_name);
+    memset(message.console.live_model_identity, 'a', 64u);
+    message.console.live_model_identity[64] = '\0';
+    memset(message.console.physical_variant_identity, 'd', 64u);
+    message.console.physical_variant_identity[64] = '\0';
+    return yvex_server_protocol_send(fd, &message, err);
+}
+
+static int send_native_progress(int fd, const yvex_client_request *request,
+                                size_t event_count, yvex_error *err)
+{
+    static const yvex_server_event_kind kinds[] = {
+        YVEX_SERVER_EVENT_TOKENIZER_COMPLETED,
+        YVEX_SERVER_EVENT_PREFILL_STARTED,
+        YVEX_SERVER_EVENT_PREFILL_PROGRESS,
+        YVEX_SERVER_EVENT_PREFILL_COMPLETED};
+    static const unsigned long long values[][2] = {
+        {5u, 1u}, {4u, 4u}, {2u, 4u}, {4u, 1u}};
+    static const char *const phases[] = {
+        "tokenizer", "prefill", "prefill", "prefill"};
+    static const char identity[] =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    server_telemetry *telemetry = NULL;
+    size_t index;
+    int rc = yvex_server_telemetry_open(&telemetry, 8u, identity, identity,
+                                        identity, err);
+    for (index = 0u; rc == YVEX_OK && index < event_count; ++index) {
+        yvex_client_message message;
+        message_base(&message, YVEX_CLIENT_MESSAGE_EVENT, request);
+        message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
+        rc = yvex_server_telemetry_emit_provider(
+            telemetry, kinds[index], YVEX_SERVER_SEVERITY_INFO,
+            request->session_name, "fixture-request", "fixture-turn",
+            phases[index], values[index][0], values[index][1], 0u,
+            index >= 2u ? (double)(index - 1u) : 0.0,
+            index >= 2u ? 2.0 : 0.0,
+            NULL, &message.event, err);
+        if (rc == YVEX_OK) rc = yvex_server_protocol_send(fd, &message, err);
+    }
+    yvex_server_telemetry_close(&telemetry);
+    return rc;
+}
+
+static int send_event_stream(int fd, const yvex_client_request *request,
+                             yvex_error *err)
+{
+    static const yvex_server_event_kind kinds[] = {
+        YVEX_SERVER_EVENT_REQUEST_STARTED,
+        YVEX_SERVER_EVENT_GENERATION_PROFILE,
+        YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE};
+    static const unsigned long long values[][3] = {
+        {5u, 1u, 3u}, {4511u, 63u, 0u}, {1u, 1u, 0u}};
+    static const char *const phases[] = {"generation", "launches", "runtime"};
+    static const char identity[] =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    server_telemetry *telemetry = NULL;
+    size_t index;
+    int rc = yvex_server_telemetry_open(&telemetry, 8u, identity, identity,
+                                        identity, err);
+    for (index = 0u; rc == YVEX_OK && index < sizeof(kinds) / sizeof(kinds[0]); ++index) {
+        yvex_client_message message;
+        message_base(&message, YVEX_CLIENT_MESSAGE_EVENT, request);
+        message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
+        rc = yvex_server_telemetry_emit_provider(
+            telemetry, kinds[index], YVEX_SERVER_SEVERITY_INFO,
+            index < 2u ? "fixture" : NULL, index < 2u ? "fixture-request" : NULL,
+            index < 2u ? "fixture-turn" : NULL, phases[index], values[index][0],
+            values[index][1], values[index][2], 0.0, 0.0, NULL, &message.event, err);
+        if (rc == YVEX_OK) rc = yvex_server_protocol_send(fd, &message, err);
+    }
+    yvex_server_telemetry_close(&telemetry);
+    return rc;
+}
+
 static int send_fragment(int fd, const yvex_client_request *request,
                          yvex_provider_output_kind kind,
                          const char *bytes, const char *call_id,
@@ -114,6 +212,50 @@ static int request_contains(const yvex_provider_request *request,
     return 0;
 }
 
+static int native_prompt_contains(const yvex_client_request *request,
+                                  const char *marker)
+{
+    unsigned long long offset;
+    size_t count = strlen(marker);
+    if (!request || request->provider_request || !request->prompt ||
+        request->prompt_bytes < count)
+        return 0;
+    for (offset = 0u; offset <= request->prompt_bytes - count; ++offset)
+        if (memcmp(request->prompt + offset, marker, count) == 0) return 1;
+    return 0;
+}
+
+static int send_native_cancellation(int fd,
+                                    const yvex_client_request *request,
+                                    yvex_error *err)
+{
+    struct pollfd listener = {.fd = listener_fd, .events = POLLIN};
+    yvex_client_message message;
+    int cancellation, ready, rc;
+    do {
+        ready = poll(&listener, 1u, 2000);
+    } while (ready < 0 && errno == EINTR);
+    if (ready <= 0 || !(listener.revents & POLLIN)) {
+        yvex_error_set(err, YVEX_ERR_TIMEOUT, "test.openai-host.cancel",
+                       "native cancellation request did not arrive");
+        return YVEX_ERR_TIMEOUT;
+    }
+    cancellation = accept(listener_fd, NULL, NULL);
+    if (cancellation < 0) {
+        yvex_error_set(err, YVEX_ERR_IO, "test.openai-host.cancel",
+                       "native cancellation accept failed");
+        return YVEX_ERR_IO;
+    }
+    rc = serve_connection(cancellation, err);
+    close(cancellation);
+    if (rc != YVEX_OK) return rc;
+    message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
+    message.status = YVEX_ERR_CANCELLED;
+    message.failure_class = YVEX_CLIENT_FAILURE_CLIENT_CANCELLED;
+    strcpy(message.reason, "native generation cancellation admitted");
+    return yvex_server_protocol_send(fd, &message, err);
+}
+
 static int send_generation(int fd, const yvex_client_request *request,
                            yvex_error *err)
 {
@@ -136,6 +278,15 @@ static int send_generation(int fd, const yvex_client_request *request,
     }
     message_base(&message, YVEX_CLIENT_MESSAGE_TURN_STARTED, request);
     rc = yvex_server_protocol_send(fd, &message, err);
+    if (rc == YVEX_OK && !provider) {
+        size_t progress_events = native_prompt_contains(request, "WAIT_PREFILL_CANCEL")
+                                     ? 2u : 4u;
+        rc = send_native_progress(fd, request, progress_events, err);
+    }
+    if (rc == YVEX_OK &&
+        (native_prompt_contains(request, "WAIT_PREFILL_CANCEL") ||
+         native_prompt_contains(request, "WAIT_DECODE_CANCEL")))
+        return send_native_cancellation(fd, request, err);
     if (rc == YVEX_OK && request_contains(provider, "DISCONNECT")) {
         struct pollfd listener = {.fd = listener_fd, .events = POLLIN};
         int ready;
@@ -205,10 +356,21 @@ static int send_generation(int fd, const yvex_client_request *request,
                                   ? YVEX_PROVIDER_FINISH_TOOL_CALLS
                                   : YVEX_PROVIDER_FINISH_STOP;
     message.prompt_tokens = 5u;
+    message.reused_tokens = 1u;
+    message.prefill_tokens = 4u;
     message.completion_tokens = 3u;
     message.total_tokens = 8u;
     message.generated_tokens = 3u;
     message.final_position = 8u;
+    message.context_used = 8u;
+    message.prefill_seconds = 2.0;
+    message.first_token_seconds = 2.5;
+    message.decode_seconds = 3.0;
+    message.prefill_rate = 2.0;
+    message.decode_rate = 1.0;
+    message.stop_reason = 3u;
+    message.generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
+    message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
     memset(message.turn_identity, 'e', 64u);
     message.turn_identity[64] = '\0';
     return yvex_server_protocol_send(fd, &message, err);
@@ -234,6 +396,11 @@ static int serve_connection(int fd, yvex_error *err)
     request.provider_request = provider;
     if (request.operation == YVEX_CLIENT_OP_RUNTIME_STATUS)
         rc = send_status(fd, &request, err);
+    else if (request.operation == YVEX_CLIENT_OP_CONSOLE_STATUS)
+        rc = send_console_status(fd, &request, err);
+    else if (request.operation == YVEX_CLIENT_OP_RUNTIME_WATCH ||
+             request.operation == YVEX_CLIENT_OP_RUNTIME_TRACE)
+        rc = send_event_stream(fd, &request, err);
     else if (request.operation == YVEX_CLIENT_OP_GENERATION_TURN)
         rc = send_generation(fd, &request, err);
     else {

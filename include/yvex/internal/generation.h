@@ -131,6 +131,7 @@ typedef int (*yvex_runtime_generation_fragment_sink)(
 typedef enum {
     YVEX_GENERATION_PROGRESS_PROMPT_ACCEPTED = 0,
     YVEX_GENERATION_PROGRESS_PREFILL_STARTED,
+    YVEX_GENERATION_PROGRESS_PREFILL_PROGRESS,
     YVEX_GENERATION_PROGRESS_PREFILL_COMPLETED
 } yvex_runtime_generation_progress_kind;
 typedef int (*yvex_runtime_generation_progress_sink)(

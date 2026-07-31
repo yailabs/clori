@@ -56,6 +56,13 @@ result. Fragment bytes carry explicit lengths and a typed stream channel:
 final text, explicit model-emitted reasoning when supported, tool call, tool
 result, or control/event.
 
+Native generation connections receive identity-sealed tokenizer and prefill
+events from the same telemetry authority as watch and trace. Prefill-start,
+per-chunk progress, and completion facts let the console update one truthful
+line without timing the asynchronous request locally. Provider/OpenAI requests
+retain their provider stream contract and do not receive these native console
+messages.
+
 Ordinary current DeepSeek text uses the final-text channel. An unavailable
 explicit-reasoning channel remains unavailable; clients may not infer hidden
 reasoning or classify prose by style.

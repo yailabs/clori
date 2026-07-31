@@ -251,7 +251,7 @@ static int test_provider_telemetry(void)
     yvex_provider_message message = {0};
     yvex_provider_request request = {0};
     server_telemetry *telemetry = NULL;
-    yvex_server_event event;
+    yvex_server_event emitted, event;
     yvex_error err;
     char json[4096];
     int rc;
@@ -275,10 +275,12 @@ static int test_provider_telemetry(void)
     rc = yvex_server_telemetry_emit_provider(
         telemetry, YVEX_SERVER_EVENT_REQUEST_STARTED,
         YVEX_SERVER_SEVERITY_INFO, "session", "r1", "t1", "turn",
-        1u, 0u, 4u, 0.0, 0.0, &request, &err);
+        1u, 0u, 4u, 0.0, 0.0, &request, &emitted, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry emit");
     rc = yvex_server_telemetry_next(telemetry, 0u, 0, &event, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry read");
+    YVEX_TEST_ASSERT_STREQ(emitted.event_identity, event.event_identity,
+                           "emitted event is the sealed retained event");
     YVEX_TEST_ASSERT_STREQ(event.provider_adapter, "openai",
                            "provider adapter event fact");
     YVEX_TEST_ASSERT_STREQ(event.provider_request_identity,

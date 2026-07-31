@@ -4,9 +4,9 @@ This runbook owns first startup and routine operation of the installed local
 runtime host and clients. Normal operation is registry-first: users list a
 complete local model profile, select it by name, start the runtime, and enter
 chat without exporting paths or repeating daemon flags. Its commands follow
-the canonical operation registry. The current REPL
-renderer is transitional; the intended console is owned by the active
-[runtime-console milestone](milestones/runtime-console-repl.md).
+the canonical operation registry. The REPL attaches to the resident daemon and
+uses the same typed session, progress, and result facts as noninteractive
+clients.
 It is not a capability ledger: consult [`ROADMAP.md`](../ROADMAP.md) for current
 gates.
 
@@ -126,6 +126,39 @@ sequence. Default telemetry excludes prompt and answer content.
 If observation is not needed, two terminals are sufficient: keep `runtime
 start` in the first and run `runtime status`, then `chat`, in the second.
 
+## Interactive console
+
+Chat opens one concise attachment view and the stable prompt:
+
+```text
+YVEX 0.1.0 · protocol 4
+deepseek-v4-flash · CUDA · variant 0123456789ab
+runtime ready · attached to resident runtime
+session main · position 0 · turns 0 · context 0/4096 · KV unavailable
+
+yvex>
+```
+
+The exact identities come from the running daemon; the example values are not
+admission evidence. Model output is streamed directly without repeated role
+labels. During a turn, the console updates one daemon-authored prefill line in
+place. The terminal result then reports prefill and generation separately,
+including TTFT, context, stop reason, and session.
+
+Slash commands are discovered from the canonical registry. `/help` lists the
+admitted set; `/status`, `/runtime`, `/model`, `/memory`, and `/context` inspect
+state; `/session`, `/sessions`, `/new`, `/attach`, `/detach`, `/reset`, and
+`/close` manage the session; `/cancel` cancels active generation; and `/quit`
+exits locally. Tab completes an unambiguous slash command. Commands for an
+unsupported explicit reasoning channel are absent rather than simulated.
+
+Ctrl-D exits from the prompt and discards an unfinished line. Ctrl-C during a
+turn requests server-owned cancellation and returns to the prompt; a second
+Ctrl-C requests exit. With no active turn, the first Ctrl-C clears the line and
+a second consecutive Ctrl-C exits. EOF, cancellation, resize, and failure all
+restore bracketed-paste and terminal modes before returning control to the
+shell.
+
 ## One-shot requests
 
 An ephemeral one-shot session streams one answer and closes while leaving the
@@ -212,8 +245,10 @@ daemon console:
 ```
 
 `watch` requests the compact stage stream, while `trace` requests the detailed
-event stream. Their current human renderers are transitional and can look
-similar; `trace --json` is the unambiguous canonical JSONL projection.
+event stream. Watch names the operational event and its semantic counters.
+Human trace additionally shows sequence, severity, turn, phase, timing, and
+rate. `trace --json` emits the canonical complete JSONL event record. Prompts
+and answers remain absent from all three by default.
 
 Raw daemon JSONL is selected at host startup with `--console raw`. Increase
 `--trace-level` from `summary` to `stages`, `tokens`, or `full` only when the

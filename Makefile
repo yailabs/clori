@@ -792,8 +792,9 @@ test-client test-cli-cutover: client $(CLIENT_CUTOVER_TEST)
 	YVEX_BIN='$(YVEX_BIN)' YVEX_CLIENT_LANE_OBJ='$(CLIENT_LANE_OBJ)' \
 		sh $(CLIENT_CUTOVER_TEST)
 
-test-repl: client $(REPL_PTY_TEST)
-	YVEX_BIN='$(YVEX_BIN)' sh $(REPL_PTY_TEST)
+test-repl: client $(OPENAI_FAKE_HOST) $(REPL_PTY_TEST)
+	YVEX_BIN='$(YVEX_BIN)' YVEX_TEST_HOST='$(OPENAI_FAKE_HOST)' \
+		sh $(REPL_PTY_TEST)
 
 test-packaging: package
 	@test -x '$(BUILD_DIR)/package/product/bin/yvex'

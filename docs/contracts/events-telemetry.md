@@ -10,7 +10,7 @@ project these facts but do not own event meaning.
 Runtime, server, session, generation, listener, and shutdown owners publish one
 ordered event stream. Consumers are the daemon raw console, local protocol
 subscribers, status/metrics accumulation, `runtime watch`, `runtime trace`, and
-future console renderers.
+the interactive console.
 
 No consumer scrapes another renderer's text.
 
@@ -52,13 +52,11 @@ runtime model.
 
 `yvexd --console raw` and `yvex runtime trace --json` emit canonical JSONL for
 the admitted trace schema. `runtime status` is a bounded snapshot rather than
-an event replay. The current human `runtime watch` and `runtime trace`
-renderers are transitional and do not yet provide the intended semantic
-operational and detailed technical views.
-
-The active runtime-console milestone owns those human projections. It must
-consume this same authority and must not create synthetic startup, progress,
-or timing events.
+an event replay. Human `runtime watch` renders the compact semantic stage
+stream. Human `runtime trace` adds sequence, severity, turn, phase, timing, and
+rate to the same semantic facts. Neither renderer exposes generic positional
+counter names. Native prefill progress sent to the REPL is another projection
+of the sealed event, not a synthetic client event.
 
 ## Privacy and content
 

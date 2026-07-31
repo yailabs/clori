@@ -10,8 +10,8 @@ semantics. C interfaces are documented separately in [YVEX C API](c-api.md).
 Producer: `yvexd`, common runtime, graph/backend, tokenizer, generation, and
 server owners.
 
-Consumers: runtime-client operations in `yvex`, the in-process OpenAI adapter,
-focused runtime tests, and future console renderers.
+Consumers: runtime-client operations and the interactive console in `yvex`,
+the in-process OpenAI adapter, and focused runtime tests.
 
 The contract begins with one admitted complete artifact and exact runtime
 binding and ends with typed state/results, committed text, events, or refusal.
