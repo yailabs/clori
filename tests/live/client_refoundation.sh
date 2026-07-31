@@ -1,7 +1,6 @@
 #!/bin/sh
-# Purpose: prove the exact product binaries share one daemon model across two KV-reusing turns,
-# expose corresponding raw/operational events, preserve a detached session, reset exactly, and
-# close the runtime once. All runtime output remains in an untracked temporary directory.
+# The product clients share one daemon model across two KV-reusing turns, preserve detached state,
+# reset exactly, and close the runtime once. Runtime output remains in an untracked directory.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}

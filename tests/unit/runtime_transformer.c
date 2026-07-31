@@ -1,12 +1,8 @@
-/* Owner: runtime transformer tests.
- * Owns: family policy, canonical identities, token admission, residual composition, and final-stage reference proof.
- * Does not own: selected-artifact scale execution, CUDA qualification, logits, decode loops, or CLI I/O.
- * Invariants: reference equations do not call production initial/deferred/final transformer mechanisms.
- * Boundary: focused internal-ABI evidence; no fixture enters production objects.
- * Purpose: prove the bounded pointer-free transformer plan/input and composed numerical contracts.
- * Inputs: deterministic tiny plans, token IDs, activations, weights, and test-owned temporary files.
- * Effects: creates and removes only one temporary directory and caller-owned arrays.
- * Failure: identity, admission, ordering, or numeric mismatch fails the unit runner. */
+/*
+ * Exercises the bounded pointer-free transformer plan/input and composed numerical contracts.
+ * Reference equations do not call production initial/deferred/final transformer mechanisms.
+ * Focused internal-ABI evidence; no fixture enters production objects.
+ */
 #define _GNU_SOURCE
 #include "tests/test.h"
 
@@ -21,13 +17,12 @@
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/transformer.h>
 
-/* Purpose: produce one deterministic valid identity. */
 static void transformer_test_identity(char output[YVEX_SHA256_HEX_CAP], unsigned int value)
 {
     (void)snprintf(output, YVEX_SHA256_HEX_CAP, "%064x", value);
 }
 
-/* Purpose: construct and import one tiny identity-bearing transformer plan. */
+/* Construct and import one tiny identity-bearing transformer plan. */
 static int transformer_test_plan(yvex_transformer_plan **out,
                                  yvex_transformer_plan_summary *summary_out)
 {
@@ -77,7 +72,6 @@ static int transformer_test_plan(yvex_transformer_plan **out,
     return 0;
 }
 
-/* Purpose: prove exact DeepSeek family projection without target-string policy in common owners. */
 static int transformer_test_family(void)
 {
     const yvex_runtime_family_adapter *adapter =
@@ -94,7 +88,6 @@ static int transformer_test_family(void)
     return 0;
 }
 
-/* Purpose: independently exercise initial/deferred/final composition equations. */
 static int transformer_test_numeric(void)
 {
     yvex_transformer_plan *plan = NULL;
@@ -140,7 +133,6 @@ static int transformer_test_numeric(void)
     return 0;
 }
 
-/* Purpose: prove field-wise router identity mutation and unused-capacity invariance. */
 static int transformer_test_router_identity(void)
 {
     yvex_moe_router_result router;
@@ -166,7 +158,7 @@ static int transformer_test_router_identity(void)
     return 0;
 }
 
-/* Purpose: prove bounded memory/file token admission, exact identities, drift, and refusal. */
+/* Prove bounded memory/file token admission, exact identities, drift, and refusal. */
 static int transformer_test_input(void)
 {
     yvex_transformer_plan *plan = NULL;
@@ -236,7 +228,6 @@ static int transformer_test_input(void)
     return 0;
 }
 
-/* Purpose: prove the production block API refuses missing transaction owners before mutation. */
 static int transformer_test_block_api_refusal(void)
 {
     yvex_runtime_transformer_block_result result;

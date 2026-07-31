@@ -1,12 +1,8 @@
-/* Owner: live DeepSeek activation-prefill evidence.
- * Owns: target-scale tensor-input, chunk, causality, rollback, CPU/CUDA, and cleanup proof.
- * Does not own: production runtime behavior, canonical probes, artifacts, MoE, or generation.
- * Invariants: every input covers 43 admitted layers and every execution uses session-persistent state.
- * Boundary: test-only consumer of the production runtime-prefill API and admitted external artifact.
- * Purpose: prove activation prefill over real DeepSeek weights without creating another executor.
- * Inputs: selected GGUF, immutable runtime binding, and one caller-owned activation output path.
- * Effects: writes one bounded activation file and executes serial CPU/CUDA sessions.
- * Failure: prints the typed owner and releases every test-owned model, session, input, and allocation. */
+/*
+ * Exercises activation prefill over real DeepSeek weights without creating another executor.
+ * Every input covers 43 admitted layers and every execution uses session-persistent state.
+ * Test-only consumer of the production runtime-prefill API and admitted external artifact.
+ */
 #include <yvex/internal/core.h>
 #include <yvex/internal/runtime_prefill.h>
 
@@ -26,7 +22,6 @@ typedef struct {
     unsigned long long cancel_after_chunks;
 } live_cancel;
 
-/* Purpose: print one typed live failure without losing its semantic owner. */
 static int live_fail(const char *step, int rc, const yvex_error *err)
 {
     fprintf(stderr, "prefill_live step=%s status=%d where=%s reason=%s\n",
@@ -35,7 +30,6 @@ static int live_fail(const char *step, int rc, const yvex_error *err)
     return 0;
 }
 
-/* Purpose: release one caller-owned activation bundle exactly once. */
 static void live_activation_close(live_activation *activation)
 {
     if (!activation) return;
@@ -45,7 +39,6 @@ static void live_activation_close(live_activation *activation)
     memset(activation, 0, sizeof(*activation));
 }
 
-/* Purpose: construct deterministic finite activation values from semantic coordinates. */
 static float live_activation_value(unsigned long long layer,
                                    unsigned long long token,
                                    unsigned long long column,
@@ -59,7 +52,6 @@ static float live_activation_value(unsigned long long layer,
     return result;
 }
 
-/* Purpose: seal one all-layer activation bundle from the admitted runtime model. */
 static int live_activation_open(live_activation *activation,
                                 const yvex_runtime_model *model,
                                 unsigned long long start,
@@ -151,7 +143,6 @@ fail:
     return rc;
 }
 
-/* Purpose: cancel at the first safe point after the requested completed chunk. */
 static int live_cancel_requested(void *context)
 {
     live_cancel *cancel = (live_cancel *)context;
@@ -159,7 +150,6 @@ static int live_cancel_requested(void *context)
            cancel->result->chunk_count >= cancel->cancel_after_chunks;
 }
 
-/* Purpose: open one isolated production execution session. */
 static int live_session_open(yvex_runtime_execution_session **session,
                              yvex_runtime_model *model,
                              yvex_backend_kind backend, yvex_error *err)
@@ -172,7 +162,6 @@ static int live_session_open(yvex_runtime_execution_session **session,
     return yvex_runtime_session_open(session, model, &request, &failure, err);
 }
 
-/* Purpose: execute one production activation bundle with explicit chunking. */
 static int live_execute(yvex_runtime_model *model,
                         yvex_runtime_execution_session *session,
                         const live_activation *activation,
@@ -198,7 +187,6 @@ static int live_execute(yvex_runtime_model *model,
         model, session, activation->input, &request, result, &failure, err);
 }
 
-/* Purpose: close one session and preserve cleanup failure as live evidence. */
 static int live_session_close(yvex_runtime_execution_session **session,
                               yvex_error *err)
 {
@@ -206,7 +194,7 @@ static int live_session_close(yvex_runtime_execution_session **session,
     return rc == YVEX_OK && !*session ? YVEX_OK : rc;
 }
 
-/* Purpose: prove whole-chunk, subchunk, clear, cancellation, and rollback on CPU. */
+/* Prove whole-chunk, subchunk, clear, cancellation, and rollback on CPU. */
 static int live_cpu_suite(yvex_runtime_model *model,
                           const live_activation *full,
                           const live_activation *prefix_a,
@@ -345,7 +333,6 @@ static int live_cpu_suite(yvex_runtime_model *model,
     return rc;
 }
 
-/* Purpose: prove CUDA consumes the exact CPU activation bytes and committed state contract. */
 static int live_cuda_suite(yvex_runtime_model *model,
                            const live_activation *full, yvex_error *err)
 {

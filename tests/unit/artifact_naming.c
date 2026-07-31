@@ -1,6 +1,4 @@
-/*
- * YVEX - Artifact naming tests
- */
+
 #include <string.h>
 
 #include <yvex/api.h>

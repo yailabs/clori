@@ -1,21 +1,13 @@
-/* Owner: backend.cuda.errors (backend.cuda).
- * Owns: CUDA Driver error translation shared by CUDA admission and execution.
- * Does not own: model policy, graph admission, generation readiness, or higher-stage claims.
- * Invariants: CUDA failures preserve the originating Driver status and typed operation context.
- * Boundary: this owner exposes typed facts only at its admitted subsystem stage.
- * Purpose: Translate CUDA Driver status into stable typed YVEX failures.
- * Inputs: A CUDA status code, operation label, and caller-owned error result.
- * Effects: Writes only the supplied error object.
- * Failure: Unknown and known driver failures remain distinguishable typed CUDA refusals. */
+/*
+ * Translate CUDA Driver status into stable typed YVEX failures.
+ *
+ * CUDA failures preserve the originating Driver status and typed operation context. This owner
+ * exposes typed facts only at its admitted subsystem stage.
+ */
 
 #include "src/backend/cuda/private.h"
 #include <stdio.h>
 
-/* Purpose: Implement the canonical status mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
 int yvex_cuda_status(const yvex_cuda_driver *driver,
                      CUresult code,
                      const char *where,

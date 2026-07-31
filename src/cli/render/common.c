@@ -1,13 +1,9 @@
-/* Owner: src/cli/render
- * Owns: small CLI-only helper implementations shared by model-artifacts command family surfaces.
- * Does not own: command-family dispatch bodies, provider execution, domain algorithms, renderer contracts, libyvex
- *   sources, artifact emission, runtime generation, eval, benchmark, or release decisions.
- * Invariants: shared rendering stays policy-free, table-driven, and below the repository unit limit.
- * Boundary: shared CLI helpers do not imply runtime support or artifact emission.
- * Purpose: provide small CLI-only helper implementations shared by model-artifacts command family surfaces.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Provide small CLI-only helper implementations shared by model-artifacts command family surfaces.
+ *
+ * Shared rendering stays policy-free, table-driven, and below the repository unit limit. Shared
+ * CLI helpers do not imply runtime support or artifact emission.
+ */
 #include "src/cli/model_artifacts/private.h"
 #include "src/cli/render/private.h"
 
@@ -235,11 +231,6 @@ static const yvex_render_field_spec download_audit_source_fields[] = {
 
 #undef DOWNLOAD_FIELD
 
-/* Purpose: Construct the owned models registry open state (`models_registry_open`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int models_registry_open(yvex_model_registry **registry, const char *registry_path,
                          int create_if_missing, yvex_error *err) {
     yvex_model_registry_options options;
@@ -250,11 +241,6 @@ int models_registry_open(yvex_model_registry **registry, const char *registry_pa
     return yvex_model_registry_open(registry, &options, err);
 }
 
-/* Purpose: Render print metadata drift from typed facts (`print_metadata_drift_cli`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void print_metadata_drift_cli(const yvex_model_metadata_drift_report *report) {
     unsigned int i;
 
@@ -273,20 +259,10 @@ void print_metadata_drift_cli(const yvex_model_metadata_drift_report *report) {
     }
 }
 
-/* Purpose: Compute path exists for its CLI invariant (`path_exists`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int path_exists(const char *path) {
     return path && path[0] && access(path, F_OK) == 0;
 }
 
-/* Purpose: Compute is path like reference for its CLI invariant (`is_path_like_reference`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int is_path_like_reference(const char *input) {
     size_t len;
 
@@ -298,11 +274,6 @@ int is_path_like_reference(const char *input) {
     return len >= 5u && strcmp(input + len - 5u, ".gguf") == 0;
 }
 
-/* Purpose: append one admitted role to a bounded comma-separated CLI field.
- * Inputs: caller-owned field, exact capacity, and immutable role name.
- * Effects: appends one comma and role only when the complete suffix fits.
- * Failure: invalid or exhausted buffers remain unchanged.
- * Boundary: formatting cannot alter role admission. */
 void model_artifact_append_role(char *out, size_t out_cap, const char *role)
 {
     size_t used;
@@ -317,11 +288,6 @@ void model_artifact_append_role(char *out, size_t out_cap, const char *role)
     snprintf(out + used, used < out_cap ? out_cap - used : 0u, "%s", role);
 }
 
-/* Purpose: Transfer bounded write escaped data (`write_escaped`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void write_escaped(FILE *fp, const char *s) {
     if (!s)
         s = "";
@@ -344,11 +310,6 @@ static void write_escaped(FILE *fp, const char *s) {
     yvex_cli_out_char(fp, '"');
 }
 
-/* Purpose: Transfer bounded write field data (`write_field`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void write_field(FILE *fp, const char *indent, const char *key, const char *value,
                         int comma) {
     yvex_cli_out_fputs(indent, fp);
@@ -357,32 +318,17 @@ static void write_field(FILE *fp, const char *indent, const char *key, const cha
     yvex_cli_out_writef(fp, "%s\n", comma ? "," : "");
 }
 
-/* Purpose: Transfer bounded write u64 field data (`write_u64_field`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void write_u64_field(FILE *fp, const char *indent, const char *key, unsigned long long value,
                             int comma) {
     yvex_cli_out_fputs(indent, fp);
     yvex_cli_out_writef(fp, "\"%s\": %llu%s\n", key, value, comma ? "," : "");
 }
 
-/* Purpose: Transfer bounded write bool field data (`write_bool_field`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void write_bool_field(FILE *fp, const char *indent, const char *key, int value, int comma) {
     yvex_cli_out_fputs(indent, fp);
     yvex_cli_out_writef(fp, "\"%s\": %s%s\n", key, value ? "true" : "false", comma ? "," : "");
 }
 
-/* Purpose: Parse parse models output mode into typed CLI state (`parse_models_output_mode`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int parse_models_output_mode(const char *value, yvex_models_output_mode *mode) {
     if (!value || !mode)
         return 0;
@@ -397,11 +343,6 @@ int parse_models_output_mode(const char *value, yvex_models_output_mode *mode) {
     return 1;
 }
 
-/* Purpose: Parse parse models bound option into typed CLI state (`parse_models_bound_option`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int parse_models_bound_option(const char *command, int arg_count, char **args, int *index,
                               void *options, const yvex_models_option_spec *specs,
                               size_t spec_count, int *handled) {
@@ -447,11 +388,6 @@ int parse_models_bound_option(const char *command, int arg_count, char **args, i
     return 0;
 }
 
-/* Purpose: Render print model registry entry from typed facts (`print_model_registry_entry_cli`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void print_model_registry_entry_cli(const yvex_model_registry_entry *entry) {
     if (!entry)
         return;
@@ -461,11 +397,6 @@ void print_model_registry_entry_cli(const yvex_model_registry_entry *entry) {
                         entry->known_tensor_bytes, entry->selected_embedding_ready ? "yes" : "no");
 }
 
-/* Purpose: Render print model registry entry audit from typed facts (`print_model_registry_entry_audit`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void print_model_registry_entry_audit(const yvex_model_registry_entry *entry) {
     if (!entry)
         return;
@@ -490,11 +421,6 @@ void print_model_registry_entry_audit(const yvex_model_registry_entry *entry) {
                         entry->selected_embedding_ready ? "true" : "false");
 }
 
-/* Purpose: Render print model registry scan entry from typed facts (`print_model_registry_scan_entry_cli`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void print_model_registry_scan_entry_cli(const yvex_model_registry_entry *entry) {
     if (!entry)
         return;
@@ -502,11 +428,6 @@ void print_model_registry_scan_entry_cli(const yvex_model_registry_entry *entry)
     yvex_cli_out_writef(stdout, "path: %s\n", entry->path ? entry->path : "");
 }
 
-/* Purpose: Compute dims to text for its CLI invariant (`dims_to_text`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void dims_to_text(const unsigned long long *dims, unsigned int rank, char *out, size_t out_cap) {
     size_t used = 0u;
     unsigned int i;
@@ -527,11 +448,6 @@ void dims_to_text(const unsigned long long *dims, unsigned int rank, char *out, 
     }
 }
 
-/* Purpose: Compute populate registry identity for its CLI invariant (`populate_registry_identity`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int populate_registry_identity(yvex_model_registry_entry *entry, char *sha256, char *format,
                                char *architecture, char *primary_name, char *primary_role,
                                char *primary_dtype, char *primary_dims, yvex_error *err) {
@@ -571,60 +487,35 @@ int populate_registry_identity(yvex_model_registry_entry *entry, char *sha256, c
     return YVEX_OK;
 }
 
-/* Purpose: Render model stage print from typed facts (`model_stage_print`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void model_stage_print(const char *stage, const char *status) {
     yvex_cli_out_writef(stdout, "stage: %s %s\n", stage ? stage : "", status ? status : "");
 }
 
-/* Purpose: Normalize an optional family selector to the explicit auto value.
- * Inputs: Borrowed nullable family name.
- * Effects: None; the returned string remains borrowed or static.
- * Failure: Empty input selects the stable auto fallback.
- * Boundary: Normalization does not select or admit a model family. */
 const char *model_requested_family(const char *family) {
     return family && family[0] ? family : "auto";
 }
 
-/* Purpose: Render one indexed model phase through the shared CLI phase grammar.
- * Inputs: Borrowed prefix, phase name, status, and fallback text.
- * Effects: Writes exactly two ordered fields through CLI I/O.
- * Failure: CLI write failure remains owned by the output boundary.
- * Boundary: Phase rendering cannot change lifecycle or capability state. */
+/*
+ * Render one indexed model phase through the shared CLI phase grammar.
+ *
+ * Borrowed prefix, phase name, status, and fallback text.
+ */
 void model_phase_print(const char *prefix, unsigned int index, const char *name, const char *status,
                        const char *fallback) {
     yvex_cli_out_writef(stdout, "%s.%u.name: %s\n", prefix, index, name ? name : "");
     yvex_cli_out_writef(stdout, "%s.%u.status: %s\n", prefix, index, status ? status : fallback);
 }
 
-/* Purpose: Render model print runtime generation from typed facts (`model_print_runtime_generation`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void model_print_runtime_generation(const char *runtime_execution) {
     yvex_cli_out_writef(stdout, "runtime_execution: %s\n",
                         runtime_execution ? runtime_execution : "not-performed");
     yvex_cli_out_writef(stdout, "generation: unsupported\n");
 }
 
-/* Purpose: Compute arg value valid for its CLI invariant (`cli_arg_value_valid`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int cli_arg_value_valid(const char *value) {
     return value && value[0] && !strchr(value, '\n') && !strchr(value, '\r');
 }
 
-/* Purpose: Parse parse models value option into typed CLI state (`parse_models_value_option`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int parse_models_value_option(const char *command, const char *flag, int arg_count, char **args,
                               int *index, const char **value) {
     if (*index + 1 >= arg_count) {
@@ -639,11 +530,6 @@ int parse_models_value_option(const char *command, const char *flag, int arg_cou
     return 0;
 }
 
-/* Purpose: Compute model backend kind from name for its CLI invariant (`model_backend_kind_from_name`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_backend_kind_from_name(const char *backend_name, yvex_backend_kind *kind) {
     if (!kind)
         return 0;
@@ -658,11 +544,6 @@ int model_backend_kind_from_name(const char *backend_name, yvex_backend_kind *ki
     return 0;
 }
 
-/* Purpose: Compute expand operator path for its CLI invariant (`expand_operator_path`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int expand_operator_path(const char *input, char *out, size_t out_cap, yvex_error *err,
                          const char *where) {
     const char *home;
@@ -694,11 +575,6 @@ int expand_operator_path(const char *input, char *out, size_t out_cap, yvex_erro
     return YVEX_OK;
 }
 
-/* Purpose: Compute path join2 for its CLI invariant (`path_join2`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int path_join2(char *out, size_t out_cap, const char *dir, const char *file, yvex_error *err,
                const char *where) {
     int n = snprintf(out, out_cap, "%s/%s", dir, file);
@@ -709,11 +585,6 @@ int path_join2(char *out, size_t out_cap, const char *dir, const char *file, yve
     return YVEX_OK;
 }
 
-/* Purpose: Compute path parent dir for its CLI invariant (`path_parent_dir`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int path_parent_dir(const char *path, char *out, size_t out_cap) {
     const char *slash;
     size_t len;
@@ -735,11 +606,6 @@ int path_parent_dir(const char *path, char *out, size_t out_cap) {
     return 1;
 }
 
-/* Purpose: Render fullmodel print largest from typed facts (`fullmodel_print_largest`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void fullmodel_print_largest(const fullmodel_largest_tensor *top, unsigned int top_count) {
     unsigned int i;
 
@@ -756,15 +622,12 @@ void fullmodel_print_largest(const fullmodel_largest_tensor *top, unsigned int t
     }
 }
 
-/* Purpose: Compute fullmodel residency is future unsupported for its CLI invariant
- *   (`fullmodel_residency_is_future_unsupported`). */
 static int fullmodel_residency_is_future_unsupported(const char *residency) {
     return residency &&
            (strcmp(residency, "ssd-streamed") == 0 || strcmp(residency, "managed-memory") == 0 ||
             strcmp(residency, "distributed") == 0);
 }
 
-/* Purpose: Compute fullmodel placement for residency for its CLI invariant (`fullmodel_placement_for_residency`). */
 static const char *fullmodel_placement_for_residency(const char *backend, const char *residency,
                                                      int present) {
     if (!present)
@@ -780,16 +643,10 @@ static const char *fullmodel_placement_for_residency(const char *backend, const 
     return backend && strcmp(backend, "cuda") == 0 ? "cuda-resident" : "cpu-resident";
 }
 
-/* Purpose: Compute fullmodel required bool for its CLI invariant (`fullmodel_required_bool`). */
 static const char *fullmodel_required_bool(int value) {
     return value ? "true" : "false";
 }
 
-/* Purpose: test one declarative tensor-collection requirement.
- * Inputs: immutable collection facts and one admitted rule.
- * Effects: none.
- * Failure: absent facts remain conservatively missing.
- * Boundary: rendering consumes collection truth but never derives support. */
 static int fullmodel_collection_missing(const yvex_fullmodel_collections *collections,
                                         plan_collection_rule rule) {
     if (!collections)
@@ -817,7 +674,6 @@ static int fullmodel_collection_missing(const yvex_fullmodel_collections *collec
     return 1;
 }
 
-/* Purpose: Count absent required collections from the canonical requirement table. */
 static unsigned int
 fullmodel_plan_missing_collection_blockers(const yvex_fullmodel_collections *collections) {
     unsigned int count = 0u;
@@ -831,7 +687,6 @@ fullmodel_plan_missing_collection_blockers(const yvex_fullmodel_collections *col
     return count;
 }
 
-/* Purpose: Compute fullmodel plan blocker count for its CLI invariant (`fullmodel_plan_blocker_count`). */
 static unsigned int fullmodel_plan_blocker_count(const yvex_fullmodel_collections *collections,
                                                  int selected_target, const char *residency,
                                                  const yvex_fullmodel_backend_fit *fit) {
@@ -849,7 +704,6 @@ static unsigned int fullmodel_plan_blocker_count(const yvex_fullmodel_collection
     return count;
 }
 
-/* Purpose: Compute fullmodel plan status for its CLI invariant (`fullmodel_plan_status`). */
 static const char *fullmodel_plan_status(const yvex_fullmodel_collections *collections,
                                          int selected_target, const char *residency,
                                          const yvex_fullmodel_backend_fit *fit) {
@@ -864,11 +718,6 @@ static const char *fullmodel_plan_status(const yvex_fullmodel_collections *colle
     return "ready";
 }
 
-/* Purpose: Render fullmodel print phase from typed facts (`fullmodel_print_phase`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void fullmodel_print_phase(unsigned int index, const char *name, const char *status,
                            unsigned long long tensor_count, unsigned long long tensor_bytes,
                            const char *residency, int required, int blocked, const char *blocker) {
@@ -884,11 +733,6 @@ void fullmodel_print_phase(unsigned int index, const char *name, const char *sta
                         blocker && blocker[0] ? blocker : "none");
 }
 
-/* Purpose: Render fullmodel print collection plan from typed facts (`fullmodel_print_collection_plan`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_print_collection_plan(const char *name, const char *status,
                                             unsigned long long tensor_count,
                                             unsigned long long tensor_bytes,
@@ -912,11 +756,6 @@ static void fullmodel_print_collection_plan(const char *name, const char *status
                         blocker && blocker[0] ? blocker : "none");
 }
 
-/* Purpose: Render fullmodel print blocker from typed facts (`fullmodel_print_blocker`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 unsigned int fullmodel_print_blocker(unsigned int index, const char *category, const char *severity,
                                      const char *message, int blocks_full_materialization,
                                      int blocks_generation) {
@@ -932,11 +771,6 @@ unsigned int fullmodel_print_blocker(unsigned int index, const char *category, c
     return index + 1u;
 }
 
-/* Purpose: Render absent collection requirements in canonical order.
- * Inputs: Typed inventory.
- * Effects: Writes CLI output.
- * Failure: Output refusal only.
- * Boundary: Projects existing policy. */
 static void
 fullmodel_print_missing_collection_blockers(unsigned int *index,
                                             const yvex_fullmodel_collections *collections) {
@@ -961,11 +795,6 @@ fullmodel_print_missing_collection_blockers(unsigned int *index,
     }
 }
 
-/* Purpose: Render fullmodel print materialization phases from typed facts (`fullmodel_print_materialization_phases`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_print_materialization_phases(
     const yvex_fullmodel_backend_fit *fit, const char *backend, const char *residency,
     const char *role_coverage, unsigned long long tensor_count,
@@ -1003,12 +832,6 @@ static void fullmodel_print_materialization_phases(
     fullmodel_print_phase(10u, "cleanup", "planned", 0ull, 0ull, "not-applicable", 1, 0, "none");
 }
 
-/* Resolve status, placement, and blocker without duplicating collection policy. */
-/* Purpose: Render fullmodel print planned collection from typed facts (`fullmodel_print_planned_collection`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_print_planned_collection(const plan_collection_spec *spec,
                                                const yvex_fullmodel_collections *collections,
                                                const char *backend, const char *residency) {
@@ -1048,8 +871,6 @@ static void fullmodel_print_planned_collection(const plan_collection_spec *spec,
                                     blocker);
 }
 
-/* Render the collection placement section from one immutable inventory. */
-/* Purpose: Render fullmodel print collection plans from typed facts (`fullmodel_print_collection_plans`). */
 static void fullmodel_print_collection_plans(const yvex_fullmodel_collections *collections,
                                              const char *backend, const char *residency) {
     size_t i;
@@ -1059,11 +880,6 @@ static void fullmodel_print_collection_plans(const yvex_fullmodel_collections *c
     }
 }
 
-/* Purpose: Render fullmodel print materialization plan from typed facts (`fullmodel_print_materialization_plan`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void fullmodel_print_materialization_plan(
     const yvex_cli_fullmodel_options *options, const yvex_model_ref *ref, const char *target_id,
     const char *target_class, unsigned long long artifact_bytes, yvex_arch arch,
@@ -1185,11 +1001,6 @@ void fullmodel_print_materialization_plan(
                                           "descriptor not implemented");
 }
 
-/* Purpose: Render model download print audit patterns from typed facts (`model_download_print_audit_patterns`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_print_audit_patterns(const yvex_cli_models_download_options *options) {
     unsigned int i;
 
@@ -1203,11 +1014,6 @@ static void model_download_print_audit_patterns(const yvex_cli_models_download_o
     }
 }
 
-/* Purpose: Render model download print normal from typed facts (`model_download_print_normal`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_print_normal(const yvex_cli_models_download_options *options,
                                         const yvex_model_download_report *report) {
     char bytes_text[32];
@@ -1316,11 +1122,6 @@ static void model_download_print_normal(const yvex_cli_models_download_options *
     (void)options;
 }
 
-/* Purpose: Render model download print table from typed facts (`model_download_print_table`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_print_table(const yvex_model_download_report *report) {
     char bytes_text[32];
 
@@ -1336,11 +1137,6 @@ static void model_download_print_table(const yvex_model_download_report *report)
     yvex_cli_out_writef(stdout, "status: %s\n", report->status);
 }
 
-/* Purpose: Render model download print audit from typed facts (`model_download_print_audit`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_print_audit(const yvex_cli_models_download_options *options,
                                        const yvex_model_download_report *report) {
     yvex_cli_out_writef(stdout, "models: download\n");
@@ -1400,11 +1196,6 @@ static void model_download_print_audit(const yvex_cli_models_download_options *o
         yvex_cli_out_writef(stdout, "reason: %s\n", report->error);
 }
 
-/* Purpose: Render model download print from typed facts (`model_download_print`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_print(const yvex_cli_models_download_options *options,
                                  const yvex_model_download_report *report) {
     if (options && options->output_mode == YVEX_MODELS_OUTPUT_AUDIT) {
@@ -1416,11 +1207,6 @@ static void model_download_print(const yvex_cli_models_download_options *options
     }
 }
 
-/* Purpose: Transfer bounded model download finish data (`model_download_finish`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_finish(const yvex_cli_models_download_options *options,
                           yvex_model_download_report *report) {
     model_download_print(options, report);
@@ -1436,11 +1222,6 @@ int model_download_finish(const yvex_cli_models_download_options *options,
     return 1;
 }
 
-/* Purpose: Transfer bounded model download write pattern array data (`model_download_write_pattern_array`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_write_pattern_array(FILE *fp, const char *name,
                                                const yvex_cli_models_download_options *options,
                                                int includes, int comma) {
@@ -1458,12 +1239,6 @@ static void model_download_write_pattern_array(FILE *fp, const char *name,
     yvex_cli_out_writef(fp, "]%s\n", comma ? "," : "");
 }
 
-/* Purpose: Transfer bounded model download write native inventory json data
- * (`model_download_write_native_inventory_json`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_write_native_inventory_json(const char *path, const char *source_dir,
                                                const yvex_native_weight_table *table,
                                                yvex_error *err) {
@@ -1528,11 +1303,6 @@ int model_download_write_native_inventory_json(const char *path, const char *sou
     return YVEX_OK;
 }
 
-/* Purpose: Transfer bounded model download write json sidecar data (`model_download_write_json_sidecar`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_write_json_sidecar(const char *path, const char *schema,
                                       const yvex_cli_models_download_options *options,
                                       const yvex_model_download_report *report, yvex_error *err) {
@@ -1645,11 +1415,6 @@ int model_download_write_json_sidecar(const char *path, const char *schema,
     return YVEX_OK;
 }
 
-/* Purpose: Transfer bounded model download write receipt data (`model_download_write_receipt`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_write_receipt(const char *path, const yvex_cli_models_download_options *options,
                                  const yvex_model_download_report *report, int token_present,
                                  yvex_error *err) {
@@ -1713,11 +1478,6 @@ int model_download_write_receipt(const char *path, const yvex_cli_models_downloa
     return YVEX_OK;
 }
 
-/* Purpose: Transfer bounded model download write control receipt data (`model_download_write_control_receipt`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_write_control_receipt(const char *path,
                                          const yvex_cli_models_download_options *options,
                                          const yvex_model_download_report *report,
@@ -1765,11 +1525,6 @@ int model_download_write_control_receipt(const char *path,
     return YVEX_OK;
 }
 
-/* Purpose: Transfer bounded model download finalize control receipt data (`model_download_finalize_control_receipt`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_finalize_control_receipt(const yvex_cli_models_download_options *options,
                                             const yvex_model_download_report *report,
                                             const char *status) {

@@ -1,12 +1,8 @@
-/* Owner: test-only output-head numerical reference.
- * Owns: independent scalar BF16 row decode and complete vocabulary projection.
- * Does not own: runtime plans, residency, production qtype arithmetic, CUDA, or capability.
- * Invariants: no production projection or qtype decode implementation is called.
- * Boundary: numerical test evidence only; never linked into production products.
- * Purpose: judge row orientation and every output-head vocabulary value independently.
- * Inputs: exact encoded row geometry, hidden values, and caller output.
- * Effects: writes one complete reference row or nothing useful.
- * Failure: malformed geometry, unsupported qtype, or non-finite values return false. */
+/*
+ * Judge row orientation and every output-head vocabulary value independently. No production
+ * projection or qtype decode implementation is called. Numerical test evidence only; never
+ * linked into production products.
+ */
 #include "tests/reference/logits.h"
 
 #include <math.h>
@@ -15,7 +11,6 @@
 
 #include <yvex/qtype.h>
 
-/* Purpose: decode one little-endian BF16 value without production codecs. */
 static float reference_bf16(const unsigned char *bytes)
 {
     uint32_t bits = ((uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8u)) << 16u;
@@ -24,11 +19,11 @@ static float reference_bf16(const unsigned char *bytes)
     return value;
 }
 
-/* Purpose: independently project every encoded row in canonical vocabulary order.
- * Inputs: BF16 row-major bytes, exact shape, finite hidden row, and caller capacity.
- * Effects: fills the complete caller logits row only for valid geometry.
- * Failure: returns false for unsupported qtype, extent, capacity, or non-finite math.
- * Boundary: performs no production calls, allocation, identity, or publication. */
+/*
+ * Independently project every encoded row in canonical vocabulary order.
+ *
+ * Performs no production calls, allocation, identity, or publication.
+ */
 int yvex_test_logits_reference_project(
     unsigned int qtype, const unsigned char *encoded, size_t encoded_bytes,
     unsigned long long rows, unsigned long long width,

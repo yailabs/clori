@@ -1,12 +1,9 @@
-/* Owner: source payload session.
- * Owns: secure shard admission, range indexes, handles, buffers, and exact reads.
- * Does not own: header parsing, transforms, quantization, artifacts, or rendering.
- * Invariants: every read stays under the admitted root and bound to file identity.
- * Boundary: payload readability performs no numeric transformation.
- * Purpose: admit immutable shards and expose exact bounded payload ranges.
- * Inputs: verified snapshot, trust facts, budgets, cancellation, and I/O ops.
- * Effects: owns read-only handles, indexes, bounded buffers, and positioned reads.
- * Failure: trust, drift, bounds, budget, allocation, or I/O poisons fail-closed. */
+/*
+ * Admit immutable shards and expose exact bounded payload ranges.
+ *
+ * Every read stays under the admitted root and bound to file identity. Payload readability
+ * performs no numeric transformation.
+ */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -23,56 +20,26 @@
 #define O_NOFOLLOW 0
 #endif
 
-/* Purpose: project openat facts while preserving the canonical payload session invariants.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_openat(int directory, const char *name, int flags) {
     return openat(directory, name, flags);
 }
 
-/* Purpose: project fstat facts while preserving the canonical payload session invariants.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_fstat(int fd, struct stat *status) {
     return fstat(fd, status);
 }
 
-/* Purpose: project fstatat facts while preserving the canonical payload session invariants.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_fstatat(int directory, const char *name, struct stat *status, int flags) {
     return fstatat(directory, name, status, flags);
 }
 
-/* Purpose: project pread facts while preserving the canonical payload session invariants.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source payload session state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: payload readability performs no numeric transformation. */
 static ssize_t payload_pread(int fd, void *buffer, size_t length, off_t offset) {
     return pread(fd, buffer, length, offset);
 }
 
-/* Purpose: admits one counted allocation only when its byte size fits size_t.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_allocation_fits(unsigned long long count, size_t element_size) {
     return element_size != 0u && count <= (unsigned long long)(SIZE_MAX / element_size);
 }
 
-/* Purpose: installs process primitives into caller-owned per-session dispatch state.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 void yvex_source_payload_default_ops(yvex_source_payload_ops *ops) {
     if (!ops)
         return;
@@ -87,11 +54,6 @@ void yvex_source_payload_default_ops(yvex_source_payload_ops *ops) {
     ops->free_fn = free;
 }
 
-/* Purpose: sets both domain failure and legacy status without allocating or printing.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 void yvex_source_payload_fail(yvex_source_payload_failure *failure,
                               yvex_source_payload_failure_code code,
                               unsigned long long shard_index,
@@ -115,11 +77,6 @@ void yvex_source_payload_fail(yvex_source_payload_failure *failure,
     yvex_error_set(err, (yvex_status)status, where, message);
 }
 
-/* Purpose: publish a payload refusal with no shard, tensor, or byte accounting.
- * Inputs: typed refusal code, status, location, message, and caller-owned failures.
- * Effects: writes the canonical empty accounting tuple and matching legacy error.
- * Failure: the requested refusal status is returned unchanged.
- * Boundary: refusal projection never changes payload session state. */
 int yvex_source_payload_refuse(yvex_source_payload_failure *failure,
                                yvex_source_payload_failure_code code,
                                yvex_error *err,
@@ -131,11 +88,11 @@ int yvex_source_payload_refuse(yvex_source_payload_failure *failure,
     return status;
 }
 
-/* Purpose: publish one fully contextualized payload refusal and return its legacy status.
- * Inputs: exact shard, tensor, byte, system-error, and typed refusal facts.
- * Effects: writes only caller-owned failure and error outputs.
- * Failure: the requested refusal status is returned unchanged.
- * Boundary: failure accounting does not mutate admitted source or payload identity. */
+/*
+ * Publish one fully contextualized payload refusal and return its legacy status.
+ *
+ * Failure accounting does not mutate admitted source or payload identity.
+ */
 int yvex_source_payload_refuse_at(yvex_source_payload_failure *failure,
                                   yvex_source_payload_failure_code code,
                                   unsigned long long shard,
@@ -161,11 +118,6 @@ int yvex_source_payload_refuse_at(yvex_source_payload_failure *failure,
     return status;
 }
 
-/* Purpose: returns conservative executable resource defaults for target-scale sources.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 void yvex_source_payload_budget_default(yvex_source_payload_budget *budget) {
     if (!budget)
         return;
@@ -181,11 +133,6 @@ void yvex_source_payload_budget_default(yvex_source_payload_budget *budget) {
     budget->allow_local_snapshot_seal = 1;
 }
 
-/* Purpose: map payload trust class to its stable manifest and diagnostic spelling.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 const char *yvex_source_payload_trust_class_name(yvex_source_payload_trust_class trust_class) {
     switch (trust_class) {
     case YVEX_SOURCE_PAYLOAD_TRUST_LOCAL_SNAPSHOT_SEALED:
@@ -197,11 +144,6 @@ const char *yvex_source_payload_trust_class_name(yvex_source_payload_trust_class
     }
 }
 
-/* Purpose: copy payload session data into independently owned bounded storage.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static char *payload_strdup(yvex_source_payload_session *session, const char *text) {
     size_t length;
     char *copy;
@@ -217,11 +159,6 @@ static char *payload_strdup(yvex_source_payload_session *session, const char *te
     return copy;
 }
 
-/* Purpose: project identity from stat facts while preserving the canonical payload session invariants.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static void payload_identity_from_stat(yvex_source_payload_file_identity *out,
                                        const struct stat *status) {
     out->device = status->st_dev;
@@ -231,11 +168,6 @@ static void payload_identity_from_stat(yvex_source_payload_file_identity *out,
     out->ctime = status->st_ctim;
 }
 
-/* Purpose: compare complete payload session facts without mutating either input.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_identity_equal(const yvex_source_payload_file_identity *left,
                                   const struct stat *right) {
     return left->device == right->st_dev && left->inode == right->st_ino &&
@@ -252,11 +184,6 @@ typedef struct {
     unsigned long long end;
 } payload_physical_row;
 
-/* Purpose: define deterministic ordering for payload session records.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_physical_row_compare(const void *left, const void *right) {
     const payload_physical_row *a = (const payload_physical_row *)left;
     const payload_physical_row *b = (const payload_physical_row *)right;
@@ -270,11 +197,6 @@ static int payload_physical_row_compare(const void *left, const void *right) {
     return a->tensor_index < b->tensor_index ? -1 : a->tensor_index > b->tensor_index ? 1 : 0;
 }
 
-/* Purpose: computes exact safetensors storage length from already-verified dtype/shape facts.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_tensor_storage(const yvex_native_weight_info *tensor,
                                   unsigned long long *bytes) {
     unsigned long long elements = 1u;
@@ -321,11 +243,6 @@ static int payload_tensor_storage(const yvex_native_weight_info *tensor,
     return yvex_core_u64_mul(elements, width, bytes);
 }
 
-/* Purpose: check structural validity of the supplied payload session facts.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_budget_valid(const yvex_source_payload_budget *budget) {
     return budget && budget->maximum_shards != 0u && budget->maximum_tensors != 0u &&
            budget->maximum_plan_chunks != 0u && budget->maximum_open_handles != 0u &&
@@ -336,11 +253,7 @@ static int payload_budget_valid(const yvex_source_payload_budget *budget) {
            budget->maximum_inflight_host_bytes >= budget->chunk_bytes;
 }
 
-/* Purpose: admits one root-relative regular shard and records the exact opened-file identity.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
+/* Admits one root-relative regular shard and records the exact opened-file identity. */
 static int payload_admit_shard(yvex_source_payload_session *session,
                                unsigned long long index,
                                yvex_source_payload_failure *failure,
@@ -412,11 +325,6 @@ static int payload_admit_shard(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: project allocate indexes facts while preserving the canonical payload session invariants.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_allocate_indexes(yvex_source_payload_session *session,
                                     yvex_source_payload_failure *failure,
                                     yvex_error *err) {
@@ -442,11 +350,6 @@ static int payload_allocate_indexes(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: project index shard facts while preserving the canonical payload session invariants.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_index_shard(yvex_source_payload_session *session,
                                unsigned long long index,
                                yvex_source_payload_failure *failure,
@@ -519,11 +422,6 @@ static int payload_index_shard(yvex_source_payload_session *session,
     return payload_admit_shard(session, index, failure, err);
 }
 
-/* Purpose: derive a checked payload session byte or element range.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_index_range(yvex_source_payload_session *session,
                                unsigned long long index,
                                payload_physical_row *physical,
@@ -611,11 +509,6 @@ static int payload_index_range(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: builds immutable shard and tensor indexes from the retained canonical snapshot.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 static int payload_build_indexes(yvex_source_payload_session *session,
                                  yvex_source_payload_failure *failure,
                                  yvex_error *err) {
@@ -688,13 +581,13 @@ cleanup:
     return rc;
 }
 
-/* Purpose: restore an upstream-verified v3 seal after current file admission reproduces every
- * published provider digest and the aggregate payload identity. Local-only seals remain
- * untrusted because their observed per-shard digests are not provider authority.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit source payload session destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial source payload session result.
- * Boundary: payload readability performs no numeric transformation. */
+/*
+ * Restore an upstream-verified v3 seal after current file admission reproduces every published
+ * provider digest and the aggregate payload identity. Local-only seals remain untrusted because
+ * their observed per-shard digests are not provider authority.
+ *
+ * Writes only the explicit source payload session destination through its transaction.
+ */
 static int payload_restore_published_upstream_trust(yvex_source_payload_session *session,
                                                     yvex_source_payload_failure *failure,
                                                     yvex_error *err) {
@@ -743,11 +636,6 @@ static int payload_restore_published_upstream_trust(yvex_source_payload_session 
     return YVEX_OK;
 }
 
-/* Purpose: constructs a fail-closed session only from matching exact verification facts.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 int yvex_source_payload_session_open_with_ops(yvex_source_payload_session **out,
                                               const yvex_source_payload_open_options *options,
                                               const yvex_source_payload_ops *ops,
@@ -934,11 +822,6 @@ fail:
     return rc;
 }
 
-/* Purpose: construct one admitted payload session object from validated caller facts.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 int yvex_source_payload_session_open(yvex_source_payload_session **out,
                                      const yvex_source_payload_open_options *options,
                                      yvex_source_payload_failure *failure,
@@ -946,11 +829,6 @@ int yvex_source_payload_session_open(yvex_source_payload_session **out,
     return yvex_source_payload_session_open_with_ops(out, options, NULL, failure, err);
 }
 
-/* Purpose: acquires and pins an exact admitted handle, evicting only unpinned LRU state.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 int yvex_source_payload_handle_acquire(yvex_source_payload_session *session,
                                        unsigned long long shard_index,
                                        int *fd,
@@ -1093,11 +971,11 @@ int yvex_source_payload_handle_acquire(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: releases one pin without closing or invalidating the reusable cached handle.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source payload session; cleanup remains deterministic.
- * Failure: null or released source payload session handles remain harmless.
- * Boundary: payload readability performs no numeric transformation. */
+/*
+ * Releases one pin without closing or invalidating the reusable cached handle.
+ *
+ * Releases only resources owned by source payload session; cleanup remains deterministic.
+ */
 void yvex_source_payload_handle_release(yvex_source_payload_session *session,
                                         unsigned long long shard_index) {
     unsigned int slot;
@@ -1115,11 +993,6 @@ void yvex_source_payload_handle_release(yvex_source_payload_session *session,
     pthread_mutex_unlock(&session->mutex);
 }
 
-/* Purpose: acquires one session-owned bounded buffer, reusing only idle sufficient storage.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 int yvex_source_payload_buffer_acquire(yvex_source_payload_session *session,
                                        size_t bytes,
                                        unsigned char **buffer,
@@ -1187,11 +1060,11 @@ int yvex_source_payload_buffer_acquire(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: returns one buffer to the session pool without retaining consumer pointers.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source payload session; cleanup remains deterministic.
- * Failure: null or released source payload session handles remain harmless.
- * Boundary: payload readability performs no numeric transformation. */
+/*
+ * Returns one buffer to the session pool without retaining consumer pointers.
+ *
+ * Releases only resources owned by source payload session; cleanup remains deterministic.
+ */
 void yvex_source_payload_buffer_release(yvex_source_payload_session *session, unsigned int slot) {
     if (!session || slot >= session->budget.maximum_streams)
         return;
@@ -1200,11 +1073,6 @@ void yvex_source_payload_buffer_release(yvex_source_payload_session *session, un
     pthread_mutex_unlock(&session->mutex);
 }
 
-/* Purpose: reads an exact bounded range with EINTR, partial-read, EOF, and offset checks.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source payload session state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: payload readability performs no numeric transformation. */
 int yvex_source_payload_exact_read(yvex_source_payload_session *session,
                                    unsigned long long shard_index,
                                    int fd,
@@ -1289,11 +1157,6 @@ int yvex_source_payload_exact_read(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: return the immutable admitted shard at a checked ordinal.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 const yvex_source_payload_shard *yvex_source_payload_shard_at(yvex_source_payload_session *session,
                                                               unsigned long long index) {
     const yvex_shard_index_entry *entry;
@@ -1304,11 +1167,6 @@ const yvex_source_payload_shard *yvex_source_payload_shard_at(yvex_source_payloa
     return entry ? &session->shards[entry->canonical_id].public_fact : NULL;
 }
 
-/* Purpose: return the immutable tensor payload range at a checked ordinal.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 const yvex_source_payload_range *yvex_source_payload_range_at(yvex_source_payload_session *session,
                                                               unsigned long long tensor_index) {
     if (!session || tensor_index >= session->tensor_count)
@@ -1319,11 +1177,6 @@ const yvex_source_payload_range *yvex_source_payload_range_at(yvex_source_payloa
     return &session->ranges[tensor_index];
 }
 
-/* Purpose: uses the retained snapshot hash index and projects its stable row index.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 const yvex_source_payload_range *
 yvex_source_payload_range_find(yvex_source_payload_session *session, const char *tensor_name) {
     unsigned long long index;
@@ -1334,11 +1187,6 @@ yvex_source_payload_range_find(yvex_source_payload_session *session, const char 
     return yvex_source_payload_range_at(session, index);
 }
 
-/* Purpose: atomically marks cancellation; active callbacks observe it between chunks/reads.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 int yvex_source_payload_session_cancel(yvex_source_payload_session *session,
                                        yvex_source_payload_failure *failure,
                                        yvex_error *err) {
@@ -1359,11 +1207,6 @@ int yvex_source_payload_session_cancel(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: clears cancellation only while no stream is active, preserving fail-closed state.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 int yvex_source_payload_session_reset_cancel(yvex_source_payload_session *session,
                                              yvex_source_payload_failure *failure,
                                              yvex_error *err) {
@@ -1386,11 +1229,11 @@ int yvex_source_payload_session_reset_cancel(yvex_source_payload_session *sessio
     return YVEX_OK;
 }
 
-/* Purpose: closes all unpinned resources only when no stream owns session state.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source payload session; cleanup remains deterministic.
- * Failure: null or released source payload session handles remain harmless.
- * Boundary: payload readability performs no numeric transformation. */
+/*
+ * Closes all unpinned resources only when no stream owns session state.
+ *
+ * Releases only resources owned by source payload session; cleanup remains deterministic.
+ */
 int yvex_source_payload_session_close(yvex_source_payload_session *session,
                                       yvex_source_payload_failure *failure,
                                       yvex_error *err) {
@@ -1448,11 +1291,11 @@ int yvex_source_payload_session_close(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: idempotently closes and releases all owned memory through a pointer-to-pointer.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source payload session; cleanup remains deterministic.
- * Failure: null or released source payload session handles remain harmless.
- * Boundary: payload readability performs no numeric transformation. */
+/*
+ * Idempotently closes and releases all owned memory through a pointer-to-pointer.
+ *
+ * Releases only resources owned by source payload session; cleanup remains deterministic.
+ */
 int yvex_source_payload_session_release(yvex_source_payload_session **session_pointer,
                                         yvex_source_payload_failure *failure,
                                         yvex_error *err) {
@@ -1492,11 +1335,6 @@ int yvex_source_payload_session_release(yvex_source_payload_session **session_po
     return rc;
 }
 
-/* Purpose: copies coherent lifecycle and accounting facts while holding the session lock.
- * Inputs: typed source payload session arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload session state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: payload readability performs no numeric transformation. */
 int yvex_source_payload_session_facts_get(const yvex_source_payload_session *session,
                                           yvex_source_payload_session_facts *out,
                                           yvex_error *err) {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Purpose: prove the current yvexd process grammar and fail-closed listener admission.
+# Verifies yvexd process grammar and fail-closed listener admission.
 set -eu
 
 . tests/support/cleanup.sh

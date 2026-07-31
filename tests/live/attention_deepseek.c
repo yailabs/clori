@@ -1,25 +1,7 @@
 /*
- * attention_deepseek.c - selected-artifact DeepSeek attention live-plan proof.
- *
- * Owner:
- *   tests/live
- *
- * Owns:
- *   proof that the admitted selected DeepSeek GGUF can flow through
- *   materialization, runtime descriptor projection, complete production CPU
- *   execution, independent scalar-reference comparison, and device-complete
- *   CUDA execution for all 43 release attention descriptors.
- *
- * Does not own:
- *   persistent KV, prefill, decode, logits, sampling, generation, eval,
- *   benchmark, or release claims.
- *
- * Invariants:
- *   this runner commits materialization for binding truth and compares CUDA
- *   output with a separately linked scalar oracle over identical state.
- *
- * Boundary:
- *   live-plan and scoped CPU proof are graph evidence only.
+ * This runner commits materialization for binding truth and compares CUDA output with a
+ * separately linked scalar oracle over identical state. Live-plan and scoped CPU proof are graph
+ * evidence only.
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -103,7 +85,6 @@ typedef struct {
     unsigned int discards;
 } runtime_oracle_state_factory_control;
 
-/* Purpose: independently publish one finite F32 value through BF16 RNE for live evidence. */
 static float runtime_oracle_bf16_round(float value)
 {
     uint32_t bits;
@@ -115,7 +96,6 @@ static float runtime_oracle_bf16_round(float value)
     return value;
 }
 
-/* Purpose: delegate state ownership to the canonical provider while proving factory injection. */
 static int runtime_oracle_state_factory_open(
     void *context, const yvex_graph_family_api *family,
     const yvex_attention_plan *plan, unsigned long long maximum_host_bytes,
@@ -133,7 +113,6 @@ static int runtime_oracle_state_factory_open(
     return rc;
 }
 
-/* Purpose: release only a failed factory candidate; successful sessions own their provider. */
 static int runtime_oracle_state_factory_discard(
     void *context, yvex_attention_state_provider *candidate, yvex_error *err)
 {
@@ -233,11 +212,6 @@ static int reference_metrics_merge(
     return 1;
 }
 
-/* Purpose: compare one still-live runtime CUDA publication with the separately linked oracle.
- * Inputs: exact runtime-imported plan/materialization/descriptor, canonical publication, and IR.
- * Effects: accumulates bounded test evidence before production releases the publication.
- * Failure: any fixture, oracle, discrete-state, or numeric mismatch aborts the runtime probe.
- * Boundary: test-only observation; it neither configures nor reimplements a production mode. */
 static int runtime_oracle_compare_publication(
     void *context, yvex_backend_kind backend,
     const yvex_attention_publication *production, yvex_error *err)
@@ -630,8 +604,6 @@ static void fill_history_values(float *values,
     }
 }
 
-/* Contract: proves production and oracle selection agree for zero/full-k and
- * independently refuse non-finite scores and duplicate candidate positions. */
 static int run_topk_contract_cases(void)
 {
     float scores[] = {2.0f, 2.0f, 1.0f};
@@ -694,8 +666,6 @@ static int run_topk_contract_cases(void)
     return 1;
 }
 
-/* Contract: executes production and the separate scalar oracle over identical
- * immutable inputs, compares every stage, and releases both owned traces. */
 static int run_reference_compare(
     const yvex_attention_plan *plan,
     const yvex_deepseek_v4_ir *ir,
@@ -813,8 +783,6 @@ cleanup:
     return rc;
 }
 
-/* Contract: perturb one real production float stage and require the separate
- * oracle comparison to identify the changed logical coordinate. */
 static int real_float_mutation_detected(
     yvex_attention_execution_trace *production,
     const yvex_attention_execution_trace *reference,
@@ -836,8 +804,6 @@ static int real_float_mutation_detected(
     return detected;
 }
 
-/* Contract: perturb one real production discrete stage and require the
- * independent oracle to reject the changed position or selection. */
 static int real_position_mutation_detected(
     yvex_attention_execution_trace *production,
     const yvex_attention_execution_trace *reference,
@@ -859,8 +825,6 @@ static int real_position_mutation_detected(
     return detected;
 }
 
-/* Contract: execute real selected-artifact weights and prove that corrupting
- * each available production stage is observable to the independent oracle. */
 static int run_real_mutation_proof(
     const yvex_attention_plan *plan,
     const yvex_deepseek_v4_ir *ir,
@@ -962,8 +926,6 @@ cleanup:
     return rc;
 }
 
-/* Contract: executes every production numerical stage on CUDA, then compares
- * the resulting owned trace with the separately linked full-equation oracle. */
 static int run_cuda_reference_compare(
     const yvex_attention_plan *plan,
     const yvex_deepseek_v4_ir *ir,
@@ -1056,8 +1018,6 @@ cleanup:
     return rc;
 }
 
-/* Contract: compares CPU and CUDA independently with the oracle, then
- * compares both production traces directly before releasing owned state. */
 static int run_cpu_cuda_reference_compare(
     const yvex_attention_plan *plan,
     const yvex_deepseek_v4_ir *ir,
@@ -1134,7 +1094,6 @@ typedef struct {
     unsigned long long warm_executions;
 } attention_cuda_workspace_evidence;
 
-/* Purpose: admit exact CUDA host-workspace facts without treating per-run bytes as allocations. */
 static int attention_cuda_workspace_add(
     attention_cuda_workspace_evidence *evidence,
     const yvex_attention_cpu_result *result)
@@ -1171,8 +1130,6 @@ static int attention_live_cancel_requested(void *context)
 
 #define ATTENTION_LIVE_MAX_STATE_POSITION 2056ull
 
-/* Purpose: prepare one pinned high-water staging arena through the canonical
- * backend planner before a direct graph live proof uses CUDA. */
 static int attention_cuda_workspace_prepare(
     yvex_backend *backend, const yvex_attention_plan *plan, yvex_error *err)
 {
@@ -1291,7 +1248,7 @@ static int run_cuda_fault_case(
     return passed && rc == YVEX_OK;
 }
 
-/* Purpose: prove page-locked staging cleanup failure remains observable after ownership discharge. */
+/* Prove page-locked staging cleanup failure remains observable after ownership discharge. */
 static int run_cuda_workspace_cleanup_fault(
     const yvex_attention_plan *plan, yvex_error *err)
 {
@@ -1320,8 +1277,6 @@ static int run_cuda_workspace_cleanup_fault(
     return close_rc == YVEX_ERR_BACKEND && !backend;
 }
 
-/* Contract: one missing exact encoded-attention symbol rejects the entire
- * variant atomically while leaving Driver memory capability available. */
 static int run_cuda_bundle_refusal(yvex_error *err)
 {
     yvex_backend_options options;
@@ -1770,7 +1725,6 @@ cleanup:
     return rc;
 }
 
-/* Purpose: retain the backend registry reason when a live graph execution refuses. */
 static void runtime_oracle_graph_failure_report(
     const yvex_backend *backend, yvex_runtime_execution_mode mode,
     unsigned long long layer, unsigned int repeat,
@@ -1821,11 +1775,11 @@ static void runtime_oracle_graph_failure_report(
     }
 }
 
-/* Purpose: execute the canonical SWA/CSA/HCA fixture twice through one resident CUDA mode.
- * Inputs: sealed runtime model/session, independent family IR, and representative layer ordinals.
- * Effects: captures/replays production graphs and returns oracle comparison plus graph evidence.
- * Failure: lifecycle, capture, publication, oracle, or cleanup disagreement refuses the mode.
- * Boundary: test-only admission over runtime-owned residency and workspace. */
+/*
+ * Execute the canonical SWA/CSA/HCA fixture twice through one resident CUDA mode.
+ *
+ * Lifecycle, capture, publication, oracle, or cleanup disagreement refuses the mode.
+ */
 static int run_runtime_oracle_mode(
     yvex_runtime_model *model, yvex_runtime_execution_session *runtime_session,
     const yvex_graph_attention_capacity_plan *capacity,
@@ -2023,11 +1977,6 @@ static int run_runtime_oracle_mode(
     return rc;
 }
 
-/* Purpose: prove live runtime residency admits teardown before releasing its shared device pack.
- * Inputs: sealed model with one still-live CUDA execution session.
- * Effects: marks the model-owned CUDA backend closing through an intentionally refused close.
- * Failure: any early weight release, changed residency fact, or unsafe cleanup ordering is typed.
- * Boundary: live lifecycle evidence only; the caller closes the child session and model afterward. */
 static int run_runtime_residency_close_order(yvex_runtime_model *model,
                                              yvex_error *err)
 {
@@ -2112,11 +2061,11 @@ static int run_runtime_residency_close_order(yvex_runtime_model *model,
     return YVEX_OK;
 }
 
-/* Purpose: prove operator phase cleanup retains its complete owner and succeeds on retry.
- * Inputs: admitted artifact/binding and one real SWA layer.
- * Effects: runs the production state-exercise path under one cleanup-only fault.
- * Failure: missing retained ownership, wrong failure typing, or retry disagreement refuses.
- * Boundary: test-only fault injection; the admitted artifact remains read-only. */
+/*
+ * Prove operator phase cleanup retains its complete owner and succeeds on retry.
+ *
+ * Missing retained ownership, wrong failure typing, or retry disagreement refuses.
+ */
 static int run_runtime_phase_cleanup_retry(
     const char *artifact_path, const char *runtime_binding_path,
     unsigned long long swa_layer, yvex_error *err)
@@ -2177,11 +2126,11 @@ static int run_runtime_phase_cleanup_retry(
     return YVEX_OK;
 }
 
-/* Purpose: prove piecewise and full runtime-resident CUDA graphs against one oracle fixture set.
- * Inputs: external immutable runtime binding, selected artifact, current IR, and class layers.
- * Effects: authenticates one runtime model, reuses one resident session, and reports parity facts.
- * Failure: preserves the external binding/artifact and closes every runtime-owned resource.
- * Boundary: live evidence only; it creates no runtime binding and claims no persistent KV. */
+/*
+ * Prove piecewise and full runtime-resident CUDA graphs against one oracle fixture set.
+ *
+ * Authenticates one runtime model, reuses one resident session, and reports parity facts.
+ */
 static int run_runtime_graph_oracle_suite(
     const char *artifact_path, const char *runtime_binding_path,
     const char *attention_plan_identity, const char *runtime_descriptor_identity,
@@ -2367,8 +2316,6 @@ static int run_runtime_graph_oracle_suite(
     return rc;
 }
 
-/* Contract: proves every release layer on generated PTX against both CPU and
- * the independent oracle, then exercises deep CSA/HCA state boundaries. */
 static int run_cuda_live_suite(
     const yvex_attention_plan *plan,
     const yvex_deepseek_v4_ir *ir,

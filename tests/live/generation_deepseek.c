@@ -1,12 +1,8 @@
-/* Owner: live DeepSeek generation composition evidence.
- * Owns: selected-artifact sampled-token feedback, manual orchestration parity, and evidence mutation proof.
- * Does not own: production tokenization, Transformer math, logits, sampling arithmetic, or CLI rendering.
- * Invariants: every ordinary sampled ID is the exact next decode input and no teacher-forced tail exists.
- * Boundary: test-only consumer of production lower-owner APIs over isolated CPU/CUDA sessions.
- * Purpose: prove text-to-text autoregressive composition and exact partial/publication evidence.
- * Inputs: selected GGUF, current runtime binding, backend, strategy, seed, and bounded token count.
- * Effects: opens isolated sessions serially and retains only bounded in-process token/text evidence.
- * Failure: reports the first typed mismatch and releases all model/session/context ownership. */
+/*
+ * Exercises text-to-text autoregressive composition and exact partial/publication evidence.
+ * Every ordinary sampled ID is the exact next decode input and no teacher-forced tail exists.
+ * Test-only consumer of production lower-owner APIs over isolated CPU/CUDA sessions.
+ */
 #include <yvex/internal/decode.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/generation.h>
@@ -67,7 +63,6 @@ typedef struct {
     atomic_int cancel, stop;
 } live_position_cancel;
 
-/* Purpose: print one bounded typed failure. */
 static void live_failure(const char *step, int rc, const yvex_error *err)
 {
     fprintf(stderr, "generation_live step=%s status=%d where=%s reason=%s\n",
@@ -75,7 +70,6 @@ static void live_failure(const char *step, int rc, const yvex_error *err)
             err ? yvex_error_message(err) : "");
 }
 
-/* Purpose: copy authoritative provider state without introducing another KV owner. */
 static int live_state(const yvex_runtime_execution_session *session,
                       yvex_graph_attention_state_summary *summary,
                       yvex_error *err)
@@ -88,14 +82,12 @@ static int live_state(const yvex_runtime_execution_session *session,
         view->attention_state_provider->context, summary, err);
 }
 
-/* Purpose: request cancellation only after the authoritative session reaches one exact position. */
 static int live_cancel_at_position(void *opaque)
 {
     live_position_cancel *cancel = opaque;
     return !cancel || atomic_load_explicit(&cancel->cancel, memory_order_acquire);
 }
 
-/* Purpose: observe committed position outside execution callbacks and publish one atomic cancel fact. */
 static void *live_position_monitor_main(void *opaque)
 {
     live_position_cancel *cancel = opaque;
@@ -112,7 +104,6 @@ static void *live_position_monitor_main(void *opaque)
     return NULL;
 }
 
-/* Purpose: hold one admitted execution at its first cancellation safe point. */
 static int live_cancel_block(void *opaque)
 {
     live_cancel_gate *gate = opaque;
@@ -125,7 +116,6 @@ static int live_cancel_block(void *opaque)
     return 1;
 }
 
-/* Purpose: execute one request until the test-controlled cancellation gate releases it. */
 static void *live_execute_main(void *opaque)
 {
     static const unsigned char prompt[] = "Hi";
@@ -144,7 +134,6 @@ static void *live_execute_main(void *opaque)
     return NULL;
 }
 
-/* Purpose: transfer unique close ownership while the execution thread is active. */
 static void *live_close_main(void *opaque)
 {
     live_close_thread *thread = opaque;
@@ -154,7 +143,6 @@ static void *live_close_main(void *opaque)
     return NULL;
 }
 
-/* Purpose: seal one exact in-memory prompt token input for manual composition. */
 static int live_input_open(yvex_transformer_input **input,
                            const yvex_transformer_plan_summary *plan,
                            const yvex_tokenizer_encode_result *encoded,
@@ -181,7 +169,6 @@ static int live_input_open(yvex_transformer_input **input,
     return rc;
 }
 
-/* Purpose: execute the production generation owner over one fresh session. */
 static int live_production(yvex_runtime_model *model, yvex_backend_kind backend,
                            yvex_runtime_sampling_policy policy,
                            unsigned long long maximum_tokens,
@@ -232,11 +219,6 @@ static int live_production(yvex_runtime_model *model, yvex_backend_kind backend,
     return rc;
 }
 
-/* Purpose: execute one real bounded generation boundary over an isolated session.
- * Inputs: shared immutable model, backend/policy, context limit, and optional stop token.
- * Effects: commits prompt state and any admitted ordinary token; returns exact terminal evidence.
- * Failure: preserves the primary owner failure and closes context/session in dependency order.
- * Boundary: test-only target-scale stop/capacity proof; it does not alter production policy. */
 static int live_boundary_execute(
     yvex_runtime_model *model, yvex_backend_kind backend,
     yvex_runtime_sampling_policy policy, unsigned long long context_capacity,
@@ -289,7 +271,6 @@ static int live_boundary_execute(
     return rc;
 }
 
-/* Purpose: prove terminal sampling and prompt-capacity stop never create a false decode commit. */
 static int live_stop_capacity_proof(
     yvex_runtime_model *model, yvex_backend_kind backend,
     yvex_runtime_sampling_policy policy, unsigned int first_token,
@@ -328,11 +309,11 @@ static int live_stop_capacity_proof(
     return rc;
 }
 
-/* Purpose: execute one expected post-model-commit cancellation or output-budget failure.
- * Inputs: immutable model/policy, failure kind, and isolated session ownership.
- * Effects: returns sealed partial evidence after exactly one committed sampled token.
- * Failure: reports validation or cleanup faults separately from the expected primary status.
- * Boundary: test-only failure injection uses public cancellation/output budgets, not production hooks. */
+/*
+ * Execute one expected post-model-commit cancellation or output-budget failure.
+ *
+ * Immutable model/policy, failure kind, and isolated session ownership.
+ */
 static int live_partial_execute(
     yvex_runtime_model *model, yvex_backend_kind backend,
     yvex_runtime_sampling_policy policy, int cancel_after_commit,
@@ -416,7 +397,6 @@ static int live_partial_execute(
     return rc;
 }
 
-/* Purpose: prove committed model progress survives later cancellation/output refusal without false text. */
 static int live_partial_progress_proof(
     yvex_runtime_model *model, yvex_backend_kind backend,
     yvex_runtime_sampling_policy policy, yvex_error *err)
@@ -462,7 +442,6 @@ static int live_partial_progress_proof(
     return rc;
 }
 
-/* Purpose: prove cancellation drains before close and later entry observes CLOSING. */
 static int live_lifecycle_proof(yvex_runtime_model *model,
                                 yvex_backend_kind backend,
                                 yvex_runtime_sampling_policy policy,
@@ -578,7 +557,6 @@ static int live_lifecycle_proof(yvex_runtime_model *model,
     return rc;
 }
 
-/* Purpose: append one committed token fragment in the independent orchestration lane. */
 static int live_fragment_append(yvex_tokenizer_decoder *decoder,
                                 unsigned int token, live_manual *out,
                                 yvex_error *err)
@@ -598,7 +576,6 @@ static int live_fragment_append(yvex_tokenizer_decoder *decoder,
     return rc;
 }
 
-/* Purpose: manually compose admitted lower APIs without calling production generation. */
 static int live_manual_execute(yvex_runtime_model *model,
                                yvex_backend_kind backend,
                                yvex_runtime_sampling_policy policy,
@@ -764,7 +741,6 @@ static int live_manual_execute(yvex_runtime_model *model,
     return rc;
 }
 
-/* Purpose: prove aggregate, token, plan, and output-byte mutation refusal. */
 static int live_mutation_proof(const live_generation *source, yvex_error *err)
 {
     static const size_t aggregate_offsets[] = {
@@ -825,7 +801,6 @@ static int live_mutation_proof(const live_generation *source, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: compare production orchestration against the independent lower-owner sequence. */
 static int live_compare(const live_generation *production,
                         const live_manual *manual, yvex_error *err)
 {

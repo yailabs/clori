@@ -1,15 +1,10 @@
-/* Owner: src/backend/cuda
- * Owns: canonical kernel-bundle admission, exact CUDA operation variants, atomic module/function rollback,
- *   launch/synchronization failure state, and temporary CUDA allocation cleanup.
- * Does not own: tensor geometry, graph semantics, qtype compute, model-family behavior, runtime generation, CLI
- *   rendering, or generated PTX storage.
- * Invariants: no kernel variant is supported before the canonical generated bundle and every required function are
- *   admitted; failed launch or synchronization never remains a supported variant.
- * Boundary: bounded primitive capability is not transformer or generation support.
- * Purpose: Admit the exact generated kernel bundle and mediate fail-closed CUDA launches.
- * Inputs: A context-ready CUDA backend, generated PTX bytes, and typed operation requests.
- * Effects: Loads or unloads the owned module and updates capability state atomically.
- * Failure: Rejects missing symbols, launch errors, and synchronization failures without partial capability. */
+/*
+ * Admit the exact generated kernel bundle and mediate fail-closed CUDA launches.
+ *
+ * No kernel variant is supported before the canonical generated bundle and every required function
+ * are admitted; failed launch or synchronization never remains a supported variant. Bounded
+ * primitive capability is not transformer or generation support.
+ */
 #include "src/backend/cuda/private.h"
 #include <stddef.h>
 #include <stdlib.h>
@@ -86,12 +81,12 @@ static const cuda_kernel_binding cuda_kernel_bindings[] = {
 };
 #define CUDA_KERNEL_BINDING_COUNT (sizeof(cuda_kernel_bindings) / sizeof(cuda_kernel_bindings[0]))
 #undef CUDA_HANDLE_OFFSET
-/* Purpose: address one table-admitted function slot without exposing state layout. */
+
 static CUfunction *cuda_function_slot(yvex_cuda_backend_state *state, size_t offset)
 {
     return (CUfunction *)((unsigned char *)state + offset);
 }
-/* Purpose: clear every module/function handle without Driver API side effects. */
+
 static void cuda_bundle_clear_handles(yvex_cuda_backend_state *state)
 {
     size_t index;
@@ -106,7 +101,7 @@ static void cuda_bundle_clear_handles(yvex_cuda_backend_state *state)
     state->kernel_bundle_identity[0] = '\0';
 }
 #ifdef YVEX_HAVE_CUDA_KERNEL_PTX
-/* Purpose: identify the exact generated PTX bytes admitted by this process. */
+
 static int cuda_bundle_identity(char output[YVEX_SHA256_HEX_BYTES])
 {
     yvex_sha256 hash;
@@ -121,8 +116,7 @@ static int cuda_bundle_identity(char output[YVEX_SHA256_HEX_BYTES])
     return 1;
 }
 #endif
-/* Contract: reports whether an explicit test-only failure selector matches. */
-/* Purpose: Implement the canonical test failure matches mechanism owned by the CUDA backend boundary. */
+
 static int cuda_test_failure_matches(const char *name,
                                      yvex_backend_operation_variant variant)
 {
@@ -131,12 +125,7 @@ static int cuda_test_failure_matches(const char *name,
            (strcmp(value, "all") == 0 ||
             strcmp(value, yvex_backend_operation_variant_name(variant)) == 0);
 }
-/* Contract: returns the admitted function handle for one exact kernel variant. */
-/* Purpose: Implement the canonical variant function mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 static CUfunction cuda_variant_function(const yvex_cuda_backend_state *state,
                                         yvex_backend_operation_variant variant)
 {
@@ -161,11 +150,7 @@ static CUfunction cuda_variant_function(const yvex_cuda_backend_state *state,
     }
     return first;
 }
-/* Purpose: publish every initialized field of one deterministic capability projection.
- * Inputs: caller-owned result, typed state and reason, and exact function availability.
- * Effects: initializes the varying result fields and clears the caller error.
- * Failure: this total projection cannot fail after its caller validates the result owner.
- * Boundary: does not inspect CUDA state or infer capability policy. */
+
 static int cuda_capability_publish(yvex_backend_capability_result *out,
                                    yvex_backend_capability_state state,
                                    yvex_backend_capability_reason reason,
@@ -177,8 +162,7 @@ static int cuda_capability_publish(yvex_backend_capability_result *out,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Contract: records one execution failure without changing unrelated variants. */
-/* Purpose: Implement the canonical capability fail mechanism owned by the CUDA backend boundary. */
+
 static void cuda_capability_fail(yvex_backend *backend,
                                  yvex_backend_operation_variant variant,
                                  yvex_backend_capability_reason reason)
@@ -195,11 +179,7 @@ static void cuda_capability_fail(yvex_backend *backend,
     }
 }
 #ifdef YVEX_HAVE_CUDA_KERNEL_PTX
-/* Purpose: retain a rejected module under an already valid context owner.
- * Inputs: context-owning backend and the unpublished module returned by the Driver.
- * Effects: clears every function handle and records only the module for checked close.
- * Failure: this ownership transfer cannot fail after backend admission.
- * Boundary: rejected functions never become executable; checked close discharges the module. */
+
 static void cuda_bundle_retain_rejected(yvex_backend *backend, CUmodule module)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -210,11 +190,7 @@ static void cuda_bundle_retain_rejected(yvex_backend *backend, CUmodule module)
     }
 }
 /* Contract: resolves one required function or returns a typed atomic-admission failure. */
-/* Purpose: Implement the canonical resolve required mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 static int cuda_resolve_required(yvex_cuda_backend_state *state,
                                  CUmodule module,
                                  const char *symbol,
@@ -239,11 +215,7 @@ static int cuda_resolve_required(yvex_cuda_backend_state *state,
 /*
  * Contract: admits only generated kernels.cu PTX and commits no handle
  * until module load and every required symbol succeed. No tensor payload IO. */
-/* Purpose: Implement the canonical kernel bundle admit mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -338,12 +310,7 @@ reject:
     }
 #endif
 }
-/* Contract: unloads the admitted module and preserves every handle on pre-release failure. */
-/* Purpose: Release the resources owned by kernel bundle close without changing borrowed inputs.
- * Inputs: An owned object that may be null or already released where its lifecycle permits.
- * Effects: Releases only resources owned by the supplied object and leaves it reset or unusable.
- * Failure: Null and already-released inputs follow the idempotent lifecycle contract.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_kernel_bundle_close(yvex_backend *backend, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -376,12 +343,7 @@ int yvex_cuda_kernel_bundle_close(yvex_backend *backend, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Contract: projects one exact variant without loading modules or executing work. */
-/* Purpose: Project the admitted numeric and device capability for query capability.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_query_capability(const yvex_backend *backend,
                                yvex_backend_operation_variant variant,
                                yvex_backend_capability_result *out,
@@ -438,12 +400,7 @@ int yvex_cuda_query_capability(const yvex_backend *backend,
                  : YVEX_BACKEND_CAPABILITY_REASON_FUNCTION_MISSING,
         function != NULL, err);
 }
-/* Contract: refuses an unsupported or failed variant before any CUDA dispatch. */
-/* Purpose: Project the admitted numeric and device capability for require capability.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_require_capability(yvex_backend *backend,
                                  yvex_backend_operation_variant variant,
                                  const char *where,
@@ -467,12 +424,7 @@ int yvex_cuda_require_capability(yvex_backend *backend,
     return result.state == YVEX_BACKEND_CAPABILITY_FAILED
                ? YVEX_ERR_BACKEND : YVEX_ERR_UNSUPPORTED;
 }
-/* Contract: launches one admitted function and records launch failure atomically. */
-/* Purpose: Execute the typed launch operation over already admitted buffers.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_launch(yvex_backend *backend,
                      yvex_backend_operation_variant variant,
                      CUfunction function,
@@ -521,12 +473,7 @@ int yvex_cuda_launch(yvex_backend *backend,
             backend, variant, function, grid_x, block_x, shared_bytes, where, err);
     return YVEX_OK;
 }
-/* Contract: synchronizes one variant and demotes it on any synchronization failure. */
-/* Purpose: Implement the canonical synchronize mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_synchronize(yvex_backend *backend,
                           yvex_backend_operation_variant variant,
                           const char *where,
@@ -558,11 +505,7 @@ int yvex_cuda_synchronize(yvex_backend *backend,
     }
     return rc;
 }
-/* Purpose: perform one true Driver release without changing ownership metadata.
- * Inputs: live backend, admitted variant, nonzero device pointer, and failure context.
- * Effects: calls the Driver exactly once unless the explicit pre-release seam refuses.
- * Failure: demotes the exact capability and leaves the allocation physically owned.
- * Boundary: accounting and ownership transfer remain with the temporary-release owner. */
+
 static int cuda_raw_release(yvex_backend *backend,
                             yvex_backend_operation_variant variant,
                             CUdeviceptr pointer,
@@ -584,11 +527,7 @@ static int cuda_raw_release(yvex_backend *backend,
                              YVEX_BACKEND_CAPABILITY_REASON_CLEANUP_FAILED);
     return rc;
 }
-/* Purpose: transfer a failed stack-local release into the backend's retryable owner.
- * Inputs: live CUDA state and exact pointer, byte extent, and operation variant.
- * Effects: records one unique deferred allocation without changing live accounting.
- * Failure: false on conflicting duplicate, capacity exhaustion, or byte overflow.
- * Boundary: adoption records ownership only; it never calls the Driver or clears a caller pointer. */
+
 static int cuda_deferred_release_adopt(yvex_cuda_backend_state *state,
                                        CUdeviceptr pointer,
                                        unsigned long long bytes,
@@ -612,11 +551,7 @@ static int cuda_deferred_release_adopt(yvex_cuda_backend_state *state,
     return 1;
 }
 /* Contract: releases one accounted allocation or transfers it to retryable backend ownership. */
-/* Purpose: discharge one raw CUDA allocation without losing a pointer after Driver refusal.
- * Inputs: live backend, exact allocation identity/bytes, and explicit deferred-ownership policy.
- * Effects: clears the caller pointer only after true release or successful backend adoption.
- * Failure: pre-release failure retains accounting and either caller or deferred ownership.
- * Boundary: CUDA allocation lifecycle; it does not release workspace-backed ranges. */
+
 int yvex_cuda_temporary_free(yvex_backend *backend,
                              yvex_backend_operation_variant variant,
                              CUdeviceptr *ptr,
@@ -658,11 +593,7 @@ int yvex_cuda_temporary_free(yvex_backend *backend,
         *err = release_error;
     return rc;
 }
-/* Purpose: retry every backend-owned deferred allocation in stable acquisition order.
- * Inputs: a live CUDA backend retaining zero or more failed raw releases.
- * Effects: removes and unaccounts only allocations physically released by the Driver.
- * Failure: retains every failed entry for a later checked-close retry.
- * Boundary: checked backend teardown and pre-work admission are the only consumers. */
+
 int yvex_cuda_deferred_release_drain(yvex_backend *backend, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);

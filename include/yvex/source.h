@@ -1,12 +1,5 @@
-/* Owner: public source ABI.
- * Owns: source accounts, provenance manifests, and native tensor inventory views.
- * Does not own: payload execution, model mapping, or artifact emission.
- * Invariants: declarations are format-stable, externally consumable, and independently includable.
- * Boundary: verified-source control and inventory contracts.
- * Purpose: Expose verified-source control and inventory contracts.
- * Inputs: Typed caller-owned values and immutable borrowed views as declared below.
- * Effects: Only functions with explicit lifecycle or I/O contracts mutate external state.
- * Failure: Typed status and error outputs remain authoritative; declarations add no capability. */
+/* Source metadata and inventories remain bound to their admitted snapshot. Metadata verification
+ * does not authenticate payload bytes or imply transformation, artifact, or runtime support. */
 #ifndef YVEX_SOURCE_H
 #define YVEX_SOURCE_H
 

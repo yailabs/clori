@@ -1,23 +1,6 @@
 /*
- * deepseek_attention.c - DeepSeek attention graph-boundary tests.
- *
- * Owner:
- *   tests/unit
- *
- * Owns:
- *   fixture coverage for DeepSeek attention admission refusal, immutable
- *   history-view validation, transactional state-delta lifecycle, runtime
- *   activation numerics, deterministic top-k, and reference mutation checks.
- *
- * Does not own:
- *   target-scale artifact access, full real-weight equations, CUDA execution,
- *   persistent KV storage, generation, eval, benchmark, or release claims.
- *
- * Invariants:
- *   tests use synthetic layer plans only and never read model payload bytes.
- *
- * Boundary:
- *   fixture numerics prove bounded primitives, not full-model execution.
+ * Tests use synthetic layer plans only and never read model payload bytes. Fixture numerics
+ * prove bounded primitives, not full-model execution.
  */
 #include "tests/test.h"
 
@@ -71,7 +54,6 @@ typedef struct {
     unsigned int cancel_at;
 } cancellation_fixture;
 
-/* Purpose: request cancellation at one deterministic cooperative sample. */
 static int cancellation_requested(void *opaque)
 {
     cancellation_fixture *fixture = (cancellation_fixture *)opaque;
@@ -352,7 +334,6 @@ static int test_execution_status_names(void)
     return 0;
 }
 
-/* Purpose: prove exact class geometry and borrowed cancellation refuse before execution. */
 static int test_execution_geometry_and_cancellation(void)
 {
     yvex_attention_layer_plan swa =
@@ -584,8 +565,6 @@ static int test_history_contracts(void)
     return 0;
 }
 
-/* Purpose: prove CSA candidate/ranking allocations obey one exact shared
- * scratch budget and unwind their reservations on refusal and success. */
 static int test_csa_selection_scratch_budget(void)
 {
     yvex_attention_layer_plan layer =
@@ -1261,7 +1240,6 @@ static int test_rolling_state_chunk_invariance(void)
     return 0;
 }
 
-/* Purpose: compare pinned external literals, the independent oracle, and production primitives. */
 static int test_external_semantic_conformance(void)
 {
     const yvex_test_attention_external_vectors *vectors =
@@ -1676,7 +1654,6 @@ static int test_runtime_fp8_fake_quant_policy(void)
     return 0;
 }
 
-/* Purpose: prove production and independent-oracle scalar codec edge contracts. */
 static int test_runtime_activation_codec_edges(void)
 {
     unsigned int code;
@@ -1898,7 +1875,6 @@ static int test_independent_reference_detects_stage_mutations(void)
     return 0;
 }
 
-/* Proves the production comparison contract distinguishes numeric admission from object bytes. */
 static int test_f32_comparison_contract(void)
 {
     const float identical[] = {0.0f, 1.0f, -2.0f};
@@ -1986,7 +1962,6 @@ typedef struct {
     unsigned long long left_indexer_position[1], right_indexer_position[1];
 } attention_state_comparison_fixture;
 
-/* Purpose: initialize one exact rolling-state publication for state-delta comparison. */
 static void state_comparison_rolling_init(
     yvex_attention_rolling_state_output *state, yvex_attention_rolling_kind kind,
     float *kv_state, unsigned long long kv_extent, float *score_state,
@@ -2017,7 +1992,6 @@ static void state_comparison_rolling_init(
                    "state-comparison-plan");
 }
 
-/* Purpose: construct independent but semantically identical complete candidate state deltas. */
 static void state_comparison_fixture_init(attention_state_comparison_fixture *fixture)
 {
     memset(fixture, 0, sizeof(*fixture));
@@ -2067,7 +2041,6 @@ static void state_comparison_fixture_init(attention_state_comparison_fixture *fi
     fixture->right.next_indexer_rolling_state.score_state = fixture->right_indexer_score;
 }
 
-/* Purpose: prove state-delta comparison separates exact geometry, numeric admission, and bytes. */
 static int test_attention_state_comparison_contract(void)
 {
     attention_state_comparison_fixture fixture;
@@ -2196,7 +2169,6 @@ static int test_attention_state_comparison_contract(void)
     return 0;
 }
 
-/* Proves generic mHC attention ingress/egress against an independently linked oracle. */
 static int test_attention_envelope_numeric_contract(void)
 {
     yvex_attention_layer_plan layer;
@@ -2306,7 +2278,6 @@ static int test_attention_envelope_numeric_contract(void)
     return 0;
 }
 
-/* Purpose: prove reusable graph arenas refuse capacity and isolate concurrent sessions. */
 static int test_attention_workspace_lifecycle(void)
 {
     yvex_attention_workspace *first = NULL, *second = NULL;
@@ -2362,7 +2333,6 @@ static int test_attention_workspace_lifecycle(void)
     return 0;
 }
 
-/* Purpose: prove quick probes seed real SWA rollover, CSA 513-to-512, and HCA emission geometry. */
 static int test_probe_seed_contract(void)
 {
     yvex_attention_layer_plan swa = layer_fixture(0ull, YVEX_ATTENTION_CLASS_SWA, 0ull);
@@ -2400,7 +2370,6 @@ static int test_probe_seed_contract(void)
     return 0;
 }
 
-/* Purpose: prove direct graph execution rejects stale and unknown probe schemas before owners. */
 static int test_probe_version_refusal(void)
 {
     yvex_attention_probe_request request = {0};

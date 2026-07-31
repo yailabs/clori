@@ -1,25 +1,6 @@
 /*
- * YVEX - prompt tests
- *
- * File: tests/test_prompt.c
- * Layer: test
- *
- * Purpose:
- *   Proves the tokenizer layer default prompt renderer for explicit role messages and its
- *   interaction with the fixture tokenizer.
- *
- * Covers:
- *   - yvex_prompt_render
- *   - yvex_rendered_prompt_free
- *   - prompt tokenization through yvex_tokenize_text
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_prompt
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises the tokenizer layer default prompt renderer for explicit role messages and its
+ * interaction with the fixture tokenizer.
  */
 #include <string.h>
 

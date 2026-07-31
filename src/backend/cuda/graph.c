@@ -1,12 +1,12 @@
-/* Owner: backend.cuda.graph (backend.cuda).
- * Owns: CUDA stream-capture, launch-graph, graph-exec, inventory, update, replay, and invalidation lifecycle.
- * Does not own: semantic graph policy, family schedules, kernel selection, tensor placement, or CPU fallback.
- * Invariants: one object owns one stream and at most one admitted graph/exec pair; capture is exclusive per backend.
- * Boundary: a CUDA launch graph executes already admitted backend operations and never infers model semantics.
- * Purpose: provide a family-neutral Driver API launch-graph resource for runtime execution sessions.
- * Inputs: a context-ready CUDA backend, explicit capture compatibility identity, and admitted kernel launches.
- * Effects: creates, updates, launches, synchronizes, invalidates, and releases only owned Driver resources.
- * Failure: typed refusal preserves the previous executable graph when update compatibility fails. */
+/*
+ * A launch-graph object owns its stream and at most one admitted CUDA graph/executable pair.
+ * Capture is exclusive within a backend because Driver capture state and the temporary operation
+ * inventory must describe one coherent launch sequence.
+ *
+ * Updates preserve the prior executable graph until compatibility and Driver admission succeed.
+ * Graph replay only schedules operations already admitted by backend owners; it never infers model
+ * topology or supplies a numerical fallback.
+ */
 #include "src/backend/cuda/private.h"
 #include <limits.h>
 #include <stdint.h>
@@ -78,39 +78,39 @@ static const char *const graph_reason_names[] = {
     "invalid-state", "capture-failed", "empty-capture", "instantiate-failed",
     "upload-failed", "update-incompatible", "launch-failed", "synchronize-failed", "cleanup-failed"
 };
-/* Purpose: report whether a deterministic graph fault selector names one lifecycle stage. */
+
 static int graph_failure_matches(const char *stage)
 {
     const char *selected = getenv("YVEX_TEST_CUDA_GRAPH_FAILURE");
     return selected && stage && (strcmp(selected, "all") == 0 || strcmp(selected, stage) == 0);
 }
-/* Purpose: restore the exact reusable state that preceded a safely abandoned capture. */
+
 static void graph_capture_restore(yvex_backend_cuda_graph *graph,
                                   yvex_backend_cuda_graph_reason reason)
 {
     graph->state = graph->capture_origin_state;
     graph->reason = reason;
 }
-/* Purpose: make owned launch resources immediately unavailable before fallible cleanup. */
+
 static void graph_poison(yvex_backend_cuda_graph *graph)
 {
     graph->state = YVEX_BACKEND_CUDA_GRAPH_INVALIDATED;
     graph->reason = YVEX_BACKEND_CUDA_GRAPH_REASON_NONE;
 }
-/* Purpose: retain one failed lifecycle reason while preserving the existing typed error. */
+
 static void graph_mark_failed(yvex_backend_cuda_graph *graph,
                               yvex_backend_cuda_graph_reason reason)
 {
     graph->state = YVEX_BACKEND_CUDA_GRAPH_FAILED;
     graph->reason = reason;
 }
-/* Purpose: publish one typed CUDA graph refusal that does not mutate lifecycle state. */
+
 static int graph_reject(yvex_error *err, int code, const char *where, const char *message)
 {
     yvex_error_set(err, code, where, message);
     return code;
 }
-/* Purpose: publish one exact lifecycle refusal without duplicating state mutation policy. */
+
 static int graph_fail(yvex_backend_cuda_graph *graph, yvex_backend_cuda_graph_state state,
                       yvex_backend_cuda_graph_reason reason, int code, const char *where,
                       const char *message, yvex_error *err)
@@ -120,7 +120,7 @@ static int graph_fail(yvex_backend_cuda_graph *graph, yvex_backend_cuda_graph_st
     yvex_error_set(err, code, where, message);
     return code;
 }
-/* Purpose: poison one retained Driver resource after cleanup cannot discharge ownership. */
+
 static int graph_cleanup_result(yvex_backend_cuda_graph *graph, int rc)
 {
     if (rc != YVEX_OK) {
@@ -129,7 +129,7 @@ static int graph_cleanup_result(yvex_backend_cuda_graph *graph, int rc)
     }
     return rc;
 }
-/* Purpose: publish an injected cleanup failure through the canonical poisoned state. */
+
 static int graph_cleanup_fail(yvex_backend_cuda_graph *graph, const char *where,
                               const char *message, yvex_error *err)
 {
@@ -137,18 +137,14 @@ static int graph_cleanup_fail(yvex_backend_cuda_graph *graph, const char *where,
                       YVEX_BACKEND_CUDA_GRAPH_REASON_CLEANUP_FAILED,
                       YVEX_ERR_BACKEND, where, message, err);
 }
-/* Purpose: project whether every stream entrypoint required by capture and replay is loaded.
- * Inputs: Immutable dynamically resolved Driver function table.
- * Effects: Does not mutate Driver or backend state.
- * Failure: Missing optional functions return false without changing eager admission.
- * Boundary: Reports launch-graph resource capability only. */
+
 static int stream_api_available(const yvex_cuda_driver *driver)
 {
     return driver && driver->cuStreamCreate && driver->cuStreamDestroy_v2 &&
            driver->cuStreamSynchronize && driver->cuStreamBeginCapture_v2 &&
            driver->cuStreamEndCapture;
 }
-/* Purpose: project whether every Driver graph entrypoint required by the lifecycle is loaded. */
+
 static int graph_api_available(const yvex_cuda_driver *driver)
 {
     return driver && driver->cuGraphGetNodes && driver->cuGraphNodeGetType &&
@@ -157,7 +153,7 @@ static int graph_api_available(const yvex_cuda_driver *driver)
            driver->cuGraphInstantiateWithFlags && driver->cuGraphUpload &&
            driver->cuGraphLaunch && driver->cuGraphExecDestroy && driver->cuGraphDestroy;
 }
-/* Purpose: compare canonical edge facts without observing Driver handle addresses. */
+
 static int edge_fact_compare(const void *left, const void *right)
 {
     const cuda_edge_fact *a = (const cuda_edge_fact *)left;
@@ -172,7 +168,7 @@ static int edge_fact_compare(const void *left, const void *right)
         return a->data.type < b->data.type ? -1 : 1;
     return 0;
 }
-/* Purpose: find one temporary inventory index for a Driver node handle. */
+
 static int node_index(const CUgraphNode *nodes, size_t count, CUgraphNode node,
                       unsigned long long *out)
 {
@@ -185,7 +181,7 @@ static int node_index(const CUgraphNode *nodes, size_t count, CUgraphNode node,
     }
     return 0;
 }
-/* Purpose: add one node type to the typed inventory without promoting unknown future types. */
+
 static void inventory_node(yvex_backend_cuda_graph_inventory *inventory, int type)
 {
     switch (type) {
@@ -199,7 +195,7 @@ static void inventory_node(yvex_backend_cuda_graph_inventory *inventory, int typ
     default: inventory->other_node_count++; break;
     }
 }
-/* Purpose: finalize one canonical SHA-256 stream into caller-owned hexadecimal identity storage. */
+
 static int identity_finish(yvex_sha256 *sha, char output[65], yvex_error *err)
 {
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -210,7 +206,7 @@ static int identity_finish(yvex_sha256 *sha, char output[65], yvex_error *err)
     yvex_sha256_hex(digest, output);
     return YVEX_OK;
 }
-/* Purpose: map one admitted function handle to its stable generated-bundle symbol identity. */
+
 static const char *kernel_function_identity(const yvex_cuda_backend_state *state,
                                             CUfunction function)
 {
@@ -230,11 +226,7 @@ static const char *kernel_function_identity(const yvex_cuda_backend_state *state
 #undef MATCH
     return NULL;
 }
-/* Purpose: identify pointer-free kernel work from its bundle symbol, variant, stage, and geometry.
- * Inputs: admitted backend/function, operation variant, semantic stage, and launch geometry.
- * Effects: writes one canonical digest without observing parameter or function addresses.
- * Failure: missing admission facts or digest failure returns typed state failure.
- * Boundary: identifies launch compatibility, not dynamic kernel argument values. */
+
 static int kernel_signature(const yvex_backend *backend, yvex_backend_operation_variant variant,
                             CUfunction function, unsigned int grid, unsigned int block,
                             unsigned int shared_bytes,
@@ -261,11 +253,13 @@ static int kernel_signature(const yvex_backend *backend, yvex_backend_operation_
     }
     return identity_finish(&sha, output, err);
 }
-/* Purpose: retain one successful captured launch signature for deterministic node admission.
- * Inputs: active capture owner and the exact admitted launch compatibility facts.
- * Effects: grows preparation-only storage and appends one pointer-free signature.
- * Failure: inactive capture, overflow, allocation, or identity failure appends nothing.
- * Boundary: capture registration allocates; instantiated graph replay never does. */
+/*
+ * Retain one successful captured launch signature for deterministic node admission.
+ *
+ * Active capture owner and the exact admitted launch compatibility facts. Inactive capture,
+ * overflow, allocation, or identity failure appends nothing. Capture registration allocates;
+ * instantiated graph replay never does.
+ */
 int yvex_cuda_graph_kernel_capture(yvex_backend *backend,
                                    yvex_backend_operation_variant variant, CUfunction function,
                                    unsigned int grid, unsigned int block, unsigned int shared_bytes,
@@ -306,7 +300,7 @@ int yvex_cuda_graph_kernel_capture(yvex_backend *backend,
     }
     return rc;
 }
-/* Purpose: hash explicit graph/exec compatibility facts and never Driver handles or native structures. */
+
 static int exec_identity(const yvex_backend_cuda_graph *owner, const char *graph_identity,
                          char output[65], yvex_error *err)
 {
@@ -324,11 +318,12 @@ static int exec_identity(const yvex_backend_cuda_graph *owner, const char *graph
     }
     return identity_finish(&sha, output, err);
 }
-/* Purpose: bind canonical node order and captured kernel signatures into one launch identity.
- * Inputs: admitted graph facts, canonical order, edge inventory, and caller-owned bindings.
- * Effects: binds exact captured nodes and writes a pointer-free launch-graph digest.
- * Failure: digest serialization failure publishes no usable identity.
- * Boundary: Driver handles are retained for replay but never hashed. */
+/*
+ * Bind canonical node order and captured kernel signatures into one launch identity.
+ *
+ * Digest serialization failure publishes no usable identity. Driver handles are retained for
+ * replay but never hashed.
+ */
 static int inventory_identity(const yvex_backend_cuda_graph *owner, const int *types,
                               const size_t *order, size_t node_count,
                               const cuda_edge_fact *edges, size_t edge_count,
@@ -371,11 +366,12 @@ failed:
     return graph_reject(err, YVEX_ERR_STATE, "cuda.graph.identity",
                         "CUDA launch graph identity stream rejected topology facts");
 }
-/* Purpose: admit one captured graph through canonical dependency order and registered kernel work.
- * Inputs: captured graph plus successful pointer-free kernel signatures recorded during capture.
- * Effects: returns inventory, identity, and exact kernel-node bindings for allocation-free replay.
- * Failure: ambiguous topology or registration mismatch refuses instead of guessing Driver node order.
- * Boundary: hashes topology and launch compatibility, never Driver handles or native parameter storage. */
+/*
+ * Admit one captured graph through canonical dependency order and registered kernel work.
+ *
+ * Captured graph plus successful pointer-free kernel signatures recorded during capture. Returns
+ * inventory, identity, and exact kernel-node bindings for allocation-free replay.
+ */
 static int graph_inventory(yvex_backend_cuda_graph *owner, CUgraph candidate,
                            yvex_backend_cuda_graph_inventory *inventory,
                            cuda_kernel_binding **out_bindings, size_t *out_binding_count,
@@ -564,11 +560,7 @@ done:
     free(nodes);
     return rc;
 }
-/* Purpose: destroy one candidate graph and preserve cleanup failure over the primary error.
- * Inputs: Attached owner, optional candidate handle, and the caller's primary result.
- * Effects: Destroys only the unpublished candidate graph.
- * Failure: Cleanup failure takes precedence and leaves no success-shaped result.
- * Boundary: Does not modify the currently admitted graph executable. */
+
 static int candidate_destroy(yvex_backend_cuda_graph *owner, CUgraph candidate, int primary_rc,
                              yvex_error *err)
 {
@@ -593,7 +585,7 @@ static int candidate_destroy(yvex_backend_cuda_graph *owner, CUgraph candidate, 
     }
     return rc == YVEX_OK ? primary_rc : rc;
 }
-/* Purpose: unlink one graph object from the backend-owned resource registry. */
+
 static void graph_unlink(yvex_backend_cuda_graph *graph)
 {
     yvex_cuda_backend_state *state;
@@ -611,7 +603,7 @@ static void graph_unlink(yvex_backend_cuda_graph *graph)
         cursor = &(*cursor)->next;
     }
 }
-/* Purpose: locate one session-owned graph by its complete compatibility key. */
+
 static yvex_backend_cuda_graph *graph_find(yvex_cuda_backend_state *state, const char *identity)
 {
     yvex_backend_cuda_graph *graph;
@@ -622,7 +614,7 @@ static yvex_backend_cuda_graph *graph_find(yvex_cuda_backend_state *state, const
     }
     return NULL;
 }
-/* Purpose: test whether one graph belongs to the active attention compatibility domain. */
+
 static int graph_is_attention(const yvex_cuda_backend_state *state,
                               const yvex_backend_cuda_graph *graph)
 {
@@ -634,43 +626,35 @@ static int graph_is_attention(const yvex_cuda_backend_state *state,
                    state->attention_compatibility_identity, length) == 0 &&
            graph->compatibility_identity[length] == ':';
 }
-/* Purpose: return the current capture stream selected by an explicit graph lifecycle.
- * Inputs: Immutable backend with optional active capture owner.
- * Effects: Does not mutate backend or graph state.
- * Failure: Missing or inactive state returns the null eager-stream sentinel.
- * Boundary: Used only by the canonical CUDA launch owner. */
+/*
+ * Return the current capture stream selected by an explicit graph lifecycle.
+ *
+ * Immutable backend with optional active capture owner.
+ */
 CUstream yvex_cuda_launch_stream(const yvex_backend *backend)
 {
     const yvex_cuda_backend_state *state =
         backend && backend->kind == YVEX_BACKEND_KIND_CUDA ? yvex_cuda_state(backend) : NULL;
     return state && state->capture_owner ? state->capture_stream : NULL;
 }
-/* Purpose: report whether a backend is inside one explicit, exclusive stream capture.
- * Inputs: Immutable backend state.
- * Effects: Does not mutate backend or graph state.
- * Failure: Missing state reports inactive capture.
- * Boundary: Suppresses context synchronization only while the launch owner is capturing. */
+/*
+ * Report whether a backend is inside one explicit, exclusive stream capture.
+ *
+ * Missing state reports inactive capture.
+ */
 int yvex_cuda_capture_active(const yvex_backend *backend)
 {
     const yvex_cuda_backend_state *state =
         backend && backend->kind == YVEX_BACKEND_KIND_CUDA ? yvex_cuda_state(backend) : NULL;
     return state && state->capture_owner && state->capture_stream;
 }
-/* Purpose: return the stable diagnostic name for one typed CUDA graph refusal.
- * Inputs: Typed refusal reason.
- * Effects: Does not mutate state or allocate storage.
- * Failure: Unknown values return the stable unknown label.
- * Boundary: Names backend facts without rendering operator output. */
+
 static const char *graph_reason_name(yvex_backend_cuda_graph_reason reason)
 {
     size_t count = sizeof(graph_reason_names) / sizeof(graph_reason_names[0]);
     return reason >= 0 && (size_t)reason < count ? graph_reason_names[reason] : "unknown";
 }
-/* Purpose: project optional Driver graph, stream, event, pinned, and asynchronous API admission.
- * Inputs: An immutable backend and caller-owned capability output.
- * Effects: Writes only the output; optional symbol absence never demotes eager backend admission.
- * Failure: Invalid arguments return typed failure; unsupported backends return a typed capability row.
- * Boundary: reports Driver resource capability, not graph semantics or family execution readiness. */
+
 int yvex_backend_cuda_graph_query(const yvex_backend *backend,
                                   yvex_backend_cuda_graph_capability *out, yvex_error *err)
 {
@@ -731,11 +715,14 @@ int yvex_backend_cuda_graph_query(const yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: create one stream-backed launch-graph object after complete optional API admission.
- * Inputs: A CUDA backend, schema/capture options, and caller-owned result storage.
- * Effects: Creates one non-blocking stream and registers the object beneath the backend context lifetime.
- * Failure: API, schema, allocation, or stream failures publish no partial graph object.
- * Boundary: compatibility identity is caller-provided execution truth, never inferred from a family name. */
+/*
+ * Create one stream-backed launch-graph object after complete optional API admission.
+ *
+ * A CUDA backend, schema/capture options, and caller-owned result storage. Creates one
+ * non-blocking stream and registers the object beneath the backend context lifetime. API, schema,
+ * allocation, or stream failures publish no partial graph object. Compatibility identity is
+ * caller-provided execution truth, never inferred from a family name.
+ */
 static int graph_open(yvex_backend *backend,
                       const yvex_backend_cuda_graph_options *options,
                       yvex_backend_cuda_graph **out, yvex_error *err)
@@ -801,11 +788,11 @@ static int graph_open(yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: begin exclusive stream capture while preserving any previously admitted executable graph.
- * Inputs: An open, invalidated, or instantiated graph object with a live backend context.
- * Effects: Selects the object's stream for subsequent admitted CUDA kernel launches.
- * Failure: Busy, state, injection, or Driver failures leave no active capture selection.
- * Boundary: does not launch, choose, or synthesize production operations. */
+/*
+ * Begin exclusive stream capture while preserving any previously admitted executable graph.
+ *
+ * Busy, state, injection, or Driver failures leave no active capture selection.
+ */
 static int graph_begin(yvex_backend_cuda_graph *graph, yvex_error *err)
 {
     yvex_cuda_backend_state *state;
@@ -862,11 +849,14 @@ static int graph_begin(yvex_backend_cuda_graph *graph, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: finish capture and atomically instantiate or compatibly update the executable graph.
- * Inputs: The backend's active capture owner and every kernel launch already submitted to its stream.
- * Effects: Commits a new graph/exec pair only after inventory, identity, and Driver admission succeed.
- * Failure: Empty or incompatible replacement capture preserves the previous executable graph.
- * Boundary: commits launch topology only; semantic/executable graph ownership remains with runtime. */
+/*
+ * Finish capture and atomically instantiate or compatibly update the executable graph.
+ *
+ * The backend's active capture owner and every kernel launch already submitted to its stream.
+ * Commits a new graph/exec pair only after inventory, identity, and Driver admission succeed.
+ * Empty or incompatible replacement capture preserves the previous executable graph. Commits
+ * launch topology only; semantic/executable graph ownership remains with runtime.
+ */
 static int graph_end(yvex_backend_cuda_graph *graph, yvex_error *err)
 {
     yvex_cuda_backend_state *state;
@@ -1014,11 +1004,7 @@ static int graph_end(yvex_backend_cuda_graph *graph, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: upload one instantiated graph executable without launching it.
- * Inputs: A live graph exec and its owned stream/context.
- * Effects: Performs Driver upload and advances only upload lifecycle counters.
- * Failure: Driver or injected upload failure leaves the graph executable available for retry.
- * Boundary: upload is preparation, not execution evidence. */
+
 static int graph_upload(yvex_backend_cuda_graph *graph, yvex_error *err)
 {
     yvex_cuda_backend_state *state;
@@ -1049,11 +1035,13 @@ static int graph_upload(yvex_backend_cuda_graph *graph, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: enqueue one replay of an instantiated CUDA graph executable.
- * Inputs: A live graph exec and unchanged compatibility/resource facts owned by its caller.
- * Effects: Enqueues only the captured graph on the owned stream and advances launch/replay counters.
- * Failure: Launch failure marks the object failed and publishes no successful replay counter.
- * Boundary: launch never performs CPU numerical work or an eager fallback. */
+/*
+ * Enqueue one replay of an instantiated CUDA graph executable.
+ *
+ * Enqueues only the captured graph on the owned stream and advances launch/replay counters. Launch
+ * failure marks the object failed and publishes no successful replay counter. Launch never
+ * performs CPU numerical work or an eager fallback.
+ */
 static int graph_launch(yvex_backend_cuda_graph *graph, yvex_error *err)
 {
     yvex_cuda_backend_state *state;
@@ -1087,11 +1075,11 @@ static int graph_launch(yvex_backend_cuda_graph *graph, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: synchronize only the graph object's stream after one or more launches.
- * Inputs: A live instantiated graph and its owned stream.
- * Effects: Waits for owned stream work and advances the synchronization counter on success.
- * Failure: Synchronization failure marks replay state failed and cannot be reported as completion.
- * Boundary: does not synchronize unrelated contexts or silently execute missing work. */
+/*
+ * Synchronize only the graph object's stream after one or more launches.
+ *
+ * Synchronization failure marks replay state failed and cannot be reported as completion.
+ */
 static int graph_synchronize(yvex_backend_cuda_graph *graph, yvex_error *err)
 {
     yvex_cuda_backend_state *state;
@@ -1119,11 +1107,7 @@ static int graph_synchronize(yvex_backend_cuda_graph *graph, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: prove an uncertain launch stream idle before destroying or reusing its resources.
- * Inputs: attached graph whose successful launch has not completed a successful synchronization.
- * Effects: waits only for the owned stream and clears its in-flight poison on success.
- * Failure: a failed quiescence keeps every launch resource poisoned and owned for retry.
- * Boundary: cleanup synchronization is not execution completion evidence. */
+
 static int graph_quiesce(yvex_backend_cuda_graph *graph, yvex_error *err)
 {
     yvex_cuda_backend_state *state;
@@ -1144,11 +1128,13 @@ static int graph_quiesce(yvex_backend_cuda_graph *graph, yvex_error *err)
     graph->synchronize_count++;
     return YVEX_OK;
 }
-/* Purpose: abandon a failed enqueue while preserving a previously admitted executable.
- * Inputs: active capture owner and the primary callback failure.
- * Effects: ends capture, destroys only the abandoned candidate, and clears exclusive capture state.
- * Failure: cleanup failure replaces the callback failure because ownership could not be discharged.
- * Boundary: never instantiates or launches a partial production graph. */
+/*
+ * Abandon a failed enqueue while preserving a previously admitted executable.
+ *
+ * Active capture owner and the primary callback failure. Ends capture, destroys only the abandoned
+ * candidate, and clears exclusive capture state. Cleanup failure replaces the callback failure
+ * because ownership could not be discharged.
+ */
 static int graph_capture_abort(yvex_backend_cuda_graph *graph, int primary_rc, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(graph ? graph->backend : NULL);
@@ -1176,11 +1162,12 @@ static int graph_capture_abort(yvex_backend_cuda_graph *graph, int primary_rc, y
         *err = primary;
     return primary_rc;
 }
-/* Purpose: update one captured kernel node with current allocation-stable launch parameters.
- * Inputs: backend replay owner and the next production kernel launch description.
- * Effects: updates only the matching graph-exec node and advances its replay cursor.
- * Failure: missing, reordered, or unsupported nodes refuse before graph launch.
- * Boundary: this changes dynamic arguments, never graph topology or dependency edges. */
+/*
+ * Update one captured kernel node with current allocation-stable launch parameters.
+ *
+ * Backend replay owner and the next production kernel launch description. Updates only the
+ * matching graph-exec node and advances its replay cursor.
+ */
 int yvex_cuda_graph_kernel_update(yvex_backend *backend,
                                   yvex_backend_operation_variant variant, CUfunction function,
                                   unsigned int grid, unsigned int block, unsigned int shared_bytes,
@@ -1227,11 +1214,11 @@ int yvex_cuda_graph_kernel_update(yvex_backend *backend,
     graph->kernel_update_cursor++;
     return YVEX_OK;
 }
-/* Purpose: capture once or replay one exact production launch sequence.
- * Inputs: CUDA backend, canonical compatibility key, and an enqueue-only callback.
- * Effects: owns capture/instantiate/upload/replay and returns immutable graph counters.
- * Failure: missing graph capability or callback/Driver failure never falls back to eager execution.
- * Boundary: callback selects operations; this generic owner supplies only graph lifecycle. */
+/*
+ * Capture once or replay one exact production launch sequence.
+ *
+ * Owns capture/instantiate/upload/replay and returns immutable graph counters.
+ */
 int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_identity,
                             yvex_cuda_graph_enqueue_fn enqueue, void *context,
                             yvex_backend_cuda_graph_info *info, yvex_error *err)
@@ -1350,11 +1337,12 @@ failed:
     }
     return rc;
 }
-/* Purpose: bind one attention job to a stable launch-graph compatibility key.
- * Inputs: configured backend, typed job, stage interval, and caller key storage.
- * Effects: hashes scalar policy and residency-relative weight ranges, never native pointers.
- * Failure: missing residency, overflow, or an incomplete encoded range refuses before capture.
- * Boundary: key admits launch reuse only; it does not replace semantic/executable graph identity. */
+/*
+ * Bind one attention job to a stable launch-graph compatibility key.
+ *
+ * Missing residency, overflow, or an incomplete encoded range refuses before capture. Key admits
+ * launch reuse only; it does not replace semantic/executable graph identity.
+ */
 int yvex_cuda_attention_graph_key(const yvex_backend *backend,
                                   const yvex_backend_attention_job *job, unsigned int first,
                                   unsigned int last, char output[160], yvex_error *err)
@@ -1464,11 +1452,11 @@ failed:
     return graph_reject(err, YVEX_ERR_STATE, "cuda.attention.graph_key",
                         "CUDA attention graph compatibility serialization failed");
 }
-/* Purpose: destroy captured graph and executable handles while retaining the reusable stream object.
- * Inputs: An attached graph object that is not actively capturing.
- * Effects: Releases exec before graph, clears identities/inventory, and advances invalidation count.
- * Failure: Cleanup failure preserves the still-owned handle for deterministic retry.
- * Boundary: invalidation changes launch resources only, never semantic or executable graph owners. */
+/*
+ * Destroy captured graph and executable handles while retaining the reusable stream object.
+ *
+ * Cleanup failure preserves the still-owned handle for deterministic retry.
+ */
 static int graph_invalidate(yvex_backend_cuda_graph *graph, yvex_error *err)
 {
     yvex_cuda_backend_state *state;
@@ -1532,11 +1520,7 @@ static int graph_invalidate(yvex_backend_cuda_graph *graph, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: copy immutable lifecycle facts and counters without exposing Driver handles.
- * Inputs: Borrowed graph object and caller-owned info output.
- * Effects: Writes only the complete caller-owned information row.
- * Failure: Invalid arguments return typed failure and no partial row.
- * Boundary: Projects backend lifecycle evidence, not semantic support. */
+
 static int graph_info(const yvex_backend_cuda_graph *graph,
                       yvex_backend_cuda_graph_info *out, yvex_error *err)
 {
@@ -1570,11 +1554,12 @@ static int graph_info(const yvex_backend_cuda_graph *graph,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: release one graph object after invalidating every owned Driver resource.
- * Inputs: Caller-owned graph pointer; null and already released values are idempotent.
- * Effects: Unlinks the object, destroys its stream, frees host ownership, and nulls the caller pointer.
- * Failure: Cleanup failure preserves ownership and pointer for retry.
- * Boundary: the caller must release graph objects before closing their borrowed backend. */
+/*
+ * Release one graph object after invalidating every owned Driver resource.
+ *
+ * Unlinks the object, destroys its stream, frees host ownership, and nulls the caller pointer.
+ * Cleanup failure preserves ownership and pointer for retry.
+ */
 static int graph_release(yvex_backend_cuda_graph **graph_ptr, yvex_error *err)
 {
     yvex_backend_cuda_graph *graph;
@@ -1614,11 +1599,7 @@ static int graph_release(yvex_backend_cuda_graph **graph_ptr, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: discharge every selected registry owner while retaining failed entries for retry.
- * Inputs: optional CUDA state, attention-only selector, optional successful-release count.
- * Effects: releases matching entries in registry order and continues after independent failures.
- * Failure: returns the first cleanup failure after attempting every selected owner.
- * Boundary: iterates ownership only; graph_release remains the sole Driver-resource lifecycle. */
+
 static int graph_release_registry(yvex_cuda_backend_state *state, int attention_only,
                                   unsigned long long *released, yvex_error *err)
 {
@@ -1641,11 +1622,12 @@ static int graph_release_registry(yvex_cuda_backend_state *state, int attention_
     if (result == YVEX_OK) yvex_error_clear(err);
     return result;
 }
-/* Purpose: select one explicit CUDA attention mode for a session backend.
- * Inputs: live CUDA backend, concrete mode, and upstream execution compatibility identity.
- * Effects: records only session-local dispatch policy and invalidates graphs from a replaced identity.
- * Failure: invalid or unavailable graph modes preserve the previous configuration.
- * Boundary: AUTO selection and family semantics remain runtime/graph-owned. */
+/*
+ * Select one explicit CUDA attention mode for a session backend.
+ *
+ * Live CUDA backend, concrete mode, and upstream execution compatibility identity. Records only
+ * session-local dispatch policy and invalidates graphs from a replaced identity.
+ */
 int yvex_backend_cuda_attention_configure(
     yvex_backend *backend, yvex_backend_cuda_attention_mode mode,
     const char *compatibility_identity, const char *capture_bucket,
@@ -1710,11 +1692,7 @@ int yvex_backend_cuda_attention_configure(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: aggregate session-owned attention graph lifecycle evidence.
- * Inputs: configured CUDA backend and caller-owned summary.
- * Effects: reads graph registry counters and hashes graph/exec identities without Driver handles.
- * Failure: unconfigured or malformed registry state returns typed refusal.
- * Boundary: summary is backend evidence, not semantic capability admission. */
+
 int yvex_backend_cuda_attention_graph_summary_get(
     const yvex_backend *backend, yvex_backend_cuda_attention_graph_summary *out, yvex_error *err)
 {
@@ -1784,11 +1762,7 @@ int yvex_backend_cuda_attention_graph_summary_get(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: count session-owned attention launch graphs without exposing Driver handles.
- * Inputs: live CUDA backend and caller-owned count output.
- * Effects: reads the current registry and writes one exact cardinality.
- * Failure: invalid or non-CUDA input publishes no count.
- * Boundary: includes instantiated, invalidated, and update-pending attention entries. */
+
 int yvex_backend_cuda_attention_graph_registry_count(const yvex_backend *backend,
                                                      unsigned long long *count, yvex_error *err)
 {
@@ -1805,11 +1779,7 @@ int yvex_backend_cuda_attention_graph_registry_count(const yvex_backend *backend
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: inspect one session-owned attention launch-graph registry entry.
- * Inputs: live CUDA backend, zero-based registry index, and caller-owned row.
- * Effects: copies the stable compatibility key and complete graph lifecycle facts.
- * Failure: invalid index or an oversized key publishes no partial row.
- * Boundary: returns evidence only and exposes no mutable graph or Driver handle. */
+
 int yvex_backend_cuda_attention_graph_registry_get(
     const yvex_backend *backend, unsigned long long index,
     yvex_backend_cuda_attention_graph_entry *out, yvex_error *err)
@@ -1846,11 +1816,7 @@ int yvex_backend_cuda_attention_graph_registry_get(
                     "CUDA attention graph registry index is unavailable: %llu", index);
     return YVEX_ERR_BOUNDS;
 }
-/* Purpose: apply one typed lifecycle action to every session-owned attention launch graph.
- * Inputs: live CUDA backend, update/invalidate/release action, and exact affected-count output.
- * Effects: stages updates, atomically poisons and invalidates, or releases matching graph resources.
- * Failure: invalid actions and lifecycle faults preserve every retryable registry entry.
- * Boundary: residency, workspace, and non-attention graph entries remain unchanged. */
+
 int yvex_backend_cuda_attention_graph_registry_apply(
     yvex_backend *backend, yvex_backend_cuda_graph_registry_action action,
     unsigned long long *affected, yvex_error *err)
@@ -1922,11 +1888,7 @@ int yvex_backend_cuda_attention_graph_registry_apply(
         yvex_error_clear(err);
     return result;
 }
-/* Purpose: release every graph before their shared CUDA context is destroyed.
- * Inputs: A CUDA backend at the beginning of its checked close lifecycle.
- * Effects: discharges successful entries through the canonical graph owner in registry order.
- * Failure: returns the first cleanup failure and preserves every failed entry for close retry.
- * Boundary: called only by CUDA backend close; external graph aliases expire only after success. */
+
 int yvex_cuda_graphs_close_all(yvex_backend *backend, yvex_error *err)
 {
     return graph_release_registry(yvex_cuda_state(backend), 0, NULL, err);

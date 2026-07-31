@@ -1,26 +1,15 @@
-/* Owner: src/backend
- * Owns: backend capability/qtype report construction, device/context facts, generated kernel-bundle admission, and
- *   exact operation projections.
- * Does not own: CLI rendering, graph execution, quantization, runtime generation, eval, benchmark, or release
- *   claims.
- * Invariants: one backend open produces one immutable report; report construction does not execute kernels and
- *   never infers support from context availability.
- * Boundary: backend reports do not promote backend runtime readiness.
- * Purpose: Build immutable backend reports from canonical capability and device facts.
- * Inputs: A backend request and caller-owned typed report storage.
- * Effects: Opens only the requested probe backend and releases it before returning.
- * Failure: Probe failures are represented as typed report facts without promoting support. */
+/*
+ * Build immutable backend reports from canonical capability and device facts.
+ *
+ * One backend open produces one immutable report; report construction does not execute kernels and
+ * never infers support from context availability. Backend reports do not promote backend runtime
+ * readiness.
+ */
 #include <yvex/internal/backend.h>
 
 #include <stdio.h>
 #include <string.h>
 
-/* Contract: returns the stable presentation name for typed bundle admission. */
-/* Purpose: Return the canonical diagnostic label for bundle admission name.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns the canonical unknown or zero sentinel for an invalid typed value.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 const char *yvex_backend_bundle_admission_name(
     yvex_backend_bundle_admission admission)
 {
@@ -33,8 +22,6 @@ const char *yvex_backend_bundle_admission_name(
     return "rejected";
 }
 
-/* Contract: copies one error reason into report-owned storage without IO. */
-/* Purpose: Publish report set reason only within its admitted destination range. */
 static void backend_report_set_reason(yvex_backend_report *report,
                                       const yvex_error *err)
 {
@@ -44,8 +31,6 @@ static void backend_report_set_reason(yvex_backend_report *report,
              message && message[0] ? message : "backend unavailable");
 }
 
-/* Contract: projects exact CUDA admission from one canonical variant result. */
-/* Purpose: Publish report set admission only within its admitted destination range. */
 static void backend_report_set_cuda_admission(
     yvex_backend_report *report,
     const yvex_backend_capability_result *result)
@@ -62,14 +47,6 @@ static void backend_report_set_cuda_admission(
     }
 }
 
-/*
- * Contract: opens one requested backend, copies capability/device facts, and
- * closes it. No kernel execution, operator output, or runtime claim occurs. */
-/* Purpose: Project immutable report build facts into the typed reporting surface.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 int yvex_backend_report_build(const yvex_backend_report_request *request,
                               yvex_backend_report *report,
                               yvex_error *err)

@@ -1,15 +1,10 @@
-/* Owner: src/model/target
- * Owns: qtype policy facts, qtype refusal facts, and policy report construction.
- * Does not own: CLI parsing, rendering, quantization execution, artifact emission, runtime execution, generation,
- *   eval, benchmark, or release decisions.
- * Invariants: qtype policy facts are planning/report-only and do not perform quantization, write GGUF artifacts, or
- *   mark runtime paths ready.
- * Boundary: qtype policy reporting is not quantization, artifact emission, runtime support, generation readiness,
- *   benchmark evidence, or release readiness.
- * Purpose: project source dtype and canonical numeric capability policy facts.
- * Inputs: typed target requests and bounded header metadata.
- * Effects: updates bounded policy report state only.
- * Failure: unsupported family, release, or mode remains explicitly refused. */
+/*
+ * Project source dtype and canonical numeric capability policy facts.
+ *
+ * Qtype policy facts are planning/report-only and do not perform quantization, write GGUF
+ * artifacts, or mark runtime paths ready. Qtype policy reporting is not quantization, artifact
+ * emission, runtime support, generation readiness, benchmark evidence, or release readiness.
+ */
 #include <yvex/internal/model_target.h>
 
 #include <yvex/internal/quant_numeric.h>
@@ -63,7 +58,6 @@ static const yvex_model_target_request_rules qtype_policy_rules = {
     1
 };
 
-/* Purpose: apply one qtype-policy blocker through the shared lifecycle fields. */
 static void qtype_policy_block(qtype_policy_state *state,
                                const char *mapping_status,
                                const char *blocker)
@@ -75,24 +69,6 @@ static void qtype_policy_block(qtype_policy_state *state,
     state->bracket = "blocked";
 }
 
-/*
- * qtype_policy_build_state()
- *
- * Purpose:
- *   gather qtype policy inputs from bounded source/header metadata.
- *
- * Inputs:
- *   request/family are borrowed; state is mutated.
- *
- * Effects:
- *   reads metadata file presence and safetensors headers only; no output or
- *   payload loading occurs.
- *
- * Failure:
- *   missing source/header facts become typed blockers.
- *
- * Boundary:
- *   qtype planning facts do not execute quantization or emit artifacts. */
 static void qtype_policy_build_state(const yvex_model_target_request *request,
                                      const char *family,
                                      qtype_policy_state *state)
@@ -139,23 +115,6 @@ static void qtype_policy_build_state(const yvex_model_target_request *request,
     }
 }
 
-/*
- * qtype_policy_prepare()
- *
- * Purpose:
- *   initialize common fields for qtype policy reports.
- *
- * Inputs:
- *   request, state, and report are borrowed.
- *
- * Effects:
- *   mutates report fields only; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   none.
- *
- * Boundary:
- *   policy fields remain report-only facts. */
 static void qtype_policy_prepare(const yvex_model_target_request *request,
                                  const qtype_policy_state *state,
                                  yvex_model_target_report *report)
@@ -174,23 +133,6 @@ static void qtype_policy_prepare(const yvex_model_target_request *request,
     yvex_model_target_report_prepare(report, request, &profile);
 }
 
-/*
- * qtype_policy_validate()
- *
- * Purpose:
- *   reject impossible typed request shapes for qtype policy reports.
- *
- * Inputs:
- *   request and report are borrowed.
- *
- * Effects:
- *   may append typed error rows and set exit_code; no printing occurs.
- *
- * Failure:
- *   returns 1 when a typed refusal has been populated.
- *
- * Boundary:
- *   refusal rows do not run quantization or inspect payload bytes. */
 static int qtype_policy_validate(const yvex_model_target_request *request,
                                  yvex_model_target_report *report)
 {
@@ -237,11 +179,6 @@ static int qtype_policy_validate(const yvex_model_target_request *request,
     return 0;
 }
 
-/* Purpose: register one qtype policy add contract while preserving order and bounds.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void qtype_policy_add_contract(const yvex_model_target_request *request,
                                       yvex_model_target_report *report)
 {
@@ -265,12 +202,6 @@ static void qtype_policy_add_contract(const yvex_model_target_request *request,
     yvex_model_target_report_add_output_contract(
         report, "qtype-policy", request->output_contract);
 }
-
-/* Purpose: apply the canonical qtype policy numeric lists transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static void qtype_policy_numeric_lists(char candidates[96],
                                        char refused[96])
@@ -298,7 +229,6 @@ static void qtype_policy_numeric_lists(char candidates[96],
     }
 }
 
-/* Purpose: register one qtype policy add table while preserving order and bounds. */
 static void qtype_policy_add_table(const qtype_policy_state *state,
                                    yvex_model_target_report *report)
 {
@@ -319,11 +249,6 @@ static void qtype_policy_add_table(const qtype_policy_state *state,
         state->status, state->next_row);
 }
 
-/* Purpose: register one qtype policy add audit while preserving order and bounds.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void qtype_policy_add_audit(const qtype_policy_state *state,
                                    yvex_model_target_report *report)
 {
@@ -373,26 +298,6 @@ static void qtype_policy_add_audit(const qtype_policy_state *state,
     yvex_model_target_report_common_tail(report);
 }
 
-/*
- * yvex_qtype_policy_report_build()
- *
- * Purpose:
- *   build a typed qtype policy report.
- *
- * Inputs:
- *   request is borrowed; report receives typed rows; err receives invalid
- *   argument failures.
- *
- * Effects:
- *   mutates report only; it does not parse CLI arguments, run quantization,
- *   write artifacts, or render output.
- *
- * Failure:
- *   returns invalid-arg for impossible command routing; typed unsupported
- *   releases are returned through report exit_code.
- *
- * Boundary:
- *   qtype policy reporting is not quantization. */
 int yvex_qtype_policy_report_build(const yvex_model_target_request *request,
                                    yvex_model_target_report *report,
                                    yvex_error *err)

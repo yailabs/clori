@@ -1,11 +1,6 @@
 /*
- * source_payload_deepseek.c - exhaustive read-only DeepSeek payload proof.
- *
- * Owner: tests/live.
- * Owns: live mapping-to-range assertions, discard-sink accounting, and evidence output.
- * Does not own: source policy, payload algorithms, transforms, quantization, or model data.
- * Invariants: the source tree is opened read-only and no payload byte is printed or retained.
- * Boundary: exhaustive source delivery is not conversion, artifact emission, or runtime support.
+ * The source tree is opened read-only and no payload byte is printed or retained. Exhaustive
+ * source delivery is not conversion, artifact emission, or runtime support.
  */
 #define _POSIX_C_SOURCE 200809L
 #include <yvex/internal/compilation.h>
@@ -61,7 +56,6 @@ static int live_chunk(void *opaque,
     return sink->invalid ? 1 : 0;
 }
 
-/* Commits only an exact completed stream observed by the payload owner. */
 static int live_commit(void *opaque,
                        const yvex_source_payload_stream_result *result)
 {
@@ -74,7 +68,6 @@ static int live_commit(void *opaque,
     return 0;
 }
 
-/* Records typed transactional abort without reading or logging raw bytes. */
 static void live_abort(void *opaque,
                        const yvex_source_payload_failure *failure,
                        const yvex_source_payload_stream_result *result)
@@ -86,7 +79,6 @@ static void live_abort(void *opaque,
     if (sink) sink->aborts++;
 }
 
-/* Returns monotonic elapsed nanoseconds without promoting a benchmark claim. */
 static unsigned long long live_elapsed(const struct timespec *begin,
                                        const struct timespec *end)
 {
@@ -100,7 +92,6 @@ static unsigned long long live_elapsed(const struct timespec *begin,
                (unsigned long long)(begin->tv_nsec - end->tv_nsec);
 }
 
-/* Executes either metadata/range admission or the single-pass trust-and-deliver proof. */
 int main(int argc, char **argv)
 {
     yvex_deepseek_payload_handoff_options options;

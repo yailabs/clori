@@ -1,6 +1,4 @@
-/*
- * YVEX - Model reference resolver tests
- */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

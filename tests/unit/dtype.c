@@ -1,26 +1,6 @@
 /*
- * YVEX - dtype tests
- *
- * File: tests/test_dtype.c
- * Layer: test
- *
- * Purpose:
- *   Proves model layer dtype/qtype name mapping, GGML raw type mapping, and storage
- *   projection to the canonical row-aware GGUF storage ABI.
- *
- * Covers:
- *   - yvex_dtype_get_info
- *   - yvex_dtype_from_ggml_type
- *   - yvex_dtype_name
- *   - yvex_dtype_storage_bytes
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_dtype
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises model layer dtype/qtype name mapping, GGML raw type mapping, and storage projection
+ * to the canonical row-aware GGUF storage ABI.
  */
 #include <limits.h>
 

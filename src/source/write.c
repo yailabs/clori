@@ -1,12 +1,9 @@
-/* Owner: source publication.
- * Owns: canonical manifest and derived-inventory serialization.
- * Does not own: trust decisions, CLI output, rendering, artifacts, or runtime.
- * Invariants: publication uses owned temporary files and atomic replacement.
- * Boundary: serialization records validated trust but never creates it.
- * Purpose: atomically publish source manifests and derived inventory.
- * Inputs: validated source facts, explicit destinations, and caller outputs.
- * Effects: writes, syncs, and renames only owner-created temporary files.
- * Failure: serialize, short write, sync, rename, or cleanup preserves prior state. */
+/*
+ * Atomically publish source manifests and derived inventory.
+ *
+ * Publication uses owned temporary files and atomic replacement. Serialization records validated
+ * trust but never creates it.
+ */
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -22,11 +19,6 @@ static int source_manifest_write_json_file(const char *out_path,
                                            const yvex_source_manifest_file_list *files,
                                            yvex_error *err);
 
-/* Purpose: publish one typed publication refusal without duplicating error transitions.
- * Inputs: caller-owned error state and immutable status, owner, and message facts.
- * Effects: replaces only the supplied error state.
- * Failure: returns the supplied refusal status unchanged.
- * Boundary: refusal publication does not create or mutate a source manifest. */
 static int publish_refuse(yvex_error *err,
                           yvex_status status,
                           const char *where,
@@ -35,11 +27,11 @@ static int publish_refuse(yvex_error *err,
     return status;
 }
 
-/* Purpose: writes only an unverified/in-progress source inventory manifest.
- * Inputs: typed source publication arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit source publication destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial source publication result.
- * Boundary: serialization records validated trust but never creates it. */
+/*
+ * Writes only an unverified/in-progress source inventory manifest.
+ *
+ * Writes only the explicit source publication destination through its transaction.
+ */
 int yvex_source_manifest_write_json(const char *out_path,
                                     const yvex_source_manifest_options *options,
                                     yvex_source_manifest_summary *summary_out,
@@ -68,16 +60,15 @@ int yvex_source_manifest_write_json(const char *out_path,
     return rc;
 }
 
-/* Purpose: project json field facts while preserving the canonical source publication invariants. */
 static void json_field(FILE *fp, const char *name, const char *value, int comma) {
     yvex_file_json_write_field(fp, "    ", name, value, comma);
 }
 
-/* Purpose: write source manifest summary and file-list facts to JSON.
- * Inputs: typed source publication arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit source publication destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial source publication result.
- * Boundary: serialization records validated trust but never creates it. */
+/*
+ * Write source manifest summary and file-list facts to JSON.
+ *
+ * Writes only the explicit source publication destination through its transaction.
+ */
 static int source_manifest_write_json_file(const char *out_path,
                                            const yvex_source_manifest_options *options,
                                            const yvex_source_manifest_file_list *files,
@@ -155,11 +146,11 @@ static int source_manifest_write_json_file(const char *out_path,
 
 typedef int (*source_atomic_writer)(FILE *fp, const void *context);
 
-/* Purpose: publishes one same-directory temporary file through fsync and atomic rename.
- * Inputs: typed source publication arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit source publication destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial source publication result.
- * Boundary: serialization records validated trust but never creates it. */
+/*
+ * Publishes one same-directory temporary file through fsync and atomic rename.
+ *
+ * Writes only the explicit source publication destination through its transaction.
+ */
 static int source_publish_atomic(const char *out_path,
                                  source_atomic_writer writer,
                                  const void *context,
@@ -238,11 +229,11 @@ typedef struct {
     const yvex_source_verification *verification;
 } source_verified_manifest_context;
 
-/* Purpose: serializes already-approved exact verification facts to a temporary stream.
- * Inputs: typed source publication arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit source publication destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial source publication result.
- * Boundary: serialization records validated trust but never creates it. */
+/*
+ * Serializes already-approved exact verification facts to a temporary stream.
+ *
+ * Writes only the explicit source publication destination through its transaction.
+ */
 static int source_write_verified_manifest(FILE *fp, const void *opaque) {
     const source_verified_manifest_context *context =
         (const source_verified_manifest_context *)opaque;
@@ -297,11 +288,6 @@ static int source_write_verified_manifest(FILE *fp, const void *opaque) {
                    verification->header_tensor_count) >= 0;
 }
 
-/* Purpose: admits only blocker-free exact facts to atomic complete-manifest publication.
- * Inputs: typed source publication arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit source publication destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial source publication result.
- * Boundary: serialization records validated trust but never creates it. */
 static int publish_verified(const char *out_path, const yvex_source_verify_options *options,
                             const yvex_source_verification *verification, yvex_error *err) {
     source_verified_manifest_context context;
@@ -330,11 +316,11 @@ typedef struct {
     const yvex_source_payload_session *session;
 } source_payload_manifest_context;
 
-/* Purpose: serializes a fully trusted payload set; raw payload bytes never enter output.
- * Inputs: typed source publication arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit source publication destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial source publication result.
- * Boundary: serialization records validated trust but never creates it. */
+/*
+ * Serializes a fully trusted payload set; raw payload bytes never enter output.
+ *
+ * Writes only the explicit source publication destination through its transaction.
+ */
 static int source_write_payload_manifest(FILE *fp, const void *opaque) {
     const source_payload_manifest_context *context =
         (const source_payload_manifest_context *)opaque;
@@ -447,11 +433,6 @@ static int source_write_payload_manifest(FILE *fp, const void *opaque) {
     return fprintf(fp, "    ]\n  }\n}\n") >= 0;
 }
 
-/* Purpose: publishes v3 only after all digests and aggregate identity have completed.
- * Inputs: typed source publication arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit source publication destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial source publication result.
- * Boundary: serialization records validated trust but never creates it. */
 static int publish_payload(const char *out_path,
                            const yvex_source_verification *verification,
                            const yvex_source_payload_session *session, yvex_error *err) {
@@ -475,11 +456,11 @@ typedef struct {
     const yvex_source_derived_inventory *inventory;
 } source_derived_inventory_context;
 
-/* Purpose: serializes deterministic header-derived rows with explicit YVEX authority.
- * Inputs: typed source publication arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit source publication destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial source publication result.
- * Boundary: serialization records validated trust but never creates it. */
+/*
+ * Serializes deterministic header-derived rows with explicit YVEX authority.
+ *
+ * Writes only the explicit source publication destination through its transaction.
+ */
 static int source_write_derived_inventory(FILE *fp, const void *opaque) {
     const source_derived_inventory_context *context =
         (const source_derived_inventory_context *)opaque;
@@ -510,11 +491,6 @@ static int source_write_derived_inventory(FILE *fp, const void *opaque) {
     return fprintf(fp, "  }\n}\n") >= 0;
 }
 
-/* Purpose: atomically publishes a nonempty derived inventory outside the source tree.
- * Inputs: typed source publication arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit source publication destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial source publication result.
- * Boundary: serialization records validated trust but never creates it. */
 static int publish_inventory(const char *out_path, const yvex_source_verify_options *options,
                              const yvex_source_derived_inventory *inventory, yvex_error *err) {
     source_derived_inventory_context context;
@@ -529,11 +505,6 @@ static int publish_inventory(const char *out_path, const yvex_source_verify_opti
     return source_publish_atomic(out_path, source_write_derived_inventory, &context, err);
 }
 
-/* Purpose: dispatch one typed source publication through its canonical serializer.
- * Inputs: immutable publication request and caller-owned error state.
- * Effects: atomically publishes only the request's explicit destination.
- * Failure: invalid kinds or kind-specific facts refuse without replacing prior output.
- * Boundary: serialization records admitted source truth and never creates it. */
 int yvex_source_publish(const yvex_source_publication_request *request, yvex_error *err) {
     if (!request)
         return publish_refuse(err, YVEX_ERR_INVALID_ARG, "source_publish",

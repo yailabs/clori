@@ -1,24 +1,6 @@
 /*
- * YVEX - Log tests
- *
- * File: tests/test_log.c
- * Layer: test
- *
- * Purpose:
- *   Proves that core log level and domain names are stable and that unknown
- *   values use the fallback string.
- *
- * Covers:
- *   - yvex_log_level_name
- *   - yvex_log_domain_name
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_log
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises core log level and domain names are stable and that unknown values use the fallback
+ * string.
  */
 #include <yvex/core.h>
 

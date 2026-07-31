@@ -1,15 +1,10 @@
-/* Owner: gguf.artifact writer plan (TRACK.ARTIFACT).
- * Owns: exact metadata encoding, tokenizer projection, tensor directory order, checked offsets/alignment,
- *   structural prefix bytes, and plan identity.
- * Does not own: numeric execution, source reads, file creation/publication, reader roundtrip, support admission,
- *   materialization, runtime, or rendering.
- * Invariants: plan bytes are explicit little-endian GGUF v3; qtype geometry is consumed from its canonical owner;
- *   planning reads zero tensor payload.
- * Boundary: sealed structure and predicted ranges do not prove file emission.
- * Purpose: derive sealed GGUF structure and exact physical tensor ranges.
- * Inputs: immutable lowering, quantization, tokenizer, and provenance facts.
- * Effects: allocates a self-owned plan and deterministic structural prefix.
- * Failure: typed refusal releases partial ownership and publishes no plan. */
+/*
+ * Derive sealed GGUF structure and exact physical tensor ranges.
+ *
+ * Plan bytes are explicit little-endian GGUF v3; qtype geometry is consumed from its canonical
+ * owner; planning reads zero tensor payload. Sealed structure and predicted ranges do not prove
+ * file emission.
+ */
 #include <float.h>
 #include <limits.h>
 #include <math.h>
@@ -63,11 +58,6 @@ struct yvex_gguf_writer_plan {
     size_t prefix_bytes;
 };
 
-/* Purpose: publish one structured writer-plan refusal.
- * Inputs: failure coordinates, expected/actual facts, status, and diagnostic.
- * Effects: resets the failure record and updates the shared error object.
- * Failure: returns the supplied status without exposing partial plan state.
- * Boundary: centralizes diagnostics while callers retain validation policy. */
 static int writer_fail(yvex_gguf_writer_failure *failure, yvex_gguf_writer_code code,
                        const char *name, unsigned long long metadata_index,
                        unsigned long long tensor_index, unsigned long long expected,
@@ -87,11 +77,6 @@ static int writer_fail(yvex_gguf_writer_failure *failure, yvex_gguf_writer_code 
     return status;
 }
 
-/* Purpose: align one file position to a checked power-of-two boundary.
- * Inputs: unaligned value, alignment, and caller-owned result.
- * Effects: writes the canonical aligned value.
- * Failure: returns false for invalid alignment, null output, or overflow.
- * Boundary: computes geometry only and emits no padding bytes. */
 static int writer_align(unsigned long long value, unsigned int alignment, unsigned long long *out) {
     unsigned long long mask;
     if (!out || !alignment || (alignment & (alignment - 1u)) != 0u)
@@ -103,11 +88,6 @@ static int writer_align(unsigned long long value, unsigned int alignment, unsign
     return 1;
 }
 
-/* Purpose: order borrowed tensor pointers by canonical emitted name.
- * Inputs: qsort-compatible pointers to tensor pointers.
- * Effects: none beyond qsort comparison semantics.
- * Failure: valid writer tensors always yield a deterministic comparison.
- * Boundary: lexical ordering proves uniqueness, not directory order. */
 static int writer_tensor_name_compare(const void *left, const void *right) {
     const yvex_gguf_writer_tensor *const *left_tensor =
         (const yvex_gguf_writer_tensor *const *)left;
@@ -116,11 +96,6 @@ static int writer_tensor_name_compare(const void *left, const void *right) {
     return strcmp((*left_tensor)->name, (*right_tensor)->name);
 }
 
-/* Purpose: prove emitted tensor names are unique in O(n log n).
- * Inputs: immutable tensor array and count.
- * Effects: allocates and releases a temporary pointer ordering.
- * Failure: returns zero for duplicates and negative one for invalid/allocation failure.
- * Boundary: does not reorder the canonical writer directory. */
 static int writer_tensor_names_unique(const yvex_gguf_writer_tensor *tensors,
                                       unsigned long long tensor_count) {
     const yvex_gguf_writer_tensor **ordered;
@@ -143,11 +118,6 @@ static int writer_tensor_names_unique(const yvex_gguf_writer_tensor *tensors,
     return result;
 }
 
-/* Purpose: serialize one unsigned 32-bit value in little-endian order.
- * Inputs: owned prefix buffer and scalar value.
- * Effects: appends exactly four bytes.
- * Failure: returns false when the bounded buffer cannot grow.
- * Boundary: explicit-width encoding independent of host endianness. */
 static int writer_u32(writer_buffer *buffer, unsigned int value) {
     unsigned char bytes[4];
     unsigned int index;
@@ -156,11 +126,6 @@ static int writer_u32(writer_buffer *buffer, unsigned int value) {
     return yvex_core_bytes_append(buffer, bytes, sizeof(bytes));
 }
 
-/* Purpose: serialize one unsigned 64-bit value in little-endian order.
- * Inputs: owned prefix buffer and scalar value.
- * Effects: appends exactly eight bytes.
- * Failure: returns false when the bounded buffer cannot grow.
- * Boundary: explicit-width encoding independent of native structure layout. */
 static int writer_u64(writer_buffer *buffer, unsigned long long value) {
     unsigned char bytes[8];
     unsigned int index;
@@ -169,43 +134,23 @@ static int writer_u64(writer_buffer *buffer, unsigned long long value) {
     return yvex_core_bytes_append(buffer, bytes, sizeof(bytes));
 }
 
-/* Purpose: serialize the exact IEEE-754 binary32 bit pattern.
- * Inputs: owned prefix buffer and admitted finite metadata value.
- * Effects: appends the scalar through canonical little-endian integer encoding.
- * Failure: returns false when prefix capacity is exhausted.
- * Boundary: preserves bits; metadata admission owns numeric policy. */
 static int writer_f32(writer_buffer *buffer, float value) {
     uint32_t bits;
     memcpy(&bits, &value, sizeof(bits));
     return writer_u32(buffer, bits);
 }
 
-/* Purpose: serialize the exact IEEE-754 binary64 bit pattern.
- * Inputs: owned prefix buffer and admitted finite metadata value.
- * Effects: appends the scalar through canonical little-endian integer encoding.
- * Failure: returns false when prefix capacity is exhausted.
- * Boundary: preserves bits without redefining floating-point policy. */
 static int writer_f64(writer_buffer *buffer, double value) {
     uint64_t bits;
     memcpy(&bits, &value, sizeof(bits));
     return writer_u64(buffer, bits);
 }
 
-/* Purpose: serialize a GGUF length-prefixed byte string.
- * Inputs: owned buffer, borrowed string bytes, and exact byte count.
- * Effects: appends a 64-bit length followed by the borrowed bytes.
- * Failure: returns false when either append exceeds the prefix budget.
- * Boundary: accepts arbitrary bytes; callers own UTF-8 or tokenizer validity. */
 static int writer_string(writer_buffer *buffer, const unsigned char *bytes, size_t byte_count) {
     return writer_u64(buffer, byte_count) &&
            yvex_core_bytes_append(buffer, bytes, byte_count);
 }
 
-/* Purpose: detect a duplicate key in the bounded metadata staging set.
- * Inputs: immutable staged entries, count, and candidate key.
- * Effects: none.
- * Failure: returns false when no exact duplicate exists.
- * Boundary: linear scan is bounded by the fixed metadata cap. */
 static int writer_metadata_key_exists(const writer_metadata *entries, unsigned int count,
                                       const char *key) {
     unsigned int index;
@@ -215,11 +160,6 @@ static int writer_metadata_key_exists(const writer_metadata *entries, unsigned i
     return 0;
 }
 
-/* Purpose: reserve one unique bounded metadata staging row.
- * Inputs: entry array, mutable count, and canonical key.
- * Effects: clears and initializes the next row while advancing count.
- * Failure: returns null for invalid, duplicate, oversized, or over-budget keys.
- * Boundary: stages metadata facts but does not serialize them. */
 static writer_metadata *writer_metadata_new(writer_metadata *entries, unsigned int *count,
                                             const char *key) {
     writer_metadata *entry;
@@ -232,11 +172,6 @@ static writer_metadata *writer_metadata_new(writer_metadata *entries, unsigned i
     return entry;
 }
 
-/* Purpose: stage one borrowed GGUF string metadata value.
- * Inputs: metadata set, key, borrowed bytes, and exact length.
- * Effects: records string type and borrowed byte view.
- * Failure: returns false for invalid bytes or unavailable metadata row.
- * Boundary: lifetime remains borrowed until prefix serialization completes. */
 static int writer_meta_string(writer_metadata *entries, unsigned int *count, const char *key,
                               const unsigned char *bytes, size_t byte_count) {
     writer_metadata *entry = writer_metadata_new(entries, count, key);
@@ -248,22 +183,12 @@ static int writer_meta_string(writer_metadata *entries, unsigned int *count, con
     return 1;
 }
 
-/* Purpose: stage one NUL-terminated text value as GGUF string metadata.
- * Inputs: metadata set, key, and borrowed C string.
- * Effects: records its byte view without retaining the terminator.
- * Failure: returns false for null text or metadata admission failure.
- * Boundary: convenience adapter over exact byte-string staging. */
 static int writer_meta_text(writer_metadata *entries, unsigned int *count, const char *key,
                             const char *text) {
     return text &&
            writer_meta_string(entries, count, key, (const unsigned char *)text, strlen(text));
 }
 
-/* Purpose: stage one range-checked GGUF unsigned 32-bit metadata scalar.
- * Inputs: metadata set, key, and unsigned source value.
- * Effects: records canonical scalar type and value.
- * Failure: returns false for overflow or metadata admission failure.
- * Boundary: refuses implicit truncation from architecture-sized values. */
 static int writer_meta_u32(writer_metadata *entries, unsigned int *count, const char *key,
                            unsigned long long value) {
     writer_metadata *entry;
@@ -277,11 +202,6 @@ static int writer_meta_u32(writer_metadata *entries, unsigned int *count, const 
     return 1;
 }
 
-/* Purpose: stage one normalized GGUF boolean metadata scalar.
- * Inputs: metadata set, key, and truth value.
- * Effects: records a canonical zero-or-one boolean fact.
- * Failure: returns false when the metadata row cannot be admitted.
- * Boundary: owns encoding normalization, not source policy. */
 static int writer_meta_bool(writer_metadata *entries, unsigned int *count, const char *key,
                             int value) {
     writer_metadata *entry = writer_metadata_new(entries, count, key);
@@ -292,11 +212,6 @@ static int writer_meta_bool(writer_metadata *entries, unsigned int *count, const
     return 1;
 }
 
-/* Purpose: project one typed DeepSeek lowering metadata row into GGUF storage.
- * Inputs: bounded metadata set and immutable canonical map entry.
- * Effects: records scalar/array source, type, and borrowed value references.
- * Failure: refuses unsupported type, invalid numeric range, or duplicate key.
- * Boundary: consumes lowering truth without reconstructing architecture facts. */
 static int writer_meta_map(writer_metadata *entries, unsigned int *count,
                            const yvex_deepseek_gguf_metadata *map_entry) {
     writer_metadata *entry;
@@ -347,11 +262,6 @@ static int writer_meta_map(writer_metadata *entries, unsigned int *count,
     }
 }
 
-/* Purpose: stage one dynamically produced tokenizer metadata array.
- * Inputs: key, source class, element type, and exact nonzero cardinality.
- * Effects: records array production instructions in one metadata row.
- * Failure: returns false for zero count or metadata admission failure.
- * Boundary: array elements remain owned by the tokenizer metadata source. */
 static int writer_meta_dynamic_array(writer_metadata *entries, unsigned int *count, const char *key,
                                      writer_metadata_source source, unsigned int element_type,
                                      unsigned long long element_count) {
@@ -365,11 +275,11 @@ static int writer_meta_dynamic_array(writer_metadata *entries, unsigned int *cou
     return 1;
 }
 
-/* Purpose: serialize one staged GGUF metadata key/value pair.
- * Inputs: prefix buffer, typed metadata row, and optional tokenizer source.
- * Effects: appends canonical scalar or array bytes in deterministic order.
- * Failure: returns false for malformed source data, narrowing, or buffer limits.
- * Boundary: serializes admitted rows only and creates no metadata policy. */
+/*
+ * Serialize one staged GGUF metadata key/value pair.
+ *
+ * Appends canonical scalar or array bytes in deterministic order.
+ */
 static int writer_metadata_serialize(writer_buffer *buffer, const writer_metadata *entry,
                                      const yvex_gguf_tokenizer_metadata *tokenizer) {
     unsigned long long index;
@@ -443,11 +353,6 @@ static int writer_metadata_serialize(writer_buffer *buffer, const writer_metadat
     }
 }
 
-/* Purpose: derive the deterministic writer-plan identity from semantic bytes.
- * Inputs: sealed-prefix candidate and bound profile/execution identities.
- * Effects: writes the plan identity into its owned summary.
- * Failure: returns false when canonical SHA-256 encoding cannot complete.
- * Boundary: excludes pointers, allocation order, paths, and runtime counters. */
 static int writer_plan_identity(yvex_gguf_writer_plan *plan) {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -473,11 +378,11 @@ static int writer_plan_identity(yvex_gguf_writer_plan *plan) {
     return 1;
 }
 
-/* Purpose: seed immutable provenance shared by fixture and model writer plans.
- * Inputs: empty owned plan, sealed quant summary, tensor count, and options.
- * Effects: binds identities and physical planning parameters into the summary.
- * Failure: admitted inputs make this initialization infallible.
- * Boundary: copies semantic facts but computes neither ranges nor identity. */
+/*
+ * Seed immutable provenance shared by fixture and model writer plans.
+ *
+ * Copies semantic facts but computes neither ranges nor identity.
+ */
 static void writer_plan_seed(yvex_gguf_writer_plan *plan, const yvex_quant_plan *quant_plan,
                              const yvex_quant_plan_summary *quant, unsigned long long tensor_count,
                              const yvex_gguf_writer_plan_options *options) {
@@ -507,11 +412,12 @@ static void writer_plan_seed(yvex_gguf_writer_plan *plan, const yvex_quant_plan 
                             options->required_execution_identity);
 }
 
-/* Purpose: serialize a deterministic GGUF header, metadata set, and directory.
- * Inputs: bounded buffer, admitted metadata/tokenizer, tensors, and counts.
- * Effects: appends structural bytes in canonical plan order.
- * Failure: returns false for malformed metadata or exhausted prefix capacity.
- * Boundary: emits no data-section padding or tensor payload. */
+/*
+ * Serialize a deterministic GGUF header, metadata set, and directory.
+ *
+ * Bounded buffer, admitted metadata/tokenizer, tensors, and counts. Emits no data-section padding
+ * or tensor payload.
+ */
 static int writer_prefix_serialize(writer_buffer *buffer, const writer_metadata *metadata,
                                    unsigned int metadata_count,
                                    const yvex_gguf_tokenizer_metadata *tokenizer,
@@ -540,11 +446,12 @@ static int writer_prefix_serialize(writer_buffer *buffer, const writer_metadata 
     return 1;
 }
 
-/* Purpose: align the data section and project all absolute tensor ranges.
- * Inputs: partial plan, serialized prefix, alignment, and padded data span.
- * Effects: transfers prefix ownership and finalizes structural/file geometry.
- * Failure: returns false on alignment, range, size, or buffer overflow.
- * Boundary: computes positions only and performs no file writes. */
+/*
+ * Align the data section and project all absolute tensor ranges.
+ *
+ * Partial plan, serialized prefix, alignment, and padded data span. Transfers prefix ownership and
+ * finalizes structural/file geometry. Returns false on alignment, range, size, or buffer overflow.
+ */
 static int writer_prefix_finish(yvex_gguf_writer_plan *plan, writer_buffer *buffer,
                                 unsigned int alignment, unsigned long long data_span) {
     unsigned long long structural_unaligned = buffer->count;
@@ -571,11 +478,11 @@ static int writer_prefix_finish(yvex_gguf_writer_plan *plan, writer_buffer *buff
     return 1;
 }
 
-/* Purpose: initialize canonical writer-plan resource and alignment options.
- * Inputs: caller-owned options storage.
- * Effects: resets the structure and installs bounded defaults.
- * Failure: a null destination is ignored.
- * Boundary: configures planning only and creates no plan or file. */
+/*
+ * Initialize canonical writer-plan resource and alignment options.
+ *
+ * Resets the structure and installs bounded defaults.
+ */
 void yvex_gguf_writer_plan_options_default(yvex_gguf_writer_plan_options *options) {
     if (!options)
         return;
@@ -590,11 +497,12 @@ typedef enum {
     WRITER_FIXTURE_TENSOR_ARITHMETIC
 } writer_fixture_tensor_status;
 
-/* Purpose: project and account every explicit fixture terminal in plan order.
- * Inputs: fixture names, sealed quant plan, alignment, and owned tensor array.
- * Effects: fills tensor rows, qtype counts, padding, and total payload geometry.
- * Failure: returns typed local status and the first failing ordinal.
- * Boundary: fixture planning proves mechanics but cannot establish artifact admission. */
+/*
+ * Project and account every explicit fixture terminal in plan order.
+ *
+ * Fixture names, sealed quant plan, alignment, and owned tensor array. Fills tensor rows, qtype
+ * counts, padding, and total payload geometry.
+ */
 static writer_fixture_tensor_status writer_fixture_tensors_build(
     yvex_gguf_writer_plan *plan, const yvex_quant_plan *quant_plan,
     const yvex_gguf_writer_proof_tensor *fixtures, unsigned long long tensor_count,
@@ -648,11 +556,6 @@ static writer_fixture_tensor_status writer_fixture_tensors_build(
     return WRITER_FIXTURE_TENSOR_OK;
 }
 
-/* Purpose: build a structurally real GGUF plan from an explicit quant fixture.
- * Inputs: sealed fixture quant plan, names, count, options, and result records.
- * Effects: allocates a self-owned tensor directory and serialized prefix.
- * Failure: releases every partial allocation and returns typed writer refusal.
- * Boundary: omits tokenizer proof and therefore cannot enter complete admission. */
 static int writer_plan_build_tensor_proof(
     yvex_gguf_writer_plan **out, const yvex_quant_plan *quant_plan,
     const yvex_gguf_writer_proof_tensor *fixture_tensors, unsigned long long tensor_count,
@@ -780,11 +683,6 @@ typedef struct {
     yvex_error *err;
 } writer_deepseek_context;
 
-/* Purpose: allocate the DeepSeek plan and seal verified tokenizer material.
- * Inputs: build context with matching quant, source verification, and budget.
- * Effects: owns plan/tensor/tokenizer allocations and caches borrowed token views.
- * Failure: returns typed allocation or tokenizer-completeness refusal.
- * Boundary: consumes canonical tokenizer facts without parsing GGUF metadata. */
 static int writer_deepseek_plan_create(writer_deepseek_context *context) {
     yvex_gguf_tokenizer_failure tokenizer_failure;
     int rc;
@@ -824,11 +722,6 @@ static int writer_deepseek_plan_create(writer_deepseek_context *context) {
     return YVEX_OK;
 }
 
-/* Purpose: project canonical lowering metadata without reconstructing semantics.
- * Inputs: DeepSeek build context and immutable lowering metadata sequence.
- * Effects: fills the bounded metadata staging array in lowering order.
- * Failure: refuses duplicates, unsupported values, or unrepresentable scalars.
- * Boundary: lowering remains the authority for architecture metadata. */
 static int writer_deepseek_add_lowering_metadata(writer_deepseek_context *context) {
     unsigned long long ordinal;
 
@@ -849,11 +742,12 @@ static int writer_deepseek_add_lowering_metadata(writer_deepseek_context *contex
     return YVEX_OK;
 }
 
-/* Purpose: add scalable tokenizer material and exact sidecar identities.
- * Inputs: sealed tokenizer summary plus borrowed raw JSON/config bytes.
- * Effects: appends deterministic token arrays, policy fields, and digest metadata.
- * Failure: returns false when any required row cannot be staged exactly.
- * Boundary: embeds verified tokenizer evidence without changing tokenizer identity. */
+/*
+ * Add scalable tokenizer material and exact sidecar identities.
+ *
+ * Appends deterministic token arrays, policy fields, and digest metadata. Embeds verified
+ * tokenizer evidence without changing tokenizer identity.
+ */
 static int writer_deepseek_add_tokenizer_metadata(writer_deepseek_context *context) {
     writer_metadata *metadata = context->metadata;
     unsigned int *count = &context->metadata_count;
@@ -890,11 +784,12 @@ static int writer_deepseek_add_tokenizer_metadata(writer_deepseek_context *conte
                             tokenizer->tokenizer_config_git_oid);
 }
 
-/* Purpose: bind source, transform, lowering, and quant profile provenance.
- * Inputs: canonical identity fields from the sealed quant plan.
- * Effects: stages deterministic provenance keys and numeric-contract version.
- * Failure: returns false for duplicate or unrepresentable metadata rows.
- * Boundary: records existing identities and never derives replacement identities. */
+/*
+ * Bind source, transform, lowering, and quant profile provenance.
+ *
+ * Canonical identity fields from the sealed quant plan. Stages deterministic provenance keys and
+ * numeric-contract version.
+ */
 static int writer_deepseek_add_provenance_metadata(writer_deepseek_context *context) {
     writer_metadata *metadata = context->metadata;
     unsigned int *count = &context->metadata_count;
@@ -924,11 +819,12 @@ static int writer_deepseek_add_provenance_metadata(writer_deepseek_context *cont
                            YVEX_QUANT_NUMERIC_CONTRACT_VERSION);
 }
 
-/* Purpose: add one bijected quant/lowering tensor and advance physical geometry.
- * Inputs: DeepSeek context, canonical ordinal, and current relative cursor.
- * Effects: fills one tensor row and updates qtype/payload/padding accounting.
- * Failure: typed refusal covers divergence, qtype geometry, and arithmetic overflow.
- * Boundary: consumes logical and physical facts but emits no payload bytes. */
+/*
+ * Add one bijected quant/lowering tensor and advance physical geometry.
+ *
+ * Fills one tensor row and updates qtype/payload/padding accounting. Typed refusal covers
+ * divergence, qtype geometry, and arithmetic overflow.
+ */
 static int writer_deepseek_tensor_add(writer_deepseek_context *context, unsigned long long ordinal,
                                       unsigned long long *relative) {
     const yvex_quant_decision *decision = yvex_quant_plan_decision_at(context->quant_plan, ordinal);
@@ -992,11 +888,6 @@ static int writer_deepseek_tensor_add(writer_deepseek_context *context, unsigned
     return YVEX_OK;
 }
 
-/* Purpose: build every DeepSeek tensor range and prove emitted-name uniqueness.
- * Inputs: initialized DeepSeek context with matching quant and lowering owners.
- * Effects: fills the complete tensor directory and records padded data span.
- * Failure: propagates first tensor refusal or duplicate-index allocation failure.
- * Boundary: canonical ordinal order remains unchanged by uniqueness checking. */
 static int writer_deepseek_tensors_build(writer_deepseek_context *context) {
     unsigned long long relative = 0u;
     unsigned long long ordinal;
@@ -1021,11 +912,12 @@ static int writer_deepseek_tensors_build(writer_deepseek_context *context) {
     return YVEX_OK;
 }
 
-/* Purpose: serialize structural bytes and seal plan accounting and identity.
- * Inputs: complete metadata/tensor context and ownership budget.
- * Effects: owns prefix bytes and finalizes sizes, tokenizer counts, and plan digest.
- * Failure: typed refusal covers serialization, arithmetic, budget, or identity failure.
- * Boundary: marks planning complete while payload reads remain zero. */
+/*
+ * Serialize structural bytes and seal plan accounting and identity.
+ *
+ * Complete metadata/tensor context and ownership budget. Typed refusal covers serialization,
+ * arithmetic, budget, or identity failure.
+ */
 static int writer_deepseek_plan_finish(writer_deepseek_context *context) {
     unsigned long long tensor_bytes;
     yvex_gguf_writer_plan_summary *summary = &context->plan->summary;
@@ -1068,11 +960,6 @@ static int writer_deepseek_plan_finish(writer_deepseek_context *context) {
     return YVEX_OK;
 }
 
-/* Purpose: build the complete DeepSeek writer plan from canonical owners.
- * Inputs: sealed quant plan, matching lowering, verified source, and options.
- * Effects: returns an independently owned tokenizer/prefix/tensor plan.
- * Failure: releases all partial state and returns a typed plan refusal.
- * Boundary: performs no file I/O and reads zero source payload bytes. */
 static int writer_plan_build_deepseek(
     yvex_gguf_writer_plan **out, const yvex_quant_plan *quant_plan,
     const yvex_deepseek_gguf_map *map, const yvex_source_verification *verification,
@@ -1152,11 +1039,6 @@ build_failure:
     return rc;
 }
 
-/* Purpose: build one writer plan from a tagged, immutable input class.
- * Inputs: destination, typed request, and optional failure records.
- * Effects: delegates to exactly one bounded or complete plan implementation.
- * Failure: rejects absent or unknown tags without publishing partial state.
- * Boundary: this is the sole cross-owner writer-plan constructor. */
 int yvex_gguf_writer_plan_build(yvex_gguf_writer_plan **out,
                                 const yvex_gguf_writer_plan_request *request,
                                 yvex_gguf_writer_failure *failure, yvex_error *err) {
@@ -1189,11 +1071,6 @@ int yvex_gguf_writer_plan_build(yvex_gguf_writer_plan **out,
     }
 }
 
-/* Purpose: release all independently owned writer-plan state idempotently.
- * Inputs: address of an optional writer-plan handle.
- * Effects: nulls the caller handle and frees tokenizer, directory, prefix, and plan.
- * Failure: absent handles are accepted; cleanup reports no recoverable error.
- * Boundary: borrowed lowering and quant owners are never released here. */
 void yvex_gguf_writer_plan_release(yvex_gguf_writer_plan **plan_address) {
     yvex_gguf_writer_plan *plan;
     if (!plan_address || !*plan_address)
@@ -1207,21 +1084,11 @@ void yvex_gguf_writer_plan_release(yvex_gguf_writer_plan **plan_address) {
     free(plan);
 }
 
-/* Purpose: expose the immutable summary of a sealed writer plan.
- * Inputs: optional borrowed plan.
- * Effects: none.
- * Failure: returns null for absent or incomplete plans.
- * Boundary: returned view remains owned by the plan. */
 const yvex_gguf_writer_plan_summary *
 yvex_gguf_writer_plan_summary_get(const yvex_gguf_writer_plan *plan) {
     return plan && plan->summary.complete ? &plan->summary : NULL;
 }
 
-/* Purpose: retrieve one immutable tensor-directory row by canonical ordinal.
- * Inputs: sealed borrowed plan and requested ordinal.
- * Effects: none.
- * Failure: returns null for incomplete plans or out-of-range ordinals.
- * Boundary: returned tensor view cannot outlive the plan. */
 const yvex_gguf_writer_tensor *yvex_gguf_writer_plan_tensor_at(const yvex_gguf_writer_plan *plan,
                                                                unsigned long long ordinal) {
     return plan && plan->summary.complete && ordinal < plan->summary.tensor_count
@@ -1229,11 +1096,6 @@ const yvex_gguf_writer_tensor *yvex_gguf_writer_plan_tensor_at(const yvex_gguf_w
                : NULL;
 }
 
-/* Purpose: borrow the exact serialized structural prefix of a sealed plan.
- * Inputs: sealed plan and caller-owned byte-count output.
- * Effects: publishes prefix length without copying bytes.
- * Failure: returns null and zero count for invalid inputs or incomplete plans.
- * Boundary: borrowed bytes remain immutable and plan-owned. */
 const unsigned char *yvex_gguf_writer_plan_prefix(const yvex_gguf_writer_plan *plan,
                                                   size_t *byte_count) {
     if (byte_count)

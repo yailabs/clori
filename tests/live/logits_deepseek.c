@@ -1,12 +1,8 @@
-/* Owner: live DeepSeek vocabulary-logits evidence.
- * Owns: selected-artifact logits plus real-row sampling conformance across CPU/CUDA origins.
- * Does not own: production output-head/sampling math, tokenization, generation, benchmark, or release.
- * Invariants: three complete 129280-value rows are compared per backend without tracked dumps.
- * Boundary: test-only consumer of the production Transformer, decode, residency, and logits APIs.
- * Purpose: prove one prefill and two decode hidden rows project through the exact resident output head.
- * Inputs: selected GGUF, current runtime binding, and one untracked token-stream output path.
- * Effects: opens isolated CPU/CUDA sessions serially and writes only the bounded token input.
- * Failure: reports typed production failure and releases all test-owned resources. */
+/*
+ * Exercises one prefill and two decode hidden rows project through the exact resident output
+ * head. Three complete 129280-value rows are compared per backend without tracked dumps.
+ * Test-only consumer of the production Transformer, decode, residency, and logits APIs.
+ */
 #include <yvex/internal/logits.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/runtime.h>
@@ -50,7 +46,6 @@ typedef struct {
     yvex_runtime_sampling_context_summary summary;
 } live_sampling_result;
 
-/* Purpose: print one typed live failure. */
 static void live_fail(const char *step, int rc, const yvex_error *err)
 {
     fprintf(stderr, "logits_live step=%s status=%d where=%s reason=%s\n",
@@ -58,7 +53,6 @@ static void live_fail(const char *step, int rc, const yvex_error *err)
             err ? yvex_error_message(err) : "");
 }
 
-/* Purpose: seal one canonical numeric-token input and optional external record. */
 static int live_input_open(yvex_transformer_input **input,
                            const yvex_transformer_plan_summary *plan,
                            const unsigned int *tokens,
@@ -89,7 +83,6 @@ static int live_input_open(yvex_transformer_input **input,
     return rc;
 }
 
-/* Purpose: open one warm backend-specific Transformer/decode/logits execution plane. */
 static int live_open(live_logits *execution, yvex_runtime_model *model,
                      yvex_backend_kind backend, yvex_error *err)
 {
@@ -116,7 +109,6 @@ static int live_open(live_logits *execution, yvex_runtime_model *model,
         &logits_options, err);
 }
 
-/* Purpose: release one live execution plane in strict dependent-first order. */
 static int live_close(live_logits *execution, yvex_error *err)
 {
     yvex_error cleanup;
@@ -141,7 +133,6 @@ static int live_close(live_logits *execution, yvex_error *err)
     return rc;
 }
 
-/* Purpose: execute one prefill token, two decode tokens, and three complete logits rows. */
 static int live_execute(live_logits *execution,
                         const yvex_transformer_input *prefill,
                         const yvex_transformer_input *decode,
@@ -226,7 +217,7 @@ static int live_execute(live_logits *execution,
     return rc;
 }
 
-/* Purpose: compute three complete independent rows from the exact resident output head. */
+/* Compute three complete independent rows from the exact resident output head. */
 static int live_reference(live_logits *execution, yvex_runtime_model *model,
                           yvex_error *err)
 {
@@ -265,7 +256,6 @@ static int live_reference(live_logits *execution, yvex_runtime_model *model,
     return rc;
 }
 
-/* Purpose: compare every finite vocabulary value and retain bounded error statistics. */
 static int live_compare(const float *actual, const float *reference,
                         unsigned long long count, int require_exact,
                         live_comparison *comparison)
@@ -294,9 +284,11 @@ static int live_compare(const float *actual, const float *reference,
     return comparison->first_failure == count;
 }
 
-/* Purpose: sample three already-computed complete logits rows through one reusable context.
- * Inputs: logits plan, rows, raw values, and explicit policy. Effects: publishes bounded selections.
- * Failure: source, arithmetic, identity, or cleanup refusal propagates. Boundary: no session access. */
+/*
+ * Sample three already-computed complete logits rows through one reusable context.
+ *
+ * Publishes bounded selections. Source, arithmetic, identity, or cleanup refusal propagates.
+ */
 static int live_sample_rows(
     const yvex_runtime_logits_plan_summary *plan,
     const yvex_runtime_logits_row_result rows[LIVE_LOGITS_ROWS],
@@ -331,9 +323,6 @@ static int live_sample_rows(
     return rc;
 }
 
-/* Purpose: independently compare one policy for CPU- and CUDA-origin logits.
- * Inputs: plan, both live results, and policy. Effects: publishes bounded CPU selection evidence.
- * Failure: reference/origin mismatch or warm allocation refuses. Boundary: test reference is independent. */
 static int live_sampling_policy(
     const yvex_runtime_logits_plan_summary *plan,
     const live_logits *cpu, const live_logits *cuda,
@@ -381,7 +370,6 @@ static int live_sampling_policy(
     return rc;
 }
 
-/* Purpose: seal one test-owned normalized-hidden digest with production canonical field rules. */
 static int live_hidden_digest(const float *hidden, unsigned long long count,
                               char output[YVEX_SHA256_HEX_CAP])
 {
@@ -402,14 +390,12 @@ static int live_hidden_digest(const float *hidden, unsigned long long count,
     return 1;
 }
 
-/* Purpose: request deterministic cancellation before any logits numerical work. */
 static int live_cancel_always(void *context)
 {
     (void)context;
     return 1;
 }
 
-/* Purpose: prove hidden mutation, cancellation, partial publication, and exact mismatch location. */
 static int live_failure_proofs(live_logits *execution, yvex_runtime_model *model,
                                yvex_error *err)
 {

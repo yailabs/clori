@@ -1,12 +1,9 @@
-/* Owner: artifact materialization.
- * Owns: immutable placement plans, sessions, bindings, and bounded reads.
- * Does not own: backend arithmetic, graph execution, generation, or writer publication.
- * Invariants: every binding remains tied to one admitted immutable artifact snapshot.
- * Boundary: materialization exposes bytes but performs no model arithmetic.
- * Purpose: bind admitted tensor ranges into bounded materialization sessions.
- * Inputs: complete admission, placement policy, budgets, and caller outputs.
- * Effects: allocates plan indexes, owns an artifact session, and reads positions.
- * Failure: identity, bounds, budget, allocation, or I/O publishes no binding. */
+/*
+ * Bind admitted tensor ranges into bounded materialization sessions.
+ *
+ * Every binding remains tied to one admitted immutable artifact snapshot. Materialization exposes
+ * bytes but performs no model arithmetic.
+ */
 #include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -68,7 +65,6 @@ struct yvex_materialization_session {
     int aborted;
 };
 
-/* Purpose: expose one exact test-only provider teardown fault without changing production policy. */
 static int materialize_cleanup_failure_injected(const char *point)
 {
     const char *injected = getenv("YVEX_TEST_MATERIALIZATION_CLEANUP_FAILURE");
@@ -76,7 +72,6 @@ static int materialize_cleanup_failure_injected(const char *point)
     return injected && point && strcmp(injected, point) == 0;
 }
 
-/* Purpose: project failure set facts while preserving the canonical materialization invariants. */
 static void materialize_failure_set(yvex_materialization_failure *failure,
                                     yvex_materialization_failure_code code, const char *name,
                                     unsigned long long tensor_index, unsigned long long expected,
@@ -95,7 +90,6 @@ static void materialize_failure_set(yvex_materialization_failure *failure,
         yvex_core_text_copy(failure->tensor_name, sizeof(failure->tensor_name), name);
 }
 
-/* Purpose: project reject facts while preserving the canonical materialization invariants. */
 static int materialize_reject(yvex_materialization_failure *failure,
                               yvex_materialization_failure_code code, const char *name,
                               unsigned long long tensor_index, unsigned long long expected,
@@ -106,11 +100,6 @@ static int materialize_reject(yvex_materialization_failure *failure,
     return status;
 }
 
-/* Purpose: admit one materialization entry while preserving uniqueness and checked capacity.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 static int materialize_index_insert(yvex_materialization_plan *plan, const char *name,
                                     unsigned long long index) {
     unsigned long long hash;
@@ -137,11 +126,6 @@ static int materialize_index_insert(yvex_materialization_plan *plan, const char 
     return 0;
 }
 
-/* Purpose: append canonical materialization fields to a deterministic identity stream.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 static void materialize_compute_plan_identity(yvex_materialization_plan *plan) {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -167,7 +151,6 @@ static void materialize_compute_plan_identity(yvex_materialization_plan *plan) {
     yvex_sha256_hex(digest, plan->summary.plan_identity);
 }
 
-/* Purpose: project select placement facts while preserving the canonical materialization invariants. */
 static yvex_materialization_placement
 materialize_select_placement(const yvex_tensor_info *tensor,
                              const yvex_materialization_options *options,
@@ -180,7 +163,6 @@ materialize_select_placement(const yvex_tensor_info *tensor,
     return YVEX_MATERIALIZATION_PLACEMENT_FILE_BACKED;
 }
 
-/* Purpose: project access for placement facts while preserving the canonical materialization invariants. */
 static yvex_materialization_access_mode
 materialize_access_for_placement(yvex_materialization_placement placement) {
     switch (placement) {
@@ -194,11 +176,6 @@ materialize_access_for_placement(yvex_materialization_placement placement) {
     }
 }
 
-/* Purpose: project summary add binding facts while preserving the canonical materialization invariants.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 static void materialize_summary_add_binding(yvex_materialization_summary *summary,
                                             const yvex_materialized_tensor_binding *binding) {
     if (!summary || !binding)
@@ -229,11 +206,6 @@ static void materialize_summary_add_binding(yvex_materialization_summary *summar
         summary->expert_subview_count += binding->expert_count;
 }
 
-/* Purpose: allocate the common immutable storage shared by planned and imported bindings.
- * Inputs: admitted snapshot, exact tensor count, and reserved runtime capacities.
- * Effects: publishes one empty indexed plan whose bindings remain caller-populated.
- * Failure: count, index, or allocation failure publishes no plan.
- * Boundary: performs no GGUF parsing, payload access, or binding validation. */
 static int materialize_plan_allocate(
     yvex_materialization_plan **out, const yvex_complete_artifact_admission *admission,
     const yvex_artifact_snapshot *snapshot, unsigned long long count,
@@ -279,11 +251,6 @@ static int materialize_plan_allocate(
     return YVEX_OK;
 }
 
-/* Purpose: initialize materialization state to its canonical empty or default value.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 void yvex_materialization_options_default(yvex_materialization_options *options) {
     if (!options)
         return;
@@ -295,11 +262,6 @@ void yvex_materialization_options_default(yvex_materialization_options *options)
     options->require_complete_admission = 1;
 }
 
-/* Purpose: map materialization refusal codes to stable diagnostic names.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 const char *yvex_materialization_failure_name(yvex_materialization_failure_code code) {
     return (unsigned int)code <
                    sizeof(materialization_failure_names) / sizeof(materialization_failure_names[0])
@@ -307,11 +269,6 @@ const char *yvex_materialization_failure_name(yvex_materialization_failure_code 
                : "unknown";
 }
 
-/* Purpose: project one admitted GGUF tensor into an immutable materialization binding.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 static int materialize_plan_add_tensor(yvex_materialization_plan *plan,
                                        const yvex_artifact *artifact, const yvex_gguf *gguf,
                                        const yvex_tensor_table *tensors,
@@ -401,11 +358,6 @@ static int materialize_plan_add_tensor(yvex_materialization_plan *plan,
     return YVEX_OK;
 }
 
-/* Purpose: derive an immutable placement and byte-range plan from complete artifact admission.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 int yvex_materialization_plan_build(yvex_materialization_plan **out,
                                     const yvex_complete_artifact_admission *admission,
                                     const yvex_artifact *artifact, const yvex_gguf *gguf,
@@ -490,11 +442,11 @@ int yvex_materialization_plan_build(yvex_materialization_plan **out,
     return YVEX_OK;
 }
 
-/* Purpose: reconstruct one immutable materialization plan from authenticated runtime-binding records.
- * Inputs: complete artifact admission plus canonical summary and ordered tensor records.
- * Effects: allocates a plan and lookup index without reading GGUF or source metadata.
- * Failure: malformed, duplicate, overflowing, or identity-mismatched records publish no plan.
- * Boundary: import restores physical ranges only; runtime binding owns their external serialization. */
+/*
+ * Reconstruct one immutable materialization plan from authenticated runtime-binding records.
+ *
+ * Malformed, duplicate, overflowing, or identity-mismatched records publish no plan.
+ */
 int yvex_materialization_plan_import(
     yvex_materialization_plan **out, const yvex_complete_artifact_admission *admission,
     const yvex_materialization_summary *summary,
@@ -565,11 +517,11 @@ int yvex_materialization_plan_import(
     return YVEX_OK;
 }
 
-/* Purpose: release an immutable materialization plan and its lookup index.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by artifact materialization; cleanup remains deterministic.
- * Failure: null or released artifact materialization handles remain harmless.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
+/*
+ * Release an immutable materialization plan and its lookup index.
+ *
+ * Releases only resources owned by artifact materialization; cleanup remains deterministic.
+ */
 void yvex_materialization_plan_close(yvex_materialization_plan *plan) {
     if (!plan)
         return;
@@ -578,17 +530,11 @@ void yvex_materialization_plan_close(yvex_materialization_plan *plan) {
     free(plan);
 }
 
-/* Purpose: project materialization plan summary facts while preserving the canonical materialization invariants.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 const yvex_materialization_summary *
 yvex_materialization_plan_summary(const yvex_materialization_plan *plan) {
     return plan ? &plan->summary : NULL;
 }
 
-/* Purpose: return the immutable materialization entry at a checked ordinal. */
 static const yvex_materialized_tensor_binding *plan_tensor_at(const yvex_materialization_plan *plan,
                                                               unsigned long long index) {
     if (!plan || index >= plan->count)
@@ -596,11 +542,6 @@ static const yvex_materialized_tensor_binding *plan_tensor_at(const yvex_materia
     return &plan->bindings[index];
 }
 
-/* Purpose: bind an immutable plan to the exact admitted artifact snapshot.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 int yvex_materialization_session_open(yvex_materialization_session **out,
                                       const yvex_materialization_plan *plan,
                                       const yvex_artifact *artifact,
@@ -655,11 +596,6 @@ int yvex_materialization_session_open(yvex_materialization_session **out,
     return YVEX_OK;
 }
 
-/* Purpose: seal a fully validated materialization session for concurrent reads.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 int yvex_materialization_session_commit(yvex_materialization_session *session,
                                         yvex_materialization_failure *failure, yvex_error *err) {
     yvex_artifact_snapshot current;
@@ -700,11 +636,6 @@ done:
     return rc;
 }
 
-/* Purpose: close one exclusively owned materialization session and detach its provider.
- * Inputs: session after every concurrent reader has drained.
- * Effects: clears the provider before its synchronous detach callback, then releases storage.
- * Failure: null handles remain harmless; exclusive close has no fallible lock acquisition.
- * Boundary: callers must drain readers before close; callbacks never outlive the session. */
 void yvex_materialization_session_close(yvex_materialization_session *session) {
     yvex_materialization_read_provider provider;
 
@@ -720,32 +651,22 @@ void yvex_materialization_session_close(yvex_materialization_session *session) {
     free(session);
 }
 
-/* Purpose: project materialization session summary facts while preserving the canonical materialization invariants.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 const yvex_materialization_summary *
 yvex_materialization_session_summary(const yvex_materialization_session *session) {
     return session ? &session->summary : NULL;
 }
 
-/* Purpose: return the immutable materialization entry at a checked ordinal.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 const yvex_materialized_tensor_binding *
 yvex_materialization_session_tensor_at(const yvex_materialization_session *session,
                                        unsigned long long index) {
     return session && session->plan ? plan_tensor_at(session->plan, index) : NULL;
 }
 
-/* Purpose: attach one borrowed immutable resident-byte provider after its arena is sealed.
- * Inputs: committed session and provider whose context outlives the attachment.
- * Effects: installs one read-only resolution boundary; it does not transfer arena ownership.
- * Failure: rejects replacement, invalid lifecycle, or incomplete callbacks without changing access.
- * Boundary: a provider may replace physical reads only for exact admitted tensor ranges. */
+/*
+ * Attach one borrowed immutable resident-byte provider after its arena is sealed.
+ *
+ * Installs one read-only resolution boundary; it does not transfer arena ownership.
+ */
 int yvex_materialization_session_attach_read_provider(
     yvex_materialization_session *session, const yvex_materialization_read_provider *provider,
     yvex_materialization_failure *failure, yvex_error *err) {
@@ -776,11 +697,12 @@ int yvex_materialization_session_attach_read_provider(
     return rc;
 }
 
-/* Purpose: detach the exact borrowed provider before its resident arena is released.
- * Inputs: committed session and provider ownership token.
- * Effects: clears only the matching provider and retains all access counters.
- * Failure: rejects an ownership mismatch without detaching another owner's provider.
- * Boundary: detachment never releases provider-owned bytes. */
+/*
+ * Detach the exact borrowed provider before its resident arena is released.
+ *
+ * Committed session and provider ownership token. Rejects an ownership mismatch without detaching
+ * another owner's provider.
+ */
 int yvex_materialization_session_detach_read_provider(
     yvex_materialization_session *session, const void *context,
     yvex_materialization_failure *failure, yvex_error *err) {
@@ -819,11 +741,7 @@ int yvex_materialization_session_detach_read_provider(
     return rc;
 }
 
-/* Purpose: copy physical-versus-resident byte access counters for runtime warm-path evidence.
- * Inputs: borrowed materialization session and caller-owned output.
- * Effects: copies counters without reading payload bytes or changing session state.
- * Failure: missing inputs return invalid-argument and leave no partial output.
- * Boundary: access accounting is evidence, not residency or execution admission. */
+/* Copy physical-versus-resident byte access counters for runtime warm-path evidence. */
 int yvex_materialization_session_access_summary(
     const yvex_materialization_session *session, yvex_materialization_access_summary *out,
     yvex_error *err) {
@@ -846,11 +764,11 @@ int yvex_materialization_session_access_summary(
     return YVEX_OK;
 }
 
-/* Purpose: serve one checked binding range through the single resident-or-file access path.
- * Inputs: committed session, admitted binding/range, and exactly one copy or borrow output.
- * Effects: copies or borrows bytes and updates the matching access counters after validation.
- * Failure: argument, lifecycle, range, drift, provider, or I/O failure publishes no output.
- * Boundary: provider hits never read the artifact; provider misses never satisfy borrows. */
+/*
+ * Serve one checked binding range through the single resident-or-file access path.
+ *
+ * Committed session, admitted binding/range, and exactly one copy or borrow output.
+ */
 static int materialize_session_access_locked(
     yvex_materialization_session *session,
     const yvex_materialized_tensor_binding *binding,
@@ -979,11 +897,6 @@ static int materialize_session_access_locked(
     return YVEX_OK;
 }
 
-/* Purpose: serialize one shared materialization access and its monotonic counters.
- * Inputs: committed session, admitted binding/range, output mode, and typed failures.
- * Effects: holds the access mutex across provider resolution, byte delivery, and accounting.
- * Failure: synchronization or access refusal publishes neither bytes nor partial counters.
- * Boundary: the provider owns resident storage; materialization owns access serialization. */
 static int materialize_session_access(
     yvex_materialization_session *session,
     const yvex_materialized_tensor_binding *binding,
@@ -1007,11 +920,12 @@ static int materialize_session_access(
     return rc;
 }
 
-/* Purpose: borrow an exact resident subrange without copying it through host staging.
- * Inputs: committed materialization session, admitted binding/range, and pointer output.
- * Effects: returns a provider-owned immutable span and accounts one resident access.
- * Failure: drift, bounds, absent provider, or invalid provider span publishes no pointer.
- * Boundary: only resident providers can satisfy borrow; file-backed ranges never masquerade as resident. */
+/*
+ * Borrow an exact resident subrange without copying it through host staging.
+ *
+ * Returns a provider-owned immutable span and accounts one resident access. Only resident
+ * providers can satisfy borrow; file-backed ranges never masquerade as resident.
+ */
 int yvex_materialization_session_borrow(
     yvex_materialization_session *session, const yvex_materialized_tensor_binding *binding,
     unsigned long long binding_offset, size_t len, const unsigned char **data,
@@ -1020,11 +934,6 @@ int yvex_materialization_session_borrow(
         session, binding, binding_offset, NULL, len, data, failure, err);
 }
 
-/* Purpose: perform one checked positioned read from a committed tensor binding.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned artifact materialization state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 int yvex_materialization_session_read(yvex_materialization_session *session,
                                       const yvex_materialized_tensor_binding *binding,
                                       unsigned long long binding_offset, void *dst, size_t len,
@@ -1033,11 +942,6 @@ int yvex_materialization_session_read(yvex_materialization_session *session,
         session, binding, binding_offset, dst, len, NULL, failure, err);
 }
 
-/* Purpose: stream all admitted tensor payload ranges through a bounded visitor.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 int yvex_materialization_session_walk_payload(yvex_materialization_session *session,
                                               yvex_materialization_progress_fn progress,
                                               void *progress_context,
@@ -1121,11 +1025,6 @@ int yvex_materialization_session_walk_payload(yvex_materialization_session *sess
     return YVEX_OK;
 }
 
-/* Purpose: project one routed-expert slice without copying its underlying bytes.
- * Inputs: typed artifact materialization arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact materialization state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: materialization exposes bytes but performs no model arithmetic. */
 int yvex_materialization_session_expert_subview(const yvex_materialization_session *session,
                                                 const yvex_materialized_tensor_binding *binding,
                                                 unsigned long long expert_index,

@@ -1,17 +1,11 @@
-/* Owner: src/model/compilation
- * Owns: builder lifecycle, budgeted storage, typed registration, immutable accessors, source/terminal indexes,
- *   family recipe composition, failure vocabulary, and release.
- * Does not own: family architecture facts, exact source coverage, graph sealing algorithms, canonical digest
- *   encoding, source IO, physical lowering, quantization, or rendering.
- * Invariants: builders publish no partial IR; sealed arrays are read-only to consumers; all allocator transitions
- *   are checked and released by their owning object.
- * Boundary: family composition registers artifact-neutral metadata only and never reads tensor payload bytes or
- *   selects a physical encoding.
- * Purpose: construct, seal, index, and expose deterministic transformation plans.
- * Inputs: admitted architecture facts, exact source coverage, and immutable builder options.
- * Effects: owns all builder and sealed-plan allocations; source owners remain borrowed for the duration of
- *   construction only.
- * Failure: typed refusals release every partial allocation and publish no partial IR. */
+/*
+ * Construct, seal, index, and expose deterministic transformation plans.
+ *
+ * Builders publish no partial IR; sealed arrays are read-only to consumers; all allocator
+ * transitions are checked and released by their owning object. Family composition registers
+ * artifact-neutral metadata only and never reads tensor payload bytes or selects a physical
+ * encoding.
+ */
 #include <yvex/internal/compilation.h>
 
 #include <yvex/internal/core.h>
@@ -74,27 +68,18 @@ static const deepseek_expert_projection deepseek_expert_projections[] = {
     {YVEX_TENSOR_ROLE_MOE_EXPERT_UP, "w3"}
 };
 
-/* Purpose: apply the canonical transform default allocate transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static void *transform_default_allocate(size_t size, void *context)
 {
     (void)context;
     return malloc(size);
 }
-/* Purpose: release owned transform default release resources in dependency order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 static void transform_default_release(void *allocation, void *context)
 {
     (void)context;
     free(allocation);
 }
-/* Purpose: enforce typed transform identity text valid invariants before publication. */
+
 static int transform_identity_text_valid(const char *text)
 {
     size_t index;
@@ -106,11 +91,7 @@ static int transform_identity_text_valid(const char *text)
     }
     return 1;
 }
-/* Purpose: apply the canonical allocate zero transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 void *yvex_transform_allocate_zero(yvex_transform_allocator *allocator,
                                    size_t size)
 {
@@ -121,11 +102,7 @@ void *yvex_transform_allocate_zero(yvex_transform_allocator *allocator,
     if (allocation) memset(allocation, 0, size);
     return allocation;
 }
-/* Purpose: encode hash string fields in canonical identity order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+/* Encode hash string fields in canonical identity order. */
 unsigned long long yvex_transform_hash_string(const char *text)
 {
     return text
@@ -133,11 +110,7 @@ unsigned long long yvex_transform_hash_string(const char *text)
                                     strlen(text) + 1u)
         : 0u;
 }
-/* Purpose: encode hash logical key fields in canonical identity order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+/* Encode hash logical key fields in canonical identity order. */
 unsigned long long yvex_transform_hash_logical_key(
     const yvex_transform_logical_key *key)
 {
@@ -151,11 +124,7 @@ unsigned long long yvex_transform_hash_logical_key(
     hash = yvex_core_hash_mix_u64(hash, key->auxiliary_index);
     return yvex_core_hash_mix_u64(hash, key->group_index);
 }
-/* Purpose: maintain deterministic bounded index capacity lookup state.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+/* Maintain deterministic bounded index capacity lookup state. */
 unsigned long long yvex_transform_index_capacity(unsigned long long count)
 {
     unsigned long long capacity;
@@ -164,11 +133,7 @@ unsigned long long yvex_transform_index_capacity(unsigned long long count)
                ? capacity
                : 0ull;
 }
-/* Purpose: register one index insert while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 int yvex_transform_index_insert(yvex_transform_index_slot *slots,
                                 unsigned long long capacity,
                                 unsigned long long hash,
@@ -190,7 +155,7 @@ int yvex_transform_index_insert(yvex_transform_index_slot *slots,
     }
     return 0;
 }
-/* Purpose: project typed transform status vocabulary without lost semantics. */
+
 static yvex_status transform_status(yvex_transform_failure_code code)
 {
     switch (code) {
@@ -210,11 +175,6 @@ static yvex_status transform_status(yvex_transform_failure_code code)
         return YVEX_ERR_FORMAT;
     }
 }
-/* Purpose: apply the canonical fail transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 int yvex_transform_fail(yvex_transform_failure *failure,
                         yvex_transform_failure_code code,
@@ -250,11 +210,7 @@ int yvex_transform_fail(yvex_transform_failure *failure,
                     expected, actual, axis);
     return status;
 }
-/* Purpose: apply the canonical budget default transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 void yvex_transform_budget_default(yvex_transform_budget *budget)
 {
     if (!budget) return;
@@ -266,11 +222,6 @@ void yvex_transform_budget_default(yvex_transform_budget *budget)
     budget->maximum_terminals = TRANSFORM_DEFAULT_MAX_TERMINALS;
     budget->maximum_owned_bytes = TRANSFORM_DEFAULT_MAX_BYTES;
 }
-/* Purpose: construct bounded transform grow state from admitted inputs.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int transform_grow(yvex_transform_builder *builder,
                           void **allocation,
@@ -345,7 +296,7 @@ static int transform_grow(yvex_transform_builder *builder,
         builder->peak_bytes = builder->owned_bytes;
     return YVEX_OK;
 }
-/* Purpose: enforce typed transform shape valid invariants before publication. */
+
 static int transform_shape_valid(const yvex_transform_shape *shape)
 {
     unsigned int index;
@@ -356,11 +307,6 @@ static int transform_shape_valid(const yvex_transform_shape *shape)
         if (shape->dims[index] == 0u) return 0;
     return 1;
 }
-/* Purpose: compare or copy transform source dtype matches under exact ownership.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int transform_source_dtype_matches(yvex_native_dtype source,
                                           yvex_transform_dtype value)
@@ -387,7 +333,7 @@ static int transform_source_dtype_matches(yvex_native_dtype source,
         return 0;
     }
 }
-/* Purpose: enforce typed transform logical key valid invariants before publication. */
+
 static int transform_logical_key_valid(const yvex_transform_logical_key *key)
 {
     if (!key || key->scope > YVEX_TRANSFORM_SCOPE_AUXILIARY ||
@@ -403,7 +349,6 @@ static int transform_logical_key_valid(const yvex_transform_logical_key *key)
     return key->layer_index != YVEX_TRANSFORM_IR_NO_ID &&
            key->auxiliary_index != YVEX_TRANSFORM_IR_NO_ID;
 }
-/* Purpose: enforce typed transform source scope valid invariants before publication. */
 
 static int transform_source_scope_valid(
     const yvex_transform_source_spec *source)
@@ -421,11 +366,7 @@ static int transform_source_scope_valid(
     return source->layer_index != YVEX_TRANSFORM_IR_NO_ID &&
            source->auxiliary_index != YVEX_TRANSFORM_IR_NO_ID;
 }
-/* Purpose: construct bounded builder create state from admitted inputs.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 int yvex_transform_builder_create(
     yvex_transform_builder **out,
     const yvex_transform_header *header,
@@ -519,11 +460,7 @@ int yvex_transform_builder_create(
     *out = builder;
     return YVEX_OK;
 }
-/* Purpose: register one builder add source while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 int yvex_transform_builder_add_source(
     yvex_transform_builder *builder,
     const yvex_transform_source_spec *spec,
@@ -635,11 +572,7 @@ int yvex_transform_builder_add_source(
     *value_id = id;
     return YVEX_OK;
 }
-/* Purpose: register one builder declare value while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 int yvex_transform_builder_declare_value(
     yvex_transform_builder *builder,
     const yvex_transform_value_spec *spec,
@@ -717,11 +650,7 @@ int yvex_transform_builder_declare_value(
     *value_id = id;
     return YVEX_OK;
 }
-/* Purpose: register one builder add node while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 int yvex_transform_builder_add_node(
     yvex_transform_builder *builder,
     const yvex_transform_node_spec *spec,
@@ -805,11 +734,7 @@ int yvex_transform_builder_add_node(
     *node_id = id;
     return YVEX_OK;
 }
-/* Purpose: apply the canonical builder seal transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 int yvex_transform_builder_seal(
     yvex_transform_builder *builder,
     yvex_transform_ir **out,
@@ -837,11 +762,7 @@ int yvex_transform_builder_seal(
             YVEX_CORE_OBSERVE_TRANSFORM_PLAN, 1ull);
     return rc;
 }
-/* Purpose: release owned builder release resources in dependency order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 void yvex_transform_builder_release(yvex_transform_builder **builder_ptr)
 {
     yvex_transform_builder *builder;
@@ -858,11 +779,7 @@ void yvex_transform_builder_release(yvex_transform_builder **builder_ptr)
     allocator.release(builder, allocator.context);
     *builder_ptr = NULL;
 }
-/* Purpose: release owned ir release resources in dependency order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 void yvex_transform_ir_release(yvex_transform_ir **ir_ptr)
 {
     yvex_transform_ir *ir;
@@ -886,32 +803,20 @@ void yvex_transform_ir_release(yvex_transform_ir **ir_ptr)
     allocator.release(ir, allocator.context);
     *ir_ptr = NULL;
 }
-/* Purpose: project the immutable bounded ir summary view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 const yvex_transform_ir_summary *yvex_transform_ir_summary_get(
     const yvex_transform_ir *ir)
 {
     return ir ? &ir->summary : NULL;
 }
-/* Purpose: project the immutable bounded ir source at view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 const yvex_transform_source_value *yvex_transform_ir_source_at(
     const yvex_transform_ir *ir, unsigned long long index)
 {
     return ir && index < ir->summary.source_value_count
         ? &ir->sources[index] : NULL;
 }
-/* Purpose: resolve one ir source find through the canonical index.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 const yvex_transform_source_value *yvex_transform_ir_source_find(
     const yvex_transform_ir *ir, const char *source_name)
 {
@@ -934,39 +839,27 @@ const yvex_transform_source_value *yvex_transform_ir_source_find(
     }
     return NULL;
 }
-/* Purpose: project the immutable bounded ir value at view. */
+
 static const yvex_transform_value *transform_ir_value_at(
     const yvex_transform_ir *ir, unsigned long long value_id)
 {
     return ir && value_id < ir->summary.value_count
         ? &ir->values[value_id] : NULL;
 }
-/* Purpose: project the immutable bounded ir node at view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 const yvex_transform_node *yvex_transform_ir_node_at(
     const yvex_transform_ir *ir, unsigned long long node_id)
 {
     return ir && node_id < ir->summary.node_count ? &ir->nodes[node_id] : NULL;
 }
-/* Purpose: project the immutable bounded ir node topological at view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 const yvex_transform_node *yvex_transform_ir_node_topological_at(
     const yvex_transform_ir *ir, unsigned long long ordinal)
 {
     if (!ir || ordinal >= ir->summary.node_count) return NULL;
     return &ir->nodes[ir->topological_order[ordinal]];
 }
-/* Purpose: project the immutable bounded ir terminal at view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 const yvex_transform_value *yvex_transform_ir_terminal_at(
     const yvex_transform_ir *ir, unsigned long long ordinal)
 {
@@ -974,11 +867,6 @@ const yvex_transform_value *yvex_transform_ir_terminal_at(
     return &ir->values[ir->terminal_values[ordinal]];
 }
 
-/* Purpose: project the immutable bounded ir node input at view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 const yvex_transform_value *yvex_transform_ir_node_input_at(
     const yvex_transform_ir *ir, const yvex_transform_node *node,
     unsigned long long ordinal)
@@ -994,11 +882,6 @@ const yvex_transform_value *yvex_transform_ir_node_input_at(
     value_id = ir->edges[node->input_offset + ordinal];
     return transform_ir_value_at(ir, value_id);
 }
-/* Purpose: compare or copy logical key equal under exact ownership.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 int yvex_transform_logical_key_equal(
     const yvex_transform_logical_key *left,
     const yvex_transform_logical_key *right)
@@ -1010,11 +893,6 @@ int yvex_transform_logical_key_equal(
         left->group_index == right->group_index;
 }
 
-/* Purpose: project the immutable bounded shape element count view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 int yvex_transform_shape_element_count(
     const yvex_transform_shape *shape,
     unsigned long long *out,
@@ -1047,11 +925,7 @@ int yvex_transform_shape_element_count(
     *out = product;
     return YVEX_OK;
 }
-/* Purpose: project typed failure name vocabulary without lost semantics.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 const char *yvex_transform_failure_name(yvex_transform_failure_code code)
 {
     size_t count = sizeof(transform_failure_names) /
@@ -1076,37 +950,24 @@ typedef struct {
     unsigned long long terminal_ordinal;
 } deepseek_transform_builder;
 
-/* Purpose: apply the canonical deepseek default allocate transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static void *deepseek_default_allocate(size_t size, void *context)
 {
     (void)context;
     return malloc(size);
 }
-/* Purpose: release owned deepseek default release resources in dependency order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 static void deepseek_default_release(void *allocation, void *context)
 {
     (void)context;
     free(allocation);
 }
-/* Purpose: encode deepseek hash text fields in canonical identity order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 static unsigned long long deepseek_hash_text(unsigned long long hash,
                                              const char *text)
 {
     return yvex_core_hash_mix_bytes(hash, text, strlen(text) + 1u);
 }
-/* Purpose: map deepseek scope through canonical typed vocabulary. */
+
 static yvex_transform_scope deepseek_scope(
     yvex_tensor_scope scope)
 {
@@ -1116,14 +977,14 @@ static yvex_transform_scope deepseek_scope(
         return YVEX_TRANSFORM_SCOPE_AUXILIARY;
     return YVEX_TRANSFORM_SCOPE_GLOBAL;
 }
-/* Purpose: apply the canonical deepseek subsystem transformation and invariants. */
+
 static yvex_transform_subsystem deepseek_subsystem(
     yvex_tensor_collection collection)
 {
     return collection < YVEX_TENSOR_COLLECTION_COUNT
         ? deepseek_subsystems[collection] : YVEX_TRANSFORM_SUBSYSTEM_COUNT;
 }
-/* Purpose: map deepseek dtype through canonical typed vocabulary. */
+
 static yvex_transform_dtype deepseek_dtype(yvex_native_dtype dtype,
                                            int packed_fp4)
 {
@@ -1139,7 +1000,7 @@ static yvex_transform_dtype deepseek_dtype(yvex_native_dtype dtype,
     default: return YVEX_TRANSFORM_DTYPE_UNKNOWN;
     }
 }
-/* Purpose: apply the canonical deepseek physical classes transformation and invariants. */
+
 static unsigned int deepseek_physical_classes(yvex_transform_dtype dtype)
 {
     switch (dtype) {
@@ -1155,7 +1016,7 @@ static unsigned int deepseek_physical_classes(yvex_transform_dtype dtype)
                     YVEX_TRANSFORM_PHYSICAL_QUANTIZED;
     }
 }
-/* Purpose: enforce typed deepseek refuse invariants before publication. */
+
 static int deepseek_refuse(deepseek_transform_builder *builder,
                            yvex_transform_failure_code code,
                            unsigned long long expected,
@@ -1169,11 +1030,6 @@ static int deepseek_refuse(deepseek_transform_builder *builder,
         YVEX_TRANSFORM_IR_NO_ID, expected, actual, 0u,
         builder ? builder->err : NULL, where);
 }
-/* Purpose: register one deepseek add source while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int deepseek_add_source(deepseek_transform_builder *builder,
                                const char *name,
@@ -1244,11 +1100,6 @@ static int deepseek_add_source(deepseek_transform_builder *builder,
     return yvex_transform_builder_add_source(
         builder->builder, &spec, value_id, builder->failure, builder->err);
 }
-/* Purpose: register one deepseek add terminal while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int deepseek_add_terminal(deepseek_transform_builder *builder,
                                  yvex_tensor_role role,
@@ -1298,11 +1149,6 @@ static int deepseek_add_terminal(deepseek_transform_builder *builder,
     if (rc == YVEX_OK) builder->terminal_ordinal++;
     return rc;
 }
-/* Purpose: register one deepseek add direct while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int deepseek_add_direct(deepseek_transform_builder *builder,
                                yvex_tensor_role role,
@@ -1360,11 +1206,6 @@ static int deepseek_add_direct(deepseek_transform_builder *builder,
                                  auxiliary, &shape, output_dtype, &precision,
                                  &node);
 }
-/* Purpose: register one deepseek add fp8 while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int deepseek_add_fp8(deepseek_transform_builder *builder,
                             yvex_tensor_role role,
@@ -1427,11 +1268,6 @@ static int deepseek_add_fp8(deepseek_transform_builder *builder,
         builder, role, collection, scope, layer, auxiliary, &shape,
         YVEX_TRANSFORM_DTYPE_REAL, &precision, &node);
 }
-/* Purpose: register one deepseek add experts while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int deepseek_add_experts(deepseek_transform_builder *builder,
                                 yvex_tensor_role role,
@@ -1541,11 +1377,6 @@ cleanup:
         inputs, builder->temporary_allocator.context);
     return rc;
 }
-/* Purpose: register one deepseek add recipe phase while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int deepseek_add_recipe_phase(deepseek_transform_builder *builder,
                                      const char *prefix,
@@ -1579,11 +1410,6 @@ static int deepseek_add_recipe_phase(deepseek_transform_builder *builder,
     }
     return YVEX_OK;
 }
-/* Purpose: register one deepseek add layer while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int deepseek_add_layer(deepseek_transform_builder *builder,
                               const char *prefix,
@@ -1609,11 +1435,6 @@ static int deepseek_add_layer(deepseek_transform_builder *builder,
         rc = deepseek_add_recipe_phase(builder, prefix, layer, scope, auxiliary, 1u);
     return rc;
 }
-/* Purpose: construct bounded deepseek build graph state from admitted inputs.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int deepseek_build_graph(deepseek_transform_builder *builder)
 {
@@ -1724,11 +1545,6 @@ static int deepseek_build_graph(deepseek_transform_builder *builder)
     }
     return YVEX_OK;
 }
-/* Purpose: enforce typed deepseek validate inputs invariants before publication.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int deepseek_validate_inputs(
     deepseek_transform_builder *builder,
@@ -1797,11 +1613,7 @@ static int deepseek_validate_inputs(
     builder->coverage_summary = summary;
     return YVEX_OK;
 }
-/* Purpose: construct bounded deepseek transform build state from admitted inputs.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+
 static int deepseek_transform_build(
     yvex_transform_ir **out,
     const yvex_source_verification *verification,
@@ -1887,13 +1699,12 @@ static int deepseek_transform_build(
     return rc;
 }
 
-/* Purpose: publish the immutable family transform operations used by the
- * registration table and compilation consumers.
- * Inputs: none.
- * Effects: returns process-lifetime immutable storage; no allocation or I/O.
- * Failure: cannot fail.
- * Boundary: the API constructs semantic plans but does not execute payload
- * transformations or select artifact encodings. */
+/*
+ * Publish the immutable family transform operations used by the registration table and compilation
+ * consumers.
+ *
+ * Returns process-lifetime immutable storage; no allocation or I/O.
+ */
 const yvex_model_family_transform_api *yvex_model_deepseek_transform_api(void)
 {
     static const yvex_model_family_transform_api api = {

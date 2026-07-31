@@ -1,15 +1,10 @@
-/* Owner: model.families.deepseek_v4.
- * Owns: immutable architecture, exact tensor coverage, artifact-neutral transformation recipe, GGUF lowering
- *   projection, payload binding, and typed attention composition contract for the admitted DeepSeek-V4 profile.
- * Does not own: source IO, numeric byte execution, artifact publication, backend kernels, persistent KV,
- *   transformer composition, or generation.
- * Invariants: one family header exposes one identity-preserving registration boundary; family facts never become an
- *   independent generic registry.
- * Boundary: a complete family recipe is not runtime-generation admission.
- * Purpose: define the private contract composing DeepSeek architecture, lowering, and graph recipe.
- * Inputs: immutable verified source, architecture, transform, and payload owner types.
- * Effects: declarations only; implementations own all allocation and I/O.
- * Failure: typed owner refusals publish no partial family object. */
+/*
+ * Define the private contract composing DeepSeek architecture, lowering, and graph recipe.
+ *
+ * One family header exposes one identity-preserving registration boundary; family facts never
+ * become an independent generic registry. A complete family recipe is not runtime-generation
+ * admission.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_FAMILIES_DEEPSEEK_V4_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_FAMILIES_DEEPSEEK_V4_H_INCLUDED
 #include <stddef.h>

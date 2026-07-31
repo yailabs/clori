@@ -1,15 +1,10 @@
-/* Owner: src/model/artifacts
- * Owns: registry storage, registry entry ownership, registry parse/load helpers, registry lookup, mutation,
- *   close/free logic, metadata drift comparison, and public model registry API backing.
- * Does not own: CLI parsing, command dispatch, rendering, stdout/stderr, explicit file writing, artifact emission,
- *   runtime generation, eval, benchmark, or release decisions.
- * Invariants: registry operations preserve public model_registry API behavior and never serialize operator output.
- * Boundary: registry facts are not artifact emission, source verification, runtime support, generation readiness,
- *   benchmark evidence, or release readiness.
- * Purpose: own canonical model registry storage, metadata comparison, and scanning.
- * Inputs: registry entries, filesystem roots, and explicit save paths.
- * Effects: allocates registry entries and performs explicit registry I/O.
- * Failure: parse, allocation, or I/O refusal leaves registry ownership defined. */
+/*
+ * Own canonical model registry storage, metadata comparison, and scanning.
+ *
+ * Registry operations preserve public model_registry API behavior and never serialize operator
+ * output. Registry facts are not artifact emission, source verification, runtime support,
+ * generation readiness, benchmark evidence, or release readiness.
+ */
 #include <yvex/registry.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/model_artifact.h>
@@ -76,27 +71,23 @@ static const registry_string_field registry_string_fields[] = {
      offsetof(yvex_model_registry_entry, support_level), "support_level"}
 };
 
-/* Purpose: project the immutable bounded registry string field count view. */
 static size_t registry_string_field_count(void)
 {
     return sizeof(registry_string_fields) / sizeof(registry_string_fields[0]);
 }
 
-/* Purpose: apply the canonical owned string field transformation and invariants. */
 static char **owned_string_field(yvex_model_registry_owned_entry *entry,
                                  size_t offset)
 {
     return (char **)(void *)((unsigned char *)entry + offset);
 }
 
-/* Purpose: apply the canonical view string field transformation and invariants. */
 static const char **view_string_field(yvex_model_registry_entry *entry,
                                       size_t offset)
 {
     return (const char **)(void *)((unsigned char *)entry + offset);
 }
 
-/* Purpose: apply the canonical view string value transformation and invariants. */
 static const char *view_string_value(const yvex_model_registry_entry *entry,
                                      size_t offset)
 {
@@ -104,11 +95,6 @@ static const char *view_string_value(const yvex_model_registry_entry *entry,
         ((const unsigned char *)entry + offset);
 }
 
-/* Purpose: release owned registry owned entry clear resources in dependency order.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static void registry_owned_entry_clear(yvex_model_registry_owned_entry *entry)
 {
     size_t field;
@@ -119,11 +105,6 @@ static void registry_owned_entry_clear(yvex_model_registry_owned_entry *entry)
     memset(entry, 0, sizeof(*entry));
 }
 
-/* Purpose: apply the canonical registry entry view transformation and invariants.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static void registry_entry_view(const yvex_model_registry_owned_entry *owned,
                                 yvex_model_registry_entry *view)
 {
@@ -157,11 +138,6 @@ static void registry_entry_view(const yvex_model_registry_owned_entry *owned,
     view->execution_ready = owned->execution_ready;
 }
 
-/* Purpose: compare or copy registry copy entry under exact ownership.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static int registry_copy_entry(yvex_model_registry_owned_entry *dst,
                                const yvex_model_registry_entry *src,
                                yvex_error *err)
@@ -199,20 +175,17 @@ static int registry_copy_entry(yvex_model_registry_owned_entry *dst,
     return YVEX_OK;
 }
 
-/* Purpose: apply the canonical metadata value or empty transformation and invariants. */
 static const char *metadata_value_or_empty(const char *s)
 {
     return s ? s : "";
 }
 
-/* Purpose: project typed metadata status vocabulary without lost semantics. */
 static void metadata_set_status(char *dst, size_t cap, const char *status)
 {
     if (!dst || cap == 0u) return;
     snprintf(dst, cap, "%s", status ? status : "");
 }
 
-/* Purpose: register one metadata add issue while preserving order and bounds. */
 static void metadata_add_issue(yvex_model_metadata_drift_report *out,
                                const char *code,
                                const char *registered_value,
@@ -231,13 +204,11 @@ static void metadata_add_issue(yvex_model_metadata_drift_report *out,
              current_value ? current_value : "");
 }
 
-/* Purpose: apply the canonical metadata string missing transformation and invariants. */
 static int metadata_string_missing(const char *s)
 {
     return !s || !s[0];
 }
 
-/* Purpose: project the immutable bounded metadata registered summary missing view. */
 static int metadata_registered_summary_missing(const yvex_model_registry_entry *entry)
 {
     if (!entry) return 1;
@@ -253,21 +224,18 @@ static int metadata_registered_summary_missing(const yvex_model_registry_entry *
     return 0;
 }
 
-/* Purpose: apply the canonical metadata u64 to text transformation and invariants. */
 static void metadata_u64_to_text(unsigned long long value,
                                  char out[YVEX_MODEL_METADATA_VALUE_CAP])
 {
     snprintf(out, YVEX_MODEL_METADATA_VALUE_CAP, "%llu", value);
 }
 
-/* Purpose: apply the canonical metadata bool to text transformation and invariants. */
 static void metadata_bool_to_text(int value,
                                   char out[YVEX_MODEL_METADATA_VALUE_CAP])
 {
     snprintf(out, YVEX_MODEL_METADATA_VALUE_CAP, "%s", value ? "true" : "false");
 }
 
-/* Purpose: compare or copy metadata compare string field under exact ownership. */
 static void metadata_compare_string_field(yvex_model_metadata_drift_report *out,
                                           const char *code,
                                           const char *registered_value,
@@ -280,7 +248,6 @@ static void metadata_compare_string_field(yvex_model_metadata_drift_report *out,
     }
 }
 
-/* Purpose: compare or copy metadata compare u64 field under exact ownership. */
 static void metadata_compare_u64_field(yvex_model_metadata_drift_report *out,
                                        const char *code,
                                        unsigned long long registered_value,
@@ -295,7 +262,6 @@ static void metadata_compare_u64_field(yvex_model_metadata_drift_report *out,
     metadata_add_issue(out, code, registered_text, current_text);
 }
 
-/* Purpose: compare or copy metadata compare bool field under exact ownership. */
 static void metadata_compare_bool_field(yvex_model_metadata_drift_report *out,
                                         const char *code,
                                         int registered_value,
@@ -310,11 +276,6 @@ static void metadata_compare_bool_field(yvex_model_metadata_drift_report *out,
     metadata_add_issue(out, code, registered_text, current_text);
 }
 
-/* Purpose: compare or copy registry compare metadata under exact ownership.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 int yvex_model_registry_compare_metadata(
     const yvex_model_registry_entry *registered,
     const yvex_model_registry_entry *current,
@@ -393,11 +354,6 @@ int yvex_model_registry_compare_metadata(
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded registry reserve state from admitted inputs.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static int registry_reserve(yvex_model_registry *registry,
                             unsigned long long need,
                             yvex_error *err)
@@ -419,7 +375,6 @@ static int registry_reserve(yvex_model_registry *registry,
     return YVEX_OK;
 }
 
-/* Purpose: apply the canonical ambiguous token transformation and invariants. */
 static int is_ambiguous_token(const char *alias)
 {
     return strcmp(alias, "latest") == 0 ||
@@ -436,11 +391,6 @@ static int is_ambiguous_token(const char *alias)
            strstr(alias, "-debug") || strstr(alias, "debug-");
 }
 
-/* Purpose: enforce typed alias validate invariants before publication.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 int yvex_model_alias_validate(const char *alias, yvex_error *err)
 {
     const char *p;
@@ -486,11 +436,6 @@ int yvex_model_alias_validate(const char *alias, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: form the bounded canonical registry default path without path drift.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 int yvex_model_registry_default_path(char *out,
                                      unsigned long long out_size,
                                      yvex_error *err)
@@ -515,11 +460,6 @@ int yvex_model_registry_default_path(char *out,
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded registry open state from admitted inputs.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 int yvex_model_registry_open(yvex_model_registry **out,
                              const yvex_model_registry_options *options,
                              yvex_error *err)
@@ -565,11 +505,6 @@ int yvex_model_registry_open(yvex_model_registry **out,
     return YVEX_OK;
 }
 
-/* Purpose: release owned registry close resources in dependency order.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 void yvex_model_registry_close(yvex_model_registry *registry)
 {
     unsigned long long i;
@@ -582,21 +517,11 @@ void yvex_model_registry_close(yvex_model_registry *registry)
     free(registry);
 }
 
-/* Purpose: project the immutable bounded registry count view.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 unsigned long long yvex_model_registry_count(const yvex_model_registry *registry)
 {
     return registry ? registry->count : 0u;
 }
 
-/* Purpose: project the immutable bounded registry at view.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 const yvex_model_registry_entry *yvex_model_registry_at(const yvex_model_registry *registry,
                                                         unsigned long long index)
 {
@@ -607,11 +532,6 @@ const yvex_model_registry_entry *yvex_model_registry_at(const yvex_model_registr
     return &view;
 }
 
-/* Purpose: resolve one registry find through the canonical index.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 const yvex_model_registry_entry *yvex_model_registry_find(const yvex_model_registry *registry,
                                                           const char *alias)
 {
@@ -628,11 +548,6 @@ const yvex_model_registry_entry *yvex_model_registry_find(const yvex_model_regis
     return NULL;
 }
 
-/* Purpose: register one registry add while preserving order and bounds.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 int yvex_model_registry_add(yvex_model_registry *registry,
                             const yvex_model_registry_entry *entry,
                             yvex_error *err)
@@ -662,11 +577,6 @@ int yvex_model_registry_add(yvex_model_registry *registry,
     return YVEX_OK;
 }
 
-/* Purpose: apply the canonical registry remove transformation and invariants.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 int yvex_model_registry_remove(yvex_model_registry *registry,
                                const char *alias,
                                yvex_error *err)
@@ -693,11 +603,6 @@ int yvex_model_registry_remove(yvex_model_registry *registry,
     return YVEX_ERR_STATE;
 }
 
-/* Purpose: publish registry save through the bounded output boundary.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 int yvex_model_registry_save(const yvex_model_registry *registry,
                              const char *path,
                              yvex_error *err)
@@ -716,10 +621,6 @@ int yvex_model_registry_save(const yvex_model_registry *registry,
     return yvex_model_registry_write_json_file(registry, path, err);
 }
 
-/* Purpose: append one hyphen-delimited artifact-name component without truncation.
- * Inputs: bounded output, used extent, and component. Effects: appends and terminates on success.
- * Failure: returns false when the complete component and terminator do not fit.
- * Boundary: preserves filename identity exactly rather than shortening an alias. */
 static int stem_alias_append(char *output, size_t capacity, size_t *used,
                              const char *component)
 {
@@ -735,11 +636,12 @@ static int stem_alias_append(char *output, size_t capacity, size_t *used,
     return 1;
 }
 
-/* Purpose: split one canonical artifact stem into identity-bearing registry components.
- * Inputs: stem plus bounded outputs for every required artifact-name component.
- * Effects: writes complete components and the derived alias on success.
- * Failure: returns false for malformed, missing, or truncated components.
- * Boundary: filename syntax supplies registry facts but cannot admit an artifact. */
+/*
+ * Split one canonical artifact stem into identity-bearing registry components.
+ *
+ * Stem plus bounded outputs for every required artifact-name component. Writes complete components
+ * and the derived alias on success.
+ */
 static int split_canonical_stem(const char *stem,
                                 char *family, size_t family_cap,
                                 char *model, size_t model_cap,
@@ -794,11 +696,6 @@ static int split_canonical_stem(const char *stem,
            qprofile[0] && calibration[0];
 }
 
-/* Purpose: form the bounded canonical registry entry derive from path without path drift.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 int yvex_model_registry_entry_derive_from_path(yvex_model_registry_entry *entry,
                                                const char *path,
                                                yvex_error *err)
@@ -874,11 +771,6 @@ int yvex_model_registry_entry_derive_from_path(yvex_model_registry_entry *entry,
     return YVEX_OK;
 }
 
-/* Purpose: decode bounded read file evidence without retained input.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static int read_file(const char *path, char **out, yvex_error *err)
 {
     FILE *fp;
@@ -913,11 +805,6 @@ static int read_file(const char *path, char **out, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: decode bounded extract string in evidence without retained input.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static char *extract_string_in(const char *start, const char *end, const char *key)
 {
     char needle[128];
@@ -959,7 +846,6 @@ static char *extract_string_in(const char *start, const char *end, const char *k
     return NULL;
 }
 
-/* Purpose: decode bounded extract bool in evidence without retained input. */
 static int extract_bool_in(const char *start, const char *end, const char *key)
 {
     char needle[128];
@@ -977,11 +863,6 @@ static int extract_bool_in(const char *start, const char *end, const char *key)
     return strncmp(s, "true", 4) == 0 ? 1 : 0;
 }
 
-/* Purpose: decode bounded extract ull in evidence without retained input.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static unsigned long long extract_ull_in(const char *start, const char *end, const char *key)
 {
     char needle[128];
@@ -1008,11 +889,6 @@ static unsigned long long extract_ull_in(const char *start, const char *end, con
     return value;
 }
 
-/* Purpose: release owned free entry view strings resources in dependency order.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static void free_entry_view_strings(yvex_model_registry_entry *view)
 {
     size_t field;
@@ -1023,11 +899,6 @@ static void free_entry_view_strings(yvex_model_registry_entry *view)
     memset(view, 0, sizeof(*view));
 }
 
-/* Purpose: decode bounded parse entry strings evidence without retained input.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static int parse_entry_strings(const char *start,
                                const char *end,
                                yvex_model_registry_entry *view)
@@ -1043,7 +914,6 @@ static int parse_entry_strings(const char *start,
     return 1;
 }
 
-/* Purpose: register one append owned registry entry while preserving order and bounds. */
 static int append_owned_registry_entry(yvex_model_registry *registry,
                                        yvex_model_registry_owned_entry *owned,
                                        yvex_error *err)
@@ -1064,11 +934,6 @@ static int append_owned_registry_entry(yvex_model_registry *registry,
     return YVEX_OK;
 }
 
-/* Purpose: resolve one find matching object end through the canonical index.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static const char *find_matching_object_end(const char *start)
 {
     int depth = 0;
@@ -1093,11 +958,6 @@ static const char *find_matching_object_end(const char *start)
     return NULL;
 }
 
-/* Purpose: decode bounded registry parse json evidence without retained input.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static int registry_parse_json(const char *path,
                                         yvex_model_registry *registry,
                                         yvex_error *err)
@@ -1195,11 +1055,6 @@ static int registry_parse_json(const char *path,
     return YVEX_OK;
 }
 
-/* Purpose: register one append scan entry while preserving order and bounds.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static int append_scan_entry(yvex_model_registry_entry **entries,
                              unsigned long long *count,
                              unsigned long long *cap,
@@ -1231,11 +1086,6 @@ static int append_scan_entry(yvex_model_registry_entry **entries,
     return YVEX_OK;
 }
 
-/* Purpose: decode bounded scan dir evidence without retained input.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 static int scan_dir(const char *dir,
                     yvex_model_registry_entry **entries,
                     unsigned long long *count,
@@ -1284,11 +1134,6 @@ static int scan_dir(const char *dir,
     return YVEX_OK;
 }
 
-/* Purpose: decode bounded registry scan root evidence without retained input.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 int yvex_model_registry_scan_root(const char *root,
                                   yvex_model_registry_entry **entries_out,
                                   unsigned long long *count_out,
@@ -1315,11 +1160,6 @@ int yvex_model_registry_scan_root(const char *root,
     return YVEX_OK;
 }
 
-/* Purpose: decode bounded registry scan free evidence without retained input.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 void yvex_model_registry_scan_free(yvex_model_registry_entry *entries,
                                    unsigned long long count)
 {

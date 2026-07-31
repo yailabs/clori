@@ -1,12 +1,9 @@
-/* Owner: runtime binding storage.
- * Owns: versioned canonical runtime-binding serialization, atomic publication, reopen, and import.
- * Does not own: artifact hashing, source/compiler reconstruction, model math, residency, or execution.
- * Invariants: identities cover portable semantic fields; local file snapshots are leased after reopen.
- * Boundary: the external binding transfers admitted immutable facts into runtime without becoming a cache.
- * Purpose: persist and reopen the complete immutable input needed to construct a runtime model.
- * Inputs: admitted artifact, committed materialization, runtime descriptor, and attention plan facts.
- * Effects: publishes one external content-addressed file or allocates one independently owned reopened view.
- * Failure: malformed input, short I/O, conflict, or identity drift leaves no partial published binding. */
+/*
+ * Persist and reopen the complete immutable input needed to construct a runtime model.
+ *
+ * Identities cover portable semantic fields; local file snapshots are leased after reopen. The
+ * external binding transfers admitted immutable facts into runtime without becoming a cache.
+ */
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/moe.h>
@@ -87,7 +84,7 @@ struct yvex_runtime_binding {
     yvex_attention_summary attention;
     yvex_attention_layer_plan *layers;
 };
-/* Purpose: publish stable typed runtime-binding failure context. */
+
 static void binding_failure_set(yvex_runtime_binding_failure *failure,
                                 yvex_runtime_binding_failure_code code,
                                 const char *field, const char *path,
@@ -104,7 +101,7 @@ static void binding_failure_set(yvex_runtime_binding_failure *failure,
     if (field) yvex_core_text_copy(failure->field, sizeof(failure->field), field);
     if (path) yvex_core_text_copy(failure->path, sizeof(failure->path), path);
 }
-/* Purpose: reject one binding operation without success-shaped partial output. */
+
 static int binding_reject(yvex_runtime_binding_failure *failure,
                           yvex_runtime_binding_failure_code code,
                           const char *field, const char *path,
@@ -116,7 +113,7 @@ static int binding_reject(yvex_runtime_binding_failure *failure,
     yvex_error_set(err, status, "runtime.binding", reason);
     return status;
 }
-/* Purpose: append one unsigned integer in canonical little-endian order. */
+
 static int bytes_put_u64(binding_bytes *bytes, unsigned long long value)
 {
     unsigned char encoded[8];
@@ -124,12 +121,12 @@ static int bytes_put_u64(binding_bytes *bytes, unsigned long long value)
     for (i = 0u; i < 8u; ++i) encoded[i] = (unsigned char)(value >> (i * 8u));
     return yvex_core_bytes_append(bytes, encoded, sizeof(encoded));
 }
-/* Purpose: append one signed integer through its exact two's-complement bit pattern. */
+
 static int bytes_put_i64(binding_bytes *bytes, long long value)
 {
     return bytes_put_u64(bytes, (unsigned long long)value);
 }
-/* Purpose: append one double through its exact IEEE-754 bits. */
+
 static int bytes_put_f64(binding_bytes *bytes, double value)
 {
     unsigned long long bits = 0ull;
@@ -137,14 +134,14 @@ static int bytes_put_f64(binding_bytes *bytes, double value)
     memcpy(&bits, &value, sizeof(bits));
     return bytes_put_u64(bytes, bits);
 }
-/* Purpose: append one bounded length-prefixed string without native padding. */
+
 static int bytes_put_text(binding_bytes *bytes, const char *text)
 {
     size_t length = text ? strlen(text) : 0u;
     return bytes_put_u64(bytes, (unsigned long long)length) &&
            yvex_core_bytes_append(bytes, text, length);
 }
-/* Purpose: consume exact bytes from a bounded canonical runtime-binding stream. */
+
 static int cursor_take(binding_cursor *cursor, void *out, size_t count)
 {
     if (!cursor || (!out && count) || cursor->offset > cursor->count ||
@@ -154,7 +151,6 @@ static int cursor_take(binding_cursor *cursor, void *out, size_t count)
     return 1;
 }
 
-/* Purpose: decode one canonical little-endian unsigned integer. */
 static int cursor_u64(binding_cursor *cursor, unsigned long long *out)
 {
     unsigned char encoded[8];
@@ -166,7 +162,6 @@ static int cursor_u64(binding_cursor *cursor, unsigned long long *out)
     return 1;
 }
 
-/* Purpose: decode one canonical signed integer without implementation-sized casts. */
 static int cursor_i64(binding_cursor *cursor, long long *out)
 {
     unsigned long long bits;
@@ -175,7 +170,6 @@ static int cursor_i64(binding_cursor *cursor, long long *out)
     return 1;
 }
 
-/* Purpose: decode one canonical double from explicit bits. */
 static int cursor_f64(binding_cursor *cursor, double *out)
 {
     unsigned long long bits;
@@ -184,7 +178,6 @@ static int cursor_f64(binding_cursor *cursor, double *out)
     return 1;
 }
 
-/* Purpose: decode one bounded string and reject embedded NUL or truncation. */
 static int cursor_text(binding_cursor *cursor, char *out, size_t capacity)
 {
     unsigned long long length;
@@ -231,11 +224,6 @@ typedef struct {
     }
 #define FIELD_COUNT(fields) (sizeof(fields) / sizeof((fields)[0]))
 
-/* Purpose: prove a declared record array fits both allocation and unread canonical bytes.
- * Inputs: bounded cursor, record count, and native object width.
- * Effects: none.
- * Failure: false prevents allocation when the declaration cannot fit the file or platform.
- * Boundary: one wire scalar is the conservative lower bound; parsing remains authoritative. */
 static int record_count_fits(const binding_cursor *cursor, unsigned long long record_count,
                              size_t object_bytes)
 {
@@ -249,11 +237,6 @@ static int record_count_fits(const binding_cursor *cursor, unsigned long long re
            (size_t)record_count <= BINDING_MAX_BYTES / object_bytes;
 }
 
-/* Purpose: load an unsigned field without depending on native structure padding.
- * Inputs: aligned typed field bytes, admitted width, and writable canonical value.
- * Effects: initializes only the canonical value.
- * Failure: returns false for unsupported native widths.
- * Boundary: loading neither serializes nor validates the field's semantics. */
 static int field_unsigned_load(const void *field, size_t width, unsigned long long *value)
 {
     unsigned char u8;
@@ -269,11 +252,6 @@ static int field_unsigned_load(const void *field, size_t width, unsigned long lo
     return 1;
 }
 
-/* Purpose: restore an unsigned field only when its canonical value fits the native width.
- * Inputs: aligned destination bytes, admitted u8/u16/u32/u64 width, and canonical value.
- * Effects: writes the complete destination field after its range check succeeds.
- * Failure: returns false for overflow or an unsupported native width without truncation.
- * Boundary: width admission prevents canonical input from changing value during parsing. */
 static int field_unsigned_store(void *field, size_t width, unsigned long long value)
 {
     union {
@@ -296,11 +274,6 @@ static int field_unsigned_store(void *field, size_t width, unsigned long long va
     return 1;
 }
 
-/* Purpose: encode one typed field table in the exact declared canonical order.
- * Inputs: bounded byte sink, immutable object, and its field schema.
- * Effects: appends explicit scalar, array, floating, and text values only.
- * Failure: returns false on unsupported native width or bounded allocation failure.
- * Boundary: field tables describe serialization, never semantic validation. */
 static int fields_write(binding_bytes *bytes, const void *object,
                         const binding_field *fields, size_t field_count)
 {
@@ -336,11 +309,12 @@ static int fields_write(binding_bytes *bytes, const void *object,
     return 1;
 }
 
-/* Purpose: decode one field table into an already initialized typed object.
- * Inputs: bounded cursor, writable object, and the matching field schema.
- * Effects: advances the cursor and restores only schema-listed fields.
- * Failure: returns false on truncation, malformed text, or unsupported width.
- * Boundary: decoding neither follows pointers nor validates cross-record identity. */
+/*
+ * Decode one field table into an already initialized typed object.
+ *
+ * Bounded cursor, writable object, and the matching field schema. Decoding neither follows
+ * pointers nor validates cross-record identity.
+ */
 static int fields_read(binding_cursor *cursor, void *object,
                        const binding_field *fields, size_t field_count)
 {
@@ -375,11 +349,6 @@ static int fields_read(binding_cursor *cursor, void *object,
     return 1;
 }
 
-/* Purpose: initialize and decode one complete canonical record.
- * Inputs: bounded cursor, writable object, object size, and matching field schema.
- * Effects: clears the object before restoring every declared field.
- * Failure: returns false on malformed or truncated field data.
- * Boundary: record decoding follows no pointers and performs no semantic admission. */
 static int record_read(binding_cursor *cursor, void *object, size_t object_size,
                        const binding_field *fields, size_t field_count)
 {
@@ -448,7 +417,6 @@ static const binding_field physical_compatibility_fields[] = {
     FIELD_U(yvex_artifact_physical_compatibility, payload_digest_equal),
 };
 
-/* Purpose: remove session history from the immutable materialization projection. */
 static yvex_materialization_summary materialization_canonical(
     const yvex_materialization_summary *source)
 {
@@ -660,7 +628,6 @@ static const binding_field capability_fields[] = {
     FIELD_U(yvex_runtime_capabilities, generation_ready),
 };
 
-/* Purpose: validate facts. Inputs: lattice. Effects: none. Failure: false. Boundary: pre-admission only. */
 int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *facts)
 {
     return facts && (!facts->attention_core_ready || facts->attention_semantics_ready) &&
@@ -698,11 +665,11 @@ int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *fa
            !facts->generation_ready;
 }
 
-/* Purpose: identify one pre-admission execution capability contract field-by-field.
- * Inputs: complete binary capability matrix and caller-owned SHA-256 output.
- * Effects: hashes schema and ordered logical values without native padding.
- * Failure: rejects non-binary or implication-invalid capability declarations.
- * Boundary: resource and session readiness cannot enter a binding declaration. */
+/*
+ * Identify one pre-admission execution capability contract field-by-field.
+ *
+ * Hashes schema and ordered logical values without native padding.
+ */
 int yvex_runtime_capabilities_identity(
     const yvex_runtime_capabilities *facts,
     char output[YVEX_SHA256_HEX_CAP])
@@ -732,7 +699,6 @@ int yvex_runtime_capabilities_identity(
     return 1;
 }
 
-/* Purpose: admit facts. Inputs: two lattices. Effects: none. Failure: false. Boundary: adapter maximum. */
 int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts,
                                           const yvex_runtime_capabilities *maximum)
 {
@@ -751,11 +717,6 @@ int yvex_runtime_capabilities_admitted_by(const yvex_runtime_capabilities *facts
     return 1;
 }
 
-/* Purpose: compare a binding capability matrix with the exact registered adapter version.
- * Inputs: adapter identity/version and a validated immutable capability matrix.
- * Effects: invokes only the matching adapter's typed declaration callback.
- * Failure: unknown, stale, invalid, or changed declarations return false.
- * Boundary: matching uses typed registry identities and never target-name branches. */
 static int binding_capabilities_match_adapter(
     unsigned long long adapter_id, unsigned long long adapter_version,
     const yvex_runtime_capabilities *facts)
@@ -778,7 +739,6 @@ static int binding_capabilities_match_adapter(
     }
 }
 
-/* Purpose: bind a non-MoE artifact to an explicit deterministic unavailable-plan identity. */
 static int binding_moe_unavailable_identity(
     const yvex_runtime_binding_prepare_request *request,
     const yvex_runtime_descriptor_summary *descriptor,
@@ -863,11 +823,6 @@ static const binding_field layer_tail_fields[] = {
     FIELD_U(yvex_attention_layer_plan, payload_bytes_bound),
 };
 
-/* Purpose: encode a semantic attention layer around its four nested numeric policies.
- * Inputs: canonical byte sink and immutable attention layer.
- * Effects: appends the exact layer field sequence to the candidate body.
- * Failure: returns false on unsupported field layout or bounded allocation failure.
- * Boundary: serialization records semantics but performs no numeric execution. */
 static int write_attention_layer(binding_bytes *bytes, const yvex_attention_layer_plan *value)
 {
     return fields_write(bytes, value, layer_prefix_fields, FIELD_COUNT(layer_prefix_fields)) &&
@@ -883,11 +838,6 @@ static int write_attention_layer(binding_bytes *bytes, const yvex_attention_laye
            fields_write(bytes, value, layer_tail_fields, FIELD_COUNT(layer_tail_fields));
 }
 
-/* Purpose: decode a semantic attention layer without reconstructing backend state.
- * Inputs: bounded cursor and writable attention layer.
- * Effects: clears and restores the complete layer and nested numeric policies.
- * Failure: returns false on malformed, excessive, or truncated field data.
- * Boundary: decoding performs no family lowering or backend admission. */
 static int read_attention_layer(binding_cursor *cursor, yvex_attention_layer_plan *value)
 {
     memset(value, 0, sizeof(*value));
@@ -904,11 +854,11 @@ static int read_attention_layer(binding_cursor *cursor, yvex_attention_layer_pla
            fields_read(cursor, value, layer_tail_fields, FIELD_COUNT(layer_tail_fields));
 }
 
-/* Purpose: identify the first contradiction in one persisted physical-compatibility proof.
- * Inputs: exact proof, admitted artifact facts, and current logical transform identity.
- * Effects: none.
- * Failure: returns a stable field label; null means the proof is complete and consistent.
- * Boundary: this validates preparation evidence without rebuilding a writer plan or reading payload. */
+/*
+ * Identify the first contradiction in one persisted physical-compatibility proof.
+ *
+ * Exact proof, admitted artifact facts, and current logical transform identity.
+ */
 static const char *physical_compatibility_mismatch(
     const yvex_artifact_physical_compatibility *proof,
     const yvex_complete_artifact_admission *admission,
@@ -959,29 +909,18 @@ static const char *physical_compatibility_mismatch(
     return NULL;
 }
 
-/* Purpose: recognize the single artifact-admission state accepted by runtime bindings.
- * Inputs: immutable admission facts.
- * Effects: reads facts without mutation.
- * Failure: returns false for any incomplete or promoted state.
- * Boundary: runtime admission only. */
 static int binding_admission_ready(const yvex_complete_artifact_admission *admission) {
     return admission && admission->complete && admission->materialization_input_ready &&
            !admission->runtime_supported && admission->artifact_identity_verified &&
            admission->file_snapshot.size == admission->file_bytes;
 }
 
-/* Purpose: recognize the complete attention execution evidence required by runtime bindings.
- * Inputs: immutable attention facts.
- * Effects: reads facts without mutation.
- * Failure: returns false for any missing execution proof.
- * Boundary: runtime admission only. */
 static int binding_attention_ready(const yvex_attention_summary *attention) {
     return attention && attention->history_contract_ready &&
            attention->state_delta_contract_ready && attention->cpu_reference_ready &&
            attention->cuda_execution_ready && attention->full_execution_ready;
 }
 
-/* Purpose: validate the immutable artifact, materialization, descriptor, and attention identity chain. */
 static int binding_identity_chain_valid(
     const yvex_complete_artifact_admission *admission,
     const yvex_materialization_summary *materialization,
@@ -1003,11 +942,12 @@ static int binding_identity_chain_valid(
                   attention->runtime_numeric_identity) == 0;
 }
 
-/* Purpose: derive graph identities from the exact summaries persisted by a runtime binding.
- * Inputs: authenticated materialization, runtime descriptor, and attention summaries.
- * Effects: writes both identities only after the complete canonical derivation succeeds.
- * Failure: malformed or incomplete identity inputs leave both outputs empty.
- * Boundary: semantic and executable graph identity policy belongs to runtime binding storage. */
+/*
+ * Derive graph identities from the exact summaries persisted by a runtime binding.
+ *
+ * Malformed or incomplete identity inputs leave both outputs empty. Semantic and executable graph
+ * identity policy belongs to runtime binding storage.
+ */
 static int binding_graph_identities(
     const yvex_materialization_summary *materialization,
     const yvex_runtime_descriptor_summary *descriptor,
@@ -1048,11 +988,11 @@ static int binding_graph_identities(
     return 1;
 }
 
-/* Purpose: validate the sealed identity chain before external serialization starts.
- * Inputs: complete preparation request and optional diagnostics.
- * Effects: mutates diagnostics only on refusal.
- * Failure: returns a typed lifecycle, bounds, or identity refusal.
- * Boundary: validation reads object summaries but no artifact payload. */
+/*
+ * Validate the sealed identity chain before external serialization starts.
+ *
+ * Returns a typed lifecycle, bounds, or identity refusal.
+ */
 static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
                             char semantic[YVEX_SHA256_HEX_CAP],
                             char executable[YVEX_SHA256_HEX_CAP],
@@ -1157,11 +1097,6 @@ static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: emit the unique canonical body from one admitted preparation request.
- * Inputs: sealed preparation owners and an empty bounded byte buffer.
- * Effects: appends every persisted field in canonical schema order.
- * Failure: returns false for incomplete records, unsupported widths, or allocation failure.
- * Boundary: serialization reads metadata only and never reconstructs source or compiler state. */
 static int binding_body_write(const yvex_runtime_binding_prepare_request *request,
                               const char *semantic, const char *executable,
                               const char *moe_identity,
@@ -1239,7 +1174,6 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     return 1;
 }
 
-/* Purpose: derive the content address from schema and exact canonical payload bytes. */
 static int binding_identity(const unsigned char *body, size_t body_bytes,
                             char output[YVEX_SHA256_HEX_CAP])
 {
@@ -1254,11 +1188,6 @@ static int binding_identity(const unsigned char *body, size_t body_bytes,
     return 1;
 }
 
-/* Purpose: assemble the fixed self-describing file header around a canonical payload.
- * Inputs: canonical body, its content identity, and empty file buffer.
- * Effects: allocates and fills only the candidate file buffer.
- * Failure: returns false when bounded allocation cannot grow.
- * Boundary: assembly performs no filesystem I/O. */
 static int build_file(const binding_bytes *body, const char *identity, binding_bytes *file)
 {
     if (!body || !identity || !file) return 0;
@@ -1271,11 +1200,6 @@ static int build_file(const binding_bytes *body, const char *identity, binding_b
            yvex_core_bytes_append(file, body->data, body->count);
 }
 
-/* Purpose: validate and parse a canonical payload into an independently owned binding.
- * Inputs: allocated binding candidate and authenticated bounded body bytes.
- * Effects: allocates record arrays owned by the candidate and consumes the cursor.
- * Failure: returns false; the caller releases all partially allocated records.
- * Boundary: parsing performs no source, compiler, or artifact I/O. */
 static binding_parse_result parse_body(yvex_runtime_binding *binding,
                                        const unsigned char *data, size_t count)
 {
@@ -1372,11 +1296,11 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
     return cursor.offset == cursor.count ? BINDING_PARSE_OK : BINDING_PARSE_FORMAT;
 }
 
-/* Purpose: validate parsed cross-record identities and canonical ordinals.
- * Inputs: independently parsed immutable binding candidate.
- * Effects: performs read-only validation.
- * Failure: returns false on lifecycle, identity, count, or ordinal disagreement.
- * Boundary: validation does not rebuild any imported owner. */
+/*
+ * Validate parsed cross-record identities and canonical ordinals.
+ *
+ * Returns false on lifecycle, identity, count, or ordinal disagreement.
+ */
 static int binding_validate(const yvex_runtime_binding *binding,
                             const char **field,
                             yvex_runtime_binding_failure_code *code)
@@ -1457,11 +1381,12 @@ static int binding_validate(const yvex_runtime_binding *binding,
     return 1;
 }
 
-/* Purpose: project one public summary from the canonical parsed or prepared owners.
- * Inputs: base summary, exact owner summaries, content identity, and file length.
- * Effects: fills only canonical identity and accounting fields in the summary.
- * Failure: all string capacities were validated before this projection.
- * Boundary: projection adds no capability or lifecycle truth. */
+/*
+ * Project one public summary from the canonical parsed or prepared owners.
+ *
+ * Base summary, exact owner summaries, content identity, and file length. Fills only canonical
+ * identity and accounting fields in the summary.
+ */
 static void summary_finish(yvex_runtime_binding_summary *summary,
                            const yvex_complete_artifact_admission *admission,
                            const yvex_materialization_summary *materialization,
@@ -1496,11 +1421,12 @@ static void summary_finish(yvex_runtime_binding_summary *summary,
                                attention->attention_plan_identity);
 }
 
-/* Purpose: decode and authenticate one already stable runtime-binding byte snapshot.
- * Inputs: borrowed exact file bytes, diagnostic path, optional expected identity, and name policy.
- * Effects: allocates one independently owned immutable binding on complete success.
- * Failure: malformed, noncanonical, stale, or incompatible bytes publish no binding.
- * Boundary: filesystem opening and snapshot stability remain owned by the caller. */
+/*
+ * Decode and authenticate one already stable runtime-binding byte snapshot.
+ *
+ * Borrowed exact file bytes, diagnostic path, optional expected identity, and name policy.
+ * Malformed, noncanonical, stale, or incompatible bytes publish no binding.
+ */
 static int binding_file_decode(yvex_runtime_binding **out,
                                const unsigned char *file, size_t file_count,
                                const char *path, const char *expected_identity,
@@ -1639,11 +1565,12 @@ typedef struct {
     yvex_runtime_binding_summary summary;
 } binding_candidate_context;
 
-/* Purpose: read one exact reopened publication candidate without sharing a mutable file offset.
- * Inputs: read-only candidate descriptor, expected byte count, and caller-owned output.
- * Effects: allocates one byte snapshot after proving regular-file identity and stability.
- * Failure: short reads, size mismatch, drift, or allocation failure publish no snapshot.
- * Boundary: canonical binding interpretation remains with the candidate validator. */
+/*
+ * Read one exact reopened publication candidate without sharing a mutable file offset.
+ *
+ * Allocates one byte snapshot after proving regular-file identity and stability. Short reads, size
+ * mismatch, drift, or allocation failure publish no snapshot.
+ */
 static int binding_candidate_read(int descriptor, size_t expected_count,
                                   unsigned char **out,
                                   yvex_runtime_binding_failure *failure,
@@ -1698,11 +1625,12 @@ static int binding_candidate_read(int descriptor, size_t expected_count,
     return YVEX_OK;
 }
 
-/* Purpose: authenticate the exact fsynced candidate reopened by the file lifecycle.
- * Inputs: read-only descriptor, exact byte count, and expected content identity.
- * Effects: parses then releases one independent canonical binding view.
- * Failure: injected or real validation failure prevents the final content-addressed link.
- * Boundary: this callback cannot name, replace, or publish a filesystem object. */
+/*
+ * Authenticate the exact fsynced candidate reopened by the file lifecycle.
+ *
+ * Read-only descriptor, exact byte count, and expected content identity. This callback cannot
+ * name, replace, or publish a filesystem object.
+ */
 static int binding_candidate_validate(int descriptor, size_t count,
                                       void *opaque, yvex_error *err)
 {
@@ -1738,11 +1666,6 @@ static int binding_candidate_validate(int descriptor, size_t count,
     return rc;
 }
 
-/* Purpose: translate shared file mechanics into the runtime-binding failure vocabulary.
- * Inputs: one typed core lifecycle stage.
- * Effects: returns a domain code without changing either failure object.
- * Failure: unknown stages map to a fail-closed format failure.
- * Boundary: mapping does not alter the original filesystem status or binding bytes. */
 static yvex_runtime_binding_failure_code binding_file_code(yvex_core_file_stage stage)
 {
     return (unsigned int)stage < sizeof(binding_file_codes) /
@@ -1750,11 +1673,11 @@ static yvex_runtime_binding_failure_code binding_file_code(yvex_core_file_stage 
                ? binding_file_codes[stage] : YVEX_RUNTIME_BINDING_FAILURE_FORMAT;
 }
 
-/* Purpose: publish one immutable content-addressed runtime binding transactionally.
- * Inputs: sealed admitted objects, graph identities, adapter identity, and external destination directory.
- * Effects: creates, syncs, validates, and atomically links one uniquely owned temporary file.
- * Failure: removes only its temporary/final candidate and never overwrites a pre-existing address.
- * Boundary: preparation may consume compiler-derived objects; reopening runtime never does. */
+/*
+ * Publish one immutable content-addressed runtime binding transactionally.
+ *
+ * Sealed admitted objects, graph identities, adapter identity, and external destination directory.
+ */
 int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *request,
                                  yvex_runtime_binding_prepare_result *result,
                                  yvex_runtime_binding_failure *failure, yvex_error *err)
@@ -1830,11 +1753,13 @@ done:
     return rc;
 }
 
-/* Purpose: reopen and authenticate one content-addressed runtime binding.
- * Inputs: exact external binding path whose basename is its canonical identity.
- * Effects: reads a bounded regular file and allocates one independently owned immutable view.
- * Failure: symlinks, drift, malformed fields, stale identity, or trailing bytes publish no view.
- * Boundary: reopen consumes no source, model-family IR, quantization, or writer-planning owner. */
+/*
+ * Reopen and authenticate one content-addressed runtime binding.
+ *
+ * Exact external binding path whose basename is its canonical identity. Reads a bounded regular
+ * file and allocates one independently owned immutable view. Symlinks, drift, malformed fields,
+ * stale identity, or trailing bytes publish no view.
+ */
 int yvex_runtime_binding_open(yvex_runtime_binding **out, const char *path,
                               yvex_runtime_binding_summary *summary,
                               yvex_complete_artifact_admission *admission,
@@ -1873,11 +1798,6 @@ done:
     return rc;
 }
 
-/* Purpose: release all independently owned runtime-binding records idempotently.
- * Inputs: optional binding returned by reopen.
- * Effects: releases only binding-owned record arrays and object storage.
- * Failure: null input is harmless.
- * Boundary: imported plans, artifact handles, and source files are not owned. */
 void yvex_runtime_binding_close(yvex_runtime_binding *binding)
 {
     if (!binding) return;
@@ -1887,11 +1807,6 @@ void yvex_runtime_binding_close(yvex_runtime_binding *binding)
     free(binding);
 }
 
-/* Purpose: import a plan and committed read session from authenticated binding records.
- * Inputs: reopened binding, semantically authenticated still-open artifact, and bounded read options.
- * Effects: leases the current exact snapshot and allocates a materialization plan/session.
- * Failure: closes both candidates and reports one binding-owned typed context.
- * Boundary: runtime admission verifies bytes; import binds ranges to this process-local snapshot. */
 int yvex_runtime_binding_import_materialization(
     const yvex_runtime_binding *binding, const yvex_artifact *artifact,
     const yvex_materialization_options *options, yvex_materialization_plan **plan_out,
@@ -1945,11 +1860,7 @@ int yvex_runtime_binding_import_materialization(
     return YVEX_OK;
 }
 
-/* Purpose: import one descriptor and semantic attention graph as an atomic runtime unit.
- * Inputs: authenticated binding, committed materialization session, and two empty outputs.
- * Effects: publishes independently owned descriptor and attention plan only after both validate.
- * Failure: releases every partial import and reports its exact typed binding stage.
- * Boundary: import performs no family discovery, source reconstruction, or backend lowering. */
+/* Import one descriptor and semantic attention graph as an atomic runtime unit. */
 int yvex_runtime_binding_import_graph(
     const yvex_runtime_binding *binding, const yvex_materialization_session *session,
     yvex_runtime_descriptor **descriptor_out, yvex_attention_plan **attention_out,

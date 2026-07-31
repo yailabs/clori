@@ -1,12 +1,9 @@
-/* Owner: server.openai.json.
- * Owns: strict bounded OpenAI-profile JSON request parsing into provider-neutral typed requests.
- * Does not own: HTTP framing, response rendering, model prompt syntax, sessions, or generation.
- * Invariants: duplicate/unknown/unsupported fields refuse; strings and arrays retain explicit bounded lengths.
- * Boundary: OpenAI object names end at the provider-neutral request contract.
- * Purpose: admit the exact Chat Completions and Responses v1 request subset without silent field loss.
- * Inputs: one complete HTTP body, endpoint profile, and selected runtime model identifier.
- * Effects: allocates one fully owned sealed provider request or none.
- * Failure: malformed types, duplicates, bounds, and unsupported semantics return typed refusals. */
+/*
+ * Admit the exact Chat Completions and Responses v1 request subset without silent field loss.
+ *
+ * Duplicate/unknown/unsupported fields refuse; strings and arrays retain explicit bounded lengths.
+ * OpenAI object names end at the provider-neutral request contract.
+ */
 
 #include "src/server/openai/private.h"
 
@@ -27,7 +24,6 @@ typedef struct {
     unsigned int count;
 } seen_keys;
 
-/* Purpose: publish one parsing refusal while retaining the offending public parameter. */
 static int json_refuse(yvex_error *err, yvex_status status,
                        const char *message)
 {
@@ -35,7 +31,6 @@ static int json_refuse(yvex_error *err, yvex_status status,
     return status;
 }
 
-/* Purpose: reject duplicate object keys after JSON escape decoding. */
 static int key_unique(seen_keys *seen, const char *key, yvex_error *err)
 {
     unsigned int index;
@@ -51,11 +46,6 @@ static int key_unique(seen_keys *seen, const char *key, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: validate UTF-8 independently of tokenizer/model linkage.
- * Inputs: explicit bytes and extent.
- * Effects: none.
- * Failure: returns false for NUL, overlong, surrogate, truncated, or out-of-range input.
- * Boundary: validates encoding only and performs no Unicode normalization. */
 static int utf8_valid(const unsigned char *bytes, size_t count)
 {
     size_t index = 0u;
@@ -85,11 +75,6 @@ static int utf8_valid(const unsigned char *bytes, size_t count)
     return 1;
 }
 
-/* Purpose: decode one bounded JSON string into uniquely owned UTF-8 bytes.
- * Inputs: parser cursor, span output, semantic maximum/empty policy, and error output.
- * Effects: allocates and publishes one decoded explicit-length span.
- * Failure: frees candidate storage and clears the span.
- * Boundary: JSON decoding does not apply tokenizer normalization. */
 static int string_span(yvex_json *json, yvex_provider_span *span,
                        unsigned long long maximum, int allow_empty,
                        yvex_error *err)
@@ -114,7 +99,6 @@ static int string_span(yvex_json *json, yvex_provider_span *span,
     return YVEX_OK;
 }
 
-/* Purpose: decode one bounded JSON string into fixed identifier storage. */
 static int string_fixed(yvex_json *json, char *output, size_t capacity,
                         int allow_empty, yvex_error *err)
 {
@@ -125,7 +109,6 @@ static int string_fixed(yvex_json *json, char *output, size_t capacity,
     return YVEX_OK;
 }
 
-/* Purpose: parse one finite JSON number without implicit string coercion. */
 static int number_double(yvex_json *json, double *output, yvex_error *err)
 {
     char text[64], *end = NULL;
@@ -141,11 +124,6 @@ static int number_double(yvex_json *json, double *output, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: copy one complete raw JSON value for tokenizer-owned schema rendering.
- * Inputs: parser cursor, span output, bound/object policy, and error output.
- * Effects: allocates the exact admitted JSON byte slice.
- * Failure: releases invalid storage and publishes no span.
- * Boundary: validates syntax but does not interpret JSON-schema semantics. */
 static int raw_value(yvex_json *json, yvex_provider_span *span,
                      unsigned long long maximum, int require_object,
                      yvex_error *err)
@@ -172,11 +150,11 @@ static int raw_value(yvex_json *json, yvex_provider_span *span,
     return YVEX_OK;
 }
 
-/* Purpose: parse one OpenAI function payload used by definitions or calls.
- * Inputs: object parser, cleared tool-call output, and error output.
- * Effects: allocates validated JSON arguments and records the exact function name.
- * Failure: refuses duplicates/unknown fields and leaves caller cleanup ownership explicit.
- * Boundary: parsing never dispatches or executes the named function. */
+/*
+ * Parse one OpenAI function payload used by definitions or calls.
+ *
+ * Refuses duplicates/unknown fields and leaves caller cleanup ownership explicit.
+ */
 static int function_call(yvex_json *json, yvex_provider_tool_call *call,
                          yvex_error *err)
 {
@@ -215,11 +193,11 @@ static int function_call(yvex_json *json, yvex_provider_tool_call *call,
                              "complete function call is required");
 }
 
-/* Purpose: parse one OpenAI assistant tool-call object with one function only.
- * Inputs: object parser, cleared call output, and error output.
- * Effects: records exact call ID/type and delegates function payload admission.
- * Failure: refuses missing, duplicate, parallel, or non-function call forms.
- * Boundary: syntax translation only; call identity remains application-owned input. */
+/*
+ * Parse one OpenAI assistant tool-call object with one function only.
+ *
+ * Syntax translation only; call identity remains application-owned input.
+ */
 static int tool_call(yvex_json *json, yvex_provider_tool_call *call,
                      yvex_error *err)
 {
@@ -257,11 +235,6 @@ static int tool_call(yvex_json *json, yvex_provider_tool_call *call,
                              "one typed function call is required");
 }
 
-/* Purpose: parse the admitted one-call assistant tool_calls array.
- * Inputs: array parser, target message, and error output.
- * Effects: allocates at most one typed tool call on the message.
- * Failure: refuses empty or parallel arrays and preserves explicit cleanup ownership.
- * Boundary: implements the profile's single-call limit only. */
 static int tool_calls(yvex_json *json, yvex_provider_message *message,
                       yvex_error *err)
 {
@@ -286,10 +259,6 @@ static int tool_calls(yvex_json *json, yvex_provider_message *message,
                              "one tool call is required");
 }
 
-/* Purpose: map one admitted role string into the provider-neutral role enum.
- * Inputs: terminated role label and enum output. Effects: writes one known role.
- * Failure: returns false for unknown labels.
- * Boundary: role mapping introduces no model-specific prompt markers. */
 static int role_parse(const char *role, yvex_provider_role *output)
 {
     if (strcmp(role, "developer") == 0) *output = YVEX_PROVIDER_ROLE_DEVELOPER;
@@ -301,11 +270,6 @@ static int role_parse(const char *role, yvex_provider_role *output)
     return 1;
 }
 
-/* Purpose: parse one text-only Chat message without concatenating prompt syntax.
- * Inputs: message object parser, cleared provider message, and error output.
- * Effects: allocates content/tool-call bytes and records one typed role.
- * Failure: refuses unsupported content kinds or inconsistent role fields.
- * Boundary: model prompt markers remain tokenizer/family-owned. */
 static int message_parse(yvex_json *json, yvex_provider_message *message,
                          yvex_error *err)
 {
@@ -357,11 +321,6 @@ static int message_parse(yvex_json *json, yvex_provider_message *message,
     return YVEX_OK;
 }
 
-/* Purpose: parse one bounded ordered message array.
- * Inputs: array parser, provider request owner, and error output.
- * Effects: allocates and fills the ordered provider message directory.
- * Failure: refuses empty/oversized arrays and leaves request cleanup authoritative.
- * Boundary: retains caller order without constructing prompt text. */
 static int messages_parse(yvex_json *json, yvex_provider_request *request,
                           yvex_error *err)
 {
@@ -389,11 +348,6 @@ static int messages_parse(yvex_json *json, yvex_provider_request *request,
                              "nonempty message array is required");
 }
 
-/* Purpose: parse one OpenAI function definition into provider-neutral fields.
- * Inputs: object parser, cleared function definition, and error output.
- * Effects: allocates description/schema bytes and records exact name/strict facts.
- * Failure: refuses unknown fields, invalid schema objects, and unsupported strict mode.
- * Boundary: definition admission never executes or dynamically loads tools. */
 static int function_definition(yvex_json *json,
                                yvex_provider_function_tool *tool,
                                yvex_error *err)
@@ -439,11 +393,12 @@ static int function_definition(yvex_json *json,
                              "function name and parameters are required");
 }
 
-/* Purpose: parse one tools array containing only bounded functions.
- * Inputs: array parser, provider request owner, and error output.
- * Effects: allocates a bounded typed function-tool directory.
- * Failure: refuses unknown tool types, empty definitions, or count overflow.
- * Boundary: only the admitted function type enters provider-neutral state. */
+/*
+ * Parse one tools array containing only bounded functions.
+ *
+ * Allocates a bounded typed function-tool directory. Refuses unknown tool types, empty
+ * definitions, or count overflow.
+ */
 static int tools_parse(yvex_json *json, yvex_provider_request *request,
                        int responses_style, yvex_error *err)
 {
@@ -523,11 +478,11 @@ static int tools_parse(yvex_json *json, yvex_provider_request *request,
                : YVEX_ERR_FORMAT;
 }
 
-/* Purpose: parse none/auto/required or one named function tool choice.
- * Inputs: parser cursor, provider request policy, and error output.
- * Effects: records one deterministic tool-choice enum and optional function name.
- * Failure: refuses unknown strings, fields, types, and malformed named choices.
- * Boundary: choice is intent; selection remains model/tokenizer-owned. */
+/*
+ * Parse none/auto/required or one named function tool choice.
+ *
+ * Records one deterministic tool-choice enum and optional function name.
+ */
 static int tool_choice_parse(yvex_json *json, yvex_provider_request *request,
                              int responses_style, yvex_error *err)
 {
@@ -600,11 +555,6 @@ static int tool_choice_parse(yvex_json *json, yvex_provider_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: parse one string or bounded array of stop strings.
- * Inputs: parser cursor, provider request owner, and error output.
- * Effects: allocates explicit stop spans in request order.
- * Failure: refuses empty, oversized, malformed, or over-count input.
- * Boundary: incremental stop matching belongs to the server output owner. */
 static int stops_parse(yvex_json *json, yvex_provider_request *request,
                        yvex_error *err)
 {
@@ -639,11 +589,6 @@ static int stops_parse(yvex_json *json, yvex_provider_request *request,
     }
 }
 
-/* Purpose: parse the bounded json_object response-format profile.
- * Inputs: response-format object parser, provider request, and error output.
- * Effects: selects text or json_object validation policy.
- * Failure: refuses duplicates, unknown fields, json_schema, or unknown types.
- * Boundary: does not claim constrained decoding or strict schema adherence. */
 static int response_format_parse(yvex_json *json,
                                  yvex_provider_request *request,
                                  yvex_error *err)
@@ -672,11 +617,6 @@ static int response_format_parse(yvex_json *json,
     return YVEX_OK;
 }
 
-/* Purpose: parse stream_options.include_usage without accepting hidden options.
- * Inputs: stream-options object parser, provider request, and error output.
- * Effects: records the exact terminal usage-chunk request.
- * Failure: refuses duplicate, unknown, or non-boolean fields.
- * Boundary: affects compatibility rendering only, not token accounting. */
 static int stream_options_parse(yvex_json *json,
                                 yvex_provider_request *request,
                                 yvex_error *err)
@@ -699,11 +639,6 @@ static int stream_options_parse(yvex_json *json,
                : YVEX_ERR_FORMAT;
 }
 
-/* Purpose: apply common root request fields shared by both admitted endpoint profiles.
- * Inputs: field name, parser cursor, provider request, handled flag, and error output.
- * Effects: records one shared model/sampling/stream/tool/stop field.
- * Failure: refuses invalid types, unsupported parallel calls, or malformed values.
- * Boundary: endpoint-specific fields remain in the root profile parser. */
 static int common_field(const char *key, yvex_json *json,
                         yvex_provider_request *request,
                         openai_endpoint endpoint, int *handled,
@@ -741,11 +676,6 @@ static int common_field(const char *key, yvex_json *json,
     return YVEX_OK;
 }
 
-/* Purpose: shift one optional Responses instruction into the first system message.
- * Inputs: provider request, owned instruction span, and error output.
- * Effects: grows/shifts the message directory and transfers instruction ownership.
- * Failure: preserves existing message order and reports capacity/allocation failure.
- * Boundary: role projection only; prompt syntax remains tokenizer-owned. */
 static int prepend_instruction(yvex_provider_request *request,
                                yvex_provider_span instruction,
                                yvex_error *err)
@@ -769,11 +699,11 @@ static int prepend_instruction(yvex_provider_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: parse Responses input string, message array, or function-call-output items.
- * Inputs: input parser, provider request owner, and error output.
- * Effects: allocates ordered typed messages including tool-result call IDs.
- * Failure: refuses unsupported item types, malformed fields, or count overflow.
- * Boundary: remote conversation objects and multimodal content remain unsupported. */
+/*
+ * Parse Responses input string, message array, or function-call-output items.
+ *
+ * Refuses unsupported item types, malformed fields, or count overflow.
+ */
 static int responses_input(yvex_json *json, yvex_provider_request *request,
                            yvex_error *err)
 {
@@ -870,11 +800,11 @@ static int responses_input(yvex_json *json, yvex_provider_request *request,
     }
 }
 
-/* Purpose: parse the complete admitted endpoint root and seal its provider identity.
- * Inputs: complete HTTP body, endpoint profile, loaded model ID, output owner, and error output.
- * Effects: allocates, validates, and identity-seals one provider-neutral request graph.
- * Failure: releases every partial allocation and publishes no request.
- * Boundary: OpenAI field names end here and never enter runtime/generation owners. */
+/*
+ * Parse the complete admitted endpoint root and seal its provider identity.
+ *
+ * Allocates, validates, and identity-seals one provider-neutral request graph.
+ */
 int openai_json_admit(const openai_http_request *http,
                       openai_endpoint endpoint, const char *selected_model,
                       openai_admitted_request *admitted, yvex_error *err)
@@ -1020,11 +950,6 @@ failure:
     return rc;
 }
 
-/* Purpose: release one admitted request and all translated application bytes.
- * Inputs: gateway admitted-request owner.
- * Effects: closes the provider graph and clears endpoint facts.
- * Failure: none; null and cleared owners are accepted.
- * Boundary: does not affect daemon sessions or HTTP request storage. */
 void openai_admitted_request_clear(openai_admitted_request *request)
 {
     if (!request) return;

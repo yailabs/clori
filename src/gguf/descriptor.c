@@ -1,22 +1,19 @@
-/* Owner: gguf.descriptor
- * Owns: GGUF descriptor, tensor-info, name, layout, range, and artifact-name facts.
- * Does not own: container parsing, payload I/O, writer publication, or runtime admission.
- * Invariants: every projection is checked, deterministic, and independent of mutable runtime state.
- * Boundary: structural descriptor acceptance does not imply artifact or execution support.
- * Purpose: centralize the small pure projections that define one GGUF tensor descriptor.
- * Inputs: admitted parser facts, typed tensor roles, shapes, qtypes, and naming components.
- * Effects: mutates only caller-provided result objects and reason pointers; performs no I/O.
- * Failure: invalid or incomplete facts fail closed without publishing a successful descriptor. */
+/*
+ * Centralize the small pure projections that define one GGUF tensor descriptor.
+ *
+ * Every projection is checked, deterministic, and independent of mutable runtime state. Structural
+ * descriptor acceptance does not imply artifact or execution support.
+ */
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <yvex/internal/gguf.h>
 
-/* Purpose: map one admitted role to its pinned GGUF name or layer-local suffix.
- * Inputs: typed tensor role and caller-owned layer-scope flag.
- * Effects: returns borrowed text and records whether the layer prefix is required.
- * Failure: returns null for roles without a standard name.
- * Boundary: this is format naming, not logical tensor identity. */
+/*
+ * Map one admitted role to its pinned GGUF name or layer-local suffix.
+ *
+ * This is format naming, not logical tensor identity.
+ */
 typedef struct {
     const char *name;
     int layer_scoped;
@@ -66,7 +63,6 @@ static const gguf_role_name gguf_role_names[YVEX_TENSOR_ROLE_COUNT] = {
     [YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_UP] = {"ffn_up_shexp.weight", 1},
 };
 
-/* Purpose: project one typed role to its canonical GGUF base name and scope. */
 static const char *gguf_standard_role_name(yvex_tensor_role role, int *layer_scoped) {
     if (role <= YVEX_TENSOR_ROLE_UNKNOWN || role >= YVEX_TENSOR_ROLE_COUNT)
         return NULL;
@@ -74,11 +70,12 @@ static const char *gguf_standard_role_name(yvex_tensor_role role, int *layer_sco
     return gguf_role_names[role].name;
 }
 
-/* Purpose: resolve one typed role and scope into a deterministic GGUF tensor name.
- * Inputs: role, scope indexes, output buffer, and optional provenance sink.
- * Effects: writes one bounded name and provenance value.
- * Failure: unsupported roles or insufficient output capacity return zero.
- * Boundary: emitted names remain format facts and do not define logical model identity. */
+/*
+ * Resolve one typed role and scope into a deterministic GGUF tensor name.
+ *
+ * Writes one bounded name and provenance value. Emitted names remain format facts and do not
+ * define logical model identity.
+ */
 int yvex_gguf_name_map_resolve(yvex_tensor_role role, int mtp_extension,
                                unsigned long long layer_index, unsigned long long predictor_index,
                                char *out, size_t out_cap, yvex_gguf_name_provenance *provenance,
@@ -121,11 +118,6 @@ int yvex_gguf_name_map_resolve(yvex_tensor_role role, int mtp_extension,
     return 1;
 }
 
-/* Purpose: validate one emitted tensor shape and qtype against GGUF row geometry.
- * Inputs: typed role, qtype, rank, dimensions, and optional reason sink.
- * Effects: writes a borrowed static reason when requested.
- * Failure: invalid rank, dimensions, qtype, or block divisibility returns zero.
- * Boundary: validation plans geometry but neither quantizes nor emits bytes. */
 int yvex_gguf_layout_map_shape_supported(yvex_tensor_role role, unsigned int qtype,
                                          unsigned int rank, const unsigned long long *dims,
                                          const char **reason) {
@@ -158,12 +150,10 @@ int yvex_gguf_layout_map_shape_supported(yvex_tensor_role role, unsigned int qty
     return 1;
 }
 
-/* Purpose: recognize null and empty artifact-name components. */
 static int is_empty(const char *s) {
     return !s || s[0] == '\0';
 }
 
-/* Purpose: reject whitespace that would make an artifact filename ambiguous. */
 static int contains_space(const char *s) {
     while (s && *s) {
         if (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r')
@@ -173,17 +163,11 @@ static int contains_space(const char *s) {
     return 0;
 }
 
-/* Purpose: detect reserved proof-like words in artifact-name components. */
 static int has_ambiguous_word(const char *s) {
     return s && (strstr(s, "test") || strstr(s, "final") || strstr(s, "new") ||
                  strstr(s, "fixed") || strstr(s, "latest"));
 }
 
-/* Purpose: validate one semantic artifact-name component.
- * Inputs: component text, diagnostic label, and typed error sink.
- * Effects: records a typed refusal for invalid input.
- * Failure: empty, whitespace-bearing, or proof-like components return zero.
- * Boundary: component validation does not inspect the filesystem. */
 static int validate_part(const char *part, const char *name, yvex_error *err) {
     if (is_empty(part)) {
         yvex_error_setf(err, YVEX_ERR_INVALID_ARG, "yvex_artifact_name_suggest", "%s is required",
@@ -203,11 +187,12 @@ static int validate_part(const char *part, const char *name, yvex_error *err) {
     return YVEX_OK;
 }
 
-/* Purpose: construct one deterministic artifact filename from admitted semantic components.
- * Inputs: bounded output plus repository, revision, model, precision, hardware, and version text.
- * Effects: writes exactly one filename when all components and capacity are valid.
- * Failure: invalid components, formatting failure, or truncation return typed refusal.
- * Boundary: naming does not create, admit, or publish an artifact. */
+/*
+ * Construct one deterministic artifact filename from admitted semantic components.
+ *
+ * Bounded output plus repository, revision, model, precision, hardware, and version text. Naming
+ * does not create, admit, or publish an artifact.
+ */
 int yvex_artifact_name_suggest(char *out, size_t out_size, const char *family, const char *model,
                                const char *scope, const char *artifact_class, const char *qprofile,
                                const char *calibration, const char *producer, const char *schema,

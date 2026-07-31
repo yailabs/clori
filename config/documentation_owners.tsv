@@ -11,6 +11,7 @@ docs/architecture/commands.md	architecture	canonical	operators-contributors	livi
 docs/architecture/compilation.md	architecture	canonical	contributors	living	implemented_compilation_architecture
 docs/architecture/runtime.md	architecture	canonical	operators-contributors	living	implemented_runtime_execution_architecture
 docs/architecture/system.md	architecture	canonical	all	living	implemented_system_topology
+docs/audits/code-commentary-7c90ce1/README.md	audit	frozen	contributors	frozen	code_commentary_baseline_audit
 docs/audits/documentation-architecture-51a5c/README.md	audit	frozen	contributors	frozen	documentation_architecture_baseline_audit
 docs/audits/documentation-architecture-51a5c/findings.md	audit	frozen	contributors	frozen	documentation_architecture_baseline_findings
 docs/audits/operator-surface-ec7dcc/README.md	audit	frozen	contributors	frozen	operator_surface_audit
@@ -37,6 +38,7 @@ docs/doctrine/glossary.md	doctrine	canonical	all	living	canonical_terminology
 docs/doctrine/principles.md	doctrine	canonical	all	living	architectural_thesis
 docs/migrations/command-architecture-v1.md	migration	canonical	contributors	retained	command_architecture_v1_migration
 docs/migrations/documentation-architecture-v1.md	migration	canonical	contributors	retained	documentation_architecture_v1_migration
+docs/milestones/code-commentary.md	milestone	canonical	contributors	accepted	code_commentary_boundary
 docs/milestones/command-architecture.md	milestone	canonical	contributors	accepted	command_architecture_boundary
 docs/milestones/documentation-architecture.md	milestone	canonical	contributors	accepted	documentation_architecture_boundary
 docs/milestones/runtime-console-repl.md	milestone	canonical	contributors	planned	runtime_console_boundary

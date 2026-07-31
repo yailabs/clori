@@ -1,12 +1,9 @@
-/* Owner: source inventory.
- * Owns: canonical shard catalog, one header pass, tensor index, and derived rows.
- * Does not own: payload reads, role mapping, transforms, manifest writes, or rendering.
- * Invariants: indexed and indexless authority modes remain explicit and deterministic.
- * Boundary: header inventory is not payload trust or transform execution.
- * Purpose: build the retained shard and tensor inventory from verified metadata.
- * Inputs: source roots, pinned index facts, parsed headers, and caller outputs.
- * Effects: allocates immutable indexes and reads only index and header metadata.
- * Failure: missing, duplicate, malformed, overflowed, or inconsistent facts refuse. */
+/*
+ * Build the retained shard and tensor inventory from verified metadata.
+ *
+ * Indexed and indexless authority modes remain explicit and deterministic. Header inventory is not
+ * payload trust or transform execution.
+ */
 #include <ctype.h>
 #include <limits.h>
 #include <stdint.h>
@@ -17,7 +14,6 @@
 #include <yvex/internal/source.h>
 #include <yvex/internal/source_payload.h>
 
-/* Purpose: publish one typed inventory refusal without duplicating error-state transitions. */
 static int inventory_refuse(yvex_error *err,
                             yvex_status status,
                             const char *where,
@@ -95,11 +91,12 @@ static const source_row_policy source_upstream_row_policy = {
     "upstream inventory allocation failed",
     "upstream inventory name allocation failed"};
 
-/* Purpose: append one owned name/size row for source catalogs that share vector semantics.
- * Inputs: caller-owned row vector, exact name and size, and initial growth capacity.
- * Effects: grows storage only when needed and publishes the row after its name is owned.
- * Failure: overflow or allocation failure preserves the logical row count and prior rows.
- * Boundary: vector ownership does not assign shard or upstream authority semantics. */
+/*
+ * Append one owned name/size row for source catalogs that share vector semantics.
+ *
+ * Overflow or allocation failure preserves the logical row count and prior rows. Vector ownership
+ * does not assign shard or upstream authority semantics.
+ */
 static int source_named_size_append(source_named_size **items,
                                     size_t *count,
                                     size_t *capacity,
@@ -135,11 +132,6 @@ static int source_named_size_append(source_named_size **items,
     return YVEX_OK;
 }
 
-/* Purpose: release an owned name/size row vector without interpreting its domain.
- * Inputs: caller-owned rows and their exact initialized count.
- * Effects: releases every owned name and the containing vector.
- * Failure: null storage and an empty count remain harmless.
- * Boundary: generic vector cleanup does not alter source admission state. */
 static void source_named_size_free(source_named_size *items, size_t count) {
     size_t index;
 
@@ -148,7 +140,6 @@ static void source_named_size_free(source_named_size *items, size_t count) {
     free(items);
 }
 
-/* Purpose: order two immutable name/size rows by their complete canonical names. */
 static int source_named_size_compare(const void *left, const void *right) {
     const source_named_size *a = (const source_named_size *)left;
     const source_named_size *b = (const source_named_size *)right;
@@ -156,7 +147,6 @@ static int source_named_size_compare(const void *left, const void *right) {
     return strcmp(a->name, b->name);
 }
 
-/* Purpose: compare a borrowed name key with one immutable sorted name/size row. */
 static int source_named_size_key_compare(const void *key, const void *row) {
     return strcmp((const char *)key, ((const source_named_size *)row)->name);
 }
@@ -173,7 +163,6 @@ static const size_t source_dtype_counter_offsets[YVEX_NATIVE_DTYPE_OTHER + 1u] =
     [YVEX_NATIVE_DTYPE_F8_E8M0] = offsetof(yvex_source_verification, dtype_f8_e8m0_count),
 };
 
-/* Purpose: project one native dtype through the immutable verification-counter map. */
 static void source_count_dtype(yvex_source_verification *out, yvex_native_dtype dtype) {
     size_t offset = (unsigned int)dtype <= YVEX_NATIVE_DTYPE_OTHER
                         ? source_dtype_counter_offsets[(unsigned int)dtype]
@@ -186,11 +175,6 @@ static void source_count_dtype(yvex_source_verification *out, yvex_native_dtype 
     (*counter)++;
 }
 
-/* Purpose: copies a canonical shard catalog into snapshot-owned immutable storage.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int source_snapshot_copy_shards(yvex_source_tensor_snapshot *snapshot,
                                        const yvex_source_shard_snapshot *shards,
                                        unsigned long long shard_count,
@@ -221,11 +205,6 @@ static int source_snapshot_copy_shards(yvex_source_tensor_snapshot *snapshot,
     return YVEX_OK;
 }
 
-/* Purpose: project snapshot hash bytes facts while preserving the canonical source inventory invariants.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static unsigned long long
 source_snapshot_hash_bytes(unsigned long long hash, const void *data, size_t length) {
     const unsigned char *bytes = (const unsigned char *)data;
@@ -238,11 +217,6 @@ source_snapshot_hash_bytes(unsigned long long hash, const void *data, size_t len
     return hash;
 }
 
-/* Purpose: project snapshot hash u64 facts while preserving the canonical source inventory invariants.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static unsigned long long source_snapshot_hash_u64(unsigned long long hash,
                                                    unsigned long long value) {
     unsigned char bytes[8];
@@ -253,11 +227,6 @@ static unsigned long long source_snapshot_hash_u64(unsigned long long hash,
     return source_snapshot_hash_bytes(hash, bytes, sizeof(bytes));
 }
 
-/* Purpose: append canonical source inventory fields to a deterministic identity stream.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static unsigned long long source_snapshot_identity(const yvex_native_weight_table *table) {
     unsigned long long hash = 1469598103934665603ull;
     unsigned long long i;
@@ -281,11 +250,6 @@ static unsigned long long source_snapshot_identity(const yvex_native_weight_tabl
     return hash;
 }
 
-/* Purpose: transfers a finalized native table into one immutable retained snapshot.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 int yvex_source_tensor_snapshot_take_table(yvex_source_tensor_snapshot **out,
                                            yvex_native_weight_table **table,
                                            unsigned long long shard_count,
@@ -317,11 +281,6 @@ int yvex_source_tensor_snapshot_take_table(yvex_source_tensor_snapshot **out,
     return YVEX_OK;
 }
 
-/* Purpose: transfers a finalized tensor table and copies its one-pass shard geometry.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 int yvex_source_tensor_snapshot_take_table_with_shards(yvex_source_tensor_snapshot **out,
                                                        yvex_native_weight_table **table,
                                                        const yvex_source_shard_snapshot *shards,
@@ -357,21 +316,16 @@ int yvex_source_tensor_snapshot_take_table_with_shards(yvex_source_tensor_snapsh
     return YVEX_OK;
 }
 
-/* Purpose: project tensor snapshot retain facts while preserving the canonical source inventory invariants.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 void yvex_source_tensor_snapshot_retain(yvex_source_tensor_snapshot *snapshot) {
     if (snapshot && snapshot->references < UINT_MAX)
         snapshot->references++;
 }
 
-/* Purpose: release one retained immutable tensor snapshot reference.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source inventory; cleanup remains deterministic.
- * Failure: null or released source inventory handles remain harmless.
- * Boundary: header inventory is not payload trust or transform execution. */
+/*
+ * Release one retained immutable tensor snapshot reference.
+ *
+ * Releases only resources owned by source inventory; cleanup remains deterministic.
+ */
 void yvex_source_tensor_snapshot_release(yvex_source_tensor_snapshot *snapshot) {
     unsigned long long index;
 
@@ -387,11 +341,6 @@ void yvex_source_tensor_snapshot_release(yvex_source_tensor_snapshot *snapshot) 
     free(snapshot);
 }
 
-/* Purpose: returns one borrowed immutable shard fact in canonical order.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 const yvex_source_shard_snapshot *
 yvex_source_tensor_snapshot_shard_at(const yvex_source_tensor_snapshot *snapshot,
                                      unsigned long long index) {
@@ -399,17 +348,11 @@ yvex_source_tensor_snapshot_shard_at(const yvex_source_tensor_snapshot *snapshot
                                                                          : NULL;
 }
 
-/* Purpose: compare a borrowed shard name with one immutable snapshot row. */
 static int source_snapshot_shard_key_compare(const void *key, const void *row) {
     return strcmp((const char *)key,
                   ((const yvex_source_shard_snapshot *)row)->canonical_name);
 }
 
-/* Purpose: binary-searches the immutable canonical shard catalog without allocation.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 const yvex_source_shard_snapshot *
 yvex_source_tensor_snapshot_shard_find(const yvex_source_tensor_snapshot *snapshot,
                                        const char *canonical_name) {
@@ -422,41 +365,21 @@ yvex_source_tensor_snapshot_shard_find(const yvex_source_tensor_snapshot *snapsh
                                                        source_snapshot_shard_key_compare);
 }
 
-/* Purpose: reports whether geometry came from the canonical retained header pass.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 int yvex_source_tensor_snapshot_has_shard_catalog(const yvex_source_tensor_snapshot *snapshot) {
     return snapshot && snapshot->shards && snapshot->shard_count != 0u;
 }
 
-/* Purpose: return the immutable source inventory entry at a checked ordinal.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 const yvex_native_weight_info *
 yvex_source_tensor_snapshot_at(const yvex_source_tensor_snapshot *snapshot,
                                unsigned long long index) {
     return snapshot ? yvex_native_weight_table_at(snapshot->table, index) : NULL;
 }
 
-/* Purpose: locate the source inventory entry associated with a canonical key.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 const yvex_native_weight_info *
 yvex_source_tensor_snapshot_find(const yvex_source_tensor_snapshot *snapshot, const char *name) {
     return snapshot ? yvex_native_weight_table_find(snapshot->table, name) : NULL;
 }
 
-/* Purpose: resolve the stable ordinal for one canonical source inventory key.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 int yvex_source_tensor_snapshot_find_index(const yvex_source_tensor_snapshot *snapshot,
                                            const char *name,
                                            unsigned long long *index) {
@@ -471,11 +394,6 @@ int yvex_source_tensor_snapshot_find_index(const yvex_source_tensor_snapshot *sn
     return 1;
 }
 
-/* Purpose: project tensor snapshot facts get facts while preserving the canonical source inventory invariants.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 int yvex_source_tensor_snapshot_facts_get(const yvex_source_tensor_snapshot *snapshot,
                                           yvex_source_tensor_snapshot_facts *out,
                                           yvex_error *err) {
@@ -495,11 +413,6 @@ int yvex_source_tensor_snapshot_facts_get(const yvex_source_tensor_snapshot *sna
     return YVEX_OK;
 }
 
-/* Purpose: appends one unique tensor-to-shard assignment with owned strings.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int
 source_index_append(source_index *index, const char *tensor, const char *shard, yvex_error *err) {
     source_index_entry *next;
@@ -529,11 +442,6 @@ source_index_append(source_index *index, const char *tensor, const char *shard, 
     return YVEX_OK;
 }
 
-/* Purpose: release parsed upstream tensor-name index rows.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source inventory; cleanup remains deterministic.
- * Failure: null or released source inventory handles remain harmless.
- * Boundary: header inventory is not payload trust or transform execution. */
 static void source_index_free(source_index *index) {
     size_t i;
 
@@ -547,23 +455,16 @@ static void source_index_free(source_index *index) {
     memset(index, 0, sizeof(*index));
 }
 
-/* Purpose: order upstream tensor-name index rows for deterministic binary search. */
 static int source_index_compare(const void *left, const void *right) {
     const source_index_entry *a = (const source_index_entry *)left;
     const source_index_entry *b = (const source_index_entry *)right;
     return strcmp(a->tensor, b->tensor);
 }
 
-/* Purpose: compare a borrowed tensor key with one immutable sorted index row. */
 static int source_index_key_compare(const void *key, const void *row) {
     return strcmp((const char *)key, ((const source_index_entry *)row)->tensor);
 }
 
-/* Purpose: parses the upstream declared payload size with duplicate-field refusal.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int source_parse_index_metadata(yvex_json *json, source_index *index) {
     char key[YVEX_JSON_KEY_CAP];
     yvex_json_iter iter;
@@ -585,11 +486,6 @@ static int source_parse_index_metadata(yvex_json *json, source_index *index) {
     return item == YVEX_JSON_ITEM_END;
 }
 
-/* Purpose: parses all unique tensor-to-shard assignments from the upstream weight map.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int source_parse_weight_map(yvex_json *json, source_index *index, yvex_error *err) {
     char tensor[YVEX_JSON_KEY_CAP];
     char shard[YVEX_PATH_CAP];
@@ -610,11 +506,6 @@ static int source_parse_weight_map(yvex_json *json, source_index *index, yvex_er
     return item == YVEX_JSON_ITEM_END && index->count > 0u;
 }
 
-/* Purpose: parses a complete upstream index and requires metadata plus a nonempty map.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int
 source_parse_index_json(const char *data, size_t length, source_index *index, yvex_error *err) {
     yvex_json json;
@@ -659,7 +550,6 @@ source_parse_index_json(const char *data, size_t length, source_index *index, yv
     return 1;
 }
 
-/* Purpose: locate the source inventory entry associated with a canonical key. */
 static source_index_entry *source_index_find(source_index *index, const char *tensor) {
     return index && tensor
                ? (source_index_entry *)bsearch(tensor,
@@ -670,11 +560,6 @@ static source_index_entry *source_index_find(source_index *index, const char *te
                : NULL;
 }
 
-/* Purpose: adds one unique root shard and its checked local file size.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int source_shards_append(source_shards *shards,
                                 const char *name,
                                 unsigned long long size,
@@ -683,11 +568,6 @@ static int source_shards_append(source_shards *shards,
         &shards->items, &shards->count, &shards->cap, name, size, &source_shard_row_policy, err);
 }
 
-/* Purpose: release the canonical shard catalog and its owned names.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source inventory; cleanup remains deterministic.
- * Failure: null or released source inventory handles remain harmless.
- * Boundary: header inventory is not payload trust or transform execution. */
 static void source_shards_free(source_shards *shards) {
     if (!shards)
         return;
@@ -695,11 +575,6 @@ static void source_shards_free(source_shards *shards) {
     memset(shards, 0, sizeof(*shards));
 }
 
-/* Purpose: parses the exact model-N-of-M shard grammar into sequence facts.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int
 source_shard_name_parse(const char *name, unsigned int *index_out, unsigned int *total_out) {
     unsigned int index = 0u;
@@ -729,13 +604,12 @@ source_shard_name_parse(const char *name, unsigned int *index_out, unsigned int 
     return 1;
 }
 
-/* Purpose: order canonical shard rows by numeric shard identity and relative name. */
-/* Purpose: sort canonical shard rows in place without a second allocation lifecycle. */
+/* Order canonical shard rows by numeric shard identity and relative name. */
+
 static void source_shards_sort(source_shards *shards) {
     qsort(shards->items, shards->count, sizeof(shards->items[0]), source_named_size_compare);
 }
 
-/* Purpose: binary-searches the canonical sorted shard table. */
 static long source_shards_find(const source_shards *shards, const char *name) {
     const source_named_size *row;
 
@@ -749,11 +623,6 @@ static long source_shards_find(const source_shards *shards, const char *name) {
     return row ? (long)(row - shards->items) : -1;
 }
 
-/* Purpose: inventories only root safetensors shards and rejects unexpected shard forms.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source inventory state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int source_scan_root(const char *source_path,
                             source_shards *shards,
                             yvex_source_verification *out,
@@ -827,11 +696,6 @@ cleanup:
     return rc;
 }
 
-/* Purpose: adds one unique official snapshot file and its declared metadata size.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int source_upstream_append(source_upstream_inventory *inventory,
                                   const char *name,
                                   unsigned long long size,
@@ -845,11 +709,6 @@ static int source_upstream_append(source_upstream_inventory *inventory,
                                     err);
 }
 
-/* Purpose: release parsed upstream inventory rows and their owned tensor names.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source inventory; cleanup remains deterministic.
- * Failure: null or released source inventory handles remain harmless.
- * Boundary: header inventory is not payload trust or transform execution. */
 static void source_upstream_free(source_upstream_inventory *inventory) {
     if (!inventory)
         return;
@@ -857,11 +716,6 @@ static void source_upstream_free(source_upstream_inventory *inventory) {
     memset(inventory, 0, sizeof(*inventory));
 }
 
-/* Purpose: parses one file row from a pinned upstream snapshot inventory.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int
 source_upstream_parse_file(yvex_json *json, source_upstream_inventory *inventory, yvex_error *err) {
     char key[YVEX_JSON_KEY_CAP];
@@ -890,11 +744,6 @@ source_upstream_parse_file(yvex_json *json, source_upstream_inventory *inventory
            source_upstream_append(inventory, state.name, state.size, err) == YVEX_OK;
 }
 
-/* Purpose: parses the bounded official file list without accepting duplicates.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int source_upstream_parse_files(yvex_json *json,
                                        source_upstream_inventory *inventory,
                                        yvex_error *err) {
@@ -910,11 +759,7 @@ static int source_upstream_parse_files(yvex_json *json,
     return item == YVEX_JSON_ITEM_END && !iter.trailing_separator && inventory->count > 0u;
 }
 
-/* Purpose: parses and verifies repository/revision identity for an indexless snapshot.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
+/* Parses and verifies repository/revision identity for an indexless snapshot. */
 static int source_upstream_parse(const char *data,
                                  size_t length,
                                  source_upstream_inventory *inventory,
@@ -957,11 +802,7 @@ static int source_upstream_parse(const char *data,
     return item == YVEX_JSON_ITEM_END && yvex_json_complete(&json) && seen == 15u;
 }
 
-/* Purpose: verifies the official index file, provider identity, and declared shard map.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source inventory state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: header inventory is not payload trust or transform execution. */
+/* Verifies the official index file, provider identity, and declared shard map. */
 static int source_verify_index(const yvex_source_verify_options *options,
                                source_index *index,
                                yvex_source_verification *out,
@@ -1003,11 +844,6 @@ static int source_verify_index(const yvex_source_verify_options *options,
     return YVEX_OK;
 }
 
-/* Purpose: reconciles every indexed shard assignment with the root shard inventory.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source inventory state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: header inventory is not payload trust or transform execution. */
 static void source_verify_index_shards(source_index *index,
                                        const source_shards *shards,
                                        yvex_source_verification *out) {
@@ -1040,11 +876,6 @@ static void source_verify_index_shards(source_index *index,
     free(referenced);
 }
 
-/* Purpose: verifies a deliberately indexless official snapshot before deriving a map.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source inventory state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int source_verify_upstream_indexless(const yvex_source_verify_options *options,
                                             const source_shards *shards,
                                             yvex_source_verification *out,
@@ -1095,18 +926,13 @@ static int source_verify_upstream_indexless(const yvex_source_verify_options *op
     return YVEX_OK;
 }
 
-/* Purpose: order native tensor facts by canonical tensor name for coverage comparison. */
 static int source_native_info_compare(const void *left, const void *right) {
     const yvex_native_weight_info *const *a = (const yvex_native_weight_info *const *)left;
     const yvex_native_weight_info *const *b = (const yvex_native_weight_info *const *)right;
     return strcmp((*a)->name, (*b)->name);
 }
 
-/* Purpose: builds deterministic owned tensor-to-shard rows from the canonical header table.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header inventory is not payload trust or transform execution. */
+/* Builds deterministic owned tensor-to-shard rows from the canonical header table. */
 static int source_derived_build(const yvex_native_weight_table *table,
                                 yvex_source_derived_inventory *derived,
                                 yvex_error *err) {
@@ -1146,11 +972,6 @@ static int source_derived_build(const yvex_native_weight_table *table,
     return YVEX_OK;
 }
 
-/* Purpose: performs the sole header pass and reconciles unique tensors with its authority.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source inventory state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: header inventory is not payload trust or transform execution. */
 static int source_verify_headers(const yvex_source_verify_options *options,
                                  const source_shards *shards,
                                  source_index *index,
@@ -1290,11 +1111,11 @@ cleanup:
     return rc;
 }
 
-/* Purpose: release the complete derived inventory, retained snapshot, and all owned rows.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source inventory; cleanup remains deterministic.
- * Failure: null or released source inventory handles remain harmless.
- * Boundary: header inventory is not payload trust or transform execution. */
+/*
+ * Release the complete derived inventory, retained snapshot, and all owned rows.
+ *
+ * Releases only resources owned by source inventory; cleanup remains deterministic.
+ */
 void yvex_source_derived_inventory_free(yvex_source_derived_inventory *inventory) {
     size_t i;
 
@@ -1308,11 +1129,6 @@ void yvex_source_derived_inventory_free(yvex_source_derived_inventory *inventory
     memset(inventory, 0, sizeof(*inventory));
 }
 
-/* Purpose: coordinates indexed or indexless inventory verification without payload reads.
- * Inputs: typed source inventory arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source inventory state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: header inventory is not payload trust or transform execution. */
 int yvex_source_inventory_verify(const yvex_source_verify_options *options,
                                  yvex_source_verification *out,
                                  yvex_source_derived_inventory *derived,

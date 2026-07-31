@@ -1,12 +1,9 @@
-/* Owner: graph MoE execution.
- * Owns: immutable MoE plan validation, deterministic routing, and generic CPU expert arithmetic.
- * Does not own: family policy selection, artifact I/O, CUDA resources, runtime sessions, CLI, or transformer state.
- * Invariants: plans bind exact descriptor roles and expert execution touches only selected subviews.
- * Boundary: reusable token-local MoE math and plan admission.
- * Purpose: lower typed family MoE facts into an executable plan and canonical CPU operations.
- * Inputs: admitted descriptors/materialization, family projection, encoded weights, and finite activations.
- * Effects: allocates immutable plans or writes only caller-owned numerical outputs.
- * Failure: malformed roles, qtypes, geometry, non-finite math, or identity drift publishes no success. */
+/*
+ * Lower typed family MoE facts into an executable plan and canonical CPU operations.
+ *
+ * Plans bind exact descriptor roles and expert execution touches only selected subviews. Reusable
+ * token-local MoE math and plan admission.
+ */
 #include <yvex/internal/moe.h>
 #include "src/graph/private.h"
 #include <float.h>
@@ -29,15 +26,17 @@ static const yvex_tensor_role moe_slot_roles[YVEX_MOE_WEIGHT_COUNT] = {
     YVEX_TENSOR_ROLE_MOE_EXPERT_UP, YVEX_TENSOR_ROLE_MOE_EXPERT_DOWN,
     YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_GATE, YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_UP,
     YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_DOWN};
-/* Purpose: publish one graph-owned MoE refusal without partial capability. */
+
 static int moe_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "graph.moe", reason);
     return status;
 }
-/* Purpose: identify routing evidence field-by-field without native structure layout.
- * Inputs: admitted router result and exact routed-expert extent. Effects: writes one digest.
- * Failure: malformed/non-finite evidence returns false. Boundary: excludes padding and unused capacity. */
+/*
+ * Identify routing evidence field-by-field without native structure layout.
+ *
+ * Excludes padding and unused capacity.
+ */
 int yvex_moe_router_result_identity(const yvex_moe_router_result *router,
                                     unsigned long long routed_experts,
                                     char output[YVEX_SHA256_HEX_CAP])
@@ -72,7 +71,7 @@ int yvex_moe_router_result_identity(const yvex_moe_router_result *router,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-/* Purpose: resolve the typed family adapter by immutable numeric identity. */
+
 static const yvex_moe_family_api *moe_family_find(unsigned long long adapter_id,
                                                    unsigned long long adapter_version)
 {
@@ -84,7 +83,7 @@ static const yvex_moe_family_api *moe_family_find(unsigned long long adapter_id,
             return family;
     }
 }
-/* Purpose: resolve one descriptor role to its exact materialized binding. */
+
 static const yvex_materialized_tensor_binding *moe_binding_find(
     const yvex_materialization_session *materialization,
     const yvex_runtime_descriptor *descriptor, yvex_tensor_role role,
@@ -96,7 +95,7 @@ static const yvex_materialized_tensor_binding *moe_binding_find(
     return runtime ? yvex_materialization_session_tensor_at(materialization,
                                                              runtime->tensor_id) : NULL;
 }
-/* Purpose: validate one exact encoded matrix/vector geometry. */
+
 static int moe_binding_geometry(const yvex_materialized_tensor_binding *binding,
                                 unsigned long long width, unsigned long long rows,
                                 unsigned long long experts, int numerical)
@@ -112,8 +111,7 @@ static int moe_binding_geometry(const yvex_materialized_tensor_binding *binding,
     return capability && capability->dedicated_cpu_compute_available &&
            capability->dedicated_cuda_compute_available;
 }
-/* Purpose: validate every role/shape of one projected MoE layer and bind tensor identities.
- * Inputs: plan and descriptors. Effects: binds IDs. Failure: typed. Boundary: no payload reads. */
+
 static int moe_layer_bind(yvex_moe_layer_plan *layer,
                           const yvex_materialization_session *materialization,
                           const yvex_runtime_descriptor *descriptor, yvex_error *err)
@@ -186,16 +184,18 @@ static int moe_layer_bind(yvex_moe_layer_plan *layer,
 #undef GEOM
     return YVEX_OK;
 }
-/* Purpose: append one IEEE-754 value through the canonical integer identity encoding.
- * Inputs: hash/value. Effects: updates hash. Failure: false. Boundary: canonical bits only. */
+
 static int moe_hash_f64(yvex_sha256 *hash, double value)
 {
     unsigned long long bits = 0ull;
     memcpy(&bits, &value, sizeof(bits));
     return yvex_sha256_update_u64(hash, bits);
 }
-/* Purpose: hash one layer from canonical scalar fields and bound tensor identities.
- * Inputs: layer/summary. Effects: seals identity. Failure: false. Boundary: no pointers. */
+/*
+ * Hash one layer from canonical scalar fields and bound tensor identities.
+ *
+ * Seals identity.
+ */
 static int moe_layer_identity(yvex_moe_layer_plan *layer,
                               const yvex_moe_plan_summary *summary)
 {
@@ -230,8 +230,7 @@ static int moe_layer_identity(yvex_moe_layer_plan *layer,
     yvex_sha256_hex(digest, layer->layer_identity);
     return 1;
 }
-/* Purpose: seal one plan identity over its exact immutable layer sequence.
- * Inputs: plan. Effects: seals identity. Failure: false. Boundary: ordered immutable facts. */
+
 static int moe_plan_identity(yvex_moe_plan *plan)
 {
     yvex_sha256 hash;
@@ -254,8 +253,7 @@ static int moe_plan_identity(yvex_moe_plan *plan)
     yvex_sha256_hex(digest, plan->summary.moe_plan_identity);
     return 1;
 }
-/* Purpose: build the exact immutable MoE plan from typed family and runtime facts.
- * Inputs: admitted owners. Effects: allocates plan. Failure: typed. Boundary: no source inference. */
+
 int yvex_moe_plan_build(yvex_moe_plan **out, unsigned long long adapter_id,
                         unsigned long long adapter_version,
                         const yvex_materialization_session *materialization,
@@ -327,21 +325,26 @@ int yvex_moe_plan_build(yvex_moe_plan **out, unsigned long long adapter_id,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: borrow the immutable MoE plan summary.
- * Inputs: plan. Effects: none. Failure: null. Boundary: borrowed lifetime. */
+/*
+ * Borrow the immutable MoE plan summary.
+ *
+ * Borrowed lifetime.
+ */
 const yvex_moe_plan_summary *yvex_moe_plan_summary_get(const yvex_moe_plan *plan)
 {
     return plan ? &plan->summary : NULL;
 }
-/* Purpose: borrow one immutable MoE layer by canonical ordinal.
- * Inputs: plan/ordinal. Effects: none. Failure: null. Boundary: borrowed lifetime. */
+/*
+ * Borrow one immutable MoE layer by canonical ordinal.
+ *
+ * Borrowed lifetime.
+ */
 const yvex_moe_layer_plan *yvex_moe_plan_layer_at(const yvex_moe_plan *plan,
                                                    unsigned long long ordinal)
 {
     return plan && ordinal < plan->summary.layer_count ? &plan->layers[ordinal] : NULL;
 }
-/* Purpose: release one independently owned immutable MoE plan idempotently.
- * Inputs: plan owner. Effects: frees plan. Failure: none. Boundary: graph allocation only. */
+
 void yvex_moe_plan_close(yvex_moe_plan **plan)
 {
     if (!plan || !*plan) return;
@@ -349,8 +352,7 @@ void yvex_moe_plan_close(yvex_moe_plan **plan)
     free(*plan);
     *plan = NULL;
 }
-/* Purpose: decode one F32/BF16/I32 coefficient vector without qtype-policy inference.
- * Inputs: weight/output. Effects: writes output. Failure: false. Boundary: fixed flat qtypes. */
+
 static int moe_decode_flat(const yvex_moe_weight_view *weight, float *out,
                            unsigned long long count)
 {
@@ -375,7 +377,7 @@ static int moe_decode_flat(const yvex_moe_weight_view *weight, float *out,
     }
     return 1;
 }
-/* Purpose: execute one canonical encoded matrix-vector product on CPU. */
+
 static int moe_matvec(const yvex_moe_weight_view *weight, const float *input,
                       float *output, yvex_error *err)
 {
@@ -391,8 +393,7 @@ static int moe_matvec(const yvex_moe_weight_view *weight, const float *input,
             return yvex_error_code(err);
     return YVEX_OK;
 }
-/* Purpose: execute generic mHC FFN ingress and learned RMS normalization on CPU.
- * Inputs: job/buffers. Effects: writes stages. Failure: typed. Boundary: generic FFN ingress. */
+
 int yvex_moe_ffn_prepare_cpu(const yvex_moe_layer_job *job, float *normalized,
                              float *post, float *combination, yvex_error *err)
 {
@@ -443,13 +444,13 @@ int yvex_moe_ffn_prepare_cpu(const yvex_moe_layer_job *job, float *normalized,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: evaluate stable sqrt(softplus(x)) without overflow. */
+
 static double moe_score(double value)
 {
     double softplus = value > 0.0 ? value + log1p(exp(-value)) : log1p(exp(value));
     return sqrt(softplus);
 }
-/* Purpose: select deterministic descending scores with ordinal-ascending ties. */
+
 static void moe_topk(const float *scores, unsigned long long count, unsigned long long topk,
                      unsigned long long *selected)
 {
@@ -466,8 +467,7 @@ static void moe_topk(const float *scores, unsigned long long count, unsigned lon
         selected[rank] = best;
     }
 }
-/* Purpose: execute hash or learned routing with exact score/bias/weight separation.
- * Inputs: job/input. Effects: writes route. Failure: typed. Boundary: no expert execution. */
+
 int yvex_moe_route_cpu(const yvex_moe_layer_job *job, const float *normalized,
                        yvex_moe_router_result *result, yvex_error *err)
 {
@@ -534,8 +534,7 @@ int yvex_moe_route_cpu(const yvex_moe_layer_job *job, const float *normalized,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: execute one exact selected routed or shared encoded SwiGLU expert on CPU.
- * Inputs: plan/weights/input. Effects: writes output. Failure: typed. Boundary: one expert. */
+
 int yvex_moe_expert_cpu(const yvex_moe_layer_plan *layer,
                         const yvex_moe_weight_view *gate,
                         const yvex_moe_weight_view *up,

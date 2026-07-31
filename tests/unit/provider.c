@@ -1,8 +1,6 @@
 /*
- * Provider-neutral contract tests.
- *
- * Purpose: prove bounded request identity, owned clone/wire roundtrip, JSON/tool refusal,
- * and authoritative output mutation detection without HTTP or model execution.
+ * Exercises bounded request identity, owned clone/wire roundtrip, JSON/tool refusal, and
+ * authoritative output mutation detection without HTTP or model execution.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -11,7 +9,7 @@
 
 #include "tests/test.h"
 
-/* Purpose: construct one exact provider request used by identity and wire tests. */
+/* Construct one exact provider request used by identity and wire tests. */
 static int request_build(yvex_provider_request *request,
                          yvex_provider_message messages[2],
                          yvex_provider_function_tool tools[1],
@@ -66,7 +64,7 @@ static int request_build(yvex_provider_request *request,
     return yvex_provider_request_seal(request, err);
 }
 
-/* Purpose: prove canonical identity and complete owned wire reconstruction. */
+/* Prove canonical identity and complete owned wire reconstruction. */
 static int test_request_roundtrip(void)
 {
     yvex_provider_request source, *clone = NULL, *decoded = NULL;
@@ -107,7 +105,6 @@ static int test_request_roundtrip(void)
     return 0;
 }
 
-/* Purpose: prove invalid tool schema and ambiguous provider semantics fail before sealing. */
 static int test_refusal(void)
 {
     yvex_provider_request request;
@@ -126,7 +123,6 @@ static int test_refusal(void)
     return 0;
 }
 
-/* Purpose: prove every authoritative output field participates in validation. */
 static int test_output_identity(void)
 {
     static const unsigned char bytes[] = "ok";
@@ -152,7 +148,6 @@ static int test_output_identity(void)
     return 0;
 }
 
-/* Purpose: prove provider callers share one complete semantic default policy. */
 static int test_request_defaults(void)
 {
     yvex_provider_request request;

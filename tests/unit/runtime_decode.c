@@ -1,25 +1,19 @@
-/* Owner: runtime decode tests.
- * Owns: canonical step/aggregate identity mutation and lifecycle refusal evidence.
- * Does not own: selected-artifact execution, transformer numerics, KV storage, CLI, logits, or generation.
- * Invariants: tests exercise field-wise public internal ABI and never enter production objects.
- * Boundary: focused decode-contract evidence over deterministic caller-owned facts.
- * Purpose: prove decode evidence identities and malformed lifecycle requests fail closed.
- * Inputs: synthetic typed results and absent-owner refusal requests.
- * Effects: none outside stack storage.
- * Failure: any identity or refusal mismatch fails the unit runner. */
+/*
+ * Exercises decode evidence identities and malformed lifecycle requests fail closed. Tests
+ * exercise field-wise public internal ABI and never enter production objects. Focused
+ * decode-contract evidence over deterministic caller-owned facts.
+ */
 #include "tests/test.h"
 
 #include <string.h>
 
 #include <yvex/internal/decode.h>
 
-/* Purpose: produce one deterministic valid SHA-256 identity. */
 static void decode_test_identity(char output[YVEX_SHA256_HEX_CAP], unsigned int value)
 {
     (void)snprintf(output, YVEX_SHA256_HEX_CAP, "%064x", value);
 }
 
-/* Purpose: populate one complete structurally valid step result. */
 static void decode_test_step(yvex_runtime_decode_step_result *step)
 {
     memset(step, 0, sizeof(*step));
@@ -39,7 +33,6 @@ static void decode_test_step(yvex_runtime_decode_step_result *step)
     decode_test_identity(step->transformer_execution_identity, 6u);
 }
 
-/* Purpose: prove each meaningful step field enters the canonical identity. */
 static int decode_test_step_identity(void)
 {
     yvex_runtime_decode_step_result step;
@@ -63,7 +56,7 @@ static int decode_test_step_identity(void)
     return 0;
 }
 
-/* Purpose: prove ordered partial progress has one stable aggregate identity. */
+/* Prove ordered partial progress has one stable aggregate identity. */
 static int decode_test_result_identity(void)
 {
     yvex_runtime_decode_step_result step;
@@ -108,7 +101,6 @@ static int decode_test_result_identity(void)
     return 0;
 }
 
-/* Purpose: prove missing paired owners and outputs refuse before mutation. */
 static int decode_test_lifecycle_refusal(void)
 {
     yvex_runtime_decode_context *context = NULL;

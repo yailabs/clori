@@ -1,12 +1,9 @@
-/* Owner: gguf.quant_policy
- * Owns: role-based quantization policy, template derivation, validation, and policy JSON IO.
- * Does not own: calibration data, job orchestration, numeric codecs, execution, or artifacts.
- * Invariants: every rule owns its selector and derives support from canonical qtype capabilities.
- * Boundary: policy selects admissible representations; it neither converts bytes nor writes GGUF.
- * Purpose: own one immutable-at-consumption policy document and its template projection.
- * Inputs: typed policy requests, admitted template descriptors, or bounded shared-parser JSON.
- * Effects: allocates policy state and performs explicit policy file IO and template reads.
- * Failure: typed errors publish no partial policy and cleanup closes every borrowed owner. */
+/*
+ * Own one immutable-at-consumption policy document and its template projection.
+ *
+ * Every rule owns its selector and derives support from canonical qtype capabilities. Policy
+ * selects admissible representations; it neither converts bytes nor writes GGUF.
+ */
 #include <limits.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -99,7 +96,6 @@ static const char *const preset_names[] = {
     YVEX_QUANT_DS4_PROFILE_NAME,
 };
 
-/* Purpose: resolve one exact policy name-table value without accepting prefixes. */
 static int policy_name_value(const policy_name *rows, size_t count, const char *name,
                              int fallback) {
     size_t index;
@@ -132,17 +128,11 @@ static yvex_dtype qtype_to_dtype(yvex_quant_qtype qtype);
 static int qtype_storage_supported(yvex_quant_qtype qtype);
 static int qtype_compute_supported(yvex_quant_qtype qtype);
 
-/* Purpose: parse one exact policy boolean without coercing another JSON value. */
 static int policy_json_bool(yvex_gguf_json *json, int *out) {
     return yvex_json_bool(&json->cursor, out) ? YVEX_OK
                                               : yvex_gguf_json_fail(json, "expected boolean");
 }
 
-/* Purpose: project one policy qtype onto the canonical dtype spelling.
- * Inputs: policy qtype enum.
- * Effects: returns borrowed immutable text.
- * Failure: unsupported values map to UNKNOWN.
- * Boundary: naming does not claim codec or compute support. */
 const char *yvex_quant_qtype_name(yvex_quant_qtype qtype) {
     yvex_dtype dtype;
 
@@ -154,7 +144,6 @@ const char *yvex_quant_qtype_name(yvex_quant_qtype qtype) {
     return dtype == YVEX_DTYPE_UNKNOWN ? "UNKNOWN" : yvex_dtype_name(dtype);
 }
 
-/* Purpose: parse one exact canonical qtype spelling without aliases. */
 static yvex_quant_qtype qtype_from_name(const char *name) {
     yvex_quant_qtype qtype;
 
@@ -172,22 +161,22 @@ static yvex_quant_qtype qtype_from_name(const char *name) {
     return YVEX_QUANT_QTYPE_UNKNOWN;
 }
 
-/* Purpose: render one policy operation selector without importing internal IR declarations.
- * Inputs: typed public operation value.
- * Effects: returns borrowed process-lifetime text.
- * Failure: out-of-range values return "unknown".
- * Boundary: naming exposes no compiler implementation dependency. */
+/*
+ * Render one policy operation selector without importing internal IR declarations.
+ *
+ * Returns borrowed process-lifetime text.
+ */
 const char *yvex_quant_policy_operation_name(yvex_quant_policy_operation operation) {
     return operation <= YVEX_QUANT_POLICY_OPERATION_EXPERT_AGGREGATE
                ? operation_names[operation]
                : "unknown";
 }
 
-/* Purpose: render one source/terminal physical-class selector.
- * Inputs: typed public physical-class value.
- * Effects: returns borrowed process-lifetime text.
- * Failure: out-of-range values return "unknown".
- * Boundary: naming does not decide tensor representation. */
+/*
+ * Render one source/terminal physical-class selector.
+ *
+ * Returns borrowed process-lifetime text.
+ */
 const char *yvex_quant_policy_physical_class_name(
     yvex_quant_policy_physical_class physical_class) {
     return physical_class <= YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE
@@ -195,7 +184,6 @@ const char *yvex_quant_policy_physical_class_name(
                : "unknown";
 }
 
-/* Purpose: parse one exact stable name from a bounded string table. */
 static int policy_table_index(const char *const *names, size_t count, const char *name,
                               int fallback) {
     size_t index;
@@ -206,50 +194,36 @@ static int policy_table_index(const char *const *names, size_t count, const char
     return fallback;
 }
 
-/* Purpose: parse a policy operation selector through its versioned spelling table. */
 static yvex_quant_policy_operation operation_from_name(const char *name) {
     return (yvex_quant_policy_operation)policy_table_index(
         operation_names, sizeof(operation_names) / sizeof(operation_names[0]), name,
         YVEX_QUANT_POLICY_OPERATION_ANY);
 }
 
-/* Purpose: parse a physical-class selector through its versioned spelling table. */
 static yvex_quant_policy_physical_class physical_class_from_name(const char *name) {
     return (yvex_quant_policy_physical_class)policy_table_index(
         physical_class_names, sizeof(physical_class_names) / sizeof(physical_class_names[0]), name,
         YVEX_QUANT_POLICY_PHYSICAL_ANY);
 }
 
-/* Purpose: parse a tensor-collection selector through model-owned enum order. */
 static yvex_tensor_collection collection_from_name(const char *name) {
     return (yvex_tensor_collection)policy_table_index(
         collection_names, sizeof(collection_names) / sizeof(collection_names[0]), name,
         YVEX_TENSOR_COLLECTION_COUNT);
 }
 
-/* Purpose: parse a tensor-scope selector through model-owned enum order. */
 static yvex_tensor_scope scope_from_name(const char *name) {
     return (yvex_tensor_scope)policy_table_index(
         scope_names, sizeof(scope_names) / sizeof(scope_names[0]), name,
         YVEX_TENSOR_SCOPE_MTP + 1);
 }
 
-/* Purpose: render one typed policy selector kind.
- * Inputs: selector-kind enum.
- * Effects: returns borrowed immutable text.
- * Failure: unsupported values map to unknown.
- * Boundary: rendering does not match a tensor. */
 const char *yvex_quant_selector_kind_name(yvex_quant_selector_kind kind) {
     return kind >= YVEX_QUANT_SELECTOR_UNKNOWN && kind <= YVEX_QUANT_SELECTOR_DEFAULT
                ? selector_names[kind].name
                : selector_names[YVEX_QUANT_SELECTOR_UNKNOWN].name;
 }
 
-/* Purpose: parse one admitted policy selector spelling, including legacy document aliases.
- * Inputs: optional immutable selector text.
- * Effects: none.
- * Failure: null or unknown names yield the typed unknown selector.
- * Boundary: parsing does not validate selector arguments or choose a qtype. */
 static yvex_quant_selector_kind selector_from_name(const char *name) {
     int value = policy_name_value(selector_names, sizeof(selector_names) / sizeof(selector_names[0]),
                                   name, YVEX_QUANT_SELECTOR_UNKNOWN);
@@ -261,33 +235,18 @@ static yvex_quant_selector_kind selector_from_name(const char *name) {
                                                               name, YVEX_QUANT_SELECTOR_UNKNOWN));
 }
 
-/* Purpose: render one quantization-policy validation state.
- * Inputs: policy-status enum.
- * Effects: returns borrowed immutable text.
- * Failure: unsupported values map to quant-policy-unknown.
- * Boundary: status rendering cannot promote a policy. */
 const char *yvex_quant_policy_status_name(yvex_quant_policy_status status) {
     return status >= YVEX_QUANT_POLICY_STATUS_UNKNOWN && status <= YVEX_QUANT_POLICY_STATUS_INVALID
                ? policy_status_names[status]
                : policy_status_names[YVEX_QUANT_POLICY_STATUS_UNKNOWN];
 }
 
-/* Purpose: render one typed quantization-policy issue.
- * Inputs: issue enum.
- * Effects: returns borrowed immutable text.
- * Failure: unsupported values map to format refusal.
- * Boundary: issue rendering does not classify a new failure. */
 const char *yvex_quant_policy_issue_kind_name(yvex_quant_policy_issue_kind issue) {
     return issue >= YVEX_QUANT_POLICY_ISSUE_NONE && issue <= YVEX_QUANT_POLICY_ISSUE_FORMAT
                ? policy_issue_names[issue]
                : policy_issue_names[YVEX_QUANT_POLICY_ISSUE_FORMAT];
 }
 
-/* Purpose: map one policy qtype to the canonical numeric dtype identity.
- * Inputs: policy qtype enum.
- * Effects: returns a value without mutation.
- * Failure: unknown and OTHER map to the unknown dtype.
- * Boundary: mapping identity does not select a physical codec. */
 static yvex_dtype qtype_to_dtype(yvex_quant_qtype qtype) {
     size_t index;
     for (index = 0u; index < sizeof(qtype_dtypes) / sizeof(qtype_dtypes[0]); ++index)
@@ -296,14 +255,12 @@ static yvex_dtype qtype_to_dtype(yvex_quant_qtype qtype) {
     return YVEX_DTYPE_UNKNOWN;
 }
 
-/* Purpose: query storage admission from the canonical numeric capability registry. */
 static int qtype_storage_supported(yvex_quant_qtype qtype) {
     const yvex_quant_numeric_capability *capability =
         yvex_quant_numeric_capability_by_name(yvex_quant_qtype_name(qtype));
     return qtype == YVEX_QUANT_QTYPE_SOURCE || (capability && capability->storage_admitted);
 }
 
-/* Purpose: query dedicated CPU compute admission from the canonical numeric registry. */
 static int qtype_compute_supported(yvex_quant_qtype qtype) {
     const yvex_quant_numeric_capability *capability =
         yvex_quant_numeric_capability_by_name(yvex_quant_qtype_name(qtype));
@@ -311,7 +268,6 @@ static int qtype_compute_supported(yvex_quant_qtype qtype) {
            (capability && capability->dedicated_cpu_compute_available);
 }
 
-/* Purpose: resolve one exact canonical tensor-role spelling. */
 static yvex_tensor_role role_from_name(const char *name) {
     unsigned int i;
 
@@ -325,11 +281,12 @@ static yvex_tensor_role role_from_name(const char *name) {
     return YVEX_TENSOR_ROLE_UNKNOWN;
 }
 
-/* Purpose: hash every policy-v2 field without native structure representation.
- * Inputs: complete owned policy fields and ordered rules.
- * Effects: writes the canonical policy identity into its summary.
- * Failure: absent required fields or hash failure return false.
- * Boundary: excludes pointers, paths, padding, allocation order, and process state. */
+/*
+ * Hash every policy-v2 field without native structure representation.
+ *
+ * Writes the canonical policy identity into its summary. Excludes pointers, paths, padding,
+ * allocation order, and process state.
+ */
 static int policy_identity_compute(yvex_quant_policy *policy) {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -373,11 +330,6 @@ static int policy_identity_compute(yvex_quant_policy *policy) {
     return 1;
 }
 
-/* Purpose: recompute policy status and counters from the complete owned rule set.
- * Inputs: mutable policy under construction or validation.
- * Effects: replaces the embedded summary with borrowed rule-derived facts.
- * Failure: invalid rules are represented as issue counters and typed status.
- * Boundary: summary derivation does not execute or calibrate quantization. */
 static void qp_refresh_summary(yvex_quant_policy *policy) {
     unsigned long long i;
 
@@ -413,11 +365,6 @@ static void qp_refresh_summary(yvex_quant_policy *policy) {
     (void)policy_identity_compute(policy);
 }
 
-/* Purpose: append one owned physical-encoding rule to a mutable policy.
- * Inputs: policy, selector facts, qtype, calibration requirement, and error sink.
- * Effects: may grow rule storage, copies the selector, and refreshes summary state.
- * Failure: invalid input or allocation failure leaves the rule count unchanged.
- * Boundary: rule admission records policy; it does not encode tensor bytes. */
 static int policy_add_rule(yvex_quant_policy *policy, yvex_quant_selector_kind selector_kind,
                            const char *selector, yvex_tensor_role role, yvex_quant_qtype qtype,
                            int requires_imatrix, yvex_error *err) {
@@ -451,11 +398,13 @@ static int policy_add_rule(yvex_quant_policy *policy, yvex_quant_selector_kind s
     return policy_add_rule_v2(policy, &rule, err);
 }
 
-/* Purpose: append one fully typed conjunctive rule with independent owned strings.
- * Inputs: mutable policy owner, complete source rule, and error sink.
- * Effects: grows bounded rule storage and copies every executable string.
- * Failure: malformed rule, overflow, or allocation failure leaves prior rules valid.
- * Boundary: append does not seal identity or resolve any tensor. */
+/*
+ * Append one fully typed conjunctive rule with independent owned strings.
+ *
+ * Grows bounded rule storage and copies every executable string. Malformed rule, overflow, or
+ * allocation failure leaves prior rules valid. Append does not seal identity or resolve any
+ * tensor.
+ */
 static int policy_add_rule_v2(yvex_quant_policy *policy,
                               const yvex_quant_policy_rule *source,
                               yvex_error *err) {
@@ -507,11 +456,6 @@ static int policy_add_rule_v2(yvex_quant_policy *policy,
     return YVEX_OK;
 }
 
-/* Purpose: parse and validate one bounded quantization-policy document.
- * Inputs: output slot, source path, and typed error sink.
- * Effects: allocates an owned policy only after successful parsing.
- * Failure: malformed, unavailable, or invalid documents leave no accepted output.
- * Boundary: opening policy reads no model payload and performs no quantization. */
 int yvex_quant_policy_open(yvex_quant_policy **out, const char *path, yvex_error *err) {
     int rc = policy_parse_json(out, path, err);
     if (rc == YVEX_OK) {
@@ -520,11 +464,6 @@ int yvex_quant_policy_open(yvex_quant_policy **out, const char *path, yvex_error
     return rc;
 }
 
-/* Purpose: release an owned quantization policy and every nested rule string.
- * Inputs: nullable policy owner.
- * Effects: frees strings, rule storage, and the policy object.
- * Failure: cannot report failure; null is a no-op.
- * Boundary: borrowed summary and rule views expire at close. */
 void yvex_quant_policy_close(yvex_quant_policy *policy) {
     unsigned long long i;
 
@@ -545,21 +484,12 @@ void yvex_quant_policy_close(yvex_quant_policy *policy) {
     free(policy);
 }
 
-/* Purpose: serialize one policy through the canonical deterministic JSON writer.
- * Inputs: destination path, immutable policy, and typed error sink.
- * Effects: writes or replaces the requested policy document.
- * Failure: typed argument or I/O errors never report successful publication.
- * Boundary: policy serialization neither quantizes nor emits an artifact. */
+/* Serialize one policy through the canonical deterministic JSON writer. */
 int yvex_quant_policy_write_json(const char *out_path, const yvex_quant_policy *policy,
                                  yvex_error *err) {
     return policy_write_json_file(out_path, policy, err);
 }
 
-/* Purpose: project the current immutable policy summary into caller storage.
- * Inputs: policy, output summary, and typed error sink.
- * Effects: copies a summary whose strings remain borrowed from the policy.
- * Failure: null inputs return typed invalid-argument refusal.
- * Boundary: summary projection does not establish numeric support. */
 int yvex_quant_policy_get_summary(const yvex_quant_policy *policy, yvex_quant_policy_summary *out,
                                   yvex_error *err) {
     if (!policy || !out) {
@@ -571,11 +501,11 @@ int yvex_quant_policy_get_summary(const yvex_quant_policy *policy, yvex_quant_po
     return YVEX_OK;
 }
 
-/* Purpose: rederive and compare the complete policy identity after admission.
- * Inputs: sealed immutable policy and error sink.
- * Effects: hashes a value-only shallow copy without modifying the policy.
- * Failure: absent, malformed, or stale identity returns typed refusal.
- * Boundary: validation excludes native object bytes and external files. */
+/*
+ * Rederive and compare the complete policy identity after admission.
+ *
+ * Absent, malformed, or stale identity returns typed refusal.
+ */
 int yvex_quant_policy_identity_validate(const yvex_quant_policy *policy, yvex_error *err) {
     yvex_quant_policy copy;
     char expected[YVEX_QUANT_POLICY_IDENTITY_CAP];
@@ -597,29 +527,19 @@ int yvex_quant_policy_identity_validate(const yvex_quant_policy *policy, yvex_er
     return YVEX_OK;
 }
 
-/* Purpose: expose the closed built-in policy catalog cardinality.
- * Inputs: none.
- * Effects: returns one stable scalar.
- * Failure: closed static catalog access is infallible.
- * Boundary: count does not construct or select a preset. */
 unsigned long long yvex_quant_policy_preset_count(void) {
     return sizeof(preset_names) / sizeof(preset_names[0]);
 }
 
-/* Purpose: borrow one stable preset spelling from the closed catalog.
- * Inputs: catalog ordinal.
- * Effects: returns borrowed process-lifetime text.
- * Failure: out-of-range ordinal returns null.
- * Boundary: lookup does not allocate or open a policy. */
+/*
+ * Borrow one stable preset spelling from the closed catalog.
+ *
+ * Returns borrowed process-lifetime text.
+ */
 const char *yvex_quant_policy_preset_name(unsigned long long index) {
     return index < yvex_quant_policy_preset_count() ? preset_names[index] : NULL;
 }
 
-/* Purpose: append one preset rule expressed through the same typed policy-v2 representation.
- * Inputs: preset matcher/action facts, priority, label, and error sink.
- * Effects: appends one independently owned policy-v2 rule.
- * Failure: allocation or validation failure preserves prior policy state.
- * Boundary: built-ins receive no privileged resolution behavior. */
 static int policy_preset_add(yvex_quant_policy *policy, unsigned long long match_mask,
                              yvex_tensor_role role, yvex_quant_policy_operation operation,
                              yvex_tensor_scope scope,
@@ -644,11 +564,6 @@ static int policy_preset_add(yvex_quant_policy *policy, unsigned long long match
     return policy_add_rule_v2(policy, &rule, err);
 }
 
-/* Purpose: construct one immutable built-in profile through normal policy-v2 rules.
- * Inputs: output slot, exact preset name, and typed error sink.
- * Effects: allocates one independently owned sealed policy.
- * Failure: unknown preset or allocation failure publishes no partial policy.
- * Boundary: preset construction chooses representation policy but reads no model payload. */
 int yvex_quant_policy_preset_open(yvex_quant_policy **out, const char *name, yvex_error *err) {
     yvex_quant_policy *policy;
     int rc = YVEX_OK;
@@ -741,20 +656,10 @@ done:
     return rc;
 }
 
-/* Purpose: return the number of immutable rules in one policy.
- * Inputs: nullable policy.
- * Effects: returns a scalar without mutation.
- * Failure: null policy yields zero.
- * Boundary: count access exposes no mutable rule storage. */
 unsigned long long yvex_quant_policy_rule_count(const yvex_quant_policy *policy) {
     return policy ? policy->rule_count : 0;
 }
 
-/* Purpose: borrow one indexed immutable policy rule.
- * Inputs: policy and zero-based rule index.
- * Effects: returns a view valid until policy close.
- * Failure: null policy or out-of-range index yields null.
- * Boundary: the returned rule cannot mutate the policy. */
 const yvex_quant_policy_rule *yvex_quant_policy_rule_at(const yvex_quant_policy *policy,
                                                         unsigned long long index) {
     if (!policy || index >= policy->rule_count)
@@ -762,11 +667,6 @@ const yvex_quant_policy_rule *yvex_quant_policy_rule_at(const yvex_quant_policy 
     return &policy->rules[index];
 }
 
-/* Purpose: project one parsed template dtype into the corresponding policy qtype class.
- * Inputs: canonical tensor dtype.
- * Effects: none.
- * Failure: unsupported dtypes yield the typed unknown qtype.
- * Boundary: projection records source policy and never performs numeric conversion. */
 static yvex_quant_qtype template_qtype_from_dtype(yvex_dtype dtype) {
     size_t index;
     for (index = 0u; index < sizeof(qtype_dtypes) / sizeof(qtype_dtypes[0]); ++index)
@@ -775,7 +675,6 @@ static yvex_quant_qtype template_qtype_from_dtype(yvex_dtype dtype) {
     return YVEX_QUANT_QTYPE_OTHER;
 }
 
-/* Purpose: detect whether a role/qtype rule already exists in the current policy. */
 static int qp_has_role_qtype(const yvex_quant_policy *policy, yvex_tensor_role role,
                              yvex_quant_qtype qtype) {
     unsigned long long i;
@@ -790,11 +689,6 @@ static int qp_has_role_qtype(const yvex_quant_policy *policy, yvex_tensor_role r
     return 0;
 }
 
-/* Purpose: derive one role-keyed policy from an admitted GGUF template descriptor set.
- * Inputs: output slot, template path, architecture spelling, and typed error sink.
- * Effects: opens bounded artifact views and allocates one independently owned policy.
- * Failure: open, parse, allocation, or validation failure releases every partial owner.
- * Boundary: derivation reads template metadata only and performs no source quantization. */
 int yvex_quant_policy_create_from_template(yvex_quant_policy **out, const char *template_path,
                                            const char *architecture, yvex_error *err) {
     yvex_artifact_options artifact_options;
@@ -874,11 +768,6 @@ done:
     return rc;
 }
 
-/* Purpose: parse the policy source-kind and template-path object.
- * Inputs: bounded cursor and policy under construction.
- * Effects: replaces owned source strings and skips unknown fields structurally.
- * Failure: malformed syntax or allocation failure returns typed refusal.
- * Boundary: path parsing does not open the referenced template. */
 static int qj_parse_source(yvex_gguf_json *j, yvex_quant_policy *policy) {
     int rc = yvex_gguf_json_expect(j, '{');
     if (rc != YVEX_OK)
@@ -907,17 +796,11 @@ static int qj_parse_source(yvex_gguf_json *j, yvex_quant_policy *policy) {
     return yvex_gguf_json_fail(j, "unterminated source object");
 }
 
-/* Purpose: parse one bounded unsigned policy integer without floating coercion. */
 static int policy_json_u64(yvex_gguf_json *json, unsigned long long *out) {
     return yvex_json_u64(&json->cursor, out) ? YVEX_OK
                                              : yvex_gguf_json_fail(json, "expected unsigned integer");
 }
 
-/* Purpose: parse the complete conjunctive matcher of one policy-v2 rule.
- * Inputs: bounded JSON cursor and zeroed mutable rule.
- * Effects: owns parsed matcher strings and writes typed matcher fields.
- * Failure: unknown executable fields or malformed ranges refuse.
- * Boundary: parsing does not resolve terminals or infer defaults. */
 static int policy_parse_match(yvex_gguf_json *json, yvex_quant_policy_rule *rule) {
     int rc = yvex_gguf_json_expect(json, '{');
     int have_first = 0;
@@ -1013,11 +896,6 @@ static int policy_parse_match(yvex_gguf_json *json, yvex_quant_policy_rule *rule
     return rc;
 }
 
-/* Purpose: parse the complete physical action of one policy-v2 rule.
- * Inputs: bounded JSON cursor, mutable rule, and qtype-presence output.
- * Effects: writes typed qtype, calibration, and backend requirements.
- * Failure: unknown executable action or invalid value refuses.
- * Boundary: parsing records requested capability without claiming support. */
 static int policy_parse_action(yvex_gguf_json *json, yvex_quant_policy_rule *rule,
                                int *have_qtype) {
     int rc = yvex_gguf_json_expect(json, '{');
@@ -1063,11 +941,6 @@ static int policy_parse_action(yvex_gguf_json *json, yvex_quant_policy_rule *rul
     return rc;
 }
 
-/* Purpose: parse and append one complete typed policy rule.
- * Inputs: bounded cursor and policy under construction.
- * Effects: allocates temporary tokens and one owned rule on success.
- * Failure: missing fields, malformed values, or allocation failure append no partial rule.
- * Boundary: parsing a qtype choice does not claim its numeric implementation. */
 static int qj_parse_rule(yvex_gguf_json *j, void *context) {
     yvex_quant_policy *policy = context;
     yvex_quant_policy_rule rule;
@@ -1167,11 +1040,6 @@ done:
     return rc;
 }
 
-/* Purpose: parse one complete bounded JSON document into an owned policy.
- * Inputs: output slot, source path, and typed error sink.
- * Effects: reads metadata bytes, allocates policy state, and stores complete rules.
- * Failure: schema, grammar, I/O, or allocation failure releases all partial state.
- * Boundary: policy parsing performs zero source payload reads. */
 static int policy_parse_json(yvex_quant_policy **out, const char *path, yvex_error *err) {
     yvex_quant_policy *policy;
     yvex_gguf_json j;
@@ -1269,11 +1137,6 @@ fail:
     return rc;
 }
 
-/* Purpose: serialize one complete quantization policy deterministically.
- * Inputs: destination path, immutable policy, and typed error sink.
- * Effects: creates or replaces the requested JSON file and closes its stream.
- * Failure: invalid arguments, open failure, or close failure return typed errors.
- * Boundary: the writer publishes policy metadata, never encoded tensor bytes. */
 static int policy_write_json_file(const char *out_path, const yvex_quant_policy *policy,
                                   yvex_error *err) {
     FILE *fp;
@@ -1391,20 +1254,10 @@ static int policy_write_json_file(const char *out_path, const yvex_quant_policy 
     return YVEX_OK;
 }
 
-/* Purpose: project a template dtype into the qtype expected during policy validation.
- * Inputs: canonical dtype.
- * Effects: returns a value without mutation.
- * Failure: unsupported dtypes map to OTHER for explicit mismatch handling.
- * Boundary: projection does not admit a codec. */
 static yvex_quant_qtype validate_qtype_from_dtype(yvex_dtype dtype) {
     return template_qtype_from_dtype(dtype);
 }
 
-/* Purpose: derive final policy support counters after optional template validation.
- * Inputs: mutable policy, extra issue count, and fatality flag.
- * Effects: refreshes rule capability facts and the embedded summary.
- * Failure: unsupported rules remain explicit partial or invalid state.
- * Boundary: registry projection does not execute numeric kernels. */
 static void qp_set_summary(yvex_quant_policy *policy, unsigned long long extra_issues, int fatal) {
     unsigned long long i;
 
@@ -1458,11 +1311,6 @@ static void qp_set_summary(yvex_quant_policy *policy, unsigned long long extra_i
     (void)policy_identity_compute(policy);
 }
 
-/* Purpose: match a policy selector containing at most one wildcard against one tensor name.
- * Inputs: optional pattern and canonical tensor name.
- * Effects: none.
- * Failure: null inputs or incompatible prefix/suffix return false.
- * Boundary: lexical matching cannot infer tensor role or transformation semantics. */
 static int qp_match_pattern(const char *pattern, const char *name) {
     const char *star;
     size_t prefix_len;
@@ -1488,11 +1336,6 @@ static int qp_match_pattern(const char *pattern, const char *name) {
     return 1;
 }
 
-/* Purpose: compare every policy rule against an admitted GGUF template tensor table.
- * Inputs: policy, template path, issue counter, and typed error sink.
- * Effects: opens bounded artifact/parser views and increments semantic mismatch counts.
- * Failure: artifact or parser failure closes all resources and returns typed refusal.
- * Boundary: template validation reads metadata only and performs no tensor execution. */
 static int qp_validate_template(yvex_quant_policy *policy, const char *template_path,
                                 unsigned long long *issues, yvex_error *err) {
     yvex_artifact_options artifact_options;
@@ -1553,11 +1396,11 @@ done:
     return rc;
 }
 
-/* Purpose: validate policy identity, rules, capabilities, and optional template equivalence.
- * Inputs: mutable owned policy, optional template path, and typed error sink.
- * Effects: may allocate default identity strings and replaces the embedded summary.
- * Failure: invalid input, allocation, or template admission failure returns typed refusal.
- * Boundary: successful validation admits a plan document, not quantized output. */
+/*
+ * Validate policy identity, rules, capabilities, and optional template equivalence.
+ *
+ * May allocate default identity strings and replaces the embedded summary.
+ */
 int yvex_quant_policy_validate(yvex_quant_policy *policy, const char *template_path,
                                yvex_error *err) {
     unsigned long long template_issues = 0;

@@ -1,28 +1,6 @@
 /*
- * YVEX - Artifact tests
- *
- * File: tests/test_artifact.c
- * Layer: test
- *
- * Purpose:
- *   Proves artifact layer artifact opening and range checking against tiny checked-in
- *   fixtures. No model downloads or real model files are required.
- *
- * Covers:
- *   - yvex_artifact_open
- *   - yvex_artifact_close
- *   - yvex_artifact_path
- *   - yvex_artifact_size
- *   - yvex_artifact_data
- *   - yvex_range_check
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_artifact
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises artifact layer artifact opening and range checking against tiny checked-in fixtures.
+ * No model downloads or real model files are required.
  */
 #include <fcntl.h>
 #include <limits.h>
@@ -37,7 +15,6 @@
 
 #include "tests/test.h"
 
-/* Purpose: prove artifact admission and snapshot validation never traverse path symlinks. */
 static int test_artifact_symlink_refusal(void)
 {
     char root[] = "/tmp/yvex-artifact-XXXXXX";
@@ -116,7 +93,6 @@ static int test_artifact_symlink_refusal(void)
     return 0;
 }
 
-/* Purpose: prove the admitted physical catalog projects the DS4 candidate without reading payload bytes. */
 static int test_deepseek_variant_admission_catalog(void)
 {
     char root[] = "/tmp/yvex-artifact-variant-XXXXXX";

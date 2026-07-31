@@ -1,6 +1,4 @@
-/*
- * YVEX - Materialize gate tests
- */
+
 #include <string.h>
 
 #include <yvex/api.h>

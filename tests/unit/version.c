@@ -1,27 +1,4 @@
-/*
- * YVEX - Version tests
- *
- * File: tests/test_version.c
- * Layer: test
- *
- * Purpose:
- *   Proves that the core version API returns stable compile-time values
- *   without runtime setup.
- *
- * Covers:
- *   - yvex_version_string
- *   - yvex_version_major
- *   - yvex_version_minor
- *   - yvex_version_patch
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_version
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
- */
+/* Exercises the core version API returns stable compile-time values without runtime setup. */
 #include <yvex/core.h>
 
 #include "tests/test.h"

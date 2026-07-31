@@ -1,9 +1,6 @@
 /*
- * YVEX - canonical DeepSeek-V4-Flash architecture IR tests.
- *
- * Exercises normalization, layer topology, typed refusal, owned lifetime,
- * allocation cleanup, and the model-class report consumer without source IO
- * or tensor payload reads.
+ * Exercises normalization, layer topology, typed refusal, owned lifetime, allocation cleanup,
+ * and the model-class report consumer without source IO or tensor payload reads.
  */
 #include "tests/test.h"
 
@@ -25,7 +22,6 @@ static void arch_ir_copy(char *out, size_t cap, const char *value)
     out[length] = '\0';
 }
 
-/* Constructs exact already-verified facts without simulating source parsing. */
 static void arch_ir_verification_fixture(yvex_source_verification *source)
 {
     unsigned long long i;
@@ -380,7 +376,6 @@ static int test_arch_ir_golden_topology(void)
     return 0;
 }
 
-/* Purpose: prove that position authority follows compression semantics, not one global mode. */
 static int test_arch_ir_position_authority(void)
 {
     yvex_source_verification source;
@@ -546,7 +541,6 @@ static int test_arch_ir_refusal_matrix(void)
     return 0;
 }
 
-/* Admits the stronger v3 payload stage only when its parsed trust fact is set. */
 static int test_arch_ir_payload_manifest_stage(void)
 {
     yvex_source_verification source;

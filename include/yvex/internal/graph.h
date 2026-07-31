@@ -1,12 +1,9 @@
-/* Owner: graph internal ABI.
- * Owns: typed reports, normalized family recipes, attention plans, execution, and publication contracts.
- * Does not own: CLI policy, model numeric authority, backend kernels, payload access, persistent KV, or generation.
- * Invariants: cross-owner consumers use explicit immutable contracts and never graph-private implementation state.
- * Boundary: graph execution is not persistent runtime KV, transformer composition, or generation.
- * Purpose: expose the minimum graph contract required by runtime, backend, and operator adapters.
- * Inputs: admitted model, artifact, materialization, and runtime facts.
- * Effects: declarations only; owning implementations define allocation, mutation, and cleanup.
- * Failure: consumers reject unsupported combinations through typed graph and attention failures. */
+/*
+ * Expose the minimum graph contract required by runtime, backend, and operator adapters.
+ *
+ * Cross-owner consumers use explicit immutable contracts and never graph-private implementation
+ * state. Graph execution is not persistent runtime KV, transformer composition, or generation.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_GRAPH_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_GRAPH_H_INCLUDED
 
@@ -336,16 +333,6 @@ typedef struct {
     char output_identity[YVEX_DEEPSEEK_ATTENTION_IDENTITY_CAP];
 } yvex_attention_cpu_result;
 
-/* Allocate and bind exact family-declared rolling geometry for a runtime-owned state bank.
- * Inputs: immutable layer, rolling kind, position, caller output slots, and typed failures.
- * Effects: transfers two independently owned float ranges to the successful caller.
- * Failure: checked geometry or allocation refusal publishes no partial range.
- * Boundary: generic graph geometry only; callers own lifecycle and never infer family policy. */
-/* Bind an already computed rolling output to an immutable next-state view.
- * Inputs: complete output and caller-owned destination view.
- * Effects: copies typed metadata and borrows the output ranges.
- * Failure: callers supply validated non-null objects; this transformation cannot fail.
- * Boundary: no allocation, compression math, or persistent state publication. */
 void yvex_attention_rolling_output_bind(
     const yvex_attention_rolling_state_output *output,
     yvex_attention_rolling_state_view *view);
@@ -572,11 +559,6 @@ int yvex_attention_probe_history_open(yvex_attention_probe_history **out,
     const yvex_attention_history_view **view, yvex_error *err);
 void yvex_attention_probe_history_close(yvex_attention_probe_history **history);
 
-/* Execute the canonical operator probe through a supplied admitted family recipe.
- * Inputs: sealed attention owners, immutable request, and caller-owned result.
- * Effects: executes CPU and/or CUDA attention and publishes only a complete aggregate.
- * Failure: releases all probe state and backend resources without committing partial result.
- * Boundary: consumes an optional persistent state provider but owns no prompt, transformer, or generation. */
 int yvex_attention_probe_execute(const yvex_graph_family_api *family,
                                  const yvex_attention_plan *plan, const void *family_ir,
                                  yvex_materialization_session *session,
@@ -592,9 +574,4 @@ int yvex_attention_execute(
     yvex_attention_probe_result *result,
     yvex_attention_failure *failure, yvex_error *err);
 
-/* Execute one operator-reachable probe through admitted artifact and graph owners.
- * Inputs: explicit canonical paths, backend, probe, and scope.
- * Effects: owns the temporary lifecycle and publishes only a complete typed result.
- * Failure: reverse-order cleanup preserves external source/artifact state.
- * Boundary: attention probe only; persistent state remains session-owned and no prompt or generation is accepted. */
 #endif

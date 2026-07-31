@@ -1,9 +1,4 @@
-/*
- * YVEX - GGUF template tests
- *
- * File: tests/test_gguf_template.c
- * Layer: test
- */
+
 #include <string.h>
 
 #include <yvex/api.h>

@@ -1,12 +1,8 @@
-/* Owner: live DeepSeek MoE evidence.
- * Owns: selected-artifact hash/learned routing, CPU/CUDA comparison, full-layer CUDA, and input proof.
- * Does not own: production MoE math, artifacts, transformer composition, persistent state, or generation.
- * Invariants: the test consumes one production plan and only the production runtime API.
- * Boundary: test-only consumer over the admitted external GGUF and runtime binding.
- * Purpose: prove real routed/shared expert execution without copying production algorithms.
- * Inputs: selected GGUF, immutable runtime binding, and caller-owned MoE input path.
- * Effects: writes one bounded typed input and executes isolated CPU/CUDA sessions serially.
- * Failure: reports the typed production owner and releases all test-owned resources. */
+/*
+ * Exercises real routed/shared expert execution without copying production algorithms. The test
+ * consumes one production plan and only the production runtime API. Test-only consumer over the
+ * admitted external GGUF and runtime binding.
+ */
 #include <yvex/internal/core.h>
 #include <yvex/internal/moe.h>
 #include <yvex/internal/runtime.h>
@@ -37,14 +33,12 @@ typedef struct {
 
 typedef struct { unsigned long long calls, cancel_at; } live_cancel_control;
 
-/* Purpose: print one typed live failure without changing its semantic owner. */
 static void live_fail(const char *step, int rc, const yvex_error *err)
 {
     fprintf(stderr, "moe_live step=%s status=%d where=%s reason=%s\n", step, rc,
             err ? yvex_error_where(err) : "", err ? yvex_error_message(err) : "");
 }
 
-/* Purpose: release one test-owned input bundle exactly once. */
 static void live_input_close(live_input *input)
 {
     if (!input) return;
@@ -55,14 +49,12 @@ static void live_input_close(live_input *input)
     memset(input, 0, sizeof(*input));
 }
 
-/* Purpose: derive deterministic finite expanded activations from semantic coordinates. */
 static float live_value(unsigned long long layer, unsigned long long column)
 {
     unsigned long long value = (layer * 131ull + column * 7ull + 29ull) % 521ull;
     return ((float)value - 260.0f) / 2048.0f;
 }
 
-/* Purpose: seal one exact all-layer, one-token external MoE input. */
 static int live_input_open(live_input *input, const yvex_runtime_model *model,
                            const yvex_moe_plan *plan, const char *path, yvex_error *err)
 {
@@ -142,7 +134,6 @@ fail:
     return rc;
 }
 
-/* Purpose: open one isolated production execution session and MoE context. */
 static int live_context_open(yvex_runtime_execution_session **session,
                              yvex_runtime_moe_context **context,
                              yvex_runtime_model *model, yvex_backend_kind backend,
@@ -161,14 +152,12 @@ static int live_context_open(yvex_runtime_execution_session **session,
     return rc;
 }
 
-/* Purpose: cancel at one deterministic production safe point. */
 static int live_cancel_requested(void *opaque)
 {
     live_cancel_control *control = (live_cancel_control *)opaque;
     return ++control->calls >= control->cancel_at;
 }
 
-/* Purpose: close one context/session pair while preserving the first cleanup failure. */
 static int live_context_close(yvex_runtime_moe_context **context,
                               yvex_runtime_execution_session **session,
                               yvex_error *err)
@@ -184,7 +173,6 @@ static int live_context_close(yvex_runtime_moe_context **context,
     return rc;
 }
 
-/* Purpose: allocate one caller-owned single-layer publication. */
 static int live_layer_output_open(live_layer_output *output,
                                   const yvex_moe_layer_plan *layer)
 {
@@ -210,7 +198,6 @@ static int live_layer_output_open(live_layer_output *output,
     return 1;
 }
 
-/* Purpose: release one caller-owned single-layer publication. */
 static void live_layer_output_close(live_layer_output *output)
 {
     if (!output) return;
@@ -222,7 +209,6 @@ static void live_layer_output_close(live_layer_output *output)
     memset(output, 0, sizeof(*output));
 }
 
-/* Purpose: compare CPU/CUDA continuous output and exact selected ordinals. */
 static int live_layer_compare(const yvex_moe_layer_plan *layer,
                               const live_layer_output *cpu,
                               const live_layer_output *cuda, double *maximum,
@@ -261,7 +247,6 @@ static int live_layer_compare(const yvex_moe_layer_plan *layer,
     return within;
 }
 
-/* Purpose: execute representative real hash and learned layers on CPU/CUDA. */
 static int live_representative(yvex_runtime_moe_context *cpu_context,
                                yvex_runtime_moe_context *cuda_context,
                                const yvex_moe_plan *plan, const live_input *input,
@@ -310,7 +295,6 @@ static int live_representative(yvex_runtime_moe_context *cpu_context,
     return YVEX_OK;
 }
 
-/* Purpose: execute the complete admitted 43-layer MoE set on CUDA. */
 static int live_full_cuda(yvex_runtime_moe_context *context, const yvex_moe_plan *plan,
                           const live_input *input, yvex_error *err)
 {
@@ -363,7 +347,6 @@ static int live_full_cuda(yvex_runtime_moe_context *context, const yvex_moe_plan
     return rc;
 }
 
-/* Purpose: prove post-selection cancellation publishes no output and leaves the session reusable. */
 static int live_cancellation(yvex_runtime_model *model, const yvex_moe_plan *plan,
                              const live_input *input, yvex_error *err)
 {

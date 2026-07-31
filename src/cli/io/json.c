@@ -1,22 +1,13 @@
-/* Owner: src/cli/io
- * Owns: approved direct JSON text output for CLI plumbing surfaces.
- * Does not own: command schemas, domain report semantics, runtime behavior, generation, eval, benchmark, or release
- *   decisions.
- * Invariants: helpers serialize only caller-provided fields and do not claim uniform JSON.
- * Boundary: JSON writer primitives are not command-level JSON support by themselves.
- * Purpose: provide approved direct JSON text output for CLI plumbing surfaces.
- * Inputs: typed scalar, table, or JSON fields and the selected operator stream.
- * Effects: writes only explicitly requested operator output bytes.
- * Failure: propagates stream or encoding failure without changing domain state. */
+/*
+ * Provide approved direct JSON text output for CLI plumbing surfaces.
+ *
+ * Helpers serialize only caller-provided fields and do not claim uniform JSON. JSON writer
+ * primitives are not command-level JSON support by themselves.
+ */
 #include "src/cli/io/private.h"
 
 #include <math.h>
 
-/* Purpose: Escape a JSON string.
- * Inputs: stream and text.
- * Effects: writes encoded bytes.
- * Failure: stream state.
- * Boundary: CLI I/O. */
 static void json_string(FILE *fp, const char *text) {
     const unsigned char *p = (const unsigned char *)(text ? text : "");
 
@@ -41,29 +32,14 @@ static void json_string(FILE *fp, const char *text) {
     (void)yvex_cli_out_char(fp, '"');
 }
 
-/* Purpose: Begin a JSON object.
- * Inputs: stream.
- * Effects: writes delimiter.
- * Failure: stream state.
- * Boundary: CLI I/O. */
 void yvex_cli_json_begin(FILE *fp) {
     yvex_cli_out_line(fp, "{");
 }
 
-/* Purpose: End a JSON object.
- * Inputs: stream.
- * Effects: writes delimiter.
- * Failure: stream state.
- * Boundary: CLI I/O. */
 void yvex_cli_json_end(FILE *fp) {
     yvex_cli_out_line(fp, "}");
 }
 
-/* Purpose: Serialize a JSON value.
- * Inputs: stream, key, kind, and value.
- * Effects: writes a member.
- * Failure: typed refusal.
- * Boundary: availability and capability remain caller-owned. */
 static int json_field(FILE *fp, const char *key, yvex_cli_field_kind kind, const void *value,
                       int comma) {
     (void)yvex_cli_out_puts(fp, "  ");
@@ -99,38 +75,18 @@ static int json_field(FILE *fp, const char *key, yvex_cli_field_kind kind, const
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
 
-/* Purpose: Emit a JSON string.
- * Inputs: stream, key, value.
- * Effects: writes a member.
- * Failure: stream state.
- * Boundary: CLI I/O. */
 void yvex_cli_json_field_str(FILE *fp, const char *key, const char *value, int comma) {
     (void)json_field(fp, key, YVEX_CLI_FIELD_TEXT_ARRAY, value ? value : "", comma);
 }
 
-/* Purpose: Emit a JSON u64.
- * Inputs: stream, key, value.
- * Effects: writes a member.
- * Failure: stream state.
- * Boundary: CLI I/O. */
 void yvex_cli_json_field_u64(FILE *fp, const char *key, unsigned long long value, int comma) {
     (void)json_field(fp, key, YVEX_CLI_FIELD_U64, &value, comma);
 }
 
-/* Purpose: Emit a JSON boolean.
- * Inputs: stream, key, value.
- * Effects: writes a member.
- * Failure: stream state.
- * Boundary: CLI I/O. */
 void yvex_cli_json_field_bool(FILE *fp, const char *key, int value, int comma) {
     (void)json_field(fp, key, YVEX_CLI_FIELD_BOOL, &value, comma);
 }
 
-/* Purpose: Project JSON fields.
- * Inputs: stream, object, and schema.
- * Effects: writes ordered members.
- * Failure: typed refusal.
- * Boundary: availability remains caller-owned. */
 int yvex_cli_json_fields(FILE *fp, const void *object, const yvex_cli_field_spec *fields,
                          size_t field_count, int comma) {
     const unsigned char *base = object;

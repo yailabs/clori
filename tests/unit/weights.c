@@ -1,6 +1,4 @@
-/*
- * YVEX - materialized weight table tests
- */
+
 #include <yvex/api.h>
 
 #include "tests/test.h"

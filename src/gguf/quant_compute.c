@@ -1,31 +1,21 @@
-/* Owner: gguf.quant compute (TRACK.QUANT).
- * Owns: independent error accumulation and block-at-a-time encoded row dots.
- * Does not own: qtype storage geometry, encoding policy, payload IO, CUDA, artifact writing, transformer graphs, or
- *   rendering.
- * Invariants: metrics never retain tensors; CPU compute consumes encoded blocks directly and rejects non-divisible
- *   rows and malformed byte counts.
- * Boundary: a qtype row dot is bounded compute evidence, not model execution.
- * Purpose: accumulate independent numeric error facts and evaluate encoded row dots.
- * Inputs: caller-owned scalar slices, encoded qtype blocks, and immutable geometry facts.
- * Effects: mutates only caller-owned metrics, outputs, failures, and error state.
- * Failure: invalid geometry, non-finite arithmetic, and overflow refuse without partial output. */
+/*
+ * Accumulate independent numeric error facts and evaluate encoded row dots.
+ *
+ * Metrics never retain tensors; CPU compute consumes encoded blocks directly and rejects
+ * non-divisible rows and malformed byte counts. A qtype row dot is bounded compute evidence, not
+ * model execution.
+ */
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
 #include <yvex/internal/quant_numeric.h>
 
-/* Purpose: reset one caller-owned metric accumulator to its canonical empty state.
- * Inputs: an optional writable metric record.
- * Effects: clears the record when present.
- * Failure: none; a null record is a no-op.
- * Boundary: initialization does not validate or execute a codec. */
 void yvex_quant_metrics_init(yvex_quant_metrics *metrics) {
     if (metrics)
         memset(metrics, 0, sizeof(*metrics));
 }
 
-/* Purpose: add one finite term while rejecting non-finite accumulation. */
 static int quant_metrics_add(double *total, double term) {
     double next;
 
@@ -38,11 +28,11 @@ static int quant_metrics_add(double *total, double term) {
     return 1;
 }
 
-/* Purpose: compare a bounded reconstructed slice against an independent reference slice.
- * Inputs: mutable metrics, equal-length value arrays, an optional dot vector, and element count.
- * Effects: atomically replaces the accumulator after every term passes finite arithmetic checks.
- * Failure: null inputs, count overflow, or non-finite derived arithmetic leave metrics unchanged.
- * Boundary: metrics characterize codec error; they do not admit an artifact or runtime path. */
+/*
+ * Compare a bounded reconstructed slice against an independent reference slice.
+ *
+ * Null inputs, count overflow, or non-finite derived arithmetic leave metrics unchanged.
+ */
 int yvex_quant_metrics_update(yvex_quant_metrics *metrics, const float *reference,
                               const float *reconstructed, const float *dot_vector,
                               unsigned long long count) {
@@ -92,22 +82,12 @@ int yvex_quant_metrics_update(yvex_quant_metrics *metrics, const float *referenc
     return 1;
 }
 
-/* Purpose: derive root mean square error from finite accumulated observations.
- * Inputs: an optional immutable metric record.
- * Effects: none.
- * Failure: empty or null metrics yield zero by contract.
- * Boundary: this scalar is diagnostic evidence, not a capability flag. */
 double yvex_quant_metrics_rmse(const yvex_quant_metrics *metrics) {
     return metrics && metrics->finite_count
                ? sqrt(metrics->squared_error_sum / (double)metrics->finite_count)
                : 0.0;
 }
 
-/* Purpose: publish one typed CPU-compute refusal with expected and observed geometry.
- * Inputs: optional failure/error outputs plus qtype, code, status, and diagnostic facts.
- * Effects: replaces supplied failure and error records; no encoded bytes are modified.
- * Failure: always returns the supplied refusal status.
- * Boundary: centralizes row-dot refusal state without changing qtype support truth. */
 static int quant_compute_fail(yvex_quant_failure *failure, yvex_quant_failure_code code,
                               unsigned int qtype, unsigned long long expected,
                               unsigned long long actual, yvex_error *err, int status,
@@ -128,11 +108,11 @@ static int quant_compute_fail(yvex_quant_failure *failure, yvex_quant_failure_co
     return status;
 }
 
-/* Purpose: compute one encoded qtype row dot directly from canonical blocks.
- * Inputs: qtype, exact encoded bytes, an F32 vector, element count, and writable outputs.
- * Effects: decodes one block at a time and publishes the result only after complete validation.
- * Failure: unsupported qtypes, malformed rows, overflow, or non-finite terms return typed refusal.
- * Boundary: dedicated CPU qtype arithmetic is not tensor materialization or transformer execution. */
+/*
+ * Compute one encoded qtype row dot directly from canonical blocks.
+ *
+ * Unsupported qtypes, malformed rows, overflow, or non-finite terms return typed refusal.
+ */
 int yvex_quant_cpu_dot(unsigned int qtype, const unsigned char *encoded, size_t encoded_bytes,
                        const float *vector, unsigned long long elements, float *out,
                        yvex_quant_failure *failure, yvex_error *err) {

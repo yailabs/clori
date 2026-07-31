@@ -1,12 +1,9 @@
-/* Owner: graph/runtime transformer execution contract.
- * Owns: immutable transformer plans, numeric token input, block/stack composition, and publication.
- * Does not own: tokenizer text, attention or MoE mathematics, logits, sampling, decode loops, or generation.
- * Invariants: one plan binds exact lower-owner identities and one chunk owns one persistent-state transaction.
- * Boundary: internal graph/runtime/operator ABI from numeric token IDs to normalized hidden states.
- * Purpose: expose the complete transformer-backbone boundary to runtime decode and operator consumers.
- * Inputs: admitted runtime identities, token IDs, component plans, persistent state, and backend resources.
- * Effects: owns bounded plans/input/context resources and publishes only complete normalized hidden states.
- * Failure: stale identity, invalid geometry, cancellation, or numerical failure publishes no chunk state/output. */
+/*
+ * Expose the complete transformer-backbone boundary to runtime decode and operator consumers.
+ *
+ * One plan binds exact lower-owner identities and one chunk owns one persistent-state transaction.
+ * Internal graph/runtime/operator ABI from numeric token IDs to normalized hidden states.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_TRANSFORMER_H_INCLUDED
 #include <yvex/internal/moe.h>

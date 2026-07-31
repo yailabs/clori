@@ -1,12 +1,9 @@
-/* Owner: gguf.quant_job
- * Owns: quantization-job documents, validation summaries, and deterministic JSON IO.
- * Does not own: quantization policy, calibration manifests, numeric execution, or GGUF writing.
- * Invariants: summaries borrow from one complete owned document and malformed JSON fails closed.
- * Boundary: a quantization job records orchestration facts; it does not prove numeric execution.
- * Purpose: own the job-document lifecycle without embedding a second JSON grammar.
- * Inputs: typed job options or bounded JSON bytes admitted by the shared core parser.
- * Effects: owns summary strings and performs explicit job-manifest file IO.
- * Failure: typed errors retain no partial document and do not promote job status. */
+/*
+ * Own the job-document lifecycle without embedding a second JSON grammar.
+ *
+ * Summaries borrow from one complete owned document and malformed JSON fails closed. A
+ * quantization job records orchestration facts; it does not prove numeric execution.
+ */
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,17 +61,14 @@ static const job_text_field job_text_fields[] = {
      offsetof(yvex_quant_job_options, command)},
 };
 
-/* Purpose: resolve one job document string slot by its declarative field ordinal. */
 static char **job_document_text(yvex_quant_job_doc *doc, size_t index) {
     return (char **)((unsigned char *)doc + job_text_fields[index].document_offset);
 }
 
-/* Purpose: resolve one immutable options string by its declarative field ordinal. */
 static const char *job_option_text(const yvex_quant_job_options *options, size_t index) {
     return *(const char *const *)((const unsigned char *)options + job_text_fields[index].option_offset);
 }
 
-/* Purpose: locate one declared job field in an exact bounded index interval. */
 static char **job_field_find(yvex_quant_job_doc *doc, const char *key, size_t begin, size_t end) {
     size_t index;
     for (index = begin; index < end; ++index)
@@ -105,7 +99,6 @@ static const job_name job_tool_names[] = {
     {YVEX_QUANT_JOB_TOOL_EXTERNAL, "external"},
 };
 
-/* Purpose: map one exact job enum through a bounded immutable table. */
 static const char *job_name_of(const job_name *rows, size_t count, int value) {
     size_t index;
     for (index = 0u; index < count; ++index)
@@ -114,7 +107,6 @@ static const char *job_name_of(const job_name *rows, size_t count, int value) {
     return "unknown";
 }
 
-/* Purpose: parse one exact job spelling without accepting prefixes or aliases. */
 static int job_value_of(const job_name *rows, size_t count, const char *name) {
     size_t index;
     if (name)
@@ -130,11 +122,6 @@ static int job_write_json_file(const char *out_path, const yvex_quant_job_option
                                yvex_error *err);
 static void job_summarize(const yvex_quant_job_doc *doc, yvex_quant_job_summary *summary);
 
-/* Purpose: emit one contiguous range of declarative job-option string fields.
- * Inputs: open stream, immutable options, indentation, admitted interval, and trailing-comma fact.
- * Effects: appends fields in schema order with exact comma placement.
- * Failure: stream failures are observed by the enclosing document writer.
- * Boundary: formatting projects typed options and owns no job policy. */
 static void job_write_fields(FILE *file, const yvex_quant_job_options *options,
                              const char *indent, size_t begin, size_t end, int trailing_comma) {
     size_t index;
@@ -144,18 +131,12 @@ static void job_write_fields(FILE *file, const yvex_quant_job_options *options,
                                    index + 1u < end || trailing_comma);
 }
 
-/* Purpose: transfer one complete job document into process-lifetime summary storage. */
 static void store_summary_doc(yvex_quant_job_doc *doc) {
     job_doc_clear(&last_summary_doc);
     last_summary_doc = *doc;
     memset(doc, 0, sizeof(*doc));
 }
 
-/* Purpose: release every owned string in one mutable job document.
- * Inputs: nullable document owner.
- * Effects: frees nested allocations and zeroes the document.
- * Failure: cannot report failure; null is a no-op.
- * Boundary: callers must not retain summary views into the cleared document. */
 static void job_doc_clear(yvex_quant_job_doc *doc) {
     size_t index;
     if (!doc)
@@ -165,50 +146,25 @@ static void job_doc_clear(yvex_quant_job_doc *doc) {
     memset(doc, 0, sizeof(*doc));
 }
 
-/* Purpose: render one quantization-job lifecycle status.
- * Inputs: status enum.
- * Effects: returns borrowed immutable text.
- * Failure: unknown values map to unknown.
- * Boundary: rendering cannot advance the job lifecycle. */
 const char *yvex_quant_job_status_name(yvex_quant_job_status status) {
     return job_name_of(job_status_names, sizeof(job_status_names) / sizeof(job_status_names[0]),
                        status);
 }
 
-/* Purpose: parse one exact quantization-job status spelling.
- * Inputs: nullable status text.
- * Effects: returns a value without allocation.
- * Failure: null or unknown text maps to unknown.
- * Boundary: parsing does not validate a job document. */
 yvex_quant_job_status yvex_quant_job_status_from_name(const char *name) {
     return (yvex_quant_job_status)job_value_of(
         job_status_names, sizeof(job_status_names) / sizeof(job_status_names[0]), name);
 }
 
-/* Purpose: render one quantization tool class.
- * Inputs: tool enum.
- * Effects: returns borrowed immutable text.
- * Failure: unknown values map to unknown.
- * Boundary: rendering does not admit an executable. */
 const char *yvex_quant_job_tool_name(yvex_quant_job_tool tool) {
     return job_name_of(job_tool_names, sizeof(job_tool_names) / sizeof(job_tool_names[0]), tool);
 }
 
-/* Purpose: parse one exact quantization-tool spelling.
- * Inputs: nullable tool text.
- * Effects: returns a value without allocation.
- * Failure: null or unknown text maps to unknown.
- * Boundary: parsing does not inspect a tool path. */
 yvex_quant_job_tool yvex_quant_job_tool_from_name(const char *name) {
     return (yvex_quant_job_tool)job_value_of(
         job_tool_names, sizeof(job_tool_names) / sizeof(job_tool_names[0]), name);
 }
 
-/* Purpose: project owned job fields and current path-existence facts into a borrowed summary.
- * Inputs: immutable job document and caller-owned summary.
- * Effects: replaces summary fields and probes declared paths for existence.
- * Failure: null input is ignored; missing paths remain typed summary facts.
- * Boundary: existence probes do not inspect source or output contents. */
 static void job_summarize(const yvex_quant_job_doc *doc, yvex_quant_job_summary *summary) {
     if (!doc || !summary)
         return;
@@ -233,11 +189,11 @@ static void job_summarize(const yvex_quant_job_doc *doc, yvex_quant_job_summary 
         doc->out_gguf_path && doc->out_gguf_path[0] && access(doc->out_gguf_path, F_OK) == 0;
 }
 
-/* Purpose: copy typed job options into one owned mutable document.
- * Inputs: immutable options, destination document, and typed error sink.
- * Effects: allocates owned strings and initializes tool and status fields.
- * Failure: invalid input or allocation failure clears all partial state.
- * Boundary: option capture neither executes a tool nor validates referenced files. */
+/*
+ * Copy typed job options into one owned mutable document.
+ *
+ * Option capture neither executes a tool nor validates referenced files.
+ */
 static int options_to_doc(const yvex_quant_job_options *options, yvex_quant_job_doc *doc,
                           yvex_error *err) {
     size_t index;
@@ -267,11 +223,11 @@ static int options_to_doc(const yvex_quant_job_options *options, yvex_quant_job_
     return YVEX_OK;
 }
 
-/* Purpose: publish one deterministic quantization-job JSON document.
- * Inputs: destination path, typed job options, optional summary, and error sink.
- * Effects: writes the file and retains one owned process-lifetime summary document.
- * Failure: invalid input or I/O failure releases temporary state and reports no success.
- * Boundary: job serialization records orchestration; it does not execute quantization. */
+/*
+ * Publish one deterministic quantization-job JSON document.
+ *
+ * Writes the file and retains one owned process-lifetime summary document.
+ */
 int yvex_quant_job_write_json(const char *out_path, const yvex_quant_job_options *options,
                               yvex_quant_job_summary *summary_out, yvex_error *err) {
     yvex_quant_job_doc doc;
@@ -295,11 +251,12 @@ int yvex_quant_job_write_json(const char *out_path, const yvex_quant_job_options
     return rc;
 }
 
-/* Purpose: parse and validate a quantization-job document and referenced path facts.
- * Inputs: manifest path, caller-owned summary, and typed error sink.
- * Effects: reads bounded JSON and retains the accepted summary document.
- * Failure: malformed identity or inconsistent succeeded state leaves no accepted summary.
- * Boundary: validation does not run the declared command or inspect output payload. */
+/*
+ * Parse and validate a quantization-job document and referenced path facts.
+ *
+ * Reads bounded JSON and retains the accepted summary document. Malformed identity or inconsistent
+ * succeeded state leaves no accepted summary.
+ */
 int yvex_quant_job_validate(const char *manifest_path, yvex_quant_job_summary *summary_out,
                             yvex_error *err) {
     yvex_quant_job_doc doc;
@@ -341,17 +298,11 @@ typedef struct {
     yvex_error *err;
 } job_json;
 
-/* Purpose: refuse one malformed job document at the shared-parser boundary. */
 static int json_fail(job_json *json, const char *message) {
     yvex_error_setf(json->err, YVEX_ERR_FORMAT, "quant_job_json", "%s in %s", message, json->path);
     return YVEX_ERR_FORMAT;
 }
 
-/* Purpose: replace one owned job string from a bounded JSON token.
- * Inputs: parser cursor and address of an owned string slot.
- * Effects: allocates the replacement and releases the previous string.
- * Failure: malformed or oversized text preserves the existing slot.
- * Boundary: this helper owns token transfer, not field semantics. */
 static int json_replace_text(job_json *json, char **target) {
     char *value = yvex_json_string_dup(&json->cursor, 16u * 1024u * 1024u);
 
@@ -362,16 +313,16 @@ static int json_replace_text(job_json *json, char **target) {
     return YVEX_OK;
 }
 
-/* Purpose: skip an unknown member without extending the job schema. */
 static int json_skip(job_json *json) {
     return yvex_json_skip_value(&json->cursor) ? YVEX_OK : json_fail(json, "malformed JSON value");
 }
 
-/* Purpose: parse the nested tool identity and executable path.
- * Inputs: bounded cursor and job document under construction.
- * Effects: replaces owned tool-path text and records the typed tool class.
- * Failure: malformed members fail closed with parser context.
- * Boundary: parsing a path does not execute or admit the tool. */
+/*
+ * Parse the nested tool identity and executable path.
+ *
+ * Bounded cursor and job document under construction. Malformed members fail closed with parser
+ * context.
+ */
 static int parse_tool(job_json *json, yvex_quant_job_doc *doc) {
     char key[YVEX_JSON_KEY_CAP];
     yvex_json_iter iter;
@@ -400,11 +351,6 @@ static int parse_tool(job_json *json, yvex_quant_job_doc *doc) {
                : json_fail(json, "malformed object member");
 }
 
-/* Purpose: parse one bounded range of declared quant-job path fields.
- * Inputs: bounded cursor, document, and half-open canonical field-table range.
- * Effects: replaces only recognized owned paths and skips unknown members.
- * Failure: malformed values stop the object without promoting partial state.
- * Boundary: parsing path declarations performs no source or artifact I/O. */
 static int parse_paths(job_json *json, yvex_quant_job_doc *doc,
                        size_t begin, size_t end) {
     char key[YVEX_JSON_KEY_CAP];
@@ -429,11 +375,6 @@ static int parse_paths(job_json *json, yvex_quant_job_doc *doc,
                : json_fail(json, "malformed object member");
 }
 
-/* Purpose: materialize owned empty strings for every omitted optional quant-job field.
- * Inputs: mutable parsed job document.
- * Effects: allocates only missing strings and leaves existing values untouched.
- * Failure: allocation refusal is returned for caller-owned document cleanup.
- * Boundary: filling defaults does not validate job paths or execute quantization. */
 static int fill_missing_text(yvex_quant_job_doc *doc) {
     size_t index;
 
@@ -447,11 +388,6 @@ static int fill_missing_text(yvex_quant_job_doc *doc) {
     return 1;
 }
 
-/* Purpose: decode one complete quantization-job document using the core JSON cursor.
- * Inputs: source path, destination document, and typed error sink.
- * Effects: reads bounded metadata bytes and allocates all document fields.
- * Failure: I/O, grammar, or allocation failure clears every partial field.
- * Boundary: parsing reads no model payload and executes no external command. */
 static int job_parse_json_file(const char *path, yvex_quant_job_doc *doc, yvex_error *err) {
     char key[YVEX_JSON_KEY_CAP];
     char *buffer = NULL;
@@ -528,11 +464,6 @@ fail:
     return rc;
 }
 
-/* Purpose: serialize typed job options into the canonical JSON schema.
- * Inputs: destination path, immutable options, and typed error sink.
- * Effects: creates or replaces the requested document and closes its stream.
- * Failure: open or close errors return typed I/O failure.
- * Boundary: serialization does not run the job or publish a GGUF artifact. */
 static int job_write_json_file(const char *out_path, const yvex_quant_job_options *options,
                                yvex_error *err) {
     FILE *fp;

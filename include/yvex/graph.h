@@ -1,12 +1,6 @@
-/* Owner: public graph ABI.
- * Owns: graph descriptors, memory plans, and immutable execution plans.
- * Does not own: backend kernels, family-private policy, or generation loops.
- * Invariants: declarations are format-stable, externally consumable, and independently includable.
- * Boundary: model-to-graph planning and memory accounting contracts.
- * Purpose: Expose model-to-graph planning and memory accounting contracts.
- * Inputs: Typed caller-owned values and immutable borrowed views as declared below.
- * Effects: Only functions with explicit lifecycle or I/O contracts mutate external state.
- * Failure: Typed status and error outputs remain authoritative; declarations add no capability. */
+/* Graph plans describe semantic execution and its checked resource geometry. They are immutable
+ * after admission and remain distinct from backend launch graphs and session-owned persistent
+ * state. */
 #ifndef YVEX_GRAPH_H
 #define YVEX_GRAPH_H
 

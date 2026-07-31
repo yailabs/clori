@@ -1,27 +1,6 @@
 /*
- * YVEX - Runtime filesystem tests
- *
- * File: tests/test_fs.c
- * Layer: test
- *
- * Purpose:
- *   Proves runtime filesystem runtime filesystem path resolution, project-local paths, run ID
- *   creation, run-directory preparation, and directory creation behavior.
- *
- * Covers:
- *   - yvex_paths_default
- *   - yvex_paths_project
- *   - yvex_run_id_make
- *   - yvex_run_dir_prepare
- *   - yvex_run_dir_create
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_fs
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises runtime filesystem runtime filesystem path resolution, project-local paths, run ID
+ * creation, run-directory preparation, and directory creation behavior.
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -253,7 +232,6 @@ static int test_run_dir_create(void)
     return 0;
 }
 
-/* Purpose: refuse one reopened publication candidate after proving its exact bytes are readable. */
 static int reject_file_candidate(int descriptor, size_t count,
                                  void *context, yvex_error *err)
 {
@@ -271,7 +249,6 @@ static int reject_file_candidate(int descriptor, size_t count,
     return YVEX_ERR_FORMAT;
 }
 
-/* Purpose: prove the shared content-addressed file lifecycle is exact, stable, and fail-closed. */
 static int test_safe_file_lifecycle(void)
 {
     char root_template[] = "build/tests/tmp/safeXXXXXX";

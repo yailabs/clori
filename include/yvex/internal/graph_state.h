@@ -1,12 +1,9 @@
-/* Owner: graph attention state.
- * Owns: family-projected capacity recipes and transactional attention-local state.
- * Does not own: family geometry policy, graph equations, runtime sessions, or backend placement.
- * Invariants: state storage is derived only from sealed component recipes; commits are all-or-none.
- * Boundary: runtime retains an opaque handle while graph owns layout, mutation, identity, and cleanup.
- * Purpose: expose one bounded family-neutral state lifecycle to runtime and graph execution owners.
- * Inputs: sealed attention plans, family recipes, immutable history, and production publications.
- * Effects: allocates reusable component banks and publishes candidate deltas transactionally.
- * Failure: malformed recipes, bounds, cancellation, or cleanup preserve committed state exactly. */
+/*
+ * Expose one bounded family-neutral state lifecycle to runtime and graph execution owners.
+ *
+ * State storage is derived only from sealed component recipes; commits are all-or-none. Runtime
+ * retains an opaque handle while graph owns layout, mutation, identity, and cleanup.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_GRAPH_STATE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_GRAPH_STATE_H_INCLUDED
 

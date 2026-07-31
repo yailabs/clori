@@ -1,12 +1,9 @@
-/* Owner: runtime vocabulary logits.
- * Owns: exact output-head plan, resident encoded projection, reusable buffers, and result publication.
- * Does not own: transformer final norm, KV, tokenizer, token selection, sampling, or generation.
- * Invariants: one complete canonical vocabulary row is published only after every value is finite.
- * Boundary: family-neutral runtime execution from typed normalized hidden state to raw F32 logits.
- * Purpose: make prefill and decode hidden rows directly consumable by the sampling owner.
- * Inputs: one sealed model/session/transformer plan, resident output head, and typed hidden rows.
- * Effects: executes CPU or CUDA encoded matvec and publishes only complete caller-owned rows.
- * Failure: preserves prior rows, model state, sequence position, and generation exactly. */
+/*
+ * Make prefill and decode hidden rows directly consumable by the sampling owner.
+ *
+ * One complete canonical vocabulary row is published only after every value is finite.
+ * Family-neutral runtime execution from typed normalized hidden state to raw F32 logits.
+ */
 #include <yvex/internal/logits.h>
 
 #include <float.h>
@@ -42,11 +39,11 @@ struct yvex_runtime_logits_context {
     int mutex_ready, busy, invalidated;
 };
 
-/* Purpose: admit and project logits readiness from the exact immutable output-head residency.
- * Inputs: mutable capability lattice and immutable residency summary.
- * Effects: narrows output-head binding readiness to resident implementation truth.
- * Failure: false on absent owners or a requested but incomplete head.
- * Boundary: does not prepare residency or promote sampling. */
+/*
+ * Admit and project logits readiness from the exact immutable output-head residency.
+ *
+ * Narrows output-head binding readiness to resident implementation truth.
+ */
 int yvex_runtime_logits_residency_admit(
     yvex_runtime_capabilities *capabilities,
     const yvex_runtime_residency_summary *residency)
@@ -59,9 +56,6 @@ int yvex_runtime_logits_residency_admit(
     return 1;
 }
 
-/* Purpose: invalidate every logits fact after the immutable model or residency becomes stale.
- * Inputs: mutable model-owned capability lattice. Effects: clears only logits-owned facts.
- * Failure: absent storage is a no-op. Boundary: does not invalidate unrelated lower capabilities. */
 void yvex_runtime_logits_capabilities_invalidate(yvex_runtime_capabilities *capabilities)
 {
     if (!capabilities) return;
@@ -72,18 +66,12 @@ void yvex_runtime_logits_capabilities_invalidate(yvex_runtime_capabilities *capa
         capabilities->logits_partial_progress_ready = capabilities->logits_ready = 0;
 }
 
-/* Purpose: publish one stable logits refusal without changing runtime state. */
 static int logits_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "runtime.logits", reason);
     return status;
 }
 
-/* Purpose: hash finite F32 values through canonical bit fields.
- * Inputs: initialized hash, exact value row, and bounded count.
- * Effects: appends canonical unsigned bits in row order.
- * Failure: refuses absent storage or non-finite values.
- * Boundary: never hashes native arrays or structure padding. */
 static int logits_hash_values(yvex_sha256 *hash, const float *values,
                               unsigned long long count)
 {
@@ -98,7 +86,6 @@ static int logits_hash_values(yvex_sha256 *hash, const float *values,
     return 1;
 }
 
-/* Purpose: derive one canonical finite F32 payload digest. */
 static int logits_values_digest(const char *domain, const float *values,
                                 unsigned long long count,
                                 char output[YVEX_SHA256_HEX_CAP])
@@ -115,11 +102,11 @@ static int logits_values_digest(const char *domain, const float *values,
     return 1;
 }
 
-/* Purpose: derive the pointer-free output-head plan identity.
- * Inputs: complete immutable plan summary.
- * Effects: publishes only its canonical identity field.
- * Failure: returns false when hashing cannot complete.
- * Boundary: excludes pointers, paths, allocation order, and timing. */
+/*
+ * Derive the pointer-free output-head plan identity.
+ *
+ * Publishes only its canonical identity field.
+ */
 static int logits_plan_identity(yvex_runtime_logits_plan_summary *summary)
 {
     yvex_sha256 hash;
@@ -152,11 +139,6 @@ static int logits_plan_identity(yvex_runtime_logits_plan_summary *summary)
     return 1;
 }
 
-/* Purpose: project exact descriptor, family, and transformer facts into one sealed plan.
- * Inputs: admitted model view, Transformer plan, and family logits policy.
- * Effects: fills one pointer-free plan plus one borrowed exact tensor binding.
- * Failure: refuses tied, missing, malformed, or unsupported output heads.
- * Boundary: does not read weight payloads or execute final norm. */
 static int logits_plan_build(yvex_runtime_logits_plan *plan,
                              const yvex_runtime_model_view *view,
                              const yvex_transformer_plan *transformer_plan,
@@ -241,11 +223,6 @@ static int logits_plan_build(yvex_runtime_logits_plan *plan,
     return YVEX_OK;
 }
 
-/* Purpose: allocate one stable F32 backend tensor for logits-local CUDA storage.
- * Inputs: paired session backend, logical name, and bounded element count.
- * Effects: publishes one backend-owned tensor on success.
- * Failure: propagates overflow, budget, capability, and allocation refusal.
- * Boundary: allocates logits-local mutable storage, never model weights. */
 static int logits_device_open(yvex_runtime_logits_context *context,
                               yvex_device_tensor **out, const char *name,
                               unsigned long long elements, yvex_error *err)
@@ -264,11 +241,11 @@ static int logits_device_open(yvex_runtime_logits_context *context,
                                      &descriptor, out, err);
 }
 
-/* Purpose: open one reusable logits context over borrowed model/session owners.
- * Inputs: sealed model, paired session, Transformer plan, and resource budgets.
- * Effects: borrows resident head and allocates stable local CPU/CUDA workspaces.
- * Failure: closes every partial local resource without changing borrowed owners.
- * Boundary: does not open artifacts, bindings, sessions, or Transformer owners. */
+/*
+ * Open one reusable logits context over borrowed model/session owners.
+ *
+ * Borrows resident head and allocates stable local CPU/CUDA workspaces.
+ */
 int yvex_runtime_logits_context_open(
     yvex_runtime_logits_context **out, yvex_runtime_model *model,
     yvex_runtime_execution_session *session,
@@ -366,22 +343,12 @@ failure:
     return rc;
 }
 
-/* Purpose: borrow the immutable plan summary for operator and sampling admission.
- * Inputs: live logits context.
- * Effects: none.
- * Failure: absent context returns null.
- * Boundary: returned storage remains context-owned. */
 const yvex_runtime_logits_plan_summary *yvex_runtime_logits_plan_summary_get(
     const yvex_runtime_logits_context *context)
 {
     return context ? &context->plan.summary : NULL;
 }
 
-/* Purpose: seal one canonical source identity over producer and normalized-row facts.
- * Inputs: complete source fields with a finite hidden digest.
- * Effects: writes only the canonical source identity.
- * Failure: returns false on incomplete hash input.
- * Boundary: excludes the borrowed hidden pointer and native padding. */
 static int logits_source_identity(yvex_runtime_logits_source *source)
 {
     yvex_sha256 hash;
@@ -404,11 +371,12 @@ static int logits_source_identity(yvex_runtime_logits_source *source)
     return 1;
 }
 
-/* Purpose: initialize one source from exact borrowed model and plan identities.
- * Inputs: live context, phase, position, producer identity, and finite hidden row.
- * Effects: publishes one identity-bound borrowed source view.
- * Failure: refuses invalid producer/model facts or non-finite values.
- * Boundary: does not infer Transformer completion from a raw buffer. */
+/*
+ * Initialize one source from exact borrowed model and plan identities.
+ *
+ * Live context, phase, position, producer identity, and finite hidden row. Publishes one
+ * identity-bound borrowed source view.
+ */
 static int logits_source_begin(const yvex_runtime_logits_context *context,
                                yvex_runtime_logits_source *source,
                                yvex_logits_source_phase phase,
@@ -447,11 +415,6 @@ static int logits_source_begin(const yvex_runtime_logits_context *context,
     return YVEX_OK;
 }
 
-/* Purpose: admit one exact Transformer-published normalized row for logits projection.
- * Inputs: completed prefill result, its full output, capacity, and selected ordinal.
- * Effects: publishes a borrowed one-row source only after full digest verification.
- * Failure: refuses stale evidence, wrong phase, geometry, ordinal, or digest.
- * Boundary: consumes Transformer-owned final norm; it never executes norm again. */
 int yvex_runtime_logits_source_from_transformer(
     const yvex_runtime_logits_context *context,
     yvex_runtime_logits_source *source,
@@ -480,11 +443,6 @@ int yvex_runtime_logits_source_from_transformer(
         producer->execution_identity, err);
 }
 
-/* Purpose: admit one exact decode-step normalized row for logits projection.
- * Inputs: completed decode-step result and its exact normalized hidden row.
- * Effects: publishes one borrowed decode source after producer digest verification.
- * Failure: refuses incomplete, discontinuous, stale, or mutated publications.
- * Boundary: does not advance decode, KV position, or generation. */
 int yvex_runtime_logits_source_from_decode(
     const yvex_runtime_logits_context *context,
     yvex_runtime_logits_source *source,
@@ -508,11 +466,11 @@ int yvex_runtime_logits_source_from_decode(
         producer->transformer_execution_identity, err);
 }
 
-/* Purpose: validate one normalized-hidden source against exact producing identities.
- * Inputs: live logits context and previously sealed borrowed source.
- * Effects: none.
- * Failure: refuses stale model/plan/producer identity, geometry, or payload digest.
- * Boundary: admission precedes all output-head numerical work. */
+/*
+ * Validate one normalized-hidden source against exact producing identities.
+ *
+ * Refuses stale model/plan/producer identity, geometry, or payload digest.
+ */
 static int logits_source_validate(const yvex_runtime_logits_context *context,
                                   const yvex_runtime_logits_source *source,
                                   yvex_error *err)
@@ -545,11 +503,6 @@ static int logits_source_validate(const yvex_runtime_logits_context *context,
     return YVEX_OK;
 }
 
-/* Purpose: execute every vocabulary row on CPU directly from the encoded resident head.
- * Inputs: stable encoded head and one admitted normalized hidden row.
- * Effects: fills only the private candidate row.
- * Failure: cancellation, qtype, or non-finite refusal publishes nothing.
- * Boundary: uses canonical direct encoded dot and never expands the full head. */
 static int logits_project_cpu(yvex_runtime_logits_context *context,
                               const float *hidden, yvex_error *err)
 {
@@ -575,11 +528,12 @@ static int logits_project_cpu(yvex_runtime_logits_context *context,
     return YVEX_OK;
 }
 
-/* Purpose: execute one full resident output-head projection on CUDA without CPU fallback.
- * Inputs: CUDA context buffers, encoded resident head, and admitted hidden row.
- * Effects: bounded H2D, device matvec, synchronization, and candidate D2H.
- * Failure: propagates backend refusal without publishing caller output.
- * Boundary: all output-head numerical work remains on CUDA. */
+/*
+ * Execute one full resident output-head projection on CUDA without CPU fallback.
+ *
+ * CUDA context buffers, encoded resident head, and admitted hidden row. Bounded H2D, device
+ * matvec, synchronization, and candidate D2H.
+ */
 static int logits_project_cuda(yvex_runtime_logits_context *context,
                                const float *hidden,
                                yvex_runtime_logits_row_result *result,
@@ -615,11 +569,11 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
     return rc;
 }
 
-/* Purpose: seal complete row evidence after all vocabulary values are finite.
- * Inputs: complete candidate row, source, backend, plan, and residency facts.
- * Effects: publishes typed scalar facts and three distinct canonical identities.
- * Failure: any non-finite or identity failure leaves the row incomplete.
- * Boundary: does not select, rank, normalize, or interpret vocabulary entries. */
+/*
+ * Seal complete row evidence after all vocabulary values are finite.
+ *
+ * Any non-finite or identity failure leaves the row incomplete.
+ */
 static int logits_row_finish(yvex_runtime_logits_context *context,
                              const yvex_runtime_logits_source *source,
                              yvex_backend_kind backend,
@@ -688,11 +642,11 @@ static int logits_row_finish(yvex_runtime_logits_context *context,
     return YVEX_OK;
 }
 
-/* Purpose: independently re-admit one published complete logits row for a downstream owner.
- * Inputs: immutable plan, caller-owned complete F32 row, capacity, and logits evidence.
- * Effects: none.
- * Failure: stale geometry, payload, plan, or field-wise row identity refuses before consumption.
- * Boundary: validates logits publication and does not rank, normalize, or select tokens. */
+/*
+ * Independently re-admit one published complete logits row for a downstream owner.
+ *
+ * Stale geometry, payload, plan, or field-wise row identity refuses before consumption.
+ */
 int yvex_runtime_logits_row_validate(
     const yvex_runtime_logits_plan_summary *plan, const float *logits,
     unsigned long long logits_capacity,
@@ -738,11 +692,6 @@ int yvex_runtime_logits_row_validate(
     return YVEX_OK;
 }
 
-/* Purpose: re-admit the complete raw-logits prefix from one repeated execution.
- * Inputs: plan, caller values/rows and capacities, execution directory, and error output.
- * Effects: validates every completed row without changing the result or its storage.
- * Failure: malformed completion, row evidence, or a non-canonical visible prefix extent refuses.
- * Boundary: the supplied capacity is the exact caller-visible prefix, never private tail storage. */
 int yvex_runtime_logits_result_validate(
     const yvex_runtime_logits_plan_summary *plan, const float *logits,
     unsigned long long logits_capacity,
@@ -779,7 +728,6 @@ int yvex_runtime_logits_result_validate(
     return YVEX_OK;
 }
 
-/* Purpose: enter one logits context exclusively. */
 static int logits_enter(yvex_runtime_logits_context *context, yvex_error *err)
 {
     if (!context || !context->mutex_ready ||
@@ -795,7 +743,6 @@ static int logits_enter(yvex_runtime_logits_context *context, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: leave one logits context after complete or failed execution. */
 static void logits_leave(yvex_runtime_logits_context *context, int completed)
 {
     if (context && context->mutex_ready &&
@@ -806,11 +753,6 @@ static void logits_leave(yvex_runtime_logits_context *context, int completed)
     }
 }
 
-/* Purpose: project one typed normalized-hidden row into complete raw vocabulary logits.
- * Inputs: exclusive context, sealed source, exact backend, and caller row capacity.
- * Effects: copies one complete vocabulary row only after numerical/evidence success.
- * Failure: publishes no partial row and always releases context exclusivity.
- * Boundary: does not mutate KV, Transformer state, position, or generation. */
 int yvex_runtime_logits_project(
     yvex_runtime_logits_context *context,
     const yvex_runtime_logits_source *source, yvex_backend_kind backend,
@@ -847,11 +789,12 @@ int yvex_runtime_logits_project(
     return rc;
 }
 
-/* Purpose: execute ordered rows with complete-row partial-progress semantics.
- * Inputs: sealed ordered sources and caller-owned row/result directories.
- * Effects: retains earlier complete rows and seals one aggregate identity.
- * Failure: stops before the first incomplete row and preserves completed rows.
- * Boundary: row atomicity is independent; request-wide rollback is forbidden. */
+/*
+ * Execute ordered rows with complete-row partial-progress semantics.
+ *
+ * Retains earlier complete rows and seals one aggregate identity. Row atomicity is independent;
+ * request-wide rollback is forbidden.
+ */
 int yvex_runtime_logits_execute(
     yvex_runtime_logits_context *context,
     const yvex_runtime_logits_source *sources, unsigned long long row_count,
@@ -915,11 +858,11 @@ int yvex_runtime_logits_execute(
     return rc;
 }
 
-/* Purpose: release logits-local buffers while preserving borrowed model/session owners.
- * Inputs: owned context handle.
- * Effects: releases device buffers, mutex, candidate row, and context storage.
- * Failure: busy or backend cleanup refusal retains retryable ownership.
- * Boundary: never closes the model, session, Transformer, or residency. */
+/*
+ * Release logits-local buffers while preserving borrowed model/session owners.
+ *
+ * Busy or backend cleanup refusal retains retryable ownership.
+ */
 int yvex_runtime_logits_context_close(yvex_runtime_logits_context **context,
                                       yvex_error *err)
 {
@@ -952,20 +895,12 @@ int yvex_runtime_logits_context_close(yvex_runtime_logits_context **context,
     return YVEX_OK;
 }
 
-/* Operator workflow is implemented below the production projection lifecycle. */
-
-/* Purpose: adapt an owned transformer context to the cleanup-lease protocol. */
 static int logits_transformer_cleanup(void **opaque, yvex_error *err)
 {
     return yvex_runtime_transformer_context_close(
         (yvex_runtime_transformer_context **)opaque, err);
 }
 
-/* Purpose: seal one bounded token slice through the existing transformer-input schema.
- * Inputs: admitted base summary, immutable token payload, offset, and count.
- * Effects: allocates one bounded in-memory token-input owner.
- * Failure: refuses range, sealing, identity, or allocation errors.
- * Boundary: never invents a second external token format. */
 static int logits_input_slice(yvex_transformer_input **out,
                               const yvex_transformer_input_summary *base,
                               const unsigned int *tokens,
@@ -988,11 +923,6 @@ static int logits_input_slice(yvex_transformer_input **out,
     return yvex_transformer_input_open_memory(out, &summary, tokens, err);
 }
 
-/* Purpose: release operator-owned result directories without touching model state.
- * Inputs: operator result with optional row directory.
- * Effects: frees only that directory and clears its extent.
- * Failure: none.
- * Boundary: caller-owned raw logits are retained for the immediate sampling consumer only. */
 void yvex_runtime_logits_operator_result_release(yvex_logits_operator_result *result)
 {
     if (!result) return;
@@ -1004,7 +934,6 @@ void yvex_runtime_logits_operator_result_release(yvex_logits_operator_result *re
     result->row_count = 0ull;
 }
 
-/* Purpose: publish one operator refusal while retaining typed partial row facts. */
 static void logits_operator_refuse(yvex_logits_operator_result *result,
                                    const yvex_error *err)
 {
@@ -1016,11 +945,6 @@ static void logits_operator_refuse(yvex_logits_operator_result *result,
                             : "logits execution refused");
 }
 
-/* Purpose: project plan, residency, readiness, and non-claim facts into an operator result.
- * Inputs: partial result, borrowed plans/model, selected backend, and completion status.
- * Effects: copies bounded public evidence without retaining runtime owners.
- * Failure: unavailable residency leaves its resource counters zero.
- * Boundary: capability facts come from production completion, never rendering. */
 static void logits_operator_publish_facts(
     yvex_logits_operator_result *result,
     const yvex_transformer_plan_summary *transformer_plan,
@@ -1066,11 +990,6 @@ static void logits_operator_publish_facts(
     }
 }
 
-/* Purpose: publish the final operator status after all runtime cleanup has completed.
- * Inputs: typed result, final status, and authoritative primary error.
- * Effects: writes complete/refused status and clears success error state.
- * Failure: returns the supplied status unchanged.
- * Boundary: status publication cannot create logits capability. */
 static int logits_operator_finish(yvex_logits_operator_result *result, int rc,
                                   yvex_error *err)
 {
@@ -1084,11 +1003,11 @@ static int logits_operator_finish(yvex_logits_operator_result *result, int rc,
     return rc;
 }
 
-/* Purpose: publish only the completed raw-logits prefix after repeated execution.
- * Inputs: operator result, owned raw buffer, immutable plan, and current status.
- * Effects: transfers the buffer only when at least one complete row exists.
- * Failure: extent overflow preserves caller ownership and returns typed refusal.
- * Boundary: zero initialization never promotes an incomplete row. */
+/*
+ * Publish only the completed raw-logits prefix after repeated execution.
+ *
+ * Extent overflow preserves caller ownership and returns typed refusal.
+ */
 static int logits_operator_publish_raw(
     yvex_logits_operator_result *result, float **raw_logits,
     unsigned long long raw_capacity, unsigned long long row_capacity,
@@ -1126,11 +1045,11 @@ static int logits_operator_publish_raw(
     return rc;
 }
 
-/* Purpose: execute one shared-context prefill/decode/logits operator workflow.
- * Inputs: exact artifact/binding/token stream, split, backend, and budgets.
- * Effects: opens once, retains model residency, projects final prefill and every decode row.
- * Failure: cleanup leases preserve exact ownership; completed raw rows remain caller-owned evidence.
- * Boundary: no token selection, sampling, tokenization, or generation. */
+/*
+ * Execute one shared-context prefill/decode/logits operator workflow.
+ *
+ * Cleanup leases preserve exact ownership; completed raw rows remain caller-owned evidence.
+ */
 int yvex_runtime_logits_operator_execute(
     const yvex_logits_operator_request *request,
     yvex_logits_operator_result *result,

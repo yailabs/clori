@@ -1,12 +1,9 @@
-/* Owner: runtime repeated decode.
- * Owns: explicit decode admission, one-token steps, repeated lifecycle, partial progress, and operator workflow.
- * Does not own: transformer math, token-file serialization, persistent-state storage, logits, or sampling.
- * Invariants: the session is authoritative for position/generation and each completed step commits exactly once.
- * Boundary: family-neutral orchestration over one borrowed transformer context and its paired session.
- * Purpose: execute teacher-forced numeric-token decode while preserving warm transformer and KV resources.
- * Inputs: admitted token inputs, exact expected positions, backend selection, and caller-owned output storage.
- * Effects: advances committed session state per successful token and publishes bounded step evidence.
- * Failure: preserves completed steps, never publishes the failing step, and reports exact partial progress. */
+/*
+ * Execute teacher-forced numeric-token decode while preserving warm transformer and KV resources.
+ *
+ * The session is authoritative for position/generation and each completed step commits exactly
+ * once. Family-neutral orchestration over one borrowed transformer context and its paired session.
+ */
 #include <yvex/internal/decode.h>
 #include <math.h>
 #include <pthread.h>
@@ -23,17 +20,13 @@ struct yvex_runtime_decode_context {
     pthread_mutex_t mutex;
     int mutex_ready, busy;
 };
-/* Purpose: publish one stable decode refusal.
- * Inputs: status, reason, and optional error output. Effects: replaces only the error.
- * Failure: returns the supplied status. Boundary: no runtime state mutation. */
+
 static int decode_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "runtime.decode", reason);
     return status;
 }
-/* Purpose: copy the authoritative persistent-state summary from the paired session.
- * Inputs: live session and caller summary. Effects: invokes the provider summary protocol.
- * Failure: absent provider or provider failure refuses. Boundary: read-only state inspection. */
+
 static int decode_state_summary(const yvex_runtime_execution_session *session,
                                 yvex_graph_attention_state_summary *summary,
                                 yvex_error *err)
@@ -47,9 +40,7 @@ static int decode_state_summary(const yvex_runtime_execution_session *session,
                              "decode persistent state is unavailable");
     return YVEX_OK;
 }
-/* Purpose: hash canonical F32 values without native object representation.
- * Inputs: initialized hash and finite value span. Effects: appends canonical value bits.
- * Failure: rejects absent or non-finite input. Boundary: no digest finalization. */
+
 static int decode_hash_values(yvex_sha256 *hash, const float *values,
                               unsigned long long count)
 {
@@ -63,9 +54,12 @@ static int decode_hash_values(yvex_sha256 *hash, const float *values,
     }
     return 1;
 }
-/* Purpose: identify one complete step from ordered canonical fields.
- * Inputs: complete step evidence and caller digest. Effects: writes one SHA-256 identity.
- * Failure: inconsistent transition or identity facts refuse. Boundary: excludes native layout. */
+/*
+ * Identify one complete step from ordered canonical fields.
+ *
+ * Writes one SHA-256 identity. Inconsistent transition or identity facts refuse. Excludes native
+ * layout.
+ */
 int yvex_runtime_decode_step_identity(
     const yvex_runtime_decode_step_result *result,
     char output[YVEX_SHA256_HEX_CAP])
@@ -112,9 +106,11 @@ int yvex_runtime_decode_step_identity(
     yvex_sha256_hex(digest, output);
     return 1;
 }
-/* Purpose: identify an ordered complete-or-partial repeated decode result.
- * Inputs: aggregate facts, completed step directory, and output. Effects: writes one identity.
- * Failure: inconsistent prefix or missing identities refuse. Boundary: excludes timing/pointers. */
+/*
+ * Identify an ordered complete-or-partial repeated decode result.
+ *
+ * Writes one identity.
+ */
 int yvex_runtime_decode_result_identity(
     const yvex_runtime_decode_result *result,
     const yvex_runtime_decode_step_result *steps,
@@ -167,9 +163,7 @@ int yvex_runtime_decode_result_identity(
     yvex_sha256_hex(digest, output);
     return 1;
 }
-/* Purpose: enter one decode coordinator exclusively.
- * Inputs: live context. Effects: sets the busy lifecycle flag under its mutex.
- * Failure: lock or concurrent use refuses. Boundary: does not enter transformer execution. */
+
 static int decode_enter(yvex_runtime_decode_context *context, yvex_error *err)
 {
     if (!context || pthread_mutex_lock(&context->mutex) != 0)
@@ -183,9 +177,7 @@ static int decode_enter(yvex_runtime_decode_context *context, yvex_error *err)
     (void)pthread_mutex_unlock(&context->mutex);
     return YVEX_OK;
 }
-/* Purpose: leave one decode coordinator and retain its reusable lifecycle.
- * Inputs: held context and completion fact. Effects: clears busy and advances local evidence.
- * Failure: a mutex failure cannot alter model/session state. Boundary: decode-local counters only. */
+
 static void decode_leave(yvex_runtime_decode_context *context, int completed)
 {
     if (context && pthread_mutex_lock(&context->mutex) == 0) {
@@ -194,9 +186,11 @@ static void decode_leave(yvex_runtime_decode_context *context, int completed)
         (void)pthread_mutex_unlock(&context->mutex);
     }
 }
-/* Purpose: allocate one decode lifecycle over an already-open paired transformer/session.
- * Inputs: borrowed exact owners and bounded step policy. Effects: owns only mutex/counters.
- * Failure: owner mismatch or allocation failure leaves no context. Boundary: no model resource opens. */
+/*
+ * Allocate one decode lifecycle over an already-open paired transformer/session.
+ *
+ * Borrowed exact owners and bounded step policy.
+ */
 int yvex_runtime_decode_context_open(
     yvex_runtime_decode_context **out,
     yvex_runtime_transformer_context *transformer,
@@ -224,9 +218,7 @@ int yvex_runtime_decode_context_open(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: seal one bounded one-token view against the existing transformer input schema.
- * Inputs: plan, position, and numeric token ID. Effects: allocates one immutable input owner.
- * Failure: vocabulary, identity, or allocation refusal propagates. Boundary: no external file. */
+
 static int decode_token_input(yvex_transformer_input **out,
                               const yvex_transformer_plan_summary *plan,
                               unsigned long long position, unsigned int token_id,
@@ -250,10 +242,11 @@ static int decode_token_input(yvex_transformer_input **out,
         return yvex_error_code(err);
     return yvex_transformer_input_open_memory(out, &summary, &token_id, err);
 }
-/* Purpose: execute one step while the decode coordinator is exclusively held.
- * Inputs: exact expected position/token/backend and prevalidated caller row capacity.
- * Effects: delegates one explicit decode-phase transformer transaction and publishes evidence.
- * Failure: no failing-step KV or hidden row is published. Boundary: no repeated-loop policy. */
+/*
+ * Execute one step while the decode coordinator is exclusively held.
+ *
+ * Delegates one explicit decode-phase transformer transaction and publishes evidence.
+ */
 static int decode_step_locked(
     yvex_runtime_decode_context *context, unsigned long long step_ordinal,
     unsigned long long expected_position, unsigned int token_id,
@@ -358,9 +351,7 @@ static int decode_step_locked(
     yvex_transformer_input_close(&input);
     return rc;
 }
-/* Purpose: execute one public decode step with exclusive context lifecycle.
- * Inputs: exact position/token/backend and caller-owned hidden row. Effects: commits one step.
- * Failure: preserves prior KV and leaves the caller row unpublished. Boundary: no repeated loop. */
+
 int yvex_runtime_decode_step(
     yvex_runtime_decode_context *context, unsigned long long step_ordinal,
     unsigned long long expected_position, unsigned int token_id,
@@ -381,9 +372,7 @@ int yvex_runtime_decode_step(
     decode_leave(context, rc == YVEX_OK);
     return rc;
 }
-/* Purpose: accumulate exact structural counters from one completed step.
- * Inputs: aggregate and completed step facts. Effects: adds bounded execution counters.
- * Failure: none for admitted structural bounds. Boundary: identities remain separately ordered. */
+
 static void decode_accumulate(yvex_runtime_decode_result *result,
                               const yvex_runtime_decode_step_result *step)
 {
@@ -412,9 +401,11 @@ static void decode_accumulate(yvex_runtime_decode_result *result,
     result->final_ns += step->final_ns;
     result->synchronization_ns += step->synchronization_ns;
 }
-/* Purpose: finalize ordered aggregate evidence over completed caller-owned hidden rows.
- * Inputs: aggregate, output directory, and hidden width. Effects: writes digest identities.
- * Failure: non-finite output or invalid step identity refuses. Boundary: no state rehash/read. */
+/*
+ * Finalize ordered aggregate evidence over completed caller-owned hidden rows.
+ *
+ * Non-finite output or invalid step identity refuses.
+ */
 static int decode_finalize(yvex_runtime_decode_result *result,
                            const yvex_runtime_decode_output *output,
                            unsigned long long hidden_width,
@@ -443,10 +434,11 @@ static int decode_finalize(yvex_runtime_decode_result *result,
                              "decode execution identity derivation failed");
     return YVEX_OK;
 }
-/* Purpose: execute ordered teacher-forced tokens as independently committed decode steps.
- * Inputs: validated existing token input, backend, and fully preallocated hidden/step outputs.
- * Effects: publishes every completed step in order and preserves typed partial progress.
- * Failure: returns the first failing status with prior rows/state intact. Boundary: no token choice. */
+/*
+ * Execute ordered teacher-forced tokens as independently committed decode steps.
+ *
+ * Publishes every completed step in order and preserves typed partial progress.
+ */
 int yvex_runtime_decode_execute(
     yvex_runtime_decode_context *context,
     const yvex_transformer_input *input,
@@ -538,9 +530,11 @@ int yvex_runtime_decode_execute(
     decode_leave(context, result->completed_steps > 0ull);
     return rc;
 }
-/* Purpose: release decode-local lifecycle without closing borrowed transformer/session owners.
- * Inputs: idle context handle. Effects: destroys mutex and frees only decode-local memory.
- * Failure: busy or lock failure leaves ownership retryable. Boundary: borrowed owners remain open. */
+/*
+ * Release decode-local lifecycle without closing borrowed transformer/session owners.
+ *
+ * Busy or lock failure leaves ownership retryable.
+ */
 int yvex_runtime_decode_context_close(yvex_runtime_decode_context **context,
                                       yvex_error *err)
 {
@@ -562,17 +556,13 @@ int yvex_runtime_decode_context_close(yvex_runtime_decode_context **context,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: adapt one transformer owner to cleanup-lease release.
- * Inputs: opaque owned transformer handle. Effects: invokes canonical transformer close.
- * Failure: propagates retryable cleanup status. Boundary: cleanup lease adapter only. */
+
 static int decode_transformer_cleanup(void **opaque, yvex_error *err)
 {
     return yvex_runtime_transformer_context_close(
         (yvex_runtime_transformer_context **)opaque, err);
 }
-/* Purpose: project an admitted input slice through the existing token-input schema.
- * Inputs: source identities, bounded token span, start, and count. Effects: allocates one input.
- * Failure: invalid extent, token, or allocation refuses. Boundary: never rewrites external input. */
+
 static int decode_input_slice(yvex_transformer_input **out,
                               const yvex_transformer_input_summary *source,
                               const unsigned int *tokens,
@@ -588,9 +578,11 @@ static int decode_input_slice(yvex_transformer_input **out,
         return yvex_error_code(err);
     return yvex_transformer_input_open_memory(out, &summary, tokens, err);
 }
-/* Purpose: release operator-owned step directory without changing capability facts.
- * Inputs: operator result. Effects: frees its step allocation and clears ownership fields.
- * Failure: none. Boundary: no model/session/transformer cleanup. */
+/*
+ * Release operator-owned step directory without changing capability facts.
+ *
+ * Frees its step allocation and clears ownership fields.
+ */
 void yvex_runtime_decode_operator_result_release(
     yvex_decode_operator_result *result)
 {
@@ -599,9 +591,7 @@ void yvex_runtime_decode_operator_result_release(
     result->steps = NULL;
     result->step_count = 0ull;
 }
-/* Purpose: publish one operator refusal while preserving partial decode facts.
- * Inputs: mutable operator result and primary error. Effects: writes status and reason only.
- * Failure: none. Boundary: cannot promote or erase completed step evidence. */
+
 static void decode_operator_refuse(yvex_decode_operator_result *result,
                                    const yvex_error *err)
 {
@@ -611,11 +601,11 @@ static void decode_operator_refuse(yvex_decode_operator_result *result,
                         err && yvex_error_is_set(err) ? yvex_error_message(err)
                                                      : "decode execution refused");
 }
-/* Purpose: execute the installed prefill-to-decode workflow over one shared warm context.
- * Inputs: exact artifact/binding/token stream, split, backend, and resource budgets.
- * Effects: opens once, prefills once, decodes remaining tokens stepwise, and publishes typed evidence.
- * Failure: retains cleanup ownership when necessary and preserves typed partial progress.
- * Boundary: one installed operator workflow; it never tokenizes, selects tokens, or samples. */
+/*
+ * Execute the installed prefill-to-decode workflow over one shared warm context.
+ *
+ * Retains cleanup ownership when necessary and preserves typed partial progress.
+ */
 int yvex_runtime_decode_operator_execute(
     const yvex_decode_operator_request *request,
     yvex_decode_operator_result *result,

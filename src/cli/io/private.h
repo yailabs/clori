@@ -1,12 +1,4 @@
-/* Owner: cli.io.private (cli.io).
- * Owns: operator stream, table, and JSON output primitives.
- * Does not own: domain facts, capability classification, or rendering policy.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: CLI-owned output transport.
- * Purpose: provide the canonical CLI-owned output transport contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/* This is the only CLI-local boundary allowed to write operator streams directly. */
 #ifndef SRC_CLI_IO_PRIVATE_H_INCLUDED
 #define SRC_CLI_IO_PRIVATE_H_INCLUDED
 
@@ -448,7 +440,7 @@ int yvex_operator_paths_resolve_target(const yvex_operator_paths *operator_paths
                                        const char *family, const char *kind, char *out, size_t cap,
                                        int *out_exists, yvex_error *err);
 
-/* Json contract. */
+/* JSON output. */
 void yvex_cli_json_begin(FILE *fp);
 void yvex_cli_json_end(FILE *fp);
 void yvex_cli_json_field_str(FILE *fp, const char *key, const char *value, int comma);
@@ -457,7 +449,7 @@ void yvex_cli_json_field_bool(FILE *fp, const char *key, int value, int comma);
 int yvex_cli_json_fields(FILE *fp, const void *object, const yvex_cli_field_spec *fields,
                          size_t field_count, int comma);
 
-/* Out contract. */
+/* Human output. */
 int yvex_cli_out_writef(FILE *fp, const char *fmt, ...);
 int yvex_cli_out_vwritef(FILE *fp, const char *fmt, va_list ap);
 int yvex_cli_out_puts(FILE *fp, const char *text);

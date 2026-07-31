@@ -1,24 +1,6 @@
 /*
- * YVEX - Test helpers
- *
- * File: tests/test.h
- * Layer: test
- *
- * Purpose:
- *   Provides tiny assertion helpers for core C tests. This is intentionally
- *   small and dependency-free.
- *
- * Covers:
- *   - failure reporting to stderr
- *   - boolean assertions
- *   - string equality assertions
- *
- * Commands:
- *   - make test-core
- *
- * Expected:
- *   - tests exit 0 on success
- *   - tests print concise failure messages to stderr
+ * Provides tiny assertion helpers for core C tests. This is intentionally small and
+ * dependency-free.
  */
 #ifndef YVEX_TEST_H
 #define YVEX_TEST_H

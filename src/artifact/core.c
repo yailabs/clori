@@ -1,12 +1,9 @@
-/* Owner: artifact byte access.
- * Owns: read-only artifact snapshot lifecycle and checked byte ranges.
- * Does not own: GGUF semantics, completeness, materialization, or execution.
- * Invariants: every read remains bound to one revalidated regular-file snapshot.
- * Boundary: byte access does not establish artifact completeness or runtime support.
- * Purpose: own immutable artifact snapshots and bounded byte access.
- * Inputs: explicit artifact paths, map policy, checked offsets, and caller outputs.
- * Effects: opens read-only files, optionally maps bytes, and releases owned resources.
- * Failure: path, replacement, bounds, mapping, or I/O failure exposes no admitted view. */
+/*
+ * Own immutable artifact snapshots and bounded byte access.
+ *
+ * Every read remains bound to one revalidated regular-file snapshot. Byte access does not
+ * establish artifact completeness or runtime support.
+ */
 
 #define _GNU_SOURCE
 #include <errno.h>
@@ -36,7 +33,6 @@ struct yvex_artifact {
     size_t mapping_len;
 };
 
-/* Purpose: projects regular-file stat identity without allocation or IO. */
 static void snapshot_from_stat(const struct stat *st, yvex_artifact_snapshot *out) {
     memset(out, 0, sizeof(*out));
     out->device = (unsigned long long)st->st_dev;
@@ -48,11 +44,6 @@ static void snapshot_from_stat(const struct stat *st, yvex_artifact_snapshot *ou
     out->ctime_nanoseconds = (long long)st->st_ctim.tv_nsec;
 }
 
-/* Purpose: open one path while the kernel refuses every symlink and magic-link component.
- * Inputs: a bounded nonempty path already admitted by the caller.
- * Effects: returns one caller-owned read-only descriptor.
- * Failure: fails closed when the kernel cannot enforce component-safe resolution.
- * Boundary: regular-file and snapshot admission remain artifact-owned. */
 static int artifact_path_open(const char *path) {
 #if defined(__linux__) && defined(SYS_openat2)
     struct open_how how;
@@ -68,11 +59,6 @@ static int artifact_path_open(const char *path) {
 #endif
 }
 
-/* Purpose: open a read-only artifact handle and optionally map it for explicit payload access.
- * Inputs: typed artifact byte access arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact byte access state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: byte access does not establish artifact completeness or runtime support. */
 int yvex_artifact_open(yvex_artifact **out, const yvex_artifact_options *options, yvex_error *err) {
     struct stat st;
     yvex_artifact *artifact;
@@ -174,11 +160,11 @@ int yvex_artifact_open(yvex_artifact **out, const yvex_artifact_options *options
     return YVEX_OK;
 }
 
-/* Purpose: release resources owned by one artifact snapshot object and clear its observable state.
- * Inputs: typed artifact byte access arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by artifact byte access; cleanup remains deterministic.
- * Failure: null or released artifact byte access handles remain harmless.
- * Boundary: byte access does not establish artifact completeness or runtime support. */
+/*
+ * Release resources owned by one artifact snapshot object and clear its observable state.
+ *
+ * Releases only resources owned by artifact byte access; cleanup remains deterministic.
+ */
 void yvex_artifact_close(yvex_artifact *artifact) {
     if (!artifact) {
         return;
@@ -193,11 +179,6 @@ void yvex_artifact_close(yvex_artifact *artifact) {
     free(artifact);
 }
 
-/* Purpose: project path facts while preserving the canonical artifact snapshot invariants.
- * Inputs: typed artifact byte access arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact byte access state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: byte access does not establish artifact completeness or runtime support. */
 const char *yvex_artifact_path(const yvex_artifact *artifact) {
     if (!artifact) {
         return "";
@@ -205,11 +186,6 @@ const char *yvex_artifact_path(const yvex_artifact *artifact) {
     return artifact->path;
 }
 
-/* Purpose: project size facts while preserving the canonical artifact snapshot invariants.
- * Inputs: typed artifact byte access arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact byte access state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: byte access does not establish artifact completeness or runtime support. */
 unsigned long long yvex_artifact_size(const yvex_artifact *artifact) {
     if (!artifact) {
         return 0;
@@ -217,11 +193,11 @@ unsigned long long yvex_artifact_size(const yvex_artifact *artifact) {
     return artifact->size;
 }
 
-/* Purpose: release cached pages for one verified range on the retained artifact handle.
- * Inputs: an open artifact and an exact checked byte range.
- * Effects: advises the kernel that clean cached pages may be reclaimed.
- * Failure: invalid ranges or failed kernel advice return a typed refusal.
- * Boundary: cache residency changes neither artifact bytes nor snapshot identity. */
+/*
+ * Release cached pages for one verified range on the retained artifact handle.
+ *
+ * Cache residency changes neither artifact bytes nor snapshot identity.
+ */
 int yvex_artifact_cache_release(const yvex_artifact *artifact,
                                 unsigned long long offset,
                                 unsigned long long byte_count,
@@ -252,20 +228,10 @@ int yvex_artifact_cache_release(const yvex_artifact *artifact,
     return YVEX_OK;
 }
 
-/* Purpose: project is mapped facts while preserving the canonical artifact snapshot invariants.
- * Inputs: typed artifact byte access arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact byte access state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: byte access does not establish artifact completeness or runtime support. */
 int yvex_artifact_is_mapped(const yvex_artifact *artifact) {
     return artifact && artifact->mapping ? 1 : 0;
 }
 
-/* Purpose: project data facts while preserving the canonical artifact snapshot invariants.
- * Inputs: typed artifact byte access arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact byte access state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: byte access does not establish artifact completeness or runtime support. */
 const unsigned char *yvex_artifact_data(const yvex_artifact *artifact) {
     if (!artifact) {
         return NULL;
@@ -273,11 +239,6 @@ const unsigned char *yvex_artifact_data(const yvex_artifact *artifact) {
     return artifact->mapping;
 }
 
-/* Purpose: read one exact bounded file range without changing shared file position.
- * Inputs: typed artifact byte access arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned artifact byte access state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: byte access does not establish artifact completeness or runtime support. */
 int yvex_artifact_read_at(const yvex_artifact *artifact,
                           unsigned long long offset,
                           void *dst,
@@ -331,11 +292,7 @@ int yvex_artifact_read_at(const yvex_artifact *artifact,
     return YVEX_OK;
 }
 
-/* Purpose: copies open-time identity and performs no IO or allocation.
- * Inputs: typed artifact byte access arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact byte access state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: byte access does not establish artifact completeness or runtime support. */
+/* Copies open-time identity and performs no IO or allocation. */
 int yvex_artifact_snapshot_get(const yvex_artifact *artifact,
                                yvex_artifact_snapshot *out,
                                yvex_error *err) {
@@ -351,11 +308,6 @@ int yvex_artifact_snapshot_get(const yvex_artifact *artifact,
     return YVEX_OK;
 }
 
-/* Purpose: compare the borrowed descriptor and path identities with the admitted snapshot.
- * Inputs: typed artifact byte access arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact byte access state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: byte access does not establish artifact completeness or runtime support. */
 int yvex_artifact_snapshot_validate(const yvex_artifact *artifact,
                                     yvex_artifact_snapshot *current,
                                     yvex_error *err) {
@@ -410,11 +362,6 @@ int yvex_artifact_snapshot_validate(const yvex_artifact *artifact,
     return YVEX_OK;
 }
 
-/* Purpose: validate artifact snapshot invariants and retain precise refusal evidence.
- * Inputs: typed artifact byte access arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact byte access state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: byte access does not establish artifact completeness or runtime support. */
 int yvex_range_check(unsigned long long file_size,
                      unsigned long long offset,
                      unsigned long long len,

@@ -1,19 +1,11 @@
-/* Owner: model.compilation.binding
- * Owns: exact session-to-IR admission, exhaustive source-range resolution, quantizer views, and the complete
- *   DeepSeek trusted-payload handoff.
- * Does not own: source-session lifetime outside a handoff, payload reads, family topology, physical encoding,
- *   artifact writing, or execution.
- * Invariants: publication follows exact source/payload/IR/map identity checks; construction resolves every range
- *   and reads zero payload bytes.
- * Boundary: consumers borrow immutable binding and session views only for the owning binding or family-handoff
- *   lifetime.
- * Purpose: bind sealed transformation inputs to one admitted source snapshot and compose the family pipeline
- *   without reopening transformation truth.
- * Inputs: sealed IR, readable or admitted payload session, and typed family registration operations.
- * Effects: owns indexes and composed handoff lifecycles; performs source verification/session admission but no
- *   tensor payload delivery.
- * Failure: typed mismatch/allocation failures unwind in dependency order and publish neither a partial binding nor
- *   a partial handoff. */
+/*
+ * Bind sealed transformation inputs to one admitted source snapshot and compose the family
+ * pipeline without reopening transformation truth.
+ *
+ * Publication follows exact source/payload/IR/map identity checks; construction resolves every
+ * range and reads zero payload bytes. Consumers borrow immutable binding and session views only
+ * for the owning binding or family-handoff lifetime.
+ */
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -44,27 +36,16 @@ static const char *const payload_failure_names[] = {"none",
                                                     "payload-plan",
                                                     "allocation-failure"};
 
-/* Purpose: apply the canonical binding default allocate transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static void *binding_default_allocate(size_t size, void *context) {
     (void)context;
     return malloc(size);
 }
 
-/* Purpose: release owned binding default release resources in dependency order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static void binding_default_release(void *allocation, void *context) {
     (void)context;
     free(allocation);
 }
 
-/* Purpose: apply the canonical binding fail transformation and invariants. */
 static int binding_fail(yvex_transform_failure *failure, yvex_transform_failure_code code,
                         unsigned long long source, unsigned long long expected,
                         unsigned long long actual, yvex_error *err, const char *where) {
@@ -73,7 +54,6 @@ static int binding_fail(yvex_transform_failure *failure, yvex_transform_failure_
                                actual, 0u, err, where);
 }
 
-/* Purpose: compare or copy binding range equal under exact ownership. */
 static int binding_range_equal(const yvex_transform_source_value *source,
                                const yvex_source_payload_range *range,
                                const yvex_source_payload_shard *shard) {
@@ -94,11 +74,6 @@ static int binding_range_equal(const yvex_transform_source_value *source,
     return 1;
 }
 
-/* Purpose: construct bounded binding create state from admitted inputs.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 int yvex_transform_binding_create(yvex_transform_binding **out, const yvex_transform_ir *ir,
                                   yvex_source_payload_session *session,
                                   const yvex_transform_allocator *requested_allocator,
@@ -211,12 +186,6 @@ int yvex_transform_binding_create(yvex_transform_binding **out, const yvex_trans
     return YVEX_OK;
 }
 
-/* Purpose: enforce typed binding readable validate invariants before publication.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
-
 int yvex_transform_binding_readable_validate(const yvex_transform_binding *binding,
                                              yvex_transform_failure *failure, yvex_error *err) {
     const yvex_transform_ir_summary *ir_summary;
@@ -246,11 +215,6 @@ int yvex_transform_binding_readable_validate(const yvex_transform_binding *bindi
     return YVEX_OK;
 }
 
-/* Purpose: release owned binding release resources in dependency order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 void yvex_transform_binding_release(yvex_transform_binding **binding_ptr) {
     yvex_transform_binding *binding;
     yvex_transform_allocator allocator;
@@ -265,52 +229,26 @@ void yvex_transform_binding_release(yvex_transform_binding **binding_ptr) {
     *binding_ptr = NULL;
 }
 
-/* Purpose: project the immutable bounded binding summary view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 const yvex_transform_binding_summary *
 yvex_transform_binding_summary_get(const yvex_transform_binding *binding) {
     return binding ? &binding->summary : NULL;
 }
 
-/* Purpose: apply the canonical binding ir transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 const yvex_transform_ir *yvex_transform_binding_ir(const yvex_transform_binding *binding) {
     return binding ? binding->ir : NULL;
 }
-
-/* Purpose: apply the canonical binding payload session transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 yvex_source_payload_session *
 yvex_transform_binding_payload_session(const yvex_transform_binding *binding) {
     return binding ? binding->session : NULL;
 }
 
-/* Purpose: project the immutable bounded binding terminal at view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 const yvex_transform_value *
 yvex_transform_binding_terminal_at(const yvex_transform_binding *binding,
                                    unsigned long long ordinal) {
     return binding ? yvex_transform_ir_terminal_at(binding->ir, ordinal) : NULL;
 }
 
-/* Purpose: apply the canonical binding terminal operation transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 const yvex_transform_node *
 yvex_transform_binding_terminal_operation(const yvex_transform_binding *binding,
                                           unsigned long long ordinal) {
@@ -318,22 +256,12 @@ yvex_transform_binding_terminal_operation(const yvex_transform_binding *binding,
     return terminal ? yvex_transform_ir_node_at(binding->ir, terminal->producer_node_id) : NULL;
 }
 
-/* Purpose: project the immutable bounded binding source at view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 const yvex_transform_source_value *
 yvex_transform_binding_source_at(const yvex_transform_binding *binding,
                                  unsigned long long source_index) {
     return binding ? yvex_transform_ir_source_at(binding->ir, source_index) : NULL;
 }
 
-/* Purpose: project the immutable bounded binding range at view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 const yvex_source_payload_range *
 yvex_transform_binding_range_at(const yvex_transform_binding *binding,
                                 unsigned long long source_index) {
@@ -342,11 +270,6 @@ yvex_transform_binding_range_at(const yvex_transform_binding *binding,
     return yvex_source_payload_range_at(binding->session, binding->tensor_indices[source_index]);
 }
 
-/* Purpose: enforce typed binding decision validate invariants before publication.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 int yvex_transform_binding_decision_validate(const yvex_transform_binding *binding,
                                              unsigned long long terminal_ordinal,
                                              const yvex_transform_physical_decision *decision,
@@ -389,11 +312,6 @@ struct yvex_deepseek_payload_handoff {
     yvex_deepseek_payload_handoff_summary summary;
 };
 
-/* Purpose: apply the canonical handoff strdup transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static char *handoff_strdup(const char *text) {
     size_t length;
     char *copy;
@@ -407,7 +325,6 @@ static char *handoff_strdup(const char *text) {
     return copy;
 }
 
-/* Purpose: enforce typed handoff reject invariants before publication. */
 static int handoff_reject(yvex_deepseek_payload_failure *failure,
                           yvex_deepseek_payload_failure_code code, unsigned long long descriptor,
                           unsigned long long contribution, int status, yvex_error *err,
@@ -421,12 +338,6 @@ static int handoff_reject(yvex_deepseek_payload_failure *failure,
     yvex_error_set(err, (yvex_status)status, "deepseek_payload_handoff", message);
     return status;
 }
-
-/* Purpose: resolve one handoff resolve through the canonical index.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
                            const yvex_deepseek_payload_handoff_options *options,
@@ -590,12 +501,6 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded payload open state from admitted inputs.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
-
 static int payload_open(yvex_deepseek_payload_handoff **out,
                         const yvex_deepseek_payload_handoff_options *options,
                         yvex_deepseek_payload_failure *failure, yvex_error *err) {
@@ -710,12 +615,6 @@ static int payload_open(yvex_deepseek_payload_handoff **out,
     return YVEX_OK;
 }
 
-/* Purpose: release owned payload close resources in dependency order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
-
 static void payload_close(yvex_deepseek_payload_handoff *handoff) {
     const yvex_model_family_api *family;
     const yvex_model_family_lowering_api *lowering;
@@ -736,76 +635,36 @@ static void payload_close(yvex_deepseek_payload_handoff *handoff) {
     free(handoff);
 }
 
-/* Purpose: project the immutable bounded payload summary view.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static const yvex_deepseek_payload_handoff_summary *
 payload_summary(const yvex_deepseek_payload_handoff *handoff) {
     return handoff ? &handoff->summary : NULL;
 }
 
-/* Purpose: apply the canonical payload verification transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static const yvex_source_verification *
 payload_verification(const yvex_deepseek_payload_handoff *handoff) {
     return handoff ? &handoff->verification : NULL;
 }
 
-/* Purpose: map payload map through canonical typed vocabulary.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static const yvex_deepseek_gguf_map *payload_map(const yvex_deepseek_payload_handoff *handoff) {
     return handoff ? handoff->map : NULL;
 }
 
-/* Purpose: apply the canonical payload transform ir transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static const yvex_transform_ir *payload_transform_ir(const yvex_deepseek_payload_handoff *handoff) {
     return handoff ? handoff->transform_ir : NULL;
 }
 
-/* Purpose: apply the canonical payload binding transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static const yvex_transform_binding *payload_binding(const yvex_deepseek_payload_handoff *handoff) {
     return handoff ? handoff->binding : NULL;
 }
 
-/* Purpose: apply the canonical payload session transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static yvex_source_payload_session *payload_session(yvex_deepseek_payload_handoff *handoff) {
     return handoff ? handoff->session : NULL;
 }
 
-/* Purpose: apply the canonical payload plan transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static const yvex_source_payload_plan *payload_plan(const yvex_deepseek_payload_handoff *handoff) {
     return handoff ? handoff->plan : NULL;
 }
 
-/* Purpose: project typed payload failure name vocabulary without lost semantics.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static const char *payload_failure_name(yvex_deepseek_payload_failure_code code) {
     size_t count = sizeof(payload_failure_names) / sizeof(payload_failure_names[0]);
 
@@ -813,12 +672,11 @@ static const char *payload_failure_name(yvex_deepseek_payload_failure_code code)
                                              : "unknown-handoff-failure";
 }
 
-/* Purpose: publish the immutable trusted-payload handoff operation table used
- * by the family registration.
- * Inputs: none.
- * Effects: returns process-lifetime immutable storage; no allocation or I/O.
- * Failure: cannot fail.
- * Boundary: the table composes admitted owners but does not execute payload. */
+/*
+ * Publish the immutable trusted-payload handoff operation table used by the family registration.
+ *
+ * Returns process-lifetime immutable storage; no allocation or I/O.
+ */
 const yvex_model_family_payload_api *yvex_model_deepseek_payload_api(void) {
     static const yvex_model_family_payload_api api = {
         payload_open, payload_close,        payload_summary, payload_verification,

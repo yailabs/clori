@@ -1,12 +1,6 @@
 /*
- * YVEX - Source manifest tests
- *
- * File: tests/test_source_manifest.c
- * Layer: test
- *
- * Purpose:
- *   Verifies open-weight intake source provenance scanning and manifest writing over a tiny
- *   fake source tree. No external model files are required or committed.
+ * Verifies open-weight intake source provenance scanning and manifest writing over a tiny fake
+ * source tree. No external model files are required or committed.
  */
 #include "tests/test.h"
 

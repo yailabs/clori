@@ -1,14 +1,10 @@
-/* Owner: src/model/target
- * Owns: dtype/qtype support matrix facts, role-support blockers, and qtype gate handoff facts.
- * Does not own: CLI parsing, rendering, quantization execution, artifact emission, runtime execution, generation,
- *   eval, benchmark, or release decisions.
- * Invariants: role-support matrices are report-only facts and hand off incomplete quantization work to later rows.
- * Boundary: qtype role-support reporting is not qtype support completion, quantization, artifact emission, runtime
- *   readiness, generation readiness, benchmark evidence, or release readiness.
- * Purpose: project canonical qtype capability facts by tensor role.
- * Inputs: typed requests and immutable numeric capability rows.
- * Effects: updates only bounded support reports.
- * Failure: unsupported releases and modes remain typed refusals. */
+/*
+ * Project canonical qtype capability facts by tensor role.
+ *
+ * Role-support matrices are report-only facts and hand off incomplete quantization work to later
+ * rows. Qtype role-support reporting is not qtype support completion, quantization, artifact
+ * emission, runtime readiness, generation readiness, benchmark evidence, or release readiness.
+ */
 #include <yvex/internal/model_target.h>
 
 #include <yvex/internal/quant_numeric.h>
@@ -136,8 +132,6 @@ static const qtype_gate_family_fact qtype_gate_rows[] = {
     {"gemma", "gemma-4-31b-it", "blocked", "family-quantization-plan-unimplemented", "not-scheduled"},
 };
 
-/* Purpose: project typed qtype role compute status vocabulary without lost semantics. */
-
 static const char *qtype_role_compute_status(const char *source_dtype)
 {
     const yvex_quant_numeric_capability *capability;
@@ -159,23 +153,6 @@ static const char *qtype_role_compute_status(const char *source_dtype)
         ? "cpu-cuda-available" : "unavailable";
 }
 
-/*
- * qtype_role_rows()
- *
- * Purpose:
- *   select the static qtype role-support rows for a source family.
- *
- * Inputs:
- *   family is borrowed and may be empty; count receives row count.
- *
- * Effects:
- *   returns a borrowed static table; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   none.
- *
- * Boundary:
- *   selected rows are support facts, not quantization execution. */
 static const qtype_role_fact *qtype_role_rows(const char *family,
                                              unsigned long *count)
 {
@@ -191,23 +168,6 @@ static const qtype_role_fact *qtype_role_rows(const char *family,
     return qwen_role_facts;
 }
 
-/*
- * qtype_role_prepare()
- *
- * Purpose:
- *   initialize common typed fields for qtype role-support reports.
- *
- * Inputs:
- *   request and report are borrowed.
- *
- * Effects:
- *   mutates report fields only; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   none.
- *
- * Boundary:
- *   fields remain report-only and do not imply qtype completion. */
 static void qtype_role_prepare(const yvex_model_target_request *request,
                                yvex_model_target_report *report)
 {
@@ -230,23 +190,6 @@ static void qtype_role_prepare(const yvex_model_target_request *request,
     yvex_model_target_report_prepare(report, request, &profile);
 }
 
-/*
- * qtype_role_validate()
- *
- * Purpose:
- *   reject impossible typed request shapes for role-support reports.
- *
- * Inputs:
- *   request and report are borrowed.
- *
- * Effects:
- *   may append typed error rows and set exit_code; no printing occurs.
- *
- * Failure:
- *   returns 1 when a typed refusal has been populated.
- *
- * Boundary:
- *   refusal rows do not run quantization or inspect payload bytes. */
 static int qtype_role_validate(const yvex_model_target_request *request,
                                yvex_model_target_report *report)
 {
@@ -257,23 +200,6 @@ static int qtype_role_validate(const yvex_model_target_request *request,
     return 0;
 }
 
-/*
- * qtype_gate_add_table()
- *
- * Purpose:
- *   append typed table rows for the qtype role-support gate.
- *
- * Inputs:
- *   report is mutated.
- *
- * Effects:
- *   appends bounded rows only; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   row-cap exhaustion truncates through the shared row helper.
- *
- * Boundary:
- *   gate rows do not imply qtype completion. */
 static void qtype_gate_add_table(yvex_model_target_report *report)
 {
     unsigned long i;
@@ -294,23 +220,6 @@ static void qtype_gate_add_table(yvex_model_target_report *report)
     }
 }
 
-/*
- * qtype_gate_add_audit()
- *
- * Purpose:
- *   append typed audit rows for the qtype role-support gate.
- *
- * Inputs:
- *   report is mutated.
- *
- * Effects:
- *   appends bounded rows only; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   row-cap exhaustion truncates through the shared row helper.
- *
- * Boundary:
- *   gate audit facts do not implement quantization. */
 static void qtype_gate_add_audit(yvex_model_target_report *report)
 {
     unsigned long i;
@@ -333,23 +242,6 @@ static void qtype_gate_add_audit(yvex_model_target_report *report)
     yvex_model_target_report_common_tail(report);
 }
 
-/*
- * qtype_role_add_table()
- *
- * Purpose:
- *   append typed role-support table rows.
- *
- * Inputs:
- *   family is borrowed; report is mutated.
- *
- * Effects:
- *   appends bounded rows only; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   row-cap exhaustion truncates through the shared row helper.
- *
- * Boundary:
- *   role rows are support facts only. */
 static void qtype_role_add_table(const char *family,
                                  yvex_model_target_report *report)
 {
@@ -371,23 +263,6 @@ static void qtype_role_add_table(const char *family,
     }
 }
 
-/*
- * qtype_role_add_audit()
- *
- * Purpose:
- *   append typed role-support audit rows.
- *
- * Inputs:
- *   family is borrowed; report is mutated.
- *
- * Effects:
- *   appends bounded rows only; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   row-cap exhaustion truncates through the shared row helper.
- *
- * Boundary:
- *   audit rows are not quantization or artifact evidence. */
 static void qtype_role_add_audit(const char *family,
                                  yvex_model_target_report *report)
 {
@@ -435,26 +310,6 @@ static void qtype_role_add_audit(const char *family,
     yvex_model_target_report_common_tail(report);
 }
 
-/*
- * yvex_qtype_role_support_report_build()
- *
- * Purpose:
- *   build typed qtype role-support or qtype gate report facts.
- *
- * Inputs:
- *   request is borrowed; report receives typed rows; err receives invalid
- *   argument failures.
- *
- * Effects:
- *   mutates report only; it does not parse CLI arguments, run quantization,
- *   write artifacts, or render output.
- *
- * Failure:
- *   returns invalid-arg for impossible command routing; typed unsupported
- *   output/release refusals are returned through report exit_code.
- *
- * Boundary:
- *   qtype role-support reporting is not qtype support completion. */
 int yvex_qtype_role_support_report_build(const yvex_model_target_request *request,
                                          yvex_model_target_report *report,
                                          yvex_error *err)

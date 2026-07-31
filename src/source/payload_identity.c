@@ -1,12 +1,9 @@
-/* Owner: source payload identity.
- * Owns: deterministic payload-set identity and atomic trust publication.
- * Does not own: shard I/O, digest calculation, mapping, or transformation.
- * Invariants: identity excludes paths, timestamps, and mutable file facts.
- * Boundary: local sealing remains distinct from upstream verification.
- * Purpose: derive payload identity and publish completed trust atomically.
- * Inputs: source identity, ordered shard digests, trust class, and destination.
- * Effects: updates canonical hash state and publishes only complete trust.
- * Failure: invalid trust, encoding, or publication preserves prior valid state. */
+/*
+ * Derive payload identity and publish completed trust atomically.
+ *
+ * Identity excludes paths, timestamps, and mutable file facts. Local sealing remains distinct from
+ * upstream verification.
+ */
 #include <yvex/internal/core.h>
 #include <yvex/internal/source.h>
 #include <yvex/internal/source_payload.h>
@@ -14,11 +11,7 @@
 #include <limits.h>
 #include <string.h>
 
-/* Purpose: computes stable identity only after every shard owns a verified/sealed digest.
- * Inputs: typed source payload identity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload identity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: local sealing remains distinct from upstream verification. */
+/* Computes stable identity only after every shard owns a verified/sealed digest. */
 int yvex_source_payload_identity_compute(yvex_source_payload_session *session,
                                          yvex_source_payload_failure *failure,
                                          yvex_error *err) {
@@ -94,11 +87,12 @@ overflow:
                            "source_payload_identity", "canonical payload identity input overflow");
 }
 
-/* Purpose: delegates atomic v3 publication to the canonical source writer owner.
- * Inputs: typed source payload identity arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit source payload identity destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial source payload identity result.
- * Boundary: local sealing remains distinct from upstream verification. */
+/*
+ * Delegates atomic v3 publication to the canonical source writer owner.
+ *
+ * Writes only the explicit source payload identity destination through its transaction.
+ * Serialization or I/O failure publishes no partial source payload identity result.
+ */
 int yvex_source_payload_manifest_publish(const yvex_source_payload_session *session,
                                          yvex_error *err) {
     if (!session || !session->manifest_path) {

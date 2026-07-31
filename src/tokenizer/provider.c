@@ -1,12 +1,11 @@
-/* Owner: tokenizer.provider.
- * Owns: provider-message projection into the admitted prompt policy and exact typed completion parsing.
- * Does not own: HTTP/OpenAI syntax, provider request admission, generation, sessions, or tool execution.
- * Invariants: application messages reach model syntax only through the tokenizer plan; prose is never a tool call.
- * Boundary: bridges transport-neutral provider facts to artifact-bound tokenizer prompt/completion semantics.
- * Purpose: execute the pinned DeepSeek DSML tool and response-format contract without gateway prompt assembly.
- * Inputs: sealed provider requests, immutable tokenizer plan, explicit completion bytes, and bounded outputs.
- * Effects: allocates transactional rendered/encoded results and typed parsed completion storage.
- * Failure: unsupported plans or malformed DSML publish no prompt, tool call, or partial identity. */
+/*
+ * Execute the pinned DeepSeek DSML tool and response-format contract without gateway prompt
+ * assembly.
+ *
+ * Application messages reach model syntax only through the tokenizer plan; prose is never a tool
+ * call. Bridges transport-neutral provider facts to artifact-bound tokenizer prompt/completion
+ * semantics.
+ */
 
 #include "src/tokenizer/private.h"
 
@@ -57,11 +56,11 @@ typedef struct {
     unsigned long long count, capacity;
 } provider_builder;
 
-/* Purpose: reserve one checked transactional provider prompt extent.
- * Inputs: builder, requested additional bytes, and error output.
- * Effects: grows unique prompt storage while preserving the admitted prefix.
- * Failure: retains prior ownership on bounds or allocation failure.
- * Boundary: storage growth contains no prompt-policy decision. */
+/*
+ * Reserve one checked transactional provider prompt extent.
+ *
+ * Retains prior ownership on bounds or allocation failure.
+ */
 static int reserve(provider_builder *builder, unsigned long long add,
                    yvex_error *err)
 {
@@ -94,7 +93,6 @@ static int reserve(provider_builder *builder, unsigned long long add,
     return YVEX_OK;
 }
 
-/* Purpose: append one exact byte span after complete capacity admission. */
 static int append(provider_builder *builder, const void *bytes,
                   unsigned long long count, yvex_error *err)
 {
@@ -108,17 +106,12 @@ static int append(provider_builder *builder, const void *bytes,
     return YVEX_OK;
 }
 
-/* Purpose: append one terminated literal without making it a semantic length authority. */
 static int literal(provider_builder *builder, const char *text, yvex_error *err)
 {
     return append(builder, text, (unsigned long long)strlen(text), err);
 }
 
-/* Purpose: render one JSON string in deterministic ensure-ascii-false form.
- * Inputs: builder, valid explicit bytes/count, and error output.
- * Effects: appends quotes and required JSON escapes.
- * Failure: returns the first builder failure without publishing a prompt.
- * Boundary: preserves UTF-8 bytes and performs no normalization. */
+/* Render one JSON string in deterministic ensure-ascii-false form. */
 static int json_string(provider_builder *builder, const unsigned char *bytes,
                        unsigned long long count, yvex_error *err)
 {
@@ -146,7 +139,6 @@ static int json_string(provider_builder *builder, const unsigned char *bytes,
     return rc == YVEX_OK ? literal(builder, "\"", err) : rc;
 }
 
-/* Purpose: confirm one explicit span is complete UTF-8 under the tokenizer decoder. */
 static int valid_utf8(const unsigned char *bytes, unsigned long long count)
 {
     unsigned long long offset = 0u;
@@ -157,11 +149,6 @@ static int valid_utf8(const unsigned char *bytes, unsigned long long count)
     return 1;
 }
 
-/* Purpose: append exact DSML parameters projected from one JSON argument object.
- * Inputs: builder, valid arguments-object bytes, and error output.
- * Effects: parses members and appends ordered typed DSML parameter elements.
- * Failure: refuses malformed, nested-ambiguous, or unsupported JSON values.
- * Boundary: projection is tokenizer-owned and never executes a function. */
 static int append_arguments(provider_builder *builder, yvex_provider_span arguments,
                             yvex_error *err)
 {
@@ -219,7 +206,6 @@ static int append_arguments(provider_builder *builder, yvex_provider_span argume
                : YVEX_ERR_FORMAT;
 }
 
-/* Purpose: append one exact assistant DSML tool-call block. */
 static int append_tool_call(provider_builder *builder,
                             const yvex_provider_tool_call *call,
                             yvex_error *err)
@@ -240,7 +226,6 @@ static int append_tool_call(provider_builder *builder,
     return rc;
 }
 
-/* Purpose: render one canonical tool schema line owned by the prompt adapter. */
 static int append_tool_schema(provider_builder *builder,
                               const yvex_provider_function_tool *tool,
                               yvex_error *err)
@@ -261,11 +246,6 @@ static int append_tool_schema(provider_builder *builder,
     return rc;
 }
 
-/* Purpose: append exact DeepSeek tools and response-format control material.
- * Inputs: builder, sealed provider request, and error output.
- * Effects: appends schemas/choice controls and bounded JSON-object instruction.
- * Failure: returns the first schema/rendering failure without a partial prompt result.
- * Boundary: only executable facts admitted by the pinned family policy are projected. */
 static int append_controls(provider_builder *builder,
                            const yvex_provider_request *request,
                            yvex_error *err)
@@ -291,11 +271,11 @@ static int append_controls(provider_builder *builder,
     return rc;
 }
 
-/* Purpose: render the sealed provider request through the exact admitted DeepSeek prompt policy.
- * Inputs: immutable tokenizer, sealed provider request, rendered output, and error output.
- * Effects: allocates exact prompt bytes and field-wise prompt/message identities.
- * Failure: frees candidate bytes and publishes no rendered prompt.
- * Boundary: family prompt syntax lives here, outside HTTP and generation owners. */
+/*
+ * Render the sealed provider request through the exact admitted DeepSeek prompt policy.
+ *
+ * Allocates exact prompt bytes and field-wise prompt/message identities.
+ */
 int yvex_tokenizer_provider_prompt(
     const yvex_tokenizer *tokenizer, const yvex_provider_request *request,
     yvex_rendered_prompt *rendered, yvex_error *err)
@@ -413,11 +393,6 @@ identity_failure:
     return YVEX_ERR_STATE;
 }
 
-/* Purpose: render and encode one sealed provider request through the artifact tokenizer.
- * Inputs: tokenizer/request/options, rendered/encoded outputs, and error output.
- * Effects: publishes exact rendered bytes and complete ordered token IDs.
- * Failure: clears both outputs if rendering or encoding fails.
- * Boundary: encoding reuses the admitted tokenizer and never opens source sidecars. */
 int yvex_tokenizer_encode_provider_prompt(
     const yvex_tokenizer *tokenizer, const yvex_provider_request *request,
     const yvex_tokenizer_encode_options *encode_options,
@@ -445,7 +420,6 @@ int yvex_tokenizer_encode_provider_prompt(
     return rc;
 }
 
-/* Purpose: find one exact byte marker in an explicit completion span. */
 static const unsigned char *find_bytes(const unsigned char *bytes,
                                        unsigned long long count,
                                        const char *marker)
@@ -458,7 +432,6 @@ static const unsigned char *find_bytes(const unsigned char *bytes,
     return NULL;
 }
 
-/* Purpose: compare and consume one exact parser literal. */
 static int consume(const unsigned char **cursor, const unsigned char *end,
                    const char *text)
 {
@@ -469,7 +442,6 @@ static int consume(const unsigned char **cursor, const unsigned char *end,
     return 1;
 }
 
-/* Purpose: copy one bounded attribute up to its exact delimiter. */
 static int attribute(const unsigned char **cursor, const unsigned char *end,
                      const char *delimiter, char *output, size_t capacity)
 {
@@ -485,7 +457,6 @@ static int attribute(const unsigned char **cursor, const unsigned char *end,
     return 1;
 }
 
-/* Purpose: locate one admitted function name without treating prose as a call. */
 static int tool_admitted(const yvex_provider_request *request, const char *name)
 {
     unsigned long long index;
@@ -494,11 +465,6 @@ static int tool_admitted(const yvex_provider_request *request, const char *name)
     return 0;
 }
 
-/* Purpose: parse one exact single-call DSML block into canonical JSON arguments.
- * Inputs: sealed request, exact completion range, call output, and error output.
- * Effects: allocates one validated arguments object and records an admitted function name.
- * Failure: frees arguments and publishes no typed call for malformed/unlisted DSML.
- * Boundary: syntax recognition only; arbitrary prose is never interpreted as a call. */
 static int parse_call(const yvex_provider_request *request,
                       const unsigned char *cursor, const unsigned char *end,
                       yvex_provider_tool_call *call, yvex_error *err)
@@ -578,11 +544,11 @@ static int parse_call(const yvex_provider_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: parse exact completion text or a grounded single DSML call transactionally.
- * Inputs: tokenizer/request, valid UTF-8 completion bytes, result output, and error output.
- * Effects: allocates content/call bytes and seals one output identity.
- * Failure: clears the candidate and publishes no partial typed result.
- * Boundary: parsing does not execute tools or alter generation/session state. */
+/*
+ * Parse exact completion text or a grounded single DSML call transactionally.
+ *
+ * Allocates content/call bytes and seals one output identity.
+ */
 int yvex_tokenizer_parse_provider_completion(
     const yvex_tokenizer *tokenizer, const yvex_provider_request *request,
     const unsigned char *bytes, unsigned long long byte_count,
@@ -655,11 +621,6 @@ int yvex_tokenizer_parse_provider_completion(
     return YVEX_OK;
 }
 
-/* Purpose: release one tokenizer-owned provider completion result.
- * Inputs: result that may own content and arguments bytes.
- * Effects: frees both allocations and clears all evidence fields.
- * Failure: none; null and cleared results are accepted.
- * Boundary: call identifiers and provider requests remain caller-owned. */
 void yvex_tokenizer_provider_result_clear(yvex_tokenizer_provider_result *result)
 {
     if (!result) return;

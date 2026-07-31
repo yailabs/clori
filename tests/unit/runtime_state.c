@@ -1,12 +1,8 @@
-/* Owner: runtime attention-state tests.
- * Owns: bounded lifecycle, phase-equivalence, boundary, and rollback evidence.
- * Does not own: production equations, backend residency, artifacts, or CLI rendering.
- * Invariants: expected state is independently compared across chunk and decode transactions.
- * Boundary: focused internal-ABI coverage; no fixture enters production objects.
- * Purpose: prove the session-local provider is allocation-stable and transactionally exact.
- * Inputs: three admitted class geometries and deterministic publication values.
- * Effects: allocates only process-local test state and releases every candidate.
- * Failure: any state, identity, capacity, or lifecycle mismatch fails the unit runner. */
+/*
+ * Exercises the session-local provider is allocation-stable and transactionally exact. Expected
+ * state is independently compared across chunk and decode transactions. Focused internal-ABI
+ * coverage; no fixture enters production objects.
+ */
 #include "tests/test.h"
 
 #include <math.h>
@@ -29,13 +25,11 @@ typedef struct {
     yvex_attention_layer_plan layers[3];
 } state_plan_fixture;
 
-/* Purpose: expose one mutable cancellation flag at provider publication safe points. */
 static int state_cancel_requested(void *context)
 {
     return context && *(const int *)context;
 }
 
-/* Purpose: construct one exact bounded class geometry for provider lifecycle tests. */
 static yvex_attention_layer_plan state_layer(unsigned long long index,
                                              yvex_attention_class attention_class)
 {
@@ -69,7 +63,6 @@ static yvex_attention_layer_plan state_layer(unsigned long long index,
     return layer;
 }
 
-/* Purpose: initialize one opaque plan fixture without calling production plan construction. */
 static void state_plan_open(state_plan_fixture *fixture)
 {
     memset(fixture, 0, sizeof(*fixture));
@@ -88,7 +81,6 @@ static void state_plan_open(state_plan_fixture *fixture)
                    "%064x", 0x5a7eu);
 }
 
-/* Purpose: append one family-selected history component to a test state recipe. */
 static void state_recipe_history(yvex_attention_state_recipe *recipe,
                                  yvex_attention_state_binding binding,
                                  unsigned long long capacity,
@@ -105,7 +97,6 @@ static void state_recipe_history(yvex_attention_state_recipe *recipe,
     component->value_width = width;
 }
 
-/* Purpose: append one pointer-free family-selected rolling component to a test recipe. */
 static int state_recipe_rolling(yvex_attention_state_recipe *recipe,
                                 const yvex_attention_layer_plan *layer,
                                 yvex_attention_rolling_kind kind,
@@ -147,7 +138,6 @@ static int state_recipe_rolling(yvex_attention_state_recipe *recipe,
     return 1;
 }
 
-/* Purpose: project the fixture family's exact state geometry into the generic recipe ABI. */
 static int state_recipe_project(
     const yvex_attention_layer_plan *layer,
     const yvex_attention_state_recipe_request *request,
@@ -208,7 +198,6 @@ malformed:
     return YVEX_ERR_FORMAT;
 }
 
-/* Purpose: bind fixture-only state policy without changing the production family owner. */
 static const yvex_graph_family_api *state_family(void)
 {
     static const yvex_graph_family_api family = {
@@ -219,7 +208,6 @@ static const yvex_graph_family_api *state_family(void)
     return &family;
 }
 
-/* Purpose: read one typed component capacity without class-aware generic state logic. */
 static unsigned long long state_recipe_capacity(
     const yvex_attention_state_recipe *recipe,
     yvex_attention_state_binding binding)
@@ -231,14 +219,12 @@ static unsigned long long state_recipe_capacity(
     return 0ull;
 }
 
-/* Purpose: clear fixture identities before deliberately sealing mutated policy facts. */
 static int state_recipe_unseal(yvex_attention_state_recipe *recipe)
 {
     recipe->identity[0] = '\0';
     return 1;
 }
 
-/* Purpose: prove state recipes detect stale fields and bind every family-owned policy fact. */
 static int test_state_recipe_identity(const state_plan_fixture *fixture)
 {
     yvex_attention_state_recipe_request request;
@@ -291,7 +277,7 @@ static int test_state_recipe_identity(const state_plan_fixture *fixture)
     return 0;
 }
 
-/* Purpose: prove workspace recipes bind ordered extents without backend or pointer identity. */
+/* Prove workspace recipes bind ordered extents without backend or pointer identity. */
 static int test_workspace_recipe_identity(void)
 {
     yvex_attention_workspace_recipe recipe, changed;
@@ -354,7 +340,6 @@ static int test_workspace_recipe_identity(void)
     return 0;
 }
 
-/* Purpose: prove semantic rolling state and final deltas remain token-independent before backend lowering. */
 static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
 {
     const yvex_graph_family_api *family = state_family();
@@ -410,7 +395,7 @@ static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
     return 0;
 }
 
-/* Purpose: prove one immutable capacity plan owns selection, exact per-layer geometry, and identity. */
+/* Prove one immutable capacity plan owns selection, exact per-layer geometry, and identity. */
 static int test_capacity_plan(const state_plan_fixture *fixture)
 {
     const yvex_graph_family_api *family = state_family();
@@ -552,7 +537,6 @@ static int test_capacity_plan(const state_plan_fixture *fixture)
     return 0;
 }
 
-/* Purpose: release only rolling ranges allocated while constructing one publication. */
 static void state_token_release(state_token *token)
 {
     free(token->publication.next_main_rolling_state.kv_state);
@@ -562,7 +546,6 @@ static void state_token_release(state_token *token)
     memset(token, 0, sizeof(*token));
 }
 
-/* Purpose: execute one canonical rolling transition into publication-owned test storage. */
 static int state_token_rolling(const yvex_attention_layer_plan *layer,
                                const yvex_attention_rolling_state_view *before,
                                yvex_attention_rolling_state_output *after,
@@ -607,7 +590,7 @@ static int state_token_rolling(const yvex_attention_layer_plan *layer,
     return rc == YVEX_OK;
 }
 
-/* Purpose: construct one deterministic complete token publication from an immutable prior view. */
+/* Construct one deterministic complete token publication from an immutable prior view. */
 static int state_token_open(state_token *token,
                             const yvex_attention_layer_plan *layer,
                             const yvex_attention_history_view *history,
@@ -660,7 +643,6 @@ fail:
 
 typedef yvex_attention_state_provider test_state;
 
-/* Purpose: open one persistent provider fixture through its only production ABI. */
 static int state_open(test_state *state, const yvex_graph_family_api *family,
                       const yvex_attention_plan *plan,
                       unsigned long long maximum_host_bytes,
@@ -670,7 +652,6 @@ static int state_open(test_state *state, const yvex_graph_family_api *family,
         family, plan, maximum_host_bytes, state, failure, err);
 }
 
-/* Purpose: release one test-owned provider while preserving retryable ownership. */
 static int state_close(test_state *state)
 {
     yvex_error err;
@@ -683,7 +664,6 @@ static int state_close(test_state *state)
     return rc == YVEX_OK;
 }
 
-/* Purpose: borrow one immutable provider history for focused invariant checks. */
 static const yvex_attention_history_view *state_view(
     const test_state *state, unsigned long long layer_index,
     yvex_attention_state_view_kind kind)
@@ -692,7 +672,6 @@ static const yvex_attention_history_view *state_view(
                ? state->view(state->context, layer_index, kind) : NULL;
 }
 
-/* Purpose: copy one provider summary without exposing its concrete storage. */
 static int state_summary(const test_state *state,
                          yvex_graph_attention_state_summary *summary,
                          yvex_error *err)
@@ -701,7 +680,6 @@ static int state_summary(const test_state *state,
                ? state->summary(state->context, summary, err) : YVEX_ERR_STATE;
 }
 
-/* Purpose: copy one committed provider identity through its opaque contract. */
 static int state_identity(const test_state *state, unsigned long long layer_index,
                           char output[YVEX_SHA256_HEX_CAP], yvex_error *err)
 {
@@ -710,7 +688,6 @@ static int state_identity(const test_state *state, unsigned long long layer_inde
                : YVEX_ERR_STATE;
 }
 
-/* Purpose: begin one provider transaction and discard only the borrowed prior view. */
 static int state_begin(test_state *state, const yvex_attention_layer_plan *layer,
                        unsigned long long token_position,
                        unsigned long long token_count,
@@ -726,7 +703,6 @@ static int state_begin(test_state *state, const yvex_attention_layer_plan *layer
                : YVEX_ERR_STATE;
 }
 
-/* Purpose: prepare one provider layer with the exact boundary capacity used by its class. */
 static int state_prepare(test_state *state, const yvex_attention_layer_plan *layer,
                          const char *plan_identity)
 {
@@ -748,7 +724,7 @@ static int state_prepare(test_state *state, const yvex_attention_layer_plan *lay
                           &failure, &err) == YVEX_OK;
 }
 
-/* Purpose: apply one generated token using either an outer chunk or one decode transaction. */
+/* Apply one generated token using either an outer chunk or one decode transaction. */
 static int state_apply_token(test_state *state,
                              const yvex_attention_layer_plan *layer,
                              unsigned long long position, int outer_transaction,
@@ -776,7 +752,6 @@ static int state_apply_token(test_state *state,
     return 1;
 }
 
-/* Purpose: clone one plan fixture while rebinding its source-local layer storage. */
 static void state_plan_copy(state_plan_fixture *output,
                             const state_plan_fixture *input)
 {
@@ -785,7 +760,6 @@ static void state_plan_copy(state_plan_fixture *output,
     output->plan.layers = output->layers;
 }
 
-/* Purpose: collect layout, committed, candidate, and delta identities for one empty-to-token transition. */
 static int state_identity_sample(
     const state_plan_fixture *fixture, unsigned long long layer_index,
     char layout[YVEX_SHA256_HEX_CAP], char committed[YVEX_SHA256_HEX_CAP],
@@ -815,7 +789,7 @@ done:
     return ok;
 }
 
-/* Purpose: prove identical values cannot alias across plan, layout, or rolling-geometry changes. */
+/* Prove identical values cannot alias across plan, layout, or rolling-geometry changes. */
 static int test_state_identity_geometry(const state_plan_fixture *fixture)
 {
     state_plan_fixture plan_changed, geometry_changed;
@@ -846,7 +820,7 @@ static int test_state_identity_geometry(const state_plan_fixture *fixture)
     return 0;
 }
 
-/* Purpose: compare one N-token candidate transaction against N committed decode steps. */
+/* Compare one N-token candidate transaction against N committed decode steps. */
 static int state_phase_equivalence(const state_plan_fixture *fixture,
                                    unsigned long long layer_index,
                                    unsigned long long token_count)
@@ -927,7 +901,6 @@ done:
     return result;
 }
 
-/* Purpose: prove candidate abort, cancellation, reset, and idempotent cleanup preserve state. */
 static int test_state_lifecycle(const state_plan_fixture *fixture)
 {
     const yvex_graph_family_api *family = state_family();
@@ -1009,7 +982,6 @@ static int test_state_lifecycle(const state_plan_fixture *fixture)
     return 0;
 }
 
-/* Purpose: prove prepared attention banks reset to canonical empty state without reallocating. */
 static int test_state_reset(const state_plan_fixture *fixture)
 {
     const yvex_graph_family_api *family = state_family();
@@ -1070,7 +1042,7 @@ static int test_state_reset(const state_plan_fixture *fixture)
     return 0;
 }
 
-/* Purpose: prove a failed later-layer preparation cannot publish or corrupt prior state ownership. */
+/* Prove a failed later-layer preparation cannot publish or corrupt prior state ownership. */
 static int test_prepare_failure_is_atomic(const state_plan_fixture *fixture)
 {
     const yvex_graph_family_api *family = state_family();
@@ -1123,7 +1095,7 @@ static int test_prepare_failure_is_atomic(const state_plan_fixture *fixture)
     return 0;
 }
 
-/* Purpose: prove a multi-layer batch flips no selector until one atomic publish. */
+/* Prove a multi-layer batch flips no selector until one atomic publish. */
 static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
 {
     const yvex_graph_family_api *family = state_family();
@@ -1225,7 +1197,7 @@ static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
     return 0;
 }
 
-/* Purpose: prove aggregate capacity accounting remains distinct from one-layer capture maxima. */
+/* Prove aggregate capacity accounting remains distinct from one-layer capture maxima. */
 static int test_summary_capacity_accounting(const state_plan_fixture *fixture)
 {
     const yvex_graph_family_api *family = state_family();
@@ -1268,7 +1240,6 @@ static int test_summary_capacity_accounting(const state_plan_fixture *fixture)
     return 0;
 }
 
-/* Purpose: fill one complete execution descriptor fixture with canonical compatibility facts. */
 static void execution_descriptor_fixture(
     yvex_runtime_execution_descriptor_facts *facts)
 {
@@ -1338,7 +1309,6 @@ static void execution_descriptor_fixture(
     facts->total_device_bytes = 16ull * 1024ull * 1024ull * 1024ull;
 }
 
-/* Purpose: report whether one canonical fact mutation changes descriptor identity. */
 static int execution_descriptor_changed(
     const char *baseline, const yvex_runtime_execution_descriptor_facts *facts)
 {
@@ -1351,7 +1321,7 @@ static int execution_descriptor_changed(
            strcmp(baseline, identity) != 0;
 }
 
-/* Purpose: prove descriptor identity covers compatibility and excludes orchestration evidence. */
+/* Prove descriptor identity covers compatibility and excludes orchestration evidence. */
 static int test_execution_descriptor_identity(void)
 {
     yvex_runtime_execution_descriptor_facts facts, changed;
@@ -1519,7 +1489,6 @@ static int test_execution_descriptor_identity(void)
     return 0;
 }
 
-/* Purpose: prove a selected family recipe cannot bypass a missing runtime-binding refusal. */
 static int test_operator_missing_binding_refusal(void)
 {
     yvex_graph_attention_operator_request request;

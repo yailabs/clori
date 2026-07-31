@@ -1,15 +1,10 @@
-/* Owner: TRACK.ARTIFACT / TRACK.INTEGRITY.
- * Owns: bounded native GGUF roundtrip, whole-file identity, and one fail-closed admission result binding writer,
- *   physical emission, pinned official parsing, tokenizer facts, and the published immutable file snapshot.
- * Does not own: writer execution, official-reader production, registry persistence, materialization, runtime
- *   descriptors, execution, or release.
- * Invariants: roundtrip hashes every byte once; complete admission never upgrades a proof, external GGUF,
- *   incomplete file, or changed file snapshot.
- * Boundary: native verification feeds complete-artifact admission; acceptance means ready for materialization only.
- * Purpose: verify exact serialized artifacts and bind their independent proofs.
- * Inputs: sealed writer plans, digest evidence, immutable files, and parser facts.
- * Effects: bounded reads and population of caller-owned summaries or failures.
- * Failure: typed refusal with deterministic cleanup and no artifact mutation. */
+/*
+ * Verify exact serialized artifacts and bind their independent proofs.
+ *
+ * Roundtrip hashes every byte once; complete admission never upgrades a proof, external GGUF,
+ * incomplete file, or changed file snapshot. Native verification feeds complete-artifact
+ * admission; acceptance means ready for materialization only.
+ */
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,24 +71,18 @@ static const char *const artifact_admission_names[] = {
     [YVEX_ARTIFACT_ADMISSION_TENSOR_COVERAGE] = "tensor-coverage", [YVEX_ARTIFACT_ADMISSION_FILE_OPEN] = "file-open",
     [YVEX_ARTIFACT_ADMISSION_FILE_DRIFT] = "file-drift",
 };
-/* Purpose: copy one canonical SHA-256 identity into fixed-width result storage. */
+
 static void artifact_identity_copy(char destination[YVEX_SHA256_HEX_CAP], const char *source)
 {
     yvex_core_text_copy(destination, YVEX_SHA256_HEX_CAP, source);
 }
 
-/* Purpose: project a contiguous typed code through its immutable name table. */
 static const char *artifact_name_at(const char *const *names, size_t count, unsigned int code,
                                     const char *fallback)
 {
     return code < count && names[code] ? names[code] : fallback;
 }
 
-/* Purpose: publish one structured complete-artifact admission refusal.
- * Inputs: failure context, expected/actual counters, status, and diagnostic.
- * Effects: resets the caller failure record and writes the shared error object.
- * Failure: returns the supplied non-success status without touching artifact state.
- * Boundary: centralizes admission diagnostics, not admission policy. */
 static int admission_fail(yvex_artifact_admission_failure *failure,
                           yvex_artifact_admission_code code, const char *field,
                           unsigned long long expected, unsigned long long actual, yvex_error *err,
@@ -110,11 +99,6 @@ static int admission_fail(yvex_artifact_admission_failure *failure,
     return status;
 }
 
-/* Purpose: compare stable file identity captured by artifact and emission owners.
- * Inputs: immutable artifact snapshot and finalized file-sink summary.
- * Effects: none.
- * Failure: returns false for absent or mismatched identity fields.
- * Boundary: compares explicit fields and never hashes structure storage. */
 static int admission_snapshot_matches(const yvex_artifact_snapshot *snapshot,
                                       const yvex_gguf_file_sink_summary *emission) {
     return snapshot && emission && snapshot->device == emission->file_device &&
@@ -125,11 +109,6 @@ static int admission_snapshot_matches(const yvex_artifact_snapshot *snapshot,
            snapshot->ctime_nanoseconds == emission->published_ctime_nanoseconds;
 }
 
-/* Purpose: bind official-reader evidence to the validated emission inode.
- * Inputs: pinned-reader fact and finalized file-sink summary.
- * Effects: none.
- * Failure: returns false for absent evidence or any snapshot mismatch.
- * Boundary: validates file identity only; parser correctness stays external. */
 static int admission_official_snapshot_matches(const yvex_artifact_official_reader_fact *official,
                                                const yvex_gguf_file_sink_summary *emission) {
     return official && emission && official->file_device == emission->file_device &&
@@ -141,11 +120,7 @@ static int admission_official_snapshot_matches(const yvex_artifact_official_read
            official->file_ctime_nanoseconds == emission->validated_ctime_nanoseconds;
 }
 
-/* Purpose: bind all complete-artifact admission evidence into one immutable record identity.
- * Inputs: populated admission facts and fixed-width output.
- * Effects: writes only canonical SHA-256 text.
- * Failure: returns false if any explicit-width encoding step fails.
- * Boundary: record integrity does not replace exact artifact byte verification. */
+/* Bind all complete-artifact admission evidence into one immutable record identity. */
 static int admission_identity_encode(const yvex_complete_artifact_admission *admission,
                                      char output[YVEX_SHA256_HEX_CAP])
 {
@@ -179,7 +154,6 @@ static int admission_identity_encode(const yvex_complete_artifact_admission *adm
     return 1;
 }
 
-/* Purpose: validate every pinned digest in one admitted DeepSeek physical variant. */
 static int admission_deepseek_identities_valid(
     const yvex_complete_artifact_admission *admission)
 {
@@ -193,7 +167,6 @@ static int admission_deepseek_identities_valid(
            yvex_sha256_hex_is_valid(admission->writer_plan_identity);
 }
 
-/* Purpose: select one accepted physical artifact by immutable extent before exact hash proof. */
 static const yvex_complete_artifact_admission *admission_deepseek_for_size(
     unsigned long long file_bytes)
 {
@@ -207,11 +180,6 @@ static const yvex_complete_artifact_admission *admission_deepseek_for_size(
     return NULL;
 }
 
-/* Purpose: admit a published artifact when every independent proof agrees.
- * Inputs: writer plan, emission, native roundtrip, official parse, and path.
- * Effects: reopens the file metadata-only and fills one caller-owned admission.
- * Failure: returns a typed refusal and leaves the output cleared.
- * Boundary: consumes payload proof but does not reread tensor bytes. */
 int yvex_complete_artifact_admit(const yvex_artifact_admission_request *request,
                                  yvex_complete_artifact_admission *out,
                                  yvex_artifact_admission_failure *failure, yvex_error *err) {
@@ -349,11 +317,6 @@ int yvex_complete_artifact_admit(const yvex_artifact_admission_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: reconstruct the pinned DeepSeek admission from canonical constants.
- * Inputs: an already-open selected artifact and caller-owned result records.
- * Effects: validates the immutable snapshot and fills materialization facts.
- * Failure: clears output and reports size or snapshot disagreement.
- * Boundary: preserves prior artifact proof without revalidating payload bytes. */
 int yvex_artifact_admit_deepseek(const yvex_artifact *artifact,
                                  yvex_complete_artifact_admission *out,
                                  yvex_artifact_admission_failure *failure, yvex_error *err) {
@@ -398,11 +361,7 @@ int yvex_artifact_admit_deepseek(const yvex_artifact *artifact,
     return YVEX_OK;
 }
 
-/* Purpose: bind one opened artifact snapshot to its admitted exact-file identity.
- * Inputs: stable artifact handle and complete prior admission record.
- * Effects: hashes the full file and upgrades a copied admission only on exact success.
- * Failure: leaves the supplied admission unchanged and publishes typed mismatch context.
- * Boundary: verifies physical bytes only; it does not rederive semantic completeness. */
+/* Bind one opened artifact snapshot to its admitted exact-file identity. */
 int yvex_artifact_admission_identity_verify(
     const yvex_artifact *artifact, yvex_complete_artifact_admission *admission,
     int (*progress)(void *context, unsigned long long completed,
@@ -457,11 +416,6 @@ _Static_assert(YVEX_SHA256_HEX_CAP == YVEX_GGUF_WRITER_IDENTITY_CAP,
 static const char compatibility_message[] =
     "writer plan and admitted artifact physical consequences disagree";
 
-/* Purpose: publish one typed mismatch.
- * Inputs: comparison state and exact expected/actual fact.
- * Effects: invalidates compatibility.
- * Failure: returns the supplied status.
- * Boundary: performs no I/O. */
 static int compatibility_fail(compatibility_check *check, yvex_artifact_compatibility_code code,
                               const char *field, unsigned long long expected,
                               unsigned long long actual, yvex_status status) {
@@ -489,11 +443,6 @@ static int compatibility_fail(compatibility_check *check, yvex_artifact_compatib
     return status;
 }
 
-/* Purpose: bind complete admission provenance.
- * Inputs: plan, admission, and artifact snapshot.
- * Effects: reads current snapshot state only.
- * Failure: returns a typed stale or invalid refusal.
- * Boundary: never compares payload bytes. */
 static int compatibility_provenance_validate(const yvex_gguf_writer_plan_summary *plan,
                                              const yvex_complete_artifact_admission *admission,
                                              const yvex_artifact *artifact,
@@ -548,11 +497,6 @@ static int compatibility_provenance_validate(const yvex_gguf_writer_plan_summary
     return YVEX_OK;
 }
 
-/* Purpose: compare aggregate container geometry.
- * Inputs: plan, admission, artifact, and GGUF view.
- * Effects: records structural read accounting.
- * Failure: returns a typed layout refusal.
- * Boundary: performs no payload reads. */
 static int compatibility_layout_validate(const yvex_gguf_writer_plan_summary *plan,
                                          const yvex_complete_artifact_admission *admission,
                                          const yvex_artifact *artifact, const yvex_gguf *gguf,
@@ -596,11 +540,6 @@ static int compatibility_layout_validate(const yvex_gguf_writer_plan_summary *pl
     return YVEX_OK;
 }
 
-/* Purpose: compare all tensor directory rows.
- * Inputs: writer plan and parsed GGUF directory.
- * Effects: counts matching rows.
- * Failure: returns the first typed mismatch.
- * Boundary: observes directory facts only. */
 static int compatibility_tensors_validate(const yvex_gguf_writer_plan *writer_plan,
                                           const yvex_gguf_writer_plan_summary *plan,
                                           const yvex_gguf *gguf, compatibility_check *check) {
@@ -672,11 +611,11 @@ static int compatibility_tensors_validate(const yvex_gguf_writer_plan *writer_pl
     return YVEX_OK;
 }
 
-/* Purpose: prove a new semantic writer plan preserves an admitted physical GGUF exactly.
- * Inputs: sealed writer plan, complete admission, opened artifact, and parsed GGUF directory.
- * Effects: validates structural padding and fills one immutable caller-owned compatibility fact.
- * Failure: typed mismatch requires artifact and materialization rebuild; no payload is read.
- * Boundary: differing transform/profile/writer identities are admitted only when bytes are equal. */
+/*
+ * Prove a new semantic writer plan preserves an admitted physical GGUF exactly.
+ *
+ * Validates structural padding and fills one immutable caller-owned compatibility fact.
+ */
 int yvex_artifact_physical_compatibility_validate(
     const yvex_gguf_writer_plan *writer_plan, const yvex_complete_artifact_admission *admission,
     const yvex_artifact *artifact, const yvex_gguf *gguf, yvex_artifact_physical_compatibility *out,
@@ -749,22 +688,12 @@ int yvex_artifact_physical_compatibility_validate(
     return YVEX_OK;
 }
 
-/* Purpose: project an admission refusal code to stable diagnostic text.
- * Inputs: typed admission code.
- * Effects: none.
- * Failure: unknown values map to an explicit unknown spelling.
- * Boundary: rendering aid only; refusal policy remains typed. */
 const char *yvex_artifact_admission_code_name(yvex_artifact_admission_code code) {
     return artifact_name_at(artifact_admission_names,
                             sizeof(artifact_admission_names) / sizeof(artifact_admission_names[0]),
                             (unsigned int)code, "unknown");
 }
 
-/* Purpose: publish one structured native-roundtrip refusal.
- * Inputs: failing record coordinates, expected/actual facts, and status.
- * Effects: resets the failure record and updates the shared error object.
- * Failure: returns the supplied status without preserving partial success facts.
- * Boundary: centralizes evidence formatting, not verification decisions. */
 static int roundtrip_fail(yvex_gguf_roundtrip_failure *failure, yvex_gguf_roundtrip_code code,
                           const char *name, unsigned long long metadata, unsigned long long tensor,
                           unsigned long long expected, unsigned long long actual,
@@ -785,11 +714,6 @@ static int roundtrip_fail(yvex_gguf_roundtrip_failure *failure, yvex_gguf_roundt
     return status;
 }
 
-/* Purpose: verify one tokenizer metadata array's type and cardinality.
- * Inputs: admitted GGUF, metadata key, element type, and expected count.
- * Effects: none.
- * Failure: returns false when the entry is absent, malformed, or mismatched.
- * Boundary: checks tokenizer completeness without owning metadata parsing. */
 static int roundtrip_array_count(const yvex_gguf *gguf, const char *key, unsigned int element_type,
                                  unsigned long long expected) {
     const yvex_gguf_value *value = yvex_gguf_metadata_find(gguf, key);
@@ -798,11 +722,12 @@ static int roundtrip_array_count(const yvex_gguf *gguf, const char *key, unsigne
            array.element_type == (yvex_gguf_value_type)element_type && array.count == expected;
 }
 
-/* Purpose: hash one exact file range and optionally enforce zero-filled bytes.
- * Inputs: admitted artifact, range, bounded scratch, hash states, and counters.
- * Effects: performs positioned reads and advances caller-owned hashes/statistics.
- * Failure: returns false on arithmetic, read, hash, or zero-padding disagreement.
- * Boundary: retains no payload and never reads beyond the requested range. */
+/*
+ * Hash one exact file range and optionally enforce zero-filled bytes.
+ *
+ * Admitted artifact, range, bounded scratch, hash states, and counters. Returns false on
+ * arithmetic, read, hash, or zero-padding disagreement.
+ */
 static int roundtrip_hash_range(const yvex_artifact *artifact, unsigned long long offset,
                                 unsigned long long byte_count, unsigned char *buffer,
                                 size_t buffer_bytes, yvex_artifact_identity_stream *whole,
@@ -834,11 +759,6 @@ static int roundtrip_hash_range(const yvex_artifact *artifact, unsigned long lon
     return 1;
 }
 
-/* Purpose: initialize bounded native-roundtrip options.
- * Inputs: caller-owned options storage.
- * Effects: resets the structure and selects the canonical chunk size.
- * Failure: a null destination is ignored.
- * Boundary: supplies defaults only and performs no I/O. */
 void yvex_gguf_roundtrip_options_default(yvex_gguf_roundtrip_options *options) {
     if (!options)
         return;
@@ -846,11 +766,6 @@ void yvex_gguf_roundtrip_options_default(yvex_gguf_roundtrip_options *options) {
     options->verification_chunk_bytes = ROUNDTRIP_DEFAULT_CHUNK;
 }
 
-/* Purpose: publish a synchronous borrowed verification progress snapshot.
- * Inputs: optional callback options, current summary, and planned file bytes.
- * Effects: may invoke the caller callback exactly once for this checkpoint.
- * Failure: callback behavior is observational and cannot alter verifier state.
- * Boundary: neither pointers nor payload bytes may be retained by this owner. */
 static void roundtrip_progress_publish(const yvex_gguf_roundtrip_options *options,
                                        const yvex_gguf_roundtrip_summary *summary,
                                        unsigned long long planned_file_bytes) {
@@ -880,11 +795,6 @@ typedef struct {
     unsigned long long first_nonzero;
 } roundtrip_context;
 
-/* Purpose: admit immutable roundtrip inputs and bounded scratch configuration.
- * Inputs: partially initialized verification context and optional options.
- * Effects: copies options into owned context state.
- * Failure: returns typed invalid-argument refusal before opening the artifact.
- * Boundary: validates planning facts only and reads zero file bytes. */
 static int roundtrip_context_admit(roundtrip_context *context,
                                    const yvex_gguf_roundtrip_options *options) {
     if (!context->path || !context->path[0] || !context->plan || !context->digest_sink ||
@@ -905,11 +815,6 @@ static int roundtrip_context_admit(roundtrip_context *context,
     return YVEX_OK;
 }
 
-/* Purpose: open the immutable artifact and admit its native GGUF layout.
- * Inputs: admitted context carrying path and sealed writer-plan summary.
- * Effects: owns artifact/GGUF handles and records reader/layout acceptance.
- * Failure: returns typed open, parse, size, or layout refusal for cleanup.
- * Boundary: parser/layout owners supply facts; this owner binds them to the plan. */
 static int roundtrip_open_container(roundtrip_context *context) {
     yvex_artifact_options artifact_options;
     yvex_gguf_reader_options reader_options;
@@ -956,11 +861,6 @@ static int roundtrip_open_container(roundtrip_context *context) {
     return YVEX_OK;
 }
 
-/* Purpose: compare header, tokenizer, and tensor directory against the plan.
- * Inputs: open admitted GGUF and immutable writer-plan directory.
- * Effects: records admitted metadata/tensor counts and tokenizer completeness.
- * Failure: returns at the first typed header, tokenizer, or tensor divergence.
- * Boundary: compares structural facts and reads no tensor payload. */
 static int roundtrip_validate_directory(roundtrip_context *context) {
     const yvex_gguf_header *header = yvex_gguf_header_view(context->gguf);
     unsigned long long ordinal;
@@ -1024,11 +924,12 @@ static int roundtrip_validate_directory(roundtrip_context *context) {
     return YVEX_OK;
 }
 
-/* Purpose: verify and hash the serialized structural prefix exactly once.
- * Inputs: open artifact, sealed plan prefix, bounded chunk configuration.
- * Effects: allocates scratch and advances whole-file identity and counters.
- * Failure: refuses allocation, exact-read, prefix, or hash disagreement.
- * Boundary: covers only bytes preceding the first tensor payload. */
+/*
+ * Verify and hash the serialized structural prefix exactly once.
+ *
+ * Open artifact, sealed plan prefix, bounded chunk configuration. Allocates scratch and advances
+ * whole-file identity and counters.
+ */
 static int roundtrip_verify_prefix(roundtrip_context *context) {
     context->prefix = yvex_gguf_writer_plan_prefix(context->writer_plan, &context->prefix_bytes);
     context->buffer = (unsigned char *)malloc(context->options.verification_chunk_bytes);
@@ -1073,11 +974,11 @@ static int roundtrip_verify_prefix(roundtrip_context *context) {
     return YVEX_OK;
 }
 
-/* Purpose: verify one tensor payload digest and its canonical zero padding.
- * Inputs: verification context and canonical terminal ordinal.
- * Effects: advances file cursor, hashes, payload counters, and progress evidence.
- * Failure: refuses missing digest, short read, digest mismatch, or dirty padding.
- * Boundary: processes one terminal incrementally without retaining its payload. */
+/*
+ * Verify one tensor payload digest and its canonical zero padding.
+ *
+ * Refuses missing digest, short read, digest mismatch, or dirty padding.
+ */
 static int roundtrip_verify_terminal(roundtrip_context *context, unsigned long long ordinal) {
     const yvex_gguf_writer_tensor *tensor =
         yvex_gguf_writer_plan_tensor_at(context->writer_plan, ordinal);
@@ -1144,11 +1045,11 @@ static int roundtrip_verify_terminal(roundtrip_context *context, unsigned long l
     return YVEX_OK;
 }
 
-/* Purpose: seal whole-file identity and prove the open inode remained stable.
- * Inputs: fully traversed context with before snapshot and hash stream.
- * Effects: finalizes artifact identity and publishes immutable snapshot facts.
- * Failure: refuses incomplete byte coverage, digest failure, or file drift.
- * Boundary: completes native proof but does not admit runtime support. */
+/*
+ * Seal whole-file identity and prove the open inode remained stable.
+ *
+ * Finalizes artifact identity and publishes immutable snapshot facts.
+ */
 static int roundtrip_finish(roundtrip_context *context) {
     unsigned char payload_digest[YVEX_SHA256_DIGEST_BYTES];
 
@@ -1187,11 +1088,11 @@ static int roundtrip_finish(roundtrip_context *context) {
     return YVEX_OK;
 }
 
-/* Purpose: validate every planned byte of one complete temporary/final artifact.
- * Inputs: path, sealed plan, execution digests, options, and caller records.
- * Effects: bounded full-file reads plus deterministic summary/failure publication.
- * Failure: clears partial success, releases all handles/scratch, and returns typed error.
- * Boundary: borrows plan/digests and never writes or maps the complete file. */
+/*
+ * Validate every planned byte of one complete temporary/final artifact.
+ *
+ * Bounded full-file reads plus deterministic summary/failure publication.
+ */
 int yvex_gguf_roundtrip_validate(const char *path, const yvex_gguf_writer_plan *writer_plan,
                                  yvex_quant_digest_sink *digest_sink,
                                  const yvex_gguf_roundtrip_options *options,

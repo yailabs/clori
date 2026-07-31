@@ -1,15 +1,11 @@
-/* Owner: src/model
- * Owns: dtype lookup, model descriptors, tensor role classification, tensor tables, and materialized weight tables.
- * Does not own: CLI grammar, usage text, report rendering, model-target command adapters, artifact emission, graph
- *   execution, generation, eval, benchmark, or release decisions.
- * Invariants: model facts are built from parsed GGUF and tensor metadata; tensor payload bytes are read only
- *   through explicit materialization paths; domain code returns facts and errors, not operator prose.
- * Boundary: model metadata/materialization facts are not model support, runtime support, generation support, eval
- *   evidence, benchmark evidence, or release readiness.
- * Purpose: own model descriptors, tensor tables, and materialized weight lifecycles.
- * Inputs: typed GGUF descriptors, artifacts, tensors, and backends.
- * Effects: allocates and releases model, tensor, and weight owner state.
- * Failure: typed parse or materialization failure unwinds every acquired resource. */
+/*
+ * Own model descriptors, tensor tables, and materialized weight lifecycles.
+ *
+ * Model facts are built from parsed GGUF and tensor metadata; tensor payload bytes are read only
+ * through explicit materialization paths; domain code returns facts and errors, not operator
+ * prose. Model metadata/materialization facts are not model support, runtime support, generation
+ * support, eval evidence, benchmark evidence, or release readiness.
+ */
 
 #include <yvex/model.h>
 #include <yvex/artifact.h>
@@ -84,11 +80,6 @@ static const architecture_name architecture_names[] = {
     {"phi", YVEX_ARCH_PHI}, {"kimi", YVEX_ARCH_KIMI}, {"glm", YVEX_ARCH_GLM}
 };
 
-/* Purpose: map dtype info through canonical typed vocabulary.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const yvex_dtype_info *yvex_dtype_get_info(yvex_dtype dtype)
 {
     unsigned long i;
@@ -102,11 +93,6 @@ const yvex_dtype_info *yvex_dtype_get_info(yvex_dtype dtype)
     return &dtype_table[0];
 }
 
-/* Purpose: map dtype from ggml type through canonical typed vocabulary.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const yvex_dtype_info *yvex_dtype_from_ggml_type(unsigned int ggml_type)
 {
     unsigned long i;
@@ -120,11 +106,6 @@ const yvex_dtype_info *yvex_dtype_from_ggml_type(unsigned int ggml_type)
     return &dtype_table[0];
 }
 
-/* Purpose: project typed dtype name vocabulary without lost semantics.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const char *yvex_dtype_name(yvex_dtype dtype)
 {
     const yvex_dtype_info *info = yvex_dtype_get_info(dtype);
@@ -133,12 +114,6 @@ const char *yvex_dtype_name(yvex_dtype dtype)
         ? "UNKNOWN"
         : yvex_gguf_qtype_name(info->ggml_type);
 }
-
-/* Purpose: map dtype quantized through canonical typed vocabulary.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 
 int yvex_dtype_is_quantized(yvex_dtype dtype)
 {
@@ -150,12 +125,6 @@ int yvex_dtype_is_quantized(yvex_dtype dtype)
         geometry->storage_class == YVEX_GGUF_QTYPE_STORAGE_BLOCK_QUANTIZED;
 }
 
-/* Purpose: map dtype storage supported through canonical typed vocabulary.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
-
 int yvex_dtype_storage_supported(yvex_dtype dtype)
 {
     const yvex_dtype_info *info = yvex_dtype_get_info(dtype);
@@ -164,11 +133,6 @@ int yvex_dtype_storage_supported(yvex_dtype dtype)
         yvex_gguf_qtype_supported_for_storage(info->ggml_type, NULL);
 }
 
-/* Purpose: map dtype storage error code through canonical typed vocabulary.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 static int dtype_storage_error_code(yvex_gguf_qtype_storage_status status)
 {
     switch (status) {
@@ -195,12 +159,6 @@ static int dtype_storage_error_code(yvex_gguf_qtype_storage_status status)
     }
     return YVEX_ERR_UNSUPPORTED;
 }
-
-/* Purpose: map dtype tensor storage bytes through canonical typed vocabulary.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 
 int yvex_dtype_tensor_storage_bytes(yvex_dtype dtype,
                                     const unsigned long long *dims,
@@ -241,12 +199,6 @@ int yvex_dtype_tensor_storage_bytes(yvex_dtype dtype,
     return YVEX_OK;
 }
 
-/* Purpose: map dtype storage bytes through canonical typed vocabulary.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
-
 int yvex_dtype_storage_bytes(yvex_dtype dtype,
                              unsigned long long row_element_count,
                              unsigned long long *out,
@@ -272,11 +224,6 @@ struct yvex_model_descriptor {
     unsigned long long role_counts[YVEX_TENSOR_ROLE_COUNT];
 };
 
-/* Purpose: compare or copy copy bytes string under exact ownership.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 static char *copy_bytes_string(const char *data, unsigned long long len)
 {
     char *copy;
@@ -296,7 +243,6 @@ static char *copy_bytes_string(const char *data, unsigned long long len)
     return copy;
 }
 
-/* Purpose: project typed arch from name vocabulary without lost semantics. */
 static yvex_arch arch_from_name(const char *name)
 {
     size_t index;
@@ -311,26 +257,11 @@ static yvex_arch arch_from_name(const char *name)
 }
 
 /*
- * yvex_model_descriptor_from_gguf()
+ * Build a model descriptor from parsed GGUF metadata and tensor-table facts.
  *
- * Purpose:
- *   build a model descriptor from parsed GGUF metadata and tensor-table facts.
- *
- * Inputs:
- *   gguf and tensors are borrowed immutable views; out receives owned
- *   descriptor storage.
- *
- * Effects:
- *   allocates descriptor/name memory and counts tensor storage/roles; it does
- *   not print, read tensor payload bytes, or touch backend state.
- *
- * Failure:
- *   returns invalid-arg or allocation failures and releases partial descriptor
- *   ownership before returning.
- *
- * Boundary:
- *   descriptor metadata is not runtime support, generation support, benchmark
- *   evidence, or release readiness. */
+ * Returns invalid-arg or allocation failures and releases partial descriptor ownership before
+ * returning.
+ */
 int yvex_model_descriptor_from_gguf(yvex_model_descriptor **out,
                                     const yvex_gguf *gguf,
                                     const yvex_tensor_table *tensors,
@@ -402,11 +333,6 @@ int yvex_model_descriptor_from_gguf(yvex_model_descriptor **out,
     return YVEX_OK;
 }
 
-/* Purpose: release owned descriptor close resources in dependency order.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 void yvex_model_descriptor_close(yvex_model_descriptor *model)
 {
     if (!model) {
@@ -416,21 +342,11 @@ void yvex_model_descriptor_close(yvex_model_descriptor *model)
     free(model);
 }
 
-/* Purpose: map arch through canonical typed vocabulary.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 yvex_arch yvex_model_arch(const yvex_model_descriptor *model)
 {
     return model ? model->arch : YVEX_ARCH_UNKNOWN;
 }
 
-/* Purpose: project typed arch name vocabulary without lost semantics.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const char *yvex_arch_name(yvex_arch arch)
 {
     size_t index;
@@ -441,11 +357,7 @@ const char *yvex_arch_name(yvex_arch arch)
     return "unknown";
 }
 
-/* Purpose: return the immutable model descriptor name without transferring ownership.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
+/* Return the immutable model descriptor name without transferring ownership. */
 const char *yvex_model_name(const yvex_model_descriptor *model)
 {
     if (!model || !model->name) {
@@ -453,12 +365,6 @@ const char *yvex_model_name(const yvex_model_descriptor *model)
     }
     return model->name;
 }
-
-/* Purpose: construct bounded context open state from admitted inputs.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 
 int yvex_model_context_open(const char *path_or_alias,
                             yvex_model_context *out,
@@ -514,12 +420,6 @@ int yvex_model_context_open(const char *path_or_alias,
     return rc;
 }
 
-/* Purpose: construct bounded context open tokenizer state from admitted inputs.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
-
 int yvex_model_context_open_tokenizer(const char *path_or_alias,
                                       yvex_model_context *out,
                                       yvex_error *err)
@@ -538,12 +438,6 @@ int yvex_model_context_open_tokenizer(const char *path_or_alias,
     return rc;
 }
 
-/* Purpose: release owned context close resources in dependency order.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
-
 void yvex_model_context_close(yvex_model_context *context)
 {
     if (!context) return;
@@ -554,12 +448,6 @@ void yvex_model_context_close(yvex_model_context *context)
     yvex_artifact_close(context->artifact);
     memset(context, 0, sizeof(*context));
 }
-
-/* Purpose: apply the canonical context vocab size transformation and invariants.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 
 int yvex_model_context_vocab_size(const char *path_or_alias,
                                   unsigned long long *out_vocab_size,
@@ -605,51 +493,26 @@ int yvex_model_context_vocab_size(const char *path_or_alias,
     return YVEX_ERR_UNSUPPORTED;
 }
 
-/* Purpose: apply the canonical context length transformation and invariants.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 unsigned long long yvex_model_context_length(const yvex_model_descriptor *model)
 {
     return model ? model->context_length : 0;
 }
 
-/* Purpose: project the immutable bounded tensor count view.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 unsigned long long yvex_model_tensor_count(const yvex_model_descriptor *model)
 {
     return model ? model->tensor_count : 0;
 }
 
-/* Purpose: apply the canonical total storage bytes transformation and invariants.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 unsigned long long yvex_model_total_storage_bytes(const yvex_model_descriptor *model)
 {
     return model ? model->total_storage_bytes : 0;
 }
 
-/* Purpose: project the immutable bounded unsupported tensor accounting count view.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 unsigned long long yvex_model_unsupported_tensor_accounting_count(const yvex_model_descriptor *model)
 {
     return model ? model->unsupported_tensor_accounting_count : 0;
 }
 
-/* Purpose: project the immutable bounded role count view.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 unsigned long long yvex_model_role_count(const yvex_model_descriptor *model, yvex_tensor_role role)
 {
     if (!model || role >= YVEX_TENSOR_ROLE_COUNT) {
@@ -717,17 +580,11 @@ static const char *const tensor_role_names[YVEX_TENSOR_ROLE_COUNT] = {
     [YVEX_TENSOR_ROLE_MTP_OUTPUT_NORM] = "mtp_output_norm"
 };
 
-/* Purpose: project typed role name vocabulary without lost semantics.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const char *yvex_tensor_role_name(yvex_tensor_role role)
 {
     return role >= 0 && role < YVEX_TENSOR_ROLE_COUNT ? tensor_role_names[role] : "unknown";
 }
 
-/* Purpose: apply the canonical ends with transformation and invariants. */
 static int ends_with(const char *text, const char *suffix)
 {
     size_t text_len;
@@ -746,7 +603,6 @@ static int ends_with(const char *text, const char *suffix)
     return strcmp(text + text_len - suffix_len, suffix) == 0;
 }
 
-/* Purpose: apply the canonical contains transformation and invariants. */
 static int contains(const char *text, const char *needle)
 {
     return text && needle && strstr(text, needle) != NULL;
@@ -802,26 +658,6 @@ static const tensor_role_rule tensor_role_rules[] = {
      TENSOR_ROLE_SUFFIX}
 };
 
-/*
- * yvex_tensor_role_classify()
- *
- * Purpose:
- *   classify known GGUF/native tensor names into YVEX tensor role labels.
- *
- * Inputs:
- *   borrowed architecture/name/shape/dtype metadata; tensor payload bytes are
- *   never accessed.
- *
- * Effects:
- *   performs pure lexical classification with no allocation, IO, printing, or
- *   backend mutation.
- *
- * Failure:
- *   returns unknown for missing or unrecognized names.
- *
- * Boundary:
- *   lexical role classification is not full family tensor-map readiness,
- *   runtime descriptor readiness, or generation support. */
 yvex_tensor_role yvex_tensor_role_classify(const char *architecture,
                                            const char *tensor_name,
                                            unsigned int rank,
@@ -858,11 +694,6 @@ struct yvex_tensor_table {
     unsigned long long count;
 };
 
-/* Purpose: apply the canonical product dims transformation and invariants.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 static int product_dims(const yvex_gguf_tensor_info *src, unsigned long long *out, yvex_error *err)
 {
     unsigned int i;
@@ -886,27 +717,6 @@ static int product_dims(const yvex_gguf_tensor_info *src, unsigned long long *ou
     return YVEX_OK;
 }
 
-/*
- * yvex_tensor_table_from_gguf()
- *
- * Purpose:
- *   materialize a tensor metadata table from the parsed GGUF tensor directory.
- *
- * Inputs:
- *   gguf is a borrowed descriptor view; out receives an owned tensor table.
- *
- * Effects:
- *   allocates tensor rows and names, validates shape products, computes storage
- *   accounting, and assigns lexical roles. It does not read tensor payload
- *   bytes or allocate backend tensors.
- *
- * Failure:
- *   returns invalid-arg, allocation, format, bounds, or propagated storage
- *   accounting errors and releases partial tables.
- *
- * Boundary:
- *   tensor directory metadata is not runtime execution, artifact emission, or
- *   generation-capable artifact proof. */
 int yvex_tensor_table_from_gguf(yvex_tensor_table **out,
                                 const yvex_gguf *gguf,
                                 yvex_error *err)
@@ -996,11 +806,6 @@ int yvex_tensor_table_from_gguf(yvex_tensor_table **out,
     return YVEX_OK;
 }
 
-/* Purpose: release parsed tensor-table names and rows in dependency order.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 void yvex_tensor_table_close(yvex_tensor_table *table)
 {
     unsigned long long i;
@@ -1018,21 +823,11 @@ void yvex_tensor_table_close(yvex_tensor_table *table)
     free(table);
 }
 
-/* Purpose: return the immutable parsed tensor-table row count.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 unsigned long long yvex_tensor_table_count(const yvex_tensor_table *table)
 {
     return table ? table->count : 0;
 }
 
-/* Purpose: return one checked immutable parsed tensor-table row.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const yvex_tensor_info *yvex_tensor_table_at(const yvex_tensor_table *table,
                                              unsigned long long index)
 {
@@ -1042,11 +837,6 @@ const yvex_tensor_info *yvex_tensor_table_at(const yvex_tensor_table *table,
     return &table->items[index];
 }
 
-/* Purpose: resolve a parsed tensor by exact canonical tensor name.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const yvex_tensor_info *yvex_tensor_table_find(const yvex_tensor_table *table,
                                                const char *name)
 {
@@ -1084,7 +874,6 @@ struct yvex_weight_table {
     yvex_materialize_summary summary;
 };
 
-/* Purpose: apply the canonical test env enabled transformation and invariants. */
 static int test_env_enabled(const char *name)
 {
     const char *value = getenv(name);
@@ -1092,11 +881,6 @@ static int test_env_enabled(const char *name)
     return value && value[0] != '\0' && strcmp(value, "0") != 0;
 }
 
-/* Purpose: release owned materialized weight clear resources in dependency order.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 static void materialized_weight_clear(yvex_weight_table *table,
                                            yvex_materialized_weight *weight)
 {
@@ -1111,11 +895,7 @@ static void materialized_weight_clear(yvex_weight_table *table,
     weight->name = NULL;
 }
 
-/* Purpose: release backend materialized weights and table ownership in dependency order.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
+/* Release backend materialized weights and table ownership in dependency order. */
 void yvex_weight_table_close(yvex_weight_table *weights)
 {
     unsigned long long i;
@@ -1131,21 +911,11 @@ void yvex_weight_table_close(yvex_weight_table *weights)
     free(weights);
 }
 
-/* Purpose: return the immutable materialized-weight table count.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 unsigned long long yvex_weight_table_count(const yvex_weight_table *weights)
 {
     return weights ? weights->count : 0;
 }
 
-/* Purpose: return one checked immutable materialized-weight row.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const yvex_materialized_weight *yvex_weight_table_at(const yvex_weight_table *weights,
                                                      unsigned long long index)
 {
@@ -1155,11 +925,6 @@ const yvex_materialized_weight *yvex_weight_table_at(const yvex_weight_table *we
     return &weights->items[index];
 }
 
-/* Purpose: resolve one materialized weight by exact canonical tensor name.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const yvex_materialized_weight *yvex_weight_table_find(const yvex_weight_table *weights,
                                                        const char *name)
 {
@@ -1176,11 +941,6 @@ const yvex_materialized_weight *yvex_weight_table_find(const yvex_weight_table *
     return NULL;
 }
 
-/* Purpose: project typed status name vocabulary without lost semantics.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const char *yvex_weight_status_name(yvex_weight_status status)
 {
     switch (status) {
@@ -1192,11 +952,6 @@ const char *yvex_weight_status_name(yvex_weight_status status)
     return "unknown";
 }
 
-/* Purpose: project typed residency name vocabulary without lost semantics.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const char *yvex_weight_residency_name(yvex_weight_residency residency)
 {
     switch (residency) {
@@ -1207,67 +962,37 @@ const char *yvex_weight_residency_name(yvex_weight_residency residency)
     return "unknown";
 }
 
-/* Purpose: return one borrowed materialized-weight name without ownership transfer.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
+/* Return one borrowed materialized-weight name without ownership transfer. */
 const char *yvex_weight_name(const yvex_materialized_weight *weight)
 {
     return weight && weight->name ? weight->name : "";
 }
 
-/* Purpose: map dtype through canonical typed vocabulary.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 yvex_dtype yvex_weight_dtype(const yvex_materialized_weight *weight)
 {
     return weight ? weight->dtype : YVEX_DTYPE_UNKNOWN;
 }
 
-/* Purpose: map role through canonical typed vocabulary.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 yvex_tensor_role yvex_weight_role(const yvex_materialized_weight *weight)
 {
     return weight ? weight->role : YVEX_TENSOR_ROLE_UNKNOWN;
 }
 
-/* Purpose: apply the canonical bytes transformation and invariants.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 unsigned long long yvex_weight_bytes(const yvex_materialized_weight *weight)
 {
     return weight ? weight->bytes : 0;
 }
 
-/* Purpose: apply the canonical residency transformation and invariants.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 yvex_weight_residency yvex_weight_residency_of(const yvex_materialized_weight *weight)
 {
     return weight ? weight->residency : YVEX_WEIGHT_RESIDENCY_HOST;
 }
 
-/* Purpose: apply the canonical device tensor transformation and invariants.
- * Inputs: typed model and backend facts are explicit.
- * Effects: mutates only declared model output.
- * Failure: preserves typed failure and cleanup.
- * Boundary: does not imply graph execution. */
 const yvex_device_tensor *yvex_weight_device_tensor(const yvex_materialized_weight *weight)
 {
     return weight ? weight->device_tensor : NULL;
 }
 
-/* Purpose: apply the canonical residency from backend transformation and invariants. */
 static yvex_weight_residency residency_from_backend(const yvex_backend *backend)
 {
     if (yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA) {
@@ -1279,7 +1004,6 @@ static yvex_weight_residency residency_from_backend(const yvex_backend *backend)
     return YVEX_WEIGHT_RESIDENCY_HOST;
 }
 
-/* Purpose: compare or copy copy tensor dims under exact ownership. */
 static int copy_tensor_dims(yvex_backend_tensor_desc *desc, const yvex_tensor_info *tensor)
 {
     unsigned int i;
@@ -1293,28 +1017,6 @@ static int copy_tensor_dims(yvex_backend_tensor_desc *desc, const yvex_tensor_in
     return 1;
 }
 
-/*
- * materialize_one()
- *
- * Purpose:
- *   copy one validated artifact tensor range into backend-owned storage.
- *
- * Inputs:
- *   table/backend, artifact, gguf, and tensor metadata are borrowed for the
- *   duration of the transfer.
- *
- * Effects:
- *   validates the tensor range, allocates a backend tensor, writes bytes from
- *   the explicit artifact payload range, records residency, and cleans up on
- *   failure.
- *
- * Failure:
- *   returns validation, backend, allocation, or injected test failures after
- *   freeing any backend allocation it owns.
- *
- * Boundary:
- *   materialization is storage/residency proof only; it does not execute graph
- *   work, prefill, decode, logits, sampling, generation, eval, or benchmark. */
 static int materialize_one(yvex_weight_table *table,
                            const yvex_artifact *artifact,
                            const yvex_gguf *gguf,
@@ -1448,31 +1150,6 @@ static int materialize_one(yvex_weight_table *table,
     return YVEX_OK;
 }
 
-/*
- * yvex_weight_table_materialize()
- *
- * Purpose:
- *   build an owned table of backend materialized weights from GGUF tensor
- *   metadata and checked artifact ranges.
- *
- * Inputs:
- *   artifact, gguf, tensor table, backend, and options are borrowed; out
- *   receives the owned weight table.
- *
- * Effects:
- *   validates the canonical global layout before allocation, allocates
- *   weight-table rows, validates selected ranges, transfers explicit tensor
- *   payload bytes through the backend API, updates materialization summary
- *   counters, and releases partial state on failure.
- *
- * Failure:
- *   returns invalid-arg, allocation, unsupported dtype, bounds, format, or
- *   backend errors with cleanup attempted before returning.
- *
- * Boundary:
- *   weight materialization is not graph execution, runtime descriptor
- *   readiness, generation support, eval evidence, benchmark evidence, or
- *   release readiness. */
 int yvex_weight_table_materialize(yvex_weight_table **out,
                                   const yvex_artifact *artifact,
                                   const yvex_gguf *gguf,
@@ -1641,26 +1318,6 @@ int yvex_weight_table_materialize(yvex_weight_table **out,
     return YVEX_OK;
 }
 
-/*
- * yvex_weight_table_get_summary()
- *
- * Purpose:
- *   return materialization summary facts for an existing weight table.
- *
- * Inputs:
- *   weights is borrowed; out receives a by-value summary copy.
- *
- * Effects:
- *   copies summary fields and may query backend memory stats; it does not
- *   allocate, print, write files, or move tensor bytes.
- *
- * Failure:
- *   returns invalid-arg for missing inputs; backend memory-stat failures leave
- *   the copied summary otherwise intact.
- *
- * Boundary:
- *   summary facts report materialization state only and do not claim model
- *   execution, generation, eval, benchmark, or release readiness. */
 int yvex_weight_table_get_summary(const yvex_weight_table *weights,
                                   yvex_materialize_summary *out,
                                   yvex_error *err)

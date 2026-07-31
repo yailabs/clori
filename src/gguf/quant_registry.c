@@ -1,14 +1,9 @@
-/* Owner: gguf.quant registry (TRACK.QUANT).
- * Owns: one closed numeric/compute/refusal fact for every pinned qtype ID.
- * Does not own: qtype identity or byte geometry, codecs, payload IO, policy parsing, artifact emission, backend
- *   admission, or rendering.
- * Invariants: table ordinal equals the canonical GGUF qtype ID; removed and post-baseline identities always refuse
- *   deterministically.
- * Boundary: an implemented primitive is not materialization or runtime support.
- * Purpose: project one canonical numeric and compute capability row for every pinned qtype ID.
- * Inputs: canonical qtype identities and geometry owned by the GGUF ABI.
- * Effects: none; all returned registry views are immutable static storage.
- * Failure: unknown names and out-of-range identities return null or explicit refusal facts. */
+/*
+ * Project one canonical numeric and compute capability row for every pinned qtype ID.
+ *
+ * Table ordinal equals the canonical GGUF qtype ID; removed and post-baseline identities always
+ * refuse deterministically. An implemented primitive is not materialization or runtime support.
+ */
 #include <string.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/qtype.h>
@@ -114,22 +109,18 @@ typedef char
                                                   : -1];
 
 static const char *const calibration_names[] = {"none", "optional", "required", "unsupported"};
-/* Purpose: resolve the immutable numeric capability for one exact qtype identity.
- * Inputs: canonical numeric qtype ID.
- * Effects: none.
- * Failure: identities outside the closed registry return null.
- * Boundary: the row reports primitive availability, not backend or model admission. */
+/* Resolve the immutable numeric capability for one exact qtype identity. */
 const yvex_quant_numeric_capability *yvex_quant_numeric_capability_at(unsigned int qtype) {
     if (qtype >= sizeof(quant_registry) / sizeof(quant_registry[0]))
         return NULL;
     return &quant_registry[qtype].capability;
 }
 
-/* Purpose: resolve a numeric capability by the canonical geometry-owned qtype name.
- * Inputs: immutable qtype name.
- * Effects: none.
- * Failure: null or unknown names return null.
- * Boundary: name lookup never creates a second qtype identity authority. */
+/*
+ * Resolve a numeric capability by the canonical geometry-owned qtype name.
+ *
+ * Name lookup never creates a second qtype identity authority.
+ */
 const yvex_quant_numeric_capability *yvex_quant_numeric_capability_by_name(const char *name) {
     const yvex_gguf_qtype_geometry *geometry;
 
@@ -139,16 +130,10 @@ const yvex_quant_numeric_capability *yvex_quant_numeric_capability_by_name(const
     return geometry ? yvex_quant_numeric_capability_at(geometry->qtype) : NULL;
 }
 
-/* Purpose: retain the closed registry cardinality inside its sole owner. */
 static unsigned int numeric_capability_count(void) {
     return (unsigned int)(sizeof(quant_registry) / sizeof(quant_registry[0]));
 }
 
-/* Purpose: project one canonical registry row through the compatibility support ABI.
- * Inputs: immutable qtype name.
- * Effects: none.
- * Failure: null or unknown names return null.
- * Boundary: compatibility projection cannot override canonical numeric truth. */
 const yvex_qtype_support_info *yvex_qtype_support_by_name(const char *qtype) {
     const yvex_gguf_qtype_geometry *geometry;
 
@@ -160,49 +145,24 @@ const yvex_qtype_support_info *yvex_qtype_support_by_name(const char *qtype) {
                : NULL;
 }
 
-/* Purpose: expose compatibility-row cardinality without duplicating registry state.
- * Inputs: none.
- * Effects: none.
- * Failure: none.
- * Boundary: the count is exactly the numeric registry count. */
 unsigned long long yvex_qtype_support_count(void) {
     return numeric_capability_count();
 }
 
-/* Purpose: resolve one bounds-checked compatibility row by ordinal.
- * Inputs: zero-based registry index.
- * Effects: none.
- * Failure: an out-of-range index returns null.
- * Boundary: the returned view remains owned by the registry. */
 const yvex_qtype_support_info *yvex_qtype_support_at(unsigned long long index) {
     return index < numeric_capability_count() ? &quant_registry[index].compatibility : NULL;
 }
 
-/* Purpose: obtain the geometry-owned canonical name for a compatibility row.
- * Inputs: optional immutable compatibility row.
- * Effects: none.
- * Failure: a null row yields the stable UNKNOWN label.
- * Boundary: naming does not alter support classification. */
 const char *yvex_qtype_support_name(const yvex_qtype_support_info *info) {
     return info ? yvex_gguf_qtype_name(info->ggml_type) : "UNKNOWN";
 }
 
-/* Purpose: project storage admission from the canonical numeric capability row.
- * Inputs: optional immutable compatibility row.
- * Effects: none.
- * Failure: null or unresolved rows report unsupported.
- * Boundary: storage admission remains distinct from encoding and compute support. */
 int yvex_qtype_support_storage_supported(const yvex_qtype_support_info *info) {
     const yvex_quant_numeric_capability *capability =
         info ? yvex_quant_numeric_capability_at(info->ggml_type) : NULL;
     return capability && capability->storage_admitted;
 }
 
-/* Purpose: render the closed calibration requirement enum as a stable diagnostic label.
- * Inputs: calibration requirement value.
- * Effects: none.
- * Failure: out-of-range values yield unknown.
- * Boundary: rendering a requirement does not provide calibration evidence. */
 const char *yvex_quant_calibration_name(yvex_quant_calibration_requirement requirement) {
     return requirement <= YVEX_QUANT_CALIBRATION_UNSUPPORTED ? calibration_names[requirement]
                                                               : "unknown";

@@ -1,18 +1,6 @@
 #!/usr/bin/env python3
-#
-# YVEX - GGUF fixture generator
-#
-# File: tests/fixtures/gguf/make_fixtures.py
-# Layer: test fixture utility
-#
-# Purpose:
-#   Generates tiny deterministic GGUF fixtures for parser tests. The generated
-#   binary files are committed and used directly by tests; this script is only
-#   for maintaining those fixtures.
-#
-# Commands:
-#   - python3 tests/fixtures/gguf/make_fixtures.py
-#   - make test-core
+# Regenerates the tiny deterministic GGUF fixtures consumed by parser tests. The binary outputs are
+# tracked test vectors; this script is maintenance tooling rather than a production writer.
 
 from __future__ import annotations
 

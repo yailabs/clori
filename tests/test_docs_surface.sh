@@ -38,7 +38,9 @@ for file in \
   docs/releases/doctrine.md docs/releases/v0.1.md \
   docs/decisions/0003-documentation-architecture.md \
   docs/migrations/documentation-architecture-v1.md \
+  docs/audits/code-commentary-7c90ce1/README.md \
   docs/audits/documentation-architecture-51a5c/README.md \
+  docs/milestones/code-commentary.md \
   docs/milestones/documentation-architecture.md \
   config/documentation_owners.tsv config/frozen_documents.tsv
 do

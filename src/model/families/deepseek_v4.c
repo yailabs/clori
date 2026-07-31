@@ -1,18 +1,10 @@
-/* Owner: src/model/families
- * Owns: immutable DeepSeek architecture facts, topology validation, tensor recipes, runtime numeric policy, and
- *   composition of the admitted family registration.
- * Does not own: source/config IO, exact coverage indexes, Transformation IR construction, GGUF lowering mechanics,
- *   payload binding, numeric conversion, qtype policy, artifact writing, graph execution, or
- *   generation.
- * Invariants: every layer and tensor recipe derives from one admitted architecture; rejected builds publish no
- *   partial object and read zero payload bytes.
- * Boundary: the family selects typed facts and composition but delegates reusable coverage, transformation,
- *   lowering, and payload mechanisms.
- * Purpose: admit the pinned DeepSeek-V4-Flash topology as one immutable family recipe.
- * Inputs: verified structured source facts supplied by the canonical source owner.
- * Effects: owns the architecture object and publishes one process-lifetime operation table; it performs no payload
- *   reads or artifact writes.
- * Failure: typed architecture refusals release partial allocations and leave the caller output null. */
+/*
+ * Admit the pinned DeepSeek-V4-Flash topology as one immutable family recipe.
+ *
+ * Every layer and tensor recipe derives from one admitted architecture; rejected builds publish no
+ * partial object and read zero payload bytes. The family selects typed facts and composition but
+ * delegates reusable coverage, transformation, lowering, and payload mechanisms.
+ */
 #include <yvex/internal/families/deepseek_v4.h>
 
 #include <yvex/internal/core.h>
@@ -75,33 +67,18 @@ typedef struct {
     unsigned long long indexer_query_width;
 } deepseek_v4_derived_geometry;
 
-/* Purpose: allocate family-construction storage through the default heap.
- * Inputs: exact byte count and unused allocator context.
- * Effects: returns one malloc-owned allocation.
- * Failure: allocation failure returns NULL.
- * Boundary: default testable allocator for family construction. */
 static void *deepseek_v4_default_allocate(size_t size, void *context)
 {
     (void)context;
     return malloc(size);
 }
 
-/* Purpose: release storage produced by the default family allocator.
- * Inputs: nullable allocation and unused context.
- * Effects: frees one heap allocation.
- * Failure: none; NULL is accepted.
- * Boundary: allocator-paired family cleanup. */
 static void deepseek_v4_default_release(void *allocation, void *context)
 {
     (void)context;
     free(allocation);
 }
 
-/* Purpose: construct the default allocation policy for one family IR build.
- * Inputs: none.
- * Effects: returns value-owned function pointers and NULL context.
- * Failure: none.
- * Boundary: construction policy, not family semantics. */
 static yvex_deepseek_v4_ir_allocator deepseek_v4_default_allocator(void)
 {
     yvex_deepseek_v4_ir_allocator allocator;
@@ -112,7 +89,6 @@ static yvex_deepseek_v4_ir_allocator deepseek_v4_default_allocator(void)
     return allocator;
 }
 
-/* Purpose: reset optional family failure storage to its no-failure sentinel state. */
 static void deepseek_v4_failure_clear(yvex_deepseek_v4_ir_failure *failure)
 {
     if (!failure) return;
@@ -120,11 +96,6 @@ static void deepseek_v4_failure_clear(yvex_deepseek_v4_ir_failure *failure)
     failure->layer_index = YVEX_DEEPSEEK_V4_IR_NO_LAYER;
 }
 
-/* Purpose: record one typed construction refusal and its generic error projection.
- * Inputs: optional family failure, typed facts, expected/actual values, and error output.
- * Effects: populates diagnostic storage without publishing an IR.
- * Failure: always returns the mapped typed status supplied by the refusal code.
- * Boundary: family admission diagnostics; it does not alter source state. */
 static int deepseek_v4_reject(yvex_deepseek_v4_ir_failure *failure,
                               yvex_deepseek_v4_ir_failure_code code,
                               yvex_deepseek_v4_ir_component component,
@@ -156,11 +127,6 @@ static int deepseek_v4_reject(yvex_deepseek_v4_ir_failure *failure,
     return status;
 }
 
-/* Purpose: parse one complete finite decimal source fact.
- * Inputs: immutable text and required double output.
- * Effects: writes the finite value only after complete syntax admission.
- * Failure: missing, overflowing, non-finite, or trailing input returns false.
- * Boundary: family configuration parsing only. */
 static int deepseek_v4_parse_double(const char *text, double *out)
 {
     char *end = NULL;
@@ -174,11 +140,11 @@ static int deepseek_v4_parse_double(const char *text, double *out)
     return 1;
 }
 
-/* Purpose: require complete strict-source admission without reopening source owners.
- * Inputs: immutable verification, optional family failure, and generic error output.
- * Effects: reads retained facts only and publishes no state.
- * Failure: missing trust, identity, sidecar, or inventory facts return typed refusal.
- * Boundary: source-to-family binding with zero payload reads. */
+/*
+ * Require complete strict-source admission without reopening source owners.
+ *
+ * Missing trust, identity, sidecar, or inventory facts return typed refusal.
+ */
 static int deepseek_v4_validate_source(
     const yvex_source_verification *verification,
     yvex_deepseek_v4_ir_failure *failure,
@@ -243,12 +209,6 @@ static int deepseek_v4_validate_source(
     return YVEX_OK;
 }
 
-/* Validates exact cross-field geometry and derives checked reusable widths. */
-/* Purpose: derive and validate all cross-field DeepSeek tensor geometry.
- * Inputs: source facts, derived-geometry output, failure storage, and error output.
- * Effects: publishes complete derived dimensions only after every checked relation passes.
- * Failure: missing, inconsistent, or overflowing dimensions return typed family refusal.
- * Boundary: architecture semantics; no artifact layout or payload bytes are involved. */
 static int deepseek_v4_validate_geometry(
     const yvex_source_verification *source,
     deepseek_v4_derived_geometry *geometry,
@@ -450,12 +410,6 @@ static int deepseek_v4_validate_geometry(
     return YVEX_OK;
 }
 
-/* Validates the source schedule against the pinned SWA/CSA/HCA topology. */
-/* Purpose: validate the exact SWA/CSA/HCA layer schedule encoded by source facts.
- * Inputs: source verification, failure storage, and error output.
- * Effects: reads immutable schedule facts without mutation.
- * Failure: wrong length, class, compressor, or indexer pattern is refused.
- * Boundary: family topology policy, not attention execution. */
 static int deepseek_v4_validate_schedule(
     const yvex_source_verification *source,
     yvex_deepseek_v4_ir_failure *failure,
@@ -493,11 +447,6 @@ static int deepseek_v4_validate_schedule(
     return YVEX_OK;
 }
 
-/* Purpose: populate one layer's mHC topology from admitted model dimensions.
- * Inputs: mutable layer and immutable model/derived geometry.
- * Effects: writes only the layer's mHC recipe fields.
- * Failure: none after geometry admission.
- * Boundary: family fact composition, not numeric execution. */
 static void deepseek_v4_fill_mhc(
     yvex_deepseek_v4_mhc_spec *mhc,
     const yvex_source_verification *source,
@@ -520,11 +469,11 @@ static void deepseek_v4_fill_mhc(
     mhc->ffn_pre_and_deferred_post = 1;
 }
 
-/* Purpose: populate one layer's routed/shared expert and router recipe.
- * Inputs: mutable layer, immutable source/model facts, and layer index.
- * Effects: writes deterministic MoE topology and routing fields.
- * Failure: none after source and geometry validation.
- * Boundary: family MoE policy; aggregation execution stays downstream. */
+/*
+ * Populate one layer's routed/shared expert and router recipe.
+ *
+ * Writes deterministic MoE topology and routing fields.
+ */
 static void deepseek_v4_fill_moe(
     yvex_deepseek_v4_moe_spec *moe,
     const yvex_source_verification *source,
@@ -557,11 +506,6 @@ static void deepseek_v4_fill_moe(
     }
 }
 
-/* Purpose: encode the explicit no-activation-quantization policy row.
- * Inputs: mutable policy and typed activation stage.
- * Effects: initializes one complete policy value.
- * Failure: none.
- * Boundary: numeric planning fact, not conversion execution. */
 static void deepseek_v4_fill_runtime_activation_none(
     yvex_attention_activation_policy *policy)
 {
@@ -576,11 +520,6 @@ static void deepseek_v4_fill_runtime_activation_none(
     policy->nonfinite_policy = YVEX_ATTENTION_NONFINITE_REFUSE;
 }
 
-/* Purpose: encode one FP8 fake-quant activation policy row.
- * Inputs: mutable policy, stage, and Hadamard enable flag.
- * Effects: writes block, scale, transform, and rounding facts deterministically.
- * Failure: none; constants are validated later.
- * Boundary: runtime numeric authority selection only. */
 static void deepseek_v4_fill_runtime_activation_fp8(
     yvex_attention_activation_policy *policy,
     yvex_attention_activation_stage stage)
@@ -601,11 +540,6 @@ static void deepseek_v4_fill_runtime_activation_fp8(
     policy->fake_quant_inplace = 1;
 }
 
-/* Purpose: encode the FP4 activation policy paired with pinned Hadamard authority.
- * Inputs: mutable policy and activation stage.
- * Effects: writes exact block, transform, scale, and rounding facts.
- * Failure: none; downstream validation checks the closed contract.
- * Boundary: family numeric policy, not fake-quant execution. */
 static void deepseek_v4_fill_runtime_activation_fp4_hadamard(
     yvex_attention_activation_policy *policy,
     yvex_attention_activation_stage stage)
@@ -628,11 +562,6 @@ static void deepseek_v4_fill_runtime_activation_fp4_hadamard(
     policy->zero_pad_hadamard_to_power_of_two = 1;
 }
 
-/* Purpose: populate deterministic sparse top-k selection policy for one attention class.
- * Inputs: mutable policy and typed attention class.
- * Effects: selects the admitted ordering/tie contract or explicit none.
- * Failure: none; policy validation follows construction.
- * Boundary: selection semantics, not index scoring execution. */
 static void deepseek_v4_fill_sparse_topk(
     yvex_attention_topk_policy *policy,
     unsigned long long k)
@@ -653,11 +582,6 @@ static void deepseek_v4_fill_sparse_topk(
     policy->output_ranked_order = 1;
 }
 
-/* Purpose: validate one complete activation numeric policy against the pinned authority.
- * Inputs: immutable policy, expected stage, layer index, failure storage, and error output.
- * Effects: reads policy facts only.
- * Failure: schema, block, scale, transform, or revision mismatch returns typed refusal.
- * Boundary: numeric contract admission; no activation values are processed. */
 static int deepseek_v4_validate_runtime_activation_policy(
     const yvex_attention_activation_policy *policy,
     yvex_deepseek_v4_ir_failure *failure,
@@ -736,11 +660,6 @@ static int deepseek_v4_validate_runtime_activation_policy(
     return YVEX_OK;
 }
 
-/* Purpose: validate every activation and sparse-selection policy attached to one layer.
- * Inputs: immutable layer, failure storage, and error output.
- * Effects: none beyond diagnostics.
- * Failure: the first unsupported numeric field returns typed family refusal.
- * Boundary: per-layer planning validation, not attention execution. */
 static int deepseek_v4_validate_runtime_numeric_layer(
     const yvex_deepseek_v4_layer_spec *layer,
     yvex_deepseek_v4_ir_failure *failure,
@@ -797,12 +716,6 @@ static int deepseek_v4_validate_runtime_numeric_layer(
     return YVEX_OK;
 }
 
-/* Derives one explicit layer descriptor from one validated schedule entry. */
-/* Purpose: compose one immutable DeepSeek layer recipe from admitted global facts.
- * Inputs: mutable layer, immutable source/model/geometry, and layer index.
- * Effects: writes attention, norms, mHC, MoE, tensor geometry, and runtime numeric policy.
- * Failure: none after prerequisite validation; the result is validated before publication.
- * Boundary: family recipe construction, not Transformation IR or graph execution. */
 static void deepseek_v4_fill_layer(
     yvex_deepseek_v4_layer_spec *layer,
     const yvex_source_verification *source,
@@ -933,11 +846,11 @@ static void deepseek_v4_fill_layer(
     layer->rms_norm_epsilon = geometry->rms_norm_epsilon;
 }
 
-/* Purpose: populate immutable model-wide DeepSeek architecture facts.
- * Inputs: mutable model, immutable verified source, and derived geometry.
- * Effects: writes topology, position, tokenizer, identity, and source-constraint fields.
- * Failure: none after source/geometry admission.
- * Boundary: logical model recipe; artifact-specific facts remain excluded. */
+/*
+ * Populate immutable model-wide DeepSeek architecture facts.
+ *
+ * Writes topology, position, tokenizer, identity, and source-constraint fields.
+ */
 static void deepseek_v4_fill_model(
     yvex_deepseek_v4_ir *ir,
     const yvex_source_verification *source,
@@ -1031,12 +944,6 @@ static void deepseek_v4_fill_model(
     model->final_norm_after_mhc_head = 1;
 }
 
-/* Allocates and constructs the immutable object after all source checks pass. */
-/* Purpose: allocate, validate, compose, and publish a complete family architecture object.
- * Inputs: result slot, source verification, allocator, failure storage, and error output.
- * Effects: owns model/layer/auxiliary storage only after complete validation.
- * Failure: any source, geometry, schedule, numeric, or allocation failure unwinds fully.
- * Boundary: canonical DeepSeek family construction with zero payload reads. */
 static int deepseek_v4_construct(
     yvex_deepseek_v4_ir **out,
     const yvex_source_verification *source,
@@ -1156,12 +1063,6 @@ static int deepseek_v4_construct(
     return YVEX_OK;
 }
 
-/* Validates verified facts and publishes an owned IR through caller allocation policy. */
-/* Purpose: build the family architecture through an explicitly supplied allocator.
- * Inputs: result slot, verified source, allocator, failure storage, and error output.
- * Effects: delegates complete construction and publishes one owned IR on success.
- * Failure: invalid allocator or construction refusal leaves the result null.
- * Boundary: testable family lifecycle adapter. */
 static int family_ir_build_with_allocator(
     yvex_deepseek_v4_ir **out,
     const struct yvex_source_verification *verification,
@@ -1192,11 +1093,7 @@ static int family_ir_build_with_allocator(
 }
 
 /* Builds the production IR with heap ownership and no source-side effects. */
-/* Purpose: build the family architecture using the canonical heap allocator.
- * Inputs: result slot, verified source, failure storage, and error output.
- * Effects: publishes one independently owned immutable IR.
- * Failure: construction failure returns typed status with no partial result.
- * Boundary: default family registration entrypoint. */
+
 static int family_ir_build(
     yvex_deepseek_v4_ir **out,
     const struct yvex_source_verification *verification,
@@ -1210,11 +1107,6 @@ static int family_ir_build(
         out, verification, &allocator, failure, err);
 }
 
-/* Purpose: release a fully or partially owned family IR.
- * Inputs: nullable owned IR.
- * Effects: frees auxiliary, layer, and root storage through its paired allocator.
- * Failure: none; partial and NULL state are accepted.
- * Boundary: terminal family object lifecycle. */
 static void family_ir_close(yvex_deepseek_v4_ir *ir)
 {
     yvex_deepseek_v4_ir_allocator allocator;
@@ -1227,21 +1119,18 @@ static void family_ir_close(yvex_deepseek_v4_ir *ir)
     allocator.release(ir, allocator.context);
 }
 
-/* Purpose: expose the immutable model-wide spec for the lifetime of its family IR. */
 static const yvex_deepseek_v4_model_spec *family_ir_model(
     const yvex_deepseek_v4_ir *ir)
 {
     return ir ? &ir->model : NULL;
 }
 
-/* Purpose: return the admitted main-layer cardinality or zero for absent IR. */
 static unsigned long long family_ir_layer_count(
     const yvex_deepseek_v4_ir *ir)
 {
     return ir ? ir->model.main_layer_count : 0u;
 }
 
-/* Purpose: retrieve one immutable main-layer spec by checked zero-based index. */
 static const yvex_deepseek_v4_layer_spec *family_ir_layer_at(
     const yvex_deepseek_v4_ir *ir,
     unsigned long long index)
@@ -1250,14 +1139,12 @@ static const yvex_deepseek_v4_layer_spec *family_ir_layer_at(
                                                      : NULL;
 }
 
-/* Purpose: return the admitted auxiliary-layer cardinality or zero for absent IR. */
 static unsigned long long family_ir_auxiliary_count(
     const yvex_deepseek_v4_ir *ir)
 {
     return ir ? ir->model.auxiliary_layer_count : 0u;
 }
 
-/* Purpose: retrieve one immutable auxiliary-layer spec by checked index. */
 static const yvex_deepseek_v4_auxiliary_spec *family_ir_auxiliary_at(
     const yvex_deepseek_v4_ir *ir,
     unsigned long long index)
@@ -1267,11 +1154,6 @@ static const yvex_deepseek_v4_auxiliary_spec *family_ir_auxiliary_at(
                : NULL;
 }
 
-/* Purpose: map family construction failure code to stable diagnostic wording.
- * Inputs: typed family failure code.
- * Effects: none; returned storage is static.
- * Failure: unrecognized codes map to "unknown".
- * Boundary: diagnostic projection only. */
 static const char *family_ir_failure_name(
     yvex_deepseek_v4_ir_failure_code code)
 {
@@ -1300,11 +1182,6 @@ static const char *family_ir_failure_name(
     }
 }
 
-/* Purpose: map family validation component to its stable diagnostic name.
- * Inputs: typed family component.
- * Effects: none; returned storage is static.
- * Failure: unrecognized components map to "unknown".
- * Boundary: error-context rendering only. */
 static const char *family_ir_component_name(
     yvex_deepseek_v4_ir_component component)
 {
@@ -1327,7 +1204,6 @@ static const char *family_ir_component_name(
     }
 }
 
-/* Purpose: map a DeepSeek attention class to its canonical architecture label. */
 static const char *family_attention_name(
     yvex_attention_class class_id)
 {
@@ -1339,7 +1215,6 @@ static const char *family_attention_name(
     }
 }
 
-/* Purpose: map one DeepSeek KV state class to its canonical architecture label. */
 static const char *family_kv_name(yvex_deepseek_v4_kv_class class_id)
 {
     switch (class_id) {
@@ -1350,7 +1225,6 @@ static const char *family_kv_name(yvex_deepseek_v4_kv_class class_id)
     }
 }
 
-/* Purpose: map one DeepSeek router class to its canonical source-contract label. */
 static const char *family_router_name(
     yvex_deepseek_v4_router_class class_id)
 {
@@ -1362,7 +1236,6 @@ static const char *family_router_name(
     }
 }
 
-/* Purpose: map the admitted source weight dtype to its manifest spelling. */
 static const char *family_source_weight_dtype_name(
     yvex_deepseek_v4_source_weight_dtype dtype)
 {
@@ -1371,14 +1244,12 @@ static const char *family_source_weight_dtype_name(
                : "unknown";
 }
 
-/* Purpose: map the admitted source expert dtype to its manifest spelling. */
 static const char *family_source_expert_dtype_name(
     yvex_deepseek_v4_source_expert_dtype dtype)
 {
     return dtype == YVEX_DEEPSEEK_V4_SOURCE_EXPERT_FP4 ? "fp4" : "unknown";
 }
 
-/* Purpose: map source quantization authority to its canonical constraint label. */
 static const char *family_source_quantization_name(
     yvex_deepseek_v4_source_quantization quantization)
 {
@@ -1388,7 +1259,6 @@ static const char *family_source_quantization_name(
                : "unknown";
 }
 
-/* Purpose: map runtime activation stage to its identity-bearing label. */
 static const char *family_activation_stage_name(
     yvex_attention_activation_stage stage)
 {
@@ -1406,7 +1276,6 @@ static const char *family_activation_stage_name(
     return "unknown";
 }
 
-/* Purpose: map activation quantization policy to its identity-bearing label. */
 static const char *family_activation_quantization_name(
     yvex_attention_quantization quantization)
 {
@@ -1421,7 +1290,6 @@ static const char *family_activation_quantization_name(
     return "unknown";
 }
 
-/* Purpose: map runtime transform authority to its pinned identity label. */
 static const char *family_runtime_transform_name(
     yvex_attention_transform transform)
 {
@@ -1433,11 +1301,6 @@ static const char *family_runtime_transform_name(
     return "unknown";
 }
 
-/* Purpose: map sparse top-k policy to its deterministic ordering label.
- * Inputs: typed top-k policy ID.
- * Effects: none; returned storage is static.
- * Failure: unrecognized policy maps to "unknown".
- * Boundary: identity-bearing policy projection. */
 static const char *family_sparse_topk_policy_name(
     yvex_attention_topk_policy_id policy)
 {
@@ -1582,24 +1445,17 @@ static const yvex_deepseek_tensor_recipe layer_recipes[] = {
      {{offsetof(yvex_deepseek_v4_layer_spec, moe.correction_bias_width), 0}, {0u, 0}}}
 };
 
-/* Purpose: return fixed family tensor-recipe cardinality without mutable state. */
 static unsigned long long family_recipe_count(void)
 {
     return sizeof(layer_recipes) / sizeof(layer_recipes[0]);
 }
 
-/* Purpose: resolve one immutable recipe row in canonical terminal phase order. */
 static const yvex_deepseek_tensor_recipe *family_recipe_at(
     unsigned long long index)
 {
     return index < family_recipe_count() ? &layer_recipes[index] : NULL;
 }
 
-/* Purpose: evaluate one recipe's typed architecture condition for a layer.
- * Inputs: immutable recipe and layer spec.
- * Effects: none.
- * Failure: unknown conditions conservatively use the always-enabled rule.
- * Boundary: family recipe selection, not source-name parsing. */
 static int recipe_enabled(const yvex_deepseek_tensor_recipe *recipe,
                           const yvex_deepseek_v4_layer_spec *layer)
 {
@@ -1612,11 +1468,6 @@ static int recipe_enabled(const yvex_deepseek_tensor_recipe *recipe,
     return 1;
 }
 
-/* Purpose: read one recipe dimension from its typed model-or-layer field reference.
- * Inputs: immutable recipe, dimension index, layer, and model specs.
- * Effects: copies one unsigned dimension without retaining internal pointers.
- * Failure: callers admit dimension index and offsets through the static recipe table.
- * Boundary: family data projection into generic requirement construction. */
 static unsigned long long recipe_dimension(const yvex_deepseek_tensor_recipe *recipe,
                                            unsigned int dimension,
                                            const yvex_deepseek_v4_layer_spec *layer,
@@ -1631,13 +1482,13 @@ static unsigned long long recipe_dimension(const yvex_deepseek_tensor_recipe *re
     return value;
 }
 
-/* Purpose: assemble and publish the single immutable DeepSeek family ABI from
- * the family recipe and the generic lowering/binding owner projections.
- * Inputs: none.
- * Effects: initializes process-lifetime storage exactly once; no allocation or
- * I/O occurs and acquire/release ordering publishes complete sub-API tables.
- * Failure: cannot fail; concurrent callers wait for the winning initializer.
- * Boundary: registration exposes typed composition, not runtime capability. */
+/*
+ * Assemble and publish the single immutable DeepSeek family ABI from the family recipe and the
+ * generic lowering/binding owner projections.
+ *
+ * Initializes process-lifetime storage exactly once; no allocation or I/O occurs and
+ * acquire/release ordering publishes complete sub-API tables.
+ */
 const yvex_model_family_api *yvex_model_register_deepseek_v4(void)
 {
     static yvex_model_family_api api = {

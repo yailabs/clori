@@ -1,12 +1,9 @@
-/* Owner: daemon.yvexd.
- * Owns: daemon argument admission, signals, raw-console projection, and host lifecycle.
- * Does not own: model admission, session semantics, protocol framing, event identity, or client UX.
- * Invariants: one invocation creates one host and writes raw stdout only from typed event records.
- * Boundary: process entrypoint for the long-lived local runtime host.
- * Purpose: configure, start, observe, serve, and gracefully close yvexd.
- * Inputs: explicit artifact/binding/backend/budgets and operating-system signals.
- * Effects: owns process threads and delegates all runtime/socket/session resources to yvex_server.
- * Failure: concise stderr diagnostics preserve nonzero process status and close the host once. */
+/*
+ * Configure, start, observe, serve, and gracefully close yvexd.
+ *
+ * One invocation creates one host and writes raw stdout only from typed event records. Process
+ * entrypoint for the long-lived local runtime host.
+ */
 #define _POSIX_C_SOURCE 200809L
 
 #include <yvex/server.h>
@@ -21,7 +18,6 @@ typedef struct {
     yvex_server *server;
 } daemon_thread_state;
 
-/* Purpose: render the incompatible daemon product contract. */
 static void print_help(FILE *output)
 {
     fprintf(output,
@@ -37,9 +33,6 @@ static void print_help(FILE *output)
             "loopback OpenAI listener.\n");
 }
 
-/* Purpose: parse one positive unsigned daemon option without trailing bytes.
- * Inputs: terminated text and output. Effects: writes output only on success.
- * Failure: returns false for zero or malformed text. Boundary: owner-specific range checks follow. */
 static int parse_u64(const char *text, unsigned long long *value)
 {
     char *end = NULL;
@@ -51,7 +44,6 @@ static int parse_u64(const char *text, unsigned long long *value)
     return 1;
 }
 
-/* Purpose: render one typed process failure. */
 static int print_error(const yvex_error *err, int status)
 {
     fprintf(stderr, "yvexd: %s: %s\n", yvex_error_where(err),
@@ -59,7 +51,6 @@ static int print_error(const yvex_error *err, int status)
     return status;
 }
 
-/* Purpose: synchronously own SIGINT/SIGTERM outside async-signal context. */
 static void *signal_main(void *opaque)
 {
     daemon_thread_state *state = opaque;
@@ -74,7 +65,6 @@ static void *signal_main(void *opaque)
     return NULL;
 }
 
-/* Purpose: project the canonical typed event stream to parseable JSONL stdout. */
 static void *raw_console_main(void *opaque)
 {
     daemon_thread_state *state = opaque;
@@ -95,9 +85,7 @@ static void *raw_console_main(void *opaque)
     return NULL;
 }
 
-/* Purpose: own daemon startup through deterministic model, session, and socket shutdown.
- * Inputs: admitted process argv and process signals. Effects: starts, serves, stops, and closes one host.
- * Failure: prints one fatal diagnostic and returns nonzero after cleanup. Boundary: runtime work is delegated. */
+/* Own daemon startup through deterministic model, session, and socket shutdown. */
 int main(int argument_count, char **arguments)
 {
     yvex_server_options options;

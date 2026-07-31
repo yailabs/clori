@@ -1,25 +1,16 @@
-/* Owner: src/backend/cuda.
- * Owns: Driver API discovery, device/context lifetime, backend status, vtable attachment, and coordinated
- *   context/module close.
- * Does not own: generated bundle contents, symbol policy, op geometry, CLI output, graph semantics, qtype compute,
- *   or runtime generation.
- * Invariants: context creation yields context-ready only; ready requires atomic canonical bundle admission; close
- *   clears every owned Driver API handle.
- * Boundary: an open CUDA context is not primitive or model runtime support.
- * Purpose: Construct and release the dynamically admitted CUDA backend context.
- * Inputs: Driver discovery results, device selection, and caller-owned backend result storage.
- * Effects: Creates or tears down only CUDA Driver resources owned by the backend.
- * Failure: Returns typed CUDA admission or cleanup failures without publishing partial readiness. */
+/*
+ * Construct and release the dynamically admitted CUDA backend context.
+ *
+ * Context creation yields context-ready only; ready requires atomic canonical bundle admission;
+ * close clears every owned Driver API handle. An open CUDA context is not primitive or model
+ * runtime support.
+ */
 #include "src/backend/cuda/private.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-/* Purpose: Translate operator input into the canonical typed parse device index value without ambiguous aliases.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 static int parse_device_index(const char *text, int *out, yvex_error *err)
 {
     long value = 0;
@@ -48,17 +39,17 @@ static int parse_device_index(const char *text, int *out, yvex_error *err)
     *out = (int)value;
     return YVEX_OK;
 }
-/* Purpose: report whether deterministic timing fault injection selects one event operation. */
+
 static int cuda_timing_failure_matches(const char *stage)
 {
     const char *selected = getenv("YVEX_TEST_CUDA_EVENT_FAILURE");
     return selected && stage && strcmp(selected, stage) == 0;
 }
-/* Purpose: create one reusable event pair before a backend enters warm execution.
- * Inputs: admitted live backend.
- * Effects: installs context-owned start and stop events.
- * Failure: Driver or injected failure leaves timing unavailable.
- * Boundary: allocates no per-replay event. */
+/*
+ * Create one reusable event pair before a backend enters warm execution.
+ *
+ * Allocates no per-replay event.
+ */
 static int cuda_timing_open(yvex_backend *backend, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -96,11 +87,11 @@ static int cuda_timing_open(yvex_backend *backend, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: release the reusable event pair before its CUDA context becomes invalid.
- * Inputs: live backend context.
- * Effects: destroys only its owned events.
- * Failure: preserves remaining event ownership for checked retry.
- * Boundary: precedes context teardown. */
+/*
+ * Release the reusable event pair before its CUDA context becomes invalid.
+ *
+ * Preserves remaining event ownership for checked retry.
+ */
 static int cuda_timing_close(yvex_backend *backend, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -137,11 +128,11 @@ static int cuda_timing_close(yvex_backend *backend, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: begin, finish, or discard one interval through the reusable CUDA event pair.
- * Inputs: live backend, action, exact stream, optional elapsed output, and diagnostic stage.
- * Effects: changes only timing ownership and publishes device elapsed nanoseconds on finish.
- * Failure: invalid lifecycle, Driver, or range refusal leaves no published elapsed value.
- * Boundary: timing neither launches numerical work nor owns execution synchronization policy. */
+/*
+ * Begin, finish, or discard one interval through the reusable CUDA event pair.
+ *
+ * Changes only timing ownership and publishes device elapsed nanoseconds on finish.
+ */
 int yvex_cuda_timing(yvex_backend *backend, CUstream stream,
                      yvex_cuda_timing_action action, unsigned long long *elapsed_ns,
                      const char *where, yvex_error *err)
@@ -212,11 +203,7 @@ int yvex_cuda_timing(yvex_backend *backend, CUstream stream,
     if (rc == YVEX_OK) *elapsed_ns = (unsigned long long)(nanoseconds + 0.5);
     return rc;
 }
-/* Purpose: discharge CUDA ownership in dependency order for checked backend close.
- * Inputs: an exclusively owned backend whose context remains live until every child is released.
- * Effects: releases deferred allocations, graphs, module, context, Driver, and implementation state.
- * Failure: the first pre-release failure preserves the remaining backend owner for retry.
- * Boundary: outer backend storage is released only by the generic checked-close owner. */
+/* Discharge CUDA ownership in dependency order for checked backend close. */
 static int cuda_close(yvex_backend *backend, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -275,7 +262,7 @@ static int cuda_close(yvex_backend *backend, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: Implement the canonical memory stats mechanism owned by the CUDA backend boundary. */
+
 static int cuda_memory_stats(const yvex_backend *backend,
                              yvex_backend_memory_stats *out,
                              yvex_error *err)
@@ -289,7 +276,7 @@ static int cuda_memory_stats(const yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: Implement the canonical device info mechanism owned by the CUDA backend boundary. */
+
 static int cuda_device_info(const yvex_backend *backend,
                             yvex_backend_device_info *out,
                             yvex_error *err)
@@ -308,7 +295,7 @@ static int cuda_device_info(const yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: Implement the canonical sync mechanism owned by the CUDA backend boundary. */
+
 static int cuda_sync(yvex_backend *backend, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -323,11 +310,7 @@ static int cuda_sync(yvex_backend *backend, yvex_error *err)
     }
     return yvex_cuda_status(&state->driver, state->driver.cuCtxSynchronize(), "cuda.sync", err);
 }
-/* Purpose: allocate one page-locked session staging arena for captured transfers.
- * Inputs: live CUDA backend, nonzero byte extent, and caller-owned output.
- * Effects: owns one Driver allocation until the matching backend callback releases it.
- * Failure: missing pinned-memory API or Driver failure publishes no pointer.
- * Boundary: supplies stable transfer storage only; graph capture owns no host allocation. */
+
 static int cuda_host_workspace_alloc(yvex_backend *backend, size_t bytes,
                                      unsigned char **out, yvex_error *err)
 {
@@ -346,11 +329,7 @@ static int cuda_host_workspace_alloc(yvex_backend *backend, size_t bytes,
                               "cuda.host_workspace.alloc", err);
     return rc;
 }
-/* Purpose: release only a page-locked staging arena owned by this CUDA backend.
- * Inputs: live CUDA backend and its owned page-locked base; null is idempotent.
- * Effects: returns the exact Driver allocation and owns no caller-provided storage.
- * Failure: missing API or Driver failure leaves cleanup explicitly failed.
- * Boundary: does not release device residency, workspace, or graph resources. */
+
 static int cuda_host_workspace_free(yvex_backend *backend, unsigned char **base,
                                     yvex_error *err)
 {
@@ -381,9 +360,7 @@ static int cuda_host_workspace_free(yvex_backend *backend, unsigned char **base,
     }
     return rc;
 }
-/* Purpose: make one immutable arena CUDA-addressable without duplicating imported host bytes.
- * Inputs: descriptor and optional verified host storage. Effects: imports or allocates CPU-visible CUDA storage.
- * Failure: registration/allocation refusal publishes no tensor. Boundary: runtime alone seals imported bytes. */
+
 static int cuda_resident_alloc(yvex_backend *backend, const yvex_backend_tensor_desc *desc,
                                yvex_device_tensor **out, unsigned char **host, yvex_error *err)
 {
@@ -508,11 +485,7 @@ static const yvex_backend_vtable cuda_vtable = {
     cuda_host_workspace_alloc,
     cuda_host_workspace_free,
 };
-/* Purpose: retain one live lease before a shared CUDA backend copies owner resources.
- * Inputs: a stable outer owner reference whose lifecycle has not entered close.
- * Effects: atomically increments only the packed live-child count.
- * Failure: closing, failed, saturated, or malformed owners retain their prior lifecycle.
- * Boundary: publication owns matching release through the generic checked-close lifecycle. */
+
 static int shared_owner_acquire(yvex_backend *owner, yvex_error *err)
 {
     unsigned long long desired, observed;
@@ -540,11 +513,7 @@ static int shared_owner_acquire(yvex_backend *owner, yvex_error *err)
         }
     }
 }
-/* Purpose: roll back one fully initialized CUDA-open candidate without losing retry ownership.
- * Inputs: caller output, owned candidate, primary status/error, and diagnostic output.
- * Effects: closes the candidate or returns its failed cleanup owner to the caller.
- * Failure: cleanup failure supersedes the primary error and preserves the live handle.
- * Boundary: centralizes open rollback only; normal backend close policy remains unchanged. */
+
 static int cuda_open_rollback(yvex_backend **out, yvex_backend **backend,
                               int primary_status, yvex_error primary,
                               yvex_error *err)
@@ -561,11 +530,7 @@ static int cuda_open_rollback(yvex_backend **out, yvex_backend **backend,
     if (err) *err = primary;
     return primary_status;
 }
-/* Purpose: Construct the admitted open impl state only after its identities and resources are valid.
- * Inputs: A validated configuration, checked resource limits, and caller-owned result storage.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_backend_open_cuda_impl(yvex_backend **out,
                                 const char *device,
                                 unsigned long long memory_limit_bytes,
@@ -678,11 +643,11 @@ failed:
     return cuda_open_rollback(out, &backend, rc,
                               err ? *err : (yvex_error){0}, err);
 }
-/* Purpose: create session-local CUDA state that borrows one model-owned context.
- * Inputs: live CUDA owner and an exact session allocation budget.
- * Effects: owns a separate kernel module, graph registry, streams, and memory counters.
- * Failure: publishes only a failed cleanup owner when rollback cannot release its module.
- * Boundary: never destroys or unloads the model-owned context and Driver handle. */
+/*
+ * Create session-local CUDA state that borrows one model-owned context.
+ *
+ * Publishes only a failed cleanup owner when rollback cannot release its module.
+ */
 int yvex_backend_open_shared_cuda(yvex_backend **out,
                                   yvex_backend *context_owner,
                                   unsigned long long memory_limit_bytes,

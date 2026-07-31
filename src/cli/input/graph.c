@@ -1,14 +1,9 @@
-/* Owner: src/cli/input
- * Owns: typed component argument adaptation below canonical registry paths.
- * Does not own: model reference resolution, artifact inspection, graph construction, backend probing, primitive
- *   execution, report building, rendering, stdout/stderr output, generation, eval, benchmark, or
- *   release decisions.
- * Invariants: this parser only reads borrowed argc/argv and fills a typed request.
- * Boundary: parsing graph options is not graph runtime support.
- * Purpose: adapt registry-admitted inspect, execute, and profile arguments for graph owners.
- * Inputs: bounded command arguments and caller-owned typed request storage.
- * Effects: publishes request fields only after complete grammar validation.
- * Failure: invalid or ambiguous grammar leaves the request uncommitted. */
+/*
+ * Adapt registry-admitted inspect, execute, and profile arguments for graph owners.
+ *
+ * This parser only reads borrowed argc/argv and fills a typed request. Parsing graph options is
+ * not graph runtime support.
+ */
 #include "src/cli/input/private.h"
 
 #include <yvex/provider.h>
@@ -18,19 +13,21 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-/* Purpose: Compute graph arg error for its CLI invariant (`graph_arg_error`). */
+
 static int graph_arg_error(yvex_error *err, const char *message) {
     yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph", message);
     return YVEX_ERR_INVALID_ARG;
 }
-/* Purpose: Compute graph arg errorf for its CLI invariant (`graph_arg_errorf`). */
+
 static int graph_arg_errorf(yvex_error *err, const char *fmt, const char *value) {
     yvex_error_setf(err, YVEX_ERR_INVALID_ARG, "graph", fmt, value ? value : "");
     return YVEX_ERR_INVALID_ARG;
 }
-/* Purpose: initialize canonical graph CLI defaults.
- * Inputs: caller-owned argument storage. Effects: replaces it with deterministic defaults.
- * Failure: none. Boundary: defaults neither resolve paths nor admit capabilities. */
+/*
+ * Initialize canonical graph CLI defaults.
+ *
+ * Replaces it with deterministic defaults.
+ */
 static void graph_args_defaults(yvex_graph_args *out) {
     yvex_provider_sampling sampling;
     memset(out, 0, sizeof(*out));
@@ -59,9 +56,6 @@ static void graph_args_defaults(yvex_graph_args *out) {
     out->transformer.maximum_output_bytes = 1048576ull;
 }
 
-/* Purpose: parse one complete finite decimal without accepting suffixes.
- * Inputs: borrowed text and caller result. Effects: publishes only on success.
- * Failure: returns false for syntax, range, or non-finite values. Boundary: CLI parsing only. */
 static int graph_parse_finite_double(const char *text, double *out)
 {
     char *end = NULL;
@@ -74,9 +68,6 @@ static int graph_parse_finite_double(const char *text, double *out)
     return 1;
 }
 
-/* Purpose: parse one complete nonnegative U64, including zero.
- * Inputs: borrowed text and caller result. Effects: publishes only on success.
- * Failure: returns false for syntax or range. Boundary: CLI parsing only. */
 static int graph_parse_nonnegative_u64(const char *text, unsigned long long *out)
 {
     char *end = NULL;
@@ -233,7 +224,7 @@ static const yvex_graph_report_mode graph_output_modes[] = {
     YVEX_GRAPH_REPORT_MODE_NORMAL, YVEX_GRAPH_REPORT_MODE_TABLE,
     YVEX_GRAPH_REPORT_MODE_AUDIT, YVEX_GRAPH_REPORT_MODE_JSON,
     YVEX_GRAPH_REPORT_MODE_CSV};
-/* Purpose: resolve one option in the immutable grammar for the selected command mode. */
+
 static const graph_option_spec *graph_option_find(const char *flag, unsigned int mode) {
     size_t index;
 
@@ -243,9 +234,7 @@ static const graph_option_spec *graph_option_find(const char *flag, unsigned int
     }
     return NULL;
 }
-/* Purpose: Parse an output mode.
- * Inputs: text and output. Effects: sets the enum.
- * Failure: returns false. Boundary: CLI grammar. */
+
 static int graph_parse_output_mode(const char *text, int allow_json, yvex_graph_report_mode *mode) {
     size_t count = allow_json ? 5u : 3u;
     size_t index;
@@ -260,9 +249,7 @@ static int graph_parse_output_mode(const char *text, int allow_json, yvex_graph_
     }
     return 0;
 }
-/* Purpose: Bind one option.
- * Inputs: schema, argv, and cursor. Effects: updates request and cursor.
- * Failure: typed refusal. Boundary: no artifact or runtime access. */
+
 static int graph_option_bind(const graph_option_spec *spec, unsigned int mode, int argc,
                              char **argv, int *index, yvex_graph_args *out,
                              graph_parse_state *state, yvex_error *err) {
@@ -303,9 +290,7 @@ static int graph_option_bind(const graph_option_spec *spec, unsigned int mode, i
     state->seen |= spec->seen;
     return 1;
 }
-/* Purpose: Parse attention execution.
- * Inputs: argv and output. Effects: publishes options.
- * Failure: typed refusal. Boundary: no artifact or graph execution. */
+
 static int graph_attention_value_valid(const char *value, const char *const *values,
                                        size_t count) {
     size_t index;
@@ -353,17 +338,14 @@ static const char *const graph_attention_trace_values[] = {
     "none", "summary", "stages", "full"};
 static const char *const graph_attention_progress_values[] = {
     "auto", "plain", "off"};
-/* Purpose: reject a parsed control whose production descriptor has no owner yet. */
+
 static int graph_attention_control_refuse(yvex_error *err, const char *control,
                                           const char *boundary) {
     yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "graph",
                     "yvex: %s is unavailable until %s owns it", control, boundary);
     return YVEX_ERR_UNSUPPORTED;
 }
-/* Purpose: prevent accepted operator controls from becoming silently ignored state.
- * Inputs: fully parsed attention request. Effects: none.
- * Failure: names the exact missing production boundary.
- * Boundary: parser refusal never fabricates a runtime descriptor field. */
+
 static int graph_attention_controls_validate(const yvex_graph_args *out, yvex_error *err) {
     const int executes = graph_attention_action_executes(out->attention.action);
 
@@ -462,10 +444,7 @@ static int graph_attention_controls_validate(const yvex_graph_args *out, yvex_er
                                               "an executable attention request");
     return YVEX_OK;
 }
-/* Purpose: validate the typed attention action without opening runtime assets.
- * Inputs: action text and caller-owned enum output. Effects: writes one recognized action value.
- * Failure: unknown or null text returns false without modifying runtime state.
- * Boundary: grammar recognition performs no path resolution or capability admission. */
+
 static int graph_attention_action_parse(int argc, char **argv,
                                         yvex_graph_attention_action *action,
                                         int *option_start)
@@ -485,10 +464,7 @@ static int graph_attention_action_parse(int argc, char **argv,
     }
     return 0;
 }
-/* Purpose: classify actions that invoke production execution.
- * Inputs: typed CLI action. Effects: none.
- * Failure: unknown actions return false.
- * Boundary: classification neither opens a session nor executes graph work. */
+
 static int graph_attention_action_executes(yvex_graph_attention_action action)
 {
     return action == YVEX_GRAPH_ATTENTION_ACTION_EXECUTE ||
@@ -498,16 +474,13 @@ static int graph_attention_action_executes(yvex_graph_attention_action action)
             action <= YVEX_GRAPH_ATTENTION_ACTION_BENCHMARK) ||
            action == YVEX_GRAPH_ATTENTION_ACTION_QUALIFY;
 }
-/* Purpose: classify actions whose production contract requires a CUDA session. */
+
 static int graph_attention_action_cuda(yvex_graph_attention_action action)
 {
     return action >= YVEX_GRAPH_ATTENTION_ACTION_CAPTURE &&
            action <= YVEX_GRAPH_ATTENTION_ACTION_CUDA_GRAPH_RELEASE;
 }
-/* Purpose: Parse one runtime-attention operator action.
- * Inputs: argv, selected action, and caller-owned output. Effects: publishes typed options only.
- * Failure: unsupported or contradictory grammar returns a typed refusal.
- * Boundary: no source, artifact, binding, or backend access. */
+
 static int graph_parse_attention(int argc, char **argv, yvex_graph_args *out,
                                  yvex_error *err) {
     graph_parse_state state = {0};
@@ -652,7 +625,6 @@ static int graph_parse_attention(int argc, char **argv, yvex_graph_args *out,
     return YVEX_OK;
 }
 
-/* Purpose: consume one required MoE option value without opening an operator asset. */
 static const char *graph_moe_value(int argc, char **argv, int *index, yvex_error *err)
 {
     if (*index + 1 >= argc) {
@@ -662,8 +634,6 @@ static const char *graph_moe_value(int argc, char **argv, int *index, yvex_error
     return argv[++*index];
 }
 
-/* Purpose: parse the bounded production MoE execution grammar.
- * Inputs: argv. Effects: fills args. Failure: typed refusal. Boundary: no runtime execution. */
 static int graph_parse_moe(int argc, char **argv, yvex_graph_args *out, yvex_error *err)
 {
     int index;
@@ -719,9 +689,6 @@ static int graph_parse_moe(int argc, char **argv, yvex_graph_args *out, yvex_err
     return YVEX_OK;
 }
 
-/* Purpose: parse the bounded production transformer grammar.
- * Inputs: argv and caller output. Effects: fills typed arguments only after validation.
- * Failure: typed parser refusal. Boundary: never opens input or executes runtime work. */
 static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
                                    yvex_error *err)
 {
@@ -887,9 +854,7 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: Parse graph argv.
- * Inputs: argv and output. Effects: publishes request.
- * Failure: typed refusal. Boundary: CLI grammar. */
+
 int yvex_graph_args_parse(int argc, char **argv, yvex_graph_args *out, yvex_error *err) {
     if (!out) {
         graph_arg_error(err, "graph parser requires output");

@@ -1,6 +1,4 @@
-/*
- * YVEX - qtype support tests
- */
+
 #include <string.h>
 
 #include <yvex/api.h>

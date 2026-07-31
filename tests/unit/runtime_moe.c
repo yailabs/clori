@@ -1,12 +1,8 @@
-/* Owner: runtime MoE tests.
- * Owns: family-plan projection, typed input admission, independent routing, and expert arithmetic evidence.
- * Does not own: target-scale artifact execution, CUDA driver qualification, transformer composition, or CLI I/O.
- * Invariants: references do not call production routing, top-k, activation, or accumulation algorithms.
- * Boundary: focused internal-ABI evidence; no fixture enters production objects.
- * Purpose: prove the bounded production MoE contracts and their semantic mutation sensitivity.
- * Inputs: deterministic in-memory weights, activations, token IDs, and temporary tensor files.
- * Effects: creates and removes only one test-owned temporary directory.
- * Failure: any policy, numeric, input, identity, or cleanup mismatch fails the unit runner. */
+/*
+ * Exercises the bounded production MoE contracts and their semantic mutation sensitivity.
+ * References do not call production routing, top-k, activation, or accumulation algorithms.
+ * Focused internal-ABI evidence; no fixture enters production objects.
+ */
 #define _GNU_SOURCE
 #include "tests/test.h"
 
@@ -21,13 +17,11 @@
 #include <yvex/internal/moe.h>
 #include <yvex/internal/quant_numeric.h>
 
-/* Purpose: publish one deterministic canonical test identity. */
 static void moe_test_identity(char output[YVEX_SHA256_HEX_CAP], unsigned int value)
 {
     (void)snprintf(output, YVEX_SHA256_HEX_CAP, "%064x", value);
 }
 
-/* Purpose: project all 43 exact DeepSeek MoE policies without artifact I/O. */
 static int moe_test_family_plan(void)
 {
     const yvex_moe_family_api *family = yvex_graph_moe_family_at(0ull);
@@ -69,7 +63,6 @@ static int moe_test_family_plan(void)
     return 0;
 }
 
-/* Purpose: construct one exact F32 encoded matrix view. */
 static yvex_moe_weight_view moe_test_weight(float *values,
                                              unsigned long long width,
                                              unsigned long long rows)
@@ -84,14 +77,12 @@ static yvex_moe_weight_view moe_test_weight(float *values,
     return view;
 }
 
-/* Purpose: independently evaluate the admitted sqrt-softplus score. */
 static double moe_test_score(double value)
 {
     double softplus = value > 0.0 ? value + log1p(exp(-value)) : log1p(exp(value));
     return sqrt(softplus);
 }
 
-/* Purpose: prove hash/learned routing, unbiased weights, ties, bias, and refusals. */
 static int moe_test_routing(void)
 {
     yvex_moe_layer_plan layer = {0};
@@ -154,13 +145,11 @@ static int moe_test_routing(void)
     return 0;
 }
 
-/* Purpose: independently round one finite value through the BF16 publication contract. */
 static float moe_test_bf16(float value)
 {
     return yvex_quant_bf16_decode(yvex_quant_bf16_encode(value));
 }
 
-/* Purpose: prove selected expert SwiGLU against an independent direct equation. */
 static int moe_test_expert(void)
 {
     yvex_moe_layer_plan layer = {0};
@@ -202,7 +191,6 @@ typedef struct {
     unsigned int token_ids[2];
 } moe_input_fixture;
 
-/* Purpose: construct two exact per-layer activation records and token IDs. */
 static void moe_input_fixture_open(moe_input_fixture *fixture)
 {
     unsigned long long index;
@@ -231,7 +219,6 @@ static void moe_input_fixture_open(moe_input_fixture *fixture)
     fixture->token_ids[1] = 19u;
 }
 
-/* Purpose: append one byte for an exact trailing-data refusal. */
 static int moe_input_append(const char *path)
 {
     const unsigned char byte = 0xa5u;
@@ -241,7 +228,7 @@ static int moe_input_append(const char *path)
     return ok;
 }
 
-/* Purpose: prove memory/file identity, bounded views, malformed input, and secure cleanup. */
+/* Prove memory/file identity, bounded views, malformed input, and secure cleanup. */
 static int moe_test_input(void)
 {
     moe_input_fixture fixture, changed;

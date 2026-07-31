@@ -1,12 +1,12 @@
-/* Owner: client.yvex runtime-client lane.
- * Owns: product CLI grammar, thin protocol requests, one-shot streaming, REPL, and compact views.
- * Does not own: model/artifact opening, generation, sessions, telemetry truth, or offline tooling.
- * Invariants: no runtime-client route invokes an engine API and all generation flows through yvexd.
- * Boundary: runtime-facing command lane over the public local client protocol.
- * Purpose: provide chat, run, runtime, session, model selection, help, and version surfaces.
- * Inputs: argv, terminal input, explicit prompt bytes, and protocol messages.
- * Effects: writes client stdout/stderr, connects local sockets, and may exec yvexd.
- * Failure: concise errors preserve stable parser/runtime exit classes and one actionable hint. */
+/*
+ * Runtime-facing commands are deliberately thin local-protocol clients. Even though the yvex ELF
+ * also contains finite offline-engine adapters, this lane cannot open artifacts, initialize CUDA,
+ * or call generation directly; every hosted operation crosses yvexd's protocol boundary.
+ *
+ * The file also owns the transitional interactive loop. Operation identity and argument schemas
+ * come from the compiled registry, while terminal presentation remains a separate successor
+ * boundary.
+ */
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 
@@ -64,7 +64,7 @@ typedef struct {
 } client_model_config;
 static volatile sig_atomic_t repl_signal_state;
 static int console_status(const char *session_name);
-/* Purpose: emit one bounded string as deterministic JSON without terminal control bytes. */
+
 static void discovery_json_string(FILE *output, const char *value)
 {
     const unsigned char *cursor = (const unsigned char *)value;
@@ -82,9 +82,7 @@ static void discovery_json_string(FILE *output, const char *value)
     }
     fputc('"', output);
 }
-/* Purpose: project one delimiter-normalized generated list without exposing its C storage form.
- * Inputs: output stream, generated metadata, and delimiter. Effects: writes one JSON array.
- * Failure: bounds each member before rendering. Boundary: discovery formatting only. */
+
 static void discovery_json_list(FILE *output, const char *value, int delimiter)
 {
     const char *cursor = value;
@@ -107,7 +105,7 @@ static void discovery_json_list(FILE *output, const char *value, int delimiter)
     }
     fputc(']', output);
 }
-/* Purpose: name one generated classification for human and machine discovery. */
+
 static const char *visibility_name(yvex_operator_visibility visibility)
 {
     switch (visibility) {
@@ -121,7 +119,7 @@ static const char *visibility_name(yvex_operator_visibility visibility)
     }
     return "unknown";
 }
-/* Purpose: name one architectural plane without making it a command namespace. */
+
 static const char *plane_name(yvex_operator_plane plane)
 {
     static const char *const names[] = {
@@ -129,7 +127,7 @@ static const char *plane_name(yvex_operator_plane plane)
     return (unsigned int)plane < sizeof(names) / sizeof(names[0]) ? names[plane]
                                                                   : "Unknown";
 }
-/* Purpose: name one mechanically separated adapter lane. */
+
 static const char *lane_name(yvex_operator_lane lane)
 {
     switch (lane) {
@@ -142,7 +140,7 @@ static const char *lane_name(yvex_operator_lane lane)
     }
     return "unknown";
 }
-/* Purpose: test whether a descriptor lies below one requested help namespace. */
+
 static int descriptor_has_prefix(const yvex_operator_descriptor *descriptor,
                                  size_t count, const char *const *path)
 {
@@ -152,7 +150,7 @@ static int descriptor_has_prefix(const yvex_operator_descriptor *descriptor,
         if (strcmp(path[index], descriptor->command_words[index])) return 0;
     return 1;
 }
-/* Purpose: render compact usage syntax owned by one exact leaf descriptor. */
+
 static void render_leaf_usage(FILE *output,
                               const yvex_operator_descriptor *descriptor)
 {
@@ -170,7 +168,7 @@ static void render_leaf_usage(FILE *output,
     if (descriptor->flag_count) fputs(" [options]", output);
     fputc('\n', output);
 }
-/* Purpose: render detailed help metadata owned by one exact leaf descriptor. */
+
 static void render_leaf_help(const yvex_operator_descriptor *descriptor)
 {
     size_t index;
@@ -187,14 +185,12 @@ static void render_leaf_help(const yvex_operator_descriptor *descriptor)
         }
     }
 }
-/* Purpose: publish one registry-owned leaf usage line after parser refusal.
- * Inputs: one admitted operation descriptor. Effects: writes one stderr usage line.
- * Failure: none after descriptor admission. Boundary: rendering cannot alter parser status. */
+
 void yvex_client_render_usage_error(const yvex_operator_descriptor *operation)
 {
     render_leaf_usage(stderr, operation);
 }
-/* Purpose: emit admitted aliases for one discovery operation record. */
+
 static void render_discovery_aliases(size_t operation_index)
 {
     size_t index;
@@ -208,9 +204,7 @@ static void render_discovery_aliases(size_t operation_index)
     }
     fputc(']', stdout);
 }
-/* Purpose: emit one immutable argument schema for command or slash discovery.
- * Inputs: generated argument array and extent. Effects: writes one JSON array to stdout.
- * Failure: none after registry validation. Boundary: descriptors remain the sole authority. */
+
 static void render_discovery_arguments(
     const yvex_operator_argument_descriptor *arguments, size_t count)
 {
@@ -238,9 +232,7 @@ static void render_discovery_arguments(
     fputc(']', stdout);
 #undef JSON_ARGUMENT_FIELD
 }
-/* Purpose: emit one complete descriptor record in discovery schema v1.
- * Inputs: descriptor index and immutable descriptor. Effects: writes one JSON object to stdout.
- * Failure: none after registry validation. Boundary: rendering adds no command semantics. */
+
 static void render_discovery_operation(size_t operation_index,
                                        const yvex_operator_descriptor *descriptor)
 {
@@ -317,7 +309,6 @@ static void render_discovery_operation(size_t operation_index,
 #undef JSON_FIELD
 }
 
-/* Purpose: emit deterministic machine discovery from compiled immutable descriptors. */
 static void render_discovery_json(void)
 {
     size_t index;
@@ -331,9 +322,7 @@ static void render_discovery_json(void)
     }
     fputs("]}\n", stdout);
 }
-/* Purpose: render root, namespace, leaf, or machine help from the compiled registry.
- * Inputs: requested path plus visibility and JSON policy. Effects: writes stdout or one refusal.
- * Failure: returns parser status for an unknown help path. Boundary: immutable discovery only. */
+
 int yvex_client_render_help_path(size_t path_count, const char *const *path,
                                  int advanced, int json)
 {
@@ -375,7 +364,7 @@ int yvex_client_render_help_path(size_t path_count, const char *const *path,
     if (!advanced) puts("\nUse `yvex help --advanced` for advanced and engineering commands.");
     return 0;
 }
-/* Purpose: report one missing/refusing daemon consistently. */
+
 static int client_error(const yvex_error *err)
 {
     fprintf(stderr, "yvex: %s\n", yvex_error_message(err));
@@ -384,9 +373,7 @@ static int client_error(const yvex_error *err)
                         "--runtime-binding BINDING`\n");
     return 1;
 }
-/* Purpose: initialize neutral greedy facts and a client-local correlation number.
- * Inputs: request storage and operation. Effects: resets and populates caller storage.
- * Failure: none. Boundary: the daemon remains authority for execution identities. */
+
 static void request_init(yvex_client_request *request,
                          yvex_client_operation operation)
 {
@@ -407,9 +394,7 @@ static void request_init(yvex_client_request *request,
     request->min_p = defaults.sampling.min_p;
     request->typical_p = defaults.sampling.typical_p;
 }
-/* Purpose: initialize the explicit neutral greedy product policy.
- * Inputs: caller-owned policy storage. Effects: replaces its prior contents.
- * Failure: none. Boundary: does not seal or execute a sampling policy. */
+
 static void turn_options_init(client_turn_options *options)
 {
     yvex_provider_request defaults;
@@ -425,9 +410,7 @@ static void turn_options_init(client_turn_options *options)
     options->min_p = defaults.sampling.min_p;
     options->typical_p = defaults.sampling.typical_p;
 }
-/* Purpose: parse one unsigned client option with explicit zero admission.
- * Inputs: terminated text, output, and zero policy. Effects: writes output on success.
- * Failure: returns false on range, syntax, or policy error. Boundary: no domain admission. */
+
 static int parse_u64(const char *text, unsigned long long *value, int allow_zero)
 {
     char *end = NULL;
@@ -438,9 +421,7 @@ static int parse_u64(const char *text, unsigned long long *value, int allow_zero
     *value = parsed;
     return 1;
 }
-/* Purpose: parse one finite binary64 client policy value.
- * Inputs: terminated text and output. Effects: writes output on success.
- * Failure: returns false for malformed or non-finite text. Boundary: policy ranges are checked later. */
+
 static int parse_double(const char *text, double *value)
 {
     char *end = NULL;
@@ -451,9 +432,7 @@ static int parse_double(const char *text, double *value)
     *value = parsed;
     return 1;
 }
-/* Purpose: connect, send one typed request, and retain the socket for streaming.
- * Inputs: client output, immutable request, and error output. Effects: opens a local connection.
- * Failure: closes partial ownership and returns the first protocol error. Boundary: no engine call. */
+
 static int request_open(yvex_client **client,
                         const yvex_client_request *request, yvex_error *err)
 {
@@ -462,7 +441,7 @@ static int request_open(yvex_client **client,
     if (rc != YVEX_OK) yvex_client_close(client);
     return rc;
 }
-/* Purpose: request cancellation over a separate connection while the stream remains owned. */
+
 static int cancellation_request(const char *session)
 {
     yvex_client_request request;
@@ -478,9 +457,7 @@ static int cancellation_request(const char *session)
     yvex_client_close(&client);
     return rc == YVEX_OK && message.kind == YVEX_CLIENT_MESSAGE_ACK;
 }
-/* Purpose: translate the first SIGINT into cancellation and later SIGINT into REPL exit.
- * Inputs: one live turn signal state. Effects: sends cancellation and updates atomic flags.
- * Failure: retries transient cancellation connection failure until the turn ends. Boundary: signal thread only. */
+
 static void *turn_signal_main(void *opaque)
 {
     client_turn_signals *state = opaque;
@@ -504,9 +481,7 @@ static void *turn_signal_main(void *opaque)
     }
     return NULL;
 }
-/* Purpose: transfer SIGINT ownership to one bounded cancellation coordinator.
- * Inputs: state storage and exact session name. Effects: blocks signals and starts one thread.
- * Failure: leaves coordination disabled if mask or thread setup fails. Boundary: no generation mutation. */
+
 static void turn_signals_open(client_turn_signals *state,
                               const char *session)
 {
@@ -526,9 +501,7 @@ static void turn_signals_open(client_turn_signals *state,
     else
         (void)pthread_sigmask(SIG_SETMASK, &state->previous_mask, NULL);
 }
-/* Purpose: finish cancellation coordination and restore the caller signal policy.
- * Inputs: initialized coordinator state. Effects: joins its thread and restores the mask.
- * Failure: returns the observed interrupt class. Boundary: owns no daemon cancellation state. */
+
 static int turn_signals_close(client_turn_signals *state)
 {
     int result = 0;
@@ -544,9 +517,6 @@ static int turn_signals_close(client_turn_signals *state)
     return result;
 }
 
-/* Purpose: render one compact runtime status or stable JSON projection.
- * Inputs: authoritative protocol snapshot and output choice. Effects: writes product stdout.
- * Failure: none after snapshot admission. Boundary: rendering cannot change readiness. */
 static void render_status(const yvex_server_summary *status, int json)
 {
     if (json) {
@@ -629,7 +599,6 @@ static void render_status(const yvex_server_summary *status, int json)
            (double)status->metrics.current_rss_bytes / 1073741824.0);
 }
 
-/* Purpose: fetch one authoritative runtime status response without local reconstruction. */
 static int runtime_summary_fetch(yvex_server_summary *summary, yvex_error *err)
 {
     yvex_client_request request;
@@ -650,7 +619,6 @@ static int runtime_summary_fetch(yvex_server_summary *summary, yvex_error *err)
     return rc;
 }
 
-/* Purpose: request and render one complete runtime status response. */
 static int runtime_status(int json)
 {
     yvex_server_summary summary;
@@ -660,7 +628,6 @@ static int runtime_status(int json)
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
 
-/* Purpose: render only identities of the model actually open in the daemon. */
 static int runtime_model(void)
 {
     yvex_server_summary summary;
@@ -676,7 +643,6 @@ static int runtime_model(void)
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
 
-/* Purpose: render only daemon-authoritative placement and process memory facts. */
 static int runtime_memory(void)
 {
     yvex_server_summary summary;
@@ -693,7 +659,6 @@ static int runtime_memory(void)
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
 
-/* Purpose: render the compact operational projection of one typed event. */
 static void render_engine_event(const yvex_server_event *event)
 {
     printf("%-30s", yvex_server_event_kind_name(event->kind));
@@ -707,9 +672,6 @@ static void render_engine_event(const yvex_server_event *event)
     fflush(stdout);
 }
 
-/* Purpose: subscribe to watch, human trace, or canonical JSONL trace projection.
- * Inputs: zero watch, one human trace, or two JSON trace. Effects: streams stdout.
- * Failure: returns concise protocol refusal after closing the client. Boundary: one event authority. */
 static int runtime_events(int projection)
 {
     yvex_client_request request;
@@ -739,9 +701,6 @@ static int runtime_events(int projection)
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
 
-/* Purpose: send one administration request and render bounded response rows.
- * Inputs: typed operation, optional session, and row mode. Effects: performs one protocol exchange.
- * Failure: reports daemon errors without mutating local state. Boundary: no direct session access. */
 static int administration(yvex_client_operation operation,
                           const char *session_name, int render_mode)
 {
@@ -780,9 +739,6 @@ static int administration(yvex_client_operation operation,
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
 
-/* Purpose: stream one turn and render only committed fragments plus final metrics.
- * Inputs: session, explicit prompt bytes, policy, and conversation mode. Effects: sends or cancels a turn.
- * Failure: preserves daemon progress and reports exact stream status. Boundary: never opens the engine. */
 static int generation_turn(const char *session_name,
                            const unsigned char *prompt,
                            unsigned long long prompt_bytes,
@@ -854,7 +810,6 @@ static int generation_turn(const char *session_name,
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
 
-/* Purpose: ensure a named session exists without treating duplicate creation as success. */
 static int session_ensure(const char *name)
 {
     yvex_client_request request;
@@ -871,9 +826,6 @@ static int session_ensure(const char *name)
     return administration(YVEX_CLIENT_OP_SESSION_NEW, name, -1);
 }
 
-/* Purpose: retain one bounded in-memory prompt history.
- * Inputs: history and immutable line. Effects: copies a nonduplicate entry and evicts the oldest.
- * Failure: allocation failure leaves history unchanged. Boundary: prompt content is never persisted. */
 static void repl_history_push(client_repl_history *history, const char *line)
 {
     char *copy;
@@ -891,9 +843,6 @@ static void repl_history_push(client_repl_history *history, const char *line)
     history->entry[history->count++] = copy;
 }
 
-/* Purpose: release prompt history without persisting conversation content.
- * Inputs: history owner. Effects: frees all entries and clears the owner.
- * Failure: none. Boundary: does not alter daemon transcript state. */
 static void repl_history_close(client_repl_history *history)
 {
     size_t index;
@@ -901,9 +850,6 @@ static void repl_history_close(client_repl_history *history)
     memset(history, 0, sizeof(*history));
 }
 
-/* Purpose: make resize and prompt-interrupt state observable to the bounded TTY reader.
- * Inputs: SIGWINCH or SIGINT. Effects: records only signal-safe scalar state.
- * Failure: excess interrupts saturate. Boundary: generation owns SIGINT while a turn executes. */
 static void repl_signal_handler(int number)
 {
     sig_atomic_t interrupts = repl_signal_state & 3;
@@ -913,9 +859,6 @@ static void repl_signal_handler(int number)
         repl_signal_state = (repl_signal_state & ~3) | (interrupts + 1);
 }
 
-/* Purpose: redraw one prompt after history navigation or terminal resize.
- * Inputs: prompt and explicit line bytes. Effects: emits only terminal-control and caller bytes.
- * Failure: terminal write failure is observed by the next input operation. Boundary: TTY only. */
 static void repl_redraw(const char *prompt, const char *line, size_t count)
 {
     fputs("\r\033[2K", stdout);
@@ -924,9 +867,6 @@ static void repl_redraw(const char *prompt, const char *line, size_t count)
     fflush(stdout);
 }
 
-/* Purpose: replace the editable line with one bounded history entry.
- * Inputs: storage owner, extent, selected text, and prompt. Effects: grows and redraws the line.
- * Failure: allocation failure preserves the prior line. Boundary: no daemon state changes. */
 static int repl_replace_line(char **line, size_t *count, size_t *capacity,
                              const char *replacement, const char *prompt)
 {
@@ -945,9 +885,6 @@ static int repl_replace_line(char **line, size_t *count, size_t *capacity,
     return 1;
 }
 
-/* Purpose: append one byte to a bounded editable prompt.
- * Inputs: line owner, extent, capacity, and byte. Effects: grows and terminates the line.
- * Failure: returns false at the prompt budget or allocation failure. Boundary: byte-oriented UTF-8 input. */
 static int repl_append_byte(char **line, size_t *count, size_t *capacity,
                             unsigned char byte)
 {
@@ -967,9 +904,6 @@ static int repl_append_byte(char **line, size_t *count, size_t *capacity,
     return 1;
 }
 
-/* Purpose: remove the final complete UTF-8 code-unit sequence from one editable line.
- * Inputs: line bytes and extent. Effects: truncates to the preceding code-point boundary.
- * Failure: malformed trailing continuation bytes are removed conservatively. Boundary: display editing only. */
 static void repl_backspace(char *line, size_t *count)
 {
     if (!*count) return;
@@ -979,10 +913,6 @@ static void repl_backspace(char *line, size_t *count)
     line[*count] = '\0';
 }
 
-/* Purpose: read one bounded TTY line with history, resize, UTF-8 deletion, and bracketed paste.
- * Inputs: prompt, in-memory history, and result owners. Effects: temporarily enables raw input.
- * Failure: returns -1 on terminal/allocation failure, -2 on first SIGINT, and 0 on EOF/second SIGINT.
- * Boundary: restores terminal state before generation or return and never persists prompt content. */
 static int repl_read_line(const char *prompt, const client_repl_history *history,
                           char **output, size_t *output_count)
 {
@@ -1089,9 +1019,6 @@ static int repl_read_line(const char *prompt, const client_repl_history *history
     return result;
 }
 
-/* Purpose: move one REPL attachment without transferring session authority to the client.
- * Inputs: current storage, requested name, and creation policy. Effects: creates/attaches then detaches old.
- * Failure: preserves the current attachment when admission fails. Boundary: daemon owns both sessions. */
 static int repl_switch_session(char current[YVEX_SERVER_SESSION_NAME_CAP],
                                const char *next, int create)
 {
@@ -1105,7 +1032,6 @@ static int repl_switch_session(char current[YVEX_SERVER_SESSION_NAME_CAP],
     return 1;
 }
 
-/* Purpose: resolve one slash spelling from the compiled command registry. */
 static const yvex_operator_descriptor *slash_descriptor(const char *line,
                                                          const char **argument)
 {
@@ -1124,7 +1050,6 @@ static const yvex_operator_descriptor *slash_descriptor(const char *line,
     return NULL;
 }
 
-/* Purpose: render the canonical slash projection catalog without a second help list. */
 static void repl_catalog_help(void)
 {
     size_t index;
@@ -1136,9 +1061,6 @@ static void repl_catalog_help(void)
     }
 }
 
-/* Purpose: execute one registry-selected slash adapter over existing typed operations.
- * Inputs: slash line, current attachment, and generated-name counter. Effects: bounded admin action.
- * Failure: invalid arguments leave attachment and daemon state unchanged. Boundary: no string dispatch. */
 static int repl_command(const char *line, char current[YVEX_SERVER_SESSION_NAME_CAP],
                         unsigned long long *generated_session)
 {
@@ -1224,9 +1146,6 @@ static int repl_command(const char *line, char current[YVEX_SERVER_SESSION_NAME_
     return result;
 }
 
-/* Purpose: run the bounded terminal REPL over one daemon-owned session.
- * Inputs: exact session name and terminal input. Effects: attaches, streams turns, then detaches.
- * Failure: refuses non-TTY use and preserves daemon session state. Boundary: slash commands stay small. */
 static int chat(const char *session_name, unsigned long long maximum_new_tokens)
 {
     client_turn_options options;
@@ -1295,10 +1214,6 @@ static int chat(const char *session_name, unsigned long long maximum_new_tokens)
     return 0;
 }
 
-/* Purpose: parse the bounded product-chat options before entering terminal mode.
- * Inputs: product argv. Effects: invokes one REPL with explicit session and turn bound.
- * Failure: malformed, duplicate, zero, or unknown options refuse before daemon attachment.
- * Boundary: sampling remains the daemon generation owner's policy. */
 static int chat_command(int argc, char **argv)
 {
     const char *session = "main";
@@ -1322,10 +1237,7 @@ static int chat_command(int argc, char **argv)
     return chat(session, maximum_new_tokens);
 }
 
-/* Purpose: parse and execute one complete one-shot policy without inferring strategy.
- * Inputs: product argv. Effects: creates and closes an ephemeral session or uses an explicit one.
- * Failure: rejects malformed policy before connecting and preserves daemon state on stream failure.
- * Boundary: product generation always crosses the local protocol. */
+/* Parse and execute one complete one-shot policy without inferring strategy. */
 static int run_command(int argc, char **argv)
 {
     client_turn_options options;
@@ -1396,9 +1308,6 @@ static int run_command(int argc, char **argv)
     }
 }
 
-/* Purpose: resolve the private XDG model-selection file and its owning directory.
- * Inputs: caller path buffers. Effects: writes terminated absolute paths only.
- * Failure: missing/relative environment or overflow refuses. Boundary: no directory is created. */
 static int model_config_paths(char directory[PATH_MAX], char path[PATH_MAX])
 {
     const char *base = getenv("XDG_CONFIG_HOME");
@@ -1419,10 +1328,6 @@ static int model_config_paths(char directory[PATH_MAX], char path[PATH_MAX])
     return 1;
 }
 
-/* Purpose: validate or create one private client configuration directory.
- * Inputs: absolute directory. Effects: may create the final yvex component mode 0700.
- * Failure: symlink, foreign owner, non-directory, or unsafe permissions refuse.
- * Boundary: parent XDG configuration directory must already exist. */
 static int model_config_directory(const char *directory)
 {
     struct stat status;
@@ -1443,10 +1348,6 @@ static int model_config_directory(const char *directory)
     return 1;
 }
 
-/* Purpose: atomically persist one selected model alias without reading model payloads.
- * Inputs: sealed bounded config. Effects: replaces one mode-0600 XDG file through rename.
- * Failure: unsafe paths or I/O remove the temporary file and preserve the old selection.
- * Boundary: selection is client configuration, not artifact or runtime admission. */
 static int model_config_write(const client_model_config *config)
 {
     char directory[PATH_MAX], path[PATH_MAX], temporary[PATH_MAX];
@@ -1480,10 +1381,6 @@ static int model_config_write(const client_model_config *config)
     return ok;
 }
 
-/* Purpose: load one owner-validated selected-model configuration.
- * Inputs: empty output. Effects: reads one bounded regular mode-0600 file.
- * Failure: malformed, duplicate/missing, foreign, symlinked, or oversized input refuses.
- * Boundary: paths remain inert until yvexd independently authenticates them. */
 static int model_config_read(client_model_config *config)
 {
     char directory[PATH_MAX], path[PATH_MAX], line[PATH_MAX + 32u];
@@ -1547,10 +1444,6 @@ static int model_config_read(client_model_config *config)
            (!strcmp(config->backend, "cpu") || !strcmp(config->backend, "cuda"));
 }
 
-/* Purpose: parse and atomically select one explicit model alias for the next daemon start.
- * Inputs: product model-select argv. Effects: writes only private client configuration.
- * Failure: incomplete or malformed facts refuse without replacing the prior selection.
- * Boundary: does not open, verify, materialize, or switch a running model. */
 static int model_select_command(int argc, char **argv)
 {
     client_model_config config;
@@ -1611,9 +1504,6 @@ static int model_select_command(int argc, char **argv)
     return 0;
 }
 
-/* Purpose: render one selected model configuration without opening its artifact.
- * Inputs: none. Effects: reads private XDG configuration and prints compact facts.
- * Failure: missing selection returns one actionable refusal. Boundary: yvexd remains admission authority. */
 static int model_config_show(void)
 {
     client_model_config config;
@@ -1630,9 +1520,6 @@ static int model_config_show(void)
     return 0;
 }
 
-/* Purpose: exec one exact argument vector through a colocated product binary or PATH fallback.
- * Inputs: binary name and null-terminated vector. Effects: replaces the client process on success.
- * Failure: reports both colocated and PATH lookup failure. Boundary: no compatibility dispatch. */
 static int exec_sibling_vector(const char *binary, char *const arguments[])
 {
     char executable[PATH_MAX], sibling[PATH_MAX];
@@ -1654,9 +1541,6 @@ static int exec_sibling_vector(const char *binary, char *const arguments[])
     return 1;
 }
 
-/* Purpose: project a product subcommand tail into one sibling argument vector.
- * Inputs: binary name, argv, and prefix count. Effects: allocates then delegates exec.
- * Failure: reports allocation or sibling failure and frees temporary argv. Boundary: no old alias mapping. */
 static int exec_sibling(const char *binary, int argc, char **argv, int skip)
 {
     char **arguments = calloc((size_t)argc + 1u, sizeof(*arguments));
@@ -1670,9 +1554,6 @@ static int exec_sibling(const char *binary, int argc, char **argv, int skip)
     return status;
 }
 
-/* Purpose: start yvexd from explicit argv or the selected model configuration.
- * Inputs: product runtime-start argv. Effects: replaces the client with one foreground daemon.
- * Failure: missing/unsafe selection refuses with one configuration hint. Boundary: yvexd revalidates all facts. */
 static int runtime_start(int argc, char **argv)
 {
     client_model_config config;
@@ -1704,7 +1585,6 @@ static int runtime_start(int argc, char **argv)
     return exec_sibling_vector("yvexd", arguments);
 }
 
-/* Purpose: render registry-owned help arguments after generic syntax admission. */
 static int help_command(int argc, char **argv, size_t consumed)
 {
     const char *path[16];
@@ -1731,7 +1611,7 @@ typedef struct {
     char text[COMPLETION_CANDIDATE_CAP][COMPLETION_TEXT_CAP];
     size_t count;
 } completion_candidates;
-/* Purpose: admit only operator-visible descriptors to generated interactive completion. */
+
 static int completion_visible(const yvex_operator_descriptor *descriptor)
 {
     return descriptor->cli_projection &&
@@ -1740,7 +1620,6 @@ static int completion_visible(const yvex_operator_descriptor *descriptor)
            descriptor->visibility != YVEX_OPERATOR_VISIBILITY_TEST_ONLY;
 }
 
-/* Purpose: compare one command prefix against one immutable descriptor path. */
 static int completion_prefix_matches(const yvex_operator_descriptor *descriptor,
                                      size_t count, const char *const *words)
 {
@@ -1750,7 +1629,7 @@ static int completion_prefix_matches(const yvex_operator_descriptor *descriptor,
         if (strcmp(descriptor->command_words[index], words[index])) return 0;
     return 1;
 }
-/* Purpose: append one unique shell-safe registry token to a bounded completion set. */
+
 static void completion_add(completion_candidates *candidates, const char *value)
 {
     const unsigned char *cursor = (const unsigned char *)value;
@@ -1767,7 +1646,6 @@ static void completion_add(completion_candidates *candidates, const char *value)
     candidates->count++;
 }
 
-/* Purpose: append each member of one generated pipe-delimited metadata set. */
 static void completion_add_metadata(completion_candidates *candidates, const char *values)
 {
     const char *cursor = values;
@@ -1785,9 +1663,7 @@ static void completion_add_metadata(completion_candidates *candidates, const cha
         cursor = end + 1;
     }
 }
-/* Purpose: collect subcommands, flags, aliases, and enum values for one exact prefix.
- * Inputs: immutable command prefix and compiled descriptors. Effects: none.
- * Failure: omits unsafe or over-capacity candidates. Boundary: no dynamic provider is invoked. */
+
 static completion_candidates completion_collect(size_t prefix_count,
                                                 const char *const *prefix)
 {
@@ -1815,7 +1691,6 @@ static completion_candidates completion_collect(size_t prefix_count,
     return candidates;
 }
 
-/* Purpose: emit one shell case label and its finite registry-derived candidate vocabulary. */
 static void completion_emit_case(FILE *output, const char *shell,
                                  size_t prefix_count, const char *const *prefix)
 {
@@ -1833,9 +1708,11 @@ static void completion_emit_case(FILE *output, const char *shell,
     if (!strcmp(shell, "fish")) fputc('\n', output);
     else fputs(" ' ;;\n", output);
 }
-/* Purpose: emit every unique command-prefix case from immutable compiled descriptors.
- * Inputs: output stream and shell grammar. Effects: writes deterministic completion cases.
- * Failure: none after registry validation. Boundary: does not execute completion providers. */
+/*
+ * Emit every unique command-prefix case from immutable compiled descriptors.
+ *
+ * Writes deterministic completion cases.
+ */
 static void completion_emit_cases(FILE *output, const char *shell)
 {
     size_t descriptor_index, prefix_count, prior;
@@ -1862,9 +1739,7 @@ static void completion_emit_cases(FILE *output, const char *shell)
         }
     }
 }
-/* Purpose: generate one context-aware shell completion script from compiled descriptors.
- * Inputs: admitted completion command arguments. Effects: writes a script or stderr refusal.
- * Failure: returns parser status for unsupported shell. Boundary: completion never executes a model. */
+
 static int completion_command(int argc, char **argv, size_t consumed)
 {
     const char *shell = consumed + 1u < (size_t)argc ? argv[consumed + 1u] : NULL;
@@ -1904,9 +1779,7 @@ static int completion_command(int argc, char **argv, size_t consumed)
     fprintf(stderr, "yvex: completion shell must be bash, zsh, or fish\n");
     return 2;
 }
-/* Purpose: retrieve and render one server-composed console snapshot for the attached session.
- * Inputs: selected session name. Effects: performs one protocol request and writes compact output.
- * Failure: returns typed connection or response status. Boundary: no client-composed state truth. */
+
 static int console_status(const char *session_name)
 {
     yvex_client_request request;
@@ -1941,9 +1814,6 @@ static int console_status(const char *session_name)
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
 
-/* Purpose: dispatch one generated runtime adapter without command-string comparisons.
- * Inputs: one admitted runtime-client descriptor and original argv. Effects: typed client operation.
- * Failure: stable parser, configuration, connection, or protocol status. Boundary: no engine fallback. */
 int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
                          char **argv, size_t consumed)
 {

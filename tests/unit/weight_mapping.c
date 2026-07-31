@@ -1,9 +1,4 @@
-/*
- * YVEX - Weight mapping table tests
- *
- * File: tests/test_weight_mapping.c
- * Layer: test
- */
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

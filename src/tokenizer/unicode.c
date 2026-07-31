@@ -1,12 +1,8 @@
-/* Owner: tokenizer.unicode.
- * Owns: pinned Unicode 15.0 category ranges and strict UTF-8 scalar decoding.
- * Does not own: tokenizer regex ordering, normalization, BPE, prompt policy, or text rendering.
- * Invariants: ranges are sorted, non-overlapping, and derived from the pinned Unicode database.
- * Boundary: reusable tokenizer Unicode primitives; callers assign pre-tokenizer semantics.
- * Purpose: make Unicode classification deterministic without locale or external runtime dependencies.
- * Inputs: immutable byte spans and Unicode scalar values.
- * Effects: advances only caller-owned offsets.
- * Failure: malformed, overlong, surrogate, or out-of-range UTF-8 is refused.
+/*
+ * Make Unicode classification deterministic without locale or external runtime dependencies.
+ *
+ * Ranges are sorted, non-overlapping, and derived from the pinned Unicode database. Reusable
+ * tokenizer Unicode primitives; callers assign pre-tokenizer semantics.
  */
 
 #include "src/tokenizer/private.h"
@@ -333,9 +329,7 @@ static const unicode_range space_ranges[] = {
     {0x205fu, 0x205fu}, {0x3000u, 0x3000u},
 };
 #define SPACE_RANGE_COUNT (sizeof(space_ranges) / sizeof(space_ranges[0]))
-/* ranges: 10 */
 
-/* Purpose: test one scalar against one sorted non-overlapping Unicode range table. */
 static int range_contains(const unicode_range *ranges, size_t count, uint32_t point)
 {
     size_t low = 0u, high = count;
@@ -351,8 +345,6 @@ static int range_contains(const unicode_range *ranges, size_t count, uint32_t po
     return 0;
 }
 
-/* Purpose: classify one scalar through the pinned Unicode properties used by the admitted regexes.
- * Inputs: Unicode scalar. Effects: none. Failure: none. Boundary: pinned pre-tokenizer policy. */
 unsigned int yvex_tokenizer_unicode_class(uint32_t point)
 {
     unsigned int result = 0u;
@@ -367,8 +359,6 @@ unsigned int yvex_tokenizer_unicode_class(uint32_t point)
     return result;
 }
 
-/* Purpose: decode one canonical UTF-8 scalar and advance only after complete validation.
- * Inputs: byte span/offset. Effects: advances offset. Failure: false. Boundary: UTF-8 admission. */
 int yvex_tokenizer_utf8_next(const unsigned char *bytes, unsigned long long count,
                              unsigned long long *offset, uint32_t *point)
 {

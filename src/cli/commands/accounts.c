@@ -1,12 +1,3 @@
-/* Owner: CLI accounts command.
- * Owns: accounts argv validation, command dispatch, and compatibility rendering.
- * Does not own: provider discovery, credential persistence, or model behavior.
- * Invariants: bytes are written only through the CLI IO owner.
- * Boundary: consumes the public account API and returns process exit status.
- * Purpose: provide accounts argv validation, command dispatch, and compatibility rendering.
- * Inputs: typed command arguments and borrowed domain APIs.
- * Effects: dispatches domain calls and routes operator bytes only through CLI I/O.
- * Failure: returns a stable CLI status while preserving domain ownership. */
 #define _POSIX_C_SOURCE 200809L
 #include <yvex/source.h>
 #include "src/cli/input/private.h"
@@ -52,7 +43,7 @@ typedef struct {
     int token_stdin;
     int skip_ssh_key;
 } yvex_accounts_cli_options;
-/* Purpose: Compute accounts run foreground for its CLI invariant (`accounts_run_foreground`). */
+
 static int accounts_run_foreground(const char *const *args, yvex_error *err)
 {
     yvex_account_command_options command;
@@ -66,11 +57,6 @@ static int accounts_run_foreground(const char *const *args, yvex_error *err)
     return yvex_accounts_run_provider_command(&command, err);
 }
 
-/* Purpose: Parse accounts parse output mode into typed CLI state (`accounts_parse_output_mode`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int accounts_parse_output_mode(const char *value, yvex_accounts_output_mode *mode)
 {
     if (!value || !mode) return 0;
@@ -89,11 +75,6 @@ static int accounts_parse_output_mode(const char *value, yvex_accounts_output_mo
     return 0;
 }
 
-/* Purpose: Parse accounts parse value into typed CLI state (`accounts_parse_value`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int accounts_parse_value(const char *command,
                                 const char *flag,
                                 int arg_count,
@@ -113,11 +94,6 @@ static int accounts_parse_value(const char *command,
     return 0;
 }
 
-/* Purpose: Parse accounts parse common into typed CLI state (`accounts_parse_common`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int accounts_parse_common(const char *command,
                                  int arg_count,
                                  char **args,
@@ -159,7 +135,6 @@ static int accounts_parse_common(const char *command,
     return 0;
 }
 
-/* Purpose: Render accounts print observation audit from typed facts (`accounts_print_observation_audit`). */
 static void accounts_print_observation_audit(const char *prefix,
                                              const yvex_account_observation *obs)
 {
@@ -177,11 +152,6 @@ static void accounts_print_observation_audit(const char *prefix,
     if (obs->next[0]) yvex_cli_out_writef(stdout, "%snext: %s\n", prefix, obs->next);
 }
 
-/* Purpose: Render accounts print single from typed facts (`accounts_print_single`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void accounts_print_single(const char *surface,
                                   const yvex_account_observation *obs,
                                   yvex_accounts_output_mode mode)
@@ -211,11 +181,6 @@ static void accounts_print_single(const char *surface,
     yvex_cli_out_writef(stdout, "status: %s\n", obs->status);
 }
 
-/* Purpose: Orchestrate the typed command accounts providers request (`command_accounts_providers`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_accounts_providers(int arg_count, char **args)
 {
     yvex_accounts_cli_options options;
@@ -256,11 +221,6 @@ static int command_accounts_providers(int arg_count, char **args)
     return 0;
 }
 
-/* Purpose: Orchestrate the typed command accounts status request (`command_accounts_status`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_accounts_status(int arg_count, char **args)
 {
     yvex_accounts_cli_options options;
@@ -305,11 +265,6 @@ static int command_accounts_status(int arg_count, char **args)
     return 0;
 }
 
-/* Purpose: Orchestrate the typed command accounts whoami request (`command_accounts_whoami`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_accounts_whoami(int arg_count, char **args)
 {
     yvex_accounts_cli_options options;
@@ -348,11 +303,6 @@ static int command_accounts_whoami(int arg_count, char **args)
     return exit_for_status(YVEX_ERR_UNSUPPORTED);
 }
 
-/* Purpose: Parse accounts parse login options into typed CLI state (`accounts_parse_login_options`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int accounts_parse_login_options(const char *command,
                                         int arg_count,
                                         char **args,
@@ -420,11 +370,6 @@ static int accounts_parse_login_options(const char *command,
     return 0;
 }
 
-/* Purpose: Orchestrate the typed command accounts login request (`command_accounts_login`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_accounts_login(int arg_count, char **args)
 {
     yvex_accounts_cli_options options;
@@ -532,11 +477,6 @@ static int command_accounts_login(int arg_count, char **args)
     return 0;
 }
 
-/* Purpose: Orchestrate the typed command accounts ensure request (`command_accounts_ensure`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_accounts_ensure(int arg_count, char **args)
 {
     yvex_accounts_cli_options options;
@@ -613,11 +553,6 @@ static int command_accounts_ensure(int arg_count, char **args)
     return exit_for_status(YVEX_ERR_UNSUPPORTED);
 }
 
-/* Purpose: Orchestrate the typed command accounts logout request (`command_accounts_logout`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_accounts_logout(int arg_count, char **args)
 {
     yvex_accounts_cli_options options;
@@ -662,7 +597,6 @@ static int command_accounts_logout(int arg_count, char **args)
     return exit_code == 0 ? 0 : 1;
 }
 
-/* Purpose: Render accounts help command from typed facts (`accounts_help_command`). */
 static void accounts_help_command(FILE *fp)
 {
     yvex_cli_out_writef(fp, "usage: yvex system accounts providers [--output normal|table|audit]\n");
@@ -672,11 +606,6 @@ static void accounts_help_command(FILE *fp)
     yvex_cli_out_lines(fp, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
 }
 
-/* Purpose: Orchestrate the typed accounts command request (`yvex_accounts_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_accounts_command(int arg_count, char **args)
 {
     const char *sub;
@@ -700,11 +629,6 @@ int yvex_accounts_command(int arg_count, char **args)
     return 2;
 }
 
-/* Purpose: Render accounts help from typed facts (`yvex_accounts_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_accounts_help(FILE *fp)
 {
     accounts_help_command(fp);

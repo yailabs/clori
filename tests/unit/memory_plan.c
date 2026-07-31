@@ -1,24 +1,6 @@
 /*
- * YVEX - memory plan tests
- *
- * File: tests/test_memory_plan.c
- * Layer: test
- *
- * Purpose:
- *   Proves that graph planner memory plans are estimate-only summaries derived from
- *   descriptor facts and graph shapes, without allocating backend memory.
- *
- * Covers:
- *   - yvex_memory_plan_from_graph
- *   - yvex_memory_plan_get_summary
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_memory_plan
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises graph planner memory plans are estimate-only summaries derived from descriptor facts
+ * and graph shapes, without allocating backend memory.
  */
 #include <stdio.h>
 #include <string.h>

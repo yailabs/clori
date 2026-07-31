@@ -1,12 +1,9 @@
-/* Owner: server.openai.render.
- * Owns: OpenAI-profile JSON/error/model/result objects and streaming event projections.
- * Does not own: JSON request admission, HTTP framing, YVEX counters, generation, or terminal UI.
- * Invariants: every string is escaped, usage is authoritative, and no internal path/identity leaks by default.
- * Boundary: provider-neutral/YVEX result facts become only the documented compatibility-profile objects.
- * Purpose: render stable Chat Completions and Responses JSON without terminal-oriented printers.
- * Inputs: explicit IDs/model, committed fragments, terminal usage/finish facts, and bounded output owner.
- * Effects: allocates one complete JSON document per call.
- * Failure: allocation/bounds errors publish no partial JSON owner. */
+/*
+ * Render stable Chat Completions and Responses JSON without terminal-oriented printers.
+ *
+ * Every string is escaped, usage is authoritative, and no internal path/identity leaks by default.
+ * Provider-neutral/YVEX result facts become only the documented compatibility-profile objects.
+ */
 
 #include "src/server/openai/private.h"
 
@@ -21,11 +18,6 @@ typedef struct {
     unsigned long long count, capacity;
 } render_builder;
 
-/* Purpose: reserve one checked render extent.
- * Inputs: builder, requested additional bytes, and error output.
- * Effects: grows unique render storage while retaining existing bytes.
- * Failure: preserves the prior owner on bounds or allocation failure.
- * Boundary: byte storage only; no JSON semantics are selected here. */
 static int render_reserve(render_builder *builder, unsigned long long add,
                           yvex_error *err)
 {
@@ -51,7 +43,6 @@ static int render_reserve(render_builder *builder, unsigned long long add,
     return YVEX_OK;
 }
 
-/* Purpose: append one explicit render span. */
 static int render_append(render_builder *builder, const void *bytes,
                          unsigned long long count, yvex_error *err)
 {
@@ -63,18 +54,12 @@ static int render_append(render_builder *builder, const void *bytes,
     return YVEX_OK;
 }
 
-/* Purpose: append one fixed rendering literal. */
 static int render_literal(render_builder *builder, const char *text,
                           yvex_error *err)
 {
     return render_append(builder, text, (unsigned long long)strlen(text), err);
 }
 
-/* Purpose: render one explicit UTF-8 span as a JSON string.
- * Inputs: builder, explicit bytes/count, and error output.
- * Effects: appends quotes and deterministic JSON escaping.
- * Failure: returns the first builder failure with no published document.
- * Boundary: escaping does not normalize or reinterpret UTF-8 content. */
 static int render_string(render_builder *builder, const unsigned char *bytes,
                          unsigned long long count, yvex_error *err)
 {
@@ -99,7 +84,6 @@ static int render_string(render_builder *builder, const unsigned char *bytes,
     return rc == YVEX_OK ? render_literal(builder, "\"", err) : rc;
 }
 
-/* Purpose: append one terminated public string through the same JSON escaping path. */
 static int render_text(render_builder *builder, const char *text,
                        yvex_error *err)
 {
@@ -107,11 +91,6 @@ static int render_text(render_builder *builder, const char *text,
                          text ? strlen(text) : 0u, err);
 }
 
-/* Purpose: publish one completed builder into caller ownership.
- * Inputs: complete builder and cleared output pointer/count.
- * Effects: transfers allocation ownership and clears the builder.
- * Failure: frees invalid candidate storage and publishes no output.
- * Boundary: publication occurs only after the full JSON document exists. */
 static int render_finish(render_builder *builder, unsigned char **output,
                          unsigned long long *count, yvex_error *err)
 {
@@ -126,11 +105,6 @@ static int render_finish(render_builder *builder, unsigned char **output,
     return YVEX_OK;
 }
 
-/* Purpose: render one bounded OpenAI-compatible error envelope.
- * Inputs: public status/type/parameter/code/message and output owner.
- * Effects: allocates one complete escaped error JSON object.
- * Failure: frees partial rendering and leaves output null/count zero.
- * Boundary: contains no internal path, prompt, or model-state facts. */
 int openai_json_error(int status, const char *type, const char *param,
                       const char *code, const char *message,
                       unsigned char **output, unsigned long long *count,
@@ -160,11 +134,6 @@ int openai_json_error(int status, const char *type, const char *param,
     return render_finish(&builder, output, count, err);
 }
 
-/* Purpose: render the loaded-model object or list from authoritative daemon status.
- * Inputs: daemon summary, selected public model ID, list mode, and output owner.
- * Effects: allocates one model object or list document.
- * Failure: frees incomplete JSON and publishes no discovery result.
- * Boundary: projects readiness facts but does not discover or load models itself. */
 int openai_json_models(const yvex_server_summary *summary,
                        const char *selected_model, int list,
                        unsigned char **output, unsigned long long *count,
@@ -189,7 +158,6 @@ int openai_json_models(const yvex_server_summary *summary,
     return render_finish(&builder, output, count, err);
 }
 
-/* Purpose: append standard Chat usage counters without reuse-count corruption. */
 static int render_chat_usage(render_builder *builder,
                              const openai_generation_result *result,
                              yvex_error *err)
@@ -204,11 +172,6 @@ static int render_chat_usage(render_builder *builder,
                : YVEX_ERR_BOUNDS;
 }
 
-/* Purpose: append one Chat assistant message with optional exact function call.
- * Inputs: builder, committed aggregate result, and error output.
- * Effects: writes role/content plus one typed tool call when present.
- * Failure: returns the first rendering failure without publishing a response.
- * Boundary: arguments remain JSON text bytes and are never executed. */
 static int render_chat_message(render_builder *builder,
                                const openai_generation_result *result,
                                yvex_error *err)
@@ -236,11 +199,6 @@ static int render_chat_message(render_builder *builder,
     return rc == YVEX_OK ? render_literal(builder, "}", err) : rc;
 }
 
-/* Purpose: render one complete non-stream Chat Completions response.
- * Inputs: builder, public IDs/time, authoritative result, and error output.
- * Effects: appends choices, finish reason, and exact usage counters.
- * Failure: leaves publication to the caller only after full completion.
- * Boundary: maps provider facts without changing token-count semantics. */
 static int render_chat_result(render_builder *builder, const char *id,
                               const char *model, unsigned long long created,
                               const openai_generation_result *result,
@@ -263,11 +221,6 @@ static int render_chat_result(render_builder *builder, const char *id,
     return rc == YVEX_OK ? render_literal(builder, "}", err) : rc;
 }
 
-/* Purpose: render one complete bounded Responses object.
- * Inputs: builder, public IDs/time, authoritative result, and error output.
- * Effects: writes message or function-call output, status, usage, and incomplete facts.
- * Failure: returns the first render failure with no externally owned document.
- * Boundary: implements only the admitted text/function Responses profile. */
 static int render_responses_result(render_builder *builder, const char *id,
                                    const char *model, unsigned long long created,
                                    const openai_generation_result *result,
@@ -329,11 +282,6 @@ static int render_responses_result(render_builder *builder, const char *id,
     return rc == YVEX_OK ? render_literal(builder, "}", err) : rc;
 }
 
-/* Purpose: render one complete endpoint-specific non-stream result.
- * Inputs: endpoint, IDs/time, completed result, output owner, and error output.
- * Effects: allocates and transfers one Chat or Responses JSON document.
- * Failure: clears output and frees partial builder storage.
- * Boundary: endpoint projection only; transport framing is separate. */
 int openai_json_result(openai_endpoint endpoint, const char *id,
                        const char *model, unsigned long long created,
                        const openai_generation_result *result,
@@ -352,11 +300,6 @@ int openai_json_result(openai_endpoint endpoint, const char *id,
     return render_finish(&builder, output, count, err);
 }
 
-/* Purpose: render one Chat streaming role/content/tool/terminal chunk.
- * Inputs: builder, public IDs/time, protocol message, initial flag, and error output.
- * Effects: appends exactly one chat.completion.chunk object.
- * Failure: returns before the caller emits any incomplete SSE record.
- * Boundary: consumes only model-committed protocol fragments and terminal facts. */
 static int render_chat_chunk(render_builder *builder, const char *id,
                              const char *model, unsigned long long created,
                              const yvex_client_message *message, int initial,
@@ -406,11 +349,11 @@ static int render_chat_chunk(render_builder *builder, const char *id,
     return rc == YVEX_OK ? render_literal(builder, "}]}", err) : rc;
 }
 
-/* Purpose: render one documented Responses streaming event payload.
- * Inputs: builder, public IDs/model, protocol message, initial flag, and error output.
- * Effects: appends one admitted Responses event object.
- * Failure: returns before partial event bytes leave builder ownership.
- * Boundary: event sequencing is orchestrator-owned; this function renders one event. */
+/*
+ * Render one documented Responses streaming event payload.
+ *
+ * Returns before partial event bytes leave builder ownership.
+ */
 static int render_response_chunk(render_builder *builder, const char *id,
                                  const char *model,
                                  const yvex_client_message *message,
@@ -455,11 +398,6 @@ static int render_response_chunk(render_builder *builder, const char *id,
     return rc == YVEX_OK ? render_literal(builder, "}}", err) : rc;
 }
 
-/* Purpose: render one endpoint-specific SSE data object from a protocol-v4 message.
- * Inputs: endpoint, IDs/time, protocol message, initial flag, and output owner.
- * Effects: allocates and transfers one complete stream JSON object.
- * Failure: frees partial storage and leaves output null/count zero.
- * Boundary: performs no socket I/O and never fabricates uncommitted text. */
 int openai_json_stream_chunk(openai_endpoint endpoint, const char *id,
                              const char *model, unsigned long long created,
                              const yvex_client_message *message, int initial,
@@ -479,11 +417,6 @@ int openai_json_stream_chunk(openai_endpoint endpoint, const char *id,
     return render_finish(&builder, output, count, err);
 }
 
-/* Purpose: render the optional terminal Chat streaming usage chunk.
- * Inputs: public IDs/time, completed authoritative result, output owner, and error output.
- * Effects: allocates one chat.completion.chunk with empty choices and exact usage.
- * Failure: frees partial storage and leaves output null/count zero.
- * Boundary: usage values remain YVEX counters and exclude prefix-reuse extensions. */
 int openai_json_chat_usage_chunk(const char *id, const char *model,
                                  unsigned long long created,
                                  const openai_generation_result *result,
@@ -514,7 +447,6 @@ int openai_json_chat_usage_chunk(const char *id, const char *model,
     return render_finish(&builder, output, count, err);
 }
 
-/* Purpose: map one bounded Responses stream event kind to its public type. */
 static const char *response_event_name(openai_response_event_kind kind)
 {
     static const char *const names[] = {
@@ -534,7 +466,6 @@ static const char *response_event_name(openai_response_event_kind kind)
     return kind <= OPENAI_RESPONSE_EVENT_FAILED ? names[kind] : NULL;
 }
 
-/* Purpose: derive the stable output-item ID used by every event for one response. */
 static void response_item_id(const char *response_id,
                              const openai_generation_result *result,
                              char output[YVEX_PROVIDER_ID_CAP])
@@ -547,11 +478,12 @@ static void response_item_id(const char *response_id,
                        response_id);
 }
 
-/* Purpose: append one in-progress or completed Responses output item.
- * Inputs: builder, response/result facts, completion state, and error output.
- * Effects: appends one text-message or function-call item with stable identity.
- * Failure: returns the first bounded rendering error.
- * Boundary: item bytes are committed provider output and are never executed. */
+/*
+ * Append one in-progress or completed Responses output item.
+ *
+ * Appends one text-message or function-call item with stable identity. Returns the first bounded
+ * rendering error.
+ */
 static int render_response_item(render_builder *builder, const char *id,
                                 const openai_generation_result *result,
                                 int completed, yvex_error *err)
@@ -594,11 +526,12 @@ static int render_response_item(render_builder *builder, const char *id,
     return rc;
 }
 
-/* Purpose: append the event-specific payload after common type/sequence facts.
- * Inputs: event kind, IDs/model, optional fragment/result, and error output.
- * Effects: appends only fields admitted for the bounded Responses stream profile.
- * Failure: preserves builder ownership for caller cleanup.
- * Boundary: event order is controlled by the gateway orchestration owner. */
+/*
+ * Append the event-specific payload after common type/sequence facts.
+ *
+ * Appends only fields admitted for the bounded Responses stream profile. Preserves builder
+ * ownership for caller cleanup.
+ */
 static int render_response_event_payload(
     render_builder *builder, openai_response_event_kind kind,
     const char *id, const char *model, unsigned long long created,
@@ -694,11 +627,6 @@ static int render_response_event_payload(
     return rc;
 }
 
-/* Purpose: render one fully sequenced Responses streaming event.
- * Inputs: event kind, public IDs/time, optional committed fragment/result, sequence, and output owner.
- * Effects: allocates one complete profile-v1 event document.
- * Failure: frees partial bytes and publishes no event.
- * Boundary: produces application syntax only and never mutates runtime state. */
 int openai_json_response_event(openai_response_event_kind kind,
                                const char *id, const char *model,
                                unsigned long long created,

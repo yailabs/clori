@@ -299,6 +299,7 @@ def check_project_control() -> None:
         fail(f"active milestone/Active Next mismatch: {active_rows}/{active_next}")
     required = {
         "V010.DOCS.INFORMATION.ARCHITECTURE.0": "complete",
+        "V010.REPO.CODE.COMMENTARY.0": "complete",
         "V010.OPERATOR.REPL.CONSOLE.0": "active",
         "V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0": "blocked",
         "V010.EVAL.DEEPSEEK.0": "blocked",

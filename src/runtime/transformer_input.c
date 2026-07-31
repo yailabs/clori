@@ -1,12 +1,9 @@
-/* Owner: runtime transformer token input.
- * Owns: versioned numeric-token memory/file admission, canonical identities, drift checks, and cleanup.
- * Does not own: tokenization, embedding, transformer execution, model state, CLI parsing, or rendering.
- * Invariants: payload is canonical little-endian U32 and every file is regular, non-symlink, bounded, and exact.
- * Boundary: numeric model input only; token IDs do not establish tokenizer support.
- * Purpose: admit identity-bound token chunks for the production transformer API.
- * Inputs: typed summaries and U32 payloads or secure external files.
- * Effects: owns bounded copied/mapped input bytes and publishes immutable views.
- * Failure: malformed identity, extent, filesystem type, or drift releases all partial resources. */
+/*
+ * Admit identity-bound token chunks for the production transformer API.
+ *
+ * Payload is canonical little-endian U32 and every file is regular, non-symlink, bounded, and
+ * exact. Numeric model input only; token IDs do not establish tokenizer support.
+ */
 #include <yvex/internal/transformer.h>
 
 #include <errno.h>
@@ -31,14 +28,12 @@ struct yvex_transformer_input {
     int fd, file_backed;
 };
 
-/* Purpose: publish one stable transformer-input refusal. */
 static int transformer_input_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "runtime.transformer.input", reason);
     return status;
 }
 
-/* Purpose: store one canonical little-endian U32. */
 static void transformer_u32_store(unsigned char *out, uint32_t value)
 {
     out[0] = (unsigned char)value;
@@ -47,23 +42,18 @@ static void transformer_u32_store(unsigned char *out, uint32_t value)
     out[3] = (unsigned char)(value >> 24);
 }
 
-/* Purpose: store one canonical little-endian U64. */
 static void transformer_u64_store(unsigned char *out, uint64_t value)
 {
     unsigned int index;
     for (index = 0u; index < 8u; ++index) out[index] = (unsigned char)(value >> (index * 8u));
 }
 
-/* Purpose: load one canonical little-endian U32. Inputs: four bytes. Effects: none.
- * Failure: none for admitted extent. Boundary: portable encoding only. */
 static uint32_t transformer_u32_load(const unsigned char *in)
 {
     return (uint32_t)in[0] | ((uint32_t)in[1] << 8) | ((uint32_t)in[2] << 16) |
            ((uint32_t)in[3] << 24);
 }
 
-/* Purpose: load one canonical little-endian U64. Inputs: eight bytes. Effects: none.
- * Failure: none for admitted extent. Boundary: portable encoding only. */
 static uint64_t transformer_u64_load(const unsigned char *in)
 {
     uint64_t value = 0ull;
@@ -72,8 +62,6 @@ static uint64_t transformer_u64_load(const unsigned char *in)
     return value;
 }
 
-/* Purpose: transfer one bounded byte extent despite interrupts. Inputs: fd/range/direction.
- * Effects: reads or writes exact bytes. Failure: false. Boundary: no semantic parsing. */
 static int transformer_io(int fd, void *bytes, size_t count, off_t offset, int writing)
 {
     size_t done = 0u;
@@ -90,8 +78,6 @@ static int transformer_io(int fd, void *bytes, size_t count, off_t offset, int w
     return 1;
 }
 
-/* Purpose: hash tokens in canonical portable form. Inputs: tokens/count/output.
- * Effects: writes digest. Failure: false. Boundary: no native U32 aggregate bytes. */
 static int transformer_payload_digest(const unsigned int *tokens, unsigned long long count,
                                       char output[YVEX_SHA256_HEX_CAP])
 {
@@ -109,8 +95,6 @@ static int transformer_payload_digest(const unsigned int *tokens, unsigned long 
     return 1;
 }
 
-/* Purpose: derive the semantic input identity field-by-field. Inputs: sealed summary.
- * Effects: writes identity. Failure: false. Boundary: excludes path, fd, timestamp, and pointers. */
 static int transformer_input_identity(const yvex_transformer_input_summary *summary,
                                       char output[YVEX_SHA256_HEX_CAP])
 {
@@ -134,9 +118,11 @@ static int transformer_input_identity(const yvex_transformer_input_summary *summ
     return 1;
 }
 
-/* Purpose: seal one input summary over exact U32 tokens. Inputs: summary/payload.
- * Effects: writes extent/digests. Failure: typed identity/domain refusal.
- * Boundary: numeric token admission is not tokenization. */
+/*
+ * Seal one input summary over exact U32 tokens.
+ *
+ * Typed identity/domain refusal.
+ */
 int yvex_transformer_input_seal(yvex_transformer_input_summary *summary,
                                 const unsigned int *token_ids, yvex_error *err)
 {
@@ -163,8 +149,6 @@ int yvex_transformer_input_seal(yvex_transformer_input_summary *summary,
     return YVEX_OK;
 }
 
-/* Purpose: encode one fixed portable input header. Inputs: sealed summary.
- * Effects: fills header. Failure: false. Boundary: no native struct serialization. */
 static int transformer_header_encode(unsigned char header[TRANSFORMER_INPUT_HEADER_BYTES],
                                      const yvex_transformer_input_summary *summary)
 {
@@ -185,8 +169,6 @@ static int transformer_header_encode(unsigned char header[TRANSFORMER_INPUT_HEAD
     return 1;
 }
 
-/* Purpose: decode one fixed portable input header. Inputs: exact header.
- * Effects: fills summary. Failure: false. Boundary: reserved bytes must be zero. */
 static int transformer_header_decode(yvex_transformer_input_summary *summary,
                                      const unsigned char header[TRANSFORMER_INPUT_HEADER_BYTES])
 {
@@ -211,9 +193,6 @@ static int transformer_header_decode(yvex_transformer_input_summary *summary,
            summary->input_identity[YVEX_SHA256_HEX_CAP - 1u] == '\0';
 }
 
-/* Purpose: publish one exact transformer token input file for operator/test producers.
- * Inputs: sealed summary/token payload and unused destination. Effects: creates one regular file exclusively.
- * Failure: removes only the incomplete file created by this call. Boundary: no registry or tokenizer state. */
 int yvex_transformer_input_write(const char *path,
                                  const yvex_transformer_input_summary *summary,
                                  const unsigned int *token_ids, yvex_error *err)
@@ -251,9 +230,11 @@ int yvex_transformer_input_write(const char *path,
     return YVEX_OK;
 }
 
-/* Purpose: allocate one owned memory input after exact revalidation.
- * Inputs: sealed summary/payload. Effects: owns one immutable token copy.
- * Failure: typed identity/allocation refusal. Boundary: no model/session state. */
+/*
+ * Allocate one owned memory input after exact revalidation.
+ *
+ * Typed identity/allocation refusal.
+ */
 int yvex_transformer_input_open_memory(yvex_transformer_input **out,
                                        const yvex_transformer_input_summary *summary,
                                        const unsigned int *token_ids, yvex_error *err)
@@ -286,9 +267,6 @@ int yvex_transformer_input_open_memory(yvex_transformer_input **out,
     return YVEX_OK;
 }
 
-/* Purpose: securely open, parse, and own one bounded token file.
- * Inputs: non-symlink path and byte limit. Effects: retains fd/snapshot/token copy.
- * Failure: typed path/format/I/O refusal with cleanup. Boundary: no tokenizer or execution. */
 int yvex_transformer_input_open_file(yvex_transformer_input **out, const char *path,
                                      const yvex_transformer_input_limits *limits,
                                      yvex_error *err)
@@ -350,9 +328,6 @@ failure:
     return rc;
 }
 
-/* Purpose: revalidate content, identities, plan, and snapshot.
- * Inputs: admitted input/plan/binding. Effects: none. Failure: typed stale/drift refusal.
- * Boundary: validation never mutates input or model state. */
 int yvex_transformer_input_validate(const yvex_transformer_input *input,
                                     const yvex_transformer_plan *plan,
                                     const yvex_runtime_binding_summary *binding,
@@ -390,23 +365,27 @@ int yvex_transformer_input_validate(const yvex_transformer_input *input,
     return YVEX_OK;
 }
 
-/* Purpose: borrow one immutable input summary. Inputs: input. Effects: none. Failure: NULL.
- * Boundary: borrowed lifetime ends on input close. */
+/*
+ * Borrow one immutable input summary.
+ *
+ * Borrowed lifetime ends on input close.
+ */
 const yvex_transformer_input_summary *yvex_transformer_input_summary_get(
     const yvex_transformer_input *input)
 {
     return input ? &input->summary : NULL;
 }
 
-/* Purpose: borrow canonical host-order token IDs. Inputs: input. Effects: none. Failure: NULL.
- * Boundary: borrowed lifetime ends on input close. */
+/*
+ * Borrow canonical host-order token IDs.
+ *
+ * Borrowed lifetime ends on input close.
+ */
 const unsigned int *yvex_transformer_input_token_ids(const yvex_transformer_input *input)
 {
     return input ? input->tokens : NULL;
 }
 
-/* Purpose: close one token input. Inputs: owner. Effects: closes fd and frees tokens.
- * Failure: none. Boundary: repeated NULL close is idempotent. */
 void yvex_transformer_input_close(yvex_transformer_input **input)
 {
     if (!input || !*input) return;

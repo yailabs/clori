@@ -1,7 +1,4 @@
-/*
- * YVEX - DeepSeek adapter tests
- *
- */
+
 #include <string.h>
 
 #include <yvex/gguf.h>

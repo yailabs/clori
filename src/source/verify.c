@@ -1,12 +1,9 @@
-/* Owner: source verification.
- * Owns: exact admission coordination, sidecar facts, blockers, and promotion.
- * Does not own: JSON primitives, provenance parsing, inventory ownership, or payload reads.
- * Invariants: success requires complete reopened manifest and one header scan.
- * Boundary: verified metadata is not transformed bytes or artifact support.
- * Purpose: coordinate exact admission across canonical source owners.
- * Inputs: source options, snapshot output, sidecars, and verification facts.
- * Effects: reads structured metadata and publishes only complete verification.
- * Failure: missing, malformed, mismatched, overflow, or I/O leaves blockers. */
+/*
+ * Coordinate exact admission across canonical source owners.
+ *
+ * Success requires complete reopened manifest and one header scan. Verified metadata is not
+ * transformed bytes or artifact support.
+ */
 #define _XOPEN_SOURCE 700
 #include <ctype.h>
 #include <limits.h>
@@ -79,11 +76,6 @@ static const size_t source_sidecar_valid_offsets[] = {
     offsetof(yvex_source_verification, generation_config_valid),
 };
 
-/* Purpose: project path join facts while preserving the canonical source verification invariants.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 int yvex_source_path_join(char *out, size_t cap, const char *left, const char *right) {
     int n;
 
@@ -94,11 +86,11 @@ int yvex_source_path_join(char *out, size_t cap, const char *left, const char *r
     return n >= 0 && (size_t)n < cap;
 }
 
-/* Purpose: allocate one exact source-relative path with checked size arithmetic.
- * Inputs: two immutable path components.
- * Effects: returns one caller-owned allocation.
- * Failure: null input, overflow, or allocation failure returns null.
- * Boundary: path construction does not admit the resulting filesystem object. */
+/*
+ * Allocate one exact source-relative path with checked size arithmetic.
+ *
+ * Null input, overflow, or allocation failure returns null.
+ */
 char *yvex_source_path_alloc(const char *left, const char *right) {
     size_t left_length, right_length;
     const char *separator;
@@ -117,11 +109,6 @@ char *yvex_source_path_alloc(const char *left, const char *right) {
     return path;
 }
 
-/* Purpose: compare one complete suffix without allocating or scanning past either string.
- * Inputs: immutable candidate and suffix strings.
- * Effects: none.
- * Failure: null input returns false.
- * Boundary: lexical matching does not admit a source path or file type. */
 int yvex_source_ends_with(const char *text, const char *suffix) {
     size_t text_length, suffix_length;
 
@@ -133,11 +120,6 @@ int yvex_source_ends_with(const char *text, const char *suffix) {
            strcmp(text + text_length - suffix_length, suffix) == 0;
 }
 
-/* Purpose: project regular file facts while preserving the canonical source verification invariants.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 int yvex_source_regular_file(const char *path, unsigned long long *size) {
     struct stat st;
 
@@ -148,11 +130,6 @@ int yvex_source_regular_file(const char *path, unsigned long long *size) {
     return 1;
 }
 
-/* Purpose: project revision is commit facts while preserving the canonical source verification invariants.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 int yvex_source_revision_is_commit(const char *text) {
     size_t i;
 
@@ -165,11 +142,6 @@ int yvex_source_revision_is_commit(const char *text) {
     return 1;
 }
 
-/* Purpose: project verification add blocker facts while preserving the canonical source verification invariants.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 void yvex_source_verification_add_blocker(yvex_source_verification *out, const char *reason) {
     unsigned int i;
 
@@ -184,11 +156,6 @@ void yvex_source_verification_add_blocker(yvex_source_verification *out, const c
     }
 }
 
-/* Purpose: project verification has blocker facts while preserving the canonical source verification invariants.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 int yvex_source_verification_has_blocker(const yvex_source_verification *out, const char *reason) {
     unsigned int i;
 
@@ -201,18 +168,12 @@ int yvex_source_verification_has_blocker(const yvex_source_verification *out, co
     return 0;
 }
 
-/* Purpose: project one sidecar kind into its immutable admission and refusal facts. */
 static const source_sidecar_rule *source_sidecar_rule_at(source_sidecar_kind kind) {
     return kind >= SOURCE_SIDECAR_CONFIG && kind <= SOURCE_SIDECAR_GENERATION_CONFIG
                ? &source_sidecar_rules[(size_t)kind]
                : &source_sidecar_unknown;
 }
 
-/* Purpose: reads, structurally parses, and provenance-checks one required sidecar.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source verification state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 static int source_verify_sidecar(const yvex_source_verify_options *options,
                                  source_sidecar_kind kind,
                                  yvex_source_verification *out,
@@ -246,18 +207,12 @@ static int source_verify_sidecar(const yvex_source_verify_options *options,
     return rc;
 }
 
-/* Purpose: project manifest is current facts while preserving the canonical source verification invariants. */
 static int source_manifest_is_current(const yvex_source_verify_options *options,
                                       const yvex_source_verification *out) {
     return strcmp(out->manifest_status, "complete") == 0 &&
            yvex_source_provenance_manifest_matches(options, out);
 }
 
-/* Purpose: publishes and reopens the exact verified manifest through its writer owner.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 static int source_promote_manifest(const yvex_source_verify_options *options,
                                    yvex_source_verification *out,
                                    yvex_error *err) {
@@ -292,22 +247,12 @@ static int source_promote_manifest(const yvex_source_verify_options *options,
     return YVEX_OK;
 }
 
-/* Purpose: project source verification lifecycle facts into one stable typed status.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 const char *yvex_source_verification_status(const yvex_source_verification *verification) {
     if (!verification)
         return "invalid";
     return verification->verified ? "verified" : "blocked";
 }
 
-/* Purpose: coordinates exact source owners, promotes verified facts, and returns typed blockers.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source verification state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 int yvex_source_verify_with_snapshot(const yvex_source_verify_options *options,
                                      yvex_source_verification *out,
                                      yvex_source_tensor_snapshot **snapshot,
@@ -421,11 +366,6 @@ cleanup:
     return rc;
 }
 
-/* Purpose: validate source verification invariants and retain precise refusal evidence.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source verification state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 int yvex_source_verify(const yvex_source_verify_options *options,
                        yvex_source_verification *out,
                        yvex_error *err) {
@@ -490,7 +430,6 @@ typedef struct {
 #define CONFIG_USE_CACHE (1ull << 45)
 #define CONFIG_REQUIRED_MASK ((1ull << 46) - 1ull)
 
-/* Purpose: project config mark facts while preserving the canonical source verification invariants. */
 static int source_config_mark(source_config_parse_state *state, unsigned long long field) {
     if (state->seen & field)
         return 0;
@@ -706,11 +645,6 @@ static const source_json_field source_tokenizer_fields[] = {
     {"model", 64u, SOURCE_JSON_TOKEN_MODEL, 0u, 0u, 0u, 0u},
 };
 
-/* Purpose: parses the architecture list and records the canonical identity match.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 static int source_parse_architectures(yvex_json *json,
                                       const yvex_source_target_identity *identity,
                                       yvex_source_verification *out,
@@ -734,11 +668,11 @@ static int source_parse_architectures(yvex_json *json,
     return item == YVEX_JSON_ITEM_END && !iter.trailing_separator && iter.count != 0u;
 }
 
-/* Purpose: decode one schema-selected value into its typed verification field.
- * Inputs: active JSON cursor, immutable field descriptor, source identity, and output state.
- * Effects: mutates only the field selected by the immutable schema descriptor.
- * Failure: malformed or non-representable values leave the selected parse incomplete.
- * Boundary: schema decoding admits metadata only and never reads tensor payload bytes. */
+/*
+ * Decode one schema-selected value into its typed verification field.
+ *
+ * Active JSON cursor, immutable field descriptor, source identity, and output state.
+ */
 static int source_json_field_apply(yvex_json *json,
                                    const source_json_field *field,
                                    const yvex_source_target_identity *identity,
@@ -806,11 +740,11 @@ static int source_json_field_apply(yvex_json *json,
     return 0;
 }
 
-/* Purpose: parse one JSON object through an immutable typed field schema.
- * Inputs: active cursor, schema, required mask, optional identity, and caller-owned output.
- * Effects: applies each unique known field once and skips unknown values without side effects.
- * Failure: malformed syntax, duplicate known fields, or incomplete required coverage refuses.
- * Boundary: declarative metadata parsing does not infer architecture or runtime defaults. */
+/*
+ * Parse one JSON object through an immutable typed field schema.
+ *
+ * Active cursor, schema, required mask, optional identity, and caller-owned output.
+ */
 static int source_json_object_parse(yvex_json *json,
                                     const source_json_field *fields,
                                     size_t field_count,
@@ -843,11 +777,6 @@ static int source_json_object_parse(yvex_json *json,
            (!require_document_end || yvex_json_complete(json));
 }
 
-/* Purpose: parse required raw RoPE scaling facts through the canonical schema.
- * Inputs: active JSON cursor and caller-owned verification output.
- * Effects: mutates only schema-selected RoPE fields.
- * Failure: malformed, duplicate, or incomplete fields refuse the nested object.
- * Boundary: source metadata parsing does not select runtime RoPE policy. */
 static int source_parse_rope_scaling(yvex_json *json, yvex_source_verification *out) {
     source_config_parse_state state = {0};
 
@@ -861,16 +790,6 @@ static int source_parse_rope_scaling(yvex_json *json, yvex_source_verification *
                                     0);
 }
 
-/* Purpose: parses source quantization metadata without choosing a release qtype.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
-/* Purpose: parse source quantization metadata without choosing a release qtype.
- * Inputs: active JSON cursor and caller-owned verification output.
- * Effects: mutates only schema-selected source quantization fields.
- * Failure: malformed, duplicate, or incomplete fields refuse the nested object.
- * Boundary: source representation facts do not select a physical output encoding. */
 static int source_parse_quantization(yvex_json *json, yvex_source_verification *out) {
     source_config_parse_state state = {0};
 
@@ -884,16 +803,13 @@ static int source_parse_quantization(yvex_json *json, yvex_source_verification *
                                     0);
 }
 
-/* Purpose: parses every required raw DeepSeek configuration field.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
-/* Purpose: parse every required DeepSeek configuration field through immutable schema facts.
- * Inputs: bounded JSON, pinned source identity, and caller-owned verification output.
- * Effects: fills only declared configuration fields and records exact identity blockers.
- * Failure: malformed, duplicate, incomplete, or identity-mismatched facts refuse admission.
- * Boundary: verified configuration facts do not execute transformation or runtime work. */
+/*
+ * Parse every required DeepSeek configuration field through immutable schema facts.
+ *
+ * Bounded JSON, pinned source identity, and caller-owned verification output. Fills only declared
+ * configuration fields and records exact identity blockers. Malformed, duplicate, incomplete, or
+ * identity-mismatched facts refuse admission.
+ */
 static int source_parse_config_json(const char *data,
                                     size_t length,
                                     const yvex_source_target_identity *identity,
@@ -923,16 +839,6 @@ static int source_parse_config_json(const char *data,
     return 1;
 }
 
-/* Purpose: parses required tokenizer configuration facts without loading a tokenizer.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
-/* Purpose: parse required tokenizer configuration facts through immutable schema rows.
- * Inputs: bounded tokenizer configuration JSON and caller-owned verification output.
- * Effects: fills only declared tokenizer configuration fields.
- * Failure: malformed, duplicate, or incomplete fields refuse the sidecar.
- * Boundary: tokenizer metadata parsing does not load or execute a tokenizer. */
 static int
 source_parse_tokenizer_config(const char *data, size_t length, yvex_source_verification *out) {
     yvex_json json;
@@ -950,16 +856,6 @@ source_parse_tokenizer_config(const char *data, size_t length, yvex_source_verif
                                     1);
 }
 
-/* Purpose: parses raw generation-sidecar policy without implementing generation.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
-/* Purpose: parse generation-sidecar policy through immutable schema rows.
- * Inputs: bounded generation JSON and caller-owned verification output.
- * Effects: fills only declared generation-sidecar fields.
- * Failure: malformed, duplicate, or incomplete fields refuse the sidecar.
- * Boundary: recorded generation policy does not implement generation. */
 static int
 source_parse_generation_config(const char *data, size_t length, yvex_source_verification *out) {
     yvex_json json;
@@ -977,7 +873,6 @@ source_parse_generation_config(const char *data, size_t length, yvex_source_veri
                                     1);
 }
 
-/* Purpose: records one tokenizer id while preserving checked effective-vocabulary facts. */
 static int source_tokenizer_record_id(yvex_source_verification *out, unsigned long long token_id) {
     if (!out || token_id == ULLONG_MAX)
         return 0;
@@ -987,11 +882,6 @@ static int source_tokenizer_record_id(yvex_source_verification *out, unsigned lo
     return 1;
 }
 
-/* Purpose: parses the tokenizer vocabulary object and its numeric id range.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 static int source_parse_tokenizer_vocab(yvex_json *json, yvex_source_verification *out) {
     char token[YVEX_JSON_KEY_CAP];
     yvex_json_iter iter;
@@ -1011,11 +901,6 @@ static int source_parse_tokenizer_vocab(yvex_json *json, yvex_source_verificatio
     return item == YVEX_JSON_ITEM_END && !iter.trailing_separator;
 }
 
-/* Purpose: parses one added-token object and requires exactly one numeric id.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 static int source_parse_added_token(yvex_json *json, yvex_source_verification *out) {
     source_config_parse_state state = {0};
 
@@ -1031,11 +916,6 @@ static int source_parse_added_token(yvex_json *json, yvex_source_verification *o
                                     0);
 }
 
-/* Purpose: parses the added-token array without materializing token strings.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 static int source_parse_added_tokens(yvex_json *json, yvex_source_verification *out) {
     yvex_json_iter iter;
     yvex_json_item item;
@@ -1050,11 +930,6 @@ static int source_parse_added_tokens(yvex_json *json, yvex_source_verification *
     return item == YVEX_JSON_ITEM_END && !iter.trailing_separator;
 }
 
-/* Purpose: parses tokenizer model type and requires a structured vocabulary object.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 static int source_parse_tokenizer_model(yvex_json *json, yvex_source_verification *out) {
     source_config_parse_state state = {0};
 
@@ -1069,11 +944,6 @@ static int source_parse_tokenizer_model(yvex_json *json, yvex_source_verificatio
                                     0);
 }
 
-/* Purpose: validates required tokenizer JSON structure and preserves its model type.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 static int
 source_parse_tokenizer_json(const char *data, size_t length, yvex_source_verification *out) {
     yvex_json json;
@@ -1097,11 +967,6 @@ source_parse_tokenizer_json(const char *data, size_t length, yvex_source_verific
     return 1;
 }
 
-/* Purpose: project parse sidecar facts while preserving the canonical source verification invariants.
- * Inputs: typed source verification arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source verification state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: verified metadata is not transformed bytes or artifact support. */
 static int source_parse_sidecar(source_sidecar_kind kind,
                                 const char *data,
                                 size_t length,

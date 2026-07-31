@@ -1,12 +1,6 @@
-/* Owner: public backend ABI.
- * Owns: backend admission, device tensors, capabilities, and primitive execution.
- * Does not own: model topology, graph policy, or runtime orchestration.
- * Invariants: declarations are format-stable, externally consumable, and independently includable.
- * Boundary: typed CPU/CUDA execution contracts.
- * Purpose: Expose typed CPU/CUDA execution contracts.
- * Inputs: Typed caller-owned values and immutable borrowed views as declared below.
- * Effects: Only functions with explicit lifecycle or I/O contracts mutate external state.
- * Failure: Typed status and error outputs remain authoritative; declarations add no capability. */
+/* Backends execute already-admitted operations; they neither reconstruct model policy nor fall
+ * back across backend kinds. Owned resources remain associated with the backend that created
+ * them until checked release succeeds. */
 #ifndef YVEX_BACKEND_H
 #define YVEX_BACKEND_H
 

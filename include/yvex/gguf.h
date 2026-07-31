@@ -1,12 +1,6 @@
-/* Owner: public gguf ABI.
- * Owns: GGUF container parsing, layout, templates, conversion plans, and name mapping.
- * Does not own: qtype numeric capability, artifact support, or transformation execution.
- * Invariants: declarations are format-stable, externally consumable, and independently includable.
- * Boundary: GGUF format and lowering contracts over admitted model facts.
- * Purpose: Expose GGUF format and lowering contracts over admitted model facts.
- * Inputs: Typed caller-owned values and immutable borrowed views as declared below.
- * Effects: Only functions with explicit lifecycle or I/O contracts mutate external state.
- * Failure: Typed status and error outputs remain authoritative; declarations add no capability. */
+/* GGUF readers and writers expose container structure without promoting it to artifact admission.
+ * Callers retain ownership of model semantics; this ABI owns format geometry and serialized
+ * representation only. */
 #ifndef YVEX_GGUF_H
 #define YVEX_GGUF_H
 

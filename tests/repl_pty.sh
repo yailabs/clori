@@ -1,5 +1,5 @@
 #!/bin/sh
-# Purpose: prove the product chat distinguishes a PTY from piped input and reaches daemon admission.
+# A PTY must select interactive chat while piped input remains a bounded batch request.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}

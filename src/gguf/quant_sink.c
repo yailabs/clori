@@ -1,14 +1,10 @@
-/* Owner: gguf.quant sink (TRACK.QUANT).
- * Owns: concurrent-safe terminal protocol validation, incremental SHA-256, per-terminal digests, aggregate
- *   execution identity, and deterministic release.
- * Does not own: encoded byte creation, source reads, artifact files, or rendering.
- * Invariants: no payload byte is retained; a terminal digest publishes only on exact-size commit; final identity
- *   follows canonical terminal order.
- * Boundary: execution digests prove byte production, not GGUF emission.
- * Purpose: enforce terminal transactions and derive schedule-independent quantized-byte digests.
- * Inputs: a sealed quant plan, matching payload identity, and ordered encoded chunks.
- * Effects: owns bounded hash records, a mutex, and caller-visible immutable digest summaries.
- * Failure: protocol, allocation, identity, and incomplete-execution errors publish no final digest. */
+/*
+ * Enforce terminal transactions and derive schedule-independent quantized-byte digests.
+ *
+ * No payload byte is retained; a terminal digest publishes only on exact-size commit; final
+ * identity follows canonical terminal order. Execution digests prove byte production, not GGUF
+ * emission.
+ */
 #include <limits.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -47,31 +43,16 @@ struct yvex_quant_digest_sink {
     int finalized;
 };
 
-/* Purpose: allocate sink storage through the default heap seam.
- * Inputs: requested byte count and ignored allocator context.
- * Effects: acquires one heap allocation owned by the caller.
- * Failure: returns null when allocation fails.
- * Boundary: allocation does not initialize sink lifecycle state. */
 static void *quant_sink_default_allocate(size_t size, void *context) {
     (void)context;
     return malloc(size);
 }
 
-/* Purpose: release storage acquired through the default sink heap seam.
- * Inputs: optional allocation and ignored allocator context.
- * Effects: relinquishes the heap allocation.
- * Failure: none; null follows free semantics.
- * Boundary: the caller owns higher-level lifecycle ordering. */
 static void quant_sink_default_release(void *allocation, void *context) {
     (void)context;
     free(allocation);
 }
 
-/* Purpose: publish one typed digest-sink refusal with terminal accounting.
- * Inputs: optional diagnostics, failure code, terminal, expected/actual facts, and status.
- * Effects: replaces failure and error records without mutating terminal state.
- * Failure: always returns the supplied refusal status.
- * Boundary: diagnostics cannot commit or finalize a terminal. */
 static int quant_sink_fail(yvex_quant_failure *failure, yvex_quant_failure_code code,
                            unsigned long long terminal, unsigned long long expected,
                            unsigned long long actual, yvex_error *err, int status,
@@ -92,11 +73,6 @@ static int quant_sink_fail(yvex_quant_failure *failure, yvex_quant_failure_code 
     return status;
 }
 
-/* Purpose: begin exactly one terminal digest transaction against its canonical plan decision.
- * Inputs: sink context and borrowed immutable decision.
- * Effects: under lock, moves one empty record to active and initializes its hash.
- * Failure: invalid, repeated, finalized, mismatched, or unknown-qtype begins are refused.
- * Boundary: begin retains no payload and grants no commit. */
 static int quant_digest_begin(void *opaque, const yvex_quant_decision *decision) {
     yvex_quant_digest_sink *sink = (yvex_quant_digest_sink *)opaque;
     quant_digest_record *record;
@@ -120,11 +96,11 @@ static int quant_digest_begin(void *opaque, const yvex_quant_decision *decision)
     return refused;
 }
 
-/* Purpose: hash one monotonic bounded output chunk for an active terminal.
- * Inputs: sink context, canonical decision, exact logical offset, and ephemeral bytes.
- * Effects: under lock, advances delivered-byte and chunk counters after successful hashing.
- * Failure: protocol, overflow, oversize, or hash refusal leaves counters unchanged.
- * Boundary: chunk bytes are consumed synchronously and never retained. */
+/*
+ * Hash one monotonic bounded output chunk for an active terminal.
+ *
+ * Protocol, overflow, oversize, or hash refusal leaves counters unchanged.
+ */
 static int quant_digest_chunk(void *opaque, const yvex_quant_decision *decision,
                               unsigned long long output_offset, const unsigned char *bytes,
                               size_t byte_count) {
@@ -151,11 +127,11 @@ static int quant_digest_chunk(void *opaque, const yvex_quant_decision *decision,
     return refused;
 }
 
-/* Purpose: commit one terminal only after exact-size byte delivery and hash finalization.
- * Inputs: sink context, canonical decision, and executor-reported delivered bytes.
- * Effects: under lock, seals the terminal digest and aggregate byte/qtype counters.
- * Failure: incomplete, duplicate, overflowed, or unhashable commits remain uncommitted.
- * Boundary: terminal commit is not aggregate execution finalization. */
+/*
+ * Commit one terminal only after exact-size byte delivery and hash finalization.
+ *
+ * Terminal commit is not aggregate execution finalization.
+ */
 static int quant_digest_commit(void *opaque, const yvex_quant_decision *decision,
                                unsigned long long delivered_bytes) {
     yvex_quant_digest_sink *sink = (yvex_quant_digest_sink *)opaque;
@@ -187,11 +163,6 @@ static int quant_digest_commit(void *opaque, const yvex_quant_decision *decision
     return refused;
 }
 
-/* Purpose: abort one empty or active terminal transaction without publishing a digest.
- * Inputs: sink context, canonical decision, optional failure, and delivered-byte fact.
- * Effects: under lock, clears partial hash state and marks the terminal aborted once.
- * Failure: invalid contexts and already terminal states are safe no-ops.
- * Boundary: abort never interprets or retains partial output bytes. */
 static void quant_digest_abort(void *opaque, const yvex_quant_decision *decision,
                                const yvex_quant_failure *failure,
                                unsigned long long delivered_bytes) {
@@ -213,11 +184,13 @@ static void quant_digest_abort(void *opaque, const yvex_quant_decision *decision
     pthread_mutex_unlock(&sink->mutex);
 }
 
-/* Purpose: create a digest sink using the canonical heap allocator.
- * Inputs: output owner slot, sealed plan, matching payload identity, and diagnostics.
- * Effects: allocates bounded per-terminal hash state while borrowing the plan.
- * Failure: invalid plan/identity or allocation failure leaves the output null.
- * Boundary: the sink hashes encoded output and never emits an artifact. */
+/*
+ * Create a digest sink using the canonical heap allocator.
+ *
+ * Output owner slot, sealed plan, matching payload identity, and diagnostics. Allocates bounded
+ * per-terminal hash state while borrowing the plan. Invalid plan/identity or allocation failure
+ * leaves the output null.
+ */
 int yvex_quant_digest_sink_create(yvex_quant_digest_sink **out, const yvex_quant_plan *plan,
                                   const char *payload_identity, yvex_quant_failure *failure,
                                   yvex_error *err) {
@@ -225,11 +198,14 @@ int yvex_quant_digest_sink_create(yvex_quant_digest_sink **out, const yvex_quant
                                                         err);
 }
 
-/* Purpose: construct a digest sink through an explicit fault-injectable allocator seam.
- * Inputs: output slot, sealed plan, payload identity, optional allocator, and diagnostics.
- * Effects: owns sink, record array, and mutex; borrows the sealed plan for its lifetime.
- * Failure: invalid lifecycle, identity mismatch, allocation, or mutex failure unwinds completely.
- * Boundary: custom allocation changes ownership mechanics, never digest semantics. */
+/*
+ * Construct a digest sink through an explicit fault-injectable allocator seam.
+ *
+ * Output slot, sealed plan, payload identity, optional allocator, and diagnostics. Owns sink,
+ * record array, and mutex; borrows the sealed plan for its lifetime. Invalid lifecycle, identity
+ * mismatch, allocation, or mutex failure unwinds completely. Custom allocation changes ownership
+ * mechanics, never digest semantics.
+ */
 int yvex_quant_digest_sink_create_with_allocator(yvex_quant_digest_sink **out,
                                                  const yvex_quant_plan *plan,
                                                  const char *payload_identity,
@@ -288,11 +264,11 @@ int yvex_quant_digest_sink_create_with_allocator(yvex_quant_digest_sink **out,
     return YVEX_OK;
 }
 
-/* Purpose: release every sink-owned resource and null the caller owner slot.
- * Inputs: optional address of an owned digest sink.
- * Effects: destroys the mutex, releases records and sink storage, and clears ownership.
- * Failure: none; null and repeated release are safe.
- * Boundary: release does not release the borrowed quant plan. */
+/*
+ * Release every sink-owned resource and null the caller owner slot.
+ *
+ * Destroys the mutex, releases records and sink storage, and clears ownership.
+ */
 void yvex_quant_digest_sink_release(yvex_quant_digest_sink **sink_address) {
     yvex_quant_digest_sink *sink;
     yvex_quant_release_fn release;
@@ -311,11 +287,11 @@ void yvex_quant_digest_sink_release(yvex_quant_digest_sink **sink_address) {
     release(sink, allocator_context);
 }
 
-/* Purpose: expose the digest sink through the transactional quant output protocol.
- * Inputs: optional sink and writable adapter record.
- * Effects: replaces the adapter with callbacks bound to the supplied sink.
- * Failure: a null sink yields a cleared unusable adapter.
- * Boundary: the adapter borrows the sink and retains no independent ownership. */
+/*
+ * Expose the digest sink through the transactional quant output protocol.
+ *
+ * The adapter borrows the sink and retains no independent ownership.
+ */
 void yvex_quant_digest_sink_adapter(yvex_quant_digest_sink *sink, yvex_quant_output_sink *out) {
     if (!out)
         return;
@@ -329,11 +305,12 @@ void yvex_quant_digest_sink_adapter(yvex_quant_digest_sink *sink, yvex_quant_out
     out->context = sink;
 }
 
-/* Purpose: seal the canonical aggregate execution identity after every terminal commits.
- * Inputs: mutable sink plus writable summary and diagnostics.
- * Effects: hashes canonical terminal order under lock and makes the sink immutable/finalized.
- * Failure: aborted, missing, repeated, or identity-encoding failure publishes no complete summary.
- * Boundary: execution identity remains distinct from a serialized artifact identity. */
+/*
+ * Seal the canonical aggregate execution identity after every terminal commits.
+ *
+ * Aborted, missing, repeated, or identity-encoding failure publishes no complete summary.
+ * Execution identity remains distinct from a serialized artifact identity.
+ */
 int yvex_quant_digest_sink_finalize(yvex_quant_digest_sink *sink, yvex_quant_digest_summary *out,
                                     yvex_quant_failure *failure, yvex_error *err) {
     yvex_sha256 hash;
@@ -401,11 +378,7 @@ encoding_failure:
                            "aggregate execution identity encoding failed");
 }
 
-/* Purpose: compare a complete observed execution digest with one expected identity.
- * Inputs: immutable complete summary, expected SHA-256 text, and diagnostics.
- * Effects: only replaces supplied failure/error state.
- * Failure: malformed or unequal identities return typed refusal.
- * Boundary: validation never changes the published summary. */
+/* Compare a complete observed execution digest with one expected identity. */
 int yvex_quant_digest_summary_validate(const yvex_quant_digest_summary *summary,
                                        const char *expected_execution_identity,
                                        yvex_quant_failure *failure, yvex_error *err) {
@@ -424,11 +397,11 @@ int yvex_quant_digest_summary_validate(const yvex_quant_digest_summary *summary,
     return YVEX_OK;
 }
 
-/* Purpose: copy one committed terminal digest into a pointer-free caller-owned value.
- * Inputs: sink, terminal ordinal, writable digest, and diagnostics.
- * Effects: reads under lock and replaces the output only for an exact committed terminal.
- * Failure: invalid ordinal or incomplete terminal leaves a cleared output and typed refusal.
- * Boundary: the accessor exposes no raw encoded bytes and transfers no sink ownership. */
+/*
+ * Copy one committed terminal digest into a pointer-free caller-owned value.
+ *
+ * The accessor exposes no raw encoded bytes and transfers no sink ownership.
+ */
 int yvex_quant_digest_sink_terminal_at(yvex_quant_digest_sink *sink, unsigned long long ordinal,
                                        yvex_quant_terminal_digest *out, yvex_quant_failure *failure,
                                        yvex_error *err) {
@@ -462,11 +435,11 @@ int yvex_quant_digest_sink_terminal_at(yvex_quant_digest_sink *sink, unsigned lo
     return YVEX_OK;
 }
 
-/* Purpose: calculate exact sink-owned bytes for resource-budget evidence.
- * Inputs: optional immutable sink.
- * Effects: none.
- * Failure: invalid state or size overflow yields zero.
- * Boundary: accounting excludes the borrowed plan and caller buffers. */
+/*
+ * Calculate exact sink-owned bytes for resource-budget evidence.
+ *
+ * Invalid state or size overflow yields zero.
+ */
 size_t yvex_quant_digest_sink_owned_bytes(const yvex_quant_digest_sink *sink) {
     const yvex_quant_plan_summary *summary;
     size_t records;

@@ -1,12 +1,10 @@
-/* Owner: tokenizer.execution.
- * Owns: exact artifact-bound BPE plans, ByteLevel encoding, DeepSeek prompt policy, and token append storage.
- * Does not own: GGUF parsing, fixture matching, mutable incremental decoder state, model execution, or generation.
- * Invariants: accepted plans match exact tokenizer/config identities and reuse immutable bounded lookup indexes.
- * Boundary: produces numeric token sequences and prompt bytes; it never mutates model KV or chooses tokens.
- * Purpose: execute the admitted DeepSeek tokenizer pipeline without source sidecars or external runtimes.
- * Inputs: tokenizer-owned GGUF facts, explicit byte spans, messages, and caller policy.
- * Effects: seals immutable indexes and allocates only transactional result/request storage.
- * Failure: unsupported policy, malformed UTF-8, bounds, identity, or allocation publish no partial result. */
+/*
+ * Execute the admitted DeepSeek tokenizer pipeline without source sidecars or external runtimes.
+ *
+ * Accepted plans match exact tokenizer/config identities and reuse immutable bounded lookup
+ * indexes. Produces numeric token sequences and prompt bytes; it never mutates model KV or chooses
+ * tokens.
+ */
 
 #include "src/tokenizer/private.h"
 
@@ -54,8 +52,6 @@ struct yvex_token_sequence {
     unsigned long long count, capacity, generation;
 };
 
-/* Purpose: derive one process-local lookup hash; semantic identities use SHA-256 separately.
- * Inputs: byte span. Effects: none. Failure: none. Boundary: immutable lookup acceleration. */
 static uint64_t lookup_hash(const void *data, size_t count)
 {
     const unsigned char *bytes = (const unsigned char *)data;
@@ -69,7 +65,6 @@ static uint64_t lookup_hash(const void *data, size_t count)
     return value ? value : 1u;
 }
 
-/* Purpose: hash one exact byte span into canonical hexadecimal identity storage. */
 static int bytes_identity(const char *domain, const void *data, size_t count,
                           char output[YVEX_SHA256_HEX_CAP])
 {
@@ -85,7 +80,6 @@ static int bytes_identity(const char *domain, const void *data, size_t count,
     return 1;
 }
 
-/* Purpose: read one required GGUF string as an immutable bounded span. */
 static int gguf_string(const yvex_gguf *gguf, const char *key, const char **data,
                        unsigned long long *count)
 {
@@ -93,8 +87,6 @@ static int gguf_string(const yvex_gguf *gguf, const char *key, const char **data
     return value && yvex_gguf_value_as_string(value, data, count) == YVEX_OK;
 }
 
-/* Purpose: grow one transactional byte builder with checked geometric capacity.
- * Inputs: required extent. Effects: reallocates candidate. Failure: bounds/memory. Boundary: request scratch. */
 static int builder_reserve(byte_builder *builder, unsigned long long add, yvex_error *err)
 {
     unsigned long long need, capacity;
@@ -125,8 +117,6 @@ static int builder_reserve(byte_builder *builder, unsigned long long add, yvex_e
     return YVEX_OK;
 }
 
-/* Purpose: append an exact byte span after complete capacity admission.
- * Inputs: builder and span. Effects: copies bytes. Failure: reserve. Boundary: request scratch. */
 static int builder_append(byte_builder *builder, const void *data,
                           unsigned long long count, yvex_error *err)
 {
@@ -140,8 +130,6 @@ static int builder_append(byte_builder *builder, const void *data,
     return YVEX_OK;
 }
 
-/* Purpose: find one exact vocabulary byte string through the sealed immutable index.
- * Inputs: sealed index and bytes. Effects: writes ID. Failure: false. Boundary: vocabulary lookup. */
 static int vocab_lookup(const yvex_tokenizer *tokenizer, const void *data, size_t count,
                         unsigned int *token_id)
 {
@@ -164,7 +152,6 @@ static int vocab_lookup(const yvex_tokenizer *tokenizer, const void *data, size_
     return 0;
 }
 
-/* Purpose: insert one unique vocabulary row into an unsealed open-addressed index. */
 static int vocab_insert(yvex_tokenizer *tokenizer, unsigned int token_id)
 {
     const yvex_token_info *token = &tokenizer->tokens[token_id];
@@ -185,7 +172,6 @@ static int vocab_insert(yvex_tokenizer *tokenizer, unsigned int token_id)
     return 1;
 }
 
-/* Purpose: find one admitted merge by ordered token-ID pair. */
 static const tokenizer_merge_slot *merge_lookup(const yvex_tokenizer *tokenizer,
                                                 unsigned int left, unsigned int right)
 {
@@ -201,8 +187,6 @@ static const tokenizer_merge_slot *merge_lookup(const yvex_tokenizer *tokenizer,
     return NULL;
 }
 
-/* Purpose: encode one Unicode scalar into canonical UTF-8.
- * Inputs: valid scalar/capacity. Effects: writes bytes. Failure: false. Boundary: tokenizer encoding. */
 static size_t utf8_put(uint32_t point, unsigned char output[4])
 {
     if (point <= 0x7fu) {
@@ -227,7 +211,6 @@ static size_t utf8_put(uint32_t point, unsigned char output[4])
     return 4u;
 }
 
-/* Purpose: project the canonical GPT-2 ByteLevel code point for one raw byte. */
 static uint32_t byte_codepoint(unsigned int byte)
 {
     unsigned int candidate, extra = 0u;
@@ -242,8 +225,6 @@ static uint32_t byte_codepoint(unsigned int byte)
     return 256u + extra;
 }
 
-/* Purpose: validate and bind all 256 ByteLevel initial units to exact vocabulary IDs.
- * Inputs: sealed vocabulary. Effects: fills byte table. Failure: missing unit. Boundary: ByteLevel plan. */
 static int byte_tokens_build(yvex_tokenizer *tokenizer, yvex_error *err)
 {
     unsigned int byte;
@@ -259,8 +240,11 @@ static int byte_tokens_build(yvex_tokenizer *tokenizer, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: build and identity-seal the exact ID-indexed vocabulary lookup.
- * Inputs: admitted vocabulary. Effects: allocates index/digest. Failure: typed. Boundary: model lifetime. */
+/*
+ * Build and identity-seal the exact ID-indexed vocabulary lookup.
+ *
+ * Model lifetime.
+ */
 static int vocabulary_build(yvex_tokenizer *tokenizer, yvex_error *err)
 {
     yvex_sha256 hash;
@@ -300,7 +284,6 @@ static int vocabulary_build(yvex_tokenizer *tokenizer, yvex_error *err)
     return byte_tokens_build(tokenizer, err);
 }
 
-/* Purpose: insert one unique ranked merge into the immutable pair index. */
 static int merge_insert(yvex_tokenizer *tokenizer, unsigned int left, unsigned int right,
                         unsigned int merged, unsigned int rank)
 {
@@ -320,8 +303,6 @@ static int merge_insert(yvex_tokenizer *tokenizer, unsigned int left, unsigned i
     return 1;
 }
 
-/* Purpose: parse one canonical `left right` merge and resolve its three vocabulary IDs.
- * Inputs: merge bytes and vocabulary. Effects: writes IDs. Failure: format. Boundary: BPE plan. */
 static int merge_parse(const yvex_tokenizer *tokenizer, const char *text,
                        unsigned long long count, unsigned int *left,
                        unsigned int *right, unsigned int *merged, yvex_error *err)
@@ -360,8 +341,11 @@ static int merge_parse(const yvex_tokenizer *tokenizer, const char *text,
     return YVEX_OK;
 }
 
-/* Purpose: validate, index, and field-wise identity-seal all admitted merge rows.
- * Inputs: GGUF merges. Effects: allocates index/digest. Failure: typed. Boundary: model lifetime. */
+/*
+ * Validate, index, and field-wise identity-seal all admitted merge rows.
+ *
+ * Model lifetime.
+ */
 static int merges_build(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
                         yvex_error *err)
 {
@@ -415,7 +399,6 @@ static int merges_build(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
     return YVEX_OK;
 }
 
-/* Purpose: order added-token IDs by first byte, descending length, then canonical ID. */
 static int added_compare(const void *left_value, const void *right_value, void *context)
 {
     const yvex_tokenizer *tokenizer = context;
@@ -433,7 +416,6 @@ static int added_compare(const void *left_value, const void *right_value, void *
     return left < right ? -1 : left != right;
 }
 
-/* Purpose: perform a deterministic insertion sort without libc comparator context extensions. */
 static void added_sort(yvex_tokenizer *tokenizer)
 {
     unsigned long long index;
@@ -448,8 +430,7 @@ static void added_sort(yvex_tokenizer *tokenizer)
     }
 }
 
-/* Purpose: build exact added-token buckets and their field-wise identity.
- * Inputs: added-token rows. Effects: allocates order/digest. Failure: typed. Boundary: tokenizer plan. */
+/* Build exact added-token buckets and their field-wise identity. */
 static int added_tokens_build(yvex_tokenizer *tokenizer, yvex_error *err)
 {
     yvex_sha256 hash;
@@ -506,8 +487,6 @@ static int added_tokens_build(yvex_tokenizer *tokenizer, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: seal the special-token policy identity from exact optional slots.
- * Inputs: typed special facts. Effects: writes digest. Failure: hash. Boundary: tokenizer plan. */
 static int special_identity_build(yvex_tokenizer *tokenizer)
 {
     yvex_sha256 hash;
@@ -531,8 +510,6 @@ static int special_identity_build(yvex_tokenizer *tokenizer)
     return 1;
 }
 
-/* Purpose: seal the built-in exact DeepSeek prompt policy independent of local source paths.
- * Inputs: admitted family policy. Effects: writes digest. Failure: hash. Boundary: prompt plan. */
 static int prompt_identity_build(yvex_tokenizer *tokenizer)
 {
     yvex_sha256 hash;
@@ -555,7 +532,6 @@ static int prompt_identity_build(yvex_tokenizer *tokenizer)
     return 1;
 }
 
-/* Purpose: compute a plain SHA-256 digest for one artifact-retained sidecar. */
 static int raw_sha256(const void *data, size_t count, char output[YVEX_SHA256_HEX_CAP])
 {
     yvex_sha256 hash;
@@ -567,8 +543,7 @@ static int raw_sha256(const void *data, size_t count, char output[YVEX_SHA256_HE
     return 1;
 }
 
-/* Purpose: derive the complete tokenizer plan identity field by field.
- * Inputs: immutable plan facts. Effects: writes digest. Failure: hash. Boundary: tokenizer plan. */
+/* Derive the complete tokenizer plan identity field by field. */
 static int plan_identity_build(yvex_tokenizer *tokenizer)
 {
     yvex_tokenizer_plan_summary *plan = &tokenizer->plan;
@@ -608,8 +583,6 @@ static int plan_identity_build(yvex_tokenizer *tokenizer)
     return 1;
 }
 
-/* Purpose: admit the exact DeepSeek JSON/config component set before allocating indexes.
- * Inputs: retained GGUF metadata. Effects: binds source digests. Failure: unsupported. Boundary: admission. */
 static int exact_policy_admit(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
                               yvex_error *err)
 {
@@ -642,8 +615,11 @@ static int exact_policy_admit(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
     return YVEX_OK;
 }
 
-/* Purpose: seal the exact immutable tokenizer plan and all reusable indexes.
- * Inputs: GGUF tokenizer/model facts. Effects: owns plan indexes. Failure: cleanup. Boundary: model lifetime. */
+/*
+ * Seal the exact immutable tokenizer plan and all reusable indexes.
+ *
+ * Model lifetime.
+ */
 int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
                                   const yvex_model_descriptor *model, yvex_error *err)
 {
@@ -710,8 +686,11 @@ int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gg
     return YVEX_OK;
 }
 
-/* Purpose: release exact execution indexes without touching shared vocabulary ownership.
- * Inputs: tokenizer owner. Effects: frees indexes. Failure: none. Boundary: model lifetime. */
+/*
+ * Release exact execution indexes without touching shared vocabulary ownership.
+ *
+ * Model lifetime.
+ */
 void yvex_tokenizer_execution_release(yvex_tokenizer *tokenizer)
 {
     if (!tokenizer)
@@ -729,15 +708,17 @@ void yvex_tokenizer_execution_release(yvex_tokenizer *tokenizer)
     memset(&tokenizer->plan, 0, sizeof(tokenizer->plan));
 }
 
-/* Purpose: expose one immutable sealed tokenizer-plan summary.
- * Inputs: tokenizer. Effects: none. Failure: null. Boundary: tokenizer lifetime. */
+/*
+ * Expose one immutable sealed tokenizer-plan summary.
+ *
+ * Tokenizer lifetime.
+ */
 const yvex_tokenizer_plan_summary *yvex_tokenizer_plan_summary_get(const yvex_tokenizer *tokenizer)
 {
     return tokenizer && tokenizer->plan.sealed ? &tokenizer->plan : NULL;
 }
 
-/* Purpose: bind the tokenizer plan to one already admitted runtime model identity triple.
- * Inputs: sealed plan/runtime IDs. Effects: reseals plan. Failure: mismatch. Boundary: runtime model. */
+/* Bind the tokenizer plan to one already admitted runtime model identity triple. */
 int yvex_tokenizer_bind_runtime(yvex_tokenizer *tokenizer,
                                 const char *artifact_identity,
                                 const char *logical_model_identity,
@@ -768,7 +749,6 @@ int yvex_tokenizer_bind_runtime(yvex_tokenizer *tokenizer,
     return YVEX_OK;
 }
 
-/* Purpose: peek one validated Unicode scalar without changing caller offset. */
 static int span_peek(const tokenizer_span *span, unsigned long long offset,
                      uint32_t *point, unsigned long long *next)
 {
@@ -781,7 +761,6 @@ static int span_peek(const tokenizer_span *span, unsigned long long offset,
     return 1;
 }
 
-/* Purpose: identify the literal CJK/Hiragana/Katakana splitter class. */
 static int is_cjk_split(uint32_t point)
 {
     return (point >= 0x4e00u && point <= 0x9fa5u) ||
@@ -789,7 +768,6 @@ static int is_cjk_split(uint32_t point)
            (point >= 0x30a0u && point <= 0x30ffu);
 }
 
-/* Purpose: identify exact ASCII punctuation used by the first regex alternative. */
 static int is_ascii_punctuation(uint32_t point)
 {
     return (point >= 0x21u && point <= 0x2fu) ||
@@ -798,7 +776,6 @@ static int is_ascii_punctuation(uint32_t point)
            (point >= 0x7bu && point <= 0x7eu);
 }
 
-/* Purpose: consume a maximal Unicode class run and return its byte endpoint. */
 static unsigned long long take_class(const tokenizer_span *span, unsigned long long offset,
                                      unsigned int required)
 {
@@ -810,7 +787,6 @@ static unsigned long long take_class(const tokenizer_span *span, unsigned long l
     return offset;
 }
 
-/* Purpose: consume up to three numeric scalars for the first pre-tokenizer split. */
 static unsigned long long take_numbers(const tokenizer_span *span, unsigned long long offset)
 {
     uint32_t point;
@@ -824,7 +800,6 @@ static unsigned long long take_numbers(const tokenizer_span *span, unsigned long
     return offset;
 }
 
-/* Purpose: consume the literal East-Asian splitter range as one isolated match. */
 static unsigned long long take_cjk(const tokenizer_span *span, unsigned long long offset)
 {
     uint32_t point;
@@ -834,8 +809,6 @@ static unsigned long long take_cjk(const tokenizer_span *span, unsigned long lon
     return offset;
 }
 
-/* Purpose: apply the ordered letter and punctuation alternatives at one byte boundary.
- * Inputs: UTF-8 span/offset. Effects: writes endpoint. Failure: false. Boundary: pre-tokenizer regex. */
 static unsigned long long take_word_or_symbol(const tokenizer_span *span,
                                               unsigned long long offset,
                                               uint32_t point,
@@ -871,8 +844,6 @@ static unsigned long long take_word_or_symbol(const tokenizer_span *span,
     return offset;
 }
 
-/* Purpose: apply ordered whitespace alternatives including GPT-style leading-space retention.
- * Inputs: UTF-8 span/offset. Effects: writes endpoint. Failure: false. Boundary: pre-tokenizer regex. */
 static unsigned long long take_space(const tokenizer_span *span, unsigned long long offset)
 {
     uint32_t point, following;
@@ -908,7 +879,6 @@ static unsigned long long take_space(const tokenizer_span *span, unsigned long l
     return run_end;
 }
 
-/* Purpose: find the next exact pre-tokenized piece under the admitted ordered regex policy. */
 static unsigned long long next_piece(const tokenizer_span *span, unsigned long long offset)
 {
     uint32_t point;
@@ -930,8 +900,11 @@ static unsigned long long next_piece(const tokenizer_span *span, unsigned long l
     return next;
 }
 
-/* Purpose: append one token under the caller's pre-admitted result capacity.
- * Inputs: result capacity and ID. Effects: appends. Failure: bounds. Boundary: encoding transaction. */
+/*
+ * Append one token under the caller's pre-admitted result capacity.
+ *
+ * Encoding transaction.
+ */
 static int encode_append(yvex_tokens *tokens, unsigned int token_id,
                          unsigned long long maximum, yvex_error *err)
 {
@@ -964,8 +937,6 @@ static int encode_append(yvex_tokens *tokens, unsigned int token_id,
     return YVEX_OK;
 }
 
-/* Purpose: merge one ByteLevel piece by canonical rank and append its final vocabulary IDs.
- * Inputs: piece and BPE plan. Effects: appends IDs. Failure: typed. Boundary: tokenizer model. */
 static int bpe_piece(const yvex_tokenizer *tokenizer, const unsigned char *bytes,
                      unsigned long long count, yvex_tokens *tokens,
                      unsigned long long maximum, yvex_error *err)
@@ -1014,8 +985,6 @@ static int bpe_piece(const yvex_tokenizer *tokenizer, const unsigned char *bytes
     return rc;
 }
 
-/* Purpose: find the exact longest added token beginning at one byte boundary.
- * Inputs: sealed added index/span. Effects: writes match. Failure: false. Boundary: added-token policy. */
 static int added_at(const yvex_tokenizer *tokenizer, const unsigned char *bytes,
                     unsigned long long count, unsigned long long offset,
                     int allow_special, unsigned int *token_id,
@@ -1042,7 +1011,6 @@ static int added_at(const yvex_tokenizer *tokenizer, const unsigned char *bytes,
     return 0;
 }
 
-/* Purpose: locate the next added-token boundary without scanning the vocabulary. */
 static unsigned long long next_added_offset(const yvex_tokenizer *tokenizer,
                                             const unsigned char *bytes,
                                             unsigned long long count,
@@ -1059,8 +1027,6 @@ static unsigned long long next_added_offset(const yvex_tokenizer *tokenizer,
     return count;
 }
 
-/* Purpose: encode one ordinary non-added span through exact pre-tokenization and BPE.
- * Inputs: admitted UTF-8 span. Effects: appends IDs. Failure: typed. Boundary: tokenizer pipeline. */
 static int ordinary_encode(const yvex_tokenizer *tokenizer, const unsigned char *bytes,
                            unsigned long long count, yvex_tokens *tokens,
                            unsigned long long maximum, yvex_error *err)
@@ -1083,8 +1049,6 @@ static int ordinary_encode(const yvex_tokenizer *tokenizer, const unsigned char 
     return YVEX_OK;
 }
 
-/* Purpose: validate one complete UTF-8 byte span without normalization.
- * Inputs: byte span. Effects: none. Failure: format. Boundary: text admission. */
 static int utf8_validate(const unsigned char *bytes, unsigned long long count)
 {
     unsigned long long offset = 0u;
@@ -1095,8 +1059,6 @@ static int utf8_validate(const unsigned char *bytes, unsigned long long count)
     return 1;
 }
 
-/* Purpose: derive canonical token-ID and aggregate encoding identities.
- * Inputs: input/result facts. Effects: writes digests. Failure: hash. Boundary: encoding evidence. */
 static int encoding_identity_build(const yvex_tokenizer *tokenizer,
                                    yvex_tokenizer_encode_result *result)
 {
@@ -1129,8 +1091,11 @@ static int encoding_identity_build(const yvex_tokenizer *tokenizer,
     return 1;
 }
 
-/* Purpose: encode one exact byte span through added-token, pre-tokenizer, ByteLevel, and BPE policy.
- * Inputs: sealed plan/span/options. Effects: publishes IDs. Failure: rollback. Boundary: tokenizer runtime. */
+/*
+ * Encode one exact byte span through added-token, pre-tokenizer, ByteLevel, and BPE policy.
+ *
+ * Rollback.
+ */
 int yvex_tokenizer_encode(const yvex_tokenizer *tokenizer,
                           const unsigned char *bytes,
                           unsigned long long byte_count,
@@ -1221,8 +1186,6 @@ int yvex_tokenizer_encode(const yvex_tokenizer *tokenizer,
     return YVEX_OK;
 }
 
-/* Purpose: release one owned encoding result and clear all evidence.
- * Inputs: result owner. Effects: frees and clears. Failure: none. Boundary: caller ownership. */
 void yvex_tokenizer_encode_result_clear(yvex_tokenizer_encode_result *result)
 {
     if (!result)
@@ -1231,8 +1194,7 @@ void yvex_tokenizer_encode_result_clear(yvex_tokenizer_encode_result *result)
     memset(result, 0, sizeof(*result));
 }
 
-/* Purpose: map prompt roles to stable operator and identity labels.
- * Inputs: role enum. Effects: none. Failure: null. Boundary: prompt policy. */
+/* Map prompt roles to stable operator and identity labels. */
 const char *yvex_prompt_role_name(yvex_prompt_role role)
 {
     switch (role) {
@@ -1244,7 +1206,6 @@ const char *yvex_prompt_role_name(yvex_prompt_role role)
     return "unknown";
 }
 
-/* Purpose: select explicit content length while retaining source compatibility for terminated callers. */
 static int message_span(const yvex_prompt_message *message, const unsigned char **bytes,
                         unsigned long long *count)
 {
@@ -1256,8 +1217,6 @@ static int message_span(const yvex_prompt_message *message, const unsigned char 
     return *count <= SIZE_MAX && utf8_validate(*bytes, *count);
 }
 
-/* Purpose: validate the bounded basic DeepSeek role transition grammar.
- * Inputs: ordered messages. Effects: none. Failure: false. Boundary: prompt policy. */
 static int prompt_roles_valid(const yvex_prompt_message *messages,
                               unsigned long long count,
                               const yvex_prompt_options *options)
@@ -1281,8 +1240,6 @@ static int prompt_roles_valid(const yvex_prompt_message *messages,
     return 1;
 }
 
-/* Purpose: append one complete DeepSeek message under the exact basic role policy.
- * Inputs: typed message/options. Effects: writes prompt candidate. Failure: typed. Boundary: prompt policy. */
 static int prompt_message_append(byte_builder *builder,
                                  const yvex_prompt_message *message,
                                  yvex_prompt_role prior,
@@ -1320,7 +1277,6 @@ static int prompt_message_append(byte_builder *builder,
         ? builder_append(builder, deepseek_tool_end, sizeof(deepseek_tool_end) - 1u, err) : rc;
 }
 
-/* Purpose: append the exact user-to-assistant transition selected by the bounded prompt policy. */
 static int prompt_assistant_transition(byte_builder *builder,
                                        const yvex_prompt_options *options,
                                        int final_user,
@@ -1337,8 +1293,6 @@ static int prompt_assistant_transition(byte_builder *builder,
                           sizeof(deepseek_think_end) - 1u, err);
 }
 
-/* Purpose: retain the bounded diagnostic renderer used only by tokenizer fixtures.
- * Inputs: fixture messages. Effects: owns rendered bytes. Failure: typed. Boundary: fixture compatibility. */
 static int fixture_prompt_render(yvex_rendered_prompt *out,
                                  const yvex_prompt_message *messages,
                                  unsigned long long message_count,
@@ -1388,8 +1342,6 @@ static int fixture_prompt_render(yvex_rendered_prompt *out,
     return YVEX_OK;
 }
 
-/* Purpose: seal message, rendered-byte, and aggregate prompt identities field by field.
- * Inputs: plan/messages/rendered bytes. Effects: writes digests. Failure: hash. Boundary: prompt evidence. */
 static int prompt_identities(const yvex_tokenizer *tokenizer,
                              const yvex_prompt_message *messages,
                              unsigned long long message_count,
@@ -1436,8 +1388,11 @@ static int prompt_identities(const yvex_tokenizer *tokenizer,
     return 1;
 }
 
-/* Purpose: render admitted messages through the exact bounded DeepSeek V4 basic prompt policy.
- * Inputs: sealed plan/messages/options. Effects: publishes bytes. Failure: rollback. Boundary: prompt runtime. */
+/*
+ * Render admitted messages through the exact bounded DeepSeek V4 basic prompt policy.
+ *
+ * Rollback.
+ */
 int yvex_prompt_render(yvex_rendered_prompt *out,
                        const yvex_tokenizer *tokenizer,
                        const yvex_prompt_message *messages,
@@ -1495,8 +1450,11 @@ int yvex_prompt_render(yvex_rendered_prompt *out,
     return YVEX_OK;
 }
 
-/* Purpose: render and encode through one shared tokenizer path without a second formatting owner.
- * Inputs: messages and encode capacity. Effects: publishes prompt/IDs. Failure: rollback. Boundary: tokenizer. */
+/*
+ * Render and encode through one shared tokenizer path without a second formatting owner.
+ *
+ * Rollback.
+ */
 int yvex_tokenizer_encode_prompt(const yvex_tokenizer *tokenizer,
                                  const yvex_prompt_message *messages,
                                  unsigned long long message_count,
@@ -1529,8 +1487,6 @@ int yvex_tokenizer_encode_prompt(const yvex_tokenizer *tokenizer,
     return rc;
 }
 
-/* Purpose: release rendered prompt bytes and all dependent identities.
- * Inputs: prompt owner. Effects: frees and clears. Failure: none. Boundary: caller ownership. */
 void yvex_rendered_prompt_free(yvex_rendered_prompt *prompt)
 {
     if (!prompt)
@@ -1539,8 +1495,6 @@ void yvex_rendered_prompt_free(yvex_rendered_prompt *prompt)
     memset(prompt, 0, sizeof(*prompt));
 }
 
-/* Purpose: derive token-directory identities from ordered IDs and transition states.
- * Inputs: append rows/generation. Effects: writes digests. Failure: hash. Boundary: token sequence. */
 static int sequence_identity(const yvex_token_sequence *sequence,
                              yvex_token_sequence_summary *summary)
 {
@@ -1569,8 +1523,6 @@ static int sequence_identity(const yvex_token_sequence *sequence,
     return 1;
 }
 
-/* Purpose: allocate one bounded generation-local token append directory.
- * Inputs: capacity. Effects: owns rows. Failure: typed. Boundary: serialized generation-local sequence. */
 int yvex_token_sequence_open(yvex_token_sequence **out,
                              unsigned long long capacity,
                              yvex_error *err)
@@ -1596,8 +1548,6 @@ int yvex_token_sequence_open(yvex_token_sequence **out,
     return YVEX_OK;
 }
 
-/* Purpose: atomically append one proposed numeric token without model-state mutation.
- * Inputs: sequence, ID, vocabulary. Effects: appends proposed row. Failure: typed. Boundary: token sequence. */
 int yvex_token_sequence_append(yvex_token_sequence *sequence,
                                unsigned int token_id,
                                unsigned long long vocabulary_size,
@@ -1623,8 +1573,6 @@ int yvex_token_sequence_append(yvex_token_sequence *sequence,
     return YVEX_OK;
 }
 
-/* Purpose: advance one append row through exactly one admitted generation-composition stage.
- * Inputs: ordinal/expected/next. Effects: commits transition. Failure: stale. Boundary: token sequence. */
 int yvex_token_sequence_transition(yvex_token_sequence *sequence,
                                    unsigned long long ordinal,
                                    yvex_token_append_state expected,
@@ -1649,8 +1597,6 @@ int yvex_token_sequence_transition(yvex_token_sequence *sequence,
     return YVEX_OK;
 }
 
-/* Purpose: inspect one bounded token directory without exposing mutable rows.
- * Inputs: sequence/output. Effects: copies summary. Failure: lock. Boundary: token sequence. */
 int yvex_token_sequence_summary_get(const yvex_token_sequence *sequence,
                                     yvex_token_sequence_summary *summary,
                                     yvex_error *err)
@@ -1672,10 +1618,11 @@ int yvex_token_sequence_summary_get(const yvex_token_sequence *sequence,
     return YVEX_OK;
 }
 
-/* Purpose: reuse one generation-local token directory for a later turn without reallocating it.
- * Inputs: exclusively owned directory. Effects: clears prior rows and advances the directory
- * generation once. Failure: generation overflow preserves prior rows. Boundary: tokenizer,
- * sampling, runtime-session, and persistent-KV state are untouched. */
+/*
+ * Reuse one generation-local token directory for a later turn without reallocating it.
+ *
+ * Generation overflow preserves prior rows.
+ */
 int yvex_token_sequence_reset(yvex_token_sequence *sequence,
                               yvex_error *err)
 {
@@ -1699,8 +1646,7 @@ int yvex_token_sequence_reset(yvex_token_sequence *sequence,
     return YVEX_OK;
 }
 
-/* Purpose: release one token directory deterministically and clear caller ownership.
- * Inputs: unique handle. Effects: destroys/frees. Failure: retained. Boundary: token sequence lifecycle. */
+/* Release one token directory deterministically and clear caller ownership. */
 void yvex_token_sequence_close(yvex_token_sequence **sequence)
 {
     if (!sequence || !*sequence)

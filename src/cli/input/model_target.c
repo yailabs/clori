@@ -1,14 +1,10 @@
-/* Owner: src/cli/input
- * Owns: model-target subcommand and option parsing into typed CLI args.
- * Does not own: target catalogs, source/native tensor inspection, report building, sidecar writing, rendering,
- *   stdout/stderr writing, runtime execution, generation, eval, benchmark, or release decisions.
- * Invariants: parsing copies scalar option values into the request and performs no filesystem/model/report work.
- * Boundary: model-target input parsing does not create model support, quantization, artifact, runtime, generation,
- *   benchmark, or release capability.
- * Purpose: provide model-target subcommand and option parsing into typed CLI args.
- * Inputs: bounded command arguments and caller-owned typed request storage.
- * Effects: publishes request fields only after complete grammar validation.
- * Failure: invalid or ambiguous grammar leaves the request uncommitted. */
+/*
+ * Provide model-target subcommand and option parsing into typed CLI args.
+ *
+ * Parsing copies scalar option values into the request and performs no filesystem/model/report
+ * work. Model-target input parsing does not create model support, quantization, artifact, runtime,
+ * generation, benchmark, or release capability.
+ */
 #include "src/cli/input/private.h"
 
 #include <yvex/internal/core.h>
@@ -16,17 +12,11 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Purpose: Compute mt starts option for its CLI invariant (`mt_starts_option`). */
 static int mt_starts_option(const char *s)
 {
     return s && s[0] == '-';
 }
 
-/* Purpose: Parse mt parse error into typed CLI state (`mt_parse_error`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void mt_parse_error(yvex_model_target_args *out, const char *fmt, ...)
 {
     va_list ap;
@@ -63,8 +53,6 @@ static const mt_command_spec mt_commands[] = {
     {"inspect", YVEX_MODEL_TARGET_COMMAND_INSPECT},
 };
 
-/* Resolve one command spelling from the immutable model-target grammar. */
-/* Purpose: Compute mt kind from text for its CLI invariant (`mt_kind_from_text`). */
 static yvex_model_target_command_kind mt_kind_from_text(const char *text)
 {
     size_t i;
@@ -76,8 +64,6 @@ static yvex_model_target_command_kind mt_kind_from_text(const char *text)
     return YVEX_MODEL_TARGET_COMMAND_UNKNOWN;
 }
 
-/* Recover the canonical diagnostic action name for one command kind. */
-/* Purpose: Compute mt action name for its CLI invariant (`mt_action_name`). */
 static const char *mt_action_name(yvex_model_target_command_kind kind)
 {
     size_t i;
@@ -90,11 +76,6 @@ static const char *mt_action_name(yvex_model_target_command_kind kind)
     return "model-target";
 }
 
-/* Purpose: Parse mt mode parse into typed CLI state (`mt_mode_parse`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int mt_mode_parse(const char *value, yvex_model_target_render_mode *mode)
 {
     if (!value || !mode) {
@@ -119,11 +100,6 @@ static int mt_mode_parse(const char *value, yvex_model_target_render_mode *mode)
     return 0;
 }
 
-/* Purpose: Release or reset owned mt requires release state (`mt_requires_release`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int mt_requires_release(yvex_model_target_command_kind kind)
 {
     return kind == YVEX_MODEL_TARGET_COMMAND_CANDIDATE ||
@@ -132,7 +108,6 @@ static int mt_requires_release(yvex_model_target_command_kind kind)
            kind == YVEX_MODEL_TARGET_COMMAND_DECISION;
 }
 
-/* Purpose: Compute mt positional target kind for its CLI invariant (`mt_positional_target_kind`). */
 static int mt_positional_target_kind(yvex_model_target_command_kind kind)
 {
     return kind == YVEX_MODEL_TARGET_COMMAND_CLASS_PROFILE ||
@@ -143,11 +118,6 @@ static int mt_positional_target_kind(yvex_model_target_command_kind kind)
            kind == YVEX_MODEL_TARGET_COMMAND_INSPECT;
 }
 
-/* Purpose: parse model-target CLI words into a typed model-target request.
- * Inputs: Borrowed typed facts.
- * Effects: CLI-local effects only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_model_target_args_parse(int argc,
                                  char **argv,
                                  yvex_model_target_args *out,

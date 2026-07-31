@@ -1,25 +1,6 @@
 /*
- * YVEX - planner tests
- *
- * File: tests/test_planner.c
- * Layer: test
- *
- * Purpose:
- *   Proves that planner objects own a graph and memory plan while reporting
- *   CPU backend availability and CUDA availability/unavailability.
- *
- * Covers:
- *   - yvex_plan_create
- *   - yvex_plan_graph
- *   - yvex_plan_memory
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_planner
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises planner objects own a graph and memory plan while reporting CPU backend availability
+ * and CUDA availability/unavailability.
  */
 #include <stdio.h>
 #include <string.h>

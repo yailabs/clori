@@ -1,15 +1,10 @@
-/* Owner: gguf.quant execution (TRACK.QUANT).
- * Owns: block-at-a-time IDENTITY, DECODE_SCALE_PAIR, CHECKED_CAST, and EXPERT_AGGREGATE execution; resource
- *   accounting; worker coordination.
- * Does not own: source admission/IO primitives, IR construction, qtype policy, GGUF tensor naming/layout identity,
- *   writer state, CUDA, or rendering.
- * Invariants: inputs resolve through the immutable binding; no full weight or full terminal is retained;
- *   per-terminal sink transactions are exact.
- * Boundary: this produces writer-ready chunks but never creates a GGUF file.
- * Purpose: execute sealed physical decisions through bounded source and sink transactions.
- * Inputs: immutable quantization plans, transform bindings, trusted payload sessions, and budgets.
- * Effects: reads admitted ranges and emits ordered encoded chunks through a caller-owned sink.
- * Failure: returns typed quantization failures without committing an incomplete terminal. */
+/*
+ * Execute sealed physical decisions through bounded source and sink transactions.
+ *
+ * Inputs resolve through the immutable binding; no full weight or full terminal is retained;
+ * per-terminal sink transactions are exact. This produces writer-ready chunks but never creates a
+ * GGUF file.
+ */
 #include <limits.h>
 #include <math.h>
 #include <sched.h>
@@ -137,42 +132,22 @@ struct quant_executor {
     yvex_quant_execution_summary summary;
 };
 
-/* Purpose: allocate executor scratch through the default heap policy.
- * Inputs: requested byte count and unused callback context.
- * Effects: returns newly allocated heap storage.
- * Failure: returns null when the allocator refuses.
- * Boundary: default policy only; executor accounting wraps this callback. */
 static void *quant_executor_default_allocate(size_t size, void *context) {
     (void)context;
     return malloc(size);
 }
 
-/* Purpose: release scratch obtained through the default heap policy.
- * Inputs: allocation and unused callback context.
- * Effects: returns heap storage to the allocator.
- * Failure: follows the standard free contract.
- * Boundary: default policy only; executor accounting wraps this callback. */
 static void quant_executor_default_release(void *allocation, void *context) {
     (void)context;
     free(allocation);
 }
 
-/* Purpose: create a worker through the default pthread policy.
- * Inputs: thread output, entrypoint, argument, and unused callback context.
- * Effects: delegates thread creation to pthreads.
- * Failure: returns the pthread creation status.
- * Boundary: default policy only; join ownership remains with the executor. */
 static int quant_executor_default_thread_create(pthread_t *thread, void *(*entry)(void *),
                                                 void *argument, void *context) {
     (void)context;
     return pthread_create(thread, NULL, entry, argument);
 }
 
-/* Purpose: publish one structured execution refusal with terminal and source context.
- * Inputs: failure code, optional decision, range coordinates, status, and diagnostic text.
- * Effects: initializes the caller failure object and error object when supplied.
- * Failure: returns the supplied status; this helper performs no allocation or sink mutation.
- * Boundary: centralizes executor failure vocabulary without deciding recovery policy. */
 static int quant_execute_fail(yvex_quant_failure *failure, yvex_quant_failure_code code,
                               const yvex_quant_decision *decision, unsigned long long source,
                               unsigned long long row, unsigned long long block,
@@ -194,11 +169,11 @@ static int quant_execute_fail(yvex_quant_failure *failure, yvex_quant_failure_co
     return status;
 }
 
-/* Purpose: prove complete imatrix identity and per-terminal coverage before any payload read.
- * Inputs: sealed policy plan, optional admitted imatrix, and typed diagnostics.
- * Effects: reads only immutable metadata and file snapshot facts.
- * Failure: identity, name, expert geometry, or coverage mismatch refuses the executor.
- * Boundary: calibration validation never opens or reads model-weight payload ranges. */
+/*
+ * Prove complete imatrix identity and per-terminal coverage before any payload read.
+ *
+ * Identity, name, expert geometry, or coverage mismatch refuses the executor.
+ */
 static int quant_imatrix_plan_validate(const yvex_quant_plan *plan,
                                        const yvex_quant_plan_summary *plan_summary,
                                        const yvex_imatrix_data *imatrix,
@@ -244,17 +219,11 @@ static int quant_imatrix_plan_validate(const yvex_quant_plan *plan,
     return YVEX_OK;
 }
 
-/* Purpose: sample an optional cancellation token with acquire ordering. */
 static int quant_cancellation_requested(const yvex_quant_cancellation *cancellation) {
     return cancellation &&
            atomic_load_explicit(&cancellation->requested, memory_order_acquire) != 0;
 }
 
-/* Purpose: initialize bounded single-worker execution defaults and resource callbacks.
- * Inputs: caller-owned options storage, which may be null.
- * Effects: replaces the supplied structure with canonical defaults.
- * Failure: has no failure result; null storage is ignored.
- * Boundary: supplies policy defaults without admitting a plan or reading payload bytes. */
 void yvex_quant_executor_options_default(yvex_quant_executor_options *options) {
     if (!options)
         return;
@@ -268,22 +237,15 @@ void yvex_quant_executor_options_default(yvex_quant_executor_options *options) {
     options->thread_create = quant_executor_default_thread_create;
 }
 
-/* Purpose: report whether the executor's optional cancellation token is requested. */
 static int quant_executor_cancelled(const quant_executor *executor) {
     return quant_cancellation_requested(executor->options.cancellation);
 }
 
-/* Purpose: combine peer-worker stop state with caller cancellation state. */
 static int quant_executor_stopping(const quant_executor *executor) {
     return atomic_load_explicit(&executor->stop, memory_order_acquire) ||
            quant_executor_cancelled(executor);
 }
 
-/* Purpose: convert a nonnegative diagnostic magnitude to fixed-point billionths.
- * Inputs: one floating metric value; negative and unordered values map to zero.
- * Effects: returns a saturated unsigned diagnostic fact without mutating executor state.
- * Failure: saturates non-finite or unrepresentable magnitudes instead of overflowing.
- * Boundary: encodes report facts only and does not participate in codec arithmetic. */
 static unsigned long long quant_scaled_fact(double value) {
     double scaled;
 
@@ -295,11 +257,6 @@ static unsigned long long quant_scaled_fact(double value) {
     return (unsigned long long)scaled;
 }
 
-/* Purpose: reserve checked scratch under the executor's live-byte budget.
- * Inputs: executor, requested byte count, and optional budget-refusal output.
- * Effects: updates owned/peak counters and invokes the configured allocator.
- * Failure: returns null on budget or allocation refusal and rolls back accounting.
- * Boundary: owns executor scratch accounting, not the caller allocation policy. */
 static void *quant_executor_allocate(quant_executor *executor, size_t bytes, int *budget_exceeded) {
     void *allocation;
 
@@ -328,11 +285,6 @@ static void *quant_executor_allocate(quant_executor *executor, size_t bytes, int
     return allocation;
 }
 
-/* Purpose: release executor scratch and retire its accounted byte reservation.
- * Inputs: executor, allocation returned by its policy, and the reserved byte count.
- * Effects: invokes the release callback and updates live owned-byte accounting.
- * Failure: null allocations are ignored; inconsistent accounting is clamped to zero.
- * Boundary: releases executor-owned scratch and never frees borrowed plan or binding state. */
 static void quant_executor_release(quant_executor *executor, void *allocation, size_t bytes) {
     if (!allocation)
         return;
@@ -345,7 +297,6 @@ static void quant_executor_release(quant_executor *executor, void *allocation, s
     pthread_mutex_unlock(&executor->mutex);
 }
 
-/* Purpose: map scalar source dtypes to their exact little-endian storage width. */
 static unsigned int quant_source_scalar_bytes(yvex_native_dtype dtype) {
     switch (dtype) {
     case YVEX_NATIVE_DTYPE_F32:
@@ -365,17 +316,16 @@ static unsigned int quant_source_scalar_bytes(yvex_native_dtype dtype) {
     }
 }
 
-/* Purpose: admit a source stream only when it contains the single planned tensor range. */
 static int quant_source_begin(void *opaque, const yvex_source_payload_plan_summary *summary) {
     quant_source_sink *sink = (quant_source_sink *)opaque;
     return !sink || !summary || summary->range_count != 1u;
 }
 
-/* Purpose: forward one exact monotonic source chunk to a transformation consumer.
- * Inputs: source-sink state, typed chunk facts, and transient payload bytes.
- * Effects: advances logical delivery only after the consumer accepts the chunk.
- * Failure: records cancellation, peer stop, callback refusal, or offset overflow.
- * Boundary: borrowed payload bytes remain valid only for the callback duration. */
+/*
+ * Forward one exact monotonic source chunk to a transformation consumer.
+ *
+ * Records cancellation, peer stop, callback refusal, or offset overflow.
+ */
 static int quant_source_chunk(void *opaque, const yvex_source_payload_chunk *chunk,
                               const unsigned char *bytes) {
     quant_source_sink *sink = (quant_source_sink *)opaque;
@@ -402,18 +352,12 @@ static int quant_source_chunk(void *opaque, const yvex_source_payload_chunk *chu
     return 0;
 }
 
-/* Purpose: accept source commit only after exact non-aborted logical delivery.
- * Inputs: source sink state and immutable payload stream result.
- * Effects: returns protocol acceptance without mutating the result.
- * Failure: rejects incomplete, aborted, refused, or byte-mismatched delivery.
- * Boundary: validates source delivery; terminal output remains separate. */
 static int quant_source_commit(void *opaque, const yvex_source_payload_stream_result *result) {
     quant_source_sink *sink = (quant_source_sink *)opaque;
     return !sink || !result || !result->complete || result->aborted ||
            sink->consumer_status != YVEX_OK || sink->next_offset != result->delivered_logical_bytes;
 }
 
-/* Purpose: satisfy the payload abort protocol without taking ownership of its diagnostics. */
 static void quant_source_abort(void *opaque, const yvex_source_payload_failure *failure,
                                const yvex_source_payload_stream_result *result) {
     (void)opaque;
@@ -421,11 +365,6 @@ static void quant_source_abort(void *opaque, const yvex_source_payload_failure *
     (void)result;
 }
 
-/* Purpose: stream one exact bound source range through the canonical payload session.
- * Inputs: executor, terminal decision, source ordinal, consumer callback, and outputs.
- * Effects: builds a transient range plan, streams chunks, and reports physical accounting.
- * Failure: maps payload, cancellation, callback, and short-read failures to quant failures.
- * Boundary: consumes immutable binding facts and never opens or classifies source files. */
 static int quant_read_source(quant_executor *executor, const yvex_quant_decision *decision,
                              unsigned long long source_index,
                              int (*consume)(void *context, const unsigned char *bytes,
@@ -525,9 +464,6 @@ static int quant_read_source(quant_executor *executor, const yvex_quant_decision
     return YVEX_OK;
 }
 
-/* Purpose: collect one contiguous bounded side-input chunk. Inputs: collector, bytes, and offset.
- * Effects: copies accepted bytes into owned scratch. Failure: rejects gaps and capacity overflow.
- * Boundary: used only for small scale grids, never full terminal materialization. */
 static int quant_collect_chunk(void *opaque, const unsigned char *bytes, size_t byte_count,
                                unsigned long long logical_offset, yvex_quant_failure *failure,
                                yvex_error *err) {
@@ -543,11 +479,6 @@ static int quant_collect_chunk(void *opaque, const unsigned char *bytes, size_t 
     return YVEX_OK;
 }
 
-/* Purpose: collect one bounded scale-grid source.
- * Inputs: executor, decision, source ordinal, outputs, and diagnostics.
- * Effects: allocates exact scratch and streams the admitted range.
- * Failure: releases partial data on budget, stream, or size refusal.
- * Boundary: returns executor-owned bytes that the caller must release with their exact size. */
 static int quant_collect_source(quant_executor *executor, const yvex_quant_decision *decision,
                                 unsigned long long source_index, unsigned char **out,
                                 size_t *out_bytes, yvex_quant_failure *failure, yvex_error *err,
@@ -594,11 +525,12 @@ static int quant_collect_source(quant_executor *executor, const yvex_quant_decis
     return YVEX_OK;
 }
 
-/* Purpose: deliver the current output chunk exactly once.
- * Inputs: emitter and typed failure outputs.
- * Effects: advances output accounting after sink acceptance.
- * Failure: preserves abortable state on cancellation, overflow, or sink refusal.
- * Boundary: performs bounded sink delivery but never commits a terminal. */
+/*
+ * Deliver the current output chunk exactly once.
+ *
+ * Preserves abortable state on cancellation, overflow, or sink refusal. Performs bounded sink
+ * delivery but never commits a terminal.
+ */
 static int quant_emitter_flush(quant_emitter *emitter, yvex_quant_failure *failure,
                                yvex_error *err) {
     if (emitter->output_used == 0u)
@@ -643,9 +575,6 @@ static int quant_emitter_flush(quant_emitter *emitter, yvex_quant_failure *failu
     return YVEX_OK;
 }
 
-/* Purpose: append one encoded block to bounded output staging. Inputs: emitter and encoded bytes.
- * Effects: flushes when necessary, then copies the block. Failure: leaves terminal uncommitted.
- * Boundary: accepts only blocks no larger than the configured output chunk. */
 static int quant_emitter_append(quant_emitter *emitter, const unsigned char *bytes,
                                 size_t byte_count, yvex_quant_failure *failure, yvex_error *err) {
     int rc;
@@ -665,11 +594,6 @@ static int quant_emitter_append(quant_emitter *emitter, const unsigned char *byt
     return YVEX_OK;
 }
 
-/* Purpose: enforce selected qtype error bounds for one encoded block.
- * Inputs: emitter policy, reference values, independent decode, and encoded block.
- * Effects: computes only local diagnostics.
- * Failure: emits typed numeric-bound context when the contract is exceeded.
- * Boundary: validates codec output without changing encoded bytes or profile decisions. */
 static int quant_emitter_bound(const quant_emitter *emitter, const float *reference,
                                const float *reconstructed, const unsigned char *encoded,
                                yvex_quant_failure *failure, yvex_error *err) {
@@ -736,11 +660,6 @@ static int quant_emitter_bound(const quant_emitter *emitter, const float *refere
     return YVEX_OK;
 }
 
-/* Purpose: encode, independently decode, validate, and stage one complete qtype block.
- * Inputs: emitter block state and diagnostics.
- * Effects: updates metrics and output staging.
- * Failure: propagates codec, bound, accounting, or sink refusal without terminal commit.
- * Boundary: executes selected block arithmetic but does not select its qtype. */
 static int quant_emitter_encode(quant_emitter *emitter, yvex_quant_failure *failure,
                                 yvex_error *err) {
     unsigned char encoded[YVEX_QUANT_Q2_K_BYTES];
@@ -793,11 +712,6 @@ static int quant_emitter_encode(quant_emitter *emitter, yvex_quant_failure *fail
     return quant_emitter_append(emitter, encoded, encoded_bytes, failure, err);
 }
 
-/* Purpose: admit one finite transformed scalar into physical row/block geometry.
- * Inputs: emitter, scalar, and typed diagnostics.
- * Effects: advances row state and encodes complete blocks.
- * Failure: rejects non-finite, overrun, or row-divisibility violations before commit.
- * Boundary: bridges logical scalar order to sealed physical row geometry. */
 static int quant_emitter_value(quant_emitter *emitter, float value, yvex_quant_failure *failure,
                                yvex_error *err) {
     int rc;
@@ -835,11 +749,7 @@ static int quant_emitter_value(quant_emitter *emitter, float value, yvex_quant_f
     return YVEX_OK;
 }
 
-/* Purpose: begin one terminal transaction with bounded staging.
- * Inputs: executor, sealed decision, emitter output, and diagnostics.
- * Effects: allocates output scratch and calls sink begin.
- * Failure: releases all acquired scratch after geometry, budget, or sink refusal.
- * Boundary: starts but does not complete the terminal sink protocol. */
+/* Begin one terminal transaction with bounded staging. */
 static int quant_emitter_open(quant_emitter *emitter, quant_executor *executor,
                               const yvex_quant_decision *decision, yvex_quant_failure *failure,
                               yvex_error *err) {
@@ -891,11 +801,6 @@ static int quant_emitter_open(quant_emitter *emitter, quant_executor *executor,
     return YVEX_OK;
 }
 
-/* Purpose: release the bounded staging buffer owned by a terminal emitter.
- * Inputs: initialized or zeroed emitter state.
- * Effects: returns owned output scratch and clears its pointer.
- * Failure: null emitter state is ignored.
- * Boundary: never commits or aborts the caller-owned sink transaction. */
 static void quant_emitter_close(quant_emitter *emitter) {
     if (!emitter)
         return;
@@ -903,11 +808,11 @@ static void quant_emitter_close(quant_emitter *emitter) {
     emitter->output = NULL;
 }
 
-/* Purpose: finish exact terminal delivery and commit its sink transaction.
- * Inputs: completed emitter, result storage, and diagnostics.
- * Effects: flushes remaining bytes and commits exactly once.
- * Failure: refuses incomplete geometry, byte mismatch, flush failure, or commit refusal.
- * Boundary: publishes completion only after both logical and physical counts agree. */
+/*
+ * Finish exact terminal delivery and commit its sink transaction.
+ *
+ * Refuses incomplete geometry, byte mismatch, flush failure, or commit refusal.
+ */
 static int quant_emitter_finish(quant_emitter *emitter, quant_terminal_result *result,
                                 yvex_quant_failure *failure, yvex_error *err) {
     int rc;
@@ -941,11 +846,6 @@ static int quant_emitter_finish(quant_emitter *emitter, quant_terminal_result *r
     return YVEX_OK;
 }
 
-/* Purpose: decode scalar source bytes across arbitrary chunk boundaries.
- * Inputs: scalar stream, transient chunk, logical offset, and diagnostics.
- * Effects: carries partial scalars and forwards decoded values.
- * Failure: propagates source decode or downstream emission refusal.
- * Boundary: consumes transient payload bytes without retaining their address. */
 static int quant_scalar_consume(void *opaque, const unsigned char *bytes, size_t byte_count,
                                 unsigned long long logical_offset, yvex_quant_failure *failure,
                                 yvex_error *err) {
@@ -976,11 +876,11 @@ static int quant_scalar_consume(void *opaque, const unsigned char *bytes, size_t
     return YVEX_OK;
 }
 
-/* Purpose: validate and forward a complete exact-scalar batch.
- * Inputs: exact-copy stream, bytes, element count, and diagnostics.
- * Effects: stages unchanged representation and updates exact metrics.
- * Failure: refuses invalid scalar data, overflow, or sink rejection.
- * Boundary: bypasses lossy codecs only when source and selected physical encoding agree. */
+/*
+ * Validate and forward a complete exact-scalar batch.
+ *
+ * Refuses invalid scalar data, overflow, or sink rejection.
+ */
 static int quant_exact_copy_batch(quant_exact_copy_stream *stream, const unsigned char *bytes,
                                   unsigned long long elements, yvex_quant_failure *failure,
                                   yvex_error *err) {
@@ -1040,11 +940,6 @@ static int quant_exact_copy_batch(quant_exact_copy_stream *stream, const unsigne
     return YVEX_OK;
 }
 
-/* Purpose: copy an exact scalar stream while carrying fragments across chunks.
- * Inputs: exact-copy state, contiguous bytes, logical offset, and diagnostics.
- * Effects: stages complete scalar batches and retains at most one scalar fragment.
- * Failure: rejects discontinuity, partial geometry, invalid scalar, or sink failure.
- * Boundary: preserves exact source representation without full-tensor buffering. */
 static int quant_exact_copy_consume(void *opaque, const unsigned char *bytes, size_t byte_count,
                                     unsigned long long logical_offset, yvex_quant_failure *failure,
                                     yvex_error *err) {
@@ -1098,11 +993,11 @@ static int quant_exact_copy_consume(void *opaque, const unsigned char *bytes, si
     return YVEX_OK;
 }
 
-/* Purpose: narrow streamed I64 values to little-endian I32 after complete range checks.
- * Inputs: cast state, source chunk, logical offset, and diagnostics.
- * Effects: stages only individually admitted I32 scalars.
- * Failure: rejects partial, out-of-range, overflow, decode, or sink conditions before commit.
- * Boundary: implements checked narrowing only; other casts remain unsupported. */
+/*
+ * Narrow streamed I64 values to little-endian I32 after complete range checks.
+ *
+ * Rejects partial, out-of-range, overflow, decode, or sink conditions before commit.
+ */
 static int quant_cast_consume(void *opaque, const unsigned char *bytes, size_t byte_count,
                               unsigned long long logical_offset, yvex_quant_failure *failure,
                               yvex_error *err) {
@@ -1165,11 +1060,11 @@ static int quant_cast_consume(void *opaque, const unsigned char *bytes, size_t b
     return YVEX_OK;
 }
 
-/* Purpose: combine streamed FP8 weights with their admitted E8M0 scale grid.
- * Inputs: scale-pair geometry, weight chunk, logical offset, and diagnostics.
- * Effects: emits scaled logical values in canonical order.
- * Failure: rejects index overflow, malformed grids, non-finite codes, or emission refusal.
- * Boundary: decodes source representation but leaves physical encoding to the emitter. */
+/*
+ * Combine streamed FP8 weights with their admitted E8M0 scale grid.
+ *
+ * Rejects index overflow, malformed grids, non-finite codes, or emission refusal.
+ */
 static int quant_scale_pair_consume(void *opaque, const unsigned char *bytes, size_t byte_count,
                                     unsigned long long logical_offset, yvex_quant_failure *failure,
                                     yvex_error *err) {
@@ -1212,11 +1107,6 @@ static int quant_scale_pair_consume(void *opaque, const unsigned char *bytes, si
     return YVEX_OK;
 }
 
-/* Purpose: decode one expert's packed MXFP4 groups against ordered E8M0 scales.
- * Inputs: expert stream, weight chunk, logical offset, and diagnostics.
- * Effects: carries packed fragments and emits each decoded 32-value group.
- * Failure: rejects scale overrun, malformed blocks, or downstream emission failure.
- * Boundary: decodes one expert only; fan-in ordering belongs to its caller. */
 static int quant_expert_consume(void *opaque, const unsigned char *bytes, size_t byte_count,
                                 unsigned long long logical_offset, yvex_quant_failure *failure,
                                 yvex_error *err) {
@@ -1257,11 +1147,11 @@ static int quant_expert_consume(void *opaque, const unsigned char *bytes, size_t
     return YVEX_OK;
 }
 
-/* Purpose: execute one IR IDENTITY terminal as exact copy, conversion, or selected quantization.
- * Inputs: executor, bound node, decision, emitter, accounting outputs, and diagnostics.
- * Effects: streams exactly one source range through the selected scalar path.
- * Failure: rejects arity, dtype, or partial-scalar violations and propagates transaction failure.
- * Boundary: consumes IR semantics without deriving role or qtype policy. */
+/*
+ * Execute one IR IDENTITY terminal as exact copy, conversion, or selected quantization.
+ *
+ * Rejects arity, dtype, or partial-scalar violations and propagates transaction failure.
+ */
 static int quant_execute_identity(quant_executor *executor, const yvex_quant_decision *decision,
                                   const yvex_transform_node *node, quant_emitter *emitter,
                                   yvex_quant_failure *failure, yvex_error *err,
@@ -1314,11 +1204,6 @@ static int quant_execute_identity(quant_executor *executor, const yvex_quant_dec
     return rc;
 }
 
-/* Purpose: execute one FP8 weight/E8M0 scale-pair decode terminal.
- * Inputs: executor, bound two-input node, emitter, accounting outputs, and diagnostics.
- * Effects: collects the bounded scale grid and streams the paired weight range.
- * Failure: releases scale scratch and refuses malformed dtype, shape, coverage, or accounting.
- * Boundary: follows sealed block geometry and never rediscovers scale companions. */
 static int quant_execute_scale_pair(quant_executor *executor, const yvex_quant_decision *decision,
                                     const yvex_transform_node *node, quant_emitter *emitter,
                                     yvex_quant_failure *failure, yvex_error *err,
@@ -1399,11 +1284,11 @@ static int quant_execute_scale_pair(quant_executor *executor, const yvex_quant_d
     return YVEX_OK;
 }
 
-/* Purpose: execute one checked I64-to-I32 terminal.
- * Inputs: executor, bound source node, decision, emitter, accounting outputs, and diagnostics.
- * Effects: streams, validates, and stages narrowed scalars.
- * Failure: refuses any partial input, geometry mismatch, or range loss.
- * Boundary: numeric narrowing remains transactional and cannot publish a partial terminal. */
+/*
+ * Execute one checked I64-to-I32 terminal.
+ *
+ * Numeric narrowing remains transactional and cannot publish a partial terminal.
+ */
 static int quant_execute_checked_cast(quant_executor *executor, const yvex_quant_decision *decision,
                                       const yvex_transform_node *node, quant_emitter *emitter,
                                       yvex_quant_failure *failure, yvex_error *err,
@@ -1446,11 +1331,6 @@ static int quant_execute_checked_cast(quant_executor *executor, const yvex_quant
     return YVEX_OK;
 }
 
-/* Purpose: execute ordered expert aggregation over paired packed weights and scales.
- * Inputs: executor, bound fan-in node, emitter, accounting outputs, and diagnostics.
- * Effects: streams each expert in canonical index order.
- * Failure: releases side inputs and rejects fan-in, ordering, block, or accounting divergence.
- * Boundary: emits the aggregate sequence but never buffers the full terminal. */
 static int quant_execute_experts(quant_executor *executor, const yvex_quant_decision *decision,
                                  const yvex_transform_node *node, quant_emitter *emitter,
                                  yvex_quant_failure *failure, yvex_error *err,
@@ -1532,11 +1412,11 @@ static int quant_execute_experts(quant_executor *executor, const yvex_quant_deci
     return YVEX_OK;
 }
 
-/* Purpose: execute exactly one sealed terminal operation inside one sink transaction.
- * Inputs: executor, terminal ordinal, accounting outputs, and diagnostics.
- * Effects: dispatches the admitted IR operation and finishes exact output.
- * Failure: aborts an opened terminal, releases staging, and never reports a partial commit.
- * Boundary: supports only the four DeepSeek operations admitted by this executor. */
+/*
+ * Execute exactly one sealed terminal operation inside one sink transaction.
+ *
+ * Aborts an opened terminal, releases staging, and never reports a partial commit.
+ */
 static int quant_execute_terminal(quant_executor *executor, unsigned long long ordinal,
                                   quant_terminal_result *result, unsigned long long *payload_bytes,
                                   unsigned long long *chunks, unsigned long long *sources,
@@ -1597,7 +1477,6 @@ static int quant_execute_terminal(quant_executor *executor, unsigned long long o
     return rc;
 }
 
-/* Purpose: add one finite metric accumulator without producing infinity. */
 static int quant_double_merge(double *target, double source) {
     double merged;
 
@@ -1610,11 +1489,6 @@ static int quant_double_merge(double *target, double source) {
     return 1;
 }
 
-/* Purpose: merge one terminal's numeric metrics through checked temporary accumulation.
- * Inputs: aggregate target and immutable source metrics.
- * Effects: replaces the target only after a complete finite merge.
- * Failure: returns false for null, overflowed, or non-finite metrics and leaves target unchanged.
- * Boundary: aggregates diagnostics and does not determine codec acceptance bounds. */
 static int quant_metrics_merge(yvex_quant_metrics *target, const yvex_quant_metrics *source) {
     yvex_quant_metrics merged;
 
@@ -1638,11 +1512,11 @@ static int quant_metrics_merge(yvex_quant_metrics *target, const yvex_quant_metr
     return 1;
 }
 
-/* Purpose: account one committed terminal by qtype, role, payload, chunks, and metrics.
- * Inputs: executor, decision, terminal result, source facts, and diagnostics.
- * Effects: atomically replaces the aggregate summary after all checks pass.
- * Failure: reports overflow or invalid identity without changing the prior summary.
- * Boundary: records already committed work and cannot alter terminal sink state. */
+/*
+ * Account one committed terminal by qtype, role, payload, chunks, and metrics.
+ *
+ * Reports overflow or invalid identity without changing the prior summary.
+ */
 static int quant_summary_record_terminal(quant_executor *executor,
                                          const yvex_quant_decision *decision,
                                          const quant_terminal_result *result,
@@ -1690,11 +1564,7 @@ static int quant_summary_record_terminal(quant_executor *executor,
     return YVEX_OK;
 }
 
-/* Purpose: select and retain the deterministic primary worker failure.
- * Inputs: executor plus immutable failure and error facts.
- * Effects: requests peer stop, retains the primary error, and updates typed counters.
- * Failure: performs no allocation; the caller remains responsible for terminal abort cleanup.
- * Boundary: coordinates worker failure without rendering or retry policy. */
+/* Select and retain the deterministic primary worker failure. */
 static void quant_record_failure(quant_executor *executor, const yvex_quant_failure *failure,
                                  const yvex_error *err) {
     int replace;
@@ -1730,11 +1600,11 @@ static void quant_record_failure(quant_executor *executor, const yvex_quant_fail
     pthread_mutex_unlock(&executor->mutex);
 }
 
-/* Purpose: claim and execute independent terminals until completion or global stop.
- * Inputs: one worker descriptor borrowing initialized executor state.
- * Effects: runs terminal transactions and merges their committed summaries.
- * Failure: publishes the deterministic primary failure and requests peer termination.
- * Boundary: worker scheduling cannot change terminal identities or sink ordering within a terminal. */
+/*
+ * Claim and execute independent terminals until completion or global stop.
+ *
+ * Publishes the deterministic primary failure and requests peer termination.
+ */
 static void *quant_worker_main(void *opaque) {
     quant_worker *worker = (quant_worker *)opaque;
     quant_executor *executor = worker->executor;
@@ -1790,11 +1660,6 @@ static void *quant_worker_main(void *opaque) {
     return NULL;
 }
 
-/* Purpose: execute every sealed terminal through trusted reads and transactional output.
- * Inputs: complete plan, sink protocol, bounded options, summary, and diagnostics.
- * Effects: coordinates workers, streams ranges, commits exact terminals, and joins all threads.
- * Failure: aborts incomplete work, releases owned state, and returns a typed failure summary.
- * Boundary: consumes the quant plan; it neither selects policy nor serializes a GGUF container. */
 int yvex_quant_execute(const yvex_quant_plan *plan, const yvex_quant_output_sink *sink,
                        const yvex_quant_executor_options *requested_options,
                        yvex_quant_execution_summary *summary, yvex_quant_failure *failure,

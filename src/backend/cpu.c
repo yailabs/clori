@@ -1,15 +1,10 @@
-/* Owner: backend CPU implementation.
- * Owns: CPU tensor storage, lifecycle, capability admission, and bounded reference implementations of admitted
- *   backend primitives.
- * Does not own: generic backend dispatch, CUDA admission, model topology, graph scheduling, rendering, or
- *   runtime-generation capability.
- * Invariants: every tensor is tied to one backend instance; checked memory accounting precedes allocation; failed
- *   operations preserve output state.
- * Boundary: these primitives prove bounded CPU execution, not transformer or generation support.
- * Purpose: provide the independently compiled CPU implementation selected by the generic backend vtable.
- * Inputs: admitted backend descriptors, tensors, and operation parameters.
- * Effects: allocates owned CPU tensors and mutates only explicit outputs.
- * Failure: returns typed errors and releases partially constructed resources. */
+/*
+ * Provide the independently compiled CPU implementation selected by the generic backend vtable.
+ *
+ * Every tensor is tied to one backend instance; checked memory accounting precedes allocation;
+ * failed operations preserve output state. These primitives prove bounded CPU execution, not
+ * transformer or generation support.
+ */
 
 #include <yvex/internal/backend.h>
 #include <yvex/internal/quant_numeric.h>
@@ -48,7 +43,6 @@ static int cpu_op_attention(yvex_backend *, const yvex_device_tensor *,
                                  yvex_device_tensor *, yvex_device_tensor *,
                                  yvex_device_tensor *, yvex_error *);
 
-/* Purpose: Implement the canonical memory stats mechanism owned by the backend boundary. */
 static int cpu_memory_stats(const yvex_backend *backend,
                             yvex_backend_memory_stats *out,
                             yvex_error *err)
@@ -58,7 +52,6 @@ static int cpu_memory_stats(const yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Implement the canonical device info mechanism owned by the backend boundary. */
 static int cpu_device_info(const yvex_backend *backend,
                            yvex_backend_device_info *out,
                            yvex_error *err)
@@ -68,7 +61,6 @@ static int cpu_device_info(const yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Implement the canonical sync mechanism owned by the backend boundary. */
 static int cpu_sync(yvex_backend *backend, yvex_error *err)
 {
     (void)backend;
@@ -76,11 +68,6 @@ static int cpu_sync(yvex_backend *backend, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: Project CPU capability for one exact operation variant from canonical numeric facts.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static int cpu_query_capability(const yvex_backend *backend,
                                 yvex_backend_operation_variant variant,
                                 yvex_backend_capability_result *out,
@@ -126,11 +113,6 @@ static const yvex_backend_vtable cpu_vtable = {
     NULL,
 };
 
-/* Purpose: construct one admitted CPU backend through the public lifecycle owner.
- * Inputs: caller-owned result storage and typed error output.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 int yvex_backend_open_cpu(yvex_backend **out, yvex_error *err)
 {
     yvex_backend *backend;
@@ -161,11 +143,6 @@ int yvex_backend_open_cpu(yvex_backend **out, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: decode one little-endian F16 scalar through the canonical codec.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Produces only the deterministic scalar result defined for the admitted numeric domain.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static float cpu_decode_f16(const unsigned char *bytes)
 {
     unsigned short bits = (unsigned short)bytes[0] | (unsigned short)((unsigned short)bytes[1] << 8);
@@ -173,7 +150,6 @@ static float cpu_decode_f16(const unsigned char *bytes)
     return yvex_quant_f16_decode(bits);
 }
 
-/* Purpose: Implement the canonical sqrt double mechanism owned by the backend boundary. */
 static double backend_sqrt_double(double x)
 {
     double guess;
@@ -189,13 +165,11 @@ static double backend_sqrt_double(double x)
     return guess;
 }
 
-/* Purpose: Implement the canonical abs double mechanism owned by the backend boundary. */
 static double backend_abs_double(double x)
 {
     return x < 0.0 ? -x : x;
 }
 
-/* Purpose: Implement the canonical wrap radians mechanism owned by the backend boundary. */
 static double backend_wrap_radians(double x)
 {
     const double two_pi = 6.28318530717958647692;
@@ -209,11 +183,6 @@ static double backend_wrap_radians(double x)
     return x;
 }
 
-/* Purpose: Implement the canonical sincos double mechanism owned by the backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Produces only the deterministic scalar result defined for the admitted numeric domain.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static void backend_sincos_double(double x, double *sine, double *cosine)
 {
     double x2;
@@ -246,11 +215,6 @@ static void backend_sincos_double(double x, double *sine, double *cosine)
     }
 }
 
-/* Purpose: Implement the canonical exp double mechanism owned by the backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Produces only the deterministic scalar result defined for the admitted numeric domain.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static double backend_exp_double(double x)
 {
     const double ln2 = 0.69314718055994530942;
@@ -291,17 +255,11 @@ static double backend_exp_double(double x)
     return sum;
 }
 
-/* Purpose: Implement the canonical silu double mechanism owned by the backend boundary. */
 static double backend_silu_double(double x)
 {
     return x / (1.0 + backend_exp_double(-x));
 }
 
-/* Purpose: Gather F32 embedding rows into a validated CPU destination tensor.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static int cpu_op_embed(yvex_backend *backend,
                       const yvex_device_tensor *embedding,
                       const unsigned int *token_ids,
@@ -346,11 +304,7 @@ static int cpu_op_embed(yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Compute scaled causal attention directly over admitted CPU F32 tensors.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+/* Compute scaled causal attention directly over admitted CPU F32 tensors. */
 static int cpu_op_attention(yvex_backend *backend,
                           const yvex_device_tensor *query,
                           const yvex_device_tensor *keys,
@@ -445,11 +399,6 @@ static int cpu_op_attention(yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Multiply admitted CPU F32 tensors using their validated row geometry.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static int cpu_op_matmul(yvex_backend *backend,
                        const yvex_device_tensor *input,
                        const yvex_device_tensor *weight,
@@ -491,11 +440,7 @@ static int cpu_op_matmul(yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Evaluate the gated SiLU CPU MLP primitive without temporary tensor ownership.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+/* Evaluate the gated SiLU CPU MLP primitive without temporary tensor ownership. */
 static int cpu_op_mlp(yvex_backend *backend,
                     const yvex_device_tensor *input,
                     const yvex_device_tensor *gate_weight,
@@ -565,11 +510,6 @@ static int cpu_op_mlp(yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Apply the validated rotary-position transform to paired CPU F32 channels.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static int cpu_op_rope(yvex_backend *backend,
                      const yvex_device_tensor *input,
                      unsigned long long position,
@@ -643,11 +583,6 @@ static int cpu_op_rope(yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Normalize each admitted CPU F32 row by its root-mean-square magnitude.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static int cpu_op_rms_norm(yvex_backend *backend,
                          const yvex_device_tensor *input,
                          const yvex_device_tensor *weight,
@@ -696,11 +631,6 @@ static int cpu_op_rms_norm(yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Allocate one zeroed CPU tensor after reserving its exact host-memory budget.
- * Inputs: A validated configuration, checked resource limits, and caller-owned result storage.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static int cpu_tensor_alloc(yvex_backend *backend,
                           const yvex_backend_tensor_desc *desc,
                           yvex_device_tensor **out,
@@ -755,11 +685,6 @@ static int cpu_tensor_alloc(yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Return one CPU tensor allocation to the backend memory budget exactly once.
- * Inputs: An owned object that may be null or already released where its lifecycle permits.
- * Effects: Releases only resources owned by the supplied object and leaves it reset or unusable.
- * Failure: Null and already-released inputs follow the idempotent lifecycle contract.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static int cpu_tensor_free(yvex_backend *backend,
                          yvex_device_tensor *tensor,
                          yvex_error *err)
@@ -779,11 +704,6 @@ static int cpu_tensor_free(yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Copy host bytes into an admitted writable range of a CPU tensor.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static int cpu_tensor_write(yvex_backend *backend,
                           yvex_device_tensor *tensor,
                           const void *src,
@@ -802,11 +722,6 @@ static int cpu_tensor_write(yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Copy an admitted CPU tensor range into caller-owned host storage.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 static int cpu_tensor_read(yvex_backend *backend,
                          const yvex_device_tensor *tensor,
                          void *dst,
@@ -824,7 +739,6 @@ static int cpu_tensor_read(yvex_backend *backend,
     return YVEX_OK;
 }
 
-/* Purpose: Copy tensor copy between compatible admitted ranges without changing semantic identity. */
 static int cpu_tensor_copy(yvex_backend *backend,
                          yvex_device_tensor *dst,
                          const yvex_device_tensor *src,

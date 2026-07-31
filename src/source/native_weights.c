@@ -1,12 +1,9 @@
-/* Owner: native source inventory.
- * Owns: header-only safetensors tables and deterministic name lookup.
- * Does not own: tensor payload loading, role mapping, artifacts, or runtime.
- * Invariants: finalized tables contain unique names and checked byte geometry.
- * Boundary: native tables describe headers and never materialize payloads.
- * Purpose: own deterministic native tensor tables and lookup indexes.
- * Inputs: source directory, bounded header metadata, and caller outputs.
- * Effects: allocates table rows while reading only safetensors headers.
- * Failure: malformed headers, duplicates, allocation, or I/O refuses finalization. */
+/*
+ * Own deterministic native tensor tables and lookup indexes.
+ *
+ * Finalized tables contain unique names and checked byte geometry. Native tables describe headers
+ * and never materialize payloads.
+ */
 #define _XOPEN_SOURCE 700
 #include <dirent.h>
 #include <limits.h>
@@ -18,7 +15,6 @@
 #include <yvex/internal/source_payload.h>
 #include <yvex/source.h>
 
-/* Purpose: publish one typed tensor-inventory refusal without duplicating error transitions. */
 static int native_refuse(yvex_error *err,
                          yvex_status status,
                          const char *where,
@@ -51,11 +47,6 @@ static const native_dtype_row native_dtype_rows[] = {
     {YVEX_NATIVE_DTYPE_OTHER, {"OTHER", NULL, NULL}},
 };
 
-/* Purpose: map a native safetensors dtype enum to its canonical source spelling.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned native source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: native tables describe headers and never materialize payloads. */
 const char *yvex_native_dtype_name(yvex_native_dtype dtype) {
     size_t index;
 
@@ -65,11 +56,6 @@ const char *yvex_native_dtype_name(yvex_native_dtype dtype) {
     return "UNKNOWN";
 }
 
-/* Purpose: parse a canonical safetensors dtype spelling into its typed enum.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned native source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: native tables describe headers and never materialize payloads. */
 static yvex_native_dtype nw_dtype_from_name(const char *name) {
     size_t row, alias;
 
@@ -82,11 +68,6 @@ static yvex_native_dtype nw_dtype_from_name(const char *name) {
     return YVEX_NATIVE_DTYPE_OTHER;
 }
 
-/* Purpose: append canonical native tensor table fields to a deterministic identity stream.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned native source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: native tables describe headers and never materialize payloads. */
 static uint64_t nw_name_hash(const char *name) {
     uint64_t hash = UINT64_C(1469598103934665603);
 
@@ -97,11 +78,6 @@ static uint64_t nw_name_hash(const char *name) {
     return hash;
 }
 
-/* Purpose: project index rebuild facts while preserving the canonical native tensor table invariants.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned native source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: native tables describe headers and never materialize payloads. */
 static int nw_index_rebuild(yvex_native_weight_table *table, size_t requested, yvex_error *err) {
     unsigned long long *slots;
     size_t cap = 128u;
@@ -138,7 +114,6 @@ static int nw_index_rebuild(yvex_native_weight_table *table, size_t requested, y
     return YVEX_OK;
 }
 
-/* Purpose: locate the native tensor table entry associated with a canonical key. */
 static long long nw_index_find(const yvex_native_weight_table *table, const char *name) {
     size_t slot;
     size_t visited = 0u;
@@ -157,7 +132,6 @@ static long long nw_index_find(const yvex_native_weight_table *table, const char
     return -1;
 }
 
-/* Purpose: define deterministic ordering for native tensor table records. */
 static int nw_row_compare(const void *left, const void *right) {
     const yvex_native_weight_info *a = (const yvex_native_weight_info *)left;
     const yvex_native_weight_info *b = (const yvex_native_weight_info *)right;
@@ -166,11 +140,7 @@ static int nw_row_compare(const void *left, const void *right) {
     return result ? result : strcmp(a->shard_path, b->shard_path);
 }
 
-/* Purpose: construct canonical native tensor table indexes and seal their deterministic facts.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned native source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: native tables describe headers and never materialize payloads. */
+/* Construct canonical native tensor table indexes and seal their deterministic facts. */
 int yvex_native_weight_table_finalize(yvex_native_weight_table *table, yvex_error *err) {
     if (!table) {
         yvex_error_set(
@@ -192,11 +162,6 @@ int yvex_native_weight_table_finalize(yvex_native_weight_table *table, yvex_erro
     return YVEX_OK;
 }
 
-/* Purpose: admit one unique native tensor row with checked shape and byte geometry.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned native source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: native tables describe headers and never materialize payloads. */
 int yvex_native_weight_table_add(yvex_native_weight_table *table,
                                  const char *name,
                                  const char *shard_path,
@@ -302,11 +267,6 @@ int yvex_native_weight_table_add(yvex_native_weight_table *table,
     return YVEX_OK;
 }
 
-/* Purpose: project dir facts while preserving the canonical native tensor table invariants.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned native source inventory state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: native tables describe headers and never materialize payloads. */
 static int nw_scan_dir(const char *root,
                        const char *rel_dir,
                        int recursive,
@@ -366,11 +326,6 @@ static int nw_scan_dir(const char *root,
     return rc;
 }
 
-/* Purpose: build a native safetensors header inventory for a source directory.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned native source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: native tables describe headers and never materialize payloads. */
 int yvex_native_weight_table_open(yvex_native_weight_table **out,
                                   const yvex_native_weight_options *options,
                                   yvex_error *err) {
@@ -412,11 +367,11 @@ int yvex_native_weight_table_open(yvex_native_weight_table **out,
     return YVEX_OK;
 }
 
-/* Purpose: release resources owned by one native tensor table object and clear its observable state.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by native source inventory; cleanup remains deterministic.
- * Failure: null or released native source inventory handles remain harmless.
- * Boundary: native tables describe headers and never materialize payloads. */
+/*
+ * Release resources owned by one native tensor table object and clear its observable state.
+ *
+ * Releases only resources owned by native source inventory; cleanup remains deterministic.
+ */
 void yvex_native_weight_table_close(yvex_native_weight_table *table) {
     unsigned long long i;
 
@@ -433,20 +388,10 @@ void yvex_native_weight_table_close(yvex_native_weight_table *table) {
     free(table);
 }
 
-/* Purpose: report the admitted native tensor table cardinality.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned native source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: native tables describe headers and never materialize payloads. */
 unsigned long long yvex_native_weight_table_count(const yvex_native_weight_table *table) {
     return table ? table->count : 0;
 }
 
-/* Purpose: return the immutable native tensor table entry at a checked ordinal.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned native source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: native tables describe headers and never materialize payloads. */
 const yvex_native_weight_info *yvex_native_weight_table_at(const yvex_native_weight_table *table,
                                                            unsigned long long index) {
     if (!table || index >= table->count) {
@@ -455,11 +400,6 @@ const yvex_native_weight_info *yvex_native_weight_table_at(const yvex_native_wei
     return &table->items[index];
 }
 
-/* Purpose: locate the native tensor table entry associated with a canonical key.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned native source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: native tables describe headers and never materialize payloads. */
 const yvex_native_weight_info *yvex_native_weight_table_find(const yvex_native_weight_table *table,
                                                              const char *name) {
     if (!table || !name) {
@@ -471,11 +411,6 @@ const yvex_native_weight_info *yvex_native_weight_table_find(const yvex_native_w
     }
 }
 
-/* Purpose: project weight table summary facts while preserving the canonical native tensor table invariants.
- * Inputs: typed native source inventory arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned native source inventory state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: native tables describe headers and never materialize payloads. */
 int yvex_native_weight_table_summary(const yvex_native_weight_table *table,
                                      yvex_native_weight_summary *out,
                                      yvex_error *err) {

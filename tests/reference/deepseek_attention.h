@@ -1,23 +1,6 @@
 /*
- * deepseek_attention_reference.h - independent DeepSeek attention test oracle.
- *
- * Owner:
- *   tests/reference
- *
- * Owns:
- *   declarations for scalar algorithms used only to judge the production
- *   DeepSeek attention executor.
- *
- * Does not own:
- *   production graph behavior, runtime admission, payload ownership, CUDA
- *   capability, persistent KV, generation, or project claims.
- *
- * Invariants:
- *   the reference implementation never calls production attention numeric
- *   primitives.
- *
- * Boundary:
- *   independent test evidence is not a runtime implementation.
+ * The reference implementation never calls production attention numeric primitives. Independent
+ * test evidence is not a runtime implementation.
  */
 #ifndef YVEX_TEST_DEEPSEEK_ATTENTION_REFERENCE_H
 #define YVEX_TEST_DEEPSEEK_ATTENTION_REFERENCE_H

@@ -1,12 +1,9 @@
-/* Owner: CLI physical-variant command adapter.
- * Owns: argv admission and compact rendering for policy-driven full-model plan and emission.
- * Does not own: policy semantics, IR lowering, codecs, artifact layout, materialization, or runtime.
- * Invariants: every emit rederives and exactly validates its external plan before reading model payloads.
- * Boundary: CLI selects production owners but never resolves tensor qtypes or writes artifact bytes itself.
- * Purpose: make physical-variant planning, explanation, and complete GGUF emission operator reachable.
- * Inputs: explicit source authority, one sealed policy or preset, optional imatrix, and output paths.
- * Effects: may publish an external plan, policy, or complete artifact through typed domain APIs.
- * Failure: typed lower-owner refusal publishes no partial final plan or artifact. */
+/*
+ * Make physical-variant planning, explanation, and complete GGUF emission operator reachable.
+ *
+ * Every emit rederives and exactly validates its external plan before reading model payloads. CLI
+ * selects production owners but never resolves tensor qtypes or writes artifact bytes itself.
+ */
 #define _POSIX_C_SOURCE 200809L
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
@@ -61,7 +58,6 @@ static int quant_cli_writer_build(yvex_gguf_writer_plan **out,
                                   yvex_gguf_writer_failure *failure,
                                   yvex_error *err);
 
-/* Purpose: map one lower-owner refusal to a stable operator exit and bounded diagnostic. */
 static int quant_cli_fail(const char *phase, const yvex_error *err)
 {
     yvex_cli_out_writef(stderr, "yvex: quant %s failed: %s (%s)\n", phase,
@@ -69,7 +65,6 @@ static int quant_cli_fail(const char *phase, const yvex_error *err)
     return 1;
 }
 
-/* Purpose: consume one required option value without accepting truncation or implicit booleans. */
 static const char *quant_cli_value(int argc, char **argv, int *index)
 {
     if (!index || *index + 1 >= argc) return NULL;
@@ -77,11 +72,6 @@ static const char *quant_cli_value(int argc, char **argv, int *index)
     return argv[*index];
 }
 
-/* Purpose: parse the common full-model physical-variant selector and path grammar.
- * Inputs: process argv reconstructed for one registry-admitted compilation or inspection action.
- * Effects: fills caller-owned borrowed option pointers.
- * Failure: unknown, duplicate-semantic, or value-less arguments refuse.
- * Boundary: parsing assigns no qtype and opens no source or artifact. */
 static int quant_cli_parse(int argc, char **argv, quant_cli_options *options)
 {
     int index;
@@ -125,7 +115,6 @@ static int quant_cli_parse(int argc, char **argv, quant_cli_options *options)
     return 1;
 }
 
-/* Purpose: require the complete common planning authority before opening expensive resources. */
 static int quant_cli_options_valid(const quant_cli_options *options)
 {
     if (!options || !options->target || !options->source || !options->models_root ||
@@ -144,11 +133,6 @@ static int quant_cli_options_valid(const quant_cli_options *options)
     return 0;
 }
 
-/* Purpose: release compiler-plane objects in reverse dependency order.
- * Inputs: an optional partially initialized CLI context.
- * Effects: closes every owned lower-layer handle and clears borrowed state.
- * Failure: cleanup is best-effort under lower-owner close contracts and returns no status.
- * Boundary: does not publish, unlink, or reinterpret an external plan or artifact. */
 static void quant_cli_context_close(quant_cli_context *context)
 {
     if (!context) return;
@@ -161,11 +145,6 @@ static void quant_cli_context_close(quant_cli_context *context)
     memset(context, 0, sizeof(*context));
 }
 
-/* Purpose: admit exact calibration bytes and bind them to source IR identity.
- * Inputs: optional imatrix path and an already-sealed transform summary.
- * Effects: opens one immutable mapped calibration owner in the context.
- * Failure: unsupported format, identity, or bounds leave the context releasable.
- * Boundary: component names and coverage remain validated by the compile quant plan owner. */
 static int quant_cli_imatrix_open(quant_cli_context *context, const char *path,
                                   const yvex_transform_ir_summary *transform, yvex_error *err)
 {
@@ -187,11 +166,6 @@ static int quant_cli_imatrix_open(quant_cli_context *context, const char *path,
     return rc;
 }
 
-/* Purpose: reduce per-terminal compute facts into backend compatibility without changing the plan.
- * Inputs: one sealed complete physical plan and caller-owned result slots.
- * Effects: writes CPU/CUDA all-terminal compatibility facts only.
- * Failure: a missing plan or decision yields both facts false.
- * Boundary: compatibility reporting never selects or rewrites a qtype. */
 static void quant_cli_plan_compatibility(const yvex_quant_plan *plan, int *cpu, int *cuda)
 {
     const yvex_quant_plan_summary *summary = yvex_quant_plan_summary_get(plan);
@@ -212,11 +186,6 @@ static void quant_cli_plan_compatibility(const yvex_quant_plan *plan, int *cpu, 
     }
 }
 
-/* Purpose: make an explicit CLI backend request a real all-terminal admission gate.
- * Inputs: optional canonical backend spelling and one sealed physical plan.
- * Effects: performs validation only.
- * Failure: unavailable required compute refuses before payload reads or plan publication.
- * Boundary: backend selection does not enter physical-variant identity. */
 static int quant_cli_backend_validate(const char *backend, const yvex_quant_plan *plan,
                                       yvex_error *err)
 {
@@ -233,11 +202,6 @@ static int quant_cli_backend_validate(const char *backend, const yvex_quant_plan
     return YVEX_ERR_UNSUPPORTED;
 }
 
-/* Purpose: regenerate one complete policy-resolved DeepSeek physical plan from source authority.
- * Inputs: validated common CLI options and empty lifecycle context.
- * Effects: opens source handoff, policy, optional imatrix, and sealed plan.
- * Failure: no payload bytes are read by planning and partial owners remain releasable.
- * Boundary: CLI never selects a terminal qtype; family lowering and policy owners do. */
 static int quant_cli_context_open(quant_cli_context *context, const quant_cli_options *options,
                                   yvex_quant_failure *failure, yvex_error *err)
 {
@@ -289,11 +253,11 @@ static int quant_cli_context_open(quant_cli_context *context, const quant_cli_op
     return rc;
 }
 
-/* Purpose: render exact size, qtype, and identity facts from one sealed plan.
- * Inputs: one validated immutable compile quant plan.
- * Effects: writes bounded human-readable evidence to the canonical CLI output owner.
- * Failure: accepts no nullable plan and performs no domain mutation.
- * Boundary: rendered facts do not establish capability beyond the sealed plan. */
+/*
+ * Render exact size, qtype, and identity facts from one sealed plan.
+ *
+ * Writes bounded human-readable evidence to the canonical CLI output owner.
+ */
 static void quant_cli_summary_print(const quant_cli_context *context)
 {
     const yvex_quant_plan *plan = context->plan;
@@ -382,11 +346,6 @@ static void quant_cli_summary_print(const quant_cli_context *context)
     }
 }
 
-/* Purpose: render each selected decision without reinterpreting policy precedence.
- * Inputs: one exclusive tensor-or-role selector and a validated immutable plan.
- * Effects: writes matched decision evidence and its exact match count.
- * Failure: a selector matching no terminal returns a nonzero operator result.
- * Boundary: selection is report-only and cannot modify or reseal decisions. */
 static int quant_cli_explain(const quant_cli_options *options, const yvex_quant_plan *plan)
 {
     const yvex_quant_plan_summary *summary = yvex_quant_plan_summary_get(plan);
@@ -419,11 +378,6 @@ static int quant_cli_explain(const quant_cli_options *options, const yvex_quant_
     return 0;
 }
 
-/* Purpose: construct the complete writer plan from the exact resolved physical plan.
- * Inputs: a context retaining family lowering, verification, and the sealed compile quant plan.
- * Effects: allocates one caller-owned writer plan through the writer subsystem.
- * Failure: typed writer refusal leaves no usable plan in the output handle.
- * Boundary: neither this adapter nor the writer re-resolves policy rules. */
 static int quant_cli_writer_build(yvex_gguf_writer_plan **out, const quant_cli_context *context,
                                   yvex_gguf_writer_failure *failure, yvex_error *err)
 {
@@ -443,11 +397,6 @@ static int quant_cli_writer_build(yvex_gguf_writer_plan **out, const quant_cli_c
     return yvex_gguf_writer_plan_build(out, &request, failure, err);
 }
 
-/* Purpose: execute, native-roundtrip, and atomically publish one complete physical artifact.
- * Inputs: regenerated context and exact previously published plan path.
- * Effects: streams bounded source reads through codecs and the transactional GGUF file sink.
- * Failure: failed terminal, roundtrip, or publication leaves no final artifact.
- * Boundary: official-reader admission, materialization, and runtime binding remain later gates. */
 static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *context,
                           yvex_error *err)
 {
@@ -510,11 +459,6 @@ static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *c
     return rc;
 }
 
-/* Purpose: list, inspect, or transactionally export normal sealed preset policies.
- * Inputs: the bounded `compile quant preset` argv grammar.
- * Effects: may render metadata or publish one policy JSON through the policy owner.
- * Failure: unknown presets, malformed grammar, or publication errors return nonzero.
- * Boundary: presets are ordinary policies and this adapter assigns no tensor qtype. */
 static int quant_cli_preset(int argc, char **argv)
 {
     yvex_quant_policy *policy = NULL;
@@ -552,11 +496,6 @@ static int quant_cli_preset(int argc, char **argv)
     return 2;
 }
 
-/* Purpose: dispatch one canonical physical-variant command through production domain APIs.
- * Inputs: process arguments rooted at the `quant` command.
- * Effects: may publish a plan, artifact, policy export, or bounded evidence.
- * Failure: parsing and typed domain refusals return nonzero without partial final publication.
- * Boundary: contains no codec, rule resolution, artifact serialization, or materialization math. */
 int yvex_quant_command(int arg_count, char **args)
 {
     quant_cli_options options;
@@ -600,11 +539,6 @@ int yvex_quant_command(int arg_count, char **args)
     return rc == YVEX_OK ? 0 : quant_cli_fail("execution", &err);
 }
 
-/* Purpose: render the exact production physical-variant CLI grammar and boundary.
- * Inputs: one writable CLI stream selected by the caller.
- * Effects: writes usage text only.
- * Failure: stream failures follow the canonical CLI output owner's behavior.
- * Boundary: help text is not capability or execution evidence. */
 void yvex_quant_help(FILE *fp)
 {
     yvex_cli_out_writef(fp, "usage:\n");

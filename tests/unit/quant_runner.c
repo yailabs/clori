@@ -1,24 +1,10 @@
 /*
- * quant_runner.c - Focused quantization and trusted-input test runner.
- *
- * Owner: TRACK.QUANT focused validation.
- * Owns: deterministic orchestration of the qtype ABI, Transformation IR,
- *        trusted payload binding, numeric codec, executor, and compatibility
- *        projection unit suites.
- * Does not own: production behavior, source files, artifacts, CUDA execution,
- *               operator output, or capability promotion.
- * Invariants: every invoked suite is independently owned; first failure stops
- *             the runner and produces a nonzero process status.
- * Boundary: test-only runner used by normal and sanitizer validation.
+ * Every invoked suite is independently owned; first failure stops the runner and produces a
+ * nonzero process status. Test-only runner used by normal and sanitizer validation.
  */
 
 #include "tests/test.h"
 
-/*
- * run_test executes one owned suite without retaining suite state.  It
- * allocates no memory, mutates no production state, performs no payload IO on
- * its own, and reports only test-runner progress to stderr.
- */
 static int run_test(const char *name, int (*fn)(void))
 {
     int rc;
@@ -31,11 +17,6 @@ static int run_test(const char *name, int (*fn)(void))
     return rc;
 }
 
-/*
- * main sequences the complete focused quantization dependency surface.  It
- * owns no resources beyond those released by each suite and returns on the
- * first refusal so sanitizer diagnostics remain local to the failing owner.
- */
 int main(void)
 {
     if (run_test("gguf_qtype_abi", yvex_test_gguf_qtype_abi) != 0) return 1;

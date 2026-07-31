@@ -1,13 +1,7 @@
-/* Owner: src/cli/model_artifacts
- * Owns: existing tensor-collection command-family parsing and output behavior.
- * Does not own: runtime implementation, graph execution, backend algorithms, artifact emission, eval, benchmark, or
- *   release claims.
- * Invariants: CLI-only and excluded from libyvex.a; preserves existing command behavior.
- * Boundary: tensor-collection reports are report-only diagnostics.
- * Purpose: provide existing tensor-collection command-family parsing and output behavior.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Present tensor-collection coverage and geometry without materializing payloads or executing the
+ * model.
+ */
 #include "src/cli/model_artifacts/private.h"
 
 #include <string.h>
@@ -246,11 +240,6 @@ static const yvex_models_option_spec tensor_option_specs[] = {
      offsetof(yvex_cli_tensor_collection_options, output_mode)},
 };
 
-/* Purpose: Parse parse inspect tensor collection options into typed CLI state (`parse_tensor_collection_options`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int parse_tensor_collection_options(int arg_count,
                                            char **args,
                                            yvex_cli_tensor_collection_options *options)
@@ -304,18 +293,11 @@ static int parse_tensor_collection_options(int arg_count,
     return 0;
 }
 
-/* Purpose: Compute inspect tensor collection requested collection for its CLI invariant
- *   (`tensor_collection_requested_collection`). */
 static const char *tensor_collection_requested_collection(const yvex_cli_tensor_collection_options *options)
 {
     return options && options->collection && options->collection[0] ? options->collection : "unknown";
 }
 
-/* Purpose: Construct the owned inspect tensor collection init report state (`tensor_collection_init_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void tensor_collection_init_report(yvex_tensor_collection_report *report,
     const yvex_cli_tensor_collection_options *options)
 {
@@ -336,11 +318,6 @@ static void tensor_collection_init_report(yvex_tensor_collection_report *report,
     report->include_blockers = options ? options->include_blockers : 0;
 }
 
-/* Purpose: Render inspect tensor collection print report from typed facts (`tensor_collection_print_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void tensor_collection_print_report(const yvex_tensor_collection_report *report)
 {
     if (report && report->output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
@@ -367,8 +344,6 @@ static void tensor_collection_print_report(const yvex_tensor_collection_report *
     yvex_cli_out_lines(stdout, literal_pair_1, sizeof(literal_pair_1) / sizeof(literal_pair_1[0]));
 }
 
-/* Purpose: Render inspect tensor collection print invalid argument report from typed facts
- *   (`tensor_collection_print_invalid_argument_report`). */
 static int tensor_collection_print_invalid_argument_report(const yvex_cli_tensor_collection_options *options,
                                                            const char *status,
                                                            const char *reason)
@@ -387,12 +362,6 @@ static int tensor_collection_print_invalid_argument_report(const yvex_cli_tensor
     return 2;
 }
 
-/* Purpose: Render inspect tensor collection print source only report from typed facts
- * (`tensor_collection_print_source_only_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int tensor_collection_print_source_only_report(const yvex_cli_tensor_collection_options *options,
                                                       const char *target)
 {
@@ -441,8 +410,6 @@ static int tensor_collection_print_source_only_report(const yvex_cli_tensor_coll
     return 5;
 }
 
-/* Purpose: Render inspect tensor collection print missing model report from typed facts
- *   (`tensor_collection_print_missing_model_report`). */
 static int tensor_collection_print_missing_model_report(const yvex_cli_tensor_collection_options *options,
                                                         const char *reason)
 {
@@ -464,12 +431,6 @@ static int tensor_collection_print_missing_model_report(const yvex_cli_tensor_co
     return 5;
 }
 
-/* Purpose: Render inspect tensor collection print unsupported family report from typed facts
- * (`tensor_collection_print_unsupported_family_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int tensor_collection_print_unsupported_family_report(const yvex_cli_tensor_collection_options *options,
                                                             yvex_model_ref *ref,
                                                             const char *target_id,
@@ -502,18 +463,11 @@ static int tensor_collection_print_unsupported_family_report(const yvex_cli_tens
     return 5;
 }
 
-/* Purpose: Compute inspect tensor collection role status for its CLI invariant (`tensor_collection_role_status`). */
 static const char *tensor_collection_role_status(const yvex_tensor_info *tensor)
 {
     return tensor ? "present" : "missing";
 }
 
-/* Purpose: Render inspect tensor collection print model report from typed facts
- * (`tensor_collection_print_model_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int tensor_collection_print_model_report(const yvex_cli_tensor_collection_options *options,
                                                 yvex_model_ref *ref,
                                                 yvex_model_context *ctx,
@@ -654,12 +608,6 @@ static int tensor_collection_print_model_report(const yvex_cli_tensor_collection
     return 0;
 }
 
-/* Purpose: Orchestrate the typed model artifacts surface inspect tensor collection command request
- * (`yvex_model_artifacts_surface_tensor_collection_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_model_artifacts_surface_tensor_collection_command(int arg_count, char **args)
 {
     yvex_cli_tensor_collection_options options;
@@ -732,12 +680,6 @@ int yvex_model_artifacts_surface_tensor_collection_command(int arg_count, char *
     return rc;
 }
 
-/* Purpose: Render model artifacts surface inspect tensor collection help from typed facts
- * (`yvex_model_artifacts_surface_tensor_collection_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_model_artifacts_surface_tensor_collection_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,

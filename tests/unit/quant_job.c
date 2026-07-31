@@ -1,9 +1,4 @@
-/*
- * YVEX - Quant job manifest tests
- *
- * File: tests/test_quant_job.c
- * Layer: test
- */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

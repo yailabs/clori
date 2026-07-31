@@ -1,16 +1,11 @@
-/* Owner: src/backend.
- * Owns: backend lifecycle dispatch, exact public capability projection, and the backend-neutral tensor and
- *   primitive API.
- * Does not own: CLI parsing/rendering/output, CUDA module admission, graph semantics, model-family behavior, qtype
- *   compute, or runtime generation.
- * Invariants: coarse capability APIs project exact variants; failed checked release preserves caller ownership; no
- *   operator bytes are written here.
- * Boundary: concrete CPU and CUDA behavior belongs to independently compiled backend implementations; bounded
- *   primitives are not model runtime support.
- * Purpose: validate generic requests and dispatch them through an admitted backend vtable.
- * Inputs: backend kinds, descriptors, tensors, and typed operation requests.
- * Effects: mutates only explicit backend/tensor outputs through the selected implementation.
- * Failure: preserves caller ownership and returns typed admission, state, or operation failures. */
+/*
+ * Validate generic requests and dispatch them through an admitted backend vtable.
+ *
+ * Coarse capability APIs project exact variants; failed checked release preserves caller
+ * ownership; no operator bytes are written here. Concrete CPU and CUDA behavior belongs to
+ * independently compiled backend implementations; bounded primitives are not model runtime
+ * support.
+ */
 #include <yvex/internal/backend.h>
 #include <limits.h>
 #include <math.h>
@@ -95,33 +90,21 @@ static const backend_capability_rule backend_capability_rules[] = {
         {2u, 0, {YVEX_BACKEND_VARIANT_ATTENTION_CAUSAL_F32,
                  YVEX_BACKEND_VARIANT_ATTENTION_NONCAUSAL_F32}},
 };
-/* Purpose: Return the canonical diagnostic label for name at. */
+
 static const char *backend_name_at(const char *const *names,
                                    size_t count,
                                    unsigned int index)
 {
     return index < count && names[index] ? names[index] : "unknown";
 }
-/* Purpose: Return the canonical diagnostic label for kind name.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns the canonical unknown or zero sentinel for an invalid typed value.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 const char *yvex_backend_kind_name(yvex_backend_kind kind)
 {
     return backend_name_at(backend_kind_names,
                            sizeof(backend_kind_names) / sizeof(backend_kind_names[0]),
                            (unsigned int)kind);
 }
-/*
- * Parses the canonical backend names shared by runtime and command adapters.
- * It mutates only out, allocates nothing, performs no IO, and refuses future
- * or unavailable backend names without implying backend admission. */
-/* Purpose: Translate operator input into the canonical typed kind parse value without ambiguous aliases.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_kind_parse(const char *name,
                             yvex_backend_kind *out,
                             yvex_error *err)
@@ -145,32 +128,20 @@ int yvex_backend_kind_parse(const char *name,
                     "unknown backend kind: %s", name);
     return YVEX_ERR_INVALID_ARG;
 }
-/* Purpose: Return the canonical diagnostic label for status name.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns the canonical unknown or zero sentinel for an invalid typed value.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 const char *yvex_backend_status_name(yvex_backend_status status)
 {
     return backend_name_at(backend_status_names,
                            sizeof(backend_status_names) / sizeof(backend_status_names[0]),
                            (unsigned int)status);
 }
-/* Purpose: Return the canonical diagnostic label for operation variant name.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns the canonical unknown or zero sentinel for an invalid typed value.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 const char *yvex_backend_operation_variant_name(yvex_backend_operation_variant variant)
 {
     return backend_name_at(backend_variant_names, YVEX_BACKEND_VARIANT_COUNT,
                            (unsigned int)variant);
 }
-/* Purpose: Return the canonical diagnostic label for capability state name.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns the canonical unknown or zero sentinel for an invalid typed value.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 const char *yvex_backend_capability_state_name(yvex_backend_capability_state state)
 {
     return backend_name_at(
@@ -178,11 +149,7 @@ const char *yvex_backend_capability_state_name(yvex_backend_capability_state sta
         sizeof(backend_capability_state_names) / sizeof(backend_capability_state_names[0]),
         (unsigned int)state);
 }
-/* Purpose: Return the canonical diagnostic label for capability reason name.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns the canonical unknown or zero sentinel for an invalid typed value.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 const char *yvex_backend_capability_reason_name(yvex_backend_capability_reason reason)
 {
     return backend_name_at(
@@ -190,22 +157,14 @@ const char *yvex_backend_capability_reason_name(yvex_backend_capability_reason r
         sizeof(backend_capability_reason_names) / sizeof(backend_capability_reason_names[0]),
         (unsigned int)reason);
 }
-/* Purpose: Return the canonical diagnostic label for capability name.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns the canonical unknown or zero sentinel for an invalid typed value.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 const char *yvex_backend_capability_name(yvex_backend_capability capability)
 {
     return backend_name_at(backend_capability_names,
                            sizeof(backend_capability_names) / sizeof(backend_capability_names[0]),
                            (unsigned int)capability);
 }
-/* Purpose: Select and construct the requested backend kind through its canonical implementation.
- * Inputs: A validated configuration, checked resource limits, and caller-owned result storage.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed refusal; a non-null error owner exists only for checked cleanup retry.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_open(yvex_backend **out,
                       const yvex_backend_options *options,
                       yvex_error *err)
@@ -236,11 +195,7 @@ int yvex_backend_open(yvex_backend **out,
                     yvex_backend_kind_name(kind));
     return YVEX_ERR_UNSUPPORTED;
 }
-/* Purpose: Project whether admitted state satisfies context available without promoting a higher capability.
- * Inputs: None; immutable owner constants determine the result.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_cuda_context_available(void)
 {
     yvex_backend *backend = NULL;
@@ -254,20 +209,12 @@ int yvex_backend_cuda_context_available(void)
     close_rc = yvex_backend_close_checked(&backend, &err);
     return rc == YVEX_OK && close_rc == YVEX_OK;
 }
-/* Purpose: Project whether admitted state satisfies available without promoting a higher capability.
- * Inputs: None; immutable owner constants determine the result.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_cuda_available(void)
 {
     return yvex_backend_cuda_context_available();
 }
-/* Purpose: discharge exactly one previously acquired shared-resource lease.
- * Inputs: the still-live primary owner named by the child registration.
- * Effects: atomically decrements only the packed live-child count and never clears CLOSING.
- * Failure: missing ownership or underflow leaves the lifecycle unchanged for diagnosis and retry.
- * Boundary: callers must not dereference the owner after successful release. */
+
 static int backend_shared_owner_release(yvex_backend *owner, yvex_error *err)
 {
     unsigned long long desired, observed;
@@ -292,11 +239,7 @@ static int backend_shared_owner_release(yvex_backend *owner, yvex_error *err)
         }
     }
 }
-/* Purpose: atomically make one backend cleanup-only before any owned resource is released.
- * Inputs: a stable exclusive backend owner and typed error output.
- * Effects: irreversibly records CLOSING while preserving the exact live-child count.
- * Failure: live children refuse physical cleanup after the terminal state is recorded.
- * Boundary: admission performs no teardown; checked close or an outer lifecycle owner does that work. */
+
 int yvex_backend_close_admit(yvex_backend *backend, yvex_error *err)
 {
     unsigned long long desired, observed;
@@ -324,11 +267,11 @@ int yvex_backend_close_admit(yvex_backend *backend, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: release one backend through pointer ownership while preserving retryable child ownership.
- * Inputs: address of an exclusively owned backend pointer and typed error output.
- * Effects: releases pinned staging and backend resources, then nulls ownership only after discharge.
- * Failure: pre-release failure preserves the backend pointer; post-release diagnostics remain observable.
- * Boundary: public checked lifecycle used when completion depends on successful resource discharge. */
+/*
+ * Release one backend through pointer ownership while preserving retryable child ownership.
+ *
+ * Releases pinned staging and backend resources, then nulls ownership only after discharge.
+ */
 int yvex_backend_close_checked(yvex_backend **backend_ptr, yvex_error *err)
 {
     yvex_backend *backend;
@@ -384,41 +327,29 @@ int yvex_backend_close_checked(yvex_backend **backend_ptr, yvex_error *err)
     if (first_rc == YVEX_OK) yvex_error_clear(err);
     return first_rc;
 }
-/* Purpose: retain the installed idempotent close ABI for callers without a cleanup result channel.
- * Inputs: exclusively owned backend or null.
- * Effects: delegates complete ownership discharge to the checked backend lifecycle.
- * Failure: legacy callers cannot observe cleanup failure; completion-sensitive owners use the internal ABI.
- * Boundary: compatibility projection only; runtime completion never calls this wrapper. */
+/*
+ * Retain the installed idempotent close ABI for callers without a cleanup result channel.
+ *
+ * Delegates complete ownership discharge to the checked backend lifecycle.
+ */
 void yvex_backend_close(yvex_backend *backend)
 {
     yvex_error ignored;
     yvex_error_clear(&ignored);
     (void)yvex_backend_close_checked(&backend, &ignored);
 }
-/* Purpose: Implement the canonical kind of mechanism owned by the backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns the canonical unknown or zero sentinel for an invalid typed value.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 yvex_backend_kind yvex_backend_kind_of(const yvex_backend *backend)
 {
     return backend ? backend->kind : YVEX_BACKEND_KIND_CPU;
 }
-/* Purpose: Implement the canonical status of mechanism owned by the backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns the canonical unknown or zero sentinel for an invalid typed value.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 yvex_backend_status yvex_backend_status_of(const yvex_backend *backend)
 {
     return backend ? atomic_load_explicit(&backend->status, memory_order_acquire)
                    : YVEX_BACKEND_STATUS_FAILED;
 }
-/* Purpose: Retrieve get memory stats from admitted immutable or owned state.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_get_memory_stats(const yvex_backend *backend,
                                   yvex_backend_memory_stats *out,
                                   yvex_error *err)
@@ -435,11 +366,7 @@ int yvex_backend_get_memory_stats(const yvex_backend *backend,
     }
     return backend->vtable->memory_stats(backend, out, err);
 }
-/* Purpose: Retrieve get device info from admitted immutable or owned state.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_get_device_info(const yvex_backend *backend,
                                  yvex_backend_device_info *out,
                                  yvex_error *err)
@@ -459,11 +386,7 @@ int yvex_backend_get_device_info(const yvex_backend *backend,
     }
     return backend->vtable->device_info(backend, out, err);
 }
-/* Purpose: Reserve budgeted storage for tensor alloc with checked size accounting.
- * Inputs: A validated configuration, checked resource limits, and caller-owned result storage.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_tensor_alloc(yvex_backend *backend,
                               const yvex_backend_tensor_desc *desc,
                               yvex_device_tensor **out,
@@ -492,11 +415,7 @@ int yvex_backend_tensor_alloc(yvex_backend *backend,
     }
     return backend->vtable->tensor_alloc(backend, desc, out, err);
 }
-/* Purpose: Release the resources owned by tensor free without changing borrowed inputs.
- * Inputs: An owned object that may be null or already released where its lifecycle permits.
- * Effects: Releases only resources owned by the supplied object and leaves it reset or unusable.
- * Failure: Null and already-released inputs follow the idempotent lifecycle contract.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 void yvex_backend_tensor_free(yvex_backend *backend,
                               yvex_device_tensor *tensor)
 {
@@ -505,11 +424,7 @@ void yvex_backend_tensor_free(yvex_backend *backend,
     yvex_error_clear(&err);
     (void)yvex_backend_tensor_release(backend, &owned, &err);
 }
-/* Purpose: Release the resources owned by tensor release without changing borrowed inputs.
- * Inputs: An owned object that may be null or already released where its lifecycle permits.
- * Effects: Releases only resources owned by the supplied object and leaves it reset or unusable.
- * Failure: Null and already-released inputs follow the idempotent lifecycle contract.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_tensor_release(yvex_backend *backend,
                                 yvex_device_tensor **tensor,
                                 yvex_error *err)
@@ -537,38 +452,22 @@ int yvex_backend_tensor_release(yvex_backend *backend,
     }
     return rc;
 }
-/* Purpose: Return the canonical diagnostic label for device tensor name.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns the canonical unknown or zero sentinel for an invalid typed value.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 const char *yvex_device_tensor_name(const yvex_device_tensor *tensor)
 {
     return tensor && tensor->name ? tensor->name : "";
 }
-/* Purpose: Implement the canonical device tensor bytes mechanism owned by the backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns the canonical unknown or zero sentinel for an invalid typed value.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 unsigned long long yvex_device_tensor_bytes(const yvex_device_tensor *tensor)
 {
     return tensor ? tensor->bytes : 0;
 }
-/* Purpose: Project whether admitted state satisfies device tensor is written without promoting a higher capability.
- * Inputs: Immutable typed facts whose ownership, shape, or lifecycle state must be admitted.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_device_tensor_is_written(const yvex_device_tensor *tensor)
 {
     return tensor ? tensor->is_written != 0 : 0;
 }
-/* Purpose: Publish tensor write only within its admitted destination range.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_tensor_write(yvex_backend *backend,
                               yvex_device_tensor *tensor,
                               const void *src,
@@ -590,11 +489,7 @@ int yvex_backend_tensor_write(yvex_backend *backend,
     }
     return backend->vtable->tensor_write(backend, tensor, src, len, err);
 }
-/* Purpose: Retrieve tensor read from admitted immutable or owned state.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_tensor_read(yvex_backend *backend,
                              const yvex_device_tensor *tensor,
                              void *dst,
@@ -616,11 +511,6 @@ int yvex_backend_tensor_read(yvex_backend *backend,
     }
     return backend->vtable->tensor_read(backend, tensor, dst, len, err);
 }
-/* Purpose: Copy tensor copy between compatible admitted ranges without changing semantic identity.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
 int yvex_backend_tensor_copy(yvex_backend *backend,
                              yvex_device_tensor *dst,
                              const yvex_device_tensor *src,
@@ -641,11 +531,7 @@ int yvex_backend_tensor_copy(yvex_backend *backend,
     }
     return backend->vtable->tensor_copy(backend, dst, src, err);
 }
-/* Purpose: Implement the canonical sync mechanism owned by the backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_sync(yvex_backend *backend, yvex_error *err)
 {
     int rc;
@@ -662,7 +548,7 @@ int yvex_backend_sync(yvex_backend *backend, yvex_error *err)
     }
     return backend->vtable->sync(backend, err);
 }
-/* Purpose: Implement the canonical variant dtypes mechanism owned by the backend boundary. */
+
 static void backend_variant_dtypes(yvex_backend_capability_result *out)
 {
     const backend_dtype_projection *projection;
@@ -674,11 +560,7 @@ static void backend_variant_dtypes(yvex_backend_capability_result *out)
     out->weight_dtype = projection->weight;
     out->output_dtype = projection->output;
 }
-/* Purpose: Project the admitted numeric and device capability for query capability.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_query_capability(const yvex_backend *backend,
                                   yvex_backend_operation_variant variant,
                                   yvex_backend_capability_result *out,
@@ -720,11 +602,7 @@ int yvex_backend_query_capability(const yvex_backend *backend,
     }
     return rc;
 }
-/* Purpose: Project whether admitted state satisfies supports without promoting a higher capability.
- * Inputs: Immutable typed facts whose ownership, shape, or lifecycle state must be admitted.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_supports(const yvex_backend *backend,
                           yvex_backend_capability capability)
 {
@@ -742,11 +620,7 @@ int yvex_backend_supports(const yvex_backend *backend,
     }
     return rule->require_all ? supported == rule->count : supported != 0u;
 }
-/* Purpose: Execute the typed op embed operation over already admitted buffers.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_op_embed(yvex_backend *backend,
                           const yvex_device_tensor *embedding,
                           const unsigned int *token_ids,
@@ -769,11 +643,7 @@ int yvex_backend_op_embed(yvex_backend *backend,
     }
     return backend->vtable->op_embed(backend, embedding, token_ids, token_count, out, err);
 }
-/* Purpose: Execute the typed op rms norm operation over already admitted buffers.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_op_rms_norm(yvex_backend *backend,
                              const yvex_device_tensor *input,
                              const yvex_device_tensor *weight,
@@ -801,11 +671,7 @@ int yvex_backend_op_rms_norm(yvex_backend *backend,
     }
     return backend->vtable->op_rms_norm(backend, input, weight, epsilon, out, err);
 }
-/* Purpose: Execute the typed op rope operation over already admitted buffers.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_op_rope(yvex_backend *backend,
                          const yvex_device_tensor *input,
                          unsigned long long position,
@@ -834,11 +700,7 @@ int yvex_backend_op_rope(yvex_backend *backend,
     }
     return backend->vtable->op_rope(backend, input, position, rope_base, out, err);
 }
-/* Purpose: Execute the typed op matmul operation over already admitted buffers.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_op_matmul(yvex_backend *backend,
                            const yvex_device_tensor *input,
                            const yvex_device_tensor *weight,
@@ -860,11 +722,7 @@ int yvex_backend_op_matmul(yvex_backend *backend,
     }
     return backend->vtable->op_matmul(backend, input, weight, out, err);
 }
-/* Purpose: Execute the typed op mlp operation over already admitted buffers.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_op_mlp(yvex_backend *backend,
                         const yvex_device_tensor *input,
                         const yvex_device_tensor *gate_weight,
@@ -892,11 +750,7 @@ int yvex_backend_op_mlp(yvex_backend *backend,
     return backend->vtable->op_mlp(backend, input, gate_weight, up_weight,
                                    down_weight, options, intermediate, out, err);
 }
-/* Purpose: Execute the typed op attention operation over already admitted buffers.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_op_attention(yvex_backend *backend,
                               const yvex_device_tensor *query,
                               const yvex_device_tensor *keys,
@@ -944,11 +798,7 @@ int yvex_backend_op_attention(yvex_backend *backend,
                                          position, scale, causal, score_scratch,
                                          probability_scratch, out, err);
 }
-/* Purpose: Enforce the typed ownership, geometry, and lifecycle invariants for desc valid.
- * Inputs: Immutable typed facts whose ownership, shape, or lifecycle state must be admitted.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+/* Enforce the typed ownership, geometry, and lifecycle invariants for desc valid. */
 static int backend_desc_valid(const yvex_backend_tensor_desc *desc, yvex_error *err)
 {
     unsigned int i;
@@ -978,11 +828,7 @@ static int backend_desc_valid(const yvex_backend_tensor_desc *desc, yvex_error *
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: compute the deterministic positive real root shared by CPU and CUDA RoPE.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+/* Compute the deterministic positive real root shared by CPU and CUDA RoPE. */
 double yvex_backend_nth_root(double value, unsigned long long degree)
 {
     double low = 1.0;
@@ -1009,11 +855,7 @@ double yvex_backend_nth_root(double value, unsigned long long degree)
     }
     return 0.5 * (low + high);
 }
-/* Purpose: validate and account a backend allocation before acquiring storage.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_memory_can_add(const yvex_backend *backend,
                                 unsigned long long bytes,
                                 const char *backend_name,
@@ -1037,11 +879,7 @@ int yvex_backend_memory_can_add(const yvex_backend *backend,
     }
     return YVEX_OK;
 }
-/* Purpose: validate one exact whole-tensor read or write.
- * Inputs: Immutable typed facts whose ownership, shape, or lifecycle state must be admitted.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_tensor_rw_validate(const char *where,
                                     const yvex_backend *backend,
                                     const yvex_device_tensor *tensor,
@@ -1059,11 +897,7 @@ int yvex_backend_tensor_rw_validate(const char *where,
     }
     return YVEX_OK;
 }
-/* Purpose: validate same-owner, same-shape tensor copy endpoints.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_tensor_copy_validate(const yvex_backend *backend,
                                       const yvex_device_tensor *dst,
                                       const yvex_device_tensor *src,
@@ -1083,17 +917,13 @@ int yvex_backend_tensor_copy_validate(const yvex_backend *backend,
     }
     return YVEX_OK;
 }
-/* Purpose: prove exact F16 storage geometry without multiplying past U64. */
+
 static int backend_f16_elements(const yvex_device_tensor *tensor,
                                 unsigned long long elements)
 {
     return tensor && elements <= ULLONG_MAX / 2ull && tensor->bytes == elements * 2ull;
 }
-/* Purpose: admit one same-backend F32 tensor set with operation-specific diagnostics.
- * Inputs: Immutable typed facts whose ownership, shape, or lifecycle state must be admitted.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 static int backend_validate_f32_set(const yvex_backend *backend,
                                     const yvex_device_tensor *const *tensors,
                                     size_t count,
@@ -1117,7 +947,7 @@ static int backend_validate_f32_set(const yvex_backend *backend,
     }
     return YVEX_OK;
 }
-/* Purpose: multiply three nonzero MLP dimensions with exact overflow refusal. */
+
 static int backend_mul3(unsigned long long a,
                         unsigned long long b,
                         unsigned long long c,
@@ -1129,11 +959,7 @@ static int backend_mul3(unsigned long long a,
     *out = a * b * c;
     return 1;
 }
-/* Purpose: validate the shared CPU/CUDA embedding geometry and token domain.
- * Inputs: Immutable typed facts whose ownership, shape, or lifecycle state must be admitted.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_validate_embed(const yvex_backend *backend,
                                 const yvex_device_tensor *embedding,
                                 const unsigned int *token_ids,
@@ -1206,11 +1032,7 @@ int yvex_backend_validate_embed(const yvex_backend *backend,
     }
     return YVEX_OK;
 }
-/* Purpose: validate the shared CPU/CUDA RMS normalization contract.
- * Inputs: Immutable typed facts whose ownership, shape, or lifecycle state must be admitted.
- * Effects: Does not mutate caller-visible or owner state.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_validate_rms_norm(const yvex_backend *backend,
                                    const yvex_device_tensor *input,
                                    const yvex_device_tensor *weight,
@@ -1278,11 +1100,7 @@ int yvex_backend_validate_rms_norm(const yvex_backend *backend,
     }
     return YVEX_OK;
 }
-/* Purpose: validate the backend-neutral RoPE vector shape.
- * Inputs: one tensor, required head-width output, and diagnostic owner.
- * Effects: writes head_dim only after complete validation.
- * Failure: typed invalid, shape, zero-width, and odd-width refusal.
- * Boundary: geometry admission only; no backend dispatch or numeric execution. */
+
 int yvex_backend_validate_rope(const yvex_device_tensor *tensor,
                                unsigned long long *head_dim,
                                const char *where,
@@ -1310,11 +1128,11 @@ int yvex_backend_validate_rope(const yvex_device_tensor *tensor,
     *head_dim = width;
     return YVEX_OK;
 }
-/* Purpose: validate the common F32 matrix product contract for CPU and CUDA.
- * Inputs: same-backend input/weight/output tensors and dimension outputs.
- * Effects: writes m/k/n only after exact shape and byte accounting.
- * Failure: typed ownership, dtype, rank, dimension, or overflow refusal.
- * Boundary: backend-neutral admission; execution remains backend-owned. */
+/*
+ * Validate the common F32 matrix product contract for CPU and CUDA.
+ *
+ * Typed ownership, dtype, rank, dimension, or overflow refusal.
+ */
 int yvex_backend_validate_matmul(const yvex_backend *backend,
                                  const yvex_device_tensor *input,
                                  const yvex_device_tensor *weight,
@@ -1367,11 +1185,11 @@ int yvex_backend_validate_matmul(const yvex_backend *backend,
     *n_out = n;
     return YVEX_OK;
 }
-/* Purpose: validate the shared bounded attention primitive geometry.
- * Inputs: admitted Q/K/V, scratch/output tensors, sequence facts, and outputs.
- * Effects: writes head and KV element counts only after exact admission.
- * Failure: typed ownership, dtype, rank, bounds, or byte-geometry refusal.
- * Boundary: does not select attention class or execute a backend kernel. */
+/*
+ * Validate the shared bounded attention primitive geometry.
+ *
+ * Typed ownership, dtype, rank, bounds, or byte-geometry refusal.
+ */
 int yvex_backend_validate_attention(const yvex_backend *backend,
                                     const yvex_device_tensor *query,
                                     const yvex_device_tensor *keys,
@@ -1442,11 +1260,11 @@ int yvex_backend_validate_attention(const yvex_backend *backend,
     *kv_elements_out = kv_elements;
     return YVEX_OK;
 }
-/* Purpose: validate dense or routed F32 MLP geometry once for every backend.
- * Inputs: same-backend tensors, immutable options, dimension/offset outputs.
- * Effects: writes dimensions and selected expert offsets after full admission.
- * Failure: typed ownership, dtype, activation, expert, shape, or overflow refusal.
- * Boundary: validates a primitive only; model routing and kernel execution stay outside. */
+/*
+ * Validate dense or routed F32 MLP geometry once for every backend.
+ *
+ * Typed ownership, dtype, activation, expert, shape, or overflow refusal.
+ */
 int yvex_backend_validate_mlp(const yvex_backend *backend,
                               const yvex_device_tensor *input,
                               const yvex_device_tensor *gate_weight,
@@ -1572,9 +1390,11 @@ int yvex_backend_validate_mlp(const yvex_backend *backend,
     if (down_offset_out) *down_offset_out = down_offset;
     return YVEX_OK;
 }
-/* Purpose: attach one stable host/device residency mapping to a backend execution context.
- * Inputs: exact owned CPU-visible tensor. Effects: records one borrowed immutable mapping.
- * Failure: identity or lifecycle mismatch refuses. Boundary: mapping infers no model semantics. */
+/*
+ * Attach one stable host/device residency mapping to a backend execution context.
+ *
+ * Identity or lifecycle mismatch refuses.
+ */
 int yvex_backend_resident_attach(yvex_backend *backend, const unsigned char *host_base,
                                  unsigned long long bytes,
                                  const yvex_device_tensor *device_tensor,
@@ -1619,9 +1439,7 @@ int yvex_backend_resident_attach(yvex_backend *backend, const unsigned char *hos
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: detach one borrowed residency mapping before its device tensor is released.
- * Inputs: owning backend. Effects: clears only borrowed host/device mapping facts.
- * Failure: null is harmless. Boundary: neither tensor nor host arena is released. */
+
 int yvex_backend_resident_detach(yvex_backend *backend, yvex_error *err)
 {
     if (!backend) {
@@ -1636,11 +1454,12 @@ int yvex_backend_resident_detach(yvex_backend *backend, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: translate one borrowed host subrange into its stable resident device address.
- * Inputs: backend mapping and exact host byte range.
- * Effects: writes only the resolved device address on a complete hit.
- * Failure: returns miss for an unattached/outside range and invalid for arithmetic overflow.
- * Boundary: performs no allocation, transfer, or fallback. */
+/*
+ * Translate one borrowed host subrange into its stable resident device address.
+ *
+ * Returns miss for an unattached/outside range and invalid for arithmetic overflow. Performs no
+ * allocation, transfer, or fallback.
+ */
 int yvex_backend_resident_resolve(const yvex_backend *backend, const unsigned char *host,
                                   unsigned long long bytes,
                                   unsigned long long *device_address)
@@ -1665,11 +1484,13 @@ int yvex_backend_resident_resolve(const yvex_backend *backend, const unsigned ch
     *device_address = backend->resident_device_address + offset;
     return YVEX_BACKEND_RESIDENT_HIT;
 }
-/* Purpose: attach one session-owned mutable-state resolver to an execution backend.
- * Inputs: CUDA backend, borrowed resolver/context, and nonzero layout generation.
- * Effects: publishes one borrowed mapping used only for device-resident state reads.
- * Failure: malformed or duplicate attachment refuses without changing backend state.
- * Boundary: the runtime retains all state and device allocation ownership. */
+/*
+ * Attach one session-owned mutable-state resolver to an execution backend.
+ *
+ * CUDA backend, borrowed resolver/context, and nonzero layout generation. Publishes one borrowed
+ * mapping used only for device-resident state reads. The runtime retains all state and device
+ * allocation ownership.
+ */
 int yvex_backend_state_residency_attach(
     yvex_backend *backend, const void *context,
     yvex_backend_state_resolve_fn resolve, unsigned long long generation,
@@ -1693,9 +1514,7 @@ int yvex_backend_state_residency_attach(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: detach one borrowed mutable-state resolver before runtime storage release.
- * Inputs: exact owner facts. Effects: updates only declared state.
- * Failure: returns typed status without partial publication. Boundary: owner-local. */
+
 void yvex_backend_state_residency_detach(yvex_backend *backend)
 {
     if (!backend) return;
@@ -1703,10 +1522,7 @@ void yvex_backend_state_residency_detach(yvex_backend *backend)
     backend->state_residency_resolve = NULL;
     backend->state_residency_generation = 0ull;
 }
-/* Purpose: resolve a provider-owned state span to its stable device counterpart.
- * Inputs: attached backend and exact host subrange. Effects: delegates address lookup only.
- * Failure: missing mappings miss; malformed resolver results are invalid.
- * Boundary: resolution performs no transfer, allocation, or numerical fallback. */
+
 int yvex_backend_state_residency_resolve(
     const yvex_backend *backend, const void *host, unsigned long long bytes,
     unsigned long long *device_address)
@@ -1722,11 +1538,11 @@ int yvex_backend_state_residency_resolve(
     return result == YVEX_BACKEND_RESIDENT_HIT && !*device_address
                ? YVEX_BACKEND_RESIDENT_INVALID : result;
 }
-/* Purpose: attach one stable reusable device workspace to a backend session.
- * Inputs: CUDA backend, same-owner device tensor, generation, and error output.
- * Effects: records one immutable workspace extent and resets its bump cursor.
- * Failure: rejects wrong ownership, empty extent, or duplicate attachment.
- * Boundary: does not allocate, resize, or select execution policy. */
+/*
+ * Attach one stable reusable device workspace to a backend session.
+ *
+ * Rejects wrong ownership, empty extent, or duplicate attachment.
+ */
 int yvex_backend_workspace_attach(yvex_backend *backend,
                                   const yvex_device_tensor *device_tensor,
                                   unsigned long long generation, yvex_error *err)
@@ -1752,11 +1568,7 @@ int yvex_backend_workspace_attach(yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: detach one borrowed reusable workspace before releasing its tensor.
- * Inputs: owning backend or null.
- * Effects: clears workspace address, extent, cursor, peak, and generation.
- * Failure: null is a harmless no-op.
- * Boundary: tensor release remains the execution-session owner's responsibility. */
+
 void yvex_backend_workspace_detach(yvex_backend *backend)
 {
     if (!backend)
@@ -1768,11 +1580,13 @@ void yvex_backend_workspace_detach(yvex_backend *backend)
     backend->workspace_peak = 0ull;
     backend->workspace_generation = 0ull;
 }
-/* Purpose: acquire one aligned stable subrange without allocating or resizing the workspace.
- * Inputs: attached workspace, byte extent, power-of-two alignment, and address output.
- * Effects: advances only the session-local bump cursor and peak counter.
- * Failure: returns miss for no workspace/capacity and invalid for bad alignment or overflow.
- * Boundary: caller serializes use; no implicit allocation or execution-mode fallback occurs. */
+/*
+ * Acquire one aligned stable subrange without allocating or resizing the workspace.
+ *
+ * Attached workspace, byte extent, power-of-two alignment, and address output. Returns miss for no
+ * workspace/capacity and invalid for bad alignment or overflow. Caller serializes use; no implicit
+ * allocation or execution-mode fallback occurs.
+ */
 int yvex_backend_workspace_acquire(yvex_backend *backend, unsigned long long bytes,
                                    unsigned long long alignment,
                                    unsigned long long *device_address)
@@ -1799,11 +1613,13 @@ int yvex_backend_workspace_acquire(yvex_backend *backend, unsigned long long byt
         backend->workspace_peak = backend->workspace_cursor;
     return YVEX_BACKEND_RESIDENT_HIT;
 }
-/* Purpose: prepare one backend-owned cold arena for standalone execution.
- * Inputs: unprepared backend and exact bounded capacity.
- * Effects: allocates once for backend lifetime and records owned cold preparation.
- * Failure: duplicate preparation, overflow, or allocation failure preserves prior state.
- * Boundary: runtime sessions attach their own arena and never call this fallback. */
+/*
+ * Prepare one backend-owned cold arena for standalone execution.
+ *
+ * Unprepared backend and exact bounded capacity. Allocates once for backend lifetime and records
+ * owned cold preparation. Duplicate preparation, overflow, or allocation failure preserves prior
+ * state. Runtime sessions attach their own arena and never call this fallback.
+ */
 int yvex_backend_host_workspace_prepare_owned(yvex_backend *backend,
                                               unsigned long long bytes,
                                               yvex_error *err)
@@ -1844,11 +1660,7 @@ int yvex_backend_host_workspace_prepare_owned(yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: detach one stable host arena at its session/backend lifecycle boundary.
- * Inputs: backend with borrowed or owned host workspace and typed cleanup output.
- * Effects: clears arena facts only after borrowed detach or successful physical release.
- * Failure: pre-release failure preserves the complete attachment for exact retry.
- * Boundary: borrowed session storage remains owned by the session. */
+
 int yvex_backend_host_workspace_detach(yvex_backend *backend, yvex_error *err)
 {
     int rc = YVEX_OK;
@@ -1875,11 +1687,12 @@ done:
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-/* Purpose: acquire one aligned stable host subrange without allocating or resizing.
- * Inputs: prepared arena, exact bytes, power-of-two alignment, and output address.
- * Effects: advances cursor and peak only after a complete capacity check.
- * Failure: miss reports absent/insufficient capacity; invalid reports malformed geometry.
- * Boundary: no implicit preparation, growth, or execution-mode fallback occurs. */
+/*
+ * Acquire one aligned stable host subrange without allocating or resizing.
+ *
+ * Prepared arena, exact bytes, power-of-two alignment, and output address. No implicit
+ * preparation, growth, or execution-mode fallback occurs.
+ */
 int yvex_backend_host_workspace_acquire(yvex_backend *backend,
                                         unsigned long long bytes,
                                         unsigned long long alignment,
@@ -1912,11 +1725,7 @@ int yvex_backend_host_workspace_acquire(yvex_backend *backend,
         backend->host_workspace_peak = backend->host_workspace_cursor;
     return YVEX_BACKEND_RESIDENT_HIT;
 }
-/* Purpose: project exact host arena lifecycle and allocation evidence.
- * Inputs: backend and caller-owned summary.
- * Effects: writes immutable facts only.
- * Failure: false for invalid arguments.
- * Boundary: reports capacity/usage; it does not infer runtime readiness. */
+
 int yvex_backend_host_workspace_summary_get(
     const yvex_backend *backend, yvex_backend_host_workspace_summary *summary)
 {
@@ -1930,11 +1739,7 @@ int yvex_backend_host_workspace_summary_get(
         backend->host_workspace_allocation_count};
     return 1;
 }
-/* Purpose: Implement the canonical tensor same shape mechanism owned by the backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed backend refusal and publishes no partial success state.
- * Boundary: Backend admission and execution; does not infer model topology or generation capability. */
+
 int yvex_backend_tensor_same_shape(const yvex_device_tensor *a,
                                    const yvex_device_tensor *b)
 {

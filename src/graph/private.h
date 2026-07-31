@@ -1,12 +1,9 @@
-/* Owner: graph private ABI.
- * Owns: graph state, reports, attention protocols, family composition, and shared algorithms.
- * Does not own: CLI policy, backend kernels, persistent KV, generation, or capability promotion.
- * Invariants: declarations are graph-local and preserve immutable identity and transaction boundaries.
- * Boundary: this header is never installed or included outside graph production and focused tests.
- * Purpose: share the minimum typed contracts required by independent graph translation units.
- * Inputs: public and admitted internal domain types.
- * Effects: declarations only; owning translation units define mutation, I/O, and cleanup.
- * Failure: typed graph and attention failures remain authoritative. */
+/*
+ * Share the minimum typed contracts required by independent graph translation units.
+ *
+ * Declarations are graph-local and preserve immutable identity and transaction boundaries. This
+ * header is never installed or included outside graph production and focused tests.
+ */
 #ifndef YVEX_GRAPH_PRIVATE_H
 #define YVEX_GRAPH_PRIVATE_H
 #include <stddef.h>
@@ -201,28 +198,20 @@ int yvex_attention_accept(yvex_attention_failure *failure, yvex_error *err);
 
 #define attention_hash_u64 yvex_sha256_update_u64_be
 
-/* Purpose: append one nullable text field to a graph identity stream.
- * Inputs: initialized hash state and optional immutable text.
- * Effects: advances only the caller-owned digest state.
- * Failure: propagates the canonical SHA-256 update refusal.
- * Boundary: null text is serialized as the canonical empty sequence. */
+/* Append one nullable text field to a graph identity stream. */
 static inline int attention_hash_text(yvex_sha256 *hash, const char *text)
 {
     return yvex_sha256_update(hash, text ? text : "", text ? strlen(text) : 0u);
 }
 
-/* Purpose: select the lesser of two admitted unsigned extents. */
+/* Select the lesser of two admitted unsigned extents. */
 static inline unsigned long long attention_min_u64(unsigned long long left,
                                                    unsigned long long right)
 {
     return left < right ? left : right;
 }
 
-/* Purpose: release one previously admitted live CPU scratch extent.
- * Inputs: execution-owned budget and its exact admitted byte extent.
- * Effects: decrements live bytes without changing the recorded peak.
- * Failure: invalid or excessive releases leave the budget unchanged.
- * Boundary: release does not free storage or alter execution evidence. */
+/* Release one previously admitted live CPU scratch extent. */
 static inline void attention_scratch_release(yvex_attention_scratch_budget *budget,
                                              size_t bytes)
 {
@@ -230,7 +219,7 @@ static inline void attention_scratch_release(yvex_attention_scratch_budget *budg
         budget->live_bytes -= bytes;
 }
 
-/* Purpose: clear one caller-owned attention result before transactional execution. */
+/* Clear one caller-owned attention result before transactional execution. */
 static inline void attention_result_reset(yvex_attention_cpu_result *result)
 {
     if (result)
@@ -330,7 +319,7 @@ int yvex_attention_rope_apply(float *values, unsigned long long width, unsigned 
 int yvex_attention_activation_apply(const yvex_attention_activation_policy *policy, float *values,
     unsigned long long count, unsigned long long layer_index, yvex_tensor_role role,
     yvex_attention_scratch_budget *scratch, yvex_attention_failure *failure, yvex_error *err);
-/* Purpose: project one checked row across the immutable history/current segment boundary. */
+/* Project one checked row across the immutable history/current segment boundary. */
 static inline const float *attention_segment_row(
     const float *history, unsigned long long history_count,
     unsigned long long history_stride, const float *current,
@@ -343,7 +332,7 @@ static inline const float *attention_segment_row(
     return index < current_count ? current + index * current_stride : NULL;
 }
 
-/* Purpose: project one checked position across the immutable history/current boundary. */
+/* Project one checked position across the immutable history/current boundary. */
 static inline unsigned long long attention_segment_position(
     const unsigned long long *history, unsigned long long history_count,
     const unsigned long long *current, unsigned long long current_count,

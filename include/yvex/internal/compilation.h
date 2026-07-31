@@ -1,12 +1,7 @@
-/* Owner: model.compilation.internal (model.compilation).
- * Owns: Transformation IR, validation, identity, and payload binding.
- * Does not own: family policy, payload I/O, or physical encoding.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: artifact-neutral compilation lifecycle.
- * Purpose: provide the canonical artifact-neutral compilation lifecycle contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * Compilation owners exchange immutable transformation IR and runtime-binding facts through this
+ * ABI. Neither representation reads payload bytes or executes a backend.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_COMPILATION_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_COMPILATION_H_INCLUDED
 
@@ -20,7 +15,7 @@
 extern "C" {
 #endif
 
-/* Ir contract. */
+/* Ir. */
 #define YVEX_TRANSFORM_IR_SCHEMA_VERSION 1u
 #define YVEX_TRANSFORM_IR_IDENTITY_CAP 65u
 #define YVEX_TRANSFORM_IR_SOURCE_NAME_CAP 256u
@@ -400,7 +395,7 @@ int yvex_transform_shape_element_count(
     yvex_error *err);
 const char *yvex_transform_failure_name(yvex_transform_failure_code code);
 
-/* Binding contract. */
+/* Binding. */
 typedef struct yvex_transform_binding yvex_transform_binding;
 typedef struct {
     unsigned int physical_class;
@@ -479,7 +474,6 @@ typedef struct yvex_compilation_runtime_binding_result {
     int published;
 } yvex_compilation_runtime_binding_result;
 
-/* Private contract. */
 typedef struct {
     unsigned long long hash;
     unsigned long long value_plus_one;

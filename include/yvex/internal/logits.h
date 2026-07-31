@@ -1,12 +1,9 @@
-/* Owner: runtime logits contract.
- * Owns: output-head plan, normalized-hidden admission, projection lifecycle, and typed evidence.
- * Does not own: transformer final norm, tokenization, sampling, KV, or generation.
- * Invariants: one exact resident encoded head produces one complete F32 vocabulary row or nothing.
- * Boundary: internal runtime/operator ABI from normalized hidden state to raw vocabulary logits.
- * Purpose: expose complete phase-neutral vocabulary projection to sampling and operators.
- * Inputs: sealed runtime owners, typed normalized hidden rows, backend selection, and caller storage.
- * Effects: reads immutable model weights and publishes complete caller-owned logits rows.
- * Failure: failed rows publish no logits and never mutate persistent sequence state. */
+/*
+ * Expose complete phase-neutral vocabulary projection to sampling and operators.
+ *
+ * One exact resident encoded head produces one complete F32 vocabulary row or nothing. Internal
+ * runtime/operator ABI from normalized hidden state to raw vocabulary logits.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_LOGITS_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_LOGITS_H_INCLUDED
 

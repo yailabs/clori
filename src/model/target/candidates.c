@@ -1,14 +1,10 @@
-/* Owner: src/model/target
- * Owns: full-runtime candidate, dense candidate, and Qwen/Metal pressure report facts and builders.
- * Does not own: CLI parsing, command dispatch, rendering, target catalog storage, sidecar writing, runtime
- *   execution, generation, eval, benchmark, or release decisions.
- * Invariants: candidate reports remain blocked/report-only until promoted by separate implementation proof rows.
- * Boundary: candidate reporting does not create runtime capability, quantization, artifact emission, generation,
- *   benchmark, or release readiness.
- * Purpose: project immutable release-candidate facts into bounded reports.
- * Inputs: typed target requests and static candidate facts.
- * Effects: mutates only bounded report state.
- * Failure: unsupported requests preserve explicit refusal rows. */
+/*
+ * Project immutable release-candidate facts into bounded reports.
+ *
+ * Candidate reports remain blocked/report-only until promoted by separate implementation proof
+ * rows. Candidate reporting does not create runtime capability, quantization, artifact emission,
+ * generation, benchmark, or release readiness.
+ */
 #include <yvex/internal/model_target.h>
 
 #include <string.h>
@@ -162,13 +158,11 @@ static const char *const qwen_audit_rows[] = {
     "next_required_rows: POST010.QWEN.METAL.0"
 };
 
-/* Purpose: project the immutable bounded candidate fact count view. */
 static unsigned long candidate_fact_count(void)
 {
     return sizeof(candidate_facts) / sizeof(candidate_facts[0]);
 }
 
-/* Purpose: resolve one candidate find through the canonical index. */
 static const candidate_fact *candidate_find(const char *id)
 {
     unsigned long i;
@@ -182,11 +176,6 @@ static const candidate_fact *candidate_find(const char *id)
     return NULL;
 }
 
-/* Purpose: apply the canonical candidate blocker0 transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static const char *candidate_blocker0(const candidate_fact *fact,
                                       const char *prefix)
 {
@@ -210,7 +199,6 @@ static const char *candidate_blocker0(const candidate_fact *fact,
     return fact->eligibility;
 }
 
-/* Purpose: apply the canonical candidate eligibility for prefix transformation and invariants. */
 static const char *candidate_eligibility_for_prefix(const candidate_fact *fact,
                                                    const char *prefix)
 {
@@ -230,7 +218,6 @@ static const char *candidate_eligibility_for_prefix(const candidate_fact *fact,
     return fact->eligibility;
 }
 
-/* Purpose: apply the canonical candidate blocker1 transformation and invariants. */
 static const char *candidate_blocker1(const candidate_fact *fact,
                                       const char *prefix)
 {
@@ -252,7 +239,6 @@ static const char *candidate_blocker1(const candidate_fact *fact,
     return NULL;
 }
 
-/* Purpose: apply the canonical candidate next for prefix transformation and invariants. */
 static const char *candidate_next_for_prefix(const candidate_fact *fact,
                                              const char *prefix)
 {
@@ -269,11 +255,6 @@ static const char *candidate_next_for_prefix(const candidate_fact *fact,
     return fact->next;
 }
 
-/* Purpose: enforce typed candidate bad release invariants before publication.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int candidate_bad_release(const yvex_model_target_request *request,
                                  yvex_model_target_report *report,
                                  const char *label)
@@ -288,7 +269,6 @@ static int candidate_bad_release(const yvex_model_target_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: publish candidate emit help through the bounded output boundary. */
 static int candidate_emit_help(const yvex_model_target_request *request,
                                yvex_model_target_report *report)
 {
@@ -306,7 +286,6 @@ static int candidate_emit_help(const yvex_model_target_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: publish candidate emit table through the bounded output boundary. */
 static void candidate_emit_table(yvex_model_target_report *report,
                                  const char *report_name,
                                  const char *status,
@@ -317,7 +296,6 @@ static void candidate_emit_table(yvex_model_target_report *report,
                                      report_name, status, next);
 }
 
-/* Purpose: publish candidate emit common normal through the bounded output boundary. */
 static void candidate_emit_common_normal(yvex_model_target_report *report,
                                          const char *name,
                                          const char *status,
@@ -334,7 +312,6 @@ static void candidate_emit_common_normal(yvex_model_target_report *report,
         sizeof(candidate_common_suffix) / sizeof(candidate_common_suffix[0]));
 }
 
-/* Purpose: publish candidate emit unknown target through the bounded output boundary. */
 static int candidate_emit_unknown_target(yvex_model_target_report *report,
                                          const char *status,
                                          const char *target)
@@ -346,11 +323,6 @@ static int candidate_emit_unknown_target(yvex_model_target_report *report,
     return YVEX_OK;
 }
 
-/* Purpose: publish candidate emit full audit through the bounded output boundary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void candidate_emit_full_audit(yvex_model_target_report *report,
                                       const char *prefix,
                                       const char *target)
@@ -410,11 +382,6 @@ static void candidate_emit_full_audit(yvex_model_target_report *report,
     }
 }
 
-/* Purpose: construct one bounded full-runtime candidate report from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int candidate_report_build(const yvex_model_target_request *request,
                                   yvex_model_target_report *report)
 {
@@ -458,11 +425,6 @@ static int candidate_report_build(const yvex_model_target_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded dense candidate report build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int dense_candidate_report_build(const yvex_model_target_request *request,
                                         yvex_model_target_report *report)
 {
@@ -493,11 +455,6 @@ static int dense_candidate_report_build(const yvex_model_target_request *request
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded qwen metal report build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int qwen_metal_report_build(const yvex_model_target_request *request,
                                    yvex_model_target_report *report)
 {
@@ -551,11 +508,6 @@ static int qwen_metal_report_build(const yvex_model_target_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: dispatch one typed candidate request to its canonical report builder.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 int yvex_model_target_candidate_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,

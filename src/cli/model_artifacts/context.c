@@ -1,13 +1,7 @@
-/* Owner: src/cli/model_artifacts
- * Owns: existing context command-family parsing and output behavior.
- * Does not own: runtime implementation, graph execution, backend algorithms, artifact emission, eval, benchmark, or
- *   release claims.
- * Invariants: CLI-only and excluded from libyvex.a; preserves existing command behavior.
- * Boundary: context reports are report-only diagnostics.
- * Purpose: provide existing context command-family parsing and output behavior.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Render bounded context diagnostics for the engineering command lane. The reported plans do not
+ * inspect or mutate the hosted runtime.
+ */
 #include "src/cli/model_artifacts/private.h"
 
 #include <string.h>
@@ -247,11 +241,6 @@ static const yvex_models_option_spec context_option_specs[] = {
     {"--output", YVEX_MODELS_OPTION_OUTPUT, offsetof(yvex_cli_context_options, output_mode)},
 };
 
-/* Purpose: Parse parse context options into typed CLI state (`parse_context_options`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int parse_context_options(int arg_count,
                                  char **args,
                                  yvex_cli_context_options *options)
@@ -329,11 +318,6 @@ static int parse_context_options(int arg_count,
     return 0;
 }
 
-/* Purpose: Render context print phases from typed facts (`context_print_phases`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void context_print_phases(const char *family_status,
                                  const char *attention_status,
                                  const char *kv_status,
@@ -390,11 +374,6 @@ static void context_print_phases(const char *family_status,
     }
 }
 
-/* Purpose: Compute context metadata max context for its CLI invariant (`context_metadata_max_context`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static unsigned long long context_metadata_max_context(yvex_model_context *ctx,
                                                        const char **source)
 {
@@ -426,7 +405,6 @@ static unsigned long long context_metadata_max_context(yvex_model_context *ctx,
     return 0ull;
 }
 
-/* Purpose: Compute context status from collections for its CLI invariant (`context_status_from_collections`). */
 static const char *context_status_from_collections(const yvex_fullmodel_collections *collections,
                                                    int selected_target)
 {
@@ -442,11 +420,6 @@ static const char *context_status_from_collections(const yvex_fullmodel_collecti
     return "partial";
 }
 
-/* Purpose: Render context print common header from typed facts (`context_print_common_header`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void context_print_common_header(const yvex_cli_context_options *options,
                                         const char *status,
                                         const char *resolved_path,
@@ -474,11 +447,6 @@ static void context_print_common_header(const yvex_cli_context_options *options,
     yvex_cli_out_lines(stdout, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
 }
 
-/* Purpose: Render context print unsupported source only from typed facts (`context_print_unsupported_source_only`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void context_print_unsupported_source_only(const yvex_cli_context_options *options)
 {
     const char *family = strcmp(model_requested_family(options ? options->family : NULL), "auto") == 0
@@ -507,11 +475,6 @@ static void context_print_unsupported_source_only(const yvex_cli_context_options
     context_print_phases("unsupported", "unsupported", "unsupported", "unsupported", "context-profile");
 }
 
-/* Purpose: Render context print unsupported family from typed facts (`context_print_unsupported_family`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int context_print_unsupported_family(const yvex_cli_context_options *options,
                                             const char *resolved_path,
                                             const char *target_id,
@@ -537,7 +500,6 @@ static int context_print_unsupported_family(const yvex_cli_context_options *opti
     return 5;
 }
 
-/* Purpose: Render context print normal from typed facts (`context_print_normal`). */
 static void context_print_normal(const yvex_cli_context_options *options,
                                  const char *coverage_status,
                                  int selected_target)
@@ -554,11 +516,6 @@ static void context_print_normal(const yvex_cli_context_options *options,
     yvex_cli_out_lines(stdout, literal_pair_5, sizeof(literal_pair_5) / sizeof(literal_pair_5[0]));
 }
 
-/* Purpose: Render context print report from typed facts (`context_print_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int context_print_report(const yvex_cli_context_options *options,
                                 yvex_model_ref *ref,
                                 yvex_model_context *ctx,
@@ -752,12 +709,6 @@ static int context_print_report(const yvex_cli_context_options *options,
     return 0;
 }
 
-/* Purpose: Orchestrate the typed model artifacts surface context command request
- * (`yvex_model_artifacts_surface_context_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_model_artifacts_surface_context_command(int arg_count, char **args)
 {
     yvex_cli_context_options options;
@@ -860,11 +811,6 @@ int yvex_model_artifacts_surface_context_command(int arg_count, char **args)
     return rc;
 }
 
-/* Purpose: Render model artifacts surface context help from typed facts (`yvex_model_artifacts_surface_context_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_model_artifacts_surface_context_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,

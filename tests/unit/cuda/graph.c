@@ -1,8 +1,7 @@
 /*
- * CUDA launch-graph lifecycle tests.
- *
- * Proves optional Driver admission, capture/instantiate/upload/replay/update,
- * explicit inventory and identities, typed refusal, and retryable cleanup.
+ * CUDA launch-graph lifecycle tests. Proves optional Driver admission,
+ * capture/instantiate/upload/replay/update, explicit inventory and identities, typed refusal,
+ * and retryable cleanup.
  */
 
 #include <stdio.h>
@@ -15,7 +14,6 @@
 #include "src/backend/cuda/private.h"
 #include "tests/test.h"
 
-/* Purpose: initialize the bounded F32 tensor shape used by the captured RoPE kernel. */
 static void make_desc(yvex_backend_tensor_desc *desc, const char *name)
 {
     memset(desc, 0, sizeof(*desc));
@@ -26,7 +24,6 @@ static void make_desc(yvex_backend_tensor_desc *desc, const char *name)
     desc->bytes = 8ull * (unsigned long long)sizeof(float);
 }
 
-/* Purpose: initialize one exact one-dimensional CUDA fixture tensor. */
 static void make_count_desc(yvex_backend_tensor_desc *desc, const char *name,
                             yvex_dtype dtype, unsigned long long count, size_t width)
 {
@@ -38,7 +35,6 @@ static void make_count_desc(yvex_backend_tensor_desc *desc, const char *name,
     desc->bytes = count * (unsigned long long)width;
 }
 
-/* Purpose: open the first local CUDA device or report the canonical unavailable skip. */
 static int open_cuda(yvex_backend **out)
 {
     yvex_backend_options options;
@@ -56,7 +52,6 @@ static int open_cuda(yvex_backend **out)
     return 0;
 }
 
-/* Purpose: prove CORE omits envelope pieces while ENVELOPE retains the full semantic inventory. */
 static int test_attention_piece_inventory(void)
 {
     unsigned long long core_swa = 0ull, core_csa = 0ull;
@@ -109,7 +104,6 @@ static unsigned int module_unload_calls;
 static unsigned int module_true_unloads;
 static unsigned int module_unload_failures;
 
-/* Purpose: fail before the first real Driver free, then delegate the retry unchanged. */
 static CUresult fail_once_before_device_free(CUdeviceptr pointer)
 {
     ++deferred_free_calls;
@@ -120,7 +114,6 @@ static CUresult fail_once_before_device_free(CUdeviceptr pointer)
     return deferred_real_free(pointer);
 }
 
-/* Purpose: fail a bounded number of unloads, then delegate the checked-close retry. */
 static CUresult fail_before_module_unload(CUmodule module)
 {
     ++module_unload_calls;
@@ -134,7 +127,7 @@ static CUresult fail_before_module_unload(CUmodule module)
     return module_real_unload(module);
 }
 
-/* Purpose: prove failed raw cleanup transfers exact ownership/accounting to checked backend retry. */
+/* Prove failed raw cleanup transfers exact ownership/accounting to checked backend retry. */
 static int test_deferred_raw_release(void)
 {
     const unsigned long long bytes = 64ull;
@@ -209,7 +202,6 @@ static int test_deferred_raw_release(void)
     return 0;
 }
 
-/* Purpose: prove failed module unload preserves the admitted handles for checked-close retry. */
 static int test_module_release_retry(void)
 {
     yvex_backend *backend = NULL;
@@ -244,7 +236,6 @@ static int test_module_release_retry(void)
     return 0;
 }
 
-/* Purpose: prove rejected admission retains its module for checked-close retry. */
 static int test_module_rollback_retry(void)
 {
     yvex_backend *backend = NULL;
@@ -290,7 +281,7 @@ static int test_module_rollback_retry(void)
     return 0;
 }
 
-/* Purpose: prove a shared-open rollback publishes its failed backend until close can retry. */
+/* Prove a shared-open rollback publishes its failed backend until close can retry. */
 static int test_shared_open_rollback_retry(void)
 {
     yvex_backend *owner = NULL, *retained = NULL;
@@ -349,7 +340,6 @@ static int test_shared_open_rollback_retry(void)
     return 0;
 }
 
-/* Purpose: prove the owning CUDA context cannot close before its shared session child. */
 static int test_shared_context_close_order(void)
 {
     yvex_backend_capability_result capability;
@@ -384,7 +374,6 @@ static int test_shared_context_close_order(void)
     return 0;
 }
 
-/* Purpose: prove optional graph API absence refuses graphs without demoting eager kernels. */
 static int test_capability_projection(yvex_backend *backend)
 {
     yvex_backend_cuda_graph_capability graph;
@@ -447,7 +436,6 @@ typedef struct {
     unsigned long long cursor;
 } rolling_graph_fixture;
 
-/* Purpose: enqueue one real production RoPE kernel through the graph registry lifecycle. */
 static int enqueue_rope_fixture(void *opaque, int enqueue_kernels, yvex_error *err)
 {
     rope_graph_fixture *fixture = (rope_graph_fixture *)opaque;
@@ -456,7 +444,6 @@ static int enqueue_rope_fixture(void *opaque, int enqueue_kernels, yvex_error *e
                                 10000.0f, fixture->output, err);
 }
 
-/* Purpose: prove the production registry rejects a capture with no Driver nodes. */
 static int enqueue_empty_fixture(void *opaque, int enqueue_kernels, yvex_error *err)
 {
     (void)opaque;
@@ -465,7 +452,6 @@ static int enqueue_empty_fixture(void *opaque, int enqueue_kernels, yvex_error *
     return YVEX_OK;
 }
 
-/* Purpose: enqueue or update the real rolling kernel with one dynamic cursor. */
 static int enqueue_rolling_fixture(void *opaque, int enqueue_kernels, yvex_error *err)
 {
     rolling_graph_fixture *fixture = (rolling_graph_fixture *)opaque;
@@ -502,7 +488,7 @@ static int enqueue_rolling_fixture(void *opaque, int enqueue_kernels, yvex_error
               state->deepseek_rolling_function, 1u, 256u, 0u, params, stage, err);
 }
 
-/* Purpose: prove a warm graph replay updates the rolling insertion cursor. */
+/* Prove a warm graph replay updates the rolling insertion cursor. */
 static int test_rolling_cursor_update(yvex_backend *backend)
 {
     const float token[2] = {1.25f, -2.5f};
@@ -583,11 +569,13 @@ static int test_rolling_cursor_update(yvex_backend *backend)
     return 0;
 }
 
-/* Purpose: enqueue pinned H2D, memset, production kernel, and D2H nodes for registry proof.
- * Inputs: stable fixture and capture/replay enqueue policy.
- * Effects: captures the complete bounded transfer/kernel unit only during initial/update capture.
- * Failure: returns exact copy or production-kernel refusal without CPU fallback.
- * Boundary: replay preparation performs no Driver work and owns no allocation. */
+/*
+ * Enqueue pinned H2D, memset, production kernel, and D2H nodes for registry proof.
+ *
+ * Stable fixture and capture/replay enqueue policy. Captures the complete bounded transfer/kernel
+ * unit only during initial/update capture. Returns exact copy or production-kernel refusal without
+ * CPU fallback. Replay preparation performs no Driver work and owns no allocation.
+ */
 static int enqueue_attention_fixture(void *opaque, int enqueue_kernels, yvex_error *err)
 {
     attention_graph_fixture *fixture = (attention_graph_fixture *)opaque;
@@ -634,7 +622,6 @@ static int enqueue_attention_fixture(void *opaque, int enqueue_kernels, yvex_err
     return rc;
 }
 
-/* Purpose: prove session-selected attention modes require stable resources and expose exact state. */
 static int test_attention_graph_configuration(yvex_backend *backend)
 {
     const float input_data[8] = {1.0f, -2.0f, 3.0f, -4.0f,
@@ -1159,7 +1146,6 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     return 0;
 }
 
-/* Purpose: prove host staging is prepared once and every warm rewind reuses the same arena. */
 static int test_host_workspace_lifecycle(yvex_backend *backend)
 {
     yvex_backend_host_workspace_summary summary;
@@ -1229,7 +1215,7 @@ static int test_host_workspace_lifecycle(yvex_backend *backend)
     return 0;
 }
 
-/* Purpose: prove checked backend close retains registry graph ownership across a stream-release fault. */
+/* Prove checked backend close retains registry graph ownership across a stream-release fault. */
 static int test_backend_graph_close_retry(void)
 {
     yvex_backend_cuda_attention_graph_entry entry;
@@ -1283,7 +1269,7 @@ static int test_backend_graph_close_retry(void)
     return 0;
 }
 
-/* Purpose: prove checked backend close retains pinned host ownership before physical release. */
+/* Prove checked backend close retains pinned host ownership before physical release. */
 static int test_backend_host_close_retry(void)
 {
     yvex_backend_host_workspace_summary summary;
@@ -1310,7 +1296,6 @@ static int test_backend_host_close_retry(void)
     return 0;
 }
 
-/* Purpose: prove a post-release diagnostic remains observable after backend ownership is discharged. */
 static int test_backend_detach(void)
 {
     yvex_backend *backend = NULL;

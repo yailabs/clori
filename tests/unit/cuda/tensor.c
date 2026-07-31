@@ -1,12 +1,6 @@
 /*
- * YVEX - CUDA tensor tests
- *
- * File: tests/test_cuda_tensor.c
- * Layer: test
- *
- * Purpose:
- *   Proves CUDA tensor allocation, zero-read, write/read, copy, and memory
- *   accounting when CUDA is available. Returns 77 when CUDA is unavailable.
+ * Exercises CUDA tensor allocation, zero-read, write/read, copy, and memory accounting when CUDA
+ * is available. Returns 77 when CUDA is unavailable.
  */
 #include <stdio.h>
 #include <stdlib.h>

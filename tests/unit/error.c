@@ -1,29 +1,6 @@
 /*
- * YVEX - Error tests
- *
- * File: tests/test_error.c
- * Layer: test
- *
- * Purpose:
- *   Proves that fixed-size YVEX error objects are safe to clear, set,
- *   truncate, inspect, and use with null inputs.
- *
- * Covers:
- *   - yvex_error_clear
- *   - yvex_error_set
- *   - yvex_error_setf
- *   - yvex_error_is_set
- *   - yvex_error_code
- *   - yvex_error_where
- *   - yvex_error_message
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_error
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises fixed-size YVEX error objects are safe to clear, set, truncate, inspect, and use
+ * with null inputs.
  */
 #include <string.h>
 

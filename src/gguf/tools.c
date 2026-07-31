@@ -1,12 +1,9 @@
-/* Owner: GGUF tooling domain.
- * Owns: template comparison and controlled selected-tensor emission algorithms.
- * Does not own: command argument parsing, operator rendering, full artifact writing, or runtime.
- * Invariants: command grammar and stdout/stderr never enter this owner.
- * Boundary: typed tool APIs and explicit artifact-file IO only.
- * Purpose: implement bounded proof-artifact emission and immutable GGUF template comparison.
- * Inputs: typed emit/template options, canonical qtype facts, and admitted file paths.
- * Effects: owns explicit proof files or read-only template lifecycles and typed summaries.
- * Failure: I/O, geometry, structural, allocation, or comparison refusal cleans owned resources. */
+/*
+ * Implement bounded proof-artifact emission and immutable GGUF template comparison.
+ *
+ * Command grammar and stdout/stderr never enter this owner. Typed tool APIs and explicit
+ * artifact-file IO only.
+ */
 
 #include <errno.h>
 #include <stdint.h>
@@ -108,11 +105,6 @@ static int emit_write_string(FILE *fp, const char *value, yvex_error *err,
                                        const char *field);
 static int emit_pad_to_alignment(FILE *fp, unsigned long long alignment, yvex_error *err);
 
-/* Purpose: test whether a candidate controlled-emission destination already exists.
- * Inputs: immutable path.
- * Effects: opens and closes a read-only stream when present.
- * Failure: any open failure reports absent to the caller's overwrite policy.
- * Boundary: this probe does not admit path safety or replace files. */
 static int path_exists(const char *path) {
     FILE *fp = fopen(path, "rb");
     if (!fp) {
@@ -122,11 +114,6 @@ static int path_exists(const char *path) {
     return 1;
 }
 
-/* Purpose: derive the admitted scalar qtype and byte width for controlled fixture emission.
- * Inputs: optional qtype name and writable numeric outputs.
- * Effects: writes outputs only for canonical F32 or F16 scalar geometry.
- * Failure: unknown, refused, block, or widthless qtypes return false.
- * Boundary: selection is restricted to the historical one-tensor proof path. */
 static int controlled_qtype_to_plan(const char *qtype, unsigned int *ggml_type,
                                     unsigned long long *scalar_bytes) {
     const yvex_gguf_qtype_geometry *geometry =
@@ -141,11 +128,6 @@ static int controlled_qtype_to_plan(const char *qtype, unsigned int *ggml_type,
     return 1;
 }
 
-/* Purpose: measure a stream length while restoring its original position.
- * Inputs: open seekable stream.
- * Effects: performs bounded seek/tell operations and restores position.
- * Failure: any tell or seek failure returns -1.
- * Boundary: long-based measurement is confined to the tiny controlled fixture. */
 static long file_size(FILE *fp) {
     long pos;
     long end;
@@ -164,11 +146,6 @@ static long file_size(FILE *fp) {
     return end;
 }
 
-/* Purpose: reopen and materialize the controlled one-tensor artifact as a bounded roundtrip proof.
- * Inputs: emitted fixture path and diagnostics.
- * Effects: owns and deterministically closes artifact, reader, descriptor, backend, and weights.
- * Failure: the first lifecycle refusal is returned after complete cleanup.
- * Boundary: fixture roundtrip is not complete-model artifact or runtime support. */
 static int validate_roundtrip(const char *path, yvex_error *err) {
     yvex_artifact_options artifact_options;
     yvex_artifact *artifact = NULL;
@@ -209,11 +186,7 @@ static int validate_roundtrip(const char *path, yvex_error *err) {
     return rc;
 }
 
-/* Purpose: emit one deterministic selected-tensor GGUF proof through the typed tool API.
- * Inputs: controlled options plus writable summary and diagnostics.
- * Effects: creates/writes the requested proof file, flushes it, and validates one roundtrip.
- * Failure: unsafe overwrite, unsupported qtype, I/O, or roundtrip refusal leaves failed summary.
- * Boundary: controlled emission cannot enter the complete-artifact support path. */
+/* Emit one deterministic selected-tensor GGUF proof through the typed tool API. */
 int yvex_gguf_emit_controlled(const yvex_gguf_emit_options *options,
                               yvex_gguf_emit_summary *summary_out, yvex_error *err) {
     yvex_gguf_emit_plan_data plan;
@@ -330,11 +303,6 @@ int yvex_gguf_emit_controlled(const yvex_gguf_emit_options *options,
 #define GGUF_VALUE_STRING 8u
 #define GGUF_VALUE_ARRAY 9u
 
-/* Purpose: write one canonical little-endian u32 field to the controlled stream.
- * Inputs: stream, value, diagnostics, and semantic field name.
- * Effects: writes exactly four bytes or records I/O refusal.
- * Failure: partial/hard write returns I/O status.
- * Boundary: primitive serialization owns no stream lifecycle. */
 static int emit_write_u32(FILE *fp, unsigned int value, yvex_error *err,
                                     const char *field) {
     unsigned char b[4];
@@ -349,11 +317,6 @@ static int emit_write_u32(FILE *fp, unsigned int value, yvex_error *err,
     return YVEX_OK;
 }
 
-/* Purpose: write one canonical little-endian u64 field to the controlled stream.
- * Inputs: stream, value, diagnostics, and semantic field name.
- * Effects: writes exactly eight bytes or records I/O refusal.
- * Failure: partial/hard write returns I/O status.
- * Boundary: primitive serialization owns no offset policy. */
 static int emit_write_u64(FILE *fp, unsigned long long value, yvex_error *err,
                                     const char *field) {
     unsigned char b[8];
@@ -368,31 +331,16 @@ static int emit_write_u64(FILE *fp, unsigned long long value, yvex_error *err,
     return YVEX_OK;
 }
 
-/* Purpose: serialize one signed I32 through the canonical unsigned byte primitive.
- * Inputs: stream, value, diagnostics, and field name.
- * Effects: writes exactly four little-endian bytes.
- * Failure: delegated primitive write refusal returns I/O status.
- * Boundary: conversion preserves the two's-complement bit pattern. */
 static int emit_write_i32(FILE *fp, int value, yvex_error *err, const char *field) {
     return emit_write_u32(fp, (unsigned int)(uint32_t)(int32_t)value, err, field);
 }
 
-/* Purpose: serialize one F32 bit pattern through the canonical unsigned byte primitive.
- * Inputs: stream, scalar, diagnostics, and field name.
- * Effects: writes exactly four IEEE bit-pattern bytes.
- * Failure: delegated primitive write refusal returns I/O status.
- * Boundary: no numeric conversion or finite policy is applied. */
 static int emit_write_f32(FILE *fp, float value, yvex_error *err, const char *field) {
     uint32_t raw;
     memcpy(&raw, &value, sizeof(raw));
     return emit_write_u32(fp, raw, err, field);
 }
 
-/* Purpose: write one canonical little-endian u16 field to the controlled stream.
- * Inputs: stream, bounded value, diagnostics, and semantic field name.
- * Effects: writes exactly two bytes.
- * Failure: partial/hard write returns I/O status.
- * Boundary: the caller owns scalar interpretation. */
 static int emit_write_u16(FILE *fp, unsigned int value, yvex_error *err,
                                     const char *field) {
     unsigned char b[2];
@@ -405,11 +353,6 @@ static int emit_write_u16(FILE *fp, unsigned int value, yvex_error *err,
     return YVEX_OK;
 }
 
-/* Purpose: write one GGUF length-delimited string to the controlled stream.
- * Inputs: stream, optional text, diagnostics, and semantic field name.
- * Effects: writes canonical u64 length followed by exact bytes.
- * Failure: length or content write refusal returns I/O status.
- * Boundary: string validation belongs to the caller's metadata contract. */
 static int emit_write_string(FILE *fp, const char *value, yvex_error *err,
                                        const char *field) {
     unsigned long long len;
@@ -427,44 +370,24 @@ static int emit_write_string(FILE *fp, const char *value, yvex_error *err,
     return YVEX_OK;
 }
 
-/* Purpose: write one GGUF metadata key and its scalar or array type tag.
- * Inputs: stream, canonical key, type ID, and diagnostics.
- * Effects: writes one length-delimited key followed by u32 type.
- * Failure: either primitive write refusal returns I/O status.
- * Boundary: caller owns type/key semantic admission. */
 static int write_key_type(FILE *fp, const char *key, unsigned int type, yvex_error *err) {
     if (emit_write_string(fp, key, err, "metadata key") != YVEX_OK)
         return YVEX_ERR_IO;
     return emit_write_u32(fp, type, err, "metadata type");
 }
 
-/* Purpose: serialize one string-valued metadata entry in canonical order.
- * Inputs: stream, key, value, and diagnostics.
- * Effects: writes key/type then length-delimited value.
- * Failure: delegated write refusal returns I/O status.
- * Boundary: this helper does not deduplicate metadata keys. */
 static int write_string_meta(FILE *fp, const char *key, const char *value, yvex_error *err) {
     if (write_key_type(fp, key, GGUF_VALUE_STRING, err) != YVEX_OK)
         return YVEX_ERR_IO;
     return emit_write_string(fp, value, err, key);
 }
 
-/* Purpose: serialize one u32-valued metadata entry in canonical order.
- * Inputs: stream, key, value, and diagnostics.
- * Effects: writes key/type then exact u32 value.
- * Failure: delegated write refusal returns I/O status.
- * Boundary: caller owns metadata value semantics. */
 static int write_u32_meta(FILE *fp, const char *key, unsigned int value, yvex_error *err) {
     if (write_key_type(fp, key, GGUF_VALUE_UINT32, err) != YVEX_OK)
         return YVEX_ERR_IO;
     return emit_write_u32(fp, value, err, key);
 }
 
-/* Purpose: serialize one fixed-count I32 metadata array.
- * Inputs: stream, key, values/count, and diagnostics.
- * Effects: writes array type/count followed by every ordered element.
- * Failure: the first primitive write refusal aborts the entry.
- * Boundary: caller owns array cardinality and metadata policy. */
 static int write_i32_array(FILE *fp, const char *key, const int *values, unsigned long long count,
                            yvex_error *err) {
     unsigned long long i;
@@ -481,11 +404,6 @@ static int write_i32_array(FILE *fp, const char *key, const int *values, unsigne
     return YVEX_OK;
 }
 
-/* Purpose: serialize one fixed-count F32 metadata array.
- * Inputs: stream, key, values/count, and diagnostics.
- * Effects: writes array type/count followed by exact scalar bit patterns.
- * Failure: the first primitive write refusal aborts the entry.
- * Boundary: no numeric conversion is performed. */
 static int write_f32_array(FILE *fp, const char *key, const float *values, unsigned long long count,
                            yvex_error *err) {
     unsigned long long i;
@@ -502,11 +420,6 @@ static int write_f32_array(FILE *fp, const char *key, const float *values, unsig
     return YVEX_OK;
 }
 
-/* Purpose: serialize one fixed-count string metadata array.
- * Inputs: stream, key, ordered strings/count, and diagnostics.
- * Effects: writes array type/count and length-delimited elements.
- * Failure: the first primitive write refusal aborts the entry.
- * Boundary: this helper owns no tokenizer semantics. */
 static int write_string_array(FILE *fp, const char *key, const char *const *values,
                               unsigned long long count, yvex_error *err) {
     unsigned long long i;
@@ -523,11 +436,11 @@ static int write_string_array(FILE *fp, const char *key, const char *const *valu
     return YVEX_OK;
 }
 
-/* Purpose: emit the closed metadata set required by the controlled one-tensor fixture.
- * Inputs: stream, immutable emit plan, and diagnostics.
- * Effects: writes twelve deterministic metadata entries in canonical order.
- * Failure: any child serialization failure stops emission.
- * Boundary: fixture metadata is not the complete DeepSeek metadata contract. */
+/*
+ * Emit the closed metadata set required by the controlled one-tensor fixture.
+ *
+ * Writes twelve deterministic metadata entries in canonical order.
+ */
 static int emit_write_metadata(FILE *fp, const yvex_gguf_emit_plan_data *plan,
                                          yvex_error *err) {
     const char *tokens[8] = {"<unk>", "<s>", "</s>", "a", "b", "c", "d", "e"};
@@ -562,11 +475,6 @@ static int emit_write_metadata(FILE *fp, const yvex_gguf_emit_plan_data *plan,
     return YVEX_OK;
 }
 
-/* Purpose: render controlled-emission lifecycle status as stable diagnostic text.
- * Inputs: emit-status enum.
- * Effects: none.
- * Failure: out-of-range values yield gguf-unknown.
- * Boundary: status text cannot classify an artifact. */
 const char *yvex_gguf_emit_status_name(yvex_gguf_emit_status status) {
     return status >= YVEX_GGUF_EMIT_STATUS_UNKNOWN &&
                    (size_t)status < sizeof(emit_status_names) / sizeof(emit_status_names[0])
@@ -574,11 +482,12 @@ const char *yvex_gguf_emit_status_name(yvex_gguf_emit_status status) {
                : emit_status_names[YVEX_GGUF_EMIT_STATUS_UNKNOWN];
 }
 
-/* Purpose: write zero bytes through the next requested alignment boundary.
- * Inputs: current stream, nonzero alignment, and diagnostics.
- * Effects: appends bounded zero chunks until aligned.
- * Failure: offset query or write failure returns I/O status.
- * Boundary: the caller owns alignment admission and final layout validation. */
+/*
+ * Write zero bytes through the next requested alignment boundary.
+ *
+ * Current stream, nonzero alignment, and diagnostics. Appends bounded zero chunks until aligned.
+ * The caller owns alignment admission and final layout validation.
+ */
 static int emit_pad_to_alignment(FILE *fp, unsigned long long alignment,
                                            yvex_error *err) {
     long pos;
@@ -606,11 +515,6 @@ static int emit_pad_to_alignment(FILE *fp, unsigned long long alignment,
     return YVEX_OK;
 }
 
-/* Purpose: write the single canonical tensor-directory row for the controlled fixture.
- * Inputs: stream, immutable emit plan, and diagnostics.
- * Effects: writes name, rank, dimensions, qtype, and zero relative offset.
- * Failure: any primitive write refusal aborts the directory.
- * Boundary: directory shape is fixed proof data, not family lowering truth. */
 static int emit_write_tensor_dir(FILE *fp, const yvex_gguf_emit_plan_data *plan,
                                            yvex_error *err) {
     if (emit_write_string(fp, plan->target_name, err, "tensor name") != YVEX_OK)
@@ -626,11 +530,7 @@ static int emit_write_tensor_dir(FILE *fp, const yvex_gguf_emit_plan_data *plan,
     return emit_write_u64(fp, 0ull, err, "tensor relative offset");
 }
 
-/* Purpose: write deterministic controlled tensor values in the selected physical orientation.
- * Inputs: stream, scalar F32/F16 emit plan, and diagnostics.
- * Effects: generates and writes exactly 32 fixture values.
- * Failure: scalar write refusal aborts payload emission.
- * Boundary: generated proof values are never model weights. */
+/* Write deterministic controlled tensor values in the selected physical orientation. */
 static int emit_write_tensor_payload(FILE *fp, const yvex_gguf_emit_plan_data *plan,
                                                yvex_error *err) {
     float native[YVEX_GGUF_EMIT_NATIVE_ROWS][YVEX_GGUF_EMIT_NATIVE_COLS];
@@ -676,11 +576,6 @@ static int emit_write_tensor_payload(FILE *fp, const yvex_gguf_emit_plan_data *p
     return YVEX_OK;
 }
 
-/* Purpose: open one template artifact as a read-only mapped snapshot.
- * Inputs: template path, writable artifact owner, and diagnostics.
- * Effects: delegates one artifact lifecycle acquisition.
- * Failure: path/admission/I/O refusal leaves output unowned.
- * Boundary: mapping does not parse or validate GGUF content. */
 static int gt_open_artifact(const char *path, yvex_artifact **artifact, yvex_error *err) {
     yvex_artifact_options options;
 
@@ -691,11 +586,6 @@ static int gt_open_artifact(const char *path, yvex_artifact **artifact, yvex_err
     return yvex_artifact_open(artifact, &options, err);
 }
 
-/* Purpose: render template lifecycle status as stable diagnostic text.
- * Inputs: template-status enum.
- * Effects: none.
- * Failure: out-of-range values yield template-unknown.
- * Boundary: text does not create template admission. */
 const char *yvex_gguf_template_status_name(yvex_gguf_template_status status) {
     return status >= YVEX_GGUF_TEMPLATE_STATUS_UNKNOWN &&
                    (size_t)status < sizeof(template_status_names) / sizeof(template_status_names[0])
@@ -703,11 +593,6 @@ const char *yvex_gguf_template_status_name(yvex_gguf_template_status status) {
                : template_status_names[YVEX_GGUF_TEMPLATE_STATUS_UNKNOWN];
 }
 
-/* Purpose: render one typed template issue kind as stable diagnostic text.
- * Inputs: issue-kind enum.
- * Effects: none.
- * Failure: out-of-range values yield format.
- * Boundary: issue text remains a projection of typed facts. */
 const char *yvex_gguf_template_issue_kind_name(yvex_gguf_template_issue_kind kind) {
     return kind >= YVEX_GGUF_TEMPLATE_ISSUE_NONE &&
                    (size_t)kind < sizeof(template_issue_names) / sizeof(template_issue_names[0])
@@ -715,11 +600,11 @@ const char *yvex_gguf_template_issue_kind_name(yvex_gguf_template_issue_kind kin
                : template_issue_names[YVEX_GGUF_TEMPLATE_ISSUE_FORMAT];
 }
 
-/* Purpose: append one independently owned typed issue to a template result.
- * Inputs: template, issue kind, optional tensor name/message, and diagnostics.
- * Effects: grows issue storage and owns copied strings on success.
- * Failure: invalid template, capacity overflow, or allocation leaves count unchanged.
- * Boundary: issue accumulation cannot promote template status. */
+/*
+ * Append one independently owned typed issue to a template result.
+ *
+ * Invalid template, capacity overflow, or allocation leaves count unchanged.
+ */
 static int template_add_issue(yvex_gguf_template *tmpl,
                                         yvex_gguf_template_issue_kind kind, const char *tensor_name,
                                         const char *message, yvex_error *err) {
@@ -759,11 +644,11 @@ static int template_add_issue(yvex_gguf_template *tmpl,
     return YVEX_OK;
 }
 
-/* Purpose: open, parse, validate, and optionally compare one GGUF template snapshot.
- * Inputs: output owner slot, immutable template options, and diagnostics.
- * Effects: owns artifact, GGUF, tensor/model/tokenizer/native views until close.
- * Failure: any acquisition/validation refusal unwinds all partial ownership.
- * Boundary: template admission remains engineering evidence, not a supported artifact. */
+/*
+ * Open, parse, validate, and optionally compare one GGUF template snapshot.
+ *
+ * Any acquisition/validation refusal unwinds all partial ownership.
+ */
 int yvex_gguf_template_open(yvex_gguf_template **out, const yvex_gguf_template_options *options,
                             yvex_error *err) {
     yvex_gguf_template *tmpl;
@@ -806,11 +691,11 @@ int yvex_gguf_template_open(yvex_gguf_template **out, const yvex_gguf_template_o
     return YVEX_OK;
 }
 
-/* Purpose: release the complete template lifecycle and every accumulated issue.
- * Inputs: optional owned template.
- * Effects: frees issue strings/arrays and closes all nested model/artifact owners.
- * Failure: none; null close is safe.
- * Boundary: no external path or native source ownership is retained. */
+/*
+ * Release the complete template lifecycle and every accumulated issue.
+ *
+ * No external path or native source ownership is retained.
+ */
 void yvex_gguf_template_close(yvex_gguf_template *tmpl) {
     unsigned long long i;
 
@@ -832,11 +717,11 @@ void yvex_gguf_template_close(yvex_gguf_template *tmpl) {
     free(tmpl);
 }
 
-/* Purpose: copy the immutable template summary into caller-owned storage.
- * Inputs: template, writable summary, and diagnostics.
- * Effects: replaces the output summary.
- * Failure: null inputs return invalid argument.
- * Boundary: summary projection transfers no nested ownership. */
+/*
+ * Copy the immutable template summary into caller-owned storage.
+ *
+ * Summary projection transfers no nested ownership.
+ */
 int yvex_gguf_template_get_summary(const yvex_gguf_template *tmpl, yvex_gguf_template_summary *out,
                                    yvex_error *err) {
     if (!tmpl || !out) {
@@ -848,20 +733,10 @@ int yvex_gguf_template_get_summary(const yvex_gguf_template *tmpl, yvex_gguf_tem
     return YVEX_OK;
 }
 
-/* Purpose: expose accumulated template issue cardinality.
- * Inputs: optional immutable template.
- * Effects: none.
- * Failure: null template yields zero.
- * Boundary: the count includes fatal and advisory typed issues. */
 unsigned long long yvex_gguf_template_issue_count(const yvex_gguf_template *tmpl) {
     return tmpl ? tmpl->issue_count : 0;
 }
 
-/* Purpose: borrow one immutable template issue by ordinal.
- * Inputs: template and zero-based issue index.
- * Effects: none.
- * Failure: null template or out-of-range index returns null.
- * Boundary: issue text remains template-owned. */
 const yvex_gguf_template_issue *yvex_gguf_template_issue_at(const yvex_gguf_template *tmpl,
                                                             unsigned long long index) {
     if (!tmpl || index >= tmpl->issue_count)
@@ -869,7 +744,6 @@ const yvex_gguf_template_issue *yvex_gguf_template_issue_at(const yvex_gguf_temp
     return &tmpl->issues[index];
 }
 
-/* Purpose: compare one parsed template tensor shape with one native inventory shape. */
 static int gt_same_shape(const yvex_tensor_info *tensor, const yvex_native_weight_info *native) {
     unsigned int i;
 
@@ -884,11 +758,6 @@ static int gt_same_shape(const yvex_tensor_info *tensor, const yvex_native_weigh
     return 1;
 }
 
-/* Purpose: compare every template tensor with the exact-name native source inventory.
- * Inputs: mutable template owner, comparison options, and diagnostics.
- * Effects: opens native inventory, records counts/issues, and updates template status.
- * Failure: missing source, inventory failure, or issue allocation returns typed status.
- * Boundary: comparison reads headers only and does not map or convert payload bytes. */
 static int template_compare_native(yvex_gguf_template *tmpl,
                                              const yvex_gguf_template_options *options,
                                              yvex_error *err) {
@@ -962,11 +831,6 @@ static int template_compare_native(yvex_gguf_template *tmpl,
     return YVEX_OK;
 }
 
-/* Purpose: copy one GGUF string metadata value into independent template ownership.
- * Inputs: parsed GGUF view and exact metadata key.
- * Effects: allocates and copies the string when present and well typed.
- * Failure: missing/type mismatch/allocation returns null.
- * Boundary: caller owns returned storage. */
 static char *gt_copy_string_value(const yvex_gguf *gguf, const char *key) {
     const yvex_gguf_value *value = yvex_gguf_metadata_find(gguf, key);
     const char *data;
@@ -984,7 +848,6 @@ static char *gt_copy_string_value(const yvex_gguf *gguf, const char *key) {
     return out;
 }
 
-/* Purpose: count tokenizer-prefixed metadata keys in one parsed GGUF view. */
 static unsigned long long gt_tokenizer_metadata_count(const yvex_gguf *gguf) {
     unsigned long long i;
     unsigned long long n = 0;
@@ -998,11 +861,6 @@ static unsigned long long gt_tokenizer_metadata_count(const yvex_gguf *gguf) {
     return n;
 }
 
-/* Purpose: validate template architecture, tokenizer, directory, roles, and admitted dtypes.
- * Inputs: mutable template owner, validation options, and diagnostics.
- * Effects: accumulates issues and seals valid/partial/invalid summary status.
- * Failure: issue allocation or malformed required content returns typed refusal.
- * Boundary: structural template validity is not complete model support. */
 static int template_validate(yvex_gguf_template *tmpl,
                                        const yvex_gguf_template_options *options, yvex_error *err) {
     unsigned long long i;

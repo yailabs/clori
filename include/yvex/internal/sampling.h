@@ -1,12 +1,10 @@
-/* Owner: runtime sampling contract.
- * Owns: real-logits admission, immutable policy, deterministic filtering, private RNG, and selection evidence.
- * Does not own: logits projection, model/session state, token append, tokenizer, stop policy, or generation.
- * Invariants: one complete logits row yields one canonical token ID or no sampling/RNG publication.
- * Boundary: family-neutral internal runtime/operator ABI from admitted raw logits to one vocabulary token ID.
- * Purpose: expose reusable greedy and seeded stochastic selection to tokenizer and generation consumers.
- * Inputs: exact logits plan/row identities, immutable F32 logits, bounded policy, and caller results.
- * Effects: mutates only sampling-local workspace and commits one private RNG draw after stochastic success.
- * Failure: refusals publish no token and preserve caller logits, model state, and uncommitted RNG state. */
+/*
+ * Expose reusable greedy and seeded stochastic selection to tokenizer and generation consumers.
+ *
+ * One complete logits row yields one canonical token ID or no sampling/RNG publication.
+ * Family-neutral internal runtime/operator ABI from admitted raw logits to one vocabulary token
+ * ID.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_SAMPLING_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_SAMPLING_H_INCLUDED
 

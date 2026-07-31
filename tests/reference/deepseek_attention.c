@@ -1,23 +1,7 @@
 /*
- * deepseek_attention_reference.c - independent DeepSeek attention test oracle.
- *
- * Owner:
- *   tests/reference
- *
- * Owns:
- *   direct scalar equations used to judge production DeepSeek attention
- *   numeric behavior.
- *
- * Does not own:
- *   production graph behavior, runtime admission, source or artifact IO
- *   policy, CUDA capability, persistent KV, generation, or project claims.
- *
- * Invariants:
- *   this translation unit does not include the production attention-private
- *   header and does not call production attention numeric algorithms.
- *
- * Boundary:
- *   independent scalar comparison is test evidence, not runtime support.
+ * This translation unit does not include the production attention-private header and does not
+ * call production attention numeric algorithms. Independent scalar comparison is test evidence,
+ * not runtime support.
  */
 #include "tests/reference/deepseek_attention.h"
 
@@ -38,7 +22,6 @@ typedef struct {
     unsigned long long index;
 } ref_ranked_candidate;
 
-/* Purpose: render one attention lifecycle status for test evidence only. */
 const char *yvex_test_attention_status_name(yvex_attention_status status)
 {
     switch (status) {
@@ -52,7 +35,6 @@ const char *yvex_test_attention_status_name(yvex_attention_status status)
     }
 }
 
-/* Purpose: render one typed attention failure for test evidence only. */
 const char *yvex_test_attention_failure_name(yvex_attention_failure_code code)
 {
     switch (code) {
@@ -119,7 +101,6 @@ static unsigned int ref_u32(const unsigned char *bytes)
            ((unsigned int)bytes[3] << 24);
 }
 
-/* Contract: independently decodes one IEEE binary16 bit pattern. */
 static float ref_f16(unsigned short bits)
 {
     unsigned int sign = (unsigned int)(bits >> 15);
@@ -172,7 +153,6 @@ static int ref_row_bytes(const yvex_materialized_tensor_binding *binding,
     return ref_mul(blocks, binding->bytes_per_block, out) && *out > 0ull;
 }
 
-/* Contract: independently decodes one admitted attention block. */
 static int ref_decode_block(unsigned int qtype,
                             const unsigned char *encoded,
                             unsigned long long bytes,
@@ -210,7 +190,6 @@ static int ref_decode_block(unsigned int qtype,
     return 0;
 }
 
-/* Contract: reads and independently decodes one complete materialized row. */
 static int ref_decode_row(yvex_materialization_session *session,
                           const yvex_runtime_tensor_binding *runtime,
                           unsigned long long row,
@@ -260,7 +239,6 @@ static int ref_decode_row(yvex_materialization_session *session,
     return 1;
 }
 
-/* Contract: independently evaluates a matrix row range for a token batch. */
 static int ref_matrix_batch(
     yvex_materialization_session *session,
     const yvex_runtime_tensor_binding *runtime,
@@ -520,7 +498,6 @@ static unsigned char ref_fp4_encode(float value)
     return (unsigned char)best;
 }
 
-/* Purpose: independently encode one F32 value with BF16 RNE semantics. */
 static unsigned short ref_bf16_encode(float value)
 {
     unsigned int bits;
@@ -538,7 +515,6 @@ static unsigned short ref_bf16_encode(float value)
     return (unsigned short)upper;
 }
 
-/* Purpose: independently decode one BF16 payload to its exact F32 value. */
 static float ref_bf16_decode(unsigned short encoded)
 {
     unsigned int bits = (unsigned int)encoded << 16;
@@ -548,7 +524,6 @@ static float ref_bf16_decode(unsigned short encoded)
     return value;
 }
 
-/* Purpose: independently publish one model-visible BF16 value boundary. */
 static int ref_compute_round(yvex_attention_compute_contract contract,
                              float *values,
                              unsigned long long count)
@@ -566,7 +541,6 @@ static int ref_compute_round(yvex_attention_compute_contract contract,
     return 1;
 }
 
-/* Purpose: independently evaluate a stable sigmoid for the mHC oracle. */
 static double ref_mhc_sigmoid(double value)
 {
     if (value >= 0.0) {
@@ -579,7 +553,6 @@ static double ref_mhc_sigmoid(double value)
     }
 }
 
-/* Purpose: independently apply the pinned mHC Sinkhorn normalization schedule. */
 static int ref_mhc_sinkhorn(float *matrix, unsigned long long streams,
                             unsigned long long iterations, double epsilon)
 {
@@ -624,11 +597,6 @@ static int ref_mhc_sinkhorn(float *matrix, unsigned long long streams,
     return 1;
 }
 
-/* Purpose: independently evaluate attention mHC ingress, RMS norm, and immediate egress.
- * Inputs: raw plan facts and caller-owned arrays; no production numeric helper is called.
- * Effects: writes independent core-input, coefficient, and expanded-envelope oracle values.
- * Failure: malformed geometry or non-finite arithmetic returns false without a success claim.
- * Boundary: stops before FFN mHC ingress, FFN normalization, MoE, and transformer composition. */
 int yvex_test_attention_reference_envelope(
     const yvex_test_attention_envelope_case *test_case)
 {
@@ -723,7 +691,6 @@ done:
 
 int yvex_test_attention_reference_codec_selftest(void);
 
-/* Purpose: exhaustively prove the oracle's independent activation scalar codecs. */
 int yvex_test_attention_reference_codec_selftest(void)
 {
     unsigned int code;
@@ -864,7 +831,6 @@ static int ref_activation(
     return 1;
 }
 
-/* Contract: computes one zero-padded Walsh matrix product directly. */
 int yvex_test_attention_reference_hadamard(const float *input,
                                            unsigned long long length,
                                            float scale,
@@ -920,8 +886,6 @@ static void ref_rolling_release(ref_rolling_state *state)
     memset(state, 0, sizeof(*state));
 }
 
-/* Contract: independently admits the unique rolling-state shape and fill for
- * one next-token position without calling production validation. */
 static int ref_rolling_view_complete(
     const yvex_attention_layer_plan *layer,
     yvex_attention_rolling_kind kind,
@@ -973,8 +937,6 @@ static int ref_rolling_view_complete(
         view->score_state_extent >= score_extent;
 }
 
-/* Contract: creates an independently owned rolling state from one immutable
- * runtime view or the canonical empty state. */
 static int ref_rolling_init(
     ref_rolling_state *state,
     const yvex_attention_layer_plan *layer,
@@ -1111,8 +1073,6 @@ static int ref_rolling_step(ref_rolling_state *state,
     return 1;
 }
 
-/* Contract: transfers one independently computed rolling state into an owned
- * public trace value without retaining the caller's history view. */
 static int ref_rolling_export(
     ref_rolling_state *state,
     const yvex_attention_layer_plan *layer,
@@ -1168,7 +1128,6 @@ static int ref_rank_compare(const void *left, const void *right)
     return 0;
 }
 
-/* Contract: independently selects score-descending, position-ascending top-k. */
 int yvex_test_attention_reference_topk(
     const float *scores,
     const unsigned long long *positions,
@@ -1274,8 +1233,6 @@ static unsigned long long ref_emission_count(unsigned long long start,
     return emitted;
 }
 
-/* Contract: independently executes one complete learned rolling compressor
- * from raw hidden activations and materialized weights. */
 static int ref_compressor_execute(
     yvex_materialization_session *session,
     const yvex_runtime_descriptor *descriptor,
@@ -1451,7 +1408,6 @@ cleanup:
     return ok;
 }
 
-/* Contract: independently scores and ranks one CSA candidate set. */
 static int ref_csa_select(
     const yvex_attention_layer_plan *layer,
     const yvex_attention_history_view *history,
@@ -1564,8 +1520,6 @@ static int ref_accumulate(const float *query,
     return 1;
 }
 
-/* Contract: independently refuses duplicate or unbound ordinals inside each
- * typed history representation while permitting raw/compressed overlap. */
 static int ref_history_validate(
     const yvex_attention_layer_plan *layer,
     const yvex_attention_history_view *history,
@@ -1979,8 +1933,6 @@ static int ref_output_projection(
     return 1;
 }
 
-/* Contract: executes the complete DeepSeek attention equation independently
- * of the production graph implementation and publishes only a complete trace. */
 int yvex_test_attention_reference_execute(
     const yvex_attention_plan *plan,
     const yvex_deepseek_v4_ir *ir,
@@ -2423,8 +2375,6 @@ static int ref_compare_stage(
     return 1;
 }
 
-/* Contract: compares one rolling-state geometry and all owned state values,
- * admitting equal signed infinities only for intentionally unused score lanes. */
 static int ref_compare_rolling_state(
     const char *stage,
     yvex_test_attention_reference_stage stage_id,
@@ -2506,8 +2456,6 @@ static int ref_compare_rolling_state(
     return 1;
 }
 
-/* Contract: compares every continuous and discrete full-equation stage and
- * identifies the first independently detected divergence. */
 int yvex_test_attention_reference_compare_contract(
     const yvex_attention_execution_trace *production,
     const yvex_attention_execution_trace *reference,
@@ -2647,8 +2595,6 @@ int yvex_test_attention_reference_compare_contract(
     return 1;
 }
 
-/* Contract: preserves the legacy uniform-tolerance comparison as a projection
- * of the versioned stage-specific comparison contract. */
 int yvex_test_attention_reference_compare(
     const yvex_attention_execution_trace *production,
     const yvex_attention_execution_trace *reference,
@@ -2775,14 +2721,13 @@ static const yvex_test_attention_external_vectors ref_external_vectors = {
     {11.0f, 13.5f, 14.5f, 19.75f}
 };
 
-/* Purpose: expose immutable external literals without transferring ownership. */
+/* Expose immutable external literals without transferring ownership. */
 const yvex_test_attention_external_vectors *
 yvex_test_attention_external_vectors_get(void)
 {
     return &ref_external_vectors;
 }
 
-/* Purpose: hash one byte vector without depending on native aggregate layout. */
 static int ref_hash_bytes(yvex_sha256 *hash, const unsigned char *values,
                           unsigned long long count)
 {
@@ -2795,7 +2740,6 @@ static int ref_hash_bytes(yvex_sha256 *hash, const unsigned char *values,
     return 1;
 }
 
-/* Purpose: hash one unsigned-short vector as canonical integer values. */
 static int ref_hash_shorts(yvex_sha256 *hash, const unsigned short *values,
                            unsigned long long count)
 {
@@ -2808,7 +2752,6 @@ static int ref_hash_shorts(yvex_sha256 *hash, const unsigned short *values,
     return 1;
 }
 
-/* Purpose: compute one scalar compressed entry from externally supplied logits. */
 static int ref_external_compress(const float *logits, const float *values,
                                  unsigned long long count, float *result)
 {
@@ -2832,7 +2775,7 @@ static int ref_external_compress(const float *logits, const float *values,
     return isfinite(*result);
 }
 
-/* Purpose: build a provenance-bound identity over every external literal. */
+/* Build a provenance-bound identity over every external literal. */
 static int ref_external_identity(char identity[YVEX_SHA256_HEX_CAP])
 {
     const yvex_test_attention_external_vectors *v = &ref_external_vectors;
@@ -2895,7 +2838,6 @@ static int ref_external_identity(char identity[YVEX_SHA256_HEX_CAP])
     return ref_hash_finish(&hash, identity);
 }
 
-/* Purpose: validate fixed primary-source vectors through only independent scalar equations. */
 int yvex_test_attention_external_conformance_validate(
     yvex_test_attention_external_summary *summary)
 {
@@ -3176,8 +3118,6 @@ static int ref_hash_history(yvex_sha256 *hash,
     return 1;
 }
 
-/* Contract: binds independent equation output, every stage, exact selection,
- * fixture/history bytes, qtype coverage, and comparison policy as evidence. */
 int yvex_test_attention_reference_evidence_build(
     const yvex_attention_execution_trace *reference,
     const yvex_attention_history_view *history,

@@ -1,16 +1,11 @@
-/* Owner: runtime.descriptor
- * Owns: immutable runtime descriptor construction from complete-artifact admission, committed materialization
- *   bindings, qtype/storage facts, and typed family-projected map facts.
- * Does not own: backend allocation, graph binding, graph execution, attention, KV, prefill, decode, logits,
- *   sampling, generation, eval, benchmark, or release claims.
- * Invariants: descriptor identity binds artifact identity, materialization plan identity, tensor names, roles,
- *   coordinates, qtypes, placement, and byte counts, but never stores pointer addresses as identity
- *   material.
- * Boundary: descriptor construction makes the next graph milestone possible; it does not execute the graph.
- * Purpose: construct immutable runtime descriptors from admitted materialization.
- * Inputs: complete artifact admission, materialization, map, and architecture facts.
- * Effects: allocates descriptor bindings and deterministic lookup indexes.
- * Failure: identity or binding refusal releases the descriptor and publishes no partial view. */
+/*
+ * Construct immutable runtime descriptors from admitted materialization.
+ *
+ * Descriptor identity binds artifact identity, materialization plan identity, tensor names, roles,
+ * coordinates, qtypes, placement, and byte counts, but never stores pointer addresses as identity
+ * material. Descriptor construction makes the next graph milestone possible; it does not execute
+ * the graph.
+ */
 #include <yvex/internal/runtime.h>
 
 #include <yvex/internal/graph_state.h>
@@ -159,11 +154,6 @@ static const runtime_execution_field runtime_execution_fields[] = {
     {RUNTIME_EXECUTION_FIELD_U64, offsetof(runtime_execution_facts, total_device_bytes)},
 };
 
-/* Purpose: serialize one descriptor field through its canonical typed SHA operation.
- * Inputs: live hash, immutable facts, and one schema-owned field descriptor.
- * Effects: appends one canonical text or u64 value without hashing native structure bytes.
- * Failure: unknown field kinds or SHA update failure return false.
- * Boundary: field order remains owned by the static execution-descriptor schema. */
 static int runtime_execution_field_hash(
     yvex_sha256 *hash, const yvex_runtime_execution_descriptor_facts *facts,
     const runtime_execution_field *field) {
@@ -192,11 +182,12 @@ static int runtime_execution_field_hash(
     return 0;
 }
 
-/* Purpose: compute one versioned pre-dispatch descriptor from explicit canonical facts.
- * Inputs: complete compatibility fields and caller-owned SHA output.
- * Effects: writes one deterministic identity without mutating runtime state.
- * Failure: malformed identities, schema, or hash failure publishes no usable identity.
- * Boundary: paths, pointers, timings, actions, repetitions, and result evidence are absent. */
+/*
+ * Compute one versioned pre-dispatch descriptor from explicit canonical facts.
+ *
+ * Writes one deterministic identity without mutating runtime state. Malformed identities, schema,
+ * or hash failure publishes no usable identity.
+ */
 int yvex_runtime_execution_descriptor_identity_compute(
     const yvex_runtime_execution_descriptor_facts *facts,
     char output[YVEX_SHA256_HEX_CAP], yvex_error *err) {
@@ -284,11 +275,13 @@ int yvex_runtime_execution_descriptor_identity_compute(
     return YVEX_OK;
 }
 
-/* Purpose: derive a stable workspace identity from explicit execution capacities.
- * Inputs: model/backend identity, exact budgets, arena sizes, and optional capacity-plan identity.
- * Effects: writes one canonical SHA-256 identity without allocating workspace storage.
- * Failure: malformed identity input or hash failure leaves no usable output.
- * Boundary: binds scalar compatibility facts and never hashes pointers or arena contents. */
+/*
+ * Derive a stable workspace identity from explicit execution capacities.
+ *
+ * Model/backend identity, exact budgets, arena sizes, and optional capacity-plan identity. Writes
+ * one canonical SHA-256 identity without allocating workspace storage. Malformed identity input or
+ * hash failure leaves no usable output.
+ */
 int yvex_runtime_workspace_identity_compute(
     const char *runtime_model_identity, yvex_backend_kind backend,
     unsigned long long maximum_host_bytes, unsigned long long maximum_device_bytes,
@@ -324,7 +317,6 @@ int yvex_runtime_workspace_identity_compute(
     return YVEX_OK;
 }
 
-/* Purpose: project typed runtime failure vocabulary without lost semantics. */
 static void runtime_failure_set(yvex_runtime_descriptor_failure *failure,
                                 yvex_runtime_descriptor_failure_code code,
                                 const char *name,
@@ -343,7 +335,6 @@ static void runtime_failure_set(yvex_runtime_descriptor_failure *failure,
         yvex_core_text_copy(failure->tensor_name, sizeof(failure->tensor_name), name);
 }
 
-/* Purpose: enforce typed runtime reject invariants before publication. */
 static int runtime_reject(yvex_runtime_descriptor_failure *failure,
                           yvex_runtime_descriptor_failure_code code,
                           const char *name,
@@ -359,11 +350,6 @@ static int runtime_reject(yvex_runtime_descriptor_failure *failure,
     return status;
 }
 
-/* Purpose: register one runtime index insert while preserving order and bounds.
- * Inputs: admission and materialization are borrowed.
- * Effects: mutates only descriptor-owned output.
- * Failure: publishes no partial descriptor on refusal.
- * Boundary: executes no graph or generation path. */
 static int runtime_index_insert(yvex_runtime_descriptor *descriptor,
                                 const char *name,
                                 unsigned long long index) {
@@ -393,11 +379,7 @@ static int runtime_index_insert(yvex_runtime_descriptor *descriptor,
     return 0;
 }
 
-/* Purpose: encode runtime compute identity fields in canonical identity order.
- * Inputs: admission and materialization are borrowed.
- * Effects: mutates only descriptor-owned output.
- * Failure: publishes no partial descriptor on refusal.
- * Boundary: executes no graph or generation path. */
+/* Encode runtime compute identity fields in canonical identity order. */
 static void runtime_compute_identity(yvex_runtime_descriptor *descriptor) {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -439,11 +421,6 @@ static void runtime_compute_identity(yvex_runtime_descriptor *descriptor) {
                     descriptor->summary.runtime_descriptor_identity);
 }
 
-/* Purpose: construct bounded runtime descriptor alloc state from admitted inputs.
- * Inputs: admission and materialization are borrowed.
- * Effects: mutates only descriptor-owned output.
- * Failure: publishes no partial descriptor on refusal.
- * Boundary: executes no graph or generation path. */
 static yvex_runtime_descriptor *runtime_descriptor_alloc(
     unsigned long long count,
     yvex_runtime_descriptor_failure *failure,
@@ -483,11 +460,6 @@ static yvex_runtime_descriptor *runtime_descriptor_alloc(
     return descriptor;
 }
 
-/* Purpose: project the immutable bounded runtime fill common summary view.
- * Inputs: admission and materialization are borrowed.
- * Effects: mutates only descriptor-owned output.
- * Failure: publishes no partial descriptor on refusal.
- * Boundary: executes no graph or generation path. */
 static void runtime_fill_common_summary(
     yvex_runtime_descriptor *descriptor,
     const yvex_complete_artifact_admission *admission,
@@ -511,11 +483,6 @@ static void runtime_fill_common_summary(
     descriptor->summary.generation_ready = 0;
 }
 
-/* Purpose: project typed descriptor failure name vocabulary without lost semantics.
- * Inputs: admission and materialization are borrowed.
- * Effects: mutates only descriptor-owned output.
- * Failure: publishes no partial descriptor on refusal.
- * Boundary: executes no graph or generation path. */
 const char *yvex_runtime_descriptor_failure_name(
     yvex_runtime_descriptor_failure_code code) {
     switch (code) {
@@ -532,11 +499,6 @@ const char *yvex_runtime_descriptor_failure_name(
     return "unknown";
 }
 
-/* Purpose: construct bounded descriptor build state from admitted inputs.
- * Inputs: admission and materialization are borrowed.
- * Effects: mutates only descriptor-owned output.
- * Failure: publishes no partial descriptor on refusal.
- * Boundary: executes no graph or generation path. */
 int yvex_runtime_descriptor_build(
     yvex_runtime_descriptor **out,
     const yvex_complete_artifact_admission *admission,
@@ -647,11 +609,11 @@ int yvex_runtime_descriptor_build(
     return YVEX_OK;
 }
 
-/* Purpose: restore an immutable runtime descriptor from authenticated runtime-binding facts.
- * Inputs: canonical summary/rows and their imported committed materialization session.
- * Effects: allocates descriptor rows and lookup state; reads no compiler or source objects.
- * Failure: coordinate or identity disagreement releases all candidate state.
- * Boundary: import links records to materialization; it does not execute a graph. */
+/*
+ * Restore an immutable runtime descriptor from authenticated runtime-binding facts.
+ *
+ * Coordinate or identity disagreement releases all candidate state.
+ */
 int yvex_runtime_descriptor_import(
     yvex_runtime_descriptor **out, const yvex_runtime_descriptor_summary *summary,
     const yvex_runtime_tensor_binding *bindings, unsigned long long binding_count,
@@ -719,11 +681,6 @@ int yvex_runtime_descriptor_import(
     return YVEX_OK;
 }
 
-/* Purpose: release owned descriptor close resources in dependency order.
- * Inputs: admission and materialization are borrowed.
- * Effects: mutates only descriptor-owned output.
- * Failure: publishes no partial descriptor on refusal.
- * Boundary: executes no graph or generation path. */
 void yvex_runtime_descriptor_close(yvex_runtime_descriptor *descriptor) {
     if (!descriptor) return;
     free(descriptor->bindings);
@@ -731,31 +688,21 @@ void yvex_runtime_descriptor_close(yvex_runtime_descriptor *descriptor) {
     free(descriptor);
 }
 
-/* Purpose: project the immutable bounded descriptor summary view.
- * Inputs: admission and materialization are borrowed.
- * Effects: mutates only descriptor-owned output.
- * Failure: publishes no partial descriptor on refusal.
- * Boundary: executes no graph or generation path. */
 const yvex_runtime_descriptor_summary *yvex_runtime_descriptor_summary_get(
     const yvex_runtime_descriptor *descriptor) {
     return descriptor ? &descriptor->summary : NULL;
 }
 
-/* Purpose: return one immutable runtime descriptor row at a checked canonical ordinal.
- * Inputs: immutable descriptor and requested canonical index.
- * Effects: returns a borrowed view and performs no mutation.
- * Failure: null descriptor or out-of-range index returns null.
- * Boundary: the row remains valid only for the descriptor lifetime. */
+/*
+ * Return one immutable runtime descriptor row at a checked canonical ordinal.
+ *
+ * The row remains valid only for the descriptor lifetime.
+ */
 const yvex_runtime_tensor_binding *yvex_runtime_descriptor_tensor_at(
     const yvex_runtime_descriptor *descriptor, unsigned long long index) {
     return descriptor && index < descriptor->count ? &descriptor->bindings[index] : NULL;
 }
 
-/* Purpose: resolve one descriptor find role through the canonical index.
- * Inputs: admission and materialization are borrowed.
- * Effects: mutates only descriptor-owned output.
- * Failure: publishes no partial descriptor on refusal.
- * Boundary: executes no graph or generation path. */
 const yvex_runtime_tensor_binding *yvex_runtime_descriptor_find_role(
     const yvex_runtime_descriptor *descriptor,
     yvex_tensor_role role,

@@ -1,12 +1,7 @@
-/* Owner: gguf.writer (gguf).
- * Owns: immutable writer plans and transactional file sinks.
- * Does not own: quantization semantics, roundtrip admission, or publication policy.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: GGUF structural planning and file delivery.
- * Purpose: provide the canonical GGUF structural planning and file delivery contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * GGUF planners and sinks exchange immutable layout facts and transactional delivery state here.
+ * A completed write still requires independent artifact admission.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_GGUF_WRITER_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_GGUF_WRITER_H_INCLUDED
 
@@ -22,7 +17,7 @@ extern "C" {
 typedef struct yvex_gguf_tokenizer_metadata yvex_gguf_tokenizer_metadata;
 typedef struct yvex_model_family_api yvex_model_family_api;
 
-/* Writer contract. */
+/* Immutable writer plans. */
 #define YVEX_GGUF_WRITER_SCHEMA_VERSION 1u
 #define YVEX_GGUF_WRITER_IDENTITY_CAP 65u
 #define YVEX_GGUF_WRITER_NAME_CAP 192u
@@ -143,7 +138,7 @@ const yvex_gguf_writer_tensor *yvex_gguf_writer_plan_tensor_at(
 const unsigned char *yvex_gguf_writer_plan_prefix(
     const yvex_gguf_writer_plan *plan, size_t *byte_count);
 
-/* File Sink contract. */
+/* Transactional file sink. */
 typedef enum {
     YVEX_GGUF_FILE_OK = 0,
     YVEX_GGUF_FILE_INVALID_ARGUMENT,

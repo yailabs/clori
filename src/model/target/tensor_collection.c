@@ -1,19 +1,11 @@
-/* Owner: model.target.tensor_collection
- * Owns: exact DeepSeek source-requirement coverage and bounded lexical tensor collection reports for other admitted
- *   families.
- * Does not own: architecture topology, transform execution, payload reads, artifact emission, runtime admission,
- *   rendering, or generation.
- * Invariants: each verified source tensor matches exactly one requirement; complete coverage retains one immutable
- *   snapshot and reads zero payload.
- * Boundary: lexical collection facts never become role mapping, while exact DeepSeek coverage is only an input to
- *   sealed transformation planning.
- * Purpose: bind canonical family tensor recipes to retained source inventory rows and expose deterministic
- *   lookup/accounting to compilation consumers.
- * Inputs: verified source facts, family architecture recipe, retained snapshot, and typed report requests.
- * Effects: owns coverage rows/indexes and snapshot retention; reports perform only their established bounded header
- *   reads.
- * Failure: typed mismatch/allocation refusals release partial coverage and leave report and caller-owned source
- *   state defined. */
+/*
+ * Bind canonical family tensor recipes to retained source inventory rows and expose deterministic
+ * lookup/accounting to compilation consumers.
+ *
+ * Each verified source tensor matches exactly one requirement; complete coverage retains one
+ * immutable snapshot and reads zero payload. Lexical collection facts never become role mapping,
+ * while exact DeepSeek coverage is only an input to sealed transformation planning.
+ */
 #include <yvex/internal/model_target.h>
 
 #include <yvex/internal/core.h>
@@ -130,7 +122,6 @@ static const char *const coverage_failure_names[] = {
 #undef COLLECTION_STRING
 #undef COLLECTION_U64
 
-/* Purpose: map collection family facts through canonical typed vocabulary. */
 static void collection_family_facts(const char *family,
                                     const char **top_blocker,
                                     const char **source_blocker)
@@ -144,11 +135,6 @@ static void collection_family_facts(const char *family,
     }
 }
 
-/* Purpose: project collection audit common from typed facts without capability drift.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void collection_audit_common(yvex_model_target_report *report,
                                     const yvex_model_target_request *request,
                                     const char *family,
@@ -174,11 +160,6 @@ static void collection_audit_common(yvex_model_target_report *report,
     yvex_model_target_report_add_row(report, "next_required_rows: V010.MAP.8");
 }
 
-/* Purpose: construct bounded collection report build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 int yvex_tensor_collection_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
@@ -260,8 +241,6 @@ static const char *coverage_collection_name(
 static const char *coverage_failure_name(
     yvex_deepseek_tensor_coverage_failure_code code);
 
-/* Purpose: map coverage family ir through canonical typed vocabulary. */
-
 static const yvex_model_family_ir_api *coverage_family_ir(void)
 {
     return &yvex_model_register_deepseek_v4()->ir;
@@ -282,29 +261,18 @@ typedef struct {
     yvex_error *err;
 } coverage_builder;
 
-/* Purpose: apply the canonical coverage allocate transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void *coverage_allocate(size_t size, void *context)
 {
     (void)context;
     return malloc(size);
 }
 
-/* Purpose: release owned coverage release resources in dependency order.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void coverage_release(void *allocation, void *context)
 {
     (void)context;
     free(allocation);
 }
 
-/* Purpose: project typed coverage failure clear vocabulary without lost semantics. */
 static void coverage_failure_clear(
     yvex_deepseek_tensor_coverage_failure *failure)
 {
@@ -315,11 +283,6 @@ static void coverage_failure_clear(
     failure->dimension_index = YVEX_DEEPSEEK_TENSOR_NO_INDEX;
 }
 
-/* Purpose: enforce typed coverage reject invariants before publication.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int coverage_reject(
     yvex_deepseek_tensor_coverage_failure *failure,
     yvex_deepseek_tensor_coverage_failure_code code,
@@ -359,19 +322,12 @@ static int coverage_reject(
     return status;
 }
 
-/* Purpose: project typed coverage scope name vocabulary without lost semantics. */
 static const char *coverage_scope_name(yvex_tensor_scope scope)
 {
     return scope <= YVEX_TENSOR_SCOPE_MTP
                ? coverage_scope_names[scope]
                : "unknown";
 }
-
-/* Purpose: register one coverage require while preserving order and bounds.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int coverage_require(coverage_builder *builder,
                             const char *name,
@@ -447,7 +403,6 @@ static int coverage_require(coverage_builder *builder,
     return YVEX_OK;
 }
 
-/* Purpose: apply the canonical coverage vector transformation and invariants. */
 static int coverage_vector(coverage_builder *builder,
                            const char *name,
                            yvex_tensor_collection collection,
@@ -462,7 +417,6 @@ static int coverage_vector(coverage_builder *builder,
                             dtype, 1u, dims);
 }
 
-/* Purpose: apply the canonical coverage matrix transformation and invariants. */
 static int coverage_matrix(coverage_builder *builder,
                            const char *name,
                            yvex_tensor_collection collection,
@@ -477,12 +431,6 @@ static int coverage_matrix(coverage_builder *builder,
     return coverage_require(builder, name, collection, scope, layer, expert,
                             dtype, 2u, dims);
 }
-
-/* Purpose: apply the canonical coverage companion matrix transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int coverage_companion_matrix(
     coverage_builder *builder,
@@ -507,11 +455,6 @@ static int coverage_companion_matrix(
                            dtype, rows, columns);
 }
 
-/* Purpose: apply the canonical coverage fp8 pair transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int coverage_fp8_pair(coverage_builder *builder,
                              const char *base,
                              yvex_tensor_collection collection,
@@ -543,12 +486,6 @@ static int coverage_fp8_pair(coverage_builder *builder,
         rows / storage->quant_block_rows,
         columns / storage->quant_block_columns);
 }
-
-/* Purpose: apply the canonical coverage fp4 pair transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int coverage_fp4_pair(coverage_builder *builder,
                              const char *base,
@@ -584,12 +521,6 @@ static int coverage_fp4_pair(coverage_builder *builder,
         columns / storage->fp4_scale_group_width);
 }
 
-/* Purpose: apply the canonical coverage experts transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
-
 static int coverage_experts(coverage_builder *builder, const char *prefix,
                             const yvex_deepseek_v4_layer_spec *layer,
                             yvex_tensor_scope scope,
@@ -616,12 +547,6 @@ static int coverage_experts(coverage_builder *builder, const char *prefix,
     }
     return YVEX_OK;
 }
-
-/* Purpose: apply the canonical coverage recipe phase transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int coverage_recipe_phase(coverage_builder *builder, const char *prefix,
                                  const yvex_deepseek_v4_layer_spec *layer,
@@ -660,7 +585,6 @@ static int coverage_recipe_phase(coverage_builder *builder, const char *prefix,
     return YVEX_OK;
 }
 
-/* Purpose: apply the canonical coverage layer transformation and invariants. */
 static int coverage_layer(coverage_builder *builder, const char *prefix,
                           const yvex_deepseek_v4_layer_spec *layer,
                           yvex_tensor_scope scope,
@@ -672,11 +596,6 @@ static int coverage_layer(coverage_builder *builder, const char *prefix,
     return rc;
 }
 
-/* Purpose: apply the canonical coverage mhc head transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int coverage_mhc_head(coverage_builder *builder, const char *prefix,
                              yvex_tensor_scope scope, unsigned long long layer,
                              const yvex_deepseek_v4_mhc_head_spec *head,
@@ -703,12 +622,6 @@ static int coverage_mhc_head(coverage_builder *builder, const char *prefix,
     }
     return YVEX_OK;
 }
-
-/* Purpose: construct bounded coverage build requirements state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int coverage_build_requirements(coverage_builder *builder,
                                        const yvex_deepseek_v4_ir *ir)
@@ -778,12 +691,6 @@ static int coverage_build_requirements(coverage_builder *builder,
     return rc;
 }
 
-/* Purpose: decode bounded coverage parse name index evidence without retained input.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
-
 static int coverage_parse_name_index(const char *text,
                                      unsigned long long *value,
                                      const char **end)
@@ -802,12 +709,6 @@ static int coverage_parse_name_index(const char *text,
     *end = cursor;
     return 1;
 }
-
-/* Purpose: enforce typed coverage reject unexpected invariants before publication.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int coverage_reject_unexpected(coverage_builder *builder,
                                       const yvex_deepseek_v4_ir *ir,
@@ -896,11 +797,6 @@ arithmetic_overflow:
         builder->err);
 }
 
-/* Purpose: enforce typed coverage validate inputs invariants before publication.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int coverage_validate_inputs(
     const yvex_source_verification *verification,
     const yvex_deepseek_v4_ir *ir,
@@ -977,12 +873,6 @@ static int coverage_validate_inputs(
     }
     return YVEX_OK;
 }
-
-/* Purpose: construct bounded coverage build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int coverage_build(
     yvex_deepseek_tensor_coverage **out,
@@ -1153,12 +1043,6 @@ static int coverage_build(
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded coverage open verified source state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
-
 static int coverage_open_verified_source(
     yvex_deepseek_tensor_coverage **out,
     yvex_source_verification *verification,
@@ -1220,12 +1104,6 @@ cleanup:
     return rc;
 }
 
-/* Purpose: release owned coverage close resources in dependency order.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
-
 static void coverage_close(
     yvex_deepseek_tensor_coverage *coverage)
 {
@@ -1240,7 +1118,6 @@ static void coverage_close(
     options.release(coverage, options.context);
 }
 
-/* Purpose: project the immutable bounded coverage summary view. */
 static const yvex_deepseek_tensor_coverage_summary *
 coverage_summary(
     const yvex_deepseek_tensor_coverage *coverage)
@@ -1248,7 +1125,6 @@ coverage_summary(
     return coverage ? &coverage->summary : NULL;
 }
 
-/* Purpose: project the immutable bounded coverage at view. */
 static const yvex_deepseek_tensor_coverage_row *
 coverage_at(
     const yvex_deepseek_tensor_coverage *coverage,
@@ -1259,7 +1135,6 @@ coverage_at(
     return &coverage->rows[index];
 }
 
-/* Purpose: resolve one coverage find through the canonical index. */
 static const yvex_deepseek_tensor_coverage_row *
 coverage_find(
     const yvex_deepseek_tensor_coverage *coverage,
@@ -1273,8 +1148,6 @@ coverage_find(
         return NULL;
     return coverage->row_by_source[index];
 }
-
-/* Purpose: resolve one coverage find index through the canonical index. */
 
 static int coverage_find_index(
     const yvex_deepseek_tensor_coverage *coverage,
@@ -1294,8 +1167,6 @@ static int coverage_find_index(
     return 1;
 }
 
-/* Purpose: resolve one coverage find source index through the canonical index. */
-
 static int coverage_find_source_index(
     const yvex_deepseek_tensor_coverage *coverage,
     const char *source_name,
@@ -1308,7 +1179,6 @@ static int coverage_find_source_index(
     return coverage->row_by_source[*source_index] != NULL;
 }
 
-/* Purpose: project typed coverage collection name vocabulary without lost semantics. */
 static const char *coverage_collection_name(
     yvex_tensor_collection collection)
 {
@@ -1317,7 +1187,6 @@ static const char *coverage_collection_name(
                : "unknown";
 }
 
-/* Purpose: project typed coverage failure name vocabulary without lost semantics. */
 static const char *coverage_failure_name(
     yvex_deepseek_tensor_coverage_failure_code code)
 {
@@ -1326,12 +1195,13 @@ static const char *coverage_failure_name(
                : "unknown";
 }
 
-/* Purpose: publish the immutable exact-coverage operations consumed by the
- * family registration and transformation builder.
- * Inputs: none.
- * Effects: returns process-lifetime immutable storage; no allocation or I/O.
- * Failure: cannot fail.
- * Boundary: coverage proves source ownership but does not read payload bytes. */
+/*
+ * Publish the immutable exact-coverage operations consumed by the family registration and
+ * transformation builder.
+ *
+ * Returns process-lifetime immutable storage; no allocation or I/O. Coverage proves source
+ * ownership but does not read payload bytes.
+ */
 const yvex_model_family_coverage_api *yvex_model_deepseek_coverage_api(void)
 {
     static const yvex_model_family_coverage_api api = {

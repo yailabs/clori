@@ -63,11 +63,12 @@ run, or a self-authored report cannot promote a capability by itself.
 | 1 | `V010.PROJECT.CONTROL.PUBLIC.0` | `complete` | Public roadmap, contribution workflow, issue/PR templates, decision records, compact open-work extraction, and project-control guards replace the retired monolithic ledger. | `V010.OPERATOR.SURFACE.AUDIT.0` |
 | 2 | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `complete` | One versioned operation authority drives command paths, flags, defaults, validation, help, discovery, protocol projections, slash catalog, and command tests. | `V010.PROJECT.CONTROL.PUBLIC.0` |
 | 3 | `V010.DOCS.INFORMATION.ARCHITECTURE.0` | `complete` | One governed information architecture separates doctrine, reference and implemented architecture, family facts, contracts, operations, development policy, project control, decisions, audits, migrations, releases, and history. | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` |
-| 4 | `V010.OPERATOR.REPL.CONSOLE.0` | `active` | A mature daemon-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, watch, trace, cancellation, and explicit model-emitted reasoning channels. | `V010.DOCS.INFORMATION.ARCHITECTURE.0` |
-| 5 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `blocked` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.OPERATOR.REPL.CONSOLE.0` |
-| 6 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
-| 7 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
-| 8 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
+| 4 | `V010.REPO.CODE.COMMENTARY.0` | `complete` | Natural selective technical commentary replaces mandatory labeled prose across every governed first-party source while production lexical tokens remain unchanged. | `V010.DOCS.INFORMATION.ARCHITECTURE.0` |
+| 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `active` | A mature daemon-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, watch, trace, cancellation, and explicit model-emitted reasoning channels. | `V010.REPO.CODE.COMMENTARY.0` |
+| 6 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `blocked` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.OPERATOR.REPL.CONSOLE.0` |
+| 7 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
+| 8 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
+| 9 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
 
 Active Next: V010.OPERATOR.REPL.CONSOLE.0
 
@@ -75,6 +76,7 @@ Detailed accepted and successor contracts for the current sequence are:
 
 - [Canonical Operation and Command Architecture](docs/milestones/command-architecture.md)
 - [Documentation and Information Architecture](docs/milestones/documentation-architecture.md)
+- [Natural Technical Commentary](docs/milestones/code-commentary.md)
 - [Mature Runtime Console and Interactive REPL](docs/milestones/runtime-console-repl.md)
 
 The pre-implementation combined plans remain traceable without staying on the
@@ -99,6 +101,7 @@ not a replacement historical ledger.
 | Product surface | `yvex` and `yvexd` are the only product executables. The former developer and OpenAI gateway executables are retired. |
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
+| Code commentary | Every governed first-party source follows the natural selective-commentary doctrine; the structural guard rejects obsolete templates and boilerplate while production lexical tokens remain unchanged. |
 | Operator audit | The frozen post-cutover audit inventories 70 route-level commands, 426 command/flag pairs, 99 semantic operations, 10 slash commands, 14 protocol operations, 5 HTTP endpoints, and every Make/script/environment surface with zero unmatched categories. |
 | Performance | `V010.RUNTIME.DEEPSEEK.PERFORMANCE.0` remains `partial`: startup and bounded profiling are accepted; warm decode remains below admission. |
 

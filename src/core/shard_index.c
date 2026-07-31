@@ -1,22 +1,13 @@
-/* Owner: src/core.
- * Owns: linear canonical admission and deterministic logarithmic key lookup.
- * Does not own: entry allocation, key lifetime, files, payloads, or rendering.
- * Invariants: canonical IDs equal iteration positions and keys increase strictly.
- * Boundary: admitted keys establish indexing only, never shard or artifact trust.
- * Purpose: admit immutable shard-key arrays and provide deterministic indexed lookup.
- * Inputs: borrowed sorted entries, explicit count/budget, and optional lookup counters.
- * Effects: binds only the caller-owned index view and updates explicit counters.
- * Failure: invalid, duplicate, unordered, or over-budget entries leave the index empty. */
+/*
+ * Admit immutable shard-key arrays and provide deterministic indexed lookup.
+ *
+ * Canonical IDs equal iteration positions and keys increase strictly. Admitted keys establish
+ * indexing only, never shard or artifact trust.
+ */
 #include <yvex/internal/core.h>
 
 #include <string.h>
 
-/* Borrows a canonical entry array after one O(n) uniqueness/budget pass. */
-/* Purpose: Construct the owned shard index init state (`yvex_shard_index_init`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 yvex_shard_index_result yvex_shard_index_init(
     yvex_shard_index *index,
     const yvex_shard_index_entry *entries,
@@ -47,12 +38,6 @@ yvex_shard_index_result yvex_shard_index_init(
     return YVEX_SHARD_INDEX_OK;
 }
 
-/* Projects one canonical ID in O(1) without allocation or mutation. */
-/* Purpose: Compute shard index at for its core invariant (`yvex_shard_index_at`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 const yvex_shard_index_entry *yvex_shard_index_at(
     const yvex_shard_index *index,
     unsigned long long canonical_id)
@@ -62,11 +47,7 @@ const yvex_shard_index_entry *yvex_shard_index_at(
 }
 
 /* Binary-searches one borrowed key and optionally returns comparison cost. */
-/* Purpose: Compute shard index find for its core invariant (`yvex_shard_index_find`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
+
 const yvex_shard_index_entry *yvex_shard_index_find(
     const yvex_shard_index *index,
     const char *canonical_key,
@@ -92,11 +73,7 @@ const yvex_shard_index_entry *yvex_shard_index_find(
 }
 
 /* Forgets borrowed storage; the caller remains responsible for its lifetime. */
-/* Purpose: Release or reset owned shard index reset state (`yvex_shard_index_reset`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
+
 void yvex_shard_index_reset(yvex_shard_index *index)
 {
     if (index) memset(index, 0, sizeof(*index));

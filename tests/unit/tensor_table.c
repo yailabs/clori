@@ -1,27 +1,6 @@
 /*
- * YVEX - tensor table tests
- *
- * File: tests/test_tensor_table.c
- * Layer: test
- *
- * Purpose:
- *   Proves that model layer builds an owned YVEX tensor table from the GGUF parser GGUF tensor
- *   directory without claiming model execution.
- *
- * Covers:
- *   - yvex_tensor_table_from_gguf
- *   - yvex_tensor_table_count
- *   - yvex_tensor_table_at
- *   - yvex_tensor_table_find
- *   - yvex_tensor_role_classify
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_tensor_table
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises model layer builds an owned YVEX tensor table from the GGUF parser GGUF tensor
+ * directory without claiming model execution.
  */
 #include <string.h>
 

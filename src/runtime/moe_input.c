@@ -1,12 +1,9 @@
-/* Owner: runtime MoE input.
- * Owns: versioned MoE activation/token input identity, tensor-file admission, and immutable views.
- * Does not own: model math, expert weights, runtime sessions, CLI rendering, tokenizer, or transformer state.
- * Invariants: one input binds every ordered MoE layer and exact canonical little-endian payload bytes.
- * Boundary: external activation files become bounded typed views, never model or tokenizer authority.
- * Purpose: provide one production in-memory and external representation for MoE execution input.
- * Inputs: admitted plan identities, finite expanded activations, and numeric token IDs.
- * Effects: maps or copies immutable bounded input and releases only its owned resources.
- * Failure: malformed geometry, identity, file type, digest, or snapshot drift publishes no input. */
+/*
+ * Provide one production in-memory and external representation for MoE execution input.
+ *
+ * One input binds every ordered MoE layer and exact canonical little-endian payload bytes.
+ * External activation files become bounded typed views, never model or tokenizer authority.
+ */
 #define _GNU_SOURCE
 #include <yvex/internal/moe.h>
 
@@ -49,14 +46,12 @@ struct yvex_moe_input {
     struct stat snapshot;
 };
 
-/* Purpose: publish one stable runtime-owned MoE-input refusal. */
 static int input_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "runtime.moe-input", reason);
     return status;
 }
 
-/* Purpose: admit native access only when it matches the canonical scalar encoding. */
 static int input_host_supported(void)
 {
     const uint32_t one = 1u;
@@ -64,7 +59,6 @@ static int input_host_supported(void)
            *(const unsigned char *)&one == 1u;
 }
 
-/* Purpose: encode one integer in canonical little-endian order. */
 static void input_put_u64(unsigned char *out, uint64_t value)
 {
     unsigned int index;
@@ -72,7 +66,6 @@ static void input_put_u64(unsigned char *out, uint64_t value)
         out[index] = (unsigned char)(value >> (index * 8u));
 }
 
-/* Purpose: decode one canonical little-endian integer. */
 static uint64_t input_get_u64(const unsigned char *input)
 {
     uint64_t value = 0ull;
@@ -82,7 +75,6 @@ static uint64_t input_get_u64(const unsigned char *input)
     return value;
 }
 
-/* Purpose: terminate one fixed-width hexadecimal identity read from a file. */
 static void input_get_identity(char output[YVEX_SHA256_HEX_CAP],
                                const unsigned char *input)
 {
@@ -90,8 +82,6 @@ static void input_get_identity(char output[YVEX_SHA256_HEX_CAP],
     output[MOE_INPUT_IDENTITY_BYTES] = '\0';
 }
 
-/* Purpose: hash one exact payload span without adding metadata.
- * Inputs: bytes/count. Effects: writes digest. Failure: false. Boundary: canonical payload only. */
 static int input_payload_digest(const void *payload, unsigned long long bytes,
                                 char output[YVEX_SHA256_HEX_CAP])
 {
@@ -105,8 +95,6 @@ static int input_payload_digest(const void *payload, unsigned long long bytes,
     return 1;
 }
 
-/* Purpose: hash canonical scalar fields in declaration order.
- * Inputs: summary/hash. Effects: updates hash. Failure: false. Boundary: no pointers or paths. */
 static int input_hash_fields(yvex_sha256 *hash, const unsigned long long *fields,
                              size_t count)
 {
@@ -116,8 +104,11 @@ static int input_hash_fields(yvex_sha256 *hash, const unsigned long long *fields
     return 1;
 }
 
-/* Purpose: derive the path-independent MoE input identity.
- * Inputs: summary/records. Effects: writes identity. Failure: false. Boundary: immutable facts. */
+/*
+ * Derive the path-independent MoE input identity.
+ *
+ * Writes identity.
+ */
 static int input_identity(const yvex_moe_input_summary *summary,
                           const yvex_moe_input_layer_record *records,
                           char output[YVEX_SHA256_HEX_CAP])
@@ -151,7 +142,6 @@ static int input_identity(const yvex_moe_input_summary *summary,
     return 1;
 }
 
-/* Purpose: validate summary identity syntax and mandatory extents before traversal. */
 static int input_summary_valid(const yvex_moe_input_summary *summary)
 {
     return summary && summary->schema_version == YVEX_MOE_INPUT_SCHEMA_V1 &&
@@ -163,8 +153,6 @@ static int input_summary_valid(const yvex_moe_input_summary *summary)
            yvex_sha256_hex_valid(summary->moe_plan_identity);
 }
 
-/* Purpose: validate ordered layer ranges, token extent, and finite activations.
- * Inputs: summary/records/payload. Effects: none. Failure: typed. Boundary: no execution. */
 static int input_records_valid(const yvex_moe_input_summary *summary,
                                const yvex_moe_input_layer_record *records,
                                const float *activations, const unsigned int *token_ids,
@@ -202,8 +190,6 @@ static int input_records_valid(const yvex_moe_input_summary *summary,
     return YVEX_OK;
 }
 
-/* Purpose: seal payload and complete-input identities over already canonical memory.
- * Inputs: mutable summary/payload. Effects: writes digests. Failure: typed. Boundary: no I/O. */
 int yvex_moe_input_seal(yvex_moe_input_summary *summary,
                         yvex_moe_input_layer_record *records,
                         const float *activations, const unsigned int *token_ids,
@@ -230,8 +216,6 @@ int yvex_moe_input_seal(yvex_moe_input_summary *summary,
     return YVEX_OK;
 }
 
-/* Purpose: serialize canonical MoE input fields without native structure bytes.
- * Inputs: sealed input. Effects: allocates bytes. Failure: typed. Boundary: schema v1 only. */
 static int input_serialize(const yvex_moe_input_summary *summary,
                            const yvex_moe_input_layer_record *records,
                            const float *activations, const unsigned int *token_ids,
@@ -283,8 +267,7 @@ static int input_serialize(const yvex_moe_input_summary *summary,
     return YVEX_OK;
 }
 
-/* Purpose: transactionally publish one sealed MoE tensor file without replacement.
- * Inputs: path/sealed input. Effects: writes file. Failure: typed cleanup. Boundary: file adapter. */
+/* Transactionally publish one sealed MoE tensor file without replacement. */
 int yvex_moe_input_write(const char *path, const yvex_moe_input_summary *summary,
                          const yvex_moe_input_layer_record *records,
                          const float *activations, const unsigned int *token_ids,
@@ -303,8 +286,6 @@ int yvex_moe_input_write(const char *path, const yvex_moe_input_summary *summary
     return rc;
 }
 
-/* Purpose: parse one bounded mapping into typed records and payload views.
- * Inputs: mapped bytes. Effects: sets borrowed views. Failure: typed. Boundary: explicit endian schema. */
 static int input_parse(yvex_moe_input *input, yvex_error *err)
 {
     yvex_moe_input_summary *summary = &input->summary;
@@ -357,8 +338,6 @@ static int input_parse(yvex_moe_input *input, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: verify exact payload and complete input identities after parsing or copying.
- * Inputs: open input. Effects: none. Failure: typed. Boundary: complete immutable identity. */
 static int input_verify(const yvex_moe_input *input, yvex_error *err)
 {
     char activation_digest[YVEX_SHA256_HEX_CAP];
@@ -380,8 +359,6 @@ static int input_verify(const yvex_moe_input *input, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: compare a retained file handle with its admission snapshot.
- * Inputs: file-backed input. Effects: none. Failure: false. Boundary: retained handle snapshot. */
 static int input_snapshot_valid(const yvex_moe_input *input)
 {
     struct stat current;
@@ -395,8 +372,6 @@ static int input_snapshot_valid(const yvex_moe_input *input)
             current.st_ctim.tv_nsec == input->snapshot.st_ctim.tv_nsec);
 }
 
-/* Purpose: map and admit one bounded regular non-symlink MoE tensor file.
- * Inputs: path/limits. Effects: maps retained file. Failure: typed cleanup. Boundary: secure adapter. */
 int yvex_moe_input_open_file(yvex_moe_input **out, const char *path,
                              const yvex_moe_input_limits *limits, yvex_error *err)
 {
@@ -442,8 +417,11 @@ fail:
     return rc;
 }
 
-/* Purpose: copy caller-owned canonical memory into one immutable input owner.
- * Inputs: typed input. Effects: allocates copy. Failure: typed cleanup. Boundary: no file identity. */
+/*
+ * Copy caller-owned canonical memory into one immutable input owner.
+ *
+ * No file identity.
+ */
 int yvex_moe_input_open_memory(yvex_moe_input **out, const yvex_moe_input_summary *summary,
                                const yvex_moe_input_layer_record *records,
                                const float *activations, const unsigned int *token_ids,
@@ -487,8 +465,11 @@ fail:
     return rc;
 }
 
-/* Purpose: admit one open input against the exact plan and binding identity chain.
- * Inputs: input/plan/binding. Effects: none. Failure: typed. Boundary: runtime identity chain. */
+/*
+ * Admit one open input against the exact plan and binding identity chain.
+ *
+ * Runtime identity chain.
+ */
 int yvex_moe_input_validate(const yvex_moe_input *input, const yvex_moe_plan *plan,
                             const yvex_runtime_binding_summary *binding, yvex_error *err)
 {
@@ -524,15 +505,16 @@ int yvex_moe_input_validate(const yvex_moe_input *input, const yvex_moe_plan *pl
     return YVEX_OK;
 }
 
-/* Purpose: borrow immutable input summary facts.
- * Inputs: input. Effects: none. Failure: null. Boundary: borrowed owner lifetime. */
+/*
+ * Borrow immutable input summary facts.
+ *
+ * Borrowed owner lifetime.
+ */
 const yvex_moe_input_summary *yvex_moe_input_summary_get(const yvex_moe_input *input)
 {
     return input ? &input->summary : NULL;
 }
 
-/* Purpose: borrow one ordered layer activation base and stride.
- * Inputs: input/ordinal. Effects: fills views. Failure: typed. Boundary: immutable mapping. */
 int yvex_moe_input_layer_view(const yvex_moe_input *input, unsigned long long ordinal,
                               const float **values, unsigned long long *stride,
                               yvex_error *err)
@@ -550,15 +532,11 @@ int yvex_moe_input_layer_view(const yvex_moe_input *input, unsigned long long or
     return YVEX_OK;
 }
 
-/* Purpose: borrow the immutable numeric token-ID vector.
- * Inputs: input. Effects: none. Failure: null. Boundary: numeric routing input, not tokenizer. */
 const unsigned int *yvex_moe_input_token_ids(const yvex_moe_input *input)
 {
     return input ? input->token_ids : NULL;
 }
 
-/* Purpose: idempotently release mapping, file handle, and decoded directory.
- * Inputs: input owner. Effects: unmaps/closes/frees. Failure: none. Boundary: adapter resources. */
 void yvex_moe_input_close(yvex_moe_input **input)
 {
     if (!input || !*input) return;

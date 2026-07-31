@@ -1,14 +1,10 @@
-/* Owner: src/cli/io
- * Owns: approved direct text output calls for operator normal/table/audit text.
- * Does not own: domain facts, command parsing, report building, JSON policy, runtime behavior, generation, eval,
- *   benchmark, or release decisions.
- * Invariants: direct stdio output stays in this file; callers provide target streams; wrappers preserve stdio
- *   return behavior where legacy code checks it.
- * Boundary: writer calls serialize existing facts only and do not create capability.
- * Purpose: provide approved direct text output calls for operator normal/table/audit text.
- * Inputs: typed scalar, table, or JSON fields and the selected operator stream.
- * Effects: writes only explicitly requested operator output bytes.
- * Failure: propagates stream or encoding failure without changing domain state. */
+/*
+ * Provide approved direct text output calls for operator normal/table/audit text.
+ *
+ * Direct stdio output stays in this file; callers provide target streams; wrappers preserve stdio
+ * return behavior where legacy code checks it. Writer calls serialize existing facts only and do
+ * not create capability.
+ */
 #include "src/cli/io/private.h"
 
 #include <errno.h>
@@ -16,21 +12,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Purpose: Transfer bounded out vwritef data (`yvex_cli_out_vwritef`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_cli_out_vwritef(FILE *fp, const char *fmt, va_list ap)
 {
     return vfprintf(fp ? fp : stdout, fmt ? fmt : "", ap);
 }
 
-/* Purpose: Transfer bounded out writef data (`yvex_cli_out_writef`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_cli_out_writef(FILE *fp, const char *fmt, ...)
 {
     va_list ap;
@@ -42,41 +28,21 @@ int yvex_cli_out_writef(FILE *fp, const char *fmt, ...)
     return rc;
 }
 
-/* Purpose: Compute out puts for its CLI invariant (`yvex_cli_out_puts`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_cli_out_puts(FILE *fp, const char *text)
 {
     return fputs(text ? text : "", fp ? fp : stdout);
 }
 
-/* Purpose: Compute out fputs for its CLI invariant (`yvex_cli_out_fputs`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_cli_out_fputs(const char *text, FILE *fp)
 {
     return yvex_cli_out_puts(fp, text);
 }
 
-/* Purpose: Compute out char for its CLI invariant (`yvex_cli_out_char`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_cli_out_char(FILE *fp, int ch)
 {
     return fputc(ch, fp ? fp : stdout);
 }
 
-/* Purpose: force buffered operator bytes to their selected stream.
- * Inputs: explicit stream, or stdout when absent.
- * Effects: flushes only the selected CLI-owned stream.
- * Failure: returns typed I/O refusal for flush or sticky stream failure.
- * Boundary: transport completion does not alter rendered domain facts. */
 int yvex_cli_out_flush(FILE *fp)
 {
     FILE *stream = fp ? fp : stdout;
@@ -84,43 +50,22 @@ int yvex_cli_out_flush(FILE *fp)
     return fflush(stream) == 0 && !ferror(stream) ? YVEX_OK : YVEX_ERR_IO;
 }
 
-/* Purpose: Compute out stdout for its CLI invariant (`yvex_cli_out_stdout`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 FILE *yvex_cli_out_stdout(void)
 {
     return stdout;
 }
 
-/* Purpose: Compute out stderr for its CLI invariant (`yvex_cli_out_stderr`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 FILE *yvex_cli_out_stderr(void)
 {
     return stderr;
 }
 
-/* Purpose: Compute out line for its CLI invariant (`yvex_cli_out_line`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_cli_out_line(FILE *fp, const char *text)
 {
     (void)yvex_cli_out_puts(fp, text);
     (void)yvex_cli_out_char(fp, '\n');
 }
 
-/* Emit an immutable ordered block of complete text lines. */
-/* Purpose: Compute out lines for its CLI invariant (`yvex_cli_out_lines`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_cli_out_lines(FILE *fp,
                         const char *const *lines,
                         size_t line_count)
@@ -135,31 +80,16 @@ void yvex_cli_out_lines(FILE *fp,
     }
 }
 
-/* Purpose: Compute out kv str for its CLI invariant (`yvex_cli_out_kv_str`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_cli_out_kv_str(FILE *fp, const char *key, const char *value)
 {
     (void)yvex_cli_out_writef(fp, "%s: %s\n", key ? key : "", value ? value : "");
 }
 
-/* Purpose: Compute out kv bool for its CLI invariant (`yvex_cli_out_kv_bool`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_cli_out_kv_bool(FILE *fp, const char *key, int value)
 {
     yvex_cli_out_kv_str(fp, key, value ? "true" : "false");
 }
 
-/* Purpose: Serialize an immutable typed fact projection in declared order.
- * Inputs: Borrowed object and field schema; offsets address the declared object type.
- * Effects: Writes only to the caller-selected operator stream.
- * Failure: Returns -1 on the first stream failure; invalid projections are refused.
- * Boundary: Field projection formats facts but never derives capability state. */
 int yvex_cli_out_fields(FILE *fp,
                         const void *object,
                         const yvex_cli_field_spec *fields,
@@ -229,11 +159,6 @@ int yvex_cli_out_fields(FILE *fp,
     return 0;
 }
 
-/* Purpose: render one typed command failure through the operator error stream.
- * Inputs: immutable typed error and caller-selected nonzero exit code.
- * Effects: writes one diagnostic line to stderr.
- * Failure: preserves the requested exit code even if stderr is unavailable.
- * Boundary: renders domain failure without reclassifying it. */
 int print_yvex_error(const yvex_error *err, int exit_code)
 {
     yvex_cli_out_writef(stderr, "yvex: %s: %s\n", yvex_error_where(err),
@@ -241,11 +166,6 @@ int print_yvex_error(const yvex_error *err, int exit_code)
     return exit_code;
 }
 
-/* Purpose: map a domain status onto the stable process-exit contract.
- * Inputs: one domain status code.
- * Effects: none.
- * Failure: unknown failures map to the generic nonzero exit code.
- * Boundary: process status mapping does not alter domain classification. */
 int exit_for_status(int status)
 {
     switch (status) {
@@ -263,11 +183,11 @@ int exit_for_status(int status)
     }
 }
 
-/* Purpose: parse one complete unsigned integer without accepting signs or suffixes.
- * Inputs: borrowed text and caller-owned result storage.
- * Effects: publishes the value only after complete validation.
- * Failure: returns false and leaves result ownership with the caller.
- * Boundary: lexical parsing does not apply command-specific limits. */
+/*
+ * Parse one complete unsigned integer without accepting signs or suffixes.
+ *
+ * Returns false and leaves result ownership with the caller.
+ */
 int parse_ull_allow_zero(const char *text, unsigned long long *out)
 {
     char *end = NULL;
@@ -281,21 +201,11 @@ int parse_ull_allow_zero(const char *text, unsigned long long *out)
     return 1;
 }
 
-/* Purpose: parse one strictly positive unsigned integer.
- * Inputs: borrowed text and caller-owned result storage.
- * Effects: publishes a validated nonzero value.
- * Failure: returns false for zero or malformed input.
- * Boundary: delegates lexical parsing but owns the positive-value invariant. */
 int parse_positive_ull(const char *text, unsigned long long *out)
 {
     return parse_ull_allow_zero(text, out) && *out != 0;
 }
 
-/* Purpose: parse one bounded unsigned C integer without accepting suffixes.
- * Inputs: borrowed text and caller-owned result storage.
- * Effects: publishes only a value representable by unsigned int.
- * Failure: returns false for malformed, signed, or overflowing input.
- * Boundary: performs representation validation only. */
 int parse_uint_allow_zero(const char *text, unsigned int *out)
 {
     unsigned long long value;
@@ -305,11 +215,6 @@ int parse_uint_allow_zero(const char *text, unsigned int *out)
     return 1;
 }
 
-/* Purpose: render arbitrary token bytes without allowing control bytes onto the terminal.
- * Inputs: borrowed byte span and exact length.
- * Effects: writes a quoted escaped representation to stdout.
- * Failure: stream failure remains visible through stdout state.
- * Boundary: escaping changes presentation only, never token content. */
 void print_quoted_bytes(const char *data, unsigned long long len)
 {
     unsigned long long i;
@@ -334,11 +239,6 @@ void print_quoted_bytes(const char *data, unsigned long long len)
     yvex_cli_out_writef(stdout, "\"");
 }
 
-/* Purpose: resolve and open one artifact through the canonical registry boundary.
- * Inputs: path or alias plus caller-owned handle and typed error storage.
- * Effects: publishes one read-only artifact handle after resolution succeeds.
- * Failure: propagates resolver/open refusal and releases temporary model references.
- * Boundary: does not inspect GGUF semantics or infer model support. */
 int open_artifact_for_gguf(const char *path, yvex_artifact **artifact, yvex_error *err)
 {
     yvex_artifact_options options;
@@ -356,11 +256,6 @@ int open_artifact_for_gguf(const char *path, yvex_artifact **artifact, yvex_erro
     return rc;
 }
 
-/* Purpose: render one tensor shape in its declared native order.
- * Inputs: borrowed dimensions and rank.
- * Effects: writes bracketed dimensions to stdout.
- * Failure: stream failure remains visible through stdout state.
- * Boundary: does not transpose or validate tensor geometry. */
 void print_tensor_dims(const unsigned long long *dims, unsigned int rank)
 {
     unsigned int i;
@@ -373,21 +268,11 @@ void print_tensor_dims(const unsigned long long *dims, unsigned int rank)
     yvex_cli_out_writef(stdout, "]");
 }
 
-/* Purpose: render one native tensor shape without introducing a second ordering policy.
- * Inputs: borrowed dimensions and rank.
- * Effects: delegates exact rendering to the canonical tensor-dimension helper.
- * Failure: stream failure remains visible through stdout state.
- * Boundary: aliases presentation, not shape semantics. */
 void print_native_dims(const unsigned long long *dims, unsigned int rank)
 {
     print_tensor_dims(dims, rank);
 }
 
-/* Purpose: render one token sequence through the CLI-owned stream.
- * Inputs: borrowed immutable token sequence.
- * Effects: writes token identifiers to stdout.
- * Failure: stream failure remains visible through stdout state.
- * Boundary: does not decode, sample, or mutate tokens. */
 void print_token_ids(const yvex_tokens *tokens)
 {
     unsigned long long i;
@@ -397,11 +282,6 @@ void print_token_ids(const yvex_tokens *tokens)
     yvex_cli_out_writef(stdout, "\n");
 }
 
-/* Purpose: parse a non-empty comma-separated token-id sequence with bounded growth.
- * Inputs: borrowed text and caller-owned result pointers.
- * Effects: allocates and publishes an exact token-id array on success.
- * Failure: rejects malformed/overflowing input and frees partial storage.
- * Boundary: owns lexical conversion and allocation, not token validity policy. */
 int parse_id_list(const char *text, unsigned int **out_ids, unsigned long long *out_len)
 {
     unsigned int *ids = NULL;
@@ -445,11 +325,11 @@ fail:
     return 0;
 }
 
-/* Purpose: parse an exact-rank comma-separated tensor shape.
- * Inputs: borrowed text, required rank, and fixed caller-owned dimension storage.
- * Effects: publishes positive dimensions only after complete validation.
- * Failure: rejects invalid rank, malformed fields, zero dimensions, and overflow.
- * Boundary: parses shape syntax without applying tensor-role policy. */
+/*
+ * Parse an exact-rank comma-separated tensor shape.
+ *
+ * Rejects invalid rank, malformed fields, zero dimensions, and overflow.
+ */
 int parse_dims_csv(const char *text, unsigned int rank, unsigned long long dims[4])
 {
     const char *cursor = text;

@@ -1,18 +1,14 @@
-/* Owner: tests.unit.runtime_generation.
- * Owns: focused generation contract refusal, stop taxonomy, lifecycle idempotence, and API surface proof.
- * Does not own: model numerics, target-scale prompt execution, tokenizer parity, or CUDA evidence.
- * Invariants: focused tests never fabricate a production model/session or teacher-forced generation path.
- * Boundary: sanitizer-visible contract proof; complete composition belongs to the live runner.
- * Purpose: keep the common generation owner in focused and sanitizer aggregates.
- * Inputs: bounded test-owned invalid contracts. Effects: mutates only local test storage.
- * Failure: reports the first violated public refusal or lifecycle invariant. */
+/*
+ * Keep the common generation owner in focused and sanitizer aggregates. Focused tests never
+ * fabricate a production model/session or teacher-forced generation path. Sanitizer-visible
+ * contract proof; complete composition belongs to the live runner.
+ */
 #include "tests/test.h"
 
 #include <string.h>
 
 #include <yvex/internal/generation.h>
 
-/* Purpose: verify every typed stop reason has a stable nonempty operator spelling. */
 static int generation_test_stop_taxonomy(void)
 {
     unsigned int reason;
@@ -30,7 +26,6 @@ static int generation_test_stop_taxonomy(void)
     return 0;
 }
 
-/* Purpose: verify absent owners and malformed result contracts refuse before mutation. */
 static int generation_test_refusals(void)
 {
     yvex_runtime_generation_context *context = NULL;

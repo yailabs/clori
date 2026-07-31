@@ -1,13 +1,7 @@
-/* Owner: src/cli/model_artifacts
- * Owns: existing moe command-family parsing and output behavior.
- * Does not own: runtime implementation, graph execution, backend algorithms, artifact emission, eval, benchmark, or
- *   release claims.
- * Invariants: CLI-only and excluded from libyvex.a; preserves existing command behavior.
- * Boundary: moe reports are report-only diagnostics.
- * Purpose: provide existing moe command-family parsing and output behavior.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Present bounded MoE inventory and planning diagnostics without executing routing or expert
+ * arithmetic.
+ */
 #include "src/cli/model_artifacts/private.h"
 
 #include <string.h>
@@ -173,11 +167,6 @@ static const yvex_models_option_spec moe_option_specs[] = {
     {"--output", YVEX_MODELS_OPTION_OUTPUT, offsetof(yvex_cli_moe_options, output_mode)},
 };
 
-/* Purpose: Parse parse moe options into typed CLI state (`parse_moe_options`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int parse_moe_options(int arg_count,
                              char **args,
                              yvex_cli_moe_options *options)
@@ -238,11 +227,6 @@ static int parse_moe_options(int arg_count,
     return 0;
 }
 
-/* Purpose: Construct the owned moe init report state (`moe_init_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void moe_init_report(yvex_moe_class_report *report,
                             const yvex_cli_moe_options *options)
 {
@@ -258,11 +242,6 @@ static void moe_init_report(yvex_moe_class_report *report,
     report->include_blockers = options ? options->include_blockers : 0;
 }
 
-/* Purpose: Render moe print report from typed facts (`moe_print_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void moe_print_report(const yvex_moe_class_report *report)
 {
     if (report && report->output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
@@ -287,11 +266,6 @@ static void moe_print_report(const yvex_moe_class_report *report)
     yvex_cli_out_lines(stdout, literal_pair_1, sizeof(literal_pair_1) / sizeof(literal_pair_1[0]));
 }
 
-/* Purpose: Render moe print source only report from typed facts (`moe_print_source_only_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int moe_print_source_only_report(const yvex_cli_moe_options *options,
                                         const char *target)
 {
@@ -328,11 +302,6 @@ static int moe_print_source_only_report(const yvex_cli_moe_options *options,
     return 5;
 }
 
-/* Purpose: Render moe print missing model report from typed facts (`moe_print_missing_model_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int moe_print_missing_model_report(const yvex_cli_moe_options *options,
                                           const char *reason)
 {
@@ -358,11 +327,6 @@ static int moe_print_missing_model_report(const yvex_cli_moe_options *options,
     return 5;
 }
 
-/* Purpose: Render moe print unsupported family report from typed facts (`moe_print_unsupported_family_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int moe_print_unsupported_family_report(const yvex_cli_moe_options *options,
                                                yvex_model_ref *ref,
                                                const char *target_id,
@@ -392,11 +356,6 @@ static int moe_print_unsupported_family_report(const yvex_cli_moe_options *optio
     return 5;
 }
 
-/* Purpose: Render moe print model report from typed facts (`moe_print_model_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int moe_print_model_report(const yvex_cli_moe_options *options,
                                   yvex_model_ref *ref,
                                   yvex_model_context *ctx,
@@ -517,12 +476,6 @@ static int moe_print_model_report(const yvex_cli_moe_options *options,
     return 0;
 }
 
-/* Purpose: Orchestrate the typed model artifacts surface moe command request
- * (`yvex_model_artifacts_surface_moe_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_model_artifacts_surface_moe_command(int arg_count, char **args)
 {
     yvex_cli_moe_options options;
@@ -601,11 +554,6 @@ int yvex_model_artifacts_surface_moe_command(int arg_count, char **args)
     return rc;
 }
 
-/* Purpose: Render model artifacts surface moe help from typed facts (`yvex_model_artifacts_surface_moe_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_model_artifacts_surface_moe_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,

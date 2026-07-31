@@ -1,14 +1,9 @@
-/* Owner: src/cli/commands
- * Owns: graph command dispatch from typed input parser to report builder and renderer.
- * Does not own: graph construction, memory planning, backend probing, primitive execution, guard facts, report
- *   construction, rendering internals, generation, eval, benchmark, or release decisions.
- * Invariants: adapter stays thin: parse input, call one graph report API, render a typed report, and return an exit
- *   code.
- * Boundary: command dispatch is not graph runtime support.
- * Purpose: provide graph command dispatch from typed input parser to report builder and renderer.
- * Inputs: typed command arguments and borrowed domain APIs.
- * Effects: dispatches domain calls and routes operator bytes only through CLI I/O.
- * Failure: returns a stable CLI status while preserving domain ownership. */
+/*
+ * Provide graph command dispatch from typed input parser to report builder and renderer.
+ *
+ * Adapter stays thin: parse input, call one graph report API, render a typed report, and return an
+ * exit code. Command dispatch is not graph runtime support.
+ */
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
 #include "src/cli/model_artifacts/private.h"
@@ -47,7 +42,7 @@ typedef struct {
     yvex_runtime_lifecycle_phase phase;
     double started, last_update;
 } graph_attention_progress;
-/* Purpose: return a stable operator label for one measured runtime lifecycle phase. */
+
 static const char *graph_attention_progress_phase(yvex_runtime_lifecycle_phase phase)
 {
     static const char *const names[YVEX_RUNTIME_LIFECYCLE_COUNT] = {
@@ -59,7 +54,7 @@ static const char *graph_attention_progress_phase(yvex_runtime_lifecycle_phase p
 
     return (unsigned int)phase < YVEX_RUNTIME_LIFECYCLE_COUNT ? names[phase] : "unknown";
 }
-/* Purpose: obtain monotonic seconds for progress throttling without affecting evidence identity. */
+
 static double graph_attention_monotonic_seconds(void)
 {
     struct timespec value;
@@ -67,11 +62,7 @@ static double graph_attention_monotonic_seconds(void)
     return clock_gettime(CLOCK_MONOTONIC, &value) == 0
                ? (double)value.tv_sec + (double)value.tv_nsec / 1000000000.0 : 0.0;
 }
-/* Purpose: publish bounded cold-runtime progress to stderr and propagate cancellation.
- * Inputs: CLI-owned progress state plus exact runtime phase and byte counters.
- * Effects: emits at phase boundaries and at most once per second during long phases.
- * Failure: a pending signal cancels the underlying runtime operation.
- * Boundary: progress never enters stdout or semantic execution identities. */
+
 static int graph_attention_progress_update(void *opaque,
                                            yvex_runtime_lifecycle_phase phase,
                                            unsigned long long completed,
@@ -102,11 +93,7 @@ static int graph_attention_progress_update(void *opaque,
                                   now - state->started);
     return 1;
 }
-/* Purpose: enable progress only when explicitly requested or stderr is interactive.
- * Inputs: caller-owned progress state and validated mode text.
- * Effects: initializes local throttling timestamps and TTY policy.
- * Failure: unsupported modes are excluded by the CLI parser.
- * Boundary: configures presentation only and never changes runtime execution. */
+
 static void graph_attention_progress_init(graph_attention_progress *state,
                                           const char *mode)
 {
@@ -116,19 +103,17 @@ static void graph_attention_progress_init(graph_attention_progress *state,
     state->phase = YVEX_RUNTIME_LIFECYCLE_COUNT;
     state->started = graph_attention_monotonic_seconds();
 }
-/* Purpose: Record SIGINT/SIGTERM in one signal-safe scalar. */
+
 static void graph_attention_signal_handler(int signal_number) {
     if (signal_number == SIGINT || signal_number == SIGTERM)
         graph_attention_signal_seen = signal_number;
 }
-/* Purpose: Report whether the signal-safe cancellation scalar is set. */
+
 static int graph_attention_cancel_requested(void *context) {
     (void)context;
     return graph_attention_signal_seen != 0;
 }
-/* Purpose: Install cancellation handlers.
- * Inputs: prior-action storage. Effects: changes signal actions.
- * Failure: rolls back partial install. Boundary: cancellation request only; no runtime cleanup. */
+
 static int graph_attention_signals_install(struct sigaction *old_interrupt,
                                            struct sigaction *old_terminate, yvex_error *err) {
     struct sigaction action;
@@ -151,8 +136,7 @@ static int graph_attention_signals_install(struct sigaction *old_interrupt,
     }
     return YVEX_OK;
 }
-/* Purpose: Restore signal actions. Inputs: saved actions. Effects: changes handlers. Failure: I/O refusal.
- * Boundary: signal lifecycle only; graph resources remain runtime-owned. */
+
 static int graph_attention_signals_restore(const struct sigaction *old_interrupt,
                                            const struct sigaction *old_terminate, yvex_error *err) {
     int interrupt_rc = sigaction(SIGINT, old_interrupt, NULL);
@@ -164,14 +148,12 @@ static int graph_attention_signals_restore(const struct sigaction *old_interrupt
                    "cannot restore attention cancellation handlers");
     return YVEX_ERR_IO;
 }
-/* Purpose: Print one parser refusal.
- * Inputs: typed error. Effects: writes CLI stderr.
- * Failure: stream state. Boundary: CLI diagnostics only. */
+
 static int graph_cli_print_parse_error(const yvex_error *err) {
     yvex_cli_out_writef(yvex_cli_out_stderr(), "%s\n", yvex_error_message(err));
     return 2;
 }
-/* Purpose: Render graph print runtime error from typed facts (`graph_cli_print_runtime_error`). */
+
 static int graph_cli_print_runtime_error(const yvex_error *err, int exit_code) {
     yvex_cli_out_writef(yvex_cli_out_stderr(), "yvex: %s: %s\n", yvex_error_where(err),
                         yvex_error_message(err));
@@ -277,7 +259,7 @@ static const graph_attention_action graph_attention_actions[] = {
 {"profile", YVEX_RUNTIME_OPERATOR_PROFILE}, {"benchmark", YVEX_RUNTIME_OPERATOR_BENCHMARK},
     {"benchmark compare", YVEX_RUNTIME_OPERATOR_EXECUTE}, {"qualify", YVEX_RUNTIME_OPERATOR_QUALIFY},
 };
-/* Purpose: Map one validated grammar value through its typed runtime catalog. */
+
 static unsigned int graph_attention_value_find(
     const char *text, const graph_attention_value *values, size_t count,
     unsigned int fallback)
@@ -289,7 +271,7 @@ static unsigned int graph_attention_value_find(
             return values[index].value;
     return fallback;
 }
-/* Purpose: Return the bounded action projection or the stable invalid sentinel. */
+
 static const graph_attention_action *graph_attention_action_find(
     yvex_graph_attention_action action)
 {
@@ -300,10 +282,7 @@ static const graph_attention_action *graph_attention_action_find(
                ? &graph_attention_actions[action]
                : &invalid;
 }
-/* Purpose: project one legacy graph adapter action through the compiled canonical registry.
- * Inputs: a parser-admitted attention action. Effects: reads immutable descriptors only.
- * Failure: returns a neutral non-command label when generated metadata is inconsistent.
- * Boundary: the adapter does not maintain a second command-path table. */
+
 static const char *graph_attention_command_path(yvex_graph_attention_action action)
 {
     const char *legacy_action = graph_attention_action_find(action)->name;
@@ -337,11 +316,7 @@ static const char *graph_attention_command_path(yvex_graph_attention_action acti
     }
     return "attention operation";
 }
-/* Purpose: Resolve exactly one immutable binding from an external registry directory.
- * Inputs: safely opened directory and caller-owned output.
- * Effects: reads directory entries only; never opens source/compiler assets.
- * Failure: missing or ambiguous content addresses require explicit operator selection.
- * Boundary: filename discovery is not runtime-binding admission. */
+
 static int graph_attention_binding_discover(const char *directory, char *output,
                                             size_t capacity, yvex_error *err) {
     const size_t suffix_length = strlen(YVEX_RUNTIME_BINDING_SUFFIX);
@@ -397,7 +372,7 @@ static int graph_attention_binding_discover(const char *directory, char *output,
     }
     return path_join2(output, capacity, directory, selected, err, "graph_attention_cli");
 }
-/* Purpose: resolve preparation-only family facts without extending the runtime adapter ABI. */
+
 static const yvex_graph_family_preparation *graph_family_preparation_find(const char *target)
 {
     unsigned long long index;
@@ -408,11 +383,7 @@ static const yvex_graph_family_preparation *graph_family_preparation_find(const 
         if (entry->target_id && target && strcmp(entry->target_id, target) == 0) return entry;
     }
 }
-/* Purpose: resolve source and physical-variant authority for cold binding preparation.
- * Inputs: parsed preparation options, resolved operator roots, adapter, and GGUF directory.
- * Effects: fills only bounded preparation-path and preset fields in the request.
- * Failure: missing family facts, path expansion, or name bounds leave runtime unopened.
- * Boundary: this CLI adapter never opens or interprets policy, imatrix, or plan bytes. */
+
 static int graph_attention_prepare_paths(const yvex_graph_args *args,
                                          graph_attention_request *out,
                                          const yvex_runtime_family_adapter *adapter,
@@ -469,9 +440,7 @@ static int graph_attention_prepare_paths(const yvex_graph_args *args,
                                   "graph_attention_cli");
     return rc;
 }
-/* Purpose: Resolve attention paths.
- * Inputs: CLI args and output. Effects: builds a request.
- * Failure: typed path refusal. Boundary: no source, artifact, or runtime open. */
+
 static int graph_cli_attention_request_build(const yvex_graph_args *args,
                                              graph_attention_request *out, yvex_error *err) {
     yvex_paths paths = {0};
@@ -624,11 +593,7 @@ static int graph_cli_attention_request_build(const yvex_graph_args *args,
     }
     return YVEX_OK;
 }
-/* Purpose: invoke one family-owned compiler preparation adapter.
- * Inputs: resolved preparation paths, typed family adapter facts, and output storage.
- * Effects: may transactionally publish one content-addressed binding outside the repository.
- * Failure: propagates the family preparation refusal without opening runtime state.
- * Boundary: the generic CLI never constructs source, transform, quant, writer, or family plans. */
+
 static int graph_attention_binding_prepare(
     const graph_attention_request *request,
     yvex_compilation_runtime_binding_result *result, yvex_error *err)
@@ -700,11 +665,7 @@ static const graph_binding_projection graph_binding_transform_fields[] = {
     {offsetof(graph_attention_result, logical_transform_identity),
     offsetof(graph_attention_binding, logical_transform_identity)},
 };
-/* Purpose: project an ordered binding-field catalog into one operator result.
- * Inputs: immutable binding, caller-owned result, and typed field catalog.
- * Effects: copies only the catalogued bounded text fields in catalog order.
- * Failure: source contracts guarantee fit; bounded copies remain terminated.
- * Boundary: this projection neither admits the artifact nor derives identities. */
+
 static void graph_attention_binding_project(
     const graph_attention_binding *binding, graph_attention_result *result,
     const graph_binding_projection *fields, size_t count)
@@ -718,11 +679,7 @@ static void graph_attention_binding_project(
         yvex_core_text_copy(output, YVEX_SHA256_HEX_BYTES, value);
     }
 }
-/* Purpose: initialize facts common to prepared and independently reopened runtime bindings.
- * Inputs: validated CLI paths, one immutable binding summary, and its external path.
- * Effects: initializes caller-owned presentation storage.
- * Failure: bounded source contracts keep every copied field terminated.
- * Boundary: common projection performs no runtime admission or execution. */
+
 static void graph_attention_result_init(
     const yvex_graph_args *args, const graph_attention_request *request,
     const graph_attention_binding *binding, const char *binding_path,
@@ -747,10 +704,7 @@ static void graph_attention_result_init(
     result->operator_command_available = 1;
     result->production_api_available = 1;
 }
-/* Purpose: project an independently reopened preparation result into stable operator facts.
- * Inputs: validated CLI paths, sealed binding summary, and content-addressed path.
- * Effects: initializes presentation data.
- * Failure: bounded fields remain terminated. Boundary: projection owns no compiler or runtime lifecycle. */
+
 static void graph_attention_prepare_result(
     const yvex_graph_args *args, const graph_attention_request *request,
     const yvex_runtime_binding_summary *summary, const char *binding_path,
@@ -766,11 +720,7 @@ static void graph_attention_prepare_result(
 static int graph_attention_result_render(
     const yvex_graph_args *args, const yvex_graph_attention_operator_result *result,
     yvex_error *err);
-/* Purpose: publish one content-addressed binding through the preparation-plane API only.
- * Inputs: parsed CLI request and error output.
- * Effects: invokes the compiler-side producer once and renders its typed result.
- * Failure: maps preparation or rendering failures to a nonzero operator status.
- * Boundary: this is the sole CLI action allowed to rebuild preparation-plane truth. */
+
 static int graph_cli_attention_prepare(const yvex_graph_args *args, yvex_error *err)
 {
     graph_attention_request request;
@@ -817,11 +767,7 @@ static int graph_cli_attention_prepare(const yvex_graph_args *args, yvex_error *
     }
     return 0;
 }
-/* Purpose: project one independently reopened binding into operator presentation facts.
- * Inputs: parsed CLI facts, resolved paths, sealed binding summary, and output storage.
- * Effects: initializes only caller-owned presentation fields.
- * Failure: all copied values are bounded by their typed source contracts.
- * Boundary: presentation projection neither admits the artifact nor executes attention. */
+
 static void graph_attention_binding_result(
     const yvex_graph_args *args, const graph_attention_request *request,
     const yvex_runtime_binding_summary *binding,
@@ -846,11 +792,7 @@ static void graph_attention_binding_result(
         sizeof(graph_binding_transform_fields) / sizeof(graph_binding_transform_fields[0]));
     result->internal_live_runner_available = 1;
 }
-/* Purpose: render and flush one typed attention result through the canonical CLI output owner.
- * Inputs: parsed render mode, immutable result, and caller-owned error.
- * Effects: writes one complete operator record to stdout.
- * Failure: preserves the renderer refusal with one stable CLI boundary.
- * Boundary: rendering never changes runtime status, evidence, or capability facts. */
+
 static int graph_attention_result_render(
     const yvex_graph_args *args, const yvex_graph_attention_operator_result *result,
     yvex_error *err)
@@ -869,11 +811,7 @@ static int graph_attention_result_render(
                        "attention result rendering failed");
     return rc;
 }
-/* Purpose: describe one independently reopened immutable runtime binding.
- * Inputs: typed paths and one content-addressed binding.
- * Effects: renders preparation facts without opening a runtime model or session.
- * Failure: typed binding refusal leaves no runtime or presentation state.
- * Boundary: every admitted capability and residency inspection uses the production operator. */
+
 static int graph_cli_attention_describe(const yvex_graph_args *args, yvex_error *err) {
     graph_attention_request request;
     yvex_runtime_binding *binding = NULL;
@@ -894,10 +832,7 @@ static int graph_cli_attention_describe(const yvex_graph_args *args, yvex_error 
     yvex_runtime_binding_close(binding);
     return rc == YVEX_OK ? 0 : graph_cli_print_runtime_error(err, exit_for_status(rc));
 }
-/* Purpose: project validated benchmark deltas and policy evidence into presentation units.
- * Inputs: caller-owned operator summary and a compatible runtime comparison.
- * Effects: copies bounded provenance, thresholds, status, and signed timing deltas.
- * Failure: none after runtime comparison validation. Boundary: CLI owns no benchmark policy. */
+
 static void graph_attention_benchmark_comparison_apply(
     yvex_runtime_benchmark_operator_summary *summary,
     const yvex_runtime_benchmark_comparison *comparison)
@@ -927,9 +862,7 @@ static void graph_attention_benchmark_comparison_apply(
             (double)comparison->device_delta_ns[index] * scale;
     }
 }
-/* Purpose: project explicitly supplied CLI thresholds into one domain policy.
- * Inputs: parsed sentinel-bearing basis points. Effects: fills one canonical enable/value pair.
- * Failure: none; the domain validates the resulting policy. Boundary: no threshold default is invented. */
+
 static yvex_runtime_benchmark_regression_policy graph_attention_regression_policy(
     const yvex_graph_args *args)
 {
@@ -939,11 +872,7 @@ static yvex_runtime_benchmark_regression_policy graph_attention_regression_polic
                             ? 0ull : args->attention.regression_basis_points,
     };
 }
-/* Purpose: publish one deterministic SVG through the runtime chart owner.
- * Inputs: validated path, sealed records, and typed summary.
- * Effects: publishes exact path, byte count, and chart identity.
- * Failure: preserves every pre-existing destination.
- * Boundary: the CLI adapts paths and owns no chart layout or benchmark semantics. */
+
 static int graph_attention_benchmark_chart_publish(
     const char *path, const yvex_runtime_benchmark_baseline *current,
     const yvex_runtime_benchmark_baseline *baseline,
@@ -965,11 +894,7 @@ static int graph_attention_benchmark_chart_publish(
     yvex_runtime_identity_copy(summary->chart_identity, chart.identity);
     return YVEX_OK;
 }
-/* Purpose: publish/compare baseline evidence and optionally create one exact-byte SVG asset.
- * Inputs: completed benchmark/profile result and validated external paths.
- * Effects: invokes the runtime benchmark file owner and fills typed operator evidence.
- * Failure: returns the failing operation while retaining any baseline published before the chart.
- * Boundary: this adapter does not measure, own thresholds, or serialize SVG itself. */
+
 static int graph_attention_benchmark_output(
     const yvex_graph_args *args, yvex_graph_attention_operator_result *result,
     yvex_error *err)
@@ -1019,11 +944,7 @@ static int graph_attention_benchmark_output(
     return graph_attention_benchmark_chart_publish(
         args->attention.chart_path, &current, chart_baseline, &result->benchmark, err);
 }
-/* Purpose: preflight one benchmark asset path before runtime model or artifact admission.
- * Inputs: operator path, whether a new destination is required, and typed error output.
- * Effects: reads only parent/file metadata; creates, removes, and opens no model asset.
- * Failure: rejects relative, repository-owned, noncanonical, symlinked, conflicting, or absent paths.
- * Boundary: the runtime file owner repeats no-symlink and no-replace checks at publication. */
+
 static int graph_attention_external_path_preflight(
     const char *input, int destination, yvex_error *err)
 {
@@ -1068,10 +989,7 @@ unsafe:
                    "benchmark assets require canonical absolute paths outside the source repository");
     return YVEX_ERR_INVALID_ARG;
 }
-/* Purpose: reject every unsafe benchmark output before expensive runtime preparation begins.
- * Inputs: fully parsed graph attention arguments. Effects: performs bounded path metadata checks only.
- * Failure: returns the first baseline or chart path refusal.
- * Boundary: no runtime binding, artifact, model, residency, or backend is opened. */
+
 static int graph_attention_benchmark_paths_preflight(
     const yvex_graph_args *args, yvex_error *err)
 {
@@ -1097,9 +1015,7 @@ static int graph_attention_benchmark_paths_preflight(
             args->attention.chart_path, 1, err);
     return YVEX_OK;
 }
-/* Purpose: project one typed CLI refusal without changing its domain error.
- * Inputs: caller-owned operator result and populated error. Effects: marks publication incomplete.
- * Failure: bounded copies retain stable fallback text. Boundary: this helper owns no refusal policy. */
+
 static void graph_attention_result_refuse(graph_attention_result *result, const yvex_error *err)
 {
     result->completed = 0;
@@ -1108,11 +1024,7 @@ static void graph_attention_result_refuse(graph_attention_result *result, const 
     yvex_core_text_copy(result->failure_where, sizeof(result->failure_where), yvex_error_where(err));
     yvex_core_text_copy(result->reason, sizeof(result->reason), yvex_error_message(err));
 }
-/* Purpose: compare two independently authenticated component-benchmark records.
- * Inputs: validated external baseline and current paths.
- * Effects: reads the two records and renders typed performance deltas.
- * Failure: incompatible identities or malformed records return a nonzero operator status.
- * Boundary: comparison executes no model work and cannot promote correctness or release claims. */
+
 static int graph_cli_attention_benchmark_compare(const yvex_graph_args *args,
                                                   yvex_error *err)
 {
@@ -1158,9 +1070,7 @@ static int graph_cli_attention_benchmark_compare(const yvex_graph_args *args,
         return graph_cli_print_runtime_error(err, exit_for_status(rc));
     return policy.enabled && !comparison.performance_passed ? 1 : 0;
 }
-/* Purpose: Execute attention.
- * Inputs: CLI args and runtime API. Effects: renders a typed result.
- * Failure: nonzero CLI status. Boundary: no attention math, oracle, or test indirection. */
+
 static int graph_cli_attention_execute(const yvex_graph_args *args,
                                        yvex_runtime_cleanup_lease **retained_cleanup,
                                        yvex_error *err) {
@@ -1229,8 +1139,6 @@ static int graph_cli_attention_execute(const yvex_graph_args *args,
     return 0;
 }
 
-/* Purpose: execute the typed MoE command through the production runtime API.
- * Inputs: parsed CLI facts. Effects: renders once. Failure: typed exit. Boundary: adapter only. */
 static int graph_cli_moe_execute(const yvex_graph_args *args,
                                  yvex_runtime_cleanup_lease **retained_cleanup,
                                  yvex_error *err)
@@ -1290,8 +1198,6 @@ static int graph_cli_moe_execute(const yvex_graph_args *args,
         err, exit_for_status(YVEX_ERR_STATE));
 }
 
-/* Purpose: execute the typed transformer command through the production runtime API.
- * Inputs: parsed CLI facts. Effects: renders once. Failure: typed exit. Boundary: adapter only. */
 static int graph_cli_transformer_execute(
     const yvex_graph_args *args, yvex_runtime_cleanup_lease **retained_cleanup,
     yvex_error *err)
@@ -1355,9 +1261,6 @@ static int graph_cli_transformer_execute(
         err, exit_for_status(YVEX_ERR_STATE));
 }
 
-/* Purpose: execute the typed prefill-to-decode command through one production inspect context.
- * Inputs: parsed CLI facts. Effects: renders complete or partial evidence once.
- * Failure: typed exit while preserving the domain-owned partial result. Boundary: adapter only. */
 static int graph_cli_transformer_decode(
     const yvex_graph_args *args, yvex_runtime_cleanup_lease **retained_cleanup,
     yvex_error *err)
@@ -1427,11 +1330,11 @@ static int graph_cli_transformer_decode(
     return 0;
 }
 
-/* Purpose: execute complete-vocabulary logits through the production runtime API.
- * Inputs: parsed transformer/logits paths, split, backend, and budgets.
- * Effects: renders typed complete-row evidence and releases its directory.
- * Failure: typed operator or rendering refusal preserves cleanup ownership.
- * Boundary: dispatches production logits without token selection or generation. */
+/*
+ * Execute complete-vocabulary logits through the production runtime API.
+ *
+ * Typed operator or rendering refusal preserves cleanup ownership.
+ */
 static int graph_cli_transformer_logits(
     const yvex_graph_args *args, yvex_runtime_cleanup_lease **retained_cleanup,
     yvex_error *err)
@@ -1481,11 +1384,11 @@ static int graph_cli_transformer_logits(
     return 0;
 }
 
-/* Purpose: execute real-logits token selection through the common production sampler.
- * Inputs: parsed transformer workflow, explicit sampling policy, paths, backend, and budgets.
- * Effects: renders selected-token evidence without feeding it into decode or mutating KV.
- * Failure: typed operator or rendering refusal preserves cleanup ownership.
- * Boundary: sampling is operator-reachable but tokenizer and generation remain absent. */
+/*
+ * Execute real-logits token selection through the common production sampler.
+ *
+ * Typed operator or rendering refusal preserves cleanup ownership.
+ */
 static int graph_cli_transformer_sample(
     const yvex_graph_args *args, yvex_runtime_cleanup_lease **retained_cleanup,
     yvex_error *err)
@@ -1547,10 +1450,12 @@ static int graph_cli_transformer_sample(
     return 0;
 }
 
-/* Purpose: execute real autoregressive composition through one production generation context.
- * Inputs: validated text/messages, sampling policy, artifact paths, backend, and budgets.
- * Effects: renders bounded generated token/text evidence and preserves retry cleanup ownership.
- * Failure: typed runtime status retains exact partial progress. Boundary: no generation logic lives in CLI. */
+/*
+ * Execute real autoregressive composition through one production generation context.
+ *
+ * Renders bounded generated token/text evidence and preserves retry cleanup ownership. Typed
+ * runtime status retains exact partial progress.
+ */
 static int graph_cli_transformer_generate(
     const yvex_graph_args *args, yvex_runtime_cleanup_lease **retained_cleanup,
     yvex_error *err)
@@ -1650,9 +1555,7 @@ static int graph_cli_transformer_generate(
         return graph_cli_print_runtime_error(err, exit_code);
     return 0;
 }
-/* Purpose: Dispatch graph.
- * Inputs: argv. Effects: executes and renders a typed request.
- * Failure: nonzero CLI status. Boundary: domain owners retain capability truth. */
+
 int yvex_graph_command(int argc, char **argv,
                        yvex_runtime_cleanup_lease **retained_cleanup) {
     yvex_graph_args args;
@@ -1702,9 +1605,7 @@ int yvex_graph_command(int argc, char **argv,
                    "validated graph request has no attention action");
     return graph_cli_print_runtime_error(&err, exit_for_status(YVEX_ERR_STATE));
 }
-/* Purpose: Render graph help.
- * Inputs: output stream. Effects: writes CLI text.
- * Failure: stream state. Boundary: CLI presentation. */
+
 void yvex_graph_help(FILE *fp) {
     (void)yvex_graph_render_help(fp);
 }

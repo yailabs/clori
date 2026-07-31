@@ -1,12 +1,3 @@
-/* Owner: CLI artifact command.
- * Owns: artifact argv validation, dispatch, help, and compatibility rendering.
- * Does not own: artifact file lifecycle, identity, integrity truth, or materialization.
- * Invariants: bytes are written only through the CLI IO owner.
- * Boundary: consumes typed artifact APIs and returns process exit status.
- * Purpose: provide artifact argv validation, dispatch, help, and compatibility rendering.
- * Inputs: typed command arguments and borrowed domain APIs.
- * Effects: dispatches domain calls and routes operator bytes only through CLI I/O.
- * Failure: returns a stable CLI status while preserving domain ownership. */
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
 #include "src/cli/render/private.h"
@@ -251,11 +242,6 @@ typedef struct {
     yvex_model_descriptor *model;
 } artifact_view;
 
-/* Purpose: Release one partially or fully opened artifact view.
- * Inputs: Caller-owned view.
- * Effects: Closes model, tensor, GGUF, and artifact owners in reverse order.
- * Failure: Close operations are idempotent and expose no success-shaped state.
- * Boundary: The CLI owns handles only; artifact bytes remain domain-owned. */
 static void artifact_view_close(artifact_view *view) {
     if (!view)
         return;
@@ -266,11 +252,6 @@ static void artifact_view_close(artifact_view *view) {
     memset(view, 0, sizeof(*view));
 }
 
-/* Purpose: Open the requested GGUF descriptor tiers into one cleanup-safe view.
- * Inputs: Path plus tensor/model admission flags.
- * Effects: Opens bounded read-only artifact owners into the view.
- * Failure: Closes every partial owner and preserves the typed domain error.
- * Boundary: This adapter does not classify integrity or capability. */
 static int artifact_view_open(artifact_view *view, const char *path, int require_tensors,
                               int require_model, yvex_error *err) {
     int rc;
@@ -287,11 +268,6 @@ static int artifact_view_open(artifact_view *view, const char *path, int require
     return rc;
 }
 
-/* Purpose: Render print integrity report from typed facts (`print_integrity_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void print_integrity_report(const yvex_artifact_integrity_report *report,
                                    const char *model_label) {
     unsigned int i;
@@ -338,11 +314,7 @@ static void print_integrity_report(const yvex_artifact_integrity_report *report,
     yvex_cli_out_writef(stdout, "status: %s\n",
                         report->passed ? "artifact-integrity-pass" : "artifact-integrity-fail");
 }
-/* Purpose: Render print metadata value from typed facts (`print_metadata_value`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 static void print_metadata_value(const yvex_gguf_value *value) {
     unsigned long long u64;
     long long i64;
@@ -403,11 +375,6 @@ typedef struct {
     int audit;
 } integrity_cli_options;
 
-/* Purpose: Parse the common integrity check/report option grammar once.
- * Inputs: Argument slice and report-mode admission.
- * Effects: Writes only the caller-owned option record.
- * Failure: Prints the legacy syntax refusal and returns process status 2.
- * Boundary: Parsing performs no artifact, registry, or backend access. */
 static int integrity_options_parse(int arg_count, char **args, int report_mode,
                                    integrity_cli_options *options) {
     const char *surface = report_mode ? "integrity report" : "integrity";
@@ -479,11 +446,6 @@ static int integrity_options_parse(int arg_count, char **args, int report_mode,
     return 0;
 }
 
-/* Purpose: parse and execute artifact integrity check/report CLI requests.
- * Inputs: Borrowed typed facts.
- * Effects: CLI-local effects only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_integrity(int arg_count, char **args) {
     integrity_cli_options parsed;
     yvex_artifact_integrity_report report;
@@ -529,11 +491,7 @@ static int command_integrity(int arg_count, char **args) {
     }
     return 0;
 }
-/* Purpose: parse and execute descriptor-only artifact inspection.
- * Inputs: Borrowed typed facts.
- * Effects: CLI-local effects only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 static int command_inspect(int arg_count, char **args) {
     artifact_view view = {0};
     yvex_gguf_probe probe;
@@ -604,11 +562,7 @@ static int command_inspect(int arg_count, char **args) {
     artifact_view_close(&view);
     return print_yvex_error(&err, exit_for_status(rc));
 }
-/* Purpose: Orchestrate the typed command metadata request (`command_metadata`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 static int command_metadata(int arg_count, char **args) {
     artifact_view view;
     const yvex_gguf_header *header;
@@ -644,7 +598,6 @@ static int command_metadata(int arg_count, char **args) {
     return 0;
 }
 
-/* Purpose: Render the immutable identity prefix shared by every alias refusal. */
 static void print_registered_identity(const yvex_model_ref *ref,
                                       const yvex_artifact_file_identity *identity,
                                       const char *surface, const char *digest_status,
@@ -660,11 +613,6 @@ static void print_registered_identity(const yvex_model_ref *ref,
         identity->file_size, digest_status, identity_status);
 }
 
-/* Purpose: Validate enforce registered identity before downstream use (`enforce_registered_identity_cli`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int enforce_registered_identity_cli(const yvex_model_ref *ref, const char *surface) {
     yvex_artifact_file_identity identity;
     yvex_model_metadata_snapshot current_metadata;
@@ -744,11 +692,7 @@ int enforce_registered_identity_cli(const yvex_model_ref *ref, const char *surfa
     }
     return rc;
 }
-/* Purpose: Render the admitted materialization summary without deriving capability.
- * Inputs: Immutable model, reference, backend, and materialization facts.
- * Effects: Writes the stable operator field sequence through CLI I/O.
- * Failure: Stream failure publishes no execution or materialization state.
- * Boundary: Rendering does not alter artifact or backend ownership. */
+
 static void print_materialization_summary(const yvex_model_context *ctx,
                                           const yvex_model_ref *model_ref, const char *backend_name,
                                           const yvex_materialize_summary *summary) {
@@ -831,11 +775,6 @@ static const materialize_refusal_spec materialize_refusals[] = {
      "materialization-integrity-fail", 0u},
 };
 
-/* Purpose: Render one canonical materialization refusal from declarative lifecycle facts.
- * Inputs: Resolved reference, backend label, refusal kind, and optional reason.
- * Effects: Writes the stable failure field sequence through CLI I/O.
- * Failure: No partial materialization state is published.
- * Boundary: Declarative rendering does not classify the domain error. */
 static void print_materialize_refusal(const yvex_model_ref *ref, const char *backend_name,
                                       materialize_refusal_kind kind, const char *reason) {
     const materialize_refusal_spec *spec = &materialize_refusals[kind];
@@ -862,11 +801,6 @@ static void print_materialize_refusal(const yvex_model_ref *ref, const char *bac
     yvex_cli_out_writef(stdout, "status: %s\n", spec->status);
 }
 
-/* Purpose: Release every CLI-owned materialization resource in reverse order.
- * Inputs: Partially or fully initialized command state.
- * Effects: Closes weights, backend, model context, and resolved reference.
- * Failure: Idempotent close contracts leave no published execution state.
- * Boundary: Cleanup cannot remove or mutate the source artifact. */
 static void materialize_cli_close(materialize_cli_state *state) {
     if (!state)
         return;
@@ -877,11 +811,6 @@ static void materialize_cli_close(materialize_cli_state *state) {
     memset(state, 0, sizeof(*state));
 }
 
-/* Purpose: parse and execute selected artifact materialization diagnostics.
- * Inputs: Borrowed typed facts.
- * Effects: CLI-local effects only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_materialize(int arg_count, char **args) {
     materialize_cli_state state;
     yvex_backend_options backend_options;
@@ -1002,11 +931,7 @@ done:
     materialize_cli_close(&state);
     return rc;
 }
-/* Purpose: Parse parse materialize scope name into typed CLI state (`parse_materialize_scope_name`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 static yvex_materialize_scope parse_materialize_scope_name(const char *name) {
     if (!name)
         return YVEX_MATERIALIZE_SCOPE_UNKNOWN;
@@ -1052,11 +977,6 @@ enum {
     GATE_TENSOR_COMPLETE = (1u << 5u) - 1u
 };
 
-/* Purpose: Parse gate parse into typed CLI state (`gate_cli_parse`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int gate_cli_parse(int arg_count, char **args, gate_cli_kind kind,
                           gate_cli_request *request) {
     const char *surface = kind == GATE_CLI_MATERIALIZE ? "materialize-gate" : "model-gate";
@@ -1157,11 +1077,6 @@ static int gate_cli_parse(int arg_count, char **args, gate_cli_kind kind,
     return 0;
 }
 
-/* Purpose: Resolve and authenticate the artifact reference shared by both gate commands.
- * Inputs: Parsed request, gate kind, and caller-owned reference/result slots.
- * Effects: Opens one model reference and writes its admitted path, digest, and metadata status.
- * Failure: Emits the legacy typed refusal, clears partial reference state, and returns CLI status.
- * Boundary: Reference admission remains owned by registry and artifact identity APIs. */
 static int gate_ref_open(const gate_cli_request *request, gate_cli_kind kind, yvex_model_ref *ref,
                          const char **path, const char **sha256, const char **metadata_status,
                          yvex_error *err) {
@@ -1187,7 +1102,6 @@ static int gate_ref_open(const gate_cli_request *request, gate_cli_kind kind, yv
 static int gate_report_file(const char *path, gate_cli_kind kind, const void *options,
                             const void *summary, const char *reason);
 
-/* Purpose: Render one complete expected-tensor contract shared by both gates. */
 static void print_expected_tensor(FILE *fp, const char *name, unsigned int rank,
                                   const unsigned long long dims[4], const char *dtype,
                                   unsigned long long bytes) {
@@ -1200,11 +1114,6 @@ static void print_expected_tensor(FILE *fp, const char *name, unsigned int rank,
                         bytes);
 }
 
-/* Purpose: Render a materialization-gate result without reconstructing its decision.
- * Inputs: Immutable gate options, summary, and optional typed reason.
- * Effects: Writes the stable gate report to the caller-owned stream.
- * Failure: Stream failure does not mutate gate or artifact state.
- * Boundary: The domain gate remains the sole decision authority. */
 static void print_materialize_gate_report(FILE *fp, const yvex_materialize_gate_options *options,
                                           const yvex_materialize_gate_summary *summary,
                                           const char *reason) {
@@ -1230,11 +1139,7 @@ static void print_materialize_gate_report(FILE *fp, const yvex_materialize_gate_
                         reason && reason[0] ? reason : "materialization hardening gate");
     yvex_cli_out_writef(fp, "status: %s\n", yvex_materialize_gate_status_name(summary->status));
 }
-/* Purpose: Orchestrate the typed command materialize gate request (`command_materialize_gate`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 static int command_materialize_gate(int arg_count, char **args) {
     yvex_materialize_gate_options options;
     yvex_materialize_expected_tensor expected;
@@ -1304,7 +1209,7 @@ static int command_materialize_gate(int arg_count, char **args) {
     yvex_model_ref_clear(&model_ref);
     return report_rc != 0 ? report_rc : rc == YVEX_OK ? 0 : exit_for_status(rc);
 }
-/* Purpose: Render a model-gate result without reconstructing its decision. */
+
 static void print_model_gate_report(FILE *fp, const yvex_model_gate_options *options,
                                     const yvex_model_gate_summary *summary, const char *reason) {
     yvex_cli_out_writef(fp, "model gate: check\n");
@@ -1324,11 +1229,6 @@ static void print_model_gate_report(FILE *fp, const yvex_model_gate_options *opt
     yvex_cli_out_writef(fp, "status: %s\n", yvex_model_gate_status_name(summary->status));
 }
 
-/* Purpose: Publish an optional gate report through the renderer selected by its typed gate kind.
- * Inputs: Optional path, matching gate option/summary objects, and immutable failure reason.
- * Effects: Creates and closes only the requested report file after stdout rendering completes.
- * Failure: Preserves the legacy write refusal and returns process status 1.
- * Boundary: This adapter serializes existing typed facts and owns no gate decision. */
 static int gate_report_file(const char *path, gate_cli_kind kind, const void *options,
                             const void *summary, const char *reason) {
     FILE *fp;
@@ -1346,11 +1246,7 @@ static int gate_report_file(const char *path, gate_cli_kind kind, const void *op
     fclose(fp);
     return 0;
 }
-/* Purpose: Orchestrate the typed command model gate request (`command_model_gate`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 static int command_model_gate(int arg_count, char **args) {
     yvex_model_gate_options options;
     yvex_model_gate_expected_tensor expected;
@@ -1511,11 +1407,6 @@ static const yvex_render_field_spec integrity_audit_backend_fields[] = {
 #undef STATE_NESTED_FIELD
 #undef STATE_FIELD
 
-/* Purpose: Construct the owned integrity state init state (`integrity_cli_state_init`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void integrity_cli_state_init(integrity_cli_state *state) {
     memset(state, 0, sizeof(*state));
     state->identity_status = "unregistered";
@@ -1530,11 +1421,6 @@ static void integrity_cli_state_init(integrity_cli_state *state) {
     state->status = "integrity-report-pass";
 }
 
-/* Purpose: Parse integrity parse into typed CLI state (`integrity_cli_parse`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int integrity_cli_parse(int arg_count, char **args, integrity_cli_state *state) {
     integrity_cli_options parsed;
     int rc = integrity_options_parse(arg_count, args, 1, &parsed);
@@ -1547,11 +1433,6 @@ static int integrity_cli_parse(int arg_count, char **args, integrity_cli_state *
     return 0;
 }
 
-/* Purpose: Compute integrity metadata for its CLI invariant (`integrity_cli_metadata`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void integrity_cli_metadata(integrity_cli_state *state) {
     yvex_error metadata_err;
     state->model_input_kind = state->ref.kind == YVEX_MODEL_REF_ALIAS ? "alias" : "path";
@@ -1625,7 +1506,6 @@ static void integrity_cli_metadata(integrity_cli_state *state) {
     }
 }
 
-/* Purpose: Project the admitted selected embedding geometry into report state. */
 static void integrity_cli_selected_shape(integrity_cli_state *state) {
     if (state->integrity_report.selected_embedding_shape[0]) {
         state->selected_ready =
@@ -1643,11 +1523,6 @@ static void integrity_cli_selected_shape(integrity_cli_state *state) {
     }
 }
 
-/* Purpose: Compute integrity backend for its CLI invariant (`integrity_cli_backend`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void integrity_cli_backend(integrity_cli_state *state, yvex_error *err) {
     yvex_backend *backend = NULL;
     int rc;
@@ -1685,11 +1560,6 @@ static void integrity_cli_backend(integrity_cli_state *state, yvex_error *err) {
     }
 }
 
-/* Purpose: Render integrity render normal from typed facts (`integrity_cli_render_normal`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int integrity_cli_render_normal(integrity_cli_state *state) {
     const char *top_blocker = "none";
     if (state->hard_fail) {
@@ -1724,11 +1594,6 @@ static int integrity_cli_render_normal(integrity_cli_state *state) {
     return state->hard_fail ? exit_for_status(YVEX_ERR_STATE) : 0;
 }
 
-/* Purpose: Render integrity render audit from typed facts (`integrity_cli_render_audit`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int integrity_cli_render_audit(integrity_cli_state *state) {
     const yvex_artifact_integrity_report *report = &state->integrity_report;
     int i;
@@ -1775,11 +1640,7 @@ static int integrity_cli_render_audit(integrity_cli_state *state) {
                         state->report_status, state->status);
     return state->hard_fail ? exit_for_status(YVEX_ERR_STATE) : 0;
 }
-/* Purpose: Orchestrate the typed command integrity report request (`command_integrity_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 static int command_integrity_report(int arg_count, char **args) {
     integrity_cli_state state;
     yvex_error err;
@@ -1813,11 +1674,7 @@ static int command_integrity_report(int arg_count, char **args) {
     yvex_model_ref_clear(&state.ref);
     return rc;
 }
-/* Purpose: Orchestrate the typed command tensors request (`command_tensors`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 static int command_tensors(int arg_count, char **args) {
     artifact_view view;
     const yvex_gguf_header *header;
@@ -1879,115 +1736,59 @@ static int command_tensors(int arg_count, char **args) {
     artifact_view_close(&view);
     return 0;
 }
-/* Purpose: Orchestrate the typed inspect command request (`yvex_inspect_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 int yvex_inspect_command(int arg_count, char **args) {
     return command_inspect(arg_count, args);
 }
-/* Purpose: Orchestrate the typed integrity command request (`yvex_integrity_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 int yvex_integrity_command(int arg_count, char **args) {
     return command_integrity(arg_count, args);
 }
-/* Purpose: Orchestrate the typed materialize command request (`yvex_materialize_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 int yvex_materialize_command(int arg_count, char **args) {
     return command_materialize(arg_count, args);
 }
-/* Purpose: Orchestrate the typed materialize gate command request (`yvex_materialize_gate_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 int yvex_materialize_gate_command(int arg_count, char **args) {
     return command_materialize_gate(arg_count, args);
 }
-/* Purpose: Orchestrate the typed metadata command request (`yvex_metadata_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 int yvex_metadata_command(int arg_count, char **args) {
     return command_metadata(arg_count, args);
 }
-/* Purpose: Orchestrate the typed model gate command request (`yvex_model_gate_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 int yvex_model_gate_command(int arg_count, char **args) {
     return command_model_gate(arg_count, args);
 }
-/* Purpose: Orchestrate the typed tensors command request (`yvex_tensors_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 int yvex_tensors_command(int arg_count, char **args) {
     return command_tensors(arg_count, args);
 }
-/* Purpose: Render inspect help from typed facts (`yvex_inspect_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 void yvex_inspect_help(FILE *fp) {
     yvex_cli_out_fputs(inspect_help_text, fp);
 }
-/* Purpose: Render integrity help from typed facts (`yvex_integrity_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 void yvex_integrity_help(FILE *fp) {
     yvex_cli_out_fputs(integrity_help_text, fp);
 }
-/* Purpose: Render materialize help from typed facts (`yvex_materialize_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 void yvex_materialize_help(FILE *fp) {
     yvex_cli_out_fputs(materialize_help_text, fp);
 }
-/* Purpose: Render materialize gate help from typed facts (`yvex_materialize_gate_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 void yvex_materialize_gate_help(FILE *fp) {
     yvex_cli_out_fputs(materialize_gate_help_text, fp);
 }
-/* Purpose: Render metadata help from typed facts (`yvex_metadata_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 void yvex_metadata_help(FILE *fp) {
     yvex_cli_out_fputs(metadata_help_text, fp);
 }
-/* Purpose: Render model gate help from typed facts (`yvex_model_gate_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 void yvex_model_gate_help(FILE *fp) {
     yvex_cli_out_fputs(model_gate_help_text, fp);
 }
-/* Purpose: Render tensors help from typed facts (`yvex_tensors_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 void yvex_tensors_help(FILE *fp) {
     yvex_cli_out_fputs(tensors_help_text, fp);
 }

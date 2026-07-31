@@ -1,6 +1,4 @@
-/*
- * YVEX - conversion payload emit tests
- */
+
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>

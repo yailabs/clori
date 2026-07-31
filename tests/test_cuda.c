@@ -1,8 +1,4 @@
-/*
- * tests/test_cuda.c - CUDA YVEX test runner.
- *
- * This runner groups CUDA probe, tensor, kernel parity, and materialization coverage.
- */
+/* This runner groups CUDA probe, tensor, kernel parity, and materialization coverage. */
 
 #include "tests/test.h"
 
@@ -20,7 +16,6 @@ static int run_cuda_test(const char *name, int (*fn)(void))
     return rc;
 }
 
-/* Purpose: select one focused CUDA owner without changing the default complete runner. */
 static int cuda_test_selected(const char *filter, const char *name)
 {
     return !filter || filter[0] == '\0' || strcmp(filter, name) == 0;

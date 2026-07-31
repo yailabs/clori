@@ -1,12 +1,7 @@
-/* Owner: runtime.internal (runtime).
- * Owns: runtime descriptor contracts plus engine-owned artifact, backend, graph, tokenizer, and session state.
- * Does not own: artifact admission, graph policy, or generation claims.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: non-installed runtime descriptor and lifecycle ABI.
- * Purpose: provide the canonical cross-owner runtime descriptor and lifecycle contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * Runtime descriptors bind immutable model resources while execution sessions isolate mutable
+ * sequence state. This non-installed ABI keeps those lifetimes explicit across runtime consumers.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_RUNTIME_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_RUNTIME_H_INCLUDED
 #include <string.h>
@@ -25,7 +20,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Purpose: copy one canonical SHA-256 identity into its fixed-width runtime field. */
+/* Copy one canonical SHA-256 identity into its fixed-width runtime field. */
 static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_CAP],
                                               const char *source)
 {

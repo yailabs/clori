@@ -1,12 +1,9 @@
-/* Owner: source footprint scanning.
- * Owns: deterministic local directory walking and file-list summaries.
- * Does not own: source verification, manifest writing, artifacts, or runtime.
- * Invariants: scans metadata only and never reads model payload contents.
- * Boundary: footprint discovery does not create trust.
- * Purpose: build deterministic source footprint rows beneath one root.
- * Inputs: source root, bounded file-list storage, and caller summary.
- * Effects: reads directory entries and stat facts only.
- * Failure: path, allocation, traversal, or stat failure releases partial rows. */
+/*
+ * Build deterministic source footprint rows beneath one root.
+ *
+ * Scans metadata only and never reads model payload contents. Footprint discovery does not create
+ * trust.
+ */
 #define _XOPEN_SOURCE 700
 #include <ctype.h>
 #include <dirent.h>
@@ -18,7 +15,6 @@
 #include <unistd.h>
 #include <yvex/internal/source_payload.h>
 
-/* Purpose: publish one typed scan refusal without duplicating error-state transitions. */
 static int scan_refuse(yvex_error *err,
                        yvex_status status,
                        const char *where,
@@ -52,7 +48,6 @@ static const scan_kind_rule scan_kind_rules[] = {
     {".md", "metadata", SCAN_NAME_SUFFIX},
 };
 
-/* Purpose: apply one immutable lexical classification rule to a source basename. */
 static int scan_name_matches(const char *name, const scan_kind_rule *rule) {
     size_t index;
 
@@ -69,11 +64,6 @@ static int scan_name_matches(const char *name, const scan_kind_rule *rule) {
     return 1;
 }
 
-/* Purpose: project kind for path facts while preserving the canonical source footprint invariants.
- * Inputs: typed source footprint scanning arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source footprint scanning state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: footprint discovery does not create trust. */
 static const char *scan_kind_for_path(const char *rel_path) {
     const char *base = rel_path && rel_path[0] ? yvex_source_path_basename(rel_path) : "";
     size_t index;
@@ -86,11 +76,6 @@ static const char *scan_kind_for_path(const char *rel_path) {
     return "other";
 }
 
-/* Purpose: project append file facts while preserving the canonical source footprint invariants.
- * Inputs: typed source footprint scanning arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source footprint scanning state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: footprint discovery does not create trust. */
 static int scan_append_file(yvex_source_manifest_file_list *list,
                             const char *rel_path,
                             unsigned long long size_bytes,
@@ -140,7 +125,6 @@ static int scan_append_file(yvex_source_manifest_file_list *list,
     return YVEX_OK;
 }
 
-/* Purpose: define deterministic ordering for source footprint records. */
 static int scan_file_compare(const void *a, const void *b) {
     const yvex_source_manifest_file *fa = (const yvex_source_manifest_file *)a;
     const yvex_source_manifest_file *fb = (const yvex_source_manifest_file *)b;
@@ -148,11 +132,6 @@ static int scan_file_compare(const void *a, const void *b) {
     return strcmp(fa->path, fb->path);
 }
 
-/* Purpose: project dir facts while preserving the canonical source footprint invariants.
- * Inputs: typed source footprint scanning arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source footprint scanning state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: footprint discovery does not create trust. */
 static int scan_dir(const char *root,
                     const char *rel_dir,
                     int include_files,
@@ -251,11 +230,6 @@ static int scan_dir(const char *root,
     return rc;
 }
 
-/* Purpose: initialize source footprint state to its canonical empty or default value.
- * Inputs: typed source footprint scanning arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source footprint scanning state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: footprint discovery does not create trust. */
 void yvex_source_manifest_file_list_init(yvex_source_manifest_file_list *list) {
     if (!list) {
         return;
@@ -263,11 +237,11 @@ void yvex_source_manifest_file_list_init(yvex_source_manifest_file_list *list) {
     memset(list, 0, sizeof(*list));
 }
 
-/* Purpose: release resources owned by one source footprint object and clear its observable state.
- * Inputs: typed source footprint scanning arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source footprint scanning; cleanup remains deterministic.
- * Failure: null or released source footprint scanning handles remain harmless.
- * Boundary: footprint discovery does not create trust. */
+/*
+ * Release resources owned by one source footprint object and clear its observable state.
+ *
+ * Releases only resources owned by source footprint scanning; cleanup remains deterministic.
+ */
 void yvex_source_manifest_file_list_free(yvex_source_manifest_file_list *list) {
     size_t i;
 
@@ -281,11 +255,7 @@ void yvex_source_manifest_file_list_free(yvex_source_manifest_file_list *list) {
     memset(list, 0, sizeof(*list));
 }
 
-/* Purpose: enumerate deterministic source footprint rows beneath one admitted root.
- * Inputs: typed source footprint scanning arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source footprint scanning state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: footprint discovery does not create trust. */
+/* Enumerate deterministic source footprint rows beneath one admitted root. */
 int yvex_source_manifest_scan_files(const char *local_path,
                                     int include_files,
                                     yvex_source_manifest_file_list *out,

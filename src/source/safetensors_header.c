@@ -1,12 +1,9 @@
-/* Owner: source safetensors header parsing.
- * Owns: bounded header-length and tensor metadata parsing.
- * Does not own: payload loading, source admission, role mapping, or runtime.
- * Invariants: declared shapes and offsets are checked against file payload size.
- * Boundary: header parsing does not prove source completeness.
- * Purpose: parse safetensors headers into checked tensor metadata.
- * Inputs: one shard or in-memory header, payload size, and caller rows.
- * Effects: reads the fixed prefix and JSON header only.
- * Failure: truncation, JSON, shape, offset, overflow, or allocation refuses. */
+/*
+ * Parse safetensors headers into checked tensor metadata.
+ *
+ * Declared shapes and offsets are checked against file payload size. Header parsing does not prove
+ * source completeness.
+ */
 #define _GNU_SOURCE
 #include <fcntl.h>
 #include <stdio.h>
@@ -23,7 +20,6 @@ static int safetensors_parse_header(const char *json,
                                     yvex_native_weight_table *table,
                                     yvex_error *err);
 
-/* Purpose: publish one typed header refusal without duplicating error-state transitions. */
 static int header_refuse(yvex_error *err,
                          yvex_status status,
                          const char *where,
@@ -32,7 +28,6 @@ static int header_refuse(yvex_error *err,
     return status;
 }
 
-/* Purpose: project le64 facts while preserving the canonical safetensors metadata invariants. */
 static unsigned long long st_le64(const unsigned char b[8]) {
     return ((unsigned long long)b[0]) | ((unsigned long long)b[1] << 8) |
            ((unsigned long long)b[2] << 16) | ((unsigned long long)b[3] << 24) |
@@ -40,11 +35,6 @@ static unsigned long long st_le64(const unsigned char b[8]) {
            ((unsigned long long)b[6] << 48) | ((unsigned long long)b[7] << 56);
 }
 
-/* Purpose: reads exactly one bounded header and returns immutable file geometry facts.
- * Inputs: typed safetensors header parsing arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned safetensors header parsing state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: header parsing does not prove source completeness. */
 int yvex_safetensors_read_header_file_with_facts(const char *abs_path,
                                                  const char *shard_path,
                                                  yvex_native_weight_table *table,
@@ -146,11 +136,6 @@ int yvex_safetensors_read_header_file_with_facts(const char *abs_path,
     return rc;
 }
 
-/* Purpose: preserves the legacy header-only ABI while discarding returned geometry.
- * Inputs: typed safetensors header parsing arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned safetensors header parsing state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: header parsing does not prove source completeness. */
 int yvex_safetensors_read_header_file(const char *abs_path,
                                       const char *shard_path,
                                       yvex_native_weight_table *table,
@@ -160,13 +145,11 @@ int yvex_safetensors_read_header_file(const char *abs_path,
     return yvex_safetensors_read_header_file_with_facts(abs_path, shard_path, table, &facts, err);
 }
 
-/* Purpose: publish a format refusal that preserves the offending shard identity. */
 static int safetensors_json_refuse(yvex_error *err, const char *shard, const char *message) {
     yvex_error_setf(err, YVEX_ERR_FORMAT, "safetensors_json", "%s in %s", message, shard);
     return YVEX_ERR_FORMAT;
 }
 
-/* Purpose: consume one exact structural delimiter after insignificant whitespace. */
 static int safetensors_json_expect(yvex_json *json, char token) {
     yvex_json_space(json);
     if (json->cursor >= json->end || *json->cursor != token)
@@ -175,11 +158,6 @@ static int safetensors_json_expect(yvex_json *json, char token) {
     return 1;
 }
 
-/* Purpose: parse a possibly empty tensor shape without exceeding the native rank limit.
- * Inputs: mutable bounded JSON cursor, fixed dimension storage, and rank output.
- * Effects: advances the cursor and replaces rank only after a complete array.
- * Failure: malformed, oversized, or truncated arrays return false.
- * Boundary: syntax parsing does not admit tensor geometry. */
 static int safetensors_shape(yvex_json *json,
                              unsigned long long dims[YVEX_NATIVE_WEIGHT_MAX_DIMS],
                              unsigned int *rank) {
@@ -209,7 +187,6 @@ static int safetensors_shape(yvex_json *json,
     return 0;
 }
 
-/* Purpose: parse exactly two ordered tensor data offsets. */
 static int safetensors_offsets(yvex_json *json,
                                unsigned long long *start,
                                unsigned long long *end) {
@@ -218,11 +195,11 @@ static int safetensors_offsets(yvex_json *json,
            safetensors_json_expect(json, ']') && *start <= *end;
 }
 
-/* Purpose: parse one tensor object and append it only after all required facts are valid.
- * Inputs: bounded JSON cursor, tensor and shard identities, payload size, and table.
- * Effects: advances the cursor and appends one fully validated tensor row.
- * Failure: malformed fields, invalid geometry, or allocation returns typed refusal.
- * Boundary: parsed metadata does not read or trust payload bytes. */
+/*
+ * Parse one tensor object and append it only after all required facts are valid.
+ *
+ * Bounded JSON cursor, tensor and shard identities, payload size, and table.
+ */
 static int safetensors_tensor(yvex_json *json,
                               const char *name,
                               unsigned long long payload_bytes,
@@ -269,11 +246,6 @@ static int safetensors_tensor(yvex_json *json,
     return valid;
 }
 
-/* Purpose: parse safetensors header JSON into native tensor metadata records.
- * Inputs: typed safetensors header parsing arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned safetensors header parsing state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: header parsing does not prove source completeness. */
 static int safetensors_parse_header(const char *json,
                                     unsigned long long payload_bytes,
                                     const char *shard_path,

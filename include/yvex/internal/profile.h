@@ -1,12 +1,9 @@
-/* Owner: runtime execution profiling.
- * Owns: versioned identity-bound stage timings, movement counters, and profile validation.
- * Does not own: benchmark admission, CUDA event creation, runtime execution, CLI rendering, or files.
- * Invariants: every counter is checked, every duration is monotonic, and identities are field-wise sealed.
- * Boundary: internal typed evidence shared by runtime, backend aggregation, operator, and tests.
- * Purpose: represent production-adjacent startup, prefill, decode, and generation measurements.
- * Inputs: admitted runtime identities, profiling mode, measured durations, and authoritative counters.
- * Effects: mutates only caller-owned records and seals one deterministic evidence identity.
- * Failure: invalid schema, identity, timing, or overflow leaves the record unsealed. */
+/*
+ * Represent production-adjacent startup, prefill, decode, and generation measurements.
+ *
+ * Every counter is checked, every duration is monotonic, and identities are field-wise sealed.
+ * Internal typed evidence shared by runtime, backend aggregation, operator, and tests.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_PROFILE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_PROFILE_H_INCLUDED
 #include <limits.h>
@@ -66,20 +63,20 @@ typedef struct {
     char execution_plan_identity[YVEX_SHA256_HEX_BYTES], workload_identity[YVEX_SHA256_HEX_BYTES];
     char profile_identity[YVEX_SHA256_HEX_BYTES];
 } yvex_runtime_profile_record;
-/* Purpose: publish one stable profile refusal without exporting a helper symbol. */
+/* Publish one stable profile refusal without exporting a helper symbol. */
 static inline int runtime_profile_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "runtime.profile", reason);
     return status;
 }
-/* Purpose: copy one exact SHA-256 identity into a profile record. */
+/* Copy one exact SHA-256 identity into a profile record. */
 static inline int runtime_profile_identity_copy(char output[YVEX_SHA256_HEX_BYTES], const char *input)
 {
     if (!output || !yvex_sha256_hex_valid(input)) return 0;
     yvex_core_text_copy(output, YVEX_SHA256_HEX_BYTES, input);
     return 1;
 }
-/* Purpose: derive the canonical field-wise identity of one complete profile. */
+/* Derive the canonical field-wise identity of one complete profile. */
 static inline int runtime_profile_identity(const yvex_runtime_profile_record *record,
                                            char output[YVEX_SHA256_HEX_BYTES])
 {
@@ -110,7 +107,7 @@ static inline int runtime_profile_identity(const yvex_runtime_profile_record *re
     yvex_sha256_hex(digest, output);
     return 1;
 }
-/* Purpose: initialize one identity-bound mutable profile record. */
+/* Initialize one identity-bound mutable profile record. */
 static inline int runtime_profile_begin(yvex_runtime_profile_record *record,
                                         yvex_runtime_profile_mode mode,
                                         yvex_runtime_profile_scope scope, unsigned int backend,
@@ -148,7 +145,7 @@ static inline int runtime_profile_begin(yvex_runtime_profile_record *record,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: add one authoritative checked counter to a mutable profile. */
+/* Add one authoritative checked counter to a mutable profile. */
 static inline int runtime_profile_counter_add(yvex_runtime_profile_record *record,
     yvex_runtime_profile_counter counter, unsigned long long value, yvex_error *err)
 {
@@ -162,7 +159,7 @@ static inline int runtime_profile_counter_add(yvex_runtime_profile_record *recor
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: add one device-complete or host-complete measured stage duration. */
+/* Add one device-complete or host-complete measured stage duration. */
 static inline int runtime_profile_phase_add(yvex_runtime_profile_record *record,
     yvex_runtime_profile_phase phase, unsigned long long elapsed_ns, yvex_error *err)
 {
@@ -179,7 +176,7 @@ static inline int runtime_profile_phase_add(yvex_runtime_profile_record *record,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: seal one completed record after its monotonic outer boundary. */
+/* Seal one completed record after its monotonic outer boundary. */
 static inline int runtime_profile_finish(yvex_runtime_profile_record *record, yvex_error *err)
 {
     if (!record || record->schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V1 || record->sealed)
@@ -195,7 +192,7 @@ static inline int runtime_profile_finish(yvex_runtime_profile_record *record, yv
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: validate schema, monotonic bounds, identities, and canonical profile identity. */
+/* Validate schema, monotonic bounds, identities, and canonical profile identity. */
 static inline int runtime_profile_validate(const yvex_runtime_profile_record *record,
                                            yvex_error *err)
 {
@@ -217,19 +214,19 @@ static inline int runtime_profile_validate(const yvex_runtime_profile_record *re
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: return one stable profile-mode vocabulary item. */
+/* Return one stable profile-mode vocabulary item. */
 static inline const char *runtime_profile_mode_name(yvex_runtime_profile_mode mode)
 {
     static const char *const names[] = {"off", "summary", "stages", "detailed"};
     return mode <= YVEX_RUNTIME_PROFILE_DETAILED ? names[mode] : "invalid";
 }
-/* Purpose: return one stable profile-scope vocabulary item. */
+/* Return one stable profile-scope vocabulary item. */
 static inline const char *runtime_profile_scope_name(yvex_runtime_profile_scope scope)
 {
     static const char *const names[] = {"startup", "prefill", "decode", "generation"};
     return scope <= YVEX_RUNTIME_PROFILE_GENERATION ? names[scope] : "invalid";
 }
-/* Purpose: return one stable profile-phase vocabulary item. */
+/* Return one stable profile-phase vocabulary item. */
 static inline const char *runtime_profile_phase_name(yvex_runtime_profile_phase phase)
 {
     static const char *const names[] = {"queue", "tokenizer", "prompt_rendering", "embedding", "attention",
@@ -239,7 +236,7 @@ static inline const char *runtime_profile_phase_name(yvex_runtime_profile_phase 
         "provider_publication", "total_prefill", "first_decode", "subsequent_decode", "total_generation"};
     return phase < YVEX_RUNTIME_PROFILE_PHASE_COUNT ? names[phase] : "invalid";
 }
-/* Purpose: return one stable profile-counter vocabulary item. */
+/* Return one stable profile-counter vocabulary item. */
 static inline const char *runtime_profile_counter_name(yvex_runtime_profile_counter counter)
 {
     static const char *const names[] = {"host_payload_reads", "mapped_bytes_touched",

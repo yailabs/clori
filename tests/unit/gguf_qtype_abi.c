@@ -1,9 +1,6 @@
 /*
- * YVEX - canonical row-aware GGUF qtype ABI tests
- *
- * This test pins identity and storage geometry to ggml commit
- * af97976c7810cdabb1863172f31c432dab767de7. It proves storage facts only;
- * quantization, dequantization, emission, compute, and runtime remain separate.
+ * It proves storage facts only; quantization, dequantization, emission, compute, and runtime
+ * remain separate.
  */
 #include <limits.h>
 #include <stdio.h>

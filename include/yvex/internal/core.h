@@ -1,13 +1,7 @@
-/* Owner: core.internal (core).
- * Owns: checked scalar/string helpers, bounded JSON, canonical SHA-256 fields, deterministic index hashing, and
- *   shard indexing.
- * Does not own: domain policy, rendering, or subsystem lifecycle.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: cross-subsystem core algorithms and operator projections.
- * Purpose: provide the canonical cross-subsystem core algorithms and operator projections contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * Cross-subsystem leaf mechanisms live here: checked arithmetic, hashing, bounded JSON, paths,
+ * and deterministic indexes. Consumers assign domain meaning to their results.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_CORE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_CORE_H_INCLUDED
 
@@ -22,7 +16,7 @@
 extern "C" {
 #endif
 
-/* Json contract. */
+/* Bounded JSON parsing. */
 #define YVEX_JSON_KEY_CAP 1024u
 typedef struct {
     const char *cursor;
@@ -83,7 +77,7 @@ int yvex_json_u64_array(yvex_json *json,
                         size_t cap,
                         unsigned long long *count);
 
-/* Sha256 contract. */
+/* SHA-256 and identity encodings. */
 #define YVEX_SHA256_DIGEST_BYTES 32u
 #define YVEX_SHA256_HEX_BYTES 65u
 typedef struct {
@@ -103,7 +97,7 @@ int yvex_sha256_hex_valid(const char *text);
 int yvex_sha256_update_u64(yvex_sha256 *context, unsigned long long value);
 int yvex_sha256_update_text(yvex_sha256 *context, const char *text);
 
-/* Purpose: append one integer through the retained big-endian identity encoding. */
+/* Append one integer through the retained big-endian identity encoding. */
 static inline int yvex_sha256_update_u64_be(yvex_sha256 *context,
                                              unsigned long long value)
 {
@@ -133,22 +127,22 @@ void yvex_core_allocation_epoch_snapshot(yvex_core_allocation_epoch *out);
 void *yvex_core_allocate(yvex_core_allocation_operation operation,
                          void *pointer, size_t count, size_t size);
 
-/* Purpose: route malloc through the single observed core allocation ABI. */
+/* Route malloc through the single observed core allocation ABI. */
 static inline void *yvex_core_malloc(size_t size)
 {
     return yvex_core_allocate(YVEX_CORE_ALLOCATE_MALLOC, NULL, 1u, size);
 }
-/* Purpose: route calloc through the single observed core allocation ABI. */
+/* Route calloc through the single observed core allocation ABI. */
 static inline void *yvex_core_calloc(size_t count, size_t size)
 {
     return yvex_core_allocate(YVEX_CORE_ALLOCATE_CALLOC, NULL, count, size);
 }
-/* Purpose: route realloc through the single observed core allocation ABI. */
+/* Route realloc through the single observed core allocation ABI. */
 static inline void *yvex_core_realloc(void *pointer, size_t size)
 {
     return yvex_core_allocate(YVEX_CORE_ALLOCATE_REALLOC, pointer, 1u, size);
 }
-/* Purpose: route free through the single observed core allocation ABI. */
+/* Route free through the single observed core allocation ABI. */
 static inline void yvex_core_free(void *pointer)
 {
     (void)yvex_core_allocate(YVEX_CORE_ALLOCATE_FREE, pointer, 0u, 0u);
@@ -193,11 +187,11 @@ typedef struct {
     size_t initial_capacity;
 } yvex_core_bytes;
 
-/* Purpose: reserve one bounded byte arena without exposing partial growth.
- * Inputs: initialized arena and requested additional byte count.
- * Effects: may replace only arena-owned storage and capacity.
- * Failure: overflow, budget, or allocation failure preserves count and content.
- * Boundary: growth never interprets serialized domain values. */
+/*
+ * Reserve one bounded byte arena without exposing partial growth.
+ *
+ * Overflow, budget, or allocation failure preserves count and content.
+ */
 static inline int yvex_core_bytes_reserve(yvex_core_bytes *bytes,
                                           size_t additional)
 {
@@ -226,11 +220,7 @@ static inline int yvex_core_bytes_reserve(yvex_core_bytes *bytes,
     return 1;
 }
 
-/* Purpose: append one exact borrowed span without advancing count on failure.
- * Inputs: initialized arena and a span whose pointer may be null only when empty.
- * Effects: copies bytes and advances count after reserve succeeds.
- * Failure: invalid input, bounds, or allocation failure preserves logical content.
- * Boundary: callers retain field encoding and serialization order. */
+/* Append one exact borrowed span without advancing count on failure. */
 static inline int yvex_core_bytes_append(yvex_core_bytes *bytes,
                                          const void *data,
                                          size_t count)
@@ -241,11 +231,11 @@ static inline int yvex_core_bytes_append(yvex_core_bytes *bytes,
     return 1;
 }
 
-/* Purpose: append canonical zero bytes without advancing count on failure.
- * Inputs: initialized arena and exact padding count.
- * Effects: zeroes and advances one newly reserved span.
- * Failure: bounds or allocation failure preserves logical content.
- * Boundary: callers retain padding geometry and meaning. */
+/*
+ * Append canonical zero bytes without advancing count on failure.
+ *
+ * Initialized arena and exact padding count. Callers retain padding geometry and meaning.
+ */
 static inline int yvex_core_bytes_append_zero(yvex_core_bytes *bytes,
                                               size_t count)
 {
@@ -255,7 +245,7 @@ static inline int yvex_core_bytes_append_zero(yvex_core_bytes *bytes,
     return 1;
 }
 
-/* Purpose: mix one borrowed byte range into a non-authoritative FNV-1a index hash. */
+/* Mix one borrowed byte range into a non-authoritative FNV-1a index hash. */
 static inline unsigned long long yvex_core_hash_mix_bytes(unsigned long long hash,
                                                           const void *data,
                                                           size_t length)
@@ -271,7 +261,7 @@ static inline unsigned long long yvex_core_hash_mix_bytes(unsigned long long has
     return hash;
 }
 
-/* Purpose: mix one unsigned integer through its canonical little-endian bytes. */
+/* Mix one unsigned integer through its canonical little-endian bytes. */
 static inline unsigned long long yvex_core_hash_mix_u64(unsigned long long hash,
                                                         unsigned long long value)
 {
@@ -283,7 +273,7 @@ static inline unsigned long long yvex_core_hash_mix_u64(unsigned long long hash,
     return yvex_core_hash_mix_bytes(hash, bytes, sizeof(bytes));
 }
 
-/* Purpose: derive one nonzero deterministic process-local index hash. */
+/* Derive one nonzero deterministic process-local index hash. */
 static inline unsigned long long yvex_core_index_hash(const char *text)
 {
     const char *key = text ? text : "";
@@ -300,7 +290,7 @@ int yvex_core_u64_mul(unsigned long long left,
                       unsigned long long *out);
 void yvex_core_text_copy(char *destination, size_t capacity, const char *source);
 
-/* Purpose: derive a checked power-of-two capacity for one bounded load ratio. */
+/* Derive a checked power-of-two capacity for one bounded load ratio. */
 static inline int yvex_core_power_of_two_capacity(unsigned long long count,
                                                    unsigned long long minimum,
                                                    unsigned long long load_numerator,
@@ -377,7 +367,7 @@ int yvex_core_file_read_snapshot(const char *path, size_t maximum_bytes,
                                  unsigned char **data, size_t *count,
                                  yvex_core_file_result *result, yvex_error *err);
 
-/* Shard Index contract. */
+/* Deterministic shard indexes. */
 typedef enum {
     YVEX_SHARD_INDEX_OK = 0,
     YVEX_SHARD_INDEX_INVALID,

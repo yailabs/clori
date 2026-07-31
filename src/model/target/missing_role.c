@@ -1,15 +1,10 @@
-/* Owner: src/model/target
- * Owns: missing runtime-role blocker facts and missing-role report construction.
- * Does not own: CLI parsing, rendering, artifact emission, quantization, runtime execution, generation, eval,
- *   benchmark, or release decisions.
- * Invariants: missing-role reports describe coverage blockers only and never promote a lexical tensor map to
- *   runtime readiness.
- * Boundary: missing-role reporting is not tensor materialization, runtime support, generation readiness, benchmark
- *   evidence, or release readiness.
- * Purpose: project missing-role accounting and blockers from canonical facts.
- * Inputs: typed target requests and bounded role evidence.
- * Effects: mutates report state and optional sidecar output only.
- * Failure: invalid or incomplete role evidence remains a typed blocker. */
+/*
+ * Project missing-role accounting and blockers from canonical facts.
+ *
+ * Missing-role reports describe coverage blockers only and never promote a lexical tensor map to
+ * runtime readiness. Missing-role reporting is not tensor materialization, runtime support,
+ * generation readiness, benchmark evidence, or release readiness.
+ */
 #include <yvex/internal/model_target.h>
 
 #include <yvex/internal/source.h>
@@ -231,7 +226,6 @@ static const missing_role_dynamic_facts missing_dynamic_tensor_incomplete = {
     NULL, "incomplete-tensor-map", "V010.MAP.8", "blocked", NULL, NULL, NULL
 };
 
-/* Purpose: form the bounded canonical missing role sidecar path without path drift. */
 static void missing_role_sidecar_path(const yvex_model_target_request *request,
                                       const char *family,
                                       const char *suffix,
@@ -249,26 +243,6 @@ static void missing_role_sidecar_path(const yvex_model_target_request *request,
     }
 }
 
-/*
- * missing_role_build_state()
- *
- * Purpose:
- *   gather bounded local source/header and sidecar facts for missing-role
- *   reports.
- *
- * Inputs:
- *   request/family are borrowed; state is mutated.
- *
- * Effects:
- *   reads small metadata files and safetensors headers only; tensor payload
- *   bytes are never loaded.
- *
- * Failure:
- *   missing files become missing facts in the report instead of hard failures.
- *
- * Boundary:
- *   source/header facts do not prove artifact emission, runtime execution, or
- *   generation support. */
 static void missing_role_build_state(const yvex_model_target_request *request,
                                      const char *family,
                                      missing_role_state *state)
@@ -303,11 +277,11 @@ static void missing_role_build_state(const yvex_model_target_request *request,
         strstr(buf, "tied-output-head-report-only") != NULL;
 }
 
-/* Purpose: derive the single source-role view shared by normal and audit reports.
- * Inputs: family/state/target are borrowed immutable evidence.
- * Effects: returns a value-only projection and performs no I/O or publication.
- * Failure: absent evidence remains represented by deterministic missing fields.
- * Boundary: lexical role evidence never becomes runtime or artifact admission. */
+/*
+ * Derive the single source-role view shared by normal and audit reports.
+ *
+ * Absent evidence remains represented by deterministic missing fields.
+ */
 static missing_role_source_facts missing_role_source_view(
     const char *family,
     const missing_role_state *state,
@@ -335,11 +309,6 @@ static missing_role_source_facts missing_role_source_view(
     return facts;
 }
 
-/* Purpose: derive one dynamic sidecar-role view for every output mode.
- * Inputs: request/family/state/report are borrowed immutable evidence.
- * Effects: formats bounded evidence paths into value-owned storage only.
- * Failure: missing sidecars stay explicit and no filesystem state is changed.
- * Boundary: sidecar presence is diagnostic evidence, not artifact admission. */
 static missing_role_dynamic_facts missing_role_dynamic_view(
     const yvex_model_target_request *request,
     const char *family,
@@ -375,23 +344,6 @@ static missing_role_dynamic_facts missing_role_dynamic_view(
     return facts;
 }
 
-/*
- * missing_role_rows()
- *
- * Purpose:
- *   select the static missing-role facts for the requested source family.
- *
- * Inputs:
- *   family is borrowed and may be empty; count receives the row count.
- *
- * Effects:
- *   returns a borrowed static table; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   none.
- *
- * Boundary:
- *   lexical role coverage is not runtime role materialization. */
 static const missing_role_fact *missing_role_rows(const char *family,
                                                  unsigned long *count)
 {
@@ -407,23 +359,6 @@ static const missing_role_fact *missing_role_rows(const char *family,
     return qwen_missing_roles;
 }
 
-/*
- * missing_role_prepare()
- *
- * Purpose:
- *   initialize common typed report fields for missing-role reports.
- *
- * Inputs:
- *   request and report are borrowed.
- *
- * Effects:
- *   mutates report fields only; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   none.
- *
- * Boundary:
- *   status fields remain report-only and do not imply generation readiness. */
 static void missing_role_prepare(const yvex_model_target_request *request,
                                  yvex_model_target_report *report)
 {
@@ -441,23 +376,6 @@ static void missing_role_prepare(const yvex_model_target_request *request,
     yvex_model_target_report_prepare(report, request, &profile);
 }
 
-/*
- * missing_role_validate()
- *
- * Purpose:
- *   reject unsupported request shapes before report rows are built.
- *
- * Inputs:
- *   request and report are borrowed.
- *
- * Effects:
- *   may append an operator error row and set report exit_code; no printing.
- *
- * Failure:
- *   returns 0 for supported requests and 1 for typed report refusal.
- *
- * Boundary:
- *   target refusal is report evidence, not source or runtime verification. */
 static int missing_role_validate(const yvex_model_target_request *request,
                                  yvex_model_target_report *report)
 {
@@ -490,7 +408,6 @@ static int missing_role_validate(const yvex_model_target_request *request,
     return 0;
 }
 
-/* Purpose: project missing role render source table from typed facts without capability drift. */
 static void missing_role_render_source_table(const char *family,
                                              yvex_model_target_report *report)
 {
@@ -504,11 +421,6 @@ static void missing_role_render_source_table(const char *family,
         family, report->target_id);
 }
 
-/* Purpose: project missing role render dynamic table from typed facts without capability drift.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void missing_role_render_dynamic_table(const missing_role_dynamic_facts *facts,
                                               yvex_model_target_report *report)
 {
@@ -520,23 +432,6 @@ static void missing_role_render_dynamic_table(const missing_role_dynamic_facts *
                                      facts->tokenizer, "missing", facts->next);
 }
 
-/*
- * missing_role_render_audit_facts()
- *
- * Purpose:
- *   populate typed audit rows for missing-role coverage output.
- *
- * Inputs:
- *   family is borrowed; report is mutated.
- *
- * Effects:
- *   appends bounded audit rows only; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   row-cap exhaustion silently truncates through the shared row helper.
- *
- * Boundary:
- *   audit rows do not prove runtime execution or artifact readiness. */
 static void missing_role_render_audit_facts(const char *family,
                                            const missing_role_state *state,
                                            yvex_model_target_report *report)
@@ -588,11 +483,6 @@ static void missing_role_render_audit_facts(const char *family,
     yvex_model_target_report_common_tail(report);
 }
 
-/* Purpose: project missing role render source audit from typed facts without capability drift.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void missing_role_render_source_audit(const missing_role_source_facts *facts,
                                              yvex_model_target_report *report)
 {
@@ -613,11 +503,6 @@ static void missing_role_render_source_audit(const missing_role_source_facts *fa
     yvex_model_target_report_common_tail(report);
 }
 
-/* Purpose: project missing role render dynamic audit from typed facts without capability drift.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void missing_role_render_dynamic_audit(const missing_role_dynamic_facts *facts,
                                               const missing_role_state *state,
                                               yvex_model_target_report *report)
@@ -635,26 +520,6 @@ static void missing_role_render_dynamic_audit(const missing_role_dynamic_facts *
         facts);
 }
 
-/*
- * yvex_missing_role_report_build()
- *
- * Purpose:
- *   build a typed missing-role blocker report.
- *
- * Inputs:
- *   request is borrowed; report receives typed rows; err receives invalid
- *   argument failures.
- *
- * Effects:
- *   mutates report only; it does not parse CLI arguments, write output,
- *   inspect tensor payloads, or emit artifacts.
- *
- * Failure:
- *   returns invalid-arg for impossible command routing; typed unsupported
- *   targets are reported with exit_code 2.
- *
- * Boundary:
- *   missing-role reporting is not runtime support or generation readiness. */
 int yvex_missing_role_report_build(const yvex_model_target_request *request,
                                    yvex_model_target_report *report,
                                    yvex_error *err)

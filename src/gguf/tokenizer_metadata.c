@@ -1,15 +1,9 @@
-/* Owner: gguf.artifact tokenizer metadata (TRACK.ARTIFACT).
- * Owns: bounded JSON decoding, ID-indexed token material, BPE merges, special token policy, raw sidecar retention,
- *   digest facts, and deterministic cleanup.
- * Does not own: source path admission, architecture facts, tokenizer runtime, GGUF byte serialization, artifact
- *   files, reporting, or generation.
- * Invariants: JSON depth is capped, decoded strings share one owned arena, every expected token ID is present once,
- *   and provider identities revalidate.
- * Boundary: this module exposes immutable artifact metadata only.
- * Purpose: construct deterministic GGUF tokenizer metadata from verified JSON sidecars.
- * Inputs: bounded tokenizer/config JSON blobs and explicit allocator/lifecycle options.
- * Effects: owns decoded strings, merge/added-token indexes, raw blobs, and identity summaries.
- * Failure: malformed Unicode, duplicate/conflicting entries, bounds, or allocation refuse safely. */
+/*
+ * Construct deterministic GGUF tokenizer metadata from verified JSON sidecars.
+ *
+ * JSON depth is capped, decoded strings share one owned arena, every expected token ID is present
+ * once, and provider identities revalidate. This module exposes immutable artifact metadata only.
+ */
 #include <ctype.h>
 #include <limits.h>
 #include <stdint.h>
@@ -62,11 +56,6 @@ struct yvex_gguf_tokenizer_metadata {
     tokenizer_string_ref config_pad;
 };
 
-/* Purpose: publish one tokenizer-metadata refusal with stable status and location facts.
- * Inputs: optional diagnostics, code, field, index, expected/actual values, and reason.
- * Effects: replaces supplied failure and error records without modifying tokenizer ownership.
- * Failure: always returns the supplied tokenizer status.
- * Boundary: diagnostics never publish partially parsed metadata. */
 static int tokenizer_fail(yvex_gguf_tokenizer_failure *failure, yvex_gguf_tokenizer_code code,
                           const char *field, unsigned long long index, unsigned long long expected,
                           unsigned long long actual, yvex_error *err, yvex_status status,
@@ -84,18 +73,11 @@ static int tokenizer_fail(yvex_gguf_tokenizer_failure *failure, yvex_gguf_tokeni
     return status;
 }
 
-/* Purpose: advance a bounded JSON cursor across insignificant ASCII whitespace. */
 static void tokenizer_json_space(tokenizer_json *json) {
     while (json->cursor < json->end && isspace((unsigned char)*json->cursor))
         json->cursor++;
 }
 
-/* Captures one validated JSON string's raw body without allocating. */
-/* Purpose: locate one complete JSON string while preserving its raw escaped span.
- * Inputs: mutable bounded cursor and writable begin/end outputs.
- * Effects: advances beyond the closing quote on success.
- * Failure: malformed escapes, controls, or truncation return false.
- * Boundary: lexical scanning performs no Unicode decoding or allocation. */
 static int tokenizer_json_string_raw(tokenizer_json *json, const unsigned char **begin,
                                      const unsigned char **end) {
     const unsigned char *start;
@@ -132,7 +114,6 @@ static int tokenizer_json_string_raw(tokenizer_json *json, const unsigned char *
     return 0;
 }
 
-/* Purpose: decode exactly four hexadecimal JSON escape digits into one Unicode code unit. */
 static int tokenizer_hex4(const unsigned char *text, uint32_t *value) {
     uint32_t result = 0u;
     unsigned int index;
@@ -154,16 +135,10 @@ static int tokenizer_hex4(const unsigned char *text, uint32_t *value) {
     return 1;
 }
 
-/* Purpose: append one byte to the checked tokenizer arena. */
 static int tokenizer_arena_byte(tokenizer_arena *arena, unsigned char byte) {
     return yvex_core_bytes_append(arena, &byte, 1u);
 }
 
-/* Purpose: append one valid Unicode scalar as canonical UTF-8 bytes.
- * Inputs: tokenizer arena and Unicode scalar value.
- * Effects: grows and appends one to four bytes.
- * Failure: invalid scalar or allocation refusal returns false.
- * Boundary: UTF-8 emission never normalizes token content. */
 static int tokenizer_arena_utf8(tokenizer_arena *arena, uint32_t point) {
     if (point <= 0x7fu)
         return tokenizer_arena_byte(arena, (unsigned char)point);
@@ -182,12 +157,6 @@ static int tokenizer_arena_utf8(tokenizer_arena *arena, uint32_t point) {
     return 0;
 }
 
-/* Decodes one raw JSON string into the shared arena with surrogate handling. */
-/* Purpose: decode one raw JSON string span into stable tokenizer-owned UTF-8 storage.
- * Inputs: arena, escaped source span, and writable reference.
- * Effects: appends decoded bytes plus terminator and publishes the resulting arena slice.
- * Failure: malformed escapes/surrogates, controls, or allocation publish no reference.
- * Boundary: decoding preserves exact token text without tokenizer policy inference. */
 static int tokenizer_decode_string(tokenizer_arena *arena, const unsigned char *begin,
                                    const unsigned char *end, tokenizer_string_ref *out) {
     const unsigned char *cursor = begin;
@@ -253,11 +222,6 @@ static int tokenizer_decode_string(tokenizer_arena *arena, const unsigned char *
     return 1;
 }
 
-/* Purpose: parse one JSON object key into bounded caller-owned text.
- * Inputs: mutable cursor, output buffer, and capacity.
- * Effects: advances through the decoded key and required colon.
- * Failure: malformed strings, escapes, capacity, or missing colon return false.
- * Boundary: key parsing does not interpret the associated value. */
 static int tokenizer_string_key(tokenizer_json *json, char *out, size_t capacity) {
     const unsigned char *begin;
     const unsigned char *end;
@@ -281,7 +245,6 @@ static int tokenizer_string_key(tokenizer_json *json, char *out, size_t capacity
     return ok;
 }
 
-/* Purpose: consume one exact JSON literal after whitespace. */
 static int tokenizer_json_literal(tokenizer_json *json, const char *literal) {
     size_t length = strlen(literal);
     tokenizer_json_space(json);
@@ -291,7 +254,6 @@ static int tokenizer_json_literal(tokenizer_json *json, const char *literal) {
     return 1;
 }
 
-/* Purpose: parse one unsigned decimal JSON integer with checked u64 accumulation. */
 static int tokenizer_json_u64(tokenizer_json *json, unsigned long long *out) {
     yvex_json core;
     int accepted;
@@ -303,7 +265,6 @@ static int tokenizer_json_u64(tokenizer_json *json, unsigned long long *out) {
     return accepted;
 }
 
-/* Purpose: delegate unowned values to the repository's single bounded JSON grammar. */
 static int tokenizer_json_skip(tokenizer_json *json, unsigned int depth) {
     yvex_json core;
     int accepted;
@@ -318,7 +279,6 @@ static int tokenizer_json_skip(tokenizer_json *json, unsigned int depth) {
     return accepted;
 }
 
-/* Purpose: compare two tokenizer-owned arena slices for exact byte equality. */
 static int tokenizer_ref_equal(const yvex_gguf_tokenizer_metadata *metadata,
                                tokenizer_string_ref left, tokenizer_string_ref right) {
     return left.present && right.present && left.length == right.length &&
@@ -326,11 +286,6 @@ static int tokenizer_ref_equal(const yvex_gguf_tokenizer_metadata *metadata,
                   left.length) == 0;
 }
 
-/* Purpose: grow the ordered merge-reference array within checked bounds.
- * Inputs: tokenizer metadata owner.
- * Effects: may replace merge storage while preserving prior references.
- * Failure: cardinality/size overflow or allocation leaves ownership intact.
- * Boundary: growth does not parse or publish a merge entry. */
 static int tokenizer_merges_grow(yvex_gguf_tokenizer_metadata *metadata) {
     size_t capacity = metadata->merge_capacity ? metadata->merge_capacity * 2u : 1024u;
     tokenizer_string_ref *grown;
@@ -345,11 +300,6 @@ static int tokenizer_merges_grow(yvex_gguf_tokenizer_metadata *metadata) {
     return 1;
 }
 
-/* Purpose: grow added-token staging storage within checked bounds.
- * Inputs: tokenizer metadata owner.
- * Effects: may replace staging storage while preserving parsed rows.
- * Failure: cardinality/size overflow or allocation leaves ownership intact.
- * Boundary: staged rows are not applied until validation completes. */
 static int tokenizer_added_grow(yvex_gguf_tokenizer_metadata *metadata) {
     size_t capacity = metadata->added_capacity ? metadata->added_capacity * 2u : 128u;
     tokenizer_added *grown;
@@ -364,11 +314,6 @@ static int tokenizer_added_grow(yvex_gguf_tokenizer_metadata *metadata) {
     return 1;
 }
 
-/* Purpose: parse the model vocabulary object into exact ID-indexed token references.
- * Inputs: tokenizer owner, mutable JSON cursor, and diagnostics.
- * Effects: decodes token keys and records their numeric IDs.
- * Failure: duplicate/sparse/out-of-range IDs, malformed values, or allocation refuse.
- * Boundary: vocabulary parsing does not apply added-token overrides. */
 static int tokenizer_parse_vocab(yvex_gguf_tokenizer_metadata *metadata, tokenizer_json *json,
                                  yvex_gguf_tokenizer_failure *failure, yvex_error *err) {
     tokenizer_string_ref token;
@@ -411,11 +356,6 @@ static int tokenizer_parse_vocab(yvex_gguf_tokenizer_metadata *metadata, tokeniz
     }
 }
 
-/* Purpose: parse canonical string-form BPE merges in source order.
- * Inputs: tokenizer owner and mutable JSON cursor.
- * Effects: appends decoded merges using bounded owned storage.
- * Failure: malformed strings, empty/excessive count, or allocation aborts parsing.
- * Boundary: merge text is preserved for later tokenizer execution. */
 static int tokenizer_parse_merges(yvex_gguf_tokenizer_metadata *metadata, tokenizer_json *json) {
     tokenizer_string_ref merge;
     const unsigned char *begin;
@@ -447,11 +387,6 @@ static int tokenizer_parse_merges(yvex_gguf_tokenizer_metadata *metadata, tokeni
     }
 }
 
-/* Purpose: parse the tokenizer model object and route vocabulary and merge fields.
- * Inputs: tokenizer owner, mutable JSON cursor, and diagnostics.
- * Effects: populates BPE type, vocabulary, and merges while skipping unknown values.
- * Failure: malformed structure, duplicate fields, or nested parse refusal aborts.
- * Boundary: source facts do not constitute runtime tokenizer support. */
 static int tokenizer_parse_model(yvex_gguf_tokenizer_metadata *metadata, tokenizer_json *json,
                                  yvex_gguf_tokenizer_failure *failure, yvex_error *err) {
     char key[64];
@@ -497,11 +432,6 @@ static int tokenizer_parse_model(yvex_gguf_tokenizer_metadata *metadata, tokeniz
     }
 }
 
-/* Purpose: parse one added-token object with exact ID, content, and special flag.
- * Inputs: tokenizer owner and mutable JSON cursor.
- * Effects: appends one validated staging row with owned content.
- * Failure: malformed types, missing fields, duplicate IDs, or allocation refuse.
- * Boundary: the row does not alter vocabulary until application. */
 static int tokenizer_parse_added_row(yvex_gguf_tokenizer_metadata *metadata, tokenizer_json *json) {
     tokenizer_added row;
     char key[64];
@@ -562,11 +492,6 @@ static int tokenizer_parse_added_row(yvex_gguf_tokenizer_metadata *metadata, tok
     }
 }
 
-/* Purpose: parse the complete added-token array into bounded staging storage.
- * Inputs: tokenizer owner and mutable JSON cursor.
- * Effects: appends validated rows in source order.
- * Failure: excessive count, malformed row, or allocation aborts the array.
- * Boundary: vocabulary application remains a separate validation phase. */
 static int tokenizer_parse_added(yvex_gguf_tokenizer_metadata *metadata, tokenizer_json *json) {
     tokenizer_json_space(json);
     if (json->cursor >= json->end || *json->cursor++ != '[')
@@ -589,11 +514,6 @@ static int tokenizer_parse_added(yvex_gguf_tokenizer_metadata *metadata, tokeniz
     }
 }
 
-/* Purpose: apply staged added-token facts to exact vocabulary IDs.
- * Inputs: tokenizer owner plus diagnostics.
- * Effects: validates content equality, fills absent entries, and records token types.
- * Failure: out-of-range IDs or conflicting text returns typed refusal.
- * Boundary: application never changes vocabulary ordering or cardinality. */
 static int tokenizer_apply_added(yvex_gguf_tokenizer_metadata *metadata,
                                  yvex_gguf_tokenizer_failure *failure, yvex_error *err) {
     size_t index;
@@ -619,11 +539,6 @@ static int tokenizer_apply_added(yvex_gguf_tokenizer_metadata *metadata,
     return YVEX_OK;
 }
 
-/* Purpose: parse tokenizer JSON root and prove complete contiguous vocabulary cardinality.
- * Inputs: tokenizer owner and diagnostics.
- * Effects: populates model, vocabulary, merges, and added-token facts.
- * Failure: malformed root, missing model, duplicates, gaps, or trailing data refuse atomically.
- * Boundary: source parsing performs no GGUF serialization. */
 static int tokenizer_parse_json(yvex_gguf_tokenizer_metadata *metadata,
                                 yvex_gguf_tokenizer_failure *failure, yvex_error *err) {
     tokenizer_json json;
@@ -689,11 +604,6 @@ malformed:
                           "tokenizer JSON is malformed or lacks the required BPE material");
 }
 
-/* Purpose: decode one configured special-token string or content object.
- * Inputs: tokenizer owner, config cursor, and writable arena reference.
- * Effects: advances the cursor and stores decoded token content.
- * Failure: malformed form, duplicate content, or allocation refusal returns false.
- * Boundary: content resolution against vocabulary occurs after parsing. */
 static int tokenizer_config_special(yvex_gguf_tokenizer_metadata *metadata, tokenizer_json *json,
                                     tokenizer_string_ref *out) {
     char key[64];
@@ -737,7 +647,6 @@ static int tokenizer_config_special(yvex_gguf_tokenizer_metadata *metadata, toke
     }
 }
 
-/* Purpose: parse one exact JSON boolean configuration value. */
 static int tokenizer_config_bool(tokenizer_json *json, int *out) {
     if (tokenizer_json_literal(json, "true")) {
         *out = 1;
@@ -750,11 +659,6 @@ static int tokenizer_config_bool(tokenizer_json *json, int *out) {
     return 0;
 }
 
-/* Purpose: parse special-token policy and chat-template presence from the exact config blob.
- * Inputs: tokenizer owner and diagnostics.
- * Effects: records required booleans and owned special-token references.
- * Failure: malformed types, duplicate facts, missing policy, or trailing data refuse.
- * Boundary: configuration parsing does not execute templates or tokenize text. */
 static int tokenizer_parse_config(yvex_gguf_tokenizer_metadata *metadata,
                                   yvex_gguf_tokenizer_failure *failure, yvex_error *err) {
     tokenizer_json json;
@@ -836,11 +740,6 @@ malformed:
                           "tokenizer config is malformed or lacks special-token policy");
 }
 
-/* Purpose: resolve an exact tokenizer-owned text reference to its canonical token ID.
- * Inputs: immutable metadata, target arena slice, and writable ID.
- * Effects: writes the first exact ID match.
- * Failure: missing content returns false without changing tokenizer state.
- * Boundary: lookup neither inserts nor normalizes tokens. */
 static int tokenizer_find_token(const yvex_gguf_tokenizer_metadata *metadata,
                                 tokenizer_string_ref target, unsigned int *out) {
     unsigned long long index;
@@ -852,11 +751,6 @@ static int tokenizer_find_token(const yvex_gguf_tokenizer_metadata *metadata,
     return 0;
 }
 
-/* Purpose: compute the SHA-256 identity of one exact retained sidecar blob.
- * Inputs: immutable blob and writable hexadecimal digest.
- * Effects: replaces the digest after successful hash finalization.
- * Failure: hash update or finalization returns false.
- * Boundary: blob identity remains distinct from aggregate tokenizer identity. */
 static int tokenizer_blob_sha(const yvex_source_metadata_blob *blob,
                               char out[YVEX_GGUF_TOKENIZER_SHA256_CAP]) {
     yvex_sha256 hash;
@@ -869,11 +763,11 @@ static int tokenizer_blob_sha(const yvex_source_metadata_blob *blob,
     return 1;
 }
 
-/* Purpose: construct immutable target-scale tokenizer metadata from verified sidecar facts.
- * Inputs: verification, vocabulary contract, pre-tokenizer, budget, output, and diagnostics.
- * Effects: reads exact admitted sidecars, allocates decoded indexes, seals summary, and publishes.
- * Failure: identity, JSON, cardinality, special-token, digest, bounds, or allocation unwind fully.
- * Boundary: loaded metadata is writer input and not runtime tokenizer support. */
+/*
+ * Construct immutable target-scale tokenizer metadata from verified sidecar facts.
+ *
+ * Identity, JSON, cardinality, special-token, digest, bounds, or allocation unwind fully.
+ */
 int yvex_gguf_tokenizer_metadata_load(yvex_gguf_tokenizer_metadata **out,
                                       const yvex_source_verification *verification,
                                       unsigned long long expected_vocab_size,
@@ -988,11 +882,12 @@ int yvex_gguf_tokenizer_metadata_load(yvex_gguf_tokenizer_metadata **out,
     return YVEX_OK;
 }
 
-/* Purpose: release every tokenizer index, arena, and verified sidecar blob idempotently.
- * Inputs: optional address of an owned tokenizer metadata object.
- * Effects: clears caller ownership and frees every transitive allocation.
- * Failure: none; null and repeated release are safe.
- * Boundary: source verification ownership remains external. */
+/*
+ * Release every tokenizer index, arena, and verified sidecar blob idempotently.
+ *
+ * Clears caller ownership and frees every transitive allocation. Source verification ownership
+ * remains external.
+ */
 void yvex_gguf_tokenizer_metadata_release(yvex_gguf_tokenizer_metadata **metadata_address) {
     yvex_gguf_tokenizer_metadata *metadata;
     if (!metadata_address || !*metadata_address)
@@ -1010,21 +905,16 @@ void yvex_gguf_tokenizer_metadata_release(yvex_gguf_tokenizer_metadata **metadat
     free(metadata);
 }
 
-/* Purpose: borrow the immutable complete tokenizer metadata summary.
- * Inputs: optional tokenizer metadata owner.
- * Effects: none.
- * Failure: null or incomplete owner returns null.
- * Boundary: the view remains valid only for the owner lifetime. */
+/*
+ * Borrow the immutable complete tokenizer metadata summary.
+ *
+ * The view remains valid only for the owner lifetime.
+ */
 const yvex_gguf_tokenizer_summary *
 yvex_gguf_tokenizer_summary_get(const yvex_gguf_tokenizer_metadata *metadata) {
     return metadata && metadata->summary.complete ? &metadata->summary : NULL;
 }
 
-/* Purpose: borrow one vocabulary entry and token type by exact ID.
- * Inputs: complete metadata, token index, and writable borrowed-view outputs.
- * Effects: writes byte pointer, length, and token type without allocation.
- * Failure: invalid/incomplete metadata, outputs, or index returns false.
- * Boundary: token bytes remain owned by tokenizer metadata. */
 int yvex_gguf_tokenizer_token_at(const yvex_gguf_tokenizer_metadata *metadata,
                                  unsigned long long index, const unsigned char **bytes,
                                  size_t *byte_count, int *token_type) {
@@ -1037,11 +927,6 @@ int yvex_gguf_tokenizer_token_at(const yvex_gguf_tokenizer_metadata *metadata,
     return 1;
 }
 
-/* Purpose: borrow one BPE merge entry by preserved source ordinal.
- * Inputs: complete metadata, merge index, and writable borrowed-view outputs.
- * Effects: writes merge pointer and byte count without allocation.
- * Failure: invalid/incomplete metadata, outputs, or index returns false.
- * Boundary: merge bytes remain owned by tokenizer metadata. */
 int yvex_gguf_tokenizer_merge_at(const yvex_gguf_tokenizer_metadata *metadata,
                                  unsigned long long index, const unsigned char **bytes,
                                  size_t *byte_count) {
@@ -1053,11 +938,6 @@ int yvex_gguf_tokenizer_merge_at(const yvex_gguf_tokenizer_metadata *metadata,
     return 1;
 }
 
-/* Purpose: borrow the exact raw tokenizer JSON retained for artifact serialization.
- * Inputs: complete metadata and writable borrowed-view outputs.
- * Effects: writes blob pointer and byte count.
- * Failure: invalid/incomplete metadata or outputs returns false.
- * Boundary: raw bytes remain metadata-owned and immutable. */
 int yvex_gguf_tokenizer_raw_json(const yvex_gguf_tokenizer_metadata *metadata,
                                  const unsigned char **bytes, size_t *byte_count) {
     if (!metadata || !metadata->summary.complete || !bytes || !byte_count)
@@ -1067,11 +947,6 @@ int yvex_gguf_tokenizer_raw_json(const yvex_gguf_tokenizer_metadata *metadata,
     return 1;
 }
 
-/* Purpose: borrow the exact raw tokenizer configuration retained for serialization.
- * Inputs: complete metadata and writable borrowed-view outputs.
- * Effects: writes blob pointer and byte count.
- * Failure: invalid/incomplete metadata or outputs returns false.
- * Boundary: raw bytes remain metadata-owned and immutable. */
 int yvex_gguf_tokenizer_raw_config(const yvex_gguf_tokenizer_metadata *metadata,
                                    const unsigned char **bytes, size_t *byte_count) {
     if (!metadata || !metadata->summary.complete || !bytes || !byte_count)

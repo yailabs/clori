@@ -1,12 +1,7 @@
-/* Owner: gguf.quant_numeric (gguf).
- * Owns: numeric codecs, immutable quant plans, and transactional quant sinks.
- * Does not own: Transformation IR semantics, GGUF writing, or backend topology.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: physical numeric execution contracts.
- * Purpose: provide the canonical physical numeric execution contracts contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * Quantization planning and execution share physical-policy, calibration, and sink contracts
+ * here. Policy selection remains separate from encoded-byte production.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_QUANT_NUMERIC_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_QUANT_NUMERIC_H_INCLUDED
 
@@ -24,7 +19,7 @@
 extern "C" {
 #endif
 
-/* Quant Numeric contract. */
+/* Quant Numeric. */
 #define YVEX_QUANT_NUMERIC_CONTRACT_VERSION 1u
 #define YVEX_QUANT_Q8_0_ELEMENTS 32u
 #define YVEX_QUANT_Q8_0_BYTES 34u
@@ -217,7 +212,7 @@ int yvex_quant_cpu_dot(unsigned int qtype,
                        yvex_quant_failure *failure,
                        yvex_error *err);
 
-/* Quant Plan contract. */
+/* Quant Plan. */
 #define YVEX_QUANT_PROFILE_SCHEMA_VERSION 1u
 #define YVEX_QUANT_PLAN_IDENTITY_CAP 65u
 #define YVEX_QUANT_RELEASE_PROFILE_NAME \
@@ -362,14 +357,14 @@ const yvex_transform_ir *yvex_quant_plan_transform_ir(
 const yvex_transform_binding *yvex_quant_plan_binding(
     const yvex_quant_plan *plan);
 
-/* Physical-variant plan file contract. */
+/* Physical-variant plan file. */
 #define YVEX_PHYSICAL_VARIANT_FILE_SCHEMA_VERSION 1u
 int yvex_quant_plan_file_write(const char *path, const yvex_quant_plan *plan,
                                yvex_error *err);
 int yvex_quant_plan_file_validate(const char *path, const yvex_quant_plan *plan,
                                   yvex_error *err);
 
-/* Quant Sink contract. */
+/* Quant Sink. */
 typedef struct {
     int (*begin_terminal)(void *context,
                           const yvex_quant_decision *decision);

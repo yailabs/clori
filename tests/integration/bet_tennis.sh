@@ -1,5 +1,5 @@
 #!/bin/sh
-# Purpose: prove the unchanged external bet-tennis provider through configuration only.
+# The external bet-tennis provider must interoperate through configuration alone.
 set -eu
 
 YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}

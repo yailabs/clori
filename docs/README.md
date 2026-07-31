@@ -56,12 +56,16 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
 
 - [Decisions](decisions/README.md) own durable choices and rationale.
 - [Audits](audits/documentation-architecture-51a5c/README.md) preserve
-  point-in-time evidence; the operator-surface and topology audits remain
-  frozen beside the documentation baseline.
+  point-in-time evidence; the
+  [code-commentary migration](audits/code-commentary-7c90ce1/README.md),
+  operator-surface, and topology audits remain frozen beside the documentation
+  baseline.
 - [Migrations](migrations/documentation-architecture-v1.md) map superseded
   paths and terms to current owners.
 - [Milestone contracts](milestones/documentation-architecture.md) define
-  bounded implementation acceptance without owning live state.
+  bounded implementation acceptance without owning live state; the
+  [commentary contract](milestones/code-commentary.md) records the selective
+  source-commentary boundary.
 
 ## Document classes
 

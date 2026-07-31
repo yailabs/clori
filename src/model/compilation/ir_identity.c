@@ -1,15 +1,11 @@
-/* Owner: src/model/compilation
- * Owns: schema-versioned SHA-256 encoding of semantic source, value, operation, edge, ordering, shape, dtype,
- *   precision, and terminal facts.
- * Does not own: pointer/layout hashing, local paths, timestamps, GGUF facts, runtime counters, source trust policy,
- *   physical variants, or artifact identity.
- * Invariants: every integer uses explicit big-endian width and every string is bounded and length-prefixed; native
- *   structure bytes are never hashed.
- * Boundary: identity seals plan semantics but does not prove numerical execution.
- * Purpose: derive stable identities for generic transformation plans and admitted logical architecture recipes.
- * Inputs: immutable semantic fields from sealed IR or admitted family architecture.
- * Effects: writes only caller-provided identity buffers and allocates no storage.
- * Failure: malformed or unencodable facts return failure without publishing a digest. */
+/*
+ * Derive stable identities for generic transformation plans and admitted logical architecture
+ * recipes.
+ *
+ * Every integer uses explicit big-endian width and every string is bounded and length-prefixed;
+ * native structure bytes are never hashed. Identity seals plan semantics but does not prove
+ * numerical execution.
+ */
 #include <yvex/internal/compilation.h>
 
 #include <yvex/internal/core.h>
@@ -19,7 +15,6 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Purpose: encode transform identity bytes fields in canonical identity order. */
 static int transform_identity_bytes(yvex_sha256 *hash,
                                     const void *bytes,
                                     size_t length)
@@ -27,7 +22,6 @@ static int transform_identity_bytes(yvex_sha256 *hash,
     return yvex_sha256_update(hash, bytes, length);
 }
 
-/* Purpose: encode transform identity u32 fields in canonical identity order. */
 static int transform_identity_u32(yvex_sha256 *hash, unsigned int value)
 {
     unsigned char bytes[4];
@@ -38,7 +32,6 @@ static int transform_identity_u32(yvex_sha256 *hash, unsigned int value)
     return transform_identity_bytes(hash, bytes, sizeof(bytes));
 }
 
-/* Purpose: encode transform identity u64 fields in canonical identity order. */
 static int transform_identity_u64(yvex_sha256 *hash,
                                   unsigned long long value)
 {
@@ -51,7 +44,6 @@ static int transform_identity_u64(yvex_sha256 *hash,
     return transform_identity_bytes(hash, bytes, sizeof(bytes));
 }
 
-/* Purpose: encode transform identity string fields in canonical identity order. */
 static int transform_identity_string(yvex_sha256 *hash, const char *text)
 {
     size_t length;
@@ -62,7 +54,6 @@ static int transform_identity_string(yvex_sha256 *hash, const char *text)
            transform_identity_bytes(hash, text, length);
 }
 
-/* Purpose: encode transform identity shape fields in canonical identity order. */
 static int transform_identity_shape(yvex_sha256 *hash,
                                     const yvex_transform_shape *shape)
 {
@@ -74,7 +65,6 @@ static int transform_identity_shape(yvex_sha256 *hash,
     return 1;
 }
 
-/* Purpose: encode transform identity key fields in canonical identity order. */
 static int transform_identity_key(yvex_sha256 *hash,
                                   const yvex_transform_logical_key *key)
 {
@@ -86,7 +76,6 @@ static int transform_identity_key(yvex_sha256 *hash,
            transform_identity_u64(hash, key->group_index);
 }
 
-/* Purpose: encode transform identity precision fields in canonical identity order. */
 static int transform_identity_precision(
     yvex_sha256 *hash, const yvex_transform_precision_constraint *precision)
 {
@@ -101,11 +90,7 @@ static int transform_identity_precision(
                                   precision->reference_compute_required != 0);
 }
 
-/* Purpose: encode ir compute identity fields in canonical identity order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+/* Encode ir compute identity fields in canonical identity order. */
 
 int yvex_transform_ir_compute_identity(yvex_transform_ir *ir,
                                        yvex_transform_failure *failure,
@@ -238,7 +223,6 @@ encode_failure:
 }
 #define deepseek_identity_u64 yvex_sha256_update_u64_be
 
-/* Purpose: encode deepseek identity text fields in canonical identity order. */
 static int deepseek_identity_text(yvex_sha256 *hash, const char *text)
 {
     size_t length;
@@ -249,7 +233,6 @@ static int deepseek_identity_text(yvex_sha256 *hash, const char *text)
            yvex_sha256_update(hash, text, length);
 }
 
-/* Purpose: encode deepseek identity double fields in canonical identity order. */
 static int deepseek_identity_double(yvex_sha256 *hash, double value)
 {
     uint64_t bits;
@@ -271,11 +254,7 @@ typedef struct {
     identity_field_kind kind;
 } identity_field;
 
-/* Purpose: encode identity unsigned fields in canonical identity order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+/* Encode identity unsigned fields in canonical identity order. */
 
 static int identity_unsigned(yvex_sha256 *hash, const void *field, size_t width)
 {
@@ -303,11 +282,7 @@ static int identity_unsigned(yvex_sha256 *hash, const void *field, size_t width)
     return 0;
 }
 
-/* Purpose: encode identity signed fields in canonical identity order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+/* Encode identity signed fields in canonical identity order. */
 
 static int identity_signed(yvex_sha256 *hash, const void *field, size_t width)
 {
@@ -335,11 +310,11 @@ static int identity_signed(yvex_sha256 *hash, const void *field, size_t width)
     return 0;
 }
 
-/* Purpose: serialize one declared semantic field sequence in canonical order.
- * Inputs: object is immutable and fields name exact typed members, never native padding.
- * Effects: updates only the caller-owned hash with explicit integer/text/double encodings.
- * Failure: unsupported field widths or hash failures stop before later fields are observed.
- * Boundary: tables declare semantic order; they never hash whole structures or pointers. */
+/*
+ * Serialize one declared semantic field sequence in canonical order.
+ *
+ * Object is immutable and fields name exact typed members, never native padding.
+ */
 static int identity_fields(yvex_sha256 *hash,
                            const void *object,
                            const identity_field *fields,
@@ -700,16 +675,12 @@ static const identity_field model_tail_fields[] = {
 #undef ID_DOUBLE
 #undef ID_TEXT
 
-/* Purpose: encode identity activation fields in canonical identity order. */
-
 static int identity_activation(yvex_sha256 *hash,
                                const yvex_attention_activation_policy *policy)
 {
     return identity_fields(hash, policy, activation_fields,
                            sizeof(activation_fields) / sizeof(activation_fields[0]));
 }
-
-/* Purpose: encode identity topk fields in canonical identity order. */
 
 static int identity_topk(yvex_sha256 *hash,
                          const yvex_attention_topk_policy *policy)
@@ -718,11 +689,7 @@ static int identity_topk(yvex_sha256 *hash,
                            sizeof(topk_fields) / sizeof(topk_fields[0]));
 }
 
-/* Purpose: encode identity main layer fields in canonical identity order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+/* Encode identity main layer fields in canonical identity order. */
 
 static int identity_main_layer(yvex_sha256 *hash, const yvex_deepseek_v4_layer_spec *layer)
 {
@@ -755,11 +722,7 @@ static int identity_main_layer(yvex_sha256 *hash, const yvex_deepseek_v4_layer_s
            deepseek_identity_double(hash, layer->rms_norm_epsilon);
 }
 
-/* Purpose: encode identity auxiliary fields in canonical identity order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+/* Encode identity auxiliary fields in canonical identity order. */
 
 static int identity_auxiliary(yvex_sha256 *hash, const yvex_deepseek_v4_auxiliary_spec *aux)
 {
@@ -810,11 +773,7 @@ static int identity_auxiliary(yvex_sha256 *hash, const yvex_deepseek_v4_auxiliar
                                sizeof(auxiliary_share_fields[0]));
 }
 
-/* Purpose: encode identity model fields in canonical identity order.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
+/* Encode identity model fields in canonical identity order. */
 
 static int identity_model(yvex_sha256 *hash, const yvex_deepseek_v4_model_spec *model)
 {
@@ -845,13 +804,14 @@ static int identity_model(yvex_sha256 *hash, const yvex_deepseek_v4_model_spec *
                            sizeof(model_tail_fields) / sizeof(model_tail_fields[0]));
 }
 
-/* Purpose: encode the admitted DeepSeek logical architecture without native
- * structure bytes or artifact-format facts.
- * Inputs: immutable admitted architecture and a fixed-capacity output buffer.
- * Effects: writes one lowercase SHA-256 identity on complete success.
- * Failure: missing architecture facts or hash failure leave no valid identity.
- * Boundary: this is logical-model identity, not Transform IR or artifact
- * identity. */
+/*
+ * Encode the admitted DeepSeek logical architecture without native structure bytes or
+ * artifact-format facts.
+ *
+ * Writes one lowercase SHA-256 identity on complete success. Missing architecture facts or hash
+ * failure leave no valid identity. This is logical-model identity, not Transform IR or artifact
+ * identity.
+ */
 int yvex_transform_deepseek_architecture_identity(
     const yvex_deepseek_v4_ir *architecture,
     char output[YVEX_TRANSFORM_IR_IDENTITY_CAP])

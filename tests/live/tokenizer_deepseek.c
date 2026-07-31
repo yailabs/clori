@@ -1,12 +1,8 @@
-/* Owner: live DeepSeek tokenizer evidence.
- * Owns: selected-artifact tokenizer plan, exact encoding, prompt, and incremental decode proof.
- * Does not own: production tokenization, source-side oracle arithmetic, model execution, or generation.
- * Invariants: the admitted GGUF is the only production tokenizer source and no tensor payload is read.
- * Boundary: target-scale tokenizer proof; sampled IDs are decoded but never fed back into the model.
- * Purpose: prove exact artifact-bound text/token semantics against pinned expected vectors.
- * Inputs: selected GGUF, current V6 binding, and sampled token IDs from the prior live lane.
- * Effects: allocates bounded test results and reads GGUF metadata only.
- * Failure: reports the first typed mismatch and releases all borrowed owners. */
+/*
+ * Exercises exact artifact-bound text/token semantics against pinned expected vectors. The
+ * admitted GGUF is the only production tokenizer source and no tensor payload is read.
+ * Target-scale tokenizer proof; sampled IDs are decoded but never fed back into the model.
+ */
 #include <yvex/api.h>
 #include <yvex/internal/runtime.h>
 

@@ -1,6 +1,4 @@
-/*
- * YVEX - Canonical GGUF global layout admission tests
- */
+
 #include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>

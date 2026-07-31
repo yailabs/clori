@@ -1,8 +1,7 @@
-/* Owner: tests/unit runtime logits.
- * Owns: output-head orientation, independent CPU arithmetic, policy, and lifecycle refusals.
- * Does not own: target-scale artifact execution or CUDA live qualification.
- * Invariants: synthetic matrices are test-only and production APIs remain the execution authority.
- * Boundary: focused contract tests over logits, qtype, and family adapter ABIs. */
+/*
+ * Synthetic matrices are test-only and production APIs remain the execution authority. Focused
+ * contract tests over logits, qtype, and family adapter ABIs.
+ */
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/logits.h>
 #include <yvex/internal/quant_numeric.h>
@@ -14,7 +13,6 @@
 #include "tests/reference/logits.h"
 #include "tests/test.h"
 
-/* Purpose: encode one exactly represented finite BF16 test value. */
 static void logits_test_bf16(unsigned char out[2], float value)
 {
     unsigned int bits;
@@ -23,7 +21,6 @@ static void logits_test_bf16(unsigned char out[2], float value)
     out[1] = (unsigned char)(bits >> 24u);
 }
 
-/* Purpose: prove independent row-major reference and production direct dots agree exactly. */
 static int logits_test_orientation(void)
 {
     static const float weights[3][4] = {
@@ -64,7 +61,6 @@ static int logits_test_orientation(void)
     return 0;
 }
 
-/* Purpose: prove DeepSeek selects one separate unbiased output head and truthful capabilities. */
 static int logits_test_policy(void)
 {
     const yvex_runtime_family_adapter *adapter =
@@ -93,7 +89,6 @@ static int logits_test_policy(void)
     return 0;
 }
 
-/* Purpose: prove absent owners and caller storage refuse without output publication. */
 static int logits_test_lifecycle_refusal(void)
 {
     yvex_runtime_logits_context *context = NULL;

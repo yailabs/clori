@@ -1,25 +1,6 @@
 /*
- * YVEX - graph tests
- *
- * File: tests/test_graph.c
- * Layer: test
- *
- * Purpose:
- *   Proves that graph planner builds a deterministic partial graph from the current
- *   descriptor fixture and reports missing required tensor roles.
- *
- * Covers:
- *   - yvex_graph_build_for_model
- *   - graph value/op accessors
- *   - missing-role diagnostics
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_graph
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises graph planner builds a deterministic partial graph from the current descriptor
+ * fixture and reports missing required tensor roles.
  */
 #include <stdio.h>
 #include <string.h>

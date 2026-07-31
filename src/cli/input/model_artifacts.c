@@ -1,13 +1,9 @@
-/* Owner: src/cli/input
- * Owns: typed model-download and fullmodel argument parsing.
- * Does not own: registry lookup, model gate checks, rendering, stdout/stderr, artifact emission, runtime
- *   generation, eval, benchmark, or release decisions.
- * Invariants: parsers perform no artifact IO and call no domain builders.
- * Boundary: argument parsing is not artifact emission or runtime support.
- * Purpose: provide bounded model-download and fullmodel command arguments.
- * Inputs: bounded command arguments and caller-owned typed request storage.
- * Effects: publishes request fields only after complete grammar validation.
- * Failure: invalid or ambiguous grammar leaves the request uncommitted. */
+/*
+ * Provide bounded model-download and fullmodel command arguments.
+ *
+ * Parsers perform no artifact IO and call no domain builders. Argument parsing is not artifact
+ * emission or runtime support.
+ */
 #include "src/cli/input/private.h"
 #include "src/cli/model_artifacts/private.h"
 
@@ -326,11 +322,6 @@ static const input_option_spec fullmodel_options[] = {
      NULL, 0u, 0ull, YVEX_MODELS_OUTPUT_AUDIT},
     {.flag = NULL, INPUT_OPTION_TEXT, 0u}};
 
-/* Purpose: Compute fullmodel string is empty for its CLI invariant (`fullmodel_string_is_empty`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int fullmodel_string_is_empty(const char *text) {
     return !text || !text[0];
 }
@@ -342,7 +333,6 @@ _Static_assert(sizeof(yvex_model_download_progress_mode) == sizeof(int),
 _Static_assert(sizeof(yvex_models_output_mode) == sizeof(int),
                "models output enum must use int storage");
 
-/* Purpose: Resolve one option declaration without encoding grammar in parser control flow. */
 static const input_option_spec *input_option_find(const input_option_spec *specs,
                                                   const char *flag) {
     while (specs->flag) {
@@ -353,7 +343,6 @@ static const input_option_spec *input_option_find(const input_option_spec *specs
     return NULL;
 }
 
-/* Purpose: Resolve one declared spelling to its canonical string or typed numeric value. */
 static const input_option_choice *input_option_choice_find(const input_option_choice *choices,
                                                            const char *value) {
     if (!choices)
@@ -366,7 +355,6 @@ static const input_option_choice *input_option_choice_find(const input_option_ch
     return NULL;
 }
 
-/* Purpose: Emit a declared parser refusal with its exact flag or value context. */
 static void input_option_error(const char *message, input_error_detail detail,
                                const input_option_spec *spec, const char *value) {
     if (detail == INPUT_ERROR_FLAG)
@@ -377,11 +365,6 @@ static void input_option_error(const char *message, input_error_detail detail,
         yvex_cli_out_fputs(message, stderr);
 }
 
-/* Purpose: Acquire one required option value under the command's established empty-value policy.
- * Inputs: Borrowed argv and immutable option declaration.
- * Effects: Advances the caller's argument index only after a value exists.
- * Failure: Preserves the command-specific missing or invalid value diagnostic.
- * Boundary: Value acquisition does not interpret the option. */
 static int input_option_value(const char *command, const input_option_spec *spec, int arg_count,
                               char **args, int *index, const char **value) {
     if (*index + 1 >= arg_count) {
@@ -398,11 +381,6 @@ static int input_option_value(const char *command, const input_option_spec *spec
     return 0;
 }
 
-/* Purpose: Apply one typed option declaration to caller-owned command state.
- * Inputs: Immutable grammar, bounded argv, optional fullmodel command selector, and typed storage.
- * Effects: Writes only the field and auxiliary field named by the declaration.
- * Failure: Reports the declaration's exact refusal before downstream command dispatch.
- * Boundary: Parsing does not infer artifact, runtime, or capability truth. */
 static int input_option_apply(const char *command, const input_option_spec *spec, int option_command,
                               int arg_count, char **args, int *index, void *options) {
     unsigned char *base = options;
@@ -495,11 +473,6 @@ static int input_option_apply(const char *command, const input_option_spec *spec
     return 2;
 }
 
-/* Purpose: Transfer bounded model download progress mode name data (`model_download_progress_mode_name`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 const char *model_download_progress_mode_name(yvex_model_download_progress_mode mode) {
     switch (mode) {
     case YVEX_MODEL_DOWNLOAD_PROGRESS_AUTO:
@@ -516,11 +489,6 @@ const char *model_download_progress_mode_name(yvex_model_download_progress_mode 
     return "auto";
 }
 
-/* Purpose: Transfer bounded model download signal name data (`model_download_signal_name`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 const char *model_download_signal_name(int signo) {
     switch (signo) {
     case SIGINT:
@@ -535,11 +503,6 @@ const char *model_download_signal_name(int signo) {
     return "unknown";
 }
 
-/* Purpose: Transfer bounded model download effective progress mode data (`model_download_effective_progress_mode`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 yvex_model_download_progress_mode
 model_download_effective_progress_mode(yvex_model_download_progress_mode mode) {
     if (mode != YVEX_MODEL_DOWNLOAD_PROGRESS_AUTO) {
@@ -549,11 +512,6 @@ model_download_effective_progress_mode(yvex_model_download_progress_mode mode) {
                                                           : YVEX_MODEL_DOWNLOAD_PROGRESS_PLAIN;
 }
 
-/* Purpose: Transfer bounded model download auth mode name data (`model_download_auth_mode_name`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 const char *model_download_auth_mode_name(yvex_model_download_auth_mode mode) {
     switch (mode) {
     case YVEX_MODEL_DOWNLOAD_AUTH_REQUIRED:
@@ -566,11 +524,6 @@ const char *model_download_auth_mode_name(yvex_model_download_auth_mode mode) {
     }
 }
 
-/* Purpose: Validate model download options validate before downstream use (`model_download_options_validate`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_download_options_validate(yvex_cli_models_download_options *options) {
     if (!options->target && !options->repo) {
         yvex_cli_out_writef(stderr, "yvex: models download requires TARGET or --repo OWNER/NAME\n");
@@ -622,11 +575,6 @@ static int model_download_options_validate(yvex_cli_models_download_options *opt
     return 0;
 }
 
-/* Purpose: Parse parse models download options from into typed CLI state (`parse_models_download_options_from`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int parse_models_download_options_from(int arg_count, char **args, int start_index,
                                        yvex_cli_models_download_options *options) {
     int i;
@@ -679,11 +627,6 @@ int parse_models_download_options_from(int arg_count, char **args, int start_ind
     return model_download_options_validate(options);
 }
 
-/* Purpose: Transfer bounded model download json i64 field data (`model_download_json_i64_field`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 long long model_download_json_i64_field(const char *text, const char *key) {
     const char *p;
 
@@ -693,11 +636,6 @@ long long model_download_json_i64_field(const char *text, const char *key) {
     return strtoll(p, NULL, 10);
 }
 
-/* Purpose: Transfer bounded model download identity family hint data (`model_download_identity_family_hint`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_download_identity_family_hint(const char *target, char *family,
                                                size_t family_cap) {
     if (family && family_cap > 0u)
@@ -723,11 +661,6 @@ static int model_download_identity_family_hint(const char *target, char *family,
     return 0;
 }
 
-/* Purpose: Transfer bounded model download identity paths data (`model_download_identity_paths`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_identity_paths(const char *target, const char *family,
                                   const yvex_operator_paths *operator_paths,
                                   yvex_model_download_resolved_target *out, yvex_error *err) {
@@ -768,11 +701,6 @@ int model_download_identity_paths(const char *target, const char *family,
     return rc == YVEX_OK;
 }
 
-/* Purpose: Transfer bounded model download read identity file data (`model_download_read_identity_file`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_read_identity_file(const char *path, const char *target, const char *family,
                                       yvex_model_download_resolved_target *out) {
     char buf[16384];
@@ -830,12 +758,6 @@ int model_download_read_identity_file(const char *path, const char *target, cons
     return 1;
 }
 
-/* Purpose: Construct the owned model download resolve downloaded target state
- * (`model_download_resolve_downloaded_target`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_resolve_downloaded_target(const char *target,
                                              const yvex_operator_paths *operator_paths,
                                              yvex_model_download_resolved_target *out,
@@ -906,11 +828,6 @@ int model_download_resolve_downloaded_target(const char *target,
     return 0;
 }
 
-/* Purpose: Compute fullmodel options begin for its CLI invariant (`fullmodel_options_begin`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int fullmodel_options_begin(int arg_count, char **args,
                                    yvex_cli_fullmodel_options *options) {
     memset(options, 0, sizeof(*options));
@@ -950,8 +867,6 @@ static int fullmodel_options_begin(int arg_count, char **args,
     return 0;
 }
 
-/* Require the model operand after every command-specific option has parsed. */
-/* Purpose: Compute fullmodel options finish for its CLI invariant (`fullmodel_options_finish`). */
 static int fullmodel_options_finish(const yvex_cli_fullmodel_options *options) {
     const char *name = "report";
 
@@ -970,12 +885,6 @@ static int fullmodel_options_finish(const yvex_cli_fullmodel_options *options) {
     return 2;
 }
 
-/* Purpose: Parse model artifacts fullmodel options parse into typed CLI state
- * (`model_artifacts_fullmodel_options_parse`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_artifacts_fullmodel_options_parse(int arg_count, char **args,
                                             yvex_cli_fullmodel_options *options) {
     int i;

@@ -1,12 +1,9 @@
-/* Owner: src/cli/render.
- * Owns: normal/table/audit rendering for yvex_source_report.
- * Does not own: source report building, argv parsing, local file scanning, runtime, generation, eval, or benchmark.
- * Invariants: renders typed report facts and uses CLI IO writers only.
- * Boundary: rendering source facts is not source verification, artifact emission, or runtime readiness.
- * Purpose: provide normal/table/audit rendering for yvex_source_report.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Provide normal/table/audit rendering for yvex_source_report.
+ *
+ * Renders typed report facts and uses CLI IO writers only. Rendering source facts is not source
+ * verification, artifact emission, or runtime readiness.
+ */
 #include "src/cli/render/private.h"
 
 #include "src/cli/io/private.h"
@@ -560,7 +557,6 @@ static const char *const literal_lines_4[] = {
         "release ready."
 };
 
-/* Purpose: Render source render tensor print limit from typed facts (`source_render_tensor_print_limit`). */
 static unsigned long long source_render_tensor_print_limit(
     const yvex_source_report_request *options,
     const yvex_source_report *report)
@@ -581,11 +577,6 @@ static unsigned long long source_render_tensor_print_limit(
     return limit;
 }
 
-/* Purpose: Render render tensor rows from typed facts (`render_tensor_rows`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void render_tensor_rows(
     FILE *fp,
     const yvex_source_report_request *options,
@@ -619,7 +610,6 @@ static void render_tensor_rows(
     }
 }
 
-/* Purpose: Render source render model name from typed facts (`source_render_model_name`). */
 static const char *source_render_model_name(const yvex_source_report_request *options,
                                           const yvex_source_report *report)
 {
@@ -628,31 +618,22 @@ static const char *source_render_model_name(const yvex_source_report_request *op
                ? report->semantics.model_name : "unknown";
 }
 
-/* Purpose: Render source render present missing from typed facts (`source_render_present_missing`). */
 static const char *source_render_present_missing(int present)
 {
     return present ? "present" : "missing";
 }
 
-/* Purpose: Render source render target artifact status from typed facts (`source_render_target_artifact_status`). */
 static const char *source_render_target_artifact_status(const yvex_source_family_profile *profile)
 {
     return profile && profile->yvex_produced_artifact_status
                ? profile->yvex_produced_artifact_status : "planned";
 }
 
-/* Purpose: Render source render presence verification status from typed facts
- *   (`source_render_presence_verification_status`). */
 static const char *source_render_presence_verification_status(int present)
 {
     return present ? "present-unverified" : "not-present";
 }
 
-/* Purpose: Render source render normal from typed facts (`yvex_source_render_normal`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_source_render_normal(FILE *fp, const yvex_source_report *report)
 {
     const yvex_source_report_request *options = report ? &report->request : NULL;
@@ -723,11 +704,6 @@ int yvex_source_render_normal(FILE *fp, const yvex_source_report *report)
     return report->exit_code;
 }
 
-/* Purpose: Render source render table from typed facts (`yvex_source_render_table`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_source_render_table(FILE *fp, const yvex_source_report *report)
 {
     const yvex_source_report_request *options = report ? &report->request : NULL;
@@ -772,12 +748,6 @@ int yvex_source_render_table(FILE *fp, const yvex_source_report *report)
     return report->exit_code;
 }
 
-/* Render immutable DeepSeek configuration and source-format facts. */
-/* Purpose: Render source render deepseek config from typed facts (`source_render_deepseek_config`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void source_render_deepseek_config(FILE *fp, const yvex_source_report *report)
 {
     const yvex_source_verification *verification = &report->verification;
@@ -833,12 +803,6 @@ static void source_render_deepseek_config(FILE *fp, const yvex_source_report *re
 
 }
 
-/* Render retained DeepSeek tokenizer, manifest, and inventory admission facts. */
-/* Purpose: Render source render deepseek inventory from typed facts (`source_render_deepseek_inventory`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void source_render_deepseek_inventory(FILE *fp, const yvex_source_report *report)
 {
     const yvex_source_verification *verification = &report->verification;
@@ -884,12 +848,6 @@ static void source_render_deepseek_inventory(FILE *fp, const yvex_source_report 
 
 }
 
-/* Render generic source provenance, filesystem, and manifest facts. */
-/* Purpose: Render source render generic source from typed facts (`source_render_generic_source`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void source_render_generic_source(FILE *fp, const yvex_source_report *report)
 {
     const yvex_source_report_request *options = &report->request;
@@ -945,12 +903,6 @@ static void source_render_generic_source(FILE *fp, const yvex_source_report *rep
 
 }
 
-/* Render generic retained native and tensor inventory accounting. */
-/* Purpose: Render source render generic inventory from typed facts (`source_render_generic_inventory`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void source_render_generic_inventory(FILE *fp, const yvex_source_report *report)
 {
     const yvex_source_report_request *options = &report->request;
@@ -993,12 +945,6 @@ static void source_render_generic_inventory(FILE *fp, const yvex_source_report *
 
 }
 
-/* Render final generic capability refusals and blockers. */
-/* Purpose: Render source render generic boundary from typed facts (`source_render_generic_boundary`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void source_render_generic_boundary(FILE *fp, const yvex_source_report *report)
 {
     const yvex_source_report_request *options = &report->request;
@@ -1021,11 +967,6 @@ static void source_render_generic_boundary(FILE *fp, const yvex_source_report *r
 
 }
 
-/* Purpose: Render source render audit from typed facts (`yvex_source_render_audit`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_source_render_audit(FILE *fp, const yvex_source_report *report)
 {
     const yvex_source_report_request *options = report ? &report->request : NULL;
@@ -1048,11 +989,6 @@ int yvex_source_render_audit(FILE *fp, const yvex_source_report *report)
     return report->exit_code;
 }
 
-/* Purpose: Render source render json from typed facts (`yvex_source_render_json`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_source_render_json(FILE *fp, const yvex_source_report *report)
 {
     const yvex_source_report_request *options = report ? &report->request : NULL;
@@ -1097,18 +1033,12 @@ int yvex_source_render_json(FILE *fp, const yvex_source_report *report)
     return report->exit_code;
 }
 
-/* Purpose: Render render usage from typed facts (`render_usage`). */
 static void render_usage(FILE *fp)
 {
     yvex_cli_out_writef(fp,
         "usage: yvex compile source manifest report --family deepseek|qwen|gemma --release v0.1.0 [options]\n");
 }
 
-/* Purpose: Render source render help from typed facts (`yvex_source_render_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_source_render_help(FILE *fp)
 {
     render_usage(fp);
@@ -1120,11 +1050,6 @@ void yvex_source_render_help(FILE *fp)
     yvex_cli_out_lines(fp, literal_lines_4, sizeof(literal_lines_4) / sizeof(literal_lines_4[0]));
 }
 
-/* Purpose: Render source render from typed facts (`yvex_source_render`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_source_render(FILE *fp,
                        yvex_source_render_mode mode,
                        const yvex_source_report *report)

@@ -1,9 +1,4 @@
-/*
- * YVEX - Quant policy tests
- *
- * File: tests/test_quant_policy.c
- * Layer: test
- */
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

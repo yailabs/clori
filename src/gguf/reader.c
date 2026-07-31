@@ -1,25 +1,14 @@
-/* Owner: src/gguf reader ABI
- * Owns: default structural-read budgets, stable parse sections/codes, error projection, and operational reader
- *   boundary facts.
- * Does not own: byte decoding, metadata/tensor storage, reports, writer emission, global layout admission, payload
- *   reads, materialization, or runtime support.
- * Invariants: parse classification is carried by typed facts and never reconstructed from human-readable error
- *   strings.
- * Boundary: structural reader acceptance is not complete artifact integrity, writer roundtrip, materialization, or
- *   runtime support.
- * Purpose: define bounded reader policy and typed projection of structural parse failures.
- * Inputs: caller-owned options, parse results, error records, and structural reports.
- * Effects: initializes or updates only the supplied policy and diagnostic records.
- * Failure: invalid, unsupported, bounded, allocation, and format cases retain distinct codes. */
+/*
+ * Define bounded reader policy and typed projection of structural parse failures.
+ *
+ * Parse classification is carried by typed facts and never reconstructed from human-readable error
+ * strings. Structural reader acceptance is not complete artifact integrity, writer roundtrip,
+ * materialization, or runtime support.
+ */
 #include <limits.h>
 #include <stdio.h>
 #include <yvex/internal/gguf.h>
 
-/* Purpose: initialize target-capable structural reader budgets without allocation.
- * Inputs: an optional writable options record.
- * Effects: replaces every budget field when the record is present.
- * Failure: none; a null record is a no-op.
- * Boundary: defaults constrain structural reads and never read tensor payload. */
 void yvex_gguf_reader_options_default(yvex_gguf_reader_options *options) {
     if (!options)
         return;
@@ -34,11 +23,6 @@ void yvex_gguf_reader_options_default(yvex_gguf_reader_options *options) {
     options->max_array_depth = 16u;
 }
 
-/* Purpose: reset one parse result to the canonical successful empty state.
- * Inputs: an optional writable result record.
- * Effects: clears location facts and installs the stable acceptance reason.
- * Failure: none; a null result is a no-op.
- * Boundary: reset state is not evidence that a file was parsed. */
 void yvex_gguf_parse_result_reset(yvex_gguf_parse_result *result) {
     if (!result)
         return;
@@ -49,11 +33,6 @@ void yvex_gguf_parse_result_reset(yvex_gguf_parse_result *result) {
     result->reason = "GGUF structural reader accepted input";
 }
 
-/* Purpose: map one typed parser code to the stable public status vocabulary.
- * Inputs: parser failure code.
- * Effects: none.
- * Failure: unknown parse codes map to format refusal.
- * Boundary: mapping preserves parser detail in the separate parse result. */
 static int parse_code_error(yvex_gguf_parse_code code) {
     switch (code) {
     case YVEX_GGUF_PARSE_OK:
@@ -83,11 +62,6 @@ static int parse_code_error(yvex_gguf_parse_code code) {
     }
 }
 
-/* Purpose: publish one typed structural-reader refusal and its precise location.
- * Inputs: optional result/error records, parse code, section, offsets, and diagnostic text.
- * Effects: replaces supplied diagnostics and returns the mapped public status.
- * Failure: this function represents the supplied failure and performs no allocation.
- * Boundary: refusal publication owns neither artifact cleanup nor capability classification. */
 int yvex_gguf_reader_fail(yvex_gguf_parse_result *result, yvex_gguf_parse_code code,
                           yvex_gguf_parse_section section, unsigned long long byte_offset,
                           unsigned long long record_index, yvex_error *err, const char *where,

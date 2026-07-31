@@ -1,12 +1,9 @@
-/* Owner: server.openai.core.
- * Owns: loopback adapter lifecycle, endpoint routing, YVEX session orchestration, streaming, and cancellation.
- * Does not own: model/runtime lifecycle, JSON syntax, HTTP parsing, provider prompts, KV, or tool execution.
- * Invariants: every generation uses the local protocol; ephemeral sessions close and retained state is explicit.
- * Boundary: the adapter is server-owned and never links or invokes the inference engine directly.
- * Purpose: compose bounded HTTP/OpenAI translation with the existing local runtime-host protocol.
- * Inputs: loopback configuration, accepted HTTP requests, and a private YVEX socket path.
- * Effects: creates client protocol connections/sessions, streams committed results, and retains bounded response IDs.
- * Failure: cancels abandoned work, closes owned sessions/connections, and never reports false HTTP success. */
+/*
+ * Compose bounded HTTP/OpenAI translation with the existing local runtime-host protocol.
+ *
+ * Every generation uses the local protocol; ephemeral sessions close and retained state is
+ * explicit. The adapter is server-owned and never links or invokes the inference engine directly.
+ */
 #define _POSIX_C_SOURCE 200809L
 #include "src/server/openai/private.h"
 #include <arpa/inet.h>
@@ -39,18 +36,18 @@ struct server_openai_listener {
     int listen_fd, thread_started, thread_status;
     yvex_error thread_error;
 };
-/* Purpose: return current wall seconds for public OpenAI object timestamps and state TTL only. */
+
 static unsigned long long wall_seconds(void)
 {
     struct timespec now;
     return clock_gettime(CLOCK_REALTIME, &now) == 0
                ? (unsigned long long)now.tv_sec : 0u;
 }
-/* Purpose: grow one bounded collected output span.
- * Inputs: current owned bytes/count/capacity, one explicit source span, and error output.
- * Effects: reallocates and appends only after the complete extent is admitted.
- * Failure: preserves the prior owner and reports bounds or allocation failure.
- * Boundary: collects committed provider bytes without model or transport ownership. */
+/*
+ * Grow one bounded collected output span.
+ *
+ * Collects committed provider bytes without model or transport ownership.
+ */
 static int result_append(unsigned char **bytes, unsigned long long *count,
                          unsigned long long *capacity,
                          const unsigned char *fragment,
@@ -85,11 +82,7 @@ static int result_append(unsigned char **bytes, unsigned long long *count,
     *count = need;
     return YVEX_OK;
 }
-/* Purpose: release one collected generation result.
- * Inputs: a gateway-owned aggregate result.
- * Effects: frees text/argument storage and clears all public counters.
- * Failure: none; a null or cleared result is accepted.
- * Boundary: never releases daemon session or provider-request ownership. */
+
 static void result_clear(openai_generation_result *result)
 {
     if (!result) return;
@@ -97,11 +90,7 @@ static void result_clear(openai_generation_result *result)
     free(result->arguments);
     memset(result, 0, sizeof(*result));
 }
-/* Purpose: open one gateway protocol client with a bounded model-response timeout.
- * Inputs: gateway socket, client output, and error output.
- * Effects: authenticates protocol v4 and applies the configured send/receive ceiling.
- * Failure: closes partial client ownership and preserves the typed timeout/refusal.
- * Boundary: bounds gateway waiting without changing daemon generation semantics. */
+
 static int client_connect(const openai_gateway *gateway, yvex_client **client,
                           yvex_error *err)
 {
@@ -111,11 +100,7 @@ static int client_connect(const openai_gateway *gateway, yvex_client **client,
     if (rc != YVEX_OK) yvex_client_close(client);
     return rc;
 }
-/* Purpose: connect and obtain one authoritative daemon status snapshot.
- * Inputs: gateway socket configuration and caller-owned summary/error outputs.
- * Effects: opens and closes one protocol client after one status exchange.
- * Failure: publishes no summary when connection, send, or response validation fails.
- * Boundary: reads host authority without opening model or artifact resources. */
+
 static int daemon_status(const openai_gateway *gateway,
                          yvex_server_summary *summary, yvex_error *err)
 {
@@ -141,11 +126,11 @@ static int daemon_status(const openai_gateway *gateway,
     yvex_client_close(&client);
     return rc;
 }
-/* Purpose: append prior Responses context and current input without reconstructing hidden state.
- * Inputs: optional retained request, current request, and owned combined output.
- * Effects: clones one complete provider request graph and reseals its identity.
- * Failure: closes partial storage and leaves the output null.
- * Boundary: combines typed conversation facts but never infers KV from response text. */
+/*
+ * Append prior Responses context and current input without reconstructing hidden state.
+ *
+ * Clones one complete provider request graph and reseals its identity.
+ */
 static int context_combine(const yvex_provider_request *prior,
                            const yvex_provider_request *current,
                            yvex_provider_request **combined, yvex_error *err)
@@ -182,11 +167,11 @@ static int context_combine(const yvex_provider_request *prior,
     free(messages);
     return rc;
 }
-/* Purpose: append one authoritative assistant output to retained Responses context.
- * Inputs: admitted request and committed assistant text or function-call result.
- * Effects: clones and extends the message graph, then seals a new context identity.
- * Failure: destroys the candidate context and publishes no retained mapping.
- * Boundary: records provider-visible history without owning runtime session state. */
+/*
+ * Append one authoritative assistant output to retained Responses context.
+ *
+ * Clones and extends the message graph, then seals a new context identity.
+ */
 static int context_complete(const yvex_provider_request *request,
                             const openai_generation_result *result,
                             yvex_provider_request **context, yvex_error *err)
@@ -225,7 +210,7 @@ static int context_complete(const yvex_provider_request *request,
     free(messages);
     return rc;
 }
-/* Purpose: request cancellation through a separate local-protocol connection. */
+
 static void cancel_session(const openai_gateway *gateway,
                            const char *session_name)
 {
@@ -245,11 +230,7 @@ static void cancel_session(const openai_gateway *gateway,
         (void)yvex_client_receive(client, &response, &err);
     yvex_client_close(&client);
 }
-/* Purpose: observe one HTTP peer while the main gateway thread waits on model output.
- * Inputs: a fully initialized watch with immutable gateway/session facts.
- * Effects: requests typed daemon cancellation exactly once after peer closure.
- * Failure: liveness-probe failure is treated as peer loss; cancellation remains best effort.
- * Boundary: this thread never receives model output or mutates gateway response state. */
+
 static void *disconnect_watch_main(void *opaque)
 {
     disconnect_watch *watch = opaque;
@@ -269,11 +250,7 @@ static void *disconnect_watch_main(void *opaque)
     }
     return NULL;
 }
-/* Purpose: transfer HTTP-disconnect observation to one bounded watcher.
- * Inputs: cleared watch, gateway, peer descriptor, and exact active session name.
- * Effects: starts at most one joinable observer without changing session state.
- * Failure: reports thread creation and leaves the watch stopped and join-safe.
- * Boundary: generation remains on the gateway owner thread. */
+
 static int disconnect_watch_open(disconnect_watch *watch,
                                  const openai_gateway *gateway, int http_fd,
                                  const char *session_name, yvex_error *err)
@@ -295,10 +272,7 @@ static int disconnect_watch_open(disconnect_watch *watch,
     watch->started = 1;
     return YVEX_OK;
 }
-/* Purpose: stop and join one HTTP-disconnect watcher before session cleanup.
- * Inputs: a possibly unopened watch. Effects: publishes whether peer closure was observed.
- * Failure: join failure is secondary to process ownership and reports peer state conservatively.
- * Boundary: never cancels a request after returning. */
+
 static int disconnect_watch_close(disconnect_watch *watch)
 {
     int peer_closed;
@@ -310,7 +284,7 @@ static int disconnect_watch_close(disconnect_watch *watch)
     watch->started = 0;
     return peer_closed;
 }
-/* Purpose: create or close one server-owned session over the current gateway connection. */
+
 static int session_operation(yvex_client *client, yvex_client_operation operation,
                              const char *session_name, yvex_error *err)
 {
@@ -331,11 +305,7 @@ static int session_operation(yvex_client *client, yvex_client_operation operatio
     }
     return rc;
 }
-/* Purpose: close one retained or ephemeral server session through protocol v4.
- * Inputs: gateway socket, exact session name, and error output.
- * Effects: opens one bounded client connection and transfers session cleanup to yvexd.
- * Failure: leaves the caller's mapping intact so cleanup can be retried or reported.
- * Boundary: closes session/KV state only; the daemon model remains open. */
+
 static int session_close(openai_gateway *gateway, const char *session_name,
                          yvex_error *err)
 {
@@ -347,11 +317,7 @@ static int session_close(openai_gateway *gateway, const char *session_name,
     yvex_client_close(&client);
     return rc;
 }
-/* Purpose: reclaim expired state and, when required, one deterministic LRU slot.
- * Inputs: gateway state, current wall seconds, free-slot requirement, and error output.
- * Effects: closes each selected daemon session before removing its application mapping.
- * Failure: preserves the first mapping whose daemon session cannot be closed.
- * Boundary: eviction never leaves an intentionally retained session unreachable. */
+/* Reclaim expired state and, when required, one deterministic LRU slot. */
 static int state_prepare(openai_gateway *gateway, unsigned long long now,
                          int require_free, yvex_error *err)
 {
@@ -381,11 +347,7 @@ static int state_prepare(openai_gateway *gateway, unsigned long long now,
     openai_state_remove(oldest);
     return YVEX_OK;
 }
-/* Purpose: close every retained daemon session during graceful gateway shutdown.
- * Inputs: gateway state and error output.
- * Effects: closes and removes mappings in stable directory order.
- * Failure: returns the first cleanup failure while continuing other rows.
- * Boundary: process-local mappings never survive shutdown. */
+
 static int state_sessions_close(openai_gateway *gateway, yvex_error *err)
 {
     unsigned long long index;
@@ -405,7 +367,7 @@ static int state_sessions_close(openai_gateway *gateway, yvex_error *err)
     }
     return rc;
 }
-/* Purpose: map one Responses event kind to its exact SSE event name. */
+
 static const char *response_sse_name(openai_response_event_kind kind)
 {
     static const char *const names[] = {
@@ -424,11 +386,7 @@ static const char *response_sse_name(openai_response_event_kind kind)
     };
     return kind <= OPENAI_RESPONSE_EVENT_FAILED ? names[kind] : NULL;
 }
-/* Purpose: render and publish one sequenced Responses event transactionally.
- * Inputs: stream sink, event kind, public facts, optional message/result, and error output.
- * Effects: advances sequence only after one complete SSE record is written.
- * Failure: frees candidate JSON and leaves the prior sequence authoritative.
- * Boundary: event projection only; model/session state is already committed. */
+
 static int response_event_emit(openai_http_sink *sink,
                                openai_response_event_kind kind,
                                const char *id, const char *model,
@@ -449,11 +407,7 @@ static int response_event_emit(openai_http_sink *sink,
     free(json);
     return rc;
 }
-/* Purpose: emit the complete Responses item terminal sequence.
- * Inputs: sink/IDs/time, terminal message, completed aggregate result, and error output.
- * Effects: seals text or arguments, item, and response in canonical order.
- * Failure: stops at the first incomplete socket event without claiming completion.
- * Boundary: all bytes and usage facts originate in protocol-v4 messages. */
+
 static int response_terminal_emit(openai_http_sink *sink, const char *id,
                                   const char *model,
                                   unsigned long long created,
@@ -486,11 +440,7 @@ static int response_terminal_emit(openai_http_sink *sink, const char *id,
                                  message, result, err);
     return rc;
 }
-/* Purpose: publish the terminal Responses sequence only after retained state is committed.
- * Inputs: stream sink, public IDs/time, completed aggregate result, and error output.
- * Effects: creates an empty output item when no fragment existed, then emits terminal events.
- * Failure: never emits response.completed before the state mapping is authoritative.
- * Boundary: provider publication follows gateway/session state commit. */
+
 static int response_stream_complete(openai_http_sink *sink, const char *id,
                                     const char *model,
                                     unsigned long long created,
@@ -512,11 +462,7 @@ static int response_stream_complete(openai_http_sink *sink, const char *id,
                                     err);
     return rc;
 }
-/* Purpose: stream one admitted protocol fragment/event and retain exact reconstructed bytes.
- * Inputs: sink/profile IDs, one protocol message, aggregate result, and error output.
- * Effects: appends committed bytes/counters and may emit one valid SSE record.
- * Failure: preserves prior collected output and returns the first render/write error.
- * Boundary: translates committed protocol facts; it never invents model output. */
+
 static int generation_message(openai_http_sink *sink, const char *id,
                               const char *model, unsigned long long created,
                               const yvex_client_message *message,
@@ -586,11 +532,7 @@ static int generation_message(openai_http_sink *sink, const char *id,
     }
     return rc;
 }
-/* Purpose: execute one provider request through a server-owned session and committed stream.
- * Inputs: gateway socket, provider request, chosen session, public IDs, and sink.
- * Effects: sends one daemon turn, streams typed results, and records terminal facts.
- * Failure: requests cancellation and retains only facts received before failure.
- * Boundary: protocol orchestration only; model, KV, and generation remain in yvexd. */
+
 static int generation_execute(openai_gateway *gateway,
                               openai_http_sink *sink, const char *id,
                               const char *model, unsigned long long created,
@@ -650,11 +592,7 @@ static int generation_execute(openai_gateway *gateway,
     yvex_client_close(&client);
     return rc;
 }
-/* Purpose: close one Chat stream only after ephemeral session cleanup succeeds.
- * Inputs: sink, public IDs/time, completed result, usage policy, and error output.
- * Effects: emits terminal finish, optional usage, then exactly one [DONE] sentinel.
- * Failure: emits no success sentinel after an incomplete terminal publication.
- * Boundary: committed model bytes precede transport completion; session cleanup precedes success. */
+
 static int chat_stream_complete(openai_http_sink *sink, const char *id,
                                 const char *model,
                                 unsigned long long created,
@@ -683,11 +621,7 @@ static int chat_stream_complete(openai_http_sink *sink, const char *id,
     if (rc == YVEX_OK) rc = openai_http_sse_done(sink->fd, err);
     return rc;
 }
-/* Purpose: map one typed YVEX/gateway status into the bounded public HTTP error profile.
- * Inputs: lower status and optional authoritative protocol failure class.
- * Effects: none.
- * Failure: unknown status/class combinations become internal error responses.
- * Boundary: classification uses typed facts and never diagnostic prose. */
+
 static int http_status(int status, yvex_client_failure_class failure_class)
 {
     switch (failure_class) {
@@ -716,11 +650,7 @@ static int http_status(int status, yvex_client_failure_class failure_class)
     default: return 500;
     }
 }
-/* Purpose: send one safe public error envelope before any streaming headers exist.
- * Inputs: client descriptor, HTTP status, and bounded public message.
- * Effects: renders and writes exactly one complete JSON error response.
- * Failure: returns rendering or socket failure without reporting false HTTP success.
- * Boundary: hides internal paths and identities and never changes daemon state. */
+
 static int send_error(int fd, int status, const char *message)
 {
     unsigned char *json = NULL;
@@ -749,11 +679,7 @@ static int send_error(int fd, int status, const char *message)
     free(json);
     return YVEX_OK;
 }
-/* Purpose: recognize only the documented method/path compatibility matrix.
- * Inputs: admitted HTTP request and endpoint/model outputs.
- * Effects: writes route facts only when method and path match the profile.
- * Failure: returns false for unsupported or oversized model paths.
- * Boundary: routing contains no request-body or model-execution semantics. */
+
 static int route(const openai_http_request *request,
                  openai_endpoint *endpoint, char model[YVEX_PROVIDER_MODEL_CAP])
 {
@@ -776,11 +702,7 @@ static int route(const openai_http_request *request,
     else return 0;
     return 1;
 }
-/* Purpose: serve health or model discovery without creating a runtime session.
- * Inputs: gateway configuration, client descriptor, endpoint, and optional model.
- * Effects: queries daemon readiness and writes one bounded JSON response.
- * Failure: maps unavailable daemon/model state to a typed provider error.
- * Boundary: read-only discovery; no session or generation request is created. */
+
 static int handle_read(openai_gateway *gateway, int fd,
                        openai_endpoint endpoint, const char *requested_model)
 {
@@ -806,11 +728,7 @@ static int handle_read(openai_gateway *gateway, int fd,
     free(json);
     return rc;
 }
-/* Purpose: execute one Chat/Responses HTTP request through exact local-protocol state.
- * Inputs: gateway state, client descriptor, complete HTTP request, and endpoint.
- * Effects: admits provider intent, executes one turn, renders output, and retains state if required.
- * Failure: cancels active work, closes ephemeral state, and emits no false completion.
- * Boundary: owns application translation while yvexd owns inference and KV mutation. */
+
 static int handle_generation(openai_gateway *gateway, int fd,
                              const openai_http_request *http,
                              openai_endpoint endpoint)
@@ -977,11 +895,12 @@ failure:
     result_clear(&result);
     return rc;
 }
-/* Purpose: admit and route one accepted loopback connection.
- * Inputs: gateway state and one accepted loopback socket.
- * Effects: reads one request, writes one response or stream, then clears request storage.
- * Failure: sends one bounded error when possible and always returns connection ownership.
- * Boundary: one request per connection; no keep-alive or runtime ownership. */
+/*
+ * Admit and route one accepted loopback connection.
+ *
+ * Sends one bounded error when possible and always returns connection ownership. One request per
+ * connection; no keep-alive or runtime ownership.
+ */
 static int handle_connection(openai_gateway *gateway, int fd)
 {
     struct timeval timeout = {30, 0};
@@ -1008,9 +927,12 @@ static int handle_connection(openai_gateway *gateway, int fd)
     openai_http_request_clear(&request);
     return rc;
 }
-/* Purpose: serve one already-reserved loopback listener until its server owner requests stop.
- * Inputs: prepared listener ownership. Effects: accepts serial bounded requests and clears response state.
- * Failure: records the first listener failure for the lifecycle joiner. Boundary: no model ownership. */
+/*
+ * Serve one already-reserved loopback listener until its server owner requests stop.
+ *
+ * Prepared listener ownership. Accepts serial bounded requests and clears response state. No model
+ * ownership.
+ */
 static void *listener_main(void *opaque)
 {
     server_openai_listener *listener = opaque;
@@ -1083,11 +1005,6 @@ static void *listener_main(void *opaque)
     return NULL;
 }
 
-/* Purpose: reserve the loopback HTTP endpoint before any runtime model opens.
- * Inputs: unique output, explicit local protocol path, port, timeout, and shared telemetry.
- * Effects: allocates adapter state and binds/listens without accepting requests.
- * Failure: closes every partial descriptor and reports configuration or port collision.
- * Boundary: preparation owns no model, session, worker, or process entrypoint. */
 int yvex_server_openai_prepare(server_openai_listener **out,
                                const server_openai_options *options,
                                server_telemetry *telemetry,
@@ -1142,11 +1059,6 @@ io_failure:
     return YVEX_ERR_IO;
 }
 
-/* Purpose: start the gated listener thread before runtime readiness is published.
- * Inputs: one prepared listener and writable error output.
- * Effects: creates exactly one joinable thread; HTTP admission remains disabled.
- * Failure: reports invalid lifecycle state or thread creation failure without consuming the listener.
- * Boundary: does not admit requests or mutate runtime/model state. */
 int yvex_server_openai_start(server_openai_listener *listener,
                              yvex_error *err)
 {
@@ -1165,9 +1077,7 @@ int yvex_server_openai_start(server_openai_listener *listener,
     return YVEX_OK;
 }
 
-/* Purpose: admit HTTP accepts only after the runtime-ready transaction has published.
- * Inputs: one successfully started listener. Effects: atomically publishes ready and admission.
- * Failure: invalid or unstarted listeners remain unchanged. Boundary: no socket or runtime mutation. */
+/* Admit HTTP accepts only after the runtime-ready transaction has published. */
 void yvex_server_openai_activate(server_openai_listener *listener)
 {
     if (!listener || !listener->thread_started) return;
@@ -1175,9 +1085,6 @@ void yvex_server_openai_activate(server_openai_listener *listener)
     atomic_store_explicit(&listener->admit, 1, memory_order_release);
 }
 
-/* Purpose: stop HTTP admission and wake the accept owner for bounded shutdown.
- * Inputs: optional prepared listener. Effects: publishes stop and shuts down the listening descriptor.
- * Failure: descriptor shutdown failure is deferred to lifecycle cleanup. Boundary: no model close. */
 void yvex_server_openai_request_stop(server_openai_listener *listener)
 {
     if (!listener) return;
@@ -1186,9 +1093,6 @@ void yvex_server_openai_request_stop(server_openai_listener *listener)
         (void)shutdown(listener->listen_fd, SHUT_RDWR);
 }
 
-/* Purpose: join the HTTP owner after bounded cancellation and response-state cleanup.
- * Inputs: prepared listener and error output. Effects: joins at most once.
- * Failure: reports thread or listener cleanup failure. Boundary: no runtime owner closes here. */
 int yvex_server_openai_finish(server_openai_listener *listener,
                               yvex_error *err)
 {
@@ -1217,9 +1121,6 @@ int yvex_server_openai_finish(server_openai_listener *listener,
     return YVEX_OK;
 }
 
-/* Purpose: copy bounded listener lifecycle facts into the authoritative server status.
- * Inputs: optional listener and writable snapshot. Effects: writes one self-contained snapshot.
- * Failure: absent listener produces disabled zero facts. Boundary: reads no request or runtime state. */
 void yvex_server_openai_snapshot(const server_openai_listener *listener,
                                  server_openai_snapshot *snapshot)
 {
@@ -1232,9 +1133,11 @@ void yvex_server_openai_snapshot(const server_openai_listener *listener,
     snapshot->port = listener->gateway.port;
 }
 
-/* Purpose: release the adapter after its thread and retained protocol state have stopped.
- * Inputs: unique listener-owner slot. Effects: joins, closes, clears state, frees, and nulls the slot.
- * Failure: finish failure is cleanup evidence but ownership is still reclaimed. Boundary: closes no model. */
+/*
+ * Release the adapter after its thread and retained protocol state have stopped.
+ *
+ * Finish failure is cleanup evidence but ownership is still reclaimed.
+ */
 void yvex_server_openai_close(server_openai_listener **listener)
 {
     server_openai_listener *owner;

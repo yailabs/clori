@@ -1,14 +1,10 @@
-/* Owner: src/model/target
- * Owns: model-class profile facts and report construction.
- * Does not own: CLI parsing, rendering, tensor payload loading, tensor role mapping, runtime execution, generation,
- *   eval, benchmark, or release decisions.
- * Invariants: model-class profile reports use source sidecar and safetensors header facts only.
- * Boundary: model-class profiling is not tensor role mapping, runtime support, generation readiness, benchmark
- *   evidence, or release readiness.
- * Purpose: build typed family-class profiles from verified or bounded source facts.
- * Inputs: typed requests, verification results, and retained inventories.
- * Effects: owns report-attached architecture IR or bounded lexical counters.
- * Failure: verification and IR refusals publish no false runtime capability. */
+/*
+ * Build typed family-class profiles from verified or bounded source facts.
+ *
+ * Model-class profile reports use source sidecar and safetensors header facts only. Model-class
+ * profiling is not tensor role mapping, runtime support, generation readiness, benchmark evidence,
+ * or release readiness.
+ */
 #include <yvex/internal/model_target.h>
 
 #include <yvex/internal/families/deepseek_v4.h>
@@ -87,7 +83,6 @@ static const yvex_model_target_row_spec class_audit_suffix[] = {
 #undef CLASS_U64
 #undef CLASS_LITERAL
 
-/* Purpose: form the bounded canonical class profile path suffix without path drift. */
 static int class_profile_path_suffix(const char *path, const char *suffix)
 {
     size_t path_length;
@@ -100,11 +95,6 @@ static int class_profile_path_suffix(const char *path, const char *suffix)
            strcmp(path + path_length - suffix_length, suffix) == 0;
 }
 
-/* Purpose: form the bounded canonical class profile deepseek models root without path drift.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int class_profile_deepseek_models_root(
     const yvex_model_target_request *request,
@@ -141,8 +131,6 @@ static int class_profile_deepseek_models_root(
     return n >= 0 && (size_t)n < cap;
 }
 
-/* Purpose: apply the canonical class profile deepseek source transformation and invariants. */
-
 static int class_profile_deepseek_source(
     const yvex_model_target_request *request,
     const char *models_root,
@@ -158,8 +146,6 @@ static int class_profile_deepseek_source(
         out, cap, models_root, yvex_source_release_identity());
 }
 
-/* Purpose: apply the canonical class profile deepseek ir refusal transformation and invariants. */
-
 static void class_profile_deepseek_ir_refusal(
     const yvex_deepseek_v4_ir_failure *failure,
     yvex_model_target_report *report)
@@ -173,12 +159,6 @@ static void class_profile_deepseek_ir_refusal(
         yvex_model_register_deepseek_v4()->ir.failure_name(failure->code),
         failure->field ? failure->field : "none", failure->layer_index);
 }
-
-/* Purpose: apply the canonical class profile deepseek from verification transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int class_profile_deepseek_from_verification(
     const yvex_model_target_request *request,
@@ -221,12 +201,6 @@ static int class_profile_deepseek_from_verification(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
-/* Purpose: construct bounded class profile deepseek report build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int class_profile_deepseek_report_build(
     const yvex_model_target_request *request,
@@ -308,11 +282,6 @@ static int class_profile_deepseek_report_build(
         request, &verification, report, err);
 }
 
-/* Purpose: map class profile family facts through canonical typed vocabulary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void class_profile_family_facts(const char *family,
                                        const char **class_name,
                                        const char **runtime_shape,
@@ -335,11 +304,6 @@ static void class_profile_family_facts(const char *family,
     }
 }
 
-/* Purpose: construct bounded class profile report build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 int yvex_model_class_profile_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,

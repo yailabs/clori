@@ -22,6 +22,7 @@ require_file docs/decisions/README.md
 require_file docs/decisions/0001-public-project-control.md
 require_file docs/decisions/0003-documentation-architecture.md
 require_file docs/development/documentation-policy.md
+require_file docs/milestones/code-commentary.md
 require_file docs/milestones/command-architecture.md
 require_file docs/milestones/documentation-architecture.md
 require_file docs/milestones/runtime-console-repl.md
@@ -38,6 +39,7 @@ require_text "$roadmap" 'This file is the sole live authority'
 require_text "$roadmap" '| `V010.PROJECT.CONTROL.PUBLIC.0` | `complete` |'
 require_text "$roadmap" '| `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `complete` |'
 require_text "$roadmap" '| `V010.DOCS.INFORMATION.ARCHITECTURE.0` | `complete` |'
+require_text "$roadmap" '| `V010.REPO.CODE.COMMENTARY.0` | `complete` |'
 require_text "$roadmap" '| `V010.OPERATOR.REPL.CONSOLE.0` | `active` |'
 require_text "$roadmap" '| `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `blocked` |'
 require_text "$roadmap" '| `V010.EVAL.DEEPSEEK.0` | `blocked` |'
@@ -73,7 +75,7 @@ in_sequence && /^\| [0-9]+ \| `V010\./ {
 ' "$roadmap" > "$rows"
 
 row_count=$(wc -l < "$rows" | tr -d ' ')
-test "$row_count" -eq 8 || fail "expected 8 current milestones, found $row_count"
+test "$row_count" -eq 9 || fail "expected 9 current milestones, found $row_count"
 
 cut -f 1 "$rows" | LC_ALL=C sort > "$ids"
 unique_count=$(uniq "$ids" | wc -l | tr -d ' ')
@@ -109,6 +111,7 @@ require_text docs/decisions/0001-public-project-control.md '## Decision'
 require_text docs/decisions/0001-public-project-control.md 'The former complete ledger is removed'
 require_text docs/decisions/0003-documentation-architecture.md '## Decision'
 require_text docs/development/documentation-policy.md '`ROADMAP.md` is the only live macro control surface'
+require_text docs/milestones/code-commentary.md 'Status source:'
 require_text docs/milestones/documentation-architecture.md 'Status source:'
 
 issue_count=$(find .github/ISSUE_TEMPLATE -maxdepth 1 -type f -name '*.yml' |

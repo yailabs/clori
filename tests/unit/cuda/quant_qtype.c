@@ -1,12 +1,6 @@
 /*
- * quant_qtype.c - CUDA encoded-qtype arithmetic parity and failure tests.
- *
- * Owner: tests/unit/cuda.
- * Owns: bounded CPU/CUDA row-dot parity, admission refusals, repeatability,
- *   copy/launch/cleanup fault evidence, and backend cleanup assertions.
- * Does not own: model execution, artifact emission, or capability policy.
- * Invariants: all encoded inputs come from canonical TRACK.QUANT codecs.
- * Boundary: qtype primitive parity is not transformer or generation support.
+ * All encoded inputs come from canonical TRACK.QUANT codecs. Qtype primitive parity is not
+ * transformer or generation support.
  */
 #include <math.h>
 #include <stdint.h>
@@ -21,7 +15,6 @@
 
 #include "tests/test.h"
 
-/* Encodes a complete row one canonical block at a time into owned storage. */
 static int quant_cuda_encode_row(unsigned int qtype,
                                  const float *source,
                                  unsigned long long elements,
@@ -71,7 +64,6 @@ static int quant_cuda_encode_row(unsigned int qtype,
     return 1;
 }
 
-/* Proves one qtype direct kernel against the canonical bounded CPU primitive. */
 static int quant_cuda_parity(yvex_backend *backend,
                              unsigned int qtype,
                              unsigned long long elements,
@@ -164,7 +156,6 @@ static int quant_cuda_parity(yvex_backend *backend,
     return 0;
 }
 
-/* Purpose: reproduce the execution-only Q8_K activation codec without CUDA implementation reuse. */
 static void quant_q8_reference(const float input[512], float output[512])
 {
     unsigned int block;
@@ -191,7 +182,6 @@ static void quant_q8_reference(const float input[512], float output[512])
     }
 }
 
-/* Proves the production Q8_K-activation matvec against independent CPU arithmetic. */
 static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
 {
     enum { ROWS = 3, WIDTH = 512 };

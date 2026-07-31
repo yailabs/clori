@@ -1,15 +1,10 @@
-/* Owner: model-artifact CLI surface.
- * Owns: CLI-only model-artifact command data shared by its command, parser, renderer, and orchestration translation
- *   units.
- * Does not own: artifact admission, source trust, model policy, runtime state, graph execution, or any capability
- *   decision.
- * Invariants: one private contract serves this subtree; no declaration enters libyvex.a or the installed public
- *   ABI.
- * Boundary: typed CLI reports render domain facts without promoting support.
- * Purpose: Share the minimal types and calls that genuinely cross the model-artifact CLI translation-unit boundary.
- * Inputs: Public domain contracts and the canonical CLI I/O contracts.
- * Effects: Declarations only.
- * Failure: Compilation rejects missing or mismatched owner contracts. */
+/*
+ * Share the minimal types and calls that genuinely cross the model-artifact CLI translation-unit
+ * boundary.
+ *
+ * One private contract serves this subtree; no declaration enters libyvex.a or the installed
+ * public ABI. Typed CLI reports render domain facts without promoting support.
+ */
 #ifndef YVEX_CLI_MODEL_ARTIFACTS_PRIVATE_H
 #define YVEX_CLI_MODEL_ARTIFACTS_PRIVATE_H
 

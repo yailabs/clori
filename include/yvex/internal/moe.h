@@ -1,12 +1,9 @@
-/* Owner: graph/runtime MoE execution contract.
- * Owns: immutable MoE plans, typed activation input, selected-expert execution, and publication.
- * Does not own: family discovery, artifact admission, transformer composition, KV, tokenizer, or generation.
- * Invariants: family policy is projected by adapter identity and only selected expert subviews are consumed.
- * Boundary: internal graph/runtime/backend ABI for one token-local MoE block.
- * Purpose: expose the complete production MoE-local boundary without CLI-shaped numerical APIs.
- * Inputs: admitted runtime identities, encoded weight views, expanded hidden activations, and token IDs.
- * Effects: owns bounded input/context resources and publishes complete typed results transactionally.
- * Failure: stale identity, malformed geometry, unavailable qtype/backend, or cancellation publishes no output. */
+/*
+ * Expose the complete production MoE-local boundary without CLI-shaped numerical APIs.
+ *
+ * Family policy is projected by adapter identity and only selected expert subviews are consumed.
+ * Internal graph/runtime/backend ABI for one token-local MoE block.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_MOE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_MOE_H_INCLUDED
 #include <stddef.h>

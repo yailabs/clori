@@ -1,12 +1,9 @@
-/* Owner: tokenizer.token_input.
- * Owns: bounded explicit-token parsing, vocabulary-bound validation, and indexed selection.
- * Does not own: text tokenization, prefill, decode, logits, sampling, or generation.
- * Invariants: token count never exceeds fixed capacity and validated IDs remain below vocab size.
- * Boundary: typed token-input admission consumed by runtime and CLI adapters.
- * Purpose: turn explicit operator token IDs into a bounded, validated immutable input fact.
- * Inputs: typed ID arrays or decimal list text plus an admitted vocabulary cardinality.
- * Effects: mutates only caller-owned fixed-capacity token-input structures.
- * Failure: rejects empty, malformed, overflowing, excess, or out-of-vocabulary inputs. */
+/*
+ * Turn explicit operator token IDs into a bounded, validated immutable input fact.
+ *
+ * Token count never exceeds fixed capacity and validated IDs remain below vocab size. Typed
+ * token-input admission consumed by runtime and CLI adapters.
+ */
 
 #include <yvex/tokenizer.h>
 #include <ctype.h>
@@ -15,11 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Purpose: initialize a caller-owned token-input structure with explicit kind and capacity.
- * Inputs: nullable output and typed input kind.
- * Effects: clears prior scalar state without freeing external storage.
- * Failure: none; NULL is ignored.
- * Boundary: fixed-storage initialization. */
 void yvex_token_input_init(yvex_token_input *input, yvex_token_input_kind kind)
 {
     if (!input) {
@@ -30,11 +22,6 @@ void yvex_token_input_init(yvex_token_input *input, yvex_token_input_kind kind)
     input->max_tokens = YVEX_TOKEN_INPUT_MAX_TOKENS;
 }
 
-/* Purpose: map token-input kind to stable diagnostic wording.
- * Inputs: typed input-kind enumeration.
- * Effects: none; returned storage is static.
- * Failure: unrecognized values map to "unknown".
- * Boundary: label projection only. */
 const char *yvex_token_input_kind_name(yvex_token_input_kind kind)
 {
     switch (kind) {
@@ -44,11 +31,6 @@ const char *yvex_token_input_kind_name(yvex_token_input_kind kind)
     return "unknown";
 }
 
-/* Purpose: append one ID while enforcing both configured and physical capacities.
- * Inputs: mutable input, token ID, and error output.
- * Effects: writes one slot and increments count only on success.
- * Failure: full input returns typed bounds failure without mutation.
- * Boundary: local fixed-buffer mutation. */
 static int token_input_append(yvex_token_input *input,
                               unsigned int token,
                               yvex_error *err)
@@ -63,11 +45,7 @@ static int token_input_append(yvex_token_input *input,
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded token input from a caller-supplied ID array.
- * Inputs: kind, immutable IDs/count, output structure, and error output.
- * Effects: initializes and fills the caller-owned result.
- * Failure: empty, invalid, or excess input aborts with typed refusal.
- * Boundary: syntax-free token admission; vocabulary checking remains separate. */
+/* Construct bounded token input from a caller-supplied ID array. */
 int yvex_token_input_from_ids(yvex_token_input_kind kind,
                               const unsigned int *ids,
                               unsigned long long count,
@@ -97,11 +75,11 @@ int yvex_token_input_from_ids(yvex_token_input_kind kind,
     return YVEX_OK;
 }
 
-/* Purpose: parse comma-separated decimal token IDs into fixed-capacity storage.
- * Inputs: immutable text, output structure, and error output.
- * Effects: initializes and appends each exact parsed ID.
- * Failure: syntax, numeric overflow, empty input, or capacity excess is refused.
- * Boundary: operator syntax parsing only. */
+/*
+ * Parse comma-separated decimal token IDs into fixed-capacity storage.
+ *
+ * Syntax, numeric overflow, empty input, or capacity excess is refused.
+ */
 int yvex_token_input_parse_explicit(const char *text,
                                     yvex_token_input *out,
                                     yvex_error *err)
@@ -185,11 +163,6 @@ int yvex_token_input_parse_explicit(const char *text,
     return YVEX_OK;
 }
 
-/* Purpose: bind parsed token IDs to an admitted vocabulary cardinality.
- * Inputs: mutable input, nonzero vocabulary size, and error output.
- * Effects: records checked/valid flags and vocabulary size after exhaustive validation.
- * Failure: empty input, absent vocabulary, or any out-of-range ID leaves valid false.
- * Boundary: token-range admission, not model execution. */
 int yvex_token_input_validate_bounds(yvex_token_input *input,
                                      unsigned long long vocab_size,
                                      yvex_error *err)
@@ -227,11 +200,6 @@ int yvex_token_input_validate_bounds(yvex_token_input *input,
     return YVEX_OK;
 }
 
-/* Purpose: retrieve one admitted token ID by logical input index.
- * Inputs: immutable input, index, output token, and error output.
- * Effects: writes exactly one scalar token on success.
- * Failure: invalid output or index outside token count returns typed refusal.
- * Boundary: immutable token-input lookup. */
 int yvex_token_input_select(const yvex_token_input *input,
                             unsigned long long token_index,
                             unsigned int *out_token,

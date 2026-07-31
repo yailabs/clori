@@ -1,4 +1,4 @@
-/* Test-only independent output-head reference contract. */
+/* Test-only independent output-head reference. */
 #ifndef TESTS_REFERENCE_LOGITS_H_INCLUDED
 #define TESTS_REFERENCE_LOGITS_H_INCLUDED
 

@@ -1,12 +1,7 @@
-/* Owner: gguf.internal (gguf).
- * Owns: GGUF private facts, mapping, tokenizer projection, and roundtrip validation.
- * Does not own: writer publication, quant policy, or runtime support.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: container-owned internal parsing and equivalence.
- * Purpose: provide the canonical container-owned internal parsing and equivalence contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * GGUF parsing, metadata projection, and structural equivalence share container-owned types here.
+ * Parsed structure remains distinct from complete-artifact admission.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_GGUF_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_GGUF_H_INCLUDED
 
@@ -52,27 +47,27 @@ int yvex_gguf_json_array(yvex_gguf_json *json,
                          const char *malformed,
                          const char *unterminated);
 
-/* Purpose: decode one admitted canonical little-endian unsigned 16-bit field. */
+/* Decode one admitted canonical little-endian unsigned 16-bit field. */
 static inline unsigned short gguf_u16le_load(const unsigned char *bytes)
 {
     return (unsigned short)((unsigned short)bytes[0] | ((unsigned short)bytes[1] << 8));
 }
 
-/* Purpose: decode one admitted canonical little-endian unsigned 32-bit field. */
+/* Decode one admitted canonical little-endian unsigned 32-bit field. */
 static inline unsigned int gguf_u32le_load(const unsigned char *bytes)
 {
     return (unsigned int)bytes[0] | ((unsigned int)bytes[1] << 8) |
            ((unsigned int)bytes[2] << 16) | ((unsigned int)bytes[3] << 24);
 }
 
-/* Purpose: interpret one portable two's-complement I32 bit pattern without narrowing. */
+/* Interpret one portable two's-complement I32 bit pattern without narrowing. */
 static inline int32_t gguf_i32_from_u32(uint32_t value)
 {
     return value <= (uint32_t)INT32_MAX ? (int32_t)value
                                         : -1 - (int32_t)(UINT32_MAX - value);
 }
 
-/* Private parser failure contract. */
+/* Private parser failure. */
 void yvex_gguf_parse_result_reset(yvex_gguf_parse_result *result);
 int yvex_gguf_reader_fail(yvex_gguf_parse_result *result,
                           yvex_gguf_parse_code code,
@@ -82,7 +77,7 @@ int yvex_gguf_reader_fail(yvex_gguf_parse_result *result,
                           yvex_error *err,
                           const char *where,
                           const char *reason);
-/* Map contract. */
+/* Map. */
 #define YVEX_GGUF_MAPPING_REFERENCE_COMMIT \
     "e920c523e3b8a0163fe498af5bf90df35ff51d25"
 #define YVEX_GGUF_MTP_EXTENSION_VERSION 1u
@@ -101,7 +96,7 @@ int yvex_gguf_layout_map_shape_supported(yvex_tensor_role role,
                                          const unsigned long long *dims,
                                          const char **reason);
 
-/* Tokenizer Metadata contract. */
+/* Tokenizer Metadata. */
 #define YVEX_GGUF_TOKENIZER_SHA256_CAP 65u
 typedef enum {
     YVEX_GGUF_TOKENIZER_OK = 0,
@@ -178,7 +173,7 @@ int yvex_gguf_tokenizer_raw_config(
     const unsigned char **bytes,
     size_t *byte_count);
 
-/* Roundtrip contract. */
+/* Roundtrip. */
 typedef enum {
     YVEX_GGUF_ROUNDTRIP_OK = 0,
     YVEX_GGUF_ROUNDTRIP_INVALID_ARGUMENT,

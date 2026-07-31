@@ -1,12 +1,11 @@
-/* Owner: gguf.physical_variant serialization (TRACK.COMPILATION).
- * Owns: canonical pointer-free physical-variant plan bytes, transactional publication, and exact revalidation.
- * Does not own: policy resolution, IR construction, quant execution, GGUF writing, materialization, or CLI output.
- * Invariants: serialization includes every ordered terminal decision and excludes paths, pointers, padding, and time.
- * Boundary: an external plan is executable only after regeneration from admitted logical/policy facts and byte match.
- * Purpose: preserve one sealed physical decision set across planning and emission without creating a second planner.
- * Inputs: an immutable complete quant plan and an explicit regular-file path.
- * Effects: writes or validates one bounded canonical plan file.
- * Failure: partial temporary files are removed and mismatched files never admit a plan. */
+/*
+ * Preserve one sealed physical decision set across planning and emission without creating a second
+ * planner.
+ *
+ * Serialization includes every ordered terminal decision and excludes paths, pointers, padding,
+ * and time. An external plan is executable only after regeneration from admitted logical/policy
+ * facts and byte match.
+ */
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,21 +22,11 @@ typedef struct {
     size_t capacity;
 } variant_buffer;
 
-/* Purpose: publish one stable physical-variant file refusal.
- * Inputs: error sink, status, and semantic message.
- * Effects: replaces only caller diagnostic state.
- * Failure: returns the supplied status.
- * Boundary: diagnostics own no file or plan resources. */
 static int variant_fail(yvex_error *err, yvex_status status, const char *message) {
     yvex_error_set(err, status, "quant.variant_file", message);
     return status;
 }
 
-/* Purpose: reserve bounded serialization capacity with checked geometric growth.
- * Inputs: mutable buffer and required total byte count.
- * Effects: may replace the buffer allocation while retaining existing bytes.
- * Failure: budget, arithmetic, or allocation failure returns false.
- * Boundary: capacity is serialization workspace and never semantic identity. */
 static int variant_buffer_reserve(variant_buffer *buffer, size_t required) {
     size_t capacity;
     char *next;
@@ -62,11 +51,11 @@ static int variant_buffer_reserve(variant_buffer *buffer, size_t required) {
     return 1;
 }
 
-/* Purpose: append one checked formatted record to canonical plan bytes.
- * Inputs: mutable buffer and format arguments containing admitted scalar/text facts.
- * Effects: appends one record and maintains a trailing NUL outside semantic length.
- * Failure: formatting, bound, or allocation failure returns false.
- * Boundary: caller supplies canonical field order and escaping-free identity text. */
+/*
+ * Append one checked formatted record to canonical plan bytes.
+ *
+ * Caller supplies canonical field order and escaping-free identity text.
+ */
 static int variant_buffer_append(variant_buffer *buffer, const char *format, ...) {
     va_list arguments;
     va_list copy;
@@ -96,11 +85,6 @@ static int variant_buffer_append(variant_buffer *buffer, const char *format, ...
     return 1;
 }
 
-/* Purpose: append one complete terminal decision using explicit scalar fields.
- * Inputs: buffer and immutable decision in canonical ordinal order.
- * Effects: appends one newline-terminated decision record.
- * Failure: invalid rank or workspace exhaustion returns false.
- * Boundary: native structure bytes and pointer values never enter serialization. */
 static int variant_decision_append(variant_buffer *buffer, const yvex_quant_decision *decision) {
     unsigned int axis;
 
@@ -125,11 +109,6 @@ static int variant_decision_append(variant_buffer *buffer, const yvex_quant_deci
                                  decision->physical_tensor_name, decision->policy_label);
 }
 
-/* Purpose: serialize one sealed physical plan in its canonical pointer-free field order.
- * Inputs: complete immutable plan and output buffer owner.
- * Effects: allocates and fills the exact external plan bytes.
- * Failure: incomplete plan, malformed decision, or workspace failure publishes no output bytes.
- * Boundary: serialization records decisions and identities but never resolves policy. */
 static int variant_serialize(const yvex_quant_plan *plan, variant_buffer *buffer,
                              yvex_error *err) {
     const yvex_quant_plan_summary *summary = yvex_quant_plan_summary_get(plan);
@@ -175,11 +154,6 @@ static int variant_serialize(const yvex_quant_plan *plan, variant_buffer *buffer
     return YVEX_OK;
 }
 
-/* Purpose: transactionally publish one canonical physical-variant plan file.
- * Inputs: destination path, sealed plan, and error sink.
- * Effects: delegates durable no-replace publication to the canonical core file lifecycle.
- * Failure: destination conflict or typed file-lifecycle failure removes temporary state.
- * Boundary: the plan owner and all borrowed logical facts remain unchanged. */
 int yvex_quant_plan_file_write(const char *path, const yvex_quant_plan *plan, yvex_error *err) {
     variant_buffer buffer;
     yvex_core_file_result result;
@@ -197,11 +171,6 @@ int yvex_quant_plan_file_write(const char *path, const yvex_quant_plan *plan, yv
     return rc;
 }
 
-/* Purpose: validate one external plan as the exact serialization of a regenerated sealed plan.
- * Inputs: regular-file path, independently rebuilt plan, and error sink.
- * Effects: reads bounded bytes and compares the complete canonical representation.
- * Failure: symlink, drift, truncation, trailing bytes, or any field mutation refuses.
- * Boundary: validation never imports decisions without their logical/policy authority. */
 int yvex_quant_plan_file_validate(const char *path, const yvex_quant_plan *plan, yvex_error *err) {
     variant_buffer expected;
     yvex_core_file_result result;

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Purpose: prove registry dispatch, final command placement, and runtime-lane isolation.
+# Verifies registry dispatch, canonical command placement, and runtime-lane isolation.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}

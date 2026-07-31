@@ -1,12 +1,9 @@
-/* Owner: core.json
- * Owns: bounded file reads and structural JSON token decoding.
- * Does not own: document schemas, trust decisions, rendering, or JSON serialization.
- * Invariants: reads, recursion, copied keys, and allocated strings have explicit caps.
- * Boundary: consumers assign meaning only after this owner accepts the byte syntax.
- * Purpose: eliminate independent JSON cursors in source and quantization owners.
- * Inputs: immutable byte spans or regular-file paths plus caller-selected limits.
- * Effects: advances cursors and allocates only complete file or string values.
- * Failure: malformed or oversized input returns failure with no partial publication. */
+/*
+ * Eliminate independent JSON cursors in source and quantization owners.
+ *
+ * Reads, recursion, copied keys, and allocated strings have explicit caps. Consumers assign
+ * meaning only after this owner accepts the byte syntax.
+ */
 #include <yvex/internal/core.h>
 
 #include <ctype.h>
@@ -18,12 +15,6 @@
 
 #define YVEX_JSON_DEPTH_CAP 64u
 
-/* Purpose: initialize a cursor over one immutable byte span without allocation. */
-/* Purpose: Construct the owned json init state (`yvex_json_init`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 void yvex_json_init(yvex_json *json, const char *data, size_t length)
 {
     if (!json) return;
@@ -32,12 +23,6 @@ void yvex_json_init(yvex_json *json, const char *data, size_t length)
     json->depth = 0u;
 }
 
-/* Allocates and reads one metadata file under an explicit byte cap. */
-/* Purpose: Transfer bounded read bounded file data (`yvex_read_bounded_file`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 char *yvex_read_bounded_file(const char *path,
                              size_t cap,
                              size_t *length,
@@ -85,11 +70,6 @@ char *yvex_read_bounded_file(const char *path,
     return data;
 }
 
-/* Purpose: locate the first value assigned to one exact quoted JSON key.
- * Inputs: immutable text and key.
- * Effects: none; the result aliases the input text after leading whitespace.
- * Failure: absent key or colon returns null.
- * Boundary: this sidecar probe does not establish structural JSON validity. */
 const char *yvex_json_probe_field_value(const char *text, const char *key)
 {
     char needle[96];
@@ -110,11 +90,6 @@ const char *yvex_json_probe_field_value(const char *text, const char *key)
     return cursor;
 }
 
-/* Purpose: project the first quoted string assigned to one exact JSON key.
- * Inputs: immutable text and key plus a caller-owned non-empty output buffer.
- * Effects: copies a bounded prefix of the matched string and terminates it.
- * Failure: absent or malformed probe syntax clears output and returns false.
- * Boundary: this bounded sidecar probe is not a structural JSON document parser. */
 int yvex_json_probe_string_field(const char *text,
                                  const char *key,
                                  char *out,
@@ -145,11 +120,6 @@ int yvex_json_probe_string_field(const char *text,
     return 1;
 }
 
-/* Purpose: locate one exact-key row in a fixed-stride immutable schema table.
- * Inputs: row bytes, row geometry, key-member offset, and exact key text.
- * Effects: none.
- * Failure: invalid geometry or an absent key returns null.
- * Boundary: lookup does not interpret any field beyond the key pointer. */
 const void *yvex_core_keyed_row_find(const void *rows,
                                      size_t count,
                                      size_t stride,
@@ -171,11 +141,6 @@ const void *yvex_core_keyed_row_find(const void *rows,
     return NULL;
 }
 
-/* Purpose: Compute json space for its core invariant (`yvex_json_space`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 void yvex_json_space(yvex_json *json)
 {
     while (json && json->cursor < json->end &&
@@ -184,11 +149,6 @@ void yvex_json_space(yvex_json *json)
     }
 }
 
-/* Purpose: initialize one typed structural collection iterator.
- * Inputs: mutable JSON cursor, writable iterator, and admitted collection kind.
- * Effects: consumes whitespace and the opening delimiter, then initializes iteration state.
- * Failure: invalid collection kind or malformed input returns false without publication.
- * Boundary: the iterator owns separators only; consumers retain value and schema semantics. */
 int yvex_json_iter_begin(yvex_json *json,
                          yvex_json_iter *iter,
                          yvex_json_collection collection)
@@ -216,11 +176,6 @@ int yvex_json_iter_begin(yvex_json *json,
     return 1;
 }
 
-/* Purpose: advance one collection across its separator or closing delimiter.
- * Inputs: initialized iterator whose preceding value, when any, is fully consumed.
- * Effects: consumes one comma or closing delimiter and increments ready-value count.
- * Failure: malformed separators or truncated input return a typed error item.
- * Boundary: trailing commas retain the bounded parser's existing acceptance semantics. */
 static yvex_json_item json_iter_advance(yvex_json_iter *iter)
 {
     yvex_json *json;
@@ -253,11 +208,6 @@ static yvex_json_item json_iter_advance(yvex_json_iter *iter)
     return YVEX_JSON_ITEM_READY;
 }
 
-/* Purpose: advance to and decode the next bounded JSON object key.
- * Inputs: active object iterator and caller-owned key buffer.
- * Effects: consumes separators, key syntax, and the required colon.
- * Failure: malformed syntax or an undersized key buffer returns a typed error item.
- * Boundary: the returned ready item leaves its associated value unconsumed. */
 yvex_json_item yvex_json_object_member(yvex_json_iter *iter,
                                        char *key,
                                        size_t capacity)
@@ -276,17 +226,11 @@ yvex_json_item yvex_json_object_member(yvex_json_iter *iter,
     return YVEX_JSON_ITEM_READY;
 }
 
-/* Purpose: advance to the next bounded JSON array value.
- * Inputs: active array iterator whose preceding value, when any, is consumed.
- * Effects: consumes only array separators and leaves a ready value unconsumed.
- * Failure: malformed separators or truncated input return a typed error item.
- * Boundary: consumers remain responsible for the value grammar and schema. */
 yvex_json_item yvex_json_array_value(yvex_json_iter *iter)
 {
     return json_iter_advance(iter);
 }
 
-/* Purpose: Compute source json hex for its core invariant (`source_json_hex`). */
 static int source_json_hex(char value)
 {
     return (value >= '0' && value <= '9') ||
@@ -294,12 +238,6 @@ static int source_json_hex(char value)
            (value >= 'A' && value <= 'F');
 }
 
-/* Consumes one string and optionally copies its decoded bounded value. */
-/* Purpose: Compute json string for its core invariant (`yvex_json_string`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_json_string(yvex_json *json, char *out, size_t cap)
 {
     size_t length = 0u;
@@ -344,11 +282,6 @@ int yvex_json_string(yvex_json *json, char *out, size_t cap)
     return 0;
 }
 
-/* Purpose: decode one JSON string into newly allocated, exactly sized storage.
- * Inputs: Borrowed typed facts.
- * Effects: Mutates only declared core state.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 char *yvex_json_string_dup(yvex_json *json, size_t cap)
 {
     yvex_json original;
@@ -375,12 +308,6 @@ char *yvex_json_string_dup(yvex_json *json, size_t cap)
     return value;
 }
 
-/* Skips one recursively bounded array without materializing its values. */
-/* Purpose: Compute json skip array for its core invariant (`json_skip_array`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 static int json_skip_array(yvex_json *json)
 {
     yvex_json_iter iter;
@@ -397,12 +324,6 @@ static int json_skip_array(yvex_json *json)
     return 1;
 }
 
-/* Skips one recursively bounded object and rejects malformed member syntax. */
-/* Purpose: Compute json skip object for its core invariant (`json_skip_object`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 static int json_skip_object(yvex_json *json)
 {
     char key[YVEX_JSON_KEY_CAP];
@@ -421,12 +342,6 @@ static int json_skip_object(yvex_json *json)
     return 1;
 }
 
-/* Consumes one JSON number grammar without converting its value. */
-/* Purpose: Compute source json skip number for its core invariant (`source_json_skip_number`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 static int source_json_skip_number(yvex_json *json)
 {
     const char *start;
@@ -463,7 +378,6 @@ static int source_json_skip_number(yvex_json *json)
     return json->cursor > start;
 }
 
-/* Purpose: Compute source json literal for its core invariant (`source_json_literal`). */
 static int source_json_literal(yvex_json *json, const char *literal)
 {
     size_t length = strlen(literal);
@@ -475,12 +389,6 @@ static int source_json_literal(yvex_json *json, const char *literal)
     return 1;
 }
 
-/* Dispatches one complete JSON value to its bounded structural parser. */
-/* Purpose: Compute json skip value for its core invariant (`yvex_json_skip_value`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_json_skip_value(yvex_json *json)
 {
     yvex_json_space(json);
@@ -494,11 +402,6 @@ int yvex_json_skip_value(yvex_json *json)
     return source_json_skip_number(json);
 }
 
-/* Purpose: Compute json complete for its core invariant (`yvex_json_complete`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_json_complete(yvex_json *json)
 {
     yvex_json_space(json);
@@ -506,11 +409,7 @@ int yvex_json_complete(yvex_json *json)
 }
 
 /* Parses an unsigned decimal integer with checked overflow and no coercion. */
-/* Purpose: Compute json u64 for its core invariant (`yvex_json_u64`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
+
 int yvex_json_u64(yvex_json *json, unsigned long long *out)
 {
     unsigned long long value = 0u;
@@ -528,12 +427,6 @@ int yvex_json_u64(yvex_json *json, unsigned long long *out)
     return 1;
 }
 
-/* Parses an exact JSON boolean into caller-owned storage. */
-/* Purpose: Compute json bool for its core invariant (`yvex_json_bool`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_json_bool(yvex_json *json, int *out)
 {
     if (!out) return 0;
@@ -548,12 +441,6 @@ int yvex_json_bool(yvex_json *json, int *out)
     return 0;
 }
 
-/* Preserves one syntactically valid JSON number as bounded source text. */
-/* Purpose: Compute json number text for its core invariant (`yvex_json_number_text`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_json_number_text(yvex_json *json, char *out, size_t cap)
 {
     const char *start;
@@ -570,12 +457,6 @@ int yvex_json_number_text(yvex_json *json, char *out, size_t cap)
     return 1;
 }
 
-/* Parses a bounded array of unsigned integers without allocation. */
-/* Purpose: Compute json u64 array for its core invariant (`yvex_json_u64_array`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_json_u64_array(yvex_json *json,
                                unsigned long long *values,
                                size_t cap,

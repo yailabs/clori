@@ -1,12 +1,7 @@
-/* Owner: source.payload (source).
- * Owns: trusted payload sessions, range plans, streams, and source reports.
- * Does not own: source parsing, numeric conversion, or artifact writing.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: bounded payload execution and typed source projections.
- * Purpose: provide the canonical bounded payload execution and typed source projections contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * Source owners exchange admitted shard handles, bounded payload plans, and delivery receipts
+ * through this ABI. Reading a range never implies transformation or artifact support.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_SOURCE_PAYLOAD_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_SOURCE_PAYLOAD_H_INCLUDED
 
@@ -23,7 +18,7 @@
 extern "C" {
 #endif
 
-/* Payload contract. */
+/* Payload sessions and bounded reads. */
 #define YVEX_SOURCE_PAYLOAD_IDENTITY_CAP 65u
 #define YVEX_SOURCE_PAYLOAD_DIGEST_CAP 65u
 #define YVEX_SOURCE_PAYLOAD_DEFAULT_CHUNK_BYTES (8u * 1024u * 1024u)
@@ -212,7 +207,6 @@ int yvex_source_payload_probe(
     yvex_source_payload_failure *failure,
     yvex_error *err);
 
-/* Private contract. */
 typedef struct {
     int (*openat_fn)(int, const char *, int);
     int (*fstat_fn)(int, struct stat *);
@@ -353,7 +347,7 @@ int yvex_source_payload_refuse_at(yvex_source_payload_failure *failure,
                                   const char *where,
                                   const char *message);
 
-/* Report contract. */
+/* Payload reports. */
 typedef struct {
     const char *family_key;
     const char *display_family;

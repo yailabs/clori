@@ -1,12 +1,9 @@
-/* Owner: source payload planning.
- * Owns: deterministic range ordering, page coverage, and bounded chunks.
- * Does not own: file handles, payload I/O, aggregation, or transforms.
- * Invariants: chunks never cross requested tensor ranges and order is physical.
- * Boundary: planning reads zero payload bytes.
- * Purpose: project immutable ranges into deterministic bounded chunk plans.
- * Inputs: sealed session, selected ranges, chunk policy, and caller outputs.
- * Effects: allocates plan metadata and performs zero payload reads.
- * Failure: range, overflow, allocation, or budget failure publishes no plan. */
+/*
+ * Project immutable ranges into deterministic bounded chunk plans.
+ *
+ * Chunks never cross requested tensor ranges and order is physical. Planning reads zero payload
+ * bytes.
+ */
 #include <yvex/internal/core.h>
 #include <yvex/internal/source_payload.h>
 
@@ -15,11 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Purpose: define deterministic ordering for payload plan records.
- * Inputs: typed source payload planning arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload planning state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: planning reads zero payload bytes. */
 static int payload_plan_range_compare(const void *left, const void *right) {
     const yvex_source_payload_range *a = (const yvex_source_payload_range *)left;
     const yvex_source_payload_range *b = (const yvex_source_payload_range *)right;
@@ -35,11 +27,6 @@ static int payload_plan_range_compare(const void *left, const void *right) {
                                                              : 0;
 }
 
-/* Purpose: constructs an owned plan from indexed ranges without retaining payload bytes.
- * Inputs: typed source payload planning arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload planning state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: planning reads zero payload bytes. */
 int yvex_source_payload_plan_build(yvex_source_payload_plan **out,
                                    yvex_source_payload_session *session,
                                    const unsigned long long *tensor_indices,
@@ -221,11 +208,6 @@ int yvex_source_payload_plan_build(yvex_source_payload_plan **out,
     return YVEX_OK;
 }
 
-/* Purpose: builds the exhaustive physical-order plan without a second tensor lookup pass.
- * Inputs: typed source payload planning arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload planning state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: planning reads zero payload bytes. */
 int yvex_source_payload_plan_build_all(yvex_source_payload_plan **out,
                                        yvex_source_payload_session *session,
                                        size_t chunk_bytes,
@@ -238,21 +220,11 @@ int yvex_source_payload_plan_build_all(yvex_source_payload_plan **out,
         out, session, NULL, session->tensor_count, chunk_bytes, page_bytes, failure, err);
 }
 
-/* Purpose: project plan summary get facts while preserving the canonical payload plan invariants.
- * Inputs: typed source payload planning arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload planning state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: planning reads zero payload bytes. */
 const yvex_source_payload_plan_summary *
 yvex_source_payload_plan_summary_get(const yvex_source_payload_plan *plan) {
     return plan ? &plan->summary : NULL;
 }
 
-/* Purpose: return one immutable tensor-range plan entry at a checked ordinal.
- * Inputs: typed source payload planning arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload planning state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: planning reads zero payload bytes. */
 const yvex_source_payload_range *
 yvex_source_payload_plan_range_at(const yvex_source_payload_plan *plan,
                                   unsigned long long ordinal) {
@@ -268,22 +240,17 @@ yvex_source_payload_plan_range_at(const yvex_source_payload_plan *plan,
     return trusted ? &plan->session->ranges[planned->source_tensor_index] : planned;
 }
 
-/* Purpose: return one immutable bounded chunk plan entry at a checked ordinal.
- * Inputs: typed source payload planning arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload planning state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: planning reads zero payload bytes. */
 const yvex_source_payload_chunk *
 yvex_source_payload_plan_chunk_at(const yvex_source_payload_plan *plan,
                                   unsigned long long ordinal) {
     return plan && ordinal < plan->summary.chunk_count ? &plan->chunks[ordinal] : NULL;
 }
 
-/* Purpose: releases only plan arrays; the borrowed session and all source facts survive.
- * Inputs: typed source payload planning arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source payload planning; cleanup remains deterministic.
- * Failure: null or released source payload planning handles remain harmless.
- * Boundary: planning reads zero payload bytes. */
+/*
+ * Releases only plan arrays; the borrowed session and all source facts survive.
+ *
+ * Releases only resources owned by source payload planning; cleanup remains deterministic.
+ */
 void yvex_source_payload_plan_close(yvex_source_payload_plan *plan) {
     yvex_source_payload_session *session;
 

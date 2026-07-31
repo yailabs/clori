@@ -1,12 +1,9 @@
-/* Owner: cli.input.operator canonical command syntax parser.
- * Owns: registry-driven argv and slash argument syntax admission.
- * Does not own: command discovery, rendering, dispatch, or domain policy.
- * Invariants: one immutable descriptor supplies every admitted spelling, arity, and relation.
- * Boundary: syntax is admitted before one typed runtime or offline adapter is selected.
- * Purpose: remove independent command and REPL syntax parsers.
- * Inputs: compiled descriptors and bounded process or slash arguments.
- * Effects: may allocate one slash-token buffer owned by the result.
- * Failure: returns a stable parser status and one bounded diagnostic without side effects. */
+/*
+ * Remove independent command and REPL syntax parsers.
+ *
+ * One immutable descriptor supplies every admitted spelling, arity, and relation. Syntax is
+ * admitted before one typed runtime or offline adapter is selected.
+ */
 
 #include "src/cli/input/private.h"
 
@@ -20,7 +17,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Purpose: publish the first bounded syntax failure into caller-owned state. */
 static int refuse(yvex_cli_operator_invocation *out, const char *format, ...)
 {
     va_list arguments;
@@ -30,7 +26,6 @@ static int refuse(yvex_cli_operator_invocation *out, const char *format, ...)
     return 2;
 }
 
-/* Purpose: compare one pipe-separated generated metadata set with one spelling. */
 static int metadata_contains(const char *values, const char *spelling)
 {
     size_t extent = strlen(spelling);
@@ -46,9 +41,6 @@ static int metadata_contains(const char *values, const char *spelling)
     return 0;
 }
 
-/* Purpose: admit one descriptor-owned scalar spelling without reproducing domain policy.
- * Inputs: scalar text plus its generated type, range, and enum. Effects: none.
- * Failure: returns false for malformed or out-of-range text. Boundary: syntax only. */
 static int value_valid(const char *value, const char *type, const char *range,
                        const char *enum_values)
 {
@@ -98,7 +90,6 @@ static int value_valid(const char *value, const char *type, const char *range,
     return 1;
 }
 
-/* Purpose: select the descriptor governing one zero-based positional slot. */
 static const yvex_operator_argument_descriptor *argument_at(
     const yvex_operator_argument_descriptor *arguments, size_t count,
     size_t position)
@@ -112,7 +103,6 @@ static const yvex_operator_argument_descriptor *argument_at(
     return NULL;
 }
 
-/* Purpose: derive the minimum, maximum, and unbounded arity from generated arguments. */
 static void argument_bounds(const yvex_operator_argument_descriptor *arguments,
                             size_t count, size_t *minimum, size_t *maximum,
                             int *unlimited)
@@ -128,7 +118,6 @@ static void argument_bounds(const yvex_operator_argument_descriptor *arguments,
     }
 }
 
-/* Purpose: find one canonical flag or generated alias and its descriptor index. */
 static const yvex_operator_flag_descriptor *flag_find(
     const yvex_operator_descriptor *operation, const char *spelling,
     size_t *position)
@@ -144,11 +133,6 @@ static const yvex_operator_flag_descriptor *flag_find(
     return NULL;
 }
 
-/* Purpose: admit process arguments through one compiled command descriptor.
- * Inputs: exact leaf, process argv, consumed command words, and empty result.
- * Effects: allocates only temporary duplicate-state storage.
- * Failure: reports exact flag, value, relation, or arity refusal before dispatch.
- * Boundary: semantic validation remains in the typed adapter/domain owner. */
 int yvex_cli_operator_argv_parse(const yvex_operator_descriptor *operation,
                                  int argc, char **argv, size_t consumed,
                                  yvex_cli_operator_invocation *out)
@@ -239,10 +223,6 @@ int yvex_cli_operator_argv_parse(const yvex_operator_descriptor *operation,
     return status;
 }
 
-/* Purpose: tokenize and admit one slash argument tail through the descriptor-owned schema.
- * Inputs: one slash-projected descriptor, optional tail, and empty result.
- * Effects: allocates one result-owned token buffer. Failure: returns a bounded syntax refusal.
- * Boundary: domain operations and final REPL rendering remain outside this parser. */
 int yvex_cli_operator_slash_parse(const yvex_operator_descriptor *operation,
                                   const char *text,
                                   yvex_cli_operator_invocation *out)
@@ -286,9 +266,6 @@ int yvex_cli_operator_slash_parse(const yvex_operator_descriptor *operation,
     return 0;
 }
 
-/* Purpose: release one optional slash-token buffer and clear borrowed views.
- * Inputs: one initialized invocation. Effects: frees its owned buffer and clears it.
- * Failure: repeated or null close is harmless. Boundary: parser-owned storage only. */
 void yvex_cli_operator_invocation_close(yvex_cli_operator_invocation *invocation)
 {
     if (!invocation) return;

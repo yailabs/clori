@@ -1,12 +1,6 @@
 /*
- * YVEX - CUDA op tests
- *
- * File: tests/test_cuda_ops.c
- * Layer: test
- *
- * Purpose:
- *   Proves that CUDA backend CUDA supports the same minimal F32 embedding op as the backend layer
- *   CPU reference backend. Returns 77 when CUDA is unavailable.
+ * Exercises CUDA backend CUDA supports the same minimal F32 embedding op as the backend layer
+ * CPU reference backend. Returns 77 when CUDA is unavailable.
  */
 #include <math.h>
 #include <stdio.h>

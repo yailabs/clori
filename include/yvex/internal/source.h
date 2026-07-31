@@ -1,12 +1,7 @@
-/* Owner: source.internal (source).
- * Owns: source-target identity, verification, inventories, provenance, manifests, and header admission.
- * Does not own: payload execution, model policy, or artifact emission.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: verified metadata and retained source facts.
- * Purpose: provide the canonical verified metadata and retained source facts contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * Source verification owners share retained metadata, provenance, inventory, and publication
+ * lifecycles here. Metadata admission remains distinct from payload trust.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_SOURCE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_SOURCE_H_INCLUDED
 
@@ -54,13 +49,13 @@ typedef struct {
 #define YVEX_SOURCE_RELEASE_CONFIG_TYPE "deepseek_v4"
 #define YVEX_SOURCE_RELEASE_CONFIG_ARCHITECTURE "DeepseekV4ForCausalLM"
 
-/* Purpose: return the process-lifetime canonical release source identity. */
+/* Return the process-lifetime canonical release source identity. */
 const yvex_source_target_identity *yvex_source_release_identity(void);
 
-/* Purpose: match a target identifier against the canonical release source. */
+/* Match a target identifier against the canonical release source. */
 int yvex_source_is_release_target(const char *target_id);
 
-/* Purpose: return the final non-empty component of one borrowed source path. */
+/* Return the final non-empty component of one borrowed source path. */
 static inline const char *yvex_source_path_basename(const char *path)
 {
     const char *slash;
@@ -70,7 +65,7 @@ static inline const char *yvex_source_path_basename(const char *path)
     return slash && slash[1] ? slash + 1 : path;
 }
 
-/* Purpose: match one source target label against an admitted family prefix. */
+/* Match one source target label against an admitted family prefix. */
 static inline int yvex_source_target_matches_family_name(const char *family,
                                                          const char *target)
 {
@@ -80,7 +75,7 @@ static inline int yvex_source_target_matches_family_name(const char *family,
     return 0;
 }
 
-/* Purpose: admit one root-relative shard basename for source payload manifests. */
+/* Admit one root-relative shard basename for source payload manifests. */
 static inline int yvex_source_payload_name_is_canonical(const char *name)
 {
     const char *cursor;
@@ -95,13 +90,13 @@ static inline int yvex_source_payload_name_is_canonical(const char *name)
     return 1;
 }
 
-/* Purpose: project an immutable source identity beneath a caller-owned models root. */
+/* Project an immutable source identity beneath a caller-owned models root. */
 int yvex_source_target_path(char *out,
                             size_t cap,
                             const char *models_root,
                             const yvex_source_target_identity *identity);
 
-/* Verify contract. */
+/* Source verification. */
 struct yvex_source_tensor_snapshot;
 #define YVEX_SOURCE_VERIFY_BLOCKER_CAP 24u
 #define YVEX_SOURCE_VERIFY_COMPRESS_RATIO_CAP 128u
@@ -267,7 +262,7 @@ int yvex_source_verify_with_snapshot(
 const char *yvex_source_verification_status(
     const yvex_source_verification *verification);
 
-/* Inventory contract. */
+/* Retained source inventory. */
 typedef struct {
     char *tensor;
     char *shard;
@@ -340,7 +335,7 @@ const yvex_source_shard_snapshot *yvex_source_tensor_snapshot_shard_find(
 int yvex_source_tensor_snapshot_has_shard_catalog(
     const yvex_source_tensor_snapshot *snapshot);
 
-/* Provenance contract. */
+/* Provider provenance. */
 int yvex_source_provenance_manifest_read(
     const yvex_source_verify_options *options,
     yvex_source_verification *out,
@@ -394,7 +389,7 @@ int yvex_source_provenance_metadata_read(
     yvex_error *err);
 void yvex_source_metadata_blob_release(yvex_source_metadata_blob *blob);
 
-/* Write contract. */
+/* Manifest publication. */
 struct yvex_source_payload_session;
 typedef enum {
     YVEX_SOURCE_PUBLICATION_VERIFIED_MANIFEST = 0,
@@ -412,7 +407,6 @@ typedef struct {
 int yvex_source_publish(const yvex_source_publication_request *request,
                         yvex_error *err);
 
-/* Private contract. */
 typedef struct {
     char *path;
     unsigned long long size_bytes;

@@ -1,23 +1,15 @@
-/* Owner: src/cli/input.
- * Owns: argv parsing and option validation for source-manifest report.
- * Does not own: source report building, rendering, local scanning, runtime, generation, eval, or benchmark.
- * Invariants: parsing produces a typed request and performs no domain IO.
- * Boundary: CLI parsing is not source verification or runtime readiness.
- * Purpose: provide argv parsing and option validation for source-manifest report.
- * Inputs: bounded command arguments and caller-owned typed request storage.
- * Effects: publishes request fields only after complete grammar validation.
- * Failure: invalid or ambiguous grammar leaves the request uncommitted. */
+/*
+ * Provide argv parsing and option validation for source-manifest report.
+ *
+ * Parsing produces a typed request and performs no domain IO. CLI parsing is not source
+ * verification or runtime readiness.
+ */
 #include "src/cli/input/private.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <yvex/internal/source.h>
 
-/* Purpose: Parse source output mode parse into typed CLI state (`source_output_mode_parse`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int source_output_mode_parse(const char *value,
                                     yvex_source_render_mode *mode)
 {
@@ -43,11 +35,6 @@ static int source_output_mode_parse(const char *value,
     return 0;
 }
 
-/* Purpose: Parse source args parse into typed CLI state (`yvex_source_args_parse`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_source_args_parse(int argc,
                            char **argv,
                            yvex_source_args *out,
@@ -178,11 +165,6 @@ int yvex_source_args_parse(int argc,
     return YVEX_OK;
 }
 
-/* Purpose: Parse source report request from parsed into typed CLI state (`yvex_source_report_request_from_parsed`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_source_report_request_from_parsed(yvex_source_report_request *request,
                                             const yvex_source_args *args)
 {

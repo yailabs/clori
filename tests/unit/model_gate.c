@@ -1,6 +1,4 @@
-/*
- * YVEX - Model gate tests
- */
+
 #include <string.h>
 
 #include <yvex/api.h>

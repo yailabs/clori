@@ -1,5 +1,5 @@
 #!/bin/sh
-# Purpose: prove OpenAI syntax stays in the server adapter and owns no runtime authority.
+# OpenAI syntax must remain inside the server adapter and acquire no runtime authority.
 set -eu
 
 adapter=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}

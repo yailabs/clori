@@ -1,16 +1,11 @@
-/* Owner: src/model/artifacts
- * Owns: model gate checks, materialization preflight gate facts, family-specific cold runtime-binding preparation,
- *   expected tensor matching, backend status facts, selected-slice gate facts, and refusal state facts.
- * Does not own: CLI parsing, command dispatch, rendering, stdout/stderr, registry storage, explicit file writing,
- *   artifact emission, runtime generation, eval, benchmark, or release decisions.
- * Invariants: gate checks return facts only and preserve public model/materialization gate API behavior.
- * Boundary: cold preparation may compose admitted DeepSeek compiler and artifact facts, but it owns no runtime
- *   execution semantics; gate evidence is not artifact emission, generation readiness, benchmark evidence, or
- *   release readiness.
- * Purpose: admit immutable artifact and materialization evidence through typed gates.
- * Inputs: explicit gate options, artifact snapshots, and backend requirements.
- * Effects: opens bounded read-only views and temporary backend materializations.
- * Failure: typed refusals close every acquired view and leave output summaries defined. */
+/*
+ * Admit immutable artifact and materialization evidence through typed gates.
+ *
+ * Gate checks return facts only and preserve public model/materialization gate API behavior. Cold
+ * preparation may compose admitted DeepSeek compiler and artifact facts, but it owns no runtime
+ * execution semantics; gate evidence is not artifact emission, generation readiness, benchmark
+ * evidence, or release readiness.
+ */
 #include <yvex/internal/model_artifact.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compilation.h>
@@ -149,7 +144,6 @@ static const yvex_materialize_gate_summary materialize_gate_initial = {
     .cuda_status = YVEX_MATERIALIZE_BACKEND_NOT_TESTED,
 };
 
-/* Purpose: resolve one typed gate enum through an immutable name table. */
 static const char *gate_name_find(const gate_name *names,
                                   size_t count,
                                   int value,
@@ -164,11 +158,6 @@ static const char *gate_name_find(const gate_name *names,
     return fallback;
 }
 
-/* Purpose: validate the shared operator-facing artifact gate arguments.
- * Inputs: gate owner, artifact path, and optional expected tensor catalog.
- * Effects: writes only the caller-owned error on refusal.
- * Failure: malformed path or catalog returns invalid argument.
- * Boundary: validation opens no artifact and establishes no capability. */
 static int gate_options_validate(const char *owner, const char *path,
                                  unsigned long long expected_count,
                                  const void *expected, yvex_error *err)
@@ -185,11 +174,6 @@ static int gate_options_validate(const char *owner, const char *path,
     return YVEX_OK;
 }
 
-/* Purpose: open, authenticate, and parse the common read-only artifact gate inputs.
- * Inputs: artifact path, optional digest, and caller-owned typed view outputs.
- * Effects: retains views for the caller and reports the exact failed admission stage.
- * Failure: open, digest, mismatch, or GGUF refusal leaves release-safe partial views.
- * Boundary: this helper owns input lifecycle only; each gate owns failure classification. */
 static int gate_inputs_open(
     const char *path, const char *expected_sha256, yvex_artifact **artifact,
     yvex_gguf **gguf, yvex_tensor_table **tensors, char actual_sha256[65],
@@ -227,16 +211,6 @@ static int gate_inputs_open(
     return YVEX_OK;
 }
 
-/* Purpose:
- *   close the borrowed artifact view in reverse ownership order.
- * Inputs:
- *   tensors, GGUF view, and artifact may each be NULL.
- * Effects:
- *   releases every supplied view; no persistent artifact state changes.
- * Failure:
- *   close operations have no reported failure in the canonical ABI.
- * Boundary:
- *   cleanup does not classify admission or materialization capability. */
 static void gate_inputs_close(yvex_tensor_table *tensors,
                               yvex_gguf *gguf,
                               yvex_artifact *artifact)
@@ -246,11 +220,6 @@ static void gate_inputs_close(yvex_tensor_table *tensors,
     yvex_artifact_close(artifact);
 }
 
-/* Purpose: project canonical complete-artifact admission into model-gate facts.
- * Inputs: admission is borrowed; fact and error receive caller-owned results.
- * Effects: writes only the supplied outputs and allocates nothing.
- * Failure: invalid or incomplete admission produces one typed blocked result.
- * Boundary: descriptor admission never promotes execution or generation support. */
 int yvex_model_artifact_gate_from_admission(
     const yvex_complete_artifact_admission *admission,
     yvex_model_complete_artifact_gate_fact *fact,
@@ -290,12 +259,6 @@ int yvex_model_artifact_gate_from_admission(
     return YVEX_OK;
 }
 
-/* Purpose: compare or copy tensor spec matches under exact ownership.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
-
 static int tensor_spec_matches(const char *name,
                                const char *dtype,
                                unsigned int rank,
@@ -318,11 +281,6 @@ static int tensor_spec_matches(const char *name,
     return 1;
 }
 
-/* Purpose: count exact tensor-contract matches for either public gate ABI.
- * Inputs: fixed-stride immutable expectations and the admitted tensor table.
- * Effects: writes aggregate counts only.
- * Failure: malformed catalogs are rejected before this helper is called.
- * Boundary: byte-copying the layout-equivalent ABI avoids type aliasing. */
 static void gate_expected_tensors_count(
     const void *expected, size_t stride, unsigned long long count,
     const yvex_tensor_table *tensors, unsigned long long *matches,
@@ -355,11 +313,11 @@ static int materialize_repeated(
     unsigned long long *bytes_materialized, int *cleanup_verified,
     yvex_materialize_failure_class *failure_class, yvex_error *err);
 
-/* Purpose: execute one temporary all-tensor materialization backend probe.
- * Inputs: artifact views and backend identity are borrowed; status is caller-owned.
- * Effects: opens a backend and weight table, then closes both before returning.
- * Failure: unavailable backends are facts; other typed failures preserve cleanup.
- * Boundary: a backend probe does not promote runtime or generation readiness. */
+/*
+ * Execute one temporary all-tensor materialization backend probe.
+ *
+ * Artifact views and backend identity are borrowed; status is caller-owned.
+ */
 static int materialize_backend(const yvex_artifact *artifact,
                                const yvex_gguf *gguf,
                                const yvex_tensor_table *tensors,
@@ -386,17 +344,11 @@ static int materialize_backend(const yvex_artifact *artifact,
     return rc;
 }
 
-/* Purpose: classify any non-passing required backend as a gate failure. */
 static int required_backend_failed(yvex_model_gate_backend_status status)
 {
     return status != YVEX_MODEL_GATE_BACKEND_PASS;
 }
 
-/* Purpose: verify one artifact, tensor contract, and requested backend set.
- * Inputs: options are borrowed; summary and error are caller-owned outputs.
- * Effects: opens read-only artifact views and requested temporary backend probes.
- * Failure: digest, parse, tensor, or backend refusal closes all acquired resources.
- * Boundary: passing this gate proves only its selected descriptor/materialization scope. */
 int yvex_model_gate_check(const yvex_model_gate_options *options,
                           yvex_model_gate_summary *summary_out,
                           yvex_error *err)
@@ -534,24 +486,12 @@ done:
     return rc;
 }
 
-/* Purpose: project typed model-admission gate status vocabulary without lost semantics.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
-
 const char *yvex_model_gate_status_name(yvex_model_gate_status status)
 {
     return gate_name_find(model_gate_names,
                           sizeof(model_gate_names) / sizeof(model_gate_names[0]), status,
                           "model-gate-unknown");
 }
-
-/* Purpose: project typed support level name vocabulary without lost semantics.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 
 const char *yvex_model_support_level_name(yvex_model_support_level level)
 {
@@ -560,21 +500,13 @@ const char *yvex_model_support_level_name(yvex_model_support_level level)
                           "none");
 }
 
-/* Purpose: project typed gate backend status name vocabulary without lost semantics.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
-
 const char *yvex_model_gate_backend_status_name(yvex_model_gate_backend_status status)
 {
     return gate_name_find(model_backend_names,
                           sizeof(model_backend_names) / sizeof(model_backend_names[0]), status,
                           "not-tested");
 }
-/* Materialization gate helpers and summaries. */
 
-/* Purpose: preserve typed materialization failure distinctions from status and context. */
 static yvex_materialize_failure_class classify_materialize_failure(int rc,
                                                                    const yvex_error *err)
 {
@@ -594,11 +526,11 @@ static yvex_materialize_failure_class classify_materialize_failure(int rc,
     return YVEX_MATERIALIZE_FAILURE_UNKNOWN;
 }
 
-/* Purpose: repeat one backend materialization while checking release-to-baseline.
- * Inputs: artifact views, backend policy, and repeat count are borrowed.
- * Effects: opens one backend and transient weight tables; updates typed counters.
- * Failure: every failing iteration closes active weights and backend ownership.
- * Boundary: repetition proves lifecycle behavior, not graph execution support. */
+/*
+ * Repeat one backend materialization while checking release-to-baseline.
+ *
+ * Every failing iteration closes active weights and backend ownership.
+ */
 static int materialize_repeated(const yvex_artifact *artifact,
                                 const yvex_gguf *gguf,
                                 const yvex_tensor_table *tensors,
@@ -761,11 +693,6 @@ static int materialize_repeated(const yvex_artifact *artifact,
     return YVEX_OK;
 }
 
-/* Purpose: compare every explicit tensor contract against the parsed table.
- * Inputs: options and tensors are borrowed; summary and error are caller-owned.
- * Effects: updates only aggregate match/refusal facts.
- * Failure: any mismatch returns a typed state refusal without changing artifacts.
- * Boundary: matching tensor descriptors does not prove payload execution. */
 static int materialize_gate_expected_tensors(
     const yvex_materialize_gate_options *options,
     const yvex_tensor_table *tensors,
@@ -786,11 +713,6 @@ static int materialize_gate_expected_tensors(
     return YVEX_ERR_STATE;
 }
 
-/* Purpose: execute and project one requested backend materialization pass.
- * Inputs: artifact views, options, and backend policy are borrowed.
- * Effects: delegates temporary materialization and updates common summary facts.
- * Failure: required backend failure remains typed; optional failure is retained.
- * Boundary: projection does not reinterpret backend capability or runtime support. */
 static int materialize_gate_backend(
     const yvex_artifact *artifact,
     const yvex_gguf *gguf,
@@ -823,7 +745,6 @@ static int materialize_gate_backend(
     return status;
 }
 
-/* Purpose: combine requested backend cleanup facts without changing their meaning. */
 static int materialize_gate_cleanup_status(
     const yvex_materialize_gate_options *options, int cpu, int cuda)
 {
@@ -838,11 +759,6 @@ static int materialize_gate_cleanup_status(
     return 0;
 }
 
-/* Purpose: verify artifact integrity, expected tensors, backends, and cleanup.
- * Inputs: options are borrowed; summary and error receive caller-owned results.
- * Effects: opens read-only artifact views and bounded temporary materializations.
- * Failure: every refusal closes all views and preserves a defined partial summary.
- * Boundary: gate success remains materialization evidence, not graph execution. */
 int yvex_materialize_gate_check(const yvex_materialize_gate_options *options,
                                 yvex_materialize_gate_summary *summary_out,
                                 yvex_error *err)
@@ -979,24 +895,12 @@ done:
     return rc;
 }
 
-/* Purpose: project typed materialization gate status vocabulary without lost semantics.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
-
 const char *yvex_materialize_gate_status_name(yvex_materialize_gate_status status)
 {
     return gate_name_find(materialize_gate_names,
                           sizeof(materialize_gate_names) / sizeof(materialize_gate_names[0]), status,
                           "materialize-gate-unknown");
 }
-
-/* Purpose: project typed scope name vocabulary without lost semantics.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 
 const char *yvex_materialize_scope_name(yvex_materialize_scope scope)
 {
@@ -1005,12 +909,6 @@ const char *yvex_materialize_scope_name(yvex_materialize_scope scope)
                           "unknown");
 }
 
-/* Purpose: project typed backend status name vocabulary without lost semantics.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
-
 const char *yvex_materialize_backend_status_name(yvex_materialize_backend_status status)
 {
     return gate_name_find(materialize_backend_names,
@@ -1018,12 +916,6 @@ const char *yvex_materialize_backend_status_name(yvex_materialize_backend_status
                               sizeof(materialize_backend_names[0]), status,
                           "not-tested");
 }
-
-/* Purpose: project typed failure class name vocabulary without lost semantics.
- * Inputs: artifact facts and outputs are explicit.
- * Effects: mutates only declared artifact ownership.
- * Failure: releases partial ownership on refusal.
- * Boundary: does not promote runtime execution support. */
 
 const char *yvex_materialize_failure_class_name(yvex_materialize_failure_class failure)
 {
@@ -1064,11 +956,6 @@ typedef struct {
     yvex_gguf_writer_failure writer_failure;
 } runtime_binding_compiler;
 
-/* Purpose: release one partial compiler-side runtime-binding composition in reverse dependency order.
- * Inputs: caller-owned preparation context.
- * Effects: releases only context-owned resources and clears the context.
- * Failure: cleanup publishes and deletes nothing.
- * Boundary: external source, artifact, and binding assets remain untouched. */
 static void runtime_binding_compiler_close(runtime_binding_compiler *compiler)
 {
     if (!compiler) return;
@@ -1088,11 +975,6 @@ static void runtime_binding_compiler_close(runtime_binding_compiler *compiler)
     memset(compiler, 0, sizeof(*compiler));
 }
 
-/* Purpose: acquire exact DeepSeek source authority and complete artifact admission.
- * Inputs: resolved external paths and an empty compiler context.
- * Effects: opens family handoff, artifact, GGUF view, tensor table, and admission snapshot.
- * Failure: leaves a reverse-release-safe context and publishes no binding.
- * Boundary: this cold preparation operation is absent from runtime execution. */
 static int runtime_binding_compiler_open(
     runtime_binding_compiler *compiler,
     const yvex_compilation_runtime_binding_request *request, yvex_error *err)
@@ -1129,11 +1011,6 @@ static int runtime_binding_compiler_open(
     return rc;
 }
 
-/* Purpose: derive every sealed plan required by DeepSeek runtime-binding publication.
- * Inputs: verified compiler-side source and artifact context.
- * Effects: owns materialization, architecture, descriptor, attention, quant, and writer plans.
- * Failure: caller releases partial plans and no binding becomes visible.
- * Boundary: runtime execution consumes the result and never invokes this composition. */
 static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
                                          const yvex_compilation_runtime_binding_request *request,
                                          yvex_error *err)
@@ -1253,11 +1130,6 @@ static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
         &compiler->writer, &writer_request, &compiler->writer_failure, err);
 }
 
-/* Purpose: resolve one exact runtime adapter version through the typed graph registry.
- * Inputs: nonzero adapter identity and version from the preparation request.
- * Effects: returns borrowed process-lifetime registry storage.
- * Failure: unknown or stale identity returns null without target-name inference.
- * Boundary: the compiler consumes declared capability facts but never owns their policy. */
 static const yvex_runtime_family_adapter *runtime_binding_adapter_find(
     unsigned long long adapter_id, unsigned long long adapter_version)
 {
@@ -1273,11 +1145,11 @@ static const yvex_runtime_family_adapter *runtime_binding_adapter_find(
     }
 }
 
-/* Purpose: publish the admitted DeepSeek runtime binding through its family preparation adapter.
- * Inputs: resolved compiler-plane paths, exact adapter identity, and caller-owned output.
- * Effects: transactionally publishes one content-addressed external binding.
- * Failure: reverse-order cleanup preserves all external source and artifact assets.
- * Boundary: this family preparation operation is never called by runtime execution. */
+/*
+ * Publish the admitted DeepSeek runtime binding through its family preparation adapter.
+ *
+ * Resolved compiler-plane paths, exact adapter identity, and caller-owned output.
+ */
 static int prepare_deepseek_runtime_binding(
     const yvex_compilation_runtime_binding_request *request,
     yvex_compilation_runtime_binding_result *result, yvex_error *err)
@@ -1357,11 +1229,11 @@ static int prepare_deepseek_runtime_binding(
     return rc;
 }
 
-/* Purpose: enumerate compiler-plane family preparation facts and their one typed publication callback.
- * Inputs: stable registry ordinal.
- * Effects: returns immutable process-lifetime storage.
- * Failure: unknown ordinals return null.
- * Boundary: runtime model/session code never consumes this preparation-only registry. */
+/*
+ * Enumerate compiler-plane family preparation facts and their one typed publication callback.
+ *
+ * Returns immutable process-lifetime storage.
+ */
 const yvex_graph_family_preparation *
 yvex_graph_family_preparation_at(unsigned long long index)
 {

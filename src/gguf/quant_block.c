@@ -1,14 +1,10 @@
-/* Owner: gguf.quant block codecs (TRACK.QUANT).
- * Owns: deterministic F32/F16/BF16/I32, Q8_0, Q2_K, IQ2_XXS, and MXFP4 bytes.
- * Does not own: qtype IDs/geometry, source IO, profile selection, CUDA kernels, artifact layout, writing,
- *   materialization, or rendering.
- * Invariants: block layouts match the pinned GGUF ABI; every conversion checks arity, capacity, non-finite policy,
- *   and little-endian scalar storage.
- * Boundary: bounded encoded blocks are writer inputs, not a GGUF artifact.
- * Purpose: encode and independently reconstruct the closed qtype block set used by release plans.
- * Inputs: exact finite scalar blocks, canonical qtype identity, and caller-owned byte/value buffers.
- * Effects: writes only the requested complete block and typed diagnostic state.
- * Failure: unsupported qtypes, malformed arity, insufficient capacity, or non-finite data refuse. */
+/*
+ * Encode and independently reconstruct the closed qtype block set used by release plans.
+ *
+ * Block layouts match the pinned GGUF ABI; every conversion checks arity, capacity, non-finite
+ * policy, and little-endian scalar storage. Bounded encoded blocks are writer inputs, not a GGUF
+ * artifact.
+ */
 #include <float.h>
 #include <limits.h>
 #include <math.h>
@@ -49,11 +45,6 @@ static const uint16_t quant_iq2_grid[256] = {
 static unsigned char quant_iq2_nearest[43691];
 static pthread_once_t quant_iq2_once = PTHREAD_ONCE_INIT;
 
-/* Purpose: build the immutable nearest-grid projection once with lowest-index tie breaking.
- * Inputs: pinned compact IQ2 grid table.
- * Effects: initializes one process-lifetime lookup table under pthread_once.
- * Failure: exhaustive bounded construction has no fallible operation.
- * Boundary: lookup construction does not encode model data or select policy. */
 static void quant_iq2_initialize(void) {
     unsigned int packed;
 
@@ -79,11 +70,6 @@ static void quant_iq2_initialize(void) {
     }
 }
 
-/* Purpose: publish one typed block-codec refusal with exact qtype and size facts.
- * Inputs: optional diagnostics, code, qtype, expected/actual values, status, and message.
- * Effects: replaces supplied failure and error records without modifying codec buffers.
- * Failure: represents the supplied refusal and returns no capability state.
- * Boundary: diagnostics do not own executor cleanup. */
 static void quant_block_fail(yvex_quant_failure *failure, yvex_quant_failure_code code,
                              unsigned int qtype, unsigned long long expected,
                              unsigned long long actual, yvex_error *err, int status,
@@ -103,13 +89,11 @@ static void quant_block_fail(yvex_quant_failure *failure, yvex_quant_failure_cod
     yvex_error_set(err, (yvex_status)status, "quant.block", message);
 }
 
-/* Purpose: store one unsigned 16-bit value in canonical little-endian order. */
 static void quant_store_u16(unsigned char *out, unsigned short value) {
     out[0] = (unsigned char)(value & 0xffu);
     out[1] = (unsigned char)(value >> 8);
 }
 
-/* Purpose: store one unsigned 32-bit value in canonical little-endian order. */
 static void quant_store_u32(unsigned char *out, unsigned int value) {
     out[0] = (unsigned char)(value & 0xffu);
     out[1] = (unsigned char)((value >> 8) & 0xffu);
@@ -117,7 +101,6 @@ static void quant_store_u32(unsigned char *out, unsigned int value) {
     out[3] = (unsigned char)(value >> 24);
 }
 
-/* Purpose: round a bounded scalar to the nearest integer with ties resolved to even. */
 static int quant_nearest_even(float value) {
     float lower = floorf(value);
     float fraction = value - lower;
@@ -128,11 +111,6 @@ static int quant_nearest_even(float value) {
     return integer;
 }
 
-/* Purpose: validate that every value in one bounded block is finite.
- * Inputs: scalar block, element count, and optional bad-index output.
- * Effects: writes the first non-finite index on refusal.
- * Failure: returns false at the first NaN or infinity.
- * Boundary: the caller owns block-size and pointer admission. */
 static int quant_values_finite(const float *values, unsigned long long count,
                                unsigned long long *bad) {
     unsigned long long index;
@@ -146,7 +124,6 @@ static int quant_values_finite(const float *values, unsigned long long count,
     return 1;
 }
 
-/* Purpose: select the nearest pinned E2M1 code with deterministic first-code tie breaking. */
 static unsigned int quant_mxfp4_best(float value, float scale) {
     unsigned int best = 0u;
     float best_error = fabsf(value - quant_mxfp4_values[0] * scale);
@@ -162,11 +139,6 @@ static unsigned int quant_mxfp4_best(float value, float scale) {
     return best;
 }
 
-/* Purpose: choose the bounded E8M0 exponent that covers one MXFP4 block maximum.
- * Inputs: nonnegative finite maximum magnitude.
- * Effects: none.
- * Failure: nonpositive maxima map to the canonical zero-block exponent.
- * Boundary: exponent choice does not pack value nibbles. */
 static unsigned char quant_mxfp4_exponent(float maximum) {
     int exponent;
 
@@ -180,11 +152,11 @@ static unsigned char quant_mxfp4_exponent(float maximum) {
     return (unsigned char)exponent;
 }
 
-/* Purpose: encode one exact Q8_0 block using its F16 scale and signed lanes.
- * Inputs: thirty-two finite scalars and a canonical 34-byte destination.
- * Effects: writes the complete block deterministically.
- * Failure: returns false when the required scale is not representable as finite F16.
- * Boundary: caller validates qtype identity, arity, and capacity. */
+/*
+ * Encode one exact Q8_0 block using its F16 scale and signed lanes.
+ *
+ * Caller validates qtype identity, arity, and capacity.
+ */
 static int quant_encode_q8_0(const float *source, unsigned char *encoded) {
     float maximum = 0.0f;
     float scale;
@@ -213,11 +185,7 @@ static int quant_encode_q8_0(const float *source, unsigned char *encoded) {
     return 1;
 }
 
-/* Purpose: solve one 16-value Q2_K affine sub-block through the pinned deterministic search.
- * Inputs: sixteen finite scalars plus temporary code and minimum outputs.
- * Effects: writes temporary two-bit codes and the nonnegative minimum magnitude.
- * Failure: degenerate constant blocks return zero scale with valid zero codes.
- * Boundary: global F16 scale requantization occurs in the complete block encoder. */
+/* Solve one 16-value Q2_K affine sub-block through the pinned deterministic search. */
 static float quant_q2_subblock(const float *source, const float *calibration,
                                unsigned char *codes, float *minimum_out) {
     unsigned char candidate[16];
@@ -310,11 +278,6 @@ static float quant_q2_subblock(const float *source, const float *calibration,
     return scale;
 }
 
-/* Purpose: encode one pinned MXFP4 block with E8M0 scale and low/high nibble ordering.
- * Inputs: thirty-two finite scalars and a canonical 17-byte destination.
- * Effects: writes one scale byte and sixteen paired-code bytes.
- * Failure: returns false when the derived E8M0 scale is non-finite.
- * Boundary: caller owns qtype and buffer admission. */
 static int quant_encode_mxfp4(const float *source, unsigned char *encoded) {
     float maximum = 0.0f;
     float scale;
@@ -337,11 +300,6 @@ static int quant_encode_mxfp4(const float *source, unsigned char *encoded) {
     return 1;
 }
 
-/* Purpose: encode one pinned Q2_K block with sixteen ordered affine sub-blocks.
- * Inputs: 256 finite scalars and a canonical 84-byte destination.
- * Effects: writes scale/min nibbles, packed two-bit lanes, and global F16 scales.
- * Failure: returns false when global affine scales cannot be represented as finite F16.
- * Boundary: no calibration or tensor-level policy is inferred here. */
 static int quant_encode_q2_k(const float *source, const float *calibration,
                              unsigned char *encoded) {
     float scales[16];
@@ -417,7 +375,6 @@ static int quant_encode_q2_k(const float *source, const float *calibration,
     return 1;
 }
 
-/* Purpose: reconstruct the implicit even-parity eighth IQ2 sign bit. */
 static unsigned int quant_iq2_sign_mask(unsigned int low) {
     unsigned int value = low;
     unsigned int parity = 0u;
@@ -428,7 +385,6 @@ static unsigned int quant_iq2_sign_mask(unsigned int low) {
     return low | (parity << 7u);
 }
 
-/* Purpose: choose one compatible IQ2 magnitude grid for eight scaled magnitudes. */
 static unsigned int quant_iq2_select_grid(const float *magnitudes, float inverse_scale) {
     unsigned int packed = 0u;
     unsigned int lane;
@@ -444,11 +400,11 @@ static unsigned int quant_iq2_select_grid(const float *magnitudes, float inverse
     return quant_iq2_nearest[packed];
 }
 
-/* Purpose: encode one imatrix-weighted compatible IQ2_XXS block.
- * Inputs: 256 finite source values and nonnegative finite per-column calibration weights.
- * Effects: writes one canonical 66-byte GGUF block after deterministic grid search.
- * Failure: false represents invalid weights or an unrepresentable finite scale.
- * Boundary: calibration selects codec error weighting, never tensor policy. */
+/*
+ * Encode one imatrix-weighted compatible IQ2_XXS block.
+ *
+ * Writes one canonical 66-byte GGUF block after deterministic grid search.
+ */
 static int quant_encode_iq2_xxs(const float *source, const float *calibration,
                                 unsigned char *encoded) {
     float group_scales[8] = {0.0f};
@@ -564,11 +520,12 @@ static int quant_encode_iq2_xxs(const float *source, const float *calibration,
     return 1;
 }
 
-/* Purpose: encode exactly one admitted scalar or block into canonical GGUF bytes.
- * Inputs: qtype, finite source values, exact arity, destination capacity, and diagnostics.
- * Effects: publishes encoded byte count only after a complete deterministic block write.
- * Failure: identity, codec, arity, capacity, finite-policy, scale, or cast refusal is typed.
- * Boundary: block encoding neither selects a profile nor emits a GGUF artifact. */
+/*
+ * Encode exactly one admitted scalar or block into canonical GGUF bytes.
+ *
+ * Publishes encoded byte count only after a complete deterministic block write. Identity, codec,
+ * arity, capacity, finite-policy, scale, or cast refusal is typed.
+ */
 int yvex_quant_encode_block(unsigned int qtype, const float *source, unsigned long long elements,
                             unsigned char *encoded, size_t encoded_capacity, size_t *encoded_bytes,
                             yvex_quant_failure *failure, yvex_error *err) {
@@ -680,11 +637,6 @@ int yvex_quant_encode_block(unsigned int qtype, const float *source, unsigned lo
     return YVEX_OK;
 }
 
-/* Purpose: encode one admitted block with explicit per-column calibration weights.
- * Inputs: qtype, exact source/calibration block, exact destination, and diagnostics.
- * Effects: publishes one complete block and byte count only after weighted encoding succeeds.
- * Failure: invalid calibration, geometry, finite policy, or codec state publishes zero bytes.
- * Boundary: this operation consumes calibration selected by a sealed plan; it does not resolve policy. */
 int yvex_quant_encode_block_weighted(unsigned int qtype, const float *source,
                                      const float *calibration_weights,
                                      unsigned long long elements, unsigned char *encoded,
@@ -755,11 +707,11 @@ int yvex_quant_encode_block_weighted(unsigned int qtype, const float *source,
     return YVEX_OK;
 }
 
-/* Purpose: reconstruct one pinned Q2_K block from packed affine sub-block state.
- * Inputs: canonical 84-byte block and 256-value output.
- * Effects: replaces every output scalar in deterministic sub-block order.
- * Failure: none after caller-owned exact-size admission.
- * Boundary: this primitive shares no encoder search logic. */
+/*
+ * Reconstruct one pinned Q2_K block from packed affine sub-block state.
+ *
+ * Replaces every output scalar in deterministic sub-block order.
+ */
 static void quant_decode_q2_k(const unsigned char *encoded, float *out) {
     float global_scale = yvex_quant_f16_decode(gguf_u16le_load(encoded + 80u));
     float global_minimum = yvex_quant_f16_decode(gguf_u16le_load(encoded + 82u));
@@ -790,11 +742,6 @@ static void quant_decode_q2_k(const unsigned char *encoded, float *out) {
     }
 }
 
-/* Purpose: reconstruct one compatible IQ2_XXS block from grid, sign, and scale state.
- * Inputs: exact admitted 66-byte block and 256-element caller output.
- * Effects: writes the complete reconstructed F32 block.
- * Failure: caller validates geometry and scale before this infallible helper.
- * Boundary: direct reconstruction does not select qtype or allocate storage. */
 static void quant_decode_iq2_xxs(const unsigned char *encoded, float *out) {
     float block_scale = yvex_quant_f16_decode(gguf_u16le_load(encoded));
     unsigned int group;
@@ -819,11 +766,6 @@ static void quant_decode_iq2_xxs(const unsigned char *encoded, float *out) {
     }
 }
 
-/* Purpose: reference-decode one exact admitted scalar or qtype block.
- * Inputs: qtype, exact encoded bytes, exact output arity, and diagnostics.
- * Effects: publishes the complete reconstructed block after size and codec admission.
- * Failure: unknown/decoderless qtype or malformed block size returns typed refusal.
- * Boundary: reference decoding is an oracle primitive, not dedicated backend compute. */
 int yvex_quant_decode_block(unsigned int qtype, const unsigned char *encoded, size_t encoded_bytes,
                             float *out, unsigned long long out_elements,
                             yvex_quant_failure *failure, yvex_error *err) {

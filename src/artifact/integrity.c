@@ -1,12 +1,9 @@
-/* Owner: artifact integrity.
- * Owns: canonical layout projection, optional digest, and selected-range proofs.
- * Does not own: GGUF parsing policy, qtype geometry, completeness, or runtime.
- * Invariants: global layout acceptance precedes every subordinate proof.
- * Boundary: integrity acceptance does not promote complete-model support.
- * Purpose: project layout admission into typed integrity evidence.
- * Inputs: layout facts, optional expected identity, and caller-owned reports.
- * Effects: performs bounded validation and optional exact-file hashing.
- * Failure: layout, range, digest, allocation, or I/O leaves explicit refusal. */
+/*
+ * Project layout admission into typed integrity evidence.
+ *
+ * Global layout acceptance precedes every subordinate proof. Integrity acceptance does not promote
+ * complete-model support.
+ */
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -17,7 +14,6 @@
 #include <yvex/qtype.h>
 #include <yvex/internal/core.h>
 
-/* Purpose: publish one typed integrity refusal without duplicating error-state transitions. */
 static int integrity_refuse(yvex_error *err,
                             yvex_status status,
                             const char *where,
@@ -26,11 +22,6 @@ static int integrity_refuse(yvex_error *err,
     return status;
 }
 
-/* Purpose: publish one formatted integrity refusal through the canonical error buffer.
- * Inputs: typed status, owner label, format, and matching format arguments.
- * Effects: replaces only caller-owned error state.
- * Failure: formatting truncates exactly at the canonical error-message capacity.
- * Boundary: refusal formatting does not mutate artifact or report state. */
 static int integrity_refusef(yvex_error *err,
                              yvex_status status,
                              const char *where,
@@ -86,17 +77,12 @@ static const char *const parse_issue_codes[] = {
     [YVEX_GGUF_PARSE_TOTAL_BYTE_OVERFLOW] = "tensor-byte-count-overflow",
 };
 
-/* Purpose: project digest requested facts while preserving the canonical artifact integrity invariants. */
 static int digest_requested(const yvex_artifact_integrity_options *options) {
     return options && ((options->expect_sha256 && options->expect_sha256[0]) ||
                        (options->registered_sha256 && options->registered_sha256[0]));
 }
 
-/* Purpose: append canonical artifact integrity fields to a deterministic identity stream.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
+/* Append canonical artifact integrity fields to a deterministic identity stream. */
 static void apply_identity_digest(const yvex_artifact_file_identity *identity,
                                   const yvex_artifact_integrity_options *options,
                                   yvex_artifact_integrity_report *report) {
@@ -157,11 +143,6 @@ static void apply_identity_digest(const yvex_artifact_file_identity *identity,
     }
 }
 
-/* Purpose: project add issue facts while preserving the canonical artifact integrity invariants.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 static int add_issue(yvex_artifact_integrity_report *report,
                      yvex_integrity_severity severity,
                      const char *code,
@@ -191,7 +172,6 @@ static int add_issue(yvex_artifact_integrity_report *report,
     return YVEX_OK;
 }
 
-/* Purpose: project add error facts while preserving the canonical artifact integrity invariants. */
 static int add_error(yvex_artifact_integrity_report *report,
                      const char *code,
                      const char *tensor,
@@ -199,11 +179,6 @@ static int add_error(yvex_artifact_integrity_report *report,
     return add_issue(report, YVEX_INTEGRITY_SEVERITY_ERROR, code, tensor, reason);
 }
 
-/* Purpose: project add range error facts while preserving the canonical artifact integrity invariants.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 static int add_range_error(yvex_artifact_integrity_report *report,
                            const char *code,
                            const char *tensor,
@@ -228,7 +203,6 @@ static int add_range_error(yvex_artifact_integrity_report *report,
     return rc;
 }
 
-/* Purpose: projects one canonical layout refusal into the bounded report. */
 static int add_layout_error(yvex_artifact_integrity_report *report,
                             const yvex_gguf_layout_result *layout) {
     unsigned int before;
@@ -249,11 +223,6 @@ static int add_layout_error(yvex_artifact_integrity_report *report,
     return rc;
 }
 
-/* Purpose: hash only under explicit policy through the handle used for parse and layout.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 static int apply_requested_digest(const yvex_artifact *artifact,
                                   const yvex_artifact_integrity_options *options,
                                   yvex_artifact_integrity_report *report,
@@ -298,11 +267,6 @@ static int apply_requested_digest(const yvex_artifact *artifact,
     return YVEX_OK;
 }
 
-/* Purpose: report the admitted artifact integrity cardinality.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 static int tensor_element_count(const yvex_tensor_info *tensor, unsigned long long *out) {
     unsigned long long product = 1ull;
     unsigned int i;
@@ -325,11 +289,6 @@ static int tensor_element_count(const yvex_tensor_info *tensor, unsigned long lo
     return 1;
 }
 
-/* Purpose: validate tensor shape rank, dimensions, and aggregate element accounting.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 int yvex_tensor_shape_accounting_validate(const yvex_tensor_info *tensor,
                                           yvex_tensor_shape_accounting *out,
                                           yvex_error *err) {
@@ -422,11 +381,6 @@ int yvex_tensor_shape_accounting_validate(const yvex_tensor_info *tensor,
     return YVEX_OK;
 }
 
-/* Purpose: validate selected embedding geometry against canonical layout facts.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 int yvex_selected_embedding_shape_validate(const yvex_tensor_info *tensor,
                                            unsigned int token_id,
                                            yvex_selected_embedding_shape *out,
@@ -489,11 +443,6 @@ int yvex_selected_embedding_shape_validate(const yvex_tensor_info *tensor,
     return YVEX_OK;
 }
 
-/* Purpose: validate one tensor byte range against the admitted artifact layout.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 int yvex_tensor_range_validate(const yvex_artifact *artifact,
                                const yvex_gguf *gguf,
                                const yvex_tensor_info *tensor,
@@ -573,11 +522,6 @@ int yvex_tensor_range_validate(const yvex_artifact *artifact,
     return YVEX_OK;
 }
 
-/* Purpose: validate an embedding slice without weakening global range admission.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 int yvex_tensor_embedding_slice_range_validate(const yvex_tensor_range *range,
                                                unsigned int token_id,
                                                yvex_tensor_slice_range *out,
@@ -653,11 +597,6 @@ int yvex_tensor_embedding_slice_range_validate(const yvex_tensor_range *range,
     return YVEX_OK;
 }
 
-/* Purpose: project set basic report facts while preserving the canonical artifact integrity invariants.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 static void set_basic_report(const yvex_artifact *artifact,
                              const yvex_gguf *gguf,
                              const yvex_tensor_table *tensors,
@@ -698,11 +637,6 @@ static void set_basic_report(const yvex_artifact *artifact,
     }
 }
 
-/* Purpose: project map parse result to report facts while preserving the canonical artifact integrity invariants.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 static void map_parse_result_to_report(const yvex_gguf_parse_result *result,
                                        const yvex_error *source,
                                        yvex_artifact_integrity_report *report) {
@@ -727,7 +661,6 @@ static void map_parse_result_to_report(const yvex_gguf_parse_result *result,
     (void)add_error(report, code, "", message);
 }
 
-/* Purpose: project set integrity error facts while preserving the canonical artifact integrity invariants. */
 static void set_integrity_error(yvex_error *err, const yvex_artifact_integrity_report *report) {
     const yvex_integrity_issue *issue = NULL;
 
@@ -745,11 +678,6 @@ static void set_integrity_error(yvex_error *err, const yvex_artifact_integrity_r
     }
 }
 
-/* Purpose: validate canonical layout, optional digest, and selected tensor range evidence.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 int yvex_artifact_integrity_validate(const yvex_artifact *artifact,
                                      const yvex_gguf *gguf,
                                      const yvex_tensor_table *tensors,
@@ -883,11 +811,6 @@ int yvex_artifact_integrity_validate(const yvex_artifact *artifact,
     return YVEX_OK;
 }
 
-/* Purpose: open an artifact path and perform the complete typed integrity preflight.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 int yvex_artifact_integrity_check_path(const char *path,
                                        const yvex_artifact_integrity_options *options,
                                        yvex_artifact_integrity_report *out,
@@ -958,11 +881,6 @@ int yvex_artifact_integrity_check_path(const char *path,
     return YVEX_OK;
 }
 
-/* Purpose: return the immutable artifact integrity entry at a checked ordinal.
- * Inputs: typed artifact integrity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact integrity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: integrity acceptance does not promote complete-model support. */
 const yvex_integrity_issue *
 yvex_artifact_integrity_issue_at(const yvex_artifact_integrity_report *report, unsigned int index) {
     if (!report || index >= report->issue_count) {

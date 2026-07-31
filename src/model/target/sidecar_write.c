@@ -1,14 +1,10 @@
-/* Owner: src/model/target
- * Owns: explicit local sidecar writer entry points.
- * Does not own: CLI operator streams, command dispatch, rendering, runtime execution, generation, eval, benchmark,
- *   or release decisions.
- * Invariants: sidecar writer APIs write explicit local files only and never process operator streams.
- * Boundary: sidecar writer availability does not create artifact emission capability, runtime support, generation
- *   support, benchmark evidence, or release readiness.
- * Purpose: publish explicit model-target sidecars through atomic bounded writes.
- * Inputs: typed report facts and caller-selected sidecar paths.
- * Effects: creates temporary files and atomically replaces only owned destinations.
- * Failure: serialization or I/O failure removes owned temporary state. */
+/*
+ * Publish explicit model-target sidecars through atomic bounded writes.
+ *
+ * Sidecar writer APIs write explicit local files only and never process operator streams. Sidecar
+ * writer availability does not create artifact emission capability, runtime support, generation
+ * support, benchmark evidence, or release readiness.
+ */
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/io.h>
@@ -19,11 +15,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* Purpose: construct bounded sidecar open tmp state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int sidecar_open_tmp(const char *path, char *tmp, size_t tmp_cap, FILE **out)
 {
     yvex_error err;
@@ -40,11 +31,6 @@ static int sidecar_open_tmp(const char *path, char *tmp, size_t tmp_cap, FILE **
     return *out != NULL;
 }
 
-/* Purpose: release owned sidecar close tmp resources in dependency order.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int sidecar_close_tmp(FILE *fp, const char *tmp, const char *path)
 {
     if (!fp || !tmp || !path) return 0;
@@ -59,12 +45,7 @@ static int sidecar_close_tmp(FILE *fp, const char *tmp, const char *path)
     return 1;
 }
 
-
-/* Purpose: serialize one typed sidecar variant through the shared atomic file boundary.
- * Inputs: sidecar kind, optional destination, target/family/status, and optional coverage.
- * Effects: creates and publishes only the requested sidecar destination.
- * Failure: invalid kind or file failure returns false and removes owned temporary state.
- * Boundary: publication records report facts and cannot promote runtime capability. */
+/* Serialize one typed sidecar variant through the shared atomic file boundary. */
 int yvex_model_target_write_sidecar(yvex_model_target_sidecar_kind kind, const char *path,
                                     const char *target_id, const char *family,
                                     const char *status, const char *coverage)

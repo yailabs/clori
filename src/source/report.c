@@ -1,12 +1,9 @@
-/* Owner: source reporting.
- * Owns: typed exact-source and storage-pressure report facts.
- * Does not own: CLI input, rendering, artifacts, runtime, or capability policy.
- * Invariants: reports consume canonical facts and never load tensor payload bytes.
- * Boundary: reports project evidence and never promote capability.
- * Purpose: assemble typed source facts from canonical metadata owners.
- * Inputs: family profile, source paths, inventories, manifests, and reports.
- * Effects: reads bounded metadata and accumulates typed evidence facts.
- * Failure: missing or inconsistent evidence remains an explicit blocker. */
+/*
+ * Assemble typed source facts from canonical metadata owners.
+ *
+ * Reports consume canonical facts and never load tensor payload bytes. Reports project evidence
+ * and never promote capability.
+ */
 #include <ctype.h>
 #include <dirent.h>
 #include <limits.h>
@@ -266,7 +263,6 @@ static const source_u64_projection deepseek_report_projections[] = {
       offsetof(yvex_source_report, source_tensor_dtype_i8_count), SIZE_MAX, SIZE_MAX}},
 };
 
-/* Purpose: project immutable 64-bit facts through one explicit source-to-report schema. */
 static void source_report_project_u64(yvex_source_report *report,
                                       const void *input,
                                       const source_u64_projection *rows,
@@ -281,11 +277,6 @@ static void source_report_project_u64(yvex_source_report *report,
                 *(const unsigned long long *)(const void *)(source + rows[row].input);
 }
 
-/* Purpose: project report find profile facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 const yvex_source_family_profile *yvex_source_report_find_profile(const char *family) {
     unsigned long i;
 
@@ -300,11 +291,6 @@ const yvex_source_family_profile *yvex_source_report_find_profile(const char *fa
     return NULL;
 }
 
-/* Purpose: project report target is supported facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 static int source_report_target_is_supported(const yvex_source_family_profile *profile,
                                              const char *target) {
     if (!profile || !target) {
@@ -320,11 +306,6 @@ static int source_report_target_is_supported(const yvex_source_family_profile *p
     return strcmp(target, profile->target_id) == 0;
 }
 
-/* Purpose: join one report-owned path without truncating either component.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 static int source_report_path_join(char *out, size_t cap, const char *left, const char *right) {
     int n;
 
@@ -339,11 +320,6 @@ static int source_report_path_join(char *out, size_t cap, const char *left, cons
     return 1;
 }
 
-/* Purpose: project report json u64 field facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 static int
 source_report_json_u64_field(const char *text, const char *key, unsigned long long *out) {
     const char *p;
@@ -368,7 +344,6 @@ source_report_json_u64_field(const char *text, const char *key, unsigned long lo
     return 1;
 }
 
-/* Purpose: project report copy model display facts while preserving the canonical source report invariants. */
 static void source_report_copy_model_display(char *out,
                                              size_t cap,
                                              const char *family,
@@ -384,11 +359,10 @@ static void source_report_copy_model_display(char *out,
     }
 }
 
-/* Purpose: project report probe download identity file facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source reporting state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: reports project evidence and never promote capability. */
+/*
+ * Project report probe download identity file facts while preserving the canonical source report
+ * invariants.
+ */
 static int source_report_probe_download_identity_file(const char *path,
                                                       const char *target,
                                                       const char *family,
@@ -440,11 +414,6 @@ static int source_report_probe_download_identity_file(const char *path,
     return 1;
 }
 
-/* Purpose: project report probe map sidecars facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source reporting state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: reports project evidence and never promote capability. */
 static void source_report_probe_map_sidecars(yvex_source_report *report) {
     char buf[YVEX_SOURCE_MANIFEST_PROBE_CAP + 1u];
     char status[64];
@@ -473,7 +442,6 @@ static void source_report_probe_map_sidecars(yvex_source_report *report) {
     }
 }
 
-/* Purpose: project report stat kind facts while preserving the canonical source report invariants. */
 static int source_report_stat_kind(const char *path, int want_dir) {
     struct stat st;
 
@@ -486,7 +454,6 @@ static int source_report_stat_kind(const char *path, int want_dir) {
     return want_dir ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode);
 }
 
-/* Purpose: project report manifest file exists facts while preserving the canonical source report invariants. */
 static int source_report_manifest_file_exists(char *out, size_t cap, const char *dir,
                                               const char *name) {
     char candidate[YVEX_PATH_CAP];
@@ -504,7 +471,6 @@ static int source_report_manifest_file_exists(char *out, size_t cap, const char 
     return 1;
 }
 
-/* Purpose: project report check file facts while preserving the canonical source report invariants. */
 static int source_report_check_file(const char *dir, const char *name) {
     char path[YVEX_PATH_CAP];
     return source_report_manifest_file_exists(path, sizeof(path), dir, name);
@@ -513,11 +479,6 @@ static int source_report_check_file(const char *dir, const char *name) {
 static void source_report_native_collect_table(yvex_source_report *report,
                                                const yvex_native_weight_table *table);
 
-/* Purpose: project report scan top footprint facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source reporting state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: reports project evidence and never promote capability. */
 static int source_report_scan_local(const char *dir, yvex_source_report *report) {
     const unsigned long long maximum_shards = 1024u;
     yvex_native_weight_table *table;
@@ -607,7 +568,6 @@ static int source_report_scan_local(const char *dir, yvex_source_report *report)
     return fatal;
 }
 
-/* Purpose: project report native tensor elements facts while preserving the canonical source report invariants. */
 static unsigned long long
 source_report_native_tensor_elements(const yvex_native_weight_info *info) {
     unsigned long long elements = 1;
@@ -627,17 +587,11 @@ source_report_native_tensor_elements(const yvex_native_weight_info *info) {
     return elements;
 }
 
-/* Purpose: retain the greater unsigned report fact without duplicating max branches. */
 static unsigned long long source_report_u64_max(unsigned long long left,
                                                 unsigned long long right) {
     return left > right ? left : right;
 }
 
-/* Purpose: project report tensor shape string facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 static void
 source_report_tensor_shape_string(const yvex_native_weight_info *info, char *out, size_t cap) {
     size_t used = 0;
@@ -670,11 +624,6 @@ source_report_tensor_shape_string(const yvex_native_weight_info *info, char *out
     }
 }
 
-/* Purpose: decide whether one shape introduces a new report bucket.
- * Inputs: immutable tensor table and a valid row index.
- * Effects: reads prior shape facts without mutation.
- * Failure: invalid table or index returns false.
- * Boundary: shape cardinality is reporting evidence, not tensor admission. */
 static int source_report_tensor_shape_first_seen(const yvex_native_weight_table *table,
                                                  unsigned long long index) {
     unsigned long long i;
@@ -699,11 +648,6 @@ static int source_report_tensor_shape_first_seen(const yvex_native_weight_table 
     return 1;
 }
 
-/* Purpose: project report name contains ci facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 static int source_report_name_contains_ci(const char *name, const char *needle) {
     size_t needle_len;
     size_t i;
@@ -730,14 +674,12 @@ static int source_report_name_contains_ci(const char *name, const char *needle) 
     return 0;
 }
 
-/* Purpose: project report file label facts while preserving the canonical source report invariants. */
 static const char *source_report_file_label(const char *path) {
     const char *label = yvex_source_path_basename(path);
 
     return label ? label : "unknown";
 }
 
-/* Purpose: increment both report projections selected by one canonical dtype lookup. */
 static void source_report_count_dtype(yvex_source_report *report, yvex_native_dtype dtype) {
     size_t index;
     size_t native_offset = offsetof(yvex_source_report, native_dtype_other_count);
@@ -756,7 +698,6 @@ static void source_report_count_dtype(yvex_source_report *report, yvex_native_dt
     (*(unsigned long long *)(void *)(base + metadata_offset))++;
 }
 
-/* Purpose: increment the canonical tensor-rank bucket selected by immutable offsets. */
 static void source_report_metadata_count_rank(yvex_source_report *report,
                                               unsigned long long rank) {
     size_t bucket = rank < 5u ? (size_t)rank : 5u;
@@ -765,7 +706,6 @@ static void source_report_metadata_count_rank(yvex_source_report *report,
     (*(unsigned long long *)(void *)(base + source_rank_offsets[bucket]))++;
 }
 
-/* Purpose: increment the first ordered lexical role-hint bucket matching a tensor name. */
 static void source_report_metadata_count_name(yvex_source_report *report, const char *name) {
     size_t index;
     size_t offset = offsetof(yvex_source_report, source_tensor_name_other_count);
@@ -783,11 +723,6 @@ static void source_report_metadata_count_name(yvex_source_report *report, const 
     (*(unsigned long long *)(void *)((unsigned char *)report + offset))++;
 }
 
-/* Purpose: count nonempty metadata dtype and rank buckets through canonical offsets.
- * Inputs: immutable completed report and two caller-owned counters.
- * Effects: replaces both counters; does not mutate report facts.
- * Failure: callers provide admitted non-null arguments.
- * Boundary: bucket cardinality is reporting evidence, not source capability. */
 static void source_report_count_distinct(const yvex_source_report *report,
                                          unsigned long long *dtype_count,
                                          unsigned long long *rank_count) {
@@ -810,7 +745,6 @@ static void source_report_count_distinct(const yvex_source_report *report,
     }
 }
 
-/* Purpose: project report metadata add sample facts while preserving the canonical source report invariants. */
 static void source_report_metadata_add_sample(yvex_source_report *report,
                                               const yvex_native_weight_info *info,
                                               unsigned long long elements) {
@@ -832,11 +766,6 @@ static void source_report_metadata_add_sample(yvex_source_report *report,
     sample->declared_bytes = info->data_bytes;
 }
 
-/* Purpose: project report native collect table facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 static void source_report_native_collect_table(yvex_source_report *report,
                                                const yvex_native_weight_table *table) {
     const char *active_shard = NULL;
@@ -919,11 +848,6 @@ static void source_report_native_collect_table(yvex_source_report *report,
         report, &report->source_tensor_dtype_count, &report->source_tensor_rank_count);
 }
 
-/* Purpose: project report choose report file facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 static void source_report_choose_report_file(char *out,
                                              size_t cap,
                                              const yvex_source_family_profile *profile,
@@ -974,7 +898,6 @@ found:
         *out_exists = 1;
 }
 
-/* Purpose: project report manifest blob has field facts while preserving the canonical source report invariants. */
 static int source_report_manifest_blob_has_field(const char *blob, const char *field) {
     char quoted[96];
     int n;
@@ -989,16 +912,10 @@ static int source_report_manifest_blob_has_field(const char *blob, const char *f
     return strstr(blob, quoted) != NULL;
 }
 
-/* Purpose: project report manifest blob has value facts while preserving the canonical source report invariants. */
 static int source_report_manifest_blob_has_value(const char *blob, const char *value) {
     return blob && value && value[0] != '\0' && strstr(blob, value) != NULL;
 }
 
-/* Purpose: project report probe manifest facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source reporting state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: reports project evidence and never promote capability. */
 static void source_report_probe_manifest(yvex_source_report *report,
                                          const yvex_source_family_profile *profile,
                                          const char *target) {
@@ -1056,7 +973,6 @@ static void source_report_probe_manifest(yvex_source_report *report,
         source_report_manifest_blob_has_field(buf, "tensors");
 }
 
-/* Purpose: project report add blocker facts while preserving the canonical source report invariants. */
 static void source_report_add_blocker(yvex_source_report *report, const char *blocker) {
     if (!report || !blocker || report->blocker_count >= 32) {
         return;
@@ -1064,17 +980,11 @@ static void source_report_add_blocker(yvex_source_report *report, const char *bl
     report->blockers[report->blocker_count++] = blocker;
 }
 
-/* Purpose: project report tail blocker is tensor map facts while preserving the canonical source report invariants. */
 static int source_report_tail_blocker_is_tensor_map(const char *blocker) {
     return blocker &&
            (strstr(blocker, "tensor-role-map") != NULL || strstr(blocker, "tensor-map") != NULL);
 }
 
-/* Purpose: project exact DeepSeek verifier facts into the typed source report.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 static void source_report_apply_deepseek_verification(yvex_source_report *report) {
     const yvex_source_verification *verification = &report->verification;
 
@@ -1122,19 +1032,16 @@ static void source_report_apply_deepseek_verification(yvex_source_report *report
         (verification->dtype_other_count ? 1u : 0u);
 }
 
-/* Purpose: project report presence facts while preserving the canonical source report invariants. */
 static const char *source_report_presence(int present) {
     return present ? "present" : "missing";
 }
 
-/* Purpose: classify one release-verification fact without duplicating release gating. */
 static const char *source_report_verification_state(int release,
                                                     int verified,
                                                     const char *other) {
     return release ? verified ? "verified" : "blocked" : other;
 }
 
-/* Purpose: classify header-derived inventory evidence through one shared state machine. */
 static const char *source_report_header_status(int source_exists,
                                                unsigned long long shard_count,
                                                unsigned long long error_count,
@@ -1148,7 +1055,6 @@ static const char *source_report_header_status(int source_exists,
     return evidence_count ? "header-only" : "unknown";
 }
 
-/* Purpose: derive tensor-metadata availability from the canonical header inventory state. */
 static const char *source_report_native_metadata_status(const char *inventory_status,
                                                         unsigned long long tensor_count) {
     if (strcmp(inventory_status, "header-only") == 0)
@@ -1161,7 +1067,6 @@ static const char *source_report_native_metadata_status(const char *inventory_st
     return "unknown";
 }
 
-/* Purpose: project report manifest match facts while preserving the canonical source report invariants. */
 static const char *
 source_report_manifest_match(const yvex_source_report *report, int has_field, int matches) {
     if (!report->manifest_exists)
@@ -1173,7 +1078,6 @@ source_report_manifest_match(const yvex_source_report *report, int has_field, in
     return has_field ? "mismatch" : "not-declared";
 }
 
-/* Purpose: project report manifest decl facts while preserving the canonical source report invariants. */
 static const char *source_report_manifest_decl(const yvex_source_report *report, int present) {
     if (!report->manifest_exists)
         return "not-checked";
@@ -1182,11 +1086,7 @@ static const char *source_report_manifest_decl(const yvex_source_report *report,
     return present ? "declared" : "not-declared";
 }
 
-/* Purpose: append canonical source report fields to a deterministic identity stream.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
+/* Append canonical source report fields to a deterministic identity stream. */
 static void source_report_finalize_identity(yvex_source_report *report,
                                             yvex_source_report_semantics *facts,
                                             int deepseek,
@@ -1244,11 +1144,6 @@ static void source_report_finalize_identity(yvex_source_report *report,
         report->tokenizer_map_exists ? "available-report-only" : "missing";
 }
 
-/* Purpose: project report finalize inventory facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 static void source_report_finalize_inventory(yvex_source_report *report,
                                              yvex_source_report_semantics *facts,
                                              int deepseek,
@@ -1330,11 +1225,6 @@ static void source_report_finalize_inventory(yvex_source_report *report,
                                 : "planned";
 }
 
-/* Purpose: project report finalize manifest facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 static void source_report_finalize_manifest(yvex_source_report *report,
                                             yvex_source_report_semantics *facts,
                                             int deepseek) {
@@ -1393,7 +1283,6 @@ static void source_report_finalize_manifest(yvex_source_report *report,
     facts->manifest_creation_performed = deepseek && report->verification.manifest_published;
 }
 
-/* Purpose: decides all semantic source/report states before the CLI renderer runs. */
 static void source_report_finalize_semantics(yvex_source_report *report) {
     yvex_source_report_semantics *facts = &report->semantics;
     int deepseek = report->profile && strcmp(report->profile->family_key, "deepseek") == 0;
@@ -1405,11 +1294,6 @@ static void source_report_finalize_semantics(yvex_source_report *report) {
     source_report_finalize_manifest(report, facts, deepseek);
 }
 
-/* Purpose: project report probe sidecars facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source reporting state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: reports project evidence and never promote capability. */
 static void source_report_probe_sidecars(const yvex_source_report_request *options,
                                          const yvex_operator_paths *paths,
                                          int deepseek,
@@ -1451,11 +1335,6 @@ static void source_report_probe_sidecars(const yvex_source_report_request *optio
             report->download_report_path, options->target, options->profile->family_key, report);
 }
 
-/* Purpose: project report scan source facts while preserving the canonical source report invariants.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source reporting state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: reports project evidence and never promote capability. */
 static int source_report_scan_source(const yvex_source_report_request *options,
                                      const yvex_operator_paths *paths,
                                      int deepseek,
@@ -1495,11 +1374,6 @@ static int source_report_scan_source(const yvex_source_report_request *options,
     return YVEX_OK;
 }
 
-/* Purpose: assemble the complete typed source report from canonical metadata owners.
- * Inputs: typed source reporting arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source reporting state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: reports project evidence and never promote capability. */
 int yvex_source_report_build(const yvex_source_report_request *request,
                              yvex_source_report *report,
                              yvex_error *err) {

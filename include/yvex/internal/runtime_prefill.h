@@ -1,12 +1,9 @@
-/* Owner: runtime activation prefill.
- * Owns: identity-bound activation chunks, bounded tensor-file admission, and chunk coordination.
- * Does not own: prompt text, tokenization, embeddings, attention math, MoE, or generation.
- * Invariants: one sealed input covers every selected layer and each committed chunk is all-or-none.
- * Boundary: typed activations enter the existing runtime/session attention path.
- * Purpose: expose the production activation-prefill contract to operator and future transformer owners.
- * Inputs: sealed runtime identities, ordered layer activations, and session-owned persistent state.
- * Effects: admits immutable input, executes bounded chunks, and advances committed session position.
- * Failure: malformed input or failed chunks preserve the last committed prefix and release input resources. */
+/*
+ * Expose the production activation-prefill contract to operator and future transformer owners.
+ *
+ * One sealed input covers every selected layer and each committed chunk is all-or-none. Typed
+ * activations enter the existing runtime/session attention path.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_RUNTIME_PREFILL_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_RUNTIME_PREFILL_H_INCLUDED
 
@@ -53,38 +50,38 @@ typedef struct {
     yvex_attention_operation_scope operation_scope;
 } yvex_runtime_activation_input_expectation;
 
-/* Purpose: derive one ordered layer identity from semantic plan facts only. */
+/* Derive one ordered layer identity from semantic plan facts only. */
 int yvex_runtime_activation_layer_identity_compute(
     const char *attention_plan_identity, unsigned long long ordinal,
     const yvex_attention_layer_plan *layer,
     yvex_attention_operation_scope operation_scope,
     char output[YVEX_SHA256_HEX_CAP], yvex_error *err);
 
-/* Purpose: seal canonical records and payload without serializing native structure bytes. */
+/* Seal canonical records and payload without serializing native structure bytes. */
 int yvex_runtime_activation_input_seal(
     yvex_runtime_activation_input_summary *summary,
     yvex_runtime_activation_layer_record *records,
     const float *payload, yvex_error *err);
 
-/* Purpose: transactionally serialize one already sealed activation input. */
+/* Transactionally serialize one already sealed activation input. */
 int yvex_runtime_activation_input_write(
     const char *path, const yvex_runtime_activation_input_summary *summary,
     const yvex_runtime_activation_layer_record *records,
     const float *payload, yvex_error *err);
 
-/* Purpose: admit a bounded immutable tensor file through a stable open handle. */
+/* Admit a bounded immutable tensor file through a stable open handle. */
 int yvex_runtime_activation_input_open_file(
     yvex_runtime_activation_input **out, const char *path,
     const yvex_runtime_activation_input_limits *limits, yvex_error *err);
 
-/* Purpose: admit caller-owned memory through the same canonical fact validator. */
+/* Admit caller-owned memory through the same canonical fact validator. */
 int yvex_runtime_activation_input_open_memory(
     yvex_runtime_activation_input **out,
     const yvex_runtime_activation_input_summary *summary,
     const yvex_runtime_activation_layer_record *records,
     const float *payload, yvex_error *err);
 
-/* Purpose: revalidate an open file snapshot before or after execution. */
+/* Revalidate an open file snapshot before or after execution. */
 int yvex_runtime_activation_input_validate(
     const yvex_runtime_activation_input *input, yvex_error *err);
 
@@ -120,11 +117,11 @@ typedef struct {
     char execution_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_activation_prefill_result;
 
-/* Purpose: execute all admitted attention layers over ordered activation chunks.
- * Inputs: one model/session, admitted input, explicit backend/mode, and bounded capacity.
- * Effects: commits persistent state once per complete all-layer chunk.
- * Failure: the failing chunk aborts while earlier committed chunks remain authoritative.
- * Boundary: publishes attention outputs and state only, never a complete transformer hidden state. */
+/*
+ * Execute all admitted attention layers over ordered activation chunks.
+ *
+ * One model/session, admitted input, explicit backend/mode, and bounded capacity.
+ */
 int yvex_runtime_activation_prefill_execute(
     yvex_runtime_model *model, yvex_runtime_execution_session *session,
     const yvex_runtime_activation_input *input,
@@ -132,7 +129,7 @@ int yvex_runtime_activation_prefill_execute(
     yvex_runtime_activation_prefill_result *result,
     yvex_runtime_model_failure *failure, yvex_error *err);
 
-/* Purpose: adapt the existing graph-attention operator request to activation prefill. */
+/* Adapt the existing graph-attention operator request to activation prefill. */
 int yvex_runtime_activation_prefill_operator_execute(
     const yvex_graph_attention_operator_request *request,
     yvex_graph_attention_operator_result *result,

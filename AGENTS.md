@@ -169,7 +169,7 @@ top-k, masks, softmax, reductions, encoded matrix primitives, and backend
 admission. A family owns only irreducible scheduling, tensor-role lowering,
 recurrence, operation composition, and numeric-policy selection.
 
-## 5. C interfaces, symbols, and contracts
+## 5. C interfaces, symbols, and technical commentary
 
 Headers have exactly three tiers:
 
@@ -195,26 +195,37 @@ and more than one production translation-unit consumer. Do not export helpers
 merely to connect artificially split files or promote diagnostics, fixtures,
 references, renderers, or family implementation types into installed ABI.
 
-Every source file declares these fields in its leading ownership contract:
+Commentary is intent- and rationale-oriented, with selective contracts. Explain
+why code is shaped this way, which invariant must survive, and which
+non-obvious obligation a caller or maintainer must respect. Do not restate a
+function name, signature, assignment, loop, null check, or call. Obvious code
+stays visually quiet.
 
-```text
-Owner
-Owns
-Does not own
-Invariants
-Boundary
-Purpose
-Inputs
-Effects
-Failure
-```
+`config/source_owners.tsv` is the source-ownership authority; file comments do
+not repeat it. A module comment is useful only when several functions share a
+responsibility, lifetime, strategy, concurrency or transaction invariant,
+hardware/format constraint, or deliberately rejected alternative that cannot
+be recovered locally.
 
-Every production function has an adjacent semantic contract. Stateful,
-allocating, I/O, identity, lifecycle, capability, transactional, and other
-non-trivial functions state `Purpose`, `Inputs`, `Effects`, `Failure`, and
-`Boundary`. A tiny pure helper may use one concise `Purpose` statement. The
-comment must name the actual invariant or transformation; generated manifest
-prose, function-name paraphrases, and repeated boilerplate are rejected.
+Public APIs and meaningful cross-subsystem ABIs document ownership transfer or
+borrowing, lifetime, thread safety, mutability, transactional visibility,
+cancellation, cleanup, buffer extent, identity consequences, or blocking when
+types alone do not establish them. Contracts use concise natural technical
+prose, not mandatory fields. A clear private helper normally needs no comment.
+
+Algorithms and performance-sensitive paths retain substantial commentary when
+data layout, scheduling, quantization, synchronization, hardware behavior, or
+a correctness condition is non-obvious. Explain the relevant trade-off and
+what a simpler-looking change would break. Measurements appear only with an
+identifiable machine/workload context and durable evidence.
+
+Place inline commentary immediately before the conceptual transition it
+protects: delayed publication, rollback order, fail-closed refusal, an
+unavoidable transfer, or a required synchronization. Commented-out code and
+ownerless `TODO`/`FIXME` markers are forbidden; an admitted maintenance marker
+uses `TODO(#ISSUE):` or `FIXME(#ISSUE):`. Structural guards reject old labeled
+templates and repeated boilerplate, but human review determines whether prose
+is actually useful.
 
 `.clang-format` is the canonical visual style: 100-column target and 120-column
 hard limit. Production translation units stay at or below 2,000 physical

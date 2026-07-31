@@ -1,27 +1,6 @@
 /*
- * YVEX - GGUF parser tests
- *
- * File: tests/test_core.c
- * Layer: test
- *
- * Purpose:
- *   Proves GGUF probing, fixed header parsing, metadata parsing, tensor
- *   directory parsing, lookup helpers, and malformed fixture handling.
- *
- * Covers:
- *   - yvex_gguf_probe_file
- *   - yvex_gguf_read_header
- *   - yvex_gguf_open
- *   - metadata accessors
- *   - tensor directory accessors
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_gguf
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises GGUF probing, fixed header parsing, metadata parsing, tensor directory parsing,
+ * lookup helpers, and malformed fixture handling.
  */
 #include <string.h>
 

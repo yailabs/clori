@@ -1,12 +1,9 @@
-/* Owner: graph and attention planning.
- * Owns: graph plans, memory estimates, attention plan validation, canonical ordering, and identity.
- * Does not own: payload reads, family execution, reports, backend kernels, persistent KV, or generation.
- * Invariants: planning is deterministic, immutable after build, and reads zero payload bytes.
- * Boundary: plan and capability facts are not graph execution or runtime support.
- * Purpose: derive bounded executable requirements from admitted model and runtime facts.
- * Inputs: immutable model IR, tensor tables, materialization sessions, and runtime descriptors.
- * Effects: allocates independently owned plan and summary state only.
- * Failure: checked validation or allocation failure publishes no partial plan or identity. */
+/*
+ * Derive bounded executable requirements from admitted model and runtime facts.
+ *
+ * Planning is deterministic, immutable after build, and reads zero payload bytes. Plan and
+ * capability facts are not graph execution or runtime support.
+ */
 #include "src/graph/private.h"
 
 #include <yvex/internal/backend.h>
@@ -14,7 +11,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Purpose: append one admitted history component to an unpublished state recipe. */
 static void state_recipe_history_add(
     yvex_attention_state_recipe *recipe, yvex_attention_state_binding binding,
     unsigned long long capacity, unsigned long long width)
@@ -28,11 +24,6 @@ static void state_recipe_history_add(
         .binding = binding, .capacity = capacity, .value_width = width};
 }
 
-/* Purpose: append one admitted rolling component to an unpublished state recipe.
- * Inputs: recipe, layer geometry, rolling kind, and state binding.
- * Effects: appends one pointer-free component.
- * Failure: false denotes malformed or overflowing rolling geometry.
- * Boundary: immutable state planning allocates no runtime storage. */
 static int state_recipe_rolling_add(
     yvex_attention_state_recipe *recipe, const yvex_attention_layer_plan *layer,
     yvex_attention_rolling_kind kind, yvex_attention_state_binding binding)
@@ -70,11 +61,6 @@ static int state_recipe_rolling_add(
     return 1;
 }
 
-/* Purpose: derive one generic attention-state recipe from admitted layer facts.
- * Inputs: immutable layer, bounded position request, and result owners.
- * Effects: seals one pointer-free recipe.
- * Failure: malformed state policy refuses without allocating storage.
- * Boundary: family policy is already expressed by the layer; persistent KV remains separate. */
 int yvex_attention_state_recipe_build(
     const yvex_attention_layer_plan *layer,
     const yvex_attention_state_recipe_request *request,
@@ -130,7 +116,6 @@ malformed:
         "attention rolling state recipe is malformed");
 }
 
-/* Purpose: resolve one optional component from an admitted state recipe. */
 static const yvex_attention_state_component_recipe *state_recipe_component(
     const yvex_attention_state_recipe *recipe,
     yvex_attention_state_binding binding)
@@ -147,7 +132,6 @@ typedef struct workspace_recipe_slot {
     int scales_with_tokens;
 } workspace_recipe_slot;
 
-/* Purpose: append one nonempty component to an unpublished workspace recipe. */
 static void workspace_recipe_add(
     yvex_attention_workspace_recipe *recipe,
     const workspace_recipe_slot *slot,
@@ -206,11 +190,12 @@ static const workspace_recipe_slot workspace_recipe_layout[] = {
     {YVEX_ATTENTION_WORKSPACE_OUTPUT_LOW, YVEX_ATTENTION_WORKSPACE_EXECUTION, 1}
 };
 
-/* Purpose: derive one generic attention-workspace recipe from sealed state facts.
- * Inputs: layer, sealed state recipe, mode, scope, token bucket, and result owners.
- * Effects: seals deterministic component extents.
- * Failure: invalid or overflowing geometry refuses before allocation.
- * Boundary: immutable planning owns no backend byte layout or runtime allocation. */
+/*
+ * Derive one generic attention-workspace recipe from sealed state facts.
+ *
+ * Seals deterministic component extents. Immutable planning owns no backend byte layout or runtime
+ * allocation.
+ */
 int yvex_attention_workspace_recipe_build(
     const yvex_attention_layer_plan *layer,
     const yvex_attention_state_recipe *state, yvex_attention_execution_mode mode,
@@ -320,11 +305,6 @@ malformed:
         "attention workspace recipe is malformed");
 }
 
-// Purpose: Implement the graph-local failure set semantic operation.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static void attention_failure_set(
     yvex_attention_failure *failure,
     yvex_attention_failure_code code,
@@ -347,12 +327,6 @@ static void attention_failure_set(
         yvex_core_text_copy(failure->tensor_name, sizeof(failure->tensor_name), binding->binding->name);
 }
 
-// Purpose: Return the admitted reject fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
-
 int yvex_attention_reject(yvex_attention_failure *failure,
                             yvex_attention_failure_code code,
                             const yvex_runtime_tensor_binding *binding,
@@ -370,11 +344,6 @@ int yvex_attention_reject(yvex_attention_failure *failure,
     return err_code;
 }
 
-/* Purpose: publish the canonical empty diagnostic state after graph success.
- * Inputs: optional writable failure and error records.
- * Effects: clears only caller-owned diagnostics.
- * Failure: none.
- * Boundary: success finalization does not admit a higher capability. */
 int yvex_attention_accept(yvex_attention_failure *failure, yvex_error *err)
 {
     yvex_error_clear(err);
@@ -382,11 +351,6 @@ int yvex_attention_accept(yvex_attention_failure *failure, yvex_error *err)
     return YVEX_OK;
 }
 
-// Purpose: Return the admitted checked size fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 int yvex_attention_checked_size(unsigned long long count,
                                   unsigned long long width,
                                   size_t *out)
@@ -400,11 +364,6 @@ int yvex_attention_checked_size(unsigned long long count,
     return 1;
 }
 
-// Purpose: Return the admitted calloc array fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 void *yvex_attention_calloc_array(unsigned long long count,
                                     unsigned long long width)
 {
@@ -413,12 +372,6 @@ void *yvex_attention_calloc_array(unsigned long long count,
     if (!yvex_attention_checked_size(count, width, &bytes)) return NULL;
     return calloc(1u, bytes);
 }
-
-// Purpose: Return the admitted context validate fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 
 int yvex_attention_context_validate(
     const yvex_attention_plan *plan,
@@ -582,11 +535,11 @@ static void plan_hash_sparse_topk_policy(yvex_sha256 *hash,
                                          const yvex_attention_topk_policy *policy);
 void yvex_attention_plan_close(yvex_attention_plan *plan);
 
-/* Purpose: allocate the common immutable storage used by built and imported plans.
- * Inputs: exact layer count and caller-specific typed allocation diagnostics.
- * Effects: publishes one zeroed plan whose layer storage has the requested extent.
- * Failure: bounds or allocation refusal publishes no partial plan.
- * Boundary: allocation performs no family discovery, binding, or identity work. */
+/*
+ * Allocate the common immutable storage used by built and imported plans.
+ *
+ * Allocation performs no family discovery, binding, or identity work.
+ */
 static int attention_plan_allocate(
     yvex_attention_plan **out, unsigned long long layer_count,
     const char *plan_reason, const char *layer_reason,
@@ -619,11 +572,12 @@ static int attention_plan_allocate(
     return YVEX_OK;
 }
 
-/* Purpose: bind the runtime identity chain and recipe counts into a ready plan summary.
- * Inputs: caller-owned summary plus immutable runtime and family recipe facts.
- * Effects: replaces the summary with the canonical execution-ready baseline.
- * Failure: bounded identity copies always terminate their destinations.
- * Boundary: this projection neither computes an identity nor reads payload bytes. */
+/*
+ * Bind the runtime identity chain and recipe counts into a ready plan summary.
+ *
+ * Bounded identity copies always terminate their destinations. This projection neither computes an
+ * identity nor reads payload bytes.
+ */
 static void attention_summary_initialize(
     yvex_attention_summary *summary, const yvex_runtime_descriptor_summary *runtime,
     const yvex_attention_recipe *recipe)
@@ -650,11 +604,6 @@ static void attention_summary_initialize(
     summary->hca_layer_count = recipe->hca_layer_count;
 }
 
-/* Purpose: append one IEEE-754 value without hashing native structure storage.
- * Inputs: active identity stream and semantic floating-point value.
- * Effects: appends the exact value bits to the hash stream.
- * Failure: the bounded in-memory SHA operation has no recoverable failure.
- * Boundary: this helper hashes values only, never object layout or pointers. */
 static void plan_hash_f64(yvex_sha256 *hash, double value)
 {
     unsigned long long bits = 0ull;
@@ -662,11 +611,12 @@ static void plan_hash_f64(yvex_sha256 *hash, double value)
     (void)attention_hash_u64(hash, bits);
 }
 
-/* Purpose: serialize an ordered semantic field catalog without hashing native object storage.
- * Inputs: active hash, immutable typed object, and its field catalog.
- * Effects: appends each value in catalog order using its canonical integer or IEEE encoding.
- * Failure: bounded in-memory hash updates have no recoverable failure at this legacy boundary.
- * Boundary: offsets select declared fields only; padding and pointers never enter identities. */
+/*
+ * Serialize an ordered semantic field catalog without hashing native object storage.
+ *
+ * Bounded in-memory hash updates have no recoverable failure at this legacy boundary. Offsets
+ * select declared fields only; padding and pointers never enter identities.
+ */
 static void plan_hash_fields(yvex_sha256 *hash, const void *object,
                              const plan_hash_field *fields, size_t count)
 {
@@ -697,11 +647,7 @@ static void plan_hash_fields(yvex_sha256 *hash, const void *object,
     }
 }
 
-// Purpose: Derive the deterministic compute identity identity from explicit semantic fields.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
+/* Derive the deterministic compute identity identity from explicit semantic fields. */
 int yvex_attention_plan_identity_compute(
     const yvex_attention_summary *summary,
     const yvex_attention_layer_plan *layers,
@@ -741,11 +687,6 @@ int yvex_attention_plan_identity_compute(
     return 1;
 }
 
-// Purpose: Derive the deterministic plan hash activation policy identity from explicit semantic fields.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static void plan_hash_activation_policy(
     yvex_sha256 *hash,
     const yvex_attention_activation_policy *policy)
@@ -756,11 +697,6 @@ static void plan_hash_activation_policy(
                      sizeof(plan_activation_fields) / sizeof(plan_activation_fields[0]));
 }
 
-// Purpose: Derive the deterministic plan hash sparse topk policy identity from explicit semantic fields.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static void plan_hash_sparse_topk_policy(
     yvex_sha256 *hash,
     const yvex_attention_topk_policy *policy)
@@ -771,11 +707,6 @@ static void plan_hash_sparse_topk_policy(
                      sizeof(plan_topk_fields) / sizeof(plan_topk_fields[0]));
 }
 
-/* Purpose: count immediate envelope bindings through the canonical plan classifier.
- * Inputs: sealed plan, immutable runtime descriptor, and typed overflow diagnostics.
- * Effects: writes one checked count and reads no payload bytes.
- * Failure: descriptor counter overflow publishes no partial count.
- * Boundary: classification remains graph-owned; residency consumes the resulting count. */
 static int attention_envelope_binding_count(
     const yvex_attention_plan *plan, const yvex_runtime_descriptor *descriptor,
     unsigned long long *count, yvex_attention_failure_code failure_code,
@@ -799,12 +730,6 @@ static int attention_envelope_binding_count(
     }
     return YVEX_OK;
 }
-
-// Purpose: Implement the graph-local bind role semantic operation.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 
 static int attention_bind_role(
     const yvex_runtime_descriptor *descriptor,
@@ -901,11 +826,12 @@ _Static_assert(sizeof(attention_required_roles) / sizeof(attention_required_role
                    ATTENTION_REQUIRED_ROLE_COUNT,
                "attention role table must preserve the complete binding order");
 
-/* Purpose: reconstruct an immutable attention plan from authenticated runtime-binding records.
- * Inputs: canonical summary/layers plus imported materialization and runtime descriptor.
- * Effects: allocates independently owned plan storage and computes its identity.
- * Failure: stale identity chains, malformed layers, or accounting mismatch publish no plan.
- * Boundary: import performs no family discovery and reads no payload bytes. */
+/*
+ * Reconstruct an immutable attention plan from authenticated runtime-binding records.
+ *
+ * Allocates independently owned plan storage and computes its identity. Stale identity chains,
+ * malformed layers, or accounting mismatch publish no plan.
+ */
 int yvex_attention_plan_import(yvex_attention_plan **out,
                                const yvex_attention_summary *summary,
                                const yvex_attention_layer_plan *layers,
@@ -997,11 +923,6 @@ int yvex_attention_plan_import(yvex_attention_plan **out,
     return yvex_attention_accept(failure, err);
 }
 
-// Purpose: Implement the graph-local bind required layer roles semantic operation.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static int attention_bind_required_layer_roles(
     const yvex_runtime_descriptor *descriptor,
     const yvex_attention_layer_plan *layer,
@@ -1028,11 +949,6 @@ static int attention_bind_required_layer_roles(
     return YVEX_OK;
 }
 
-// Purpose: Return the admitted plan build fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 int yvex_attention_plan_build(
     yvex_attention_plan **out,
     const yvex_attention_recipe *recipe,
@@ -1166,11 +1082,6 @@ int yvex_attention_plan_build(
     return YVEX_OK;
 }
 
-// Purpose: Return the admitted plan close fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 void yvex_attention_plan_close(yvex_attention_plan *plan)
 {
     if (!plan) return;
@@ -1178,33 +1089,18 @@ void yvex_attention_plan_close(yvex_attention_plan *plan)
     free(plan);
 }
 
-// Purpose: Return the admitted plan summary fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 const yvex_attention_summary *yvex_attention_plan_summary(
     const yvex_attention_plan *plan)
 {
     return plan ? &plan->summary : NULL;
 }
 
-// Purpose: Return the admitted plan layer count fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 unsigned long long yvex_attention_plan_layer_count(
     const yvex_attention_plan *plan)
 {
     return plan ? plan->layer_count : 0ull;
 }
 
-// Purpose: Return the admitted plan layer at fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 const yvex_attention_layer_plan *yvex_attention_plan_layer_at(
     const yvex_attention_plan *plan,
     unsigned long long index)
@@ -1213,7 +1109,6 @@ const yvex_attention_layer_plan *yvex_attention_plan_layer_at(
     return &plan->layers[index];
 }
 
-/* Purpose: locate the immutable layer policy for one main-layer binding. */
 static const yvex_attention_layer_plan *attention_plan_find_layer(
     const yvex_attention_plan *plan, unsigned long long layer_index)
 {
@@ -1225,11 +1120,6 @@ static const yvex_attention_layer_plan *attention_plan_find_layer(
     return NULL;
 }
 
-/* Purpose: classify one admitted tensor as core, immediate envelope, or unrelated.
- * Inputs: immutable attention plan and runtime descriptor binding.
- * Effects: none.
- * Failure: malformed, non-main-layer, or unknown bindings classify as not required.
- * Boundary: this is the canonical graph-to-residency projection; it reads no payload bytes. */
 yvex_attention_binding_class yvex_attention_plan_binding_classify(
     const yvex_attention_plan *plan, const yvex_runtime_tensor_binding *binding)
 {
@@ -1258,17 +1148,11 @@ yvex_attention_binding_class yvex_attention_plan_binding_classify(
     return YVEX_ATTENTION_BINDING_NOT_REQUIRED;
 }
 
-// Purpose: Implement the graph-local backend allowed semantic operation.
 static int backend_allowed(const char *name)
 {
     return strcmp(name, "cpu") == 0 || strcmp(name, "none") == 0 || strcmp(name, "cuda") == 0;
 }
 
-// Purpose: Project the stable textual ABI label for backend kind from name.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static yvex_backend_kind backend_kind_from_name(const char *name)
 {
     return strcmp(name, "cuda") == 0 ? YVEX_BACKEND_KIND_CUDA : YVEX_BACKEND_KIND_CPU;
@@ -1296,7 +1180,6 @@ static const plan_backend_capability plan_backend_capabilities[] = {
      {YVEX_BACKEND_VARIANT_ATTENTION_CAUSAL_F32}, 1u},
 };
 
-/* Purpose: project exact backend variants into the legacy planner capability fields. */
 static void plan_backend_capabilities_fill(yvex_plan *plan, const yvex_backend *backend)
 {
     size_t capability, variant;
@@ -1314,11 +1197,6 @@ static void plan_backend_capabilities_fill(yvex_plan *plan, const yvex_backend *
     }
 }
 
-// Purpose: Implement the graph-local fill backend status semantic operation.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static int fill_backend_status(yvex_plan *plan, const char *backend_name, yvex_error *err)
 {
     yvex_backend *backend = NULL;
@@ -1353,11 +1231,7 @@ static int fill_backend_status(yvex_plan *plan, const char *backend_name, yvex_e
     return YVEX_OK;
 }
 
-// Purpose: Construct plan create with checked geometry and explicit ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
+/* Construct plan create with checked geometry and explicit ownership. */
 int yvex_plan_create(yvex_plan **out,
                      const yvex_model_descriptor *model,
                      const yvex_tensor_table *tensors,
@@ -1436,11 +1310,6 @@ int yvex_plan_create(yvex_plan **out,
     return YVEX_OK;
 }
 
-// Purpose: Release graph-owned resources held by plan close.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 void yvex_plan_close(yvex_plan *plan)
 {
     if (!plan) {
@@ -1453,27 +1322,16 @@ void yvex_plan_close(yvex_plan *plan)
     free(plan);
 }
 
-// Purpose: Implement the graph-local plan graph semantic operation.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 const yvex_graph *yvex_plan_graph(const yvex_plan *plan)
 {
     return plan ? plan->graph : NULL;
 }
 
-// Purpose: Implement the graph-local plan memory semantic operation.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 const yvex_memory_plan *yvex_plan_memory(const yvex_plan *plan)
 {
     return plan ? plan->memory : NULL;
 }
 
-// Purpose: Apply the checked graph-local add checked invariant.
 static int add_checked(unsigned long long a,
                        unsigned long long b,
                        unsigned long long *out,
@@ -1487,11 +1345,6 @@ static int add_checked(unsigned long long a,
     return YVEX_OK;
 }
 
-// Purpose: Implement the graph-local compute activation peak semantic operation.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static int compute_activation_peak(const yvex_graph *graph,
                                    unsigned long long *out,
                                    yvex_error *err)
@@ -1528,11 +1381,6 @@ static int compute_activation_peak(const yvex_graph *graph,
     return YVEX_OK;
 }
 
-// Purpose: Implement the graph-local memory plan from graph semantic operation.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 int yvex_memory_plan_from_graph(yvex_memory_plan **out,
                                 const yvex_graph *graph,
                                 const yvex_tensor_table *tensors,
@@ -1616,31 +1464,16 @@ int yvex_memory_plan_from_graph(yvex_memory_plan **out,
     return YVEX_OK;
 }
 
-// Purpose: Release graph-owned resources held by memory plan close.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 void yvex_memory_plan_close(yvex_memory_plan *plan)
 {
     free(plan);
 }
 
-// Purpose: Return the admitted memory plan status of fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 yvex_memory_plan_status yvex_memory_plan_status_of(const yvex_memory_plan *plan)
 {
     return plan ? plan->status : YVEX_MEMORY_PLAN_EMPTY;
 }
 
-// Purpose: Return the admitted memory plan get summary fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 int yvex_memory_plan_get_summary(const yvex_memory_plan *plan,
                                  yvex_memory_plan_summary *out,
                                  yvex_error *err)

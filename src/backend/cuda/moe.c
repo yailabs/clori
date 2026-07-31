@@ -1,12 +1,9 @@
-/* Owner: CUDA MoE execution.
- * Owns: direct encoded-weight execution, admitted MoE kernel launches, synchronization, and cleanup.
- * Does not own: family routing policy, artifact addressing, runtime sessions, CPU fallback, or CLI evidence.
- * Invariants: production weights remain directly addressable and success follows device completion.
- * Boundary: backend execution consumes a typed MoE job and never reconstructs model topology.
- * Purpose: execute one DeepSeek-selected MoE layer with canonical qtype kernels on CUDA.
- * Inputs: admitted encoded fixed/selected weights, expanded activation, and exact family plan facts.
- * Effects: uses stable workspace ranges and publishes only evidence requested by the caller.
- * Failure: copy, launch, status, or cleanup failure publishes no successful result. */
+/*
+ * Execute one DeepSeek-selected MoE layer with canonical qtype kernels on CUDA.
+ *
+ * Production weights remain directly addressable and success follows device completion. Backend
+ * execution consumes a typed MoE job and never reconstructs model topology.
+ */
 #include <yvex/internal/moe.h>
 #include "src/backend/cuda/private.h"
 #include <limits.h>
@@ -31,13 +28,13 @@ struct yvex_backend_moe_execution {
     unsigned long long routed_ns, shared_ns, synchronization_ns;
 };
 static int moe_cuda_add_selected(yvex_backend_moe_execution *execution, yvex_error *err);
-/* Purpose: publish one CUDA MoE refusal through the typed backend owner. */
+
 static int moe_cuda_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "cuda.moe", reason);
     return status;
 }
-/* Purpose: project one graph weight view into the existing encoded CUDA matvec ABI. */
+
 static yvex_backend_attention_weight moe_cuda_weight(const yvex_moe_weight_view *weight)
 {
     yvex_backend_attention_weight out = {0};
@@ -51,8 +48,7 @@ static yvex_backend_attention_weight moe_cuda_weight(const yvex_moe_weight_view 
     out.present = weight->encoded && weight->encoded_bytes != 0u;
     return out;
 }
-/* Purpose: allocate one stable range. Inputs: workspace, extent, and optional source.
- * Effects: advances workspace. Failure: typed backend error. Boundary: CUDA MoE scratch. */
+
 static int moe_cuda_allocate(yvex_backend_moe_execution *execution, CUdeviceptr *out,
                              size_t bytes, const void *source, int zero,
                              const char *stage, yvex_error *err)
@@ -60,8 +56,7 @@ static int moe_cuda_allocate(yvex_backend_moe_execution *execution, CUdeviceptr 
     return execution->ops->allocate(&execution->work, out, bytes, source, zero, stage,
                                     &execution->failure, err);
 }
-/* Purpose: upload one encoded weight. Inputs: admitted view and stable staging range.
- * Effects: replaces staged bytes. Failure: typed bound/transfer error. Boundary: CUDA MoE weight. */
+
 static int moe_cuda_upload(yvex_backend_moe_execution *execution,
                            const yvex_moe_weight_view *weight,
                            const char *stage, yvex_error *err)
@@ -80,11 +75,7 @@ static int moe_cuda_upload(yvex_backend_moe_execution *execution,
     }
     return rc;
 }
-/* Purpose: resolve one model-resident weight directly or stage only an explicit fallback view.
- * Inputs: admitted weight view and stable fallback range.
- * Effects: publishes a device address and accounts direct reuse versus transfer.
- * Failure: malformed mapped address or fallback upload publishes no usable pointer.
- * Boundary: production runtime views are direct; focused backend fixtures may exercise staging. */
+
 static int moe_cuda_weight_address(yvex_backend_moe_execution *execution,
                                    const yvex_moe_weight_view *weight,
                                    CUdeviceptr *device, const char *stage,
@@ -103,7 +94,7 @@ static int moe_cuda_weight_address(yvex_backend_moe_execution *execution,
     if (rc == YVEX_OK) *device = execution->weight_buffer;
     return rc;
 }
-/* Purpose: execute one encoded matrix-vector product from the reusable weight range. */
+
 static int moe_cuda_matvec(yvex_backend_moe_execution *execution,
                            const yvex_moe_weight_view *weight, CUdeviceptr input,
                            CUdeviceptr output, int round_bf16,
@@ -119,8 +110,7 @@ static int moe_cuda_matvec(yvex_backend_moe_execution *execution,
                                          execution->status, stage, &execution->failure, err)
                : rc;
 }
-/* Purpose: decode one coefficient vector. Inputs: encoded view and output range.
- * Effects: writes device coefficients. Failure: typed CUDA error. Boundary: CUDA qtype execution. */
+
 static int moe_cuda_decode(yvex_backend_moe_execution *execution,
                            const yvex_moe_weight_view *weight, CUdeviceptr output,
                            const char *stage, yvex_error *err)
@@ -135,8 +125,7 @@ static int moe_cuda_decode(yvex_backend_moe_execution *execution,
                                          stage, &execution->failure, err)
                : rc;
 }
-/* Purpose: measure and validate one existing outer CUDA MoE synchronization. Inputs: live execution and stage.
- * Effects: records its status download and wait. Failure: typed transfer/device error. Boundary: adds no sync. */
+
 static int moe_cuda_sync_status(yvex_backend_moe_execution *execution,
                                 const char *stage, yvex_error *err)
 {
@@ -159,8 +148,7 @@ static int moe_cuda_sync_status(yvex_backend_moe_execution *execution,
                              "CUDA MoE kernel reported invalid or non-finite numerics");
     return rc;
 }
-/* Purpose: allocate per-layer stable ranges. Inputs: sealed job and workspace.
- * Effects: fixes device addresses. Failure: typed capacity error. Boundary: CUDA MoE workspace. */
+
 static int moe_cuda_ranges(yvex_backend_moe_execution *execution, yvex_error *err)
 {
     const yvex_moe_layer_plan *layer = execution->job->layer;
@@ -227,8 +215,7 @@ static int moe_cuda_ranges(yvex_backend_moe_execution *execution, yvex_error *er
     if (rc == YVEX_OK && !execution->job->device_input) execution->h2d += expanded;
     return rc;
 }
-/* Purpose: execute mHC FFN ingress and RMS norm. Inputs: typed layer weights and activation.
- * Effects: writes device input state. Failure: typed kernel error. Boundary: CUDA MoE preparation. */
+
 static int moe_cuda_prepare_input(yvex_backend_moe_execution *execution, yvex_error *err)
 {
     const yvex_moe_layer_job *job = execution->job;
@@ -266,9 +253,7 @@ static int moe_cuda_prepare_input(yvex_backend_moe_execution *execution, yvex_er
             "cuda.moe.ffn-norm", &execution->failure, err);
     return rc;
 }
-/* Purpose: execute routing. Inputs: prepared state and typed router policy.
- * Effects: keeps selection device-side for grouped serving or publishes audit selection.
- * Failure: typed numeric error. Boundary: CUDA MoE router. */
+
 static int moe_cuda_route(yvex_backend_moe_execution *execution,
                           yvex_moe_layer_result *result, yvex_error *err)
 {
@@ -354,8 +339,7 @@ static int moe_cuda_route(yvex_backend_moe_execution *execution,
     return rc == YVEX_OK && !execution->grouped_selected
                ? moe_cuda_sync_status(execution, "cuda.moe.route-sync", err) : rc;
 }
-/* Purpose: begin one CUDA MoE layer. Inputs: admitted backend job and result storage.
- * Effects: owns work and publishes routing. Failure: closes partial work. Boundary: backend lifecycle. */
+
 int yvex_backend_moe_begin(yvex_backend_moe_execution **out, yvex_backend *backend,
                            const yvex_moe_layer_job *job,
                            yvex_moe_layer_result *result, yvex_error *err)
@@ -430,9 +414,7 @@ fail:
     (void)yvex_backend_moe_close(&execution, NULL);
     return rc;
 }
-/* Purpose: execute all routed experts from the device selection without host dispatch.
- * Inputs: grouped-capable execution with aggregate encoded views. Effects: publishes routed output.
- * Failure: missing stable addresses or malformed geometry refuses. Boundary: normal CUDA serving. */
+
 static int moe_cuda_add_selected(yvex_backend_moe_execution *execution, yvex_error *err)
 {
     const yvex_moe_layer_job *job = execution ? execution->job : NULL;
@@ -548,8 +530,7 @@ static int moe_cuda_add_selected(yvex_backend_moe_execution *execution, yvex_err
     }
     return rc;
 }
-/* Purpose: execute one selected expert. Inputs: exact gate/up/down views and route weight.
- * Effects: accumulates device output. Failure: typed kernel error. Boundary: backend MoE compute. */
+
 int yvex_backend_moe_add_expert(yvex_backend_moe_execution *execution,
                                 const yvex_moe_weight_view *gate,
                                 const yvex_moe_weight_view *up,
@@ -601,8 +582,11 @@ int yvex_backend_moe_add_expert(yvex_backend_moe_execution *execution,
     }
     return rc;
 }
-/* Purpose: publish one complete CUDA MoE output. Inputs: complete execution and result storage.
- * Effects: downloads typed result. Failure: publishes no success. Boundary: backend transaction. */
+/*
+ * Publish one complete CUDA MoE output.
+ *
+ * Backend transaction.
+ */
 int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
                             yvex_moe_layer_result *result, yvex_error *err)
 {
@@ -699,8 +683,11 @@ int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: release one CUDA MoE transaction. Inputs: owned execution handle.
- * Effects: frees work on success. Failure: retains retryable ownership. Boundary: backend cleanup. */
+/*
+ * Release one CUDA MoE transaction.
+ *
+ * Retains retryable ownership.
+ */
 int yvex_backend_moe_close(yvex_backend_moe_execution **execution, yvex_error *err)
 {
     int rc;

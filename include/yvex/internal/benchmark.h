@@ -1,12 +1,11 @@
-/* Owner: runtime.benchmark.
- * Owns: immutable attention-benchmark baselines, compatibility comparison, and deterministic SVG evidence.
- * Does not own: benchmark measurement, execution admission, runtime capability, CLI parsing, or rendering policy.
- * Invariants: records are versioned, content-addressed, bounded, and atomically published without replacement.
- * Boundary: external benchmark evidence is serialized only after production execution has produced typed facts.
- * Purpose: expose one independently reopenable baseline and chart lifecycle to runtime and operator consumers.
- * Inputs: canonical execution identities, device/build facts, counters, and measured nanosecond statistics.
- * Effects: explicit publication calls create one external file; validation and comparison are read-only.
- * Failure: typed refusals preserve every pre-existing destination and remove only owner-created temporaries. */
+/*
+ * Expose one independently reopenable baseline and chart lifecycle to runtime and operator
+ * consumers.
+ *
+ * Records are versioned, content-addressed, bounded, and atomically published without replacement.
+ * External benchmark evidence is serialized only after production execution has produced typed
+ * facts.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_BENCHMARK_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_BENCHMARK_H_INCLUDED
 

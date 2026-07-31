@@ -1,12 +1,7 @@
-/* Owner: backend.cuda.private (backend.cuda).
- * Owns: CUDA driver ABI, generated kernel bundle, and qtype launch contracts.
- * Does not own: model policy, graph topology, or CPU fallback.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: CUDA platform-private execution.
- * Purpose: provide the canonical CUDA platform-private execution contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * CUDA owners share Driver API handles, admitted kernel variants, tensors, and launch resources
+ * here. Family topology cannot be reconstructed from this platform boundary.
+ */
 #ifndef SRC_BACKEND_CUDA_PRIVATE_H_INCLUDED
 #define SRC_BACKEND_CUDA_PRIVATE_H_INCLUDED
 #include <stddef.h>
@@ -17,7 +12,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Driver contract. */
+/* Driver. */
 typedef int CUresult;
 typedef int CUdevice;
 typedef void *CUcontext;
@@ -247,7 +242,7 @@ typedef enum {
     YVEX_CUDA_ATTENTION_STAGE_ENVELOPE_POST,
     YVEX_CUDA_ATTENTION_STAGE_COUNT
 } yvex_cuda_attention_stage;
-/* Purpose: admit only semantically active pieces to the piecewise launch graph. */
+/* Admit only semantically active pieces to the piecewise launch graph. */
 static inline int cuda_attention_piece_active(
     yvex_backend_attention_scope scope,
     yvex_backend_attention_class attention_class,
@@ -358,7 +353,7 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
                                   unsigned int last,
                                   char output[160],
                                   yvex_error *err);
-/* Purpose: derive one representable host byte extent for a CUDA work range. */
+/* Derive one representable host byte extent for a CUDA work range. */
 static inline int yvex_cuda_work_checked_bytes(unsigned long long count,
                                                unsigned long long width,
                                                size_t *out)
@@ -536,7 +531,7 @@ int yvex_cuda_op_attention(yvex_backend *backend,
                            yvex_device_tensor *probability_scratch,
                            yvex_device_tensor *out,
                            yvex_error *err);
-/* Qtype contract. */
+/* Qtype. */
 int yvex_cuda_quant_row_dot(yvex_backend *backend,
                             unsigned int qtype,
                             const unsigned char *encoded,

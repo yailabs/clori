@@ -1,6 +1,4 @@
-/*
- * YVEX - CPU fixture weight materialization tests
- */
+
 #include <stdlib.h>
 #include <string.h>
 

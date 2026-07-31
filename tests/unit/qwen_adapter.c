@@ -1,6 +1,4 @@
-/*
- * YVEX - Qwen adapter tests
- */
+
 #include <string.h>
 
 #include <yvex/gguf.h>

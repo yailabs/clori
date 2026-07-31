@@ -1,12 +1,4 @@
-/* Owner: cli.render.private (cli.render).
- * Owns: domain render entrypoints and shared output formatting.
- * Does not own: domain policy, input parsing, or capability truth.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: CLI presentation over typed reports.
- * Purpose: provide the canonical CLI presentation over typed reports contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/* Renderers project typed reports without reclassifying their capability or failure state. */
 #ifndef SRC_CLI_RENDER_PRIVATE_H_INCLUDED
 #define SRC_CLI_RENDER_PRIVATE_H_INCLUDED
 
@@ -28,12 +20,10 @@
 #include <yvex/internal/transformer.h>
 #include <yvex/internal/source_payload.h>
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Private contract. */
 typedef enum {
     YVEX_RENDER_MODE_PORCELAIN = 0,
     YVEX_RENDER_MODE_TABLE,
@@ -43,7 +33,7 @@ typedef struct {
     FILE *fp;
     yvex_render_mode mode;
 } yvex_render_out;
-/* Purpose: read one immutable collection counter selected by a renderer table. */
+/* Read one immutable collection counter selected by a renderer table. */
 static inline unsigned long long cli_collection_value(
     const yvex_fullmodel_collections *collections, size_t offset) {
     if (!collections || offset == (size_t)-1)
@@ -128,12 +118,12 @@ static inline void render_lines(FILE *fp, const char *const *lines, size_t line_
     yvex_cli_out_lines(fp, lines, line_count);
 }
 
-/* Backend contract. */
+/* Backend rendering. */
 int yvex_backend_render(FILE *fp, const yvex_backend_report *report);
 int yvex_backend_render_help(FILE *fp);
 int yvex_cuda_info_render_help(FILE *fp);
 
-/* Graph contract. */
+/* Graph rendering. */
 int yvex_graph_attention_render(FILE *fp, yvex_graph_report_mode mode,
                                 const yvex_graph_attention_operator_result *result);
 int yvex_graph_moe_render(FILE *fp, yvex_graph_report_mode mode,
@@ -150,13 +140,13 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                                  const yvex_generation_operator_result *result);
 int yvex_graph_render_help(FILE *fp);
 
-/* Model Target contract. */
+/* Model-target rendering. */
 int yvex_model_target_render(FILE *fp, yvex_model_target_render_mode mode,
                              const yvex_model_target_report *report);
 int yvex_model_target_render_errors(FILE *fp, const yvex_model_target_report *report);
 int yvex_model_target_render_help(FILE *fp);
 
-/* Source contract. */
+/* Source rendering. */
 int yvex_source_render(FILE *fp, yvex_source_render_mode mode, const yvex_source_report *report);
 int yvex_source_render_normal(FILE *fp, const yvex_source_report *report);
 int yvex_source_render_table(FILE *fp, const yvex_source_report *report);

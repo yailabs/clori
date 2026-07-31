@@ -1,15 +1,10 @@
-/* Owner: src/cli/render
- * Owns: typed option parsing, provider process lifecycle, bounded source intake checks, progress/file output,
- *   control routing, and report rendering.
- * Does not own: domain model registry storage, runtime generation, artifact emission, eval, benchmark, or release
- *   claims.
- * Invariants: CLI-only and excluded from libyvex.a; existing command syntax is preserved.
- * Boundary: source download facts do not make artifacts generation-capable.
- * Purpose: provide typed option parsing, provider process lifecycle, bounded source intake checks, progress/file
- *   output, control routing, and report rendering.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Provide typed option parsing, provider process lifecycle, bounded source intake checks,
+ * progress/file output, control routing, and report rendering.
+ *
+ * CLI-only and excluded from libyvex.a; existing command syntax is preserved. Source download
+ * facts do not make artifacts generation-capable.
+ */
 #include "src/cli/model_artifacts/private.h"
 
 #include <ctype.h>
@@ -106,11 +101,6 @@ static const char *const model_download_default_excludes[] = { "*.bin",
     "*.tar",
     "*.zip"};
 
-/* Purpose: Transfer bounded model download find catalog data (`model_download_find_catalog`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 const yvex_model_download_catalog_row *model_download_find_catalog(const char *target)
 {
     unsigned long i;
@@ -124,11 +114,6 @@ const yvex_model_download_catalog_row *model_download_find_catalog(const char *t
     return NULL;
 }
 
-/* Purpose: Transfer bounded model download family valid data (`model_download_family_valid`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_family_valid(const char *family)
 {
     return family &&
@@ -138,11 +123,6 @@ int model_download_family_valid(const char *family)
             strcmp(family, "gemma") == 0);
 }
 
-/* Purpose: Transfer bounded model download local name valid data (`model_download_local_name_valid`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_local_name_valid(const char *name)
 {
     const unsigned char *p = (const unsigned char *)name;
@@ -157,11 +137,6 @@ int model_download_local_name_valid(const char *name)
     return 1;
 }
 
-/* Purpose: Transfer bounded model download repo valid data (`model_download_repo_valid`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_repo_valid(const char *repo)
 {
     const unsigned char *p = (const unsigned char *)repo;
@@ -180,11 +155,6 @@ int model_download_repo_valid(const char *repo)
     return slash_count == 1;
 }
 
-/* Purpose: Transfer bounded model download effective include count data (`model_download_effective_include_count`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 unsigned int model_download_effective_include_count(const yvex_cli_models_download_options *options)
 {
     return options && options->include_count
@@ -193,11 +163,6 @@ unsigned int model_download_effective_include_count(const yvex_cli_models_downlo
                          sizeof(model_download_default_includes[0]));
 }
 
-/* Purpose: Transfer bounded model download effective exclude count data (`model_download_effective_exclude_count`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 unsigned int model_download_effective_exclude_count(const yvex_cli_models_download_options *options)
 {
     return options && options->exclude_count
@@ -206,11 +171,6 @@ unsigned int model_download_effective_exclude_count(const yvex_cli_models_downlo
                          sizeof(model_download_default_excludes[0]));
 }
 
-/* Purpose: Transfer bounded model download effective include at data (`model_download_effective_include_at`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 const char *model_download_effective_include_at(const yvex_cli_models_download_options *options,
                                                        unsigned int index)
 {
@@ -218,11 +178,6 @@ const char *model_download_effective_include_at(const yvex_cli_models_download_o
     return model_download_default_includes[index];
 }
 
-/* Purpose: Transfer bounded model download effective exclude at data (`model_download_effective_exclude_at`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 const char *model_download_effective_exclude_at(const yvex_cli_models_download_options *options,
                                                        unsigned int index)
 {
@@ -245,22 +200,12 @@ static const yvex_model_download_report model_download_report_defaults = {
     .child_exit_status = "unknown", .orphan_check_status = "unknown",
 };
 
-/* Purpose: Construct the owned model download report init state (`model_download_report_init`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void model_download_report_init(yvex_model_download_report *report)
 {
     if (!report) return;
     *report = model_download_report_defaults;
 }
 
-/* Purpose: Transfer bounded model download path under data (`model_download_path_under`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_download_path_under(const char *path, const char *dir)
 {
     size_t dir_len;
@@ -274,11 +219,6 @@ static int model_download_path_under(const char *path, const char *dir)
            (path[dir_len] == '\0' || path[dir_len] == '/');
 }
 
-/* Purpose: Transfer bounded model download source path allowed data (`model_download_source_path_allowed`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_source_path_allowed(const yvex_operator_paths *operator_paths,
                                               const char *local_source_dir,
                                               yvex_model_download_report *report)
@@ -305,11 +245,6 @@ int model_download_source_path_allowed(const yvex_operator_paths *operator_paths
     return 1;
 }
 
-/* Purpose: Transfer bounded model download name starts with data (`model_download_name_starts_with`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_name_starts_with(const char *name, const char *prefix)
 {
     size_t n;
@@ -319,21 +254,11 @@ int model_download_name_starts_with(const char *name, const char *prefix)
     return strncmp(name, prefix, n) == 0;
 }
 
-/* Purpose: Transfer bounded model download name contains data (`model_download_name_contains`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_name_contains(const char *name, const char *needle)
 {
     return name && needle && strstr(name, needle) != NULL;
 }
 
-/* Purpose: Transfer bounded model download lock age seconds data (`model_download_lock_age_seconds`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static unsigned long long model_download_lock_age_seconds(const struct stat *st)
 {
     time_t now;
@@ -351,11 +276,6 @@ typedef struct {
     int strict_io;
 } model_download_tree_walk;
 
-/* Purpose: Copy one observed path component under the caller's existing diagnostic owner.
- * Inputs: Borrowed text, bounded destination, and exact error wording.
- * Effects: Writes only the destination path.
- * Failure: A path exceeding the destination produces the requested bounds diagnostic.
- * Boundary: Path projection does not inspect or trust payload bytes. */
 static int model_download_copy_path(char *out,
                                     size_t cap,
                                     const char *value,
@@ -369,11 +289,6 @@ static int model_download_copy_path(char *out,
     return YVEX_ERR_BOUNDS;
 }
 
-/* Purpose: Walk one source tree once for either progress facts or safetensors admission facts.
- * Inputs: Borrowed root/path and one caller-owned typed fact sink.
- * Effects: Reads directory metadata and mutates only the selected sink.
- * Failure: Strict scans surface I/O; status probes tolerate paths that disappear concurrently.
- * Boundary: Source observation does not establish payload trust. */
 static int model_download_walk_tree(const char *root,
                                     const char *rel_dir,
                                     model_download_tree_walk *walk,
@@ -484,11 +399,6 @@ static int model_download_walk_tree(const char *root,
     return rc;
 }
 
-/* Purpose: Transfer bounded model download scan source data (`model_download_scan_source`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_scan_source(const char *root,
                                       yvex_model_download_source_scan *scan,
                                       yvex_error *err)
@@ -503,11 +413,6 @@ int model_download_scan_source(const char *root,
     return model_download_walk_tree(root, "", &walk, err);
 }
 
-/* Purpose: Transfer bounded model download read u64 le data (`model_download_read_u64_le`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_download_read_u64_le(FILE *fp, unsigned long long *out)
 {
     unsigned char raw[8];
@@ -525,11 +430,6 @@ static int model_download_read_u64_le(FILE *fp, unsigned long long *out)
     return 1;
 }
 
-/* Purpose: Parse model download parse data offsets into typed CLI state (`model_download_parse_data_offsets`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_download_parse_data_offsets(const char *header,
                                              unsigned long long *max_end,
                                              unsigned long long *count)
@@ -561,11 +461,6 @@ static int model_download_parse_data_offsets(const char *header,
     return *count > 0ull;
 }
 
-/* Purpose: Transfer bounded model download safetensors file status data (`model_download_safetensors_file_status`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static const char *model_download_safetensors_file_status(const char *path)
 {
     FILE *fp;
@@ -610,12 +505,6 @@ done:
     return status;
 }
 
-/* Purpose: Validate model download check safetensors source before downstream use
- * (`model_download_check_safetensors_source`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_check_safetensors_source(const char *root,
                                                    yvex_model_download_safetensors_check *check,
                                                    yvex_error *err)
@@ -686,12 +575,6 @@ static const size_t provider_stream_fd_offsets[] = {
     offsetof(provider_stream_state, stderr_log_fd),
 };
 
-/* Close only descriptors owned by this provider stream and restore signal handlers once. */
-/* Purpose: Release or reset owned provider stream close state (`provider_stream_close`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void provider_stream_close(provider_stream_state *state)
 {
     unsigned int i;
@@ -708,11 +591,6 @@ static void provider_stream_close(provider_stream_state *state)
     }
 }
 
-/* Purpose: Close one partially prepared provider and preserve its exact typed I/O reason.
- * Inputs: Owned provider state plus borrowed reason fragments.
- * Effects: Releases only provider-owned descriptors and records the caller's failure.
- * Failure: Always returns the provider failure sentinel.
- * Boundary: Cleanup cannot classify source or artifact capability. */
 static int provider_stream_fail(provider_stream_state *state,
                                 const char *message,
                                 const char *detail)
@@ -722,12 +600,6 @@ static int provider_stream_fail(provider_stream_state *state,
     return -1;
 }
 
-/* Terminate and reap a provider after poll failure without orphaning its process group. */
-/* Purpose: Transfer bounded provider stream poll failure data (`provider_stream_poll_failure`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int provider_stream_poll_failure(provider_stream_state *state)
 {
     int saved_errno = errno;
@@ -768,12 +640,6 @@ static int provider_stream_poll_failure(provider_stream_state *state)
     return -1;
 }
 
-/* Drain ready stdout/stderr pipes into logs and optional operator mirrors. */
-/* Purpose: Transfer bounded provider stream drain data (`provider_stream_drain`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void provider_stream_drain(provider_stream_state *state,
                                   struct pollfd fds[2],
                                   const int which[2],
@@ -817,12 +683,6 @@ static void provider_stream_drain(provider_stream_state *state,
     }
 }
 
-/* Advance child state, cancellation deadlines, progress ticks, and one poll cycle. */
-/* Purpose: Transfer bounded provider stream iteration data (`provider_stream_iteration`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int provider_stream_iteration(provider_stream_state *state)
 {
     struct pollfd fds[2];
@@ -897,11 +757,7 @@ static int provider_stream_iteration(provider_stream_state *state)
 }
 
 /* Run the bounded provider event loop until both pipes and the child are closed. */
-/* Purpose: Transfer bounded provider stream loop data (`provider_stream_loop`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
+
 static int provider_stream_loop(provider_stream_state *state)
 {
     while (state->stdout_open || state->stderr_open || !state->child_exited) {
@@ -910,11 +766,6 @@ static int provider_stream_loop(provider_stream_state *state)
     return 0;
 }
 
-/* Purpose: Transfer bounded provider process run streaming data (`provider_process_run_streaming`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int provider_process_run_streaming(const char *const *args,
                                           const char *stdout_log_path,
                                           const char *stderr_log_path,
@@ -1022,11 +873,6 @@ static int provider_process_run_streaming(const char *const *args,
     return 1;
 }
 
-/* Purpose: Transfer bounded model download run hf data (`model_download_run_hf`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_run_hf(const yvex_cli_models_download_options *options,
                                  yvex_model_download_report *report,
                                  const char *token_value,
@@ -1083,11 +929,6 @@ int model_download_run_hf(const yvex_cli_models_download_options *options,
                                                err);
 }
 
-/* Purpose: Transfer bounded model download run github data (`model_download_run_github`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_run_github(const yvex_cli_models_download_options *options,
                                      const yvex_model_download_report *report,
                                      yvex_error *err)
@@ -1124,11 +965,6 @@ int model_download_run_github(const yvex_cli_models_download_options *options,
 
 #define YVEX_MODELS_ARTIFACT_ROWS_CAP 256u
 
-/* Purpose: Transfer bounded model download write all fd data (`model_download_write_all_fd`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_download_write_all_fd(int fd, const void *buf, size_t len)
 {
     const unsigned char *p = (const unsigned char *)buf;
@@ -1146,11 +982,6 @@ static int model_download_write_all_fd(int fd, const void *buf, size_t len)
     return 1;
 }
 
-/* Purpose: Transfer bounded model download mirror provider bytes data (`model_download_mirror_provider_bytes`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_mirror_provider_bytes(int fd,
                                                  const char *buf,
                                                  size_t len,
@@ -1169,11 +1000,6 @@ static void model_download_mirror_provider_bytes(int fd,
     }
 }
 
-/* Purpose: Transfer bounded model download provider signal handler data (`model_download_provider_signal_handler`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_provider_signal_handler(int signo)
 {
     if ((signo == SIGINT || signo == SIGTERM) &&
@@ -1182,12 +1008,6 @@ static void model_download_provider_signal_handler(int signo)
     }
 }
 
-/* Purpose: Transfer bounded model download install provider signal handlers data
- * (`model_download_install_provider_signal_handlers`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_download_install_provider_signal_handlers(struct sigaction *old_int,
                                                            struct sigaction *old_term,
                                                            yvex_error *err)
@@ -1213,12 +1033,6 @@ static int model_download_install_provider_signal_handlers(struct sigaction *old
     return 1;
 }
 
-/* Purpose: Transfer bounded model download restore provider signal handlers data
- * (`model_download_restore_provider_signal_handlers`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_restore_provider_signal_handlers(const struct sigaction *old_int,
                                                             const struct sigaction *old_term)
 {
@@ -1227,12 +1041,6 @@ static void model_download_restore_provider_signal_handlers(const struct sigacti
     model_download_provider_signal_seen = 0;
 }
 
-/* Purpose: Release or reset owned model download reset child signal handlers state
- * (`model_download_reset_child_signal_handlers`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_reset_child_signal_handlers(void)
 {
     struct sigaction action;
@@ -1244,11 +1052,6 @@ static void model_download_reset_child_signal_handlers(void)
     (void)sigaction(SIGTERM, &action, NULL);
 }
 
-/* Purpose: Transfer bounded model download set nonblocking data (`model_download_set_nonblocking`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_download_set_nonblocking(int fd)
 {
     int flags;
@@ -1258,11 +1061,6 @@ static int model_download_set_nonblocking(int fd)
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
-/* Purpose: Transfer bounded model download record child exit status data (`model_download_record_child_exit_status`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_record_child_exit_status(yvex_model_download_report *report,
                                                     int child_status)
 {
@@ -1290,11 +1088,6 @@ static void model_download_record_child_exit_status(yvex_model_download_report *
     snprintf(report->child_exit_status, sizeof(report->child_exit_status), "%s", status);
 }
 
-/* Purpose: Transfer bounded model download mark provider interrupted data (`model_download_mark_provider_interrupted`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_mark_provider_interrupted(yvex_model_download_report *report,
                                                      int signo,
                                                      pid_t pgid)
@@ -1314,11 +1107,6 @@ static void model_download_mark_provider_interrupted(yvex_model_download_report 
     }
 }
 
-/* Purpose: Validate model download orphan check before downstream use (`model_download_orphan_check`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_orphan_check(yvex_model_download_report *report)
 {
     const char *status;
@@ -1334,11 +1122,6 @@ static void model_download_orphan_check(yvex_model_download_report *report)
     snprintf(report->orphan_check_status, sizeof(report->orphan_check_status), "%s", status);
 }
 
-/* Purpose: Transfer bounded model download pid alive data (`model_download_pid_alive`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_pid_alive(pid_t pid)
 {
     if (pid <= 0) return 0;
@@ -1346,11 +1129,6 @@ int model_download_pid_alive(pid_t pid)
     return errno == EPERM;
 }
 
-/* Purpose: Transfer bounded model download pgid alive data (`model_download_pgid_alive`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int model_download_pgid_alive(pid_t pgid)
 {
     if (pgid <= 0) return 0;
@@ -1365,11 +1143,6 @@ static const char *const download_status_lines[] = {
     "runtime_ready: false", "generation: unsupported", "benchmark_status: not-measured",
     "status: model-download-status"};
 
-/* Purpose: Render model download print start progress from typed facts (`model_download_print_start_progress`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_print_start_progress(
     const yvex_model_download_report *report,
     yvex_model_download_progress_mode effective_mode)
@@ -1386,11 +1159,6 @@ static void model_download_print_start_progress(
     fflush(stdout);
 }
 
-/* Purpose: Transfer bounded model download format bytes data (`model_download_format_bytes`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void model_download_format_bytes(char *out,
                                         size_t cap,
                                         unsigned long long bytes)
@@ -1413,11 +1181,6 @@ void model_download_format_bytes(char *out,
     }
 }
 
-/* Purpose: Transfer bounded model download format elapsed data (`model_download_format_elapsed`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_format_elapsed(char *out,
                                           size_t cap,
                                           unsigned long long seconds)
@@ -1436,11 +1199,6 @@ static void model_download_format_elapsed(char *out,
     }
 }
 
-/* Purpose: Transfer bounded model download short file name data (`model_download_short_file_name`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void model_download_short_file_name(char *out,
                                            size_t cap,
                                            const char *path)
@@ -1476,11 +1234,6 @@ void model_download_short_file_name(char *out,
     snprintf(out, cap, "%.*s...%s", (int)head, name, name + len - tail);
 }
 
-/* Purpose: Transfer bounded model download tick scan changed data (`model_download_tick_scan_changed`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_download_tick_scan_sync(yvex_model_download_report *report,
                                          const yvex_model_download_source_scan *scan,
                                          int store)
@@ -1500,11 +1253,6 @@ static int model_download_tick_scan_sync(yvex_model_download_report *report,
     return changed;
 }
 
-/* Purpose: Render model download print tick progress from typed facts (`model_download_print_tick_progress`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void model_download_print_tick_progress(const char *source_dir,
                                                time_t started_at,
                                                yvex_model_download_report *report,
@@ -1567,11 +1315,6 @@ static void model_download_print_tick_progress(const char *source_dir,
     report->tick_count++;
 }
 
-/* Purpose: Render model download print status report from typed facts (`model_download_print_status_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void model_download_print_status_report(
     const yvex_cli_models_download_options *options,
     const yvex_model_download_report *report,

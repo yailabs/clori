@@ -1,8 +1,6 @@
 /*
- * YVEX - exact source verification tests.
- *
- * Exercises structured DeepSeek source verification with tiny metadata and
- * safetensors headers. No model payload fixture is used.
+ * Exercises structured DeepSeek source verification with tiny metadata and safetensors headers.
+ * No model payload fixture is used.
  */
 #include "tests/test.h"
 

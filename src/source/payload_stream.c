@@ -1,12 +1,9 @@
-/* Owner: source payload streaming.
- * Owns: trust scans, exact chunk delivery, transactional sinks, and probes.
- * Does not own: tensor interpretation, conversion, quantization, or operator output.
- * Invariants: commit follows exact completion and post-read identity validation.
- * Boundary: streamed source bytes are not emitted artifact tensors.
- * Purpose: deliver planned ranges transactionally and verify shard trust.
- * Inputs: readable session, immutable plan, cancellation, sink, and policy.
- * Effects: pins handles, reuses buffers, reads exactly, then commits or aborts.
- * Failure: cancel, drift, short read, digest, sink, budget, or I/O never commits. */
+/*
+ * Deliver planned ranges transactionally and verify shard trust.
+ *
+ * Commit follows exact completion and post-read identity validation. Streamed source bytes are not
+ * emitted artifact tensors.
+ */
 #define _GNU_SOURCE
 #include <yvex/internal/core.h>
 #include <yvex/internal/source_payload.h>
@@ -17,11 +14,6 @@
 #include <string.h>
 #include <time.h>
 
-/* Purpose: compare complete payload stream facts without mutating either input.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload streaming state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static int payload_stream_identity_matches(const yvex_source_payload_file_identity *identity,
                                            const struct stat *status) {
     return identity->device == status->st_dev && identity->inode == status->st_ino &&
@@ -31,20 +23,10 @@ static int payload_stream_identity_matches(const yvex_source_payload_file_identi
            identity->ctime.tv_nsec == status->st_ctim.tv_nsec;
 }
 
-/* Purpose: check structural validity of the supplied payload stream facts.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload streaming state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static int payload_sink_valid(const yvex_source_payload_sink *sink) {
     return sink && sink->begin && sink->chunk && sink->commit && sink->abort;
 }
 
-/* Purpose: reserves one bounded stream buffer and records real contention/peak facts.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload streaming state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static int payload_stream_enter(yvex_source_payload_session *session,
                                 size_t bytes,
                                 yvex_source_payload_state required,
@@ -91,11 +73,6 @@ static int payload_stream_enter(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: releases stream reservation and records failure without changing source trust.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload streaming state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static void payload_stream_leave(yvex_source_payload_session *session, size_t bytes, int failed) {
     pthread_mutex_lock(&session->mutex);
     if (session->facts.active_streams)
@@ -109,11 +86,6 @@ static void payload_stream_leave(yvex_source_payload_session *session, size_t by
     pthread_mutex_unlock(&session->mutex);
 }
 
-/* Purpose: project stream abort facts while preserving the canonical payload stream invariants.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload streaming state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static void payload_stream_abort(const yvex_source_payload_sink *sink,
                                  yvex_source_payload_failure *failure,
                                  yvex_source_payload_stream_result *result) {
@@ -124,11 +96,6 @@ static void payload_stream_abort(const yvex_source_payload_sink *sink,
         sink->abort(sink->context, failure, result);
 }
 
-/* Purpose: validates the file still names the admitted immutable descriptor after IO.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload streaming state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static int payload_stream_validate_after(yvex_source_payload_session *session,
                                          unsigned long long shard_index,
                                          int fd,
@@ -168,11 +135,6 @@ static int payload_stream_validate_after(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: delivers an already-read planned chunk and updates exact logical accounting.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload streaming state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static int payload_stream_deliver(yvex_source_payload_session *session,
                                   const yvex_source_payload_sink *sink,
                                   const yvex_source_payload_chunk *chunk,
@@ -212,11 +174,6 @@ static int payload_stream_deliver(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: streams a trusted physical-order plan through exact positioned reads.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source payload streaming state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 int yvex_source_payload_session_stream(yvex_source_payload_session *session,
                                        const yvex_source_payload_plan *plan,
                                        const yvex_source_payload_sink *sink,
@@ -363,11 +320,6 @@ fail:
     return rc;
 }
 
-/* Purpose: hashes an arbitrary gap in bounded pieces without delivering semantic bytes.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source payload streaming state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static int payload_verify_hash_span(yvex_source_payload_session *session,
                                     unsigned long long shard_index,
                                     int fd,
@@ -402,11 +354,6 @@ static int payload_verify_hash_span(yvex_source_payload_session *session,
     return YVEX_OK;
 }
 
-/* Purpose: project verify shard facts while preserving the canonical payload stream invariants.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source payload streaming state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static int payload_verify_shard(yvex_source_payload_session *session,
                                 const yvex_source_payload_plan *plan,
                                 const yvex_source_payload_sink *sink,
@@ -537,11 +484,6 @@ done:
     return YVEX_OK;
 }
 
-/* Purpose: project verify reset trust facts while preserving the canonical payload stream invariants.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source payload streaming state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static void payload_verify_reset_trust(yvex_source_payload_session *session) {
     unsigned long long index;
 
@@ -556,11 +498,6 @@ static void payload_verify_reset_trust(yvex_source_payload_session *session) {
     }
 }
 
-/* Purpose: runs one full-shard digest pass and optionally delivers planned payload chunks.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source payload streaming state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 int yvex_source_payload_session_verify(yvex_source_payload_session *session,
                                        const yvex_source_payload_plan *delivery_plan,
                                        const yvex_source_payload_sink *sink,
@@ -720,21 +657,11 @@ fail_after_trust:
     return rc;
 }
 
-/* Purpose: project probe begin facts while preserving the canonical payload stream invariants.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source payload streaming state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static int payload_probe_begin(void *context, const yvex_source_payload_plan_summary *summary) {
     (void)context;
     return summary ? 0 : 1;
 }
 
-/* Purpose: project probe chunk facts while preserving the canonical payload stream invariants.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source payload streaming state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static int payload_probe_chunk(void *context,
                                const yvex_source_payload_chunk *chunk,
                                const unsigned char *bytes) {
@@ -742,21 +669,11 @@ static int payload_probe_chunk(void *context,
     return chunk && bytes ? 0 : 1;
 }
 
-/* Purpose: project probe commit facts while preserving the canonical payload stream invariants.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source payload streaming state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static int payload_probe_commit(void *context, const yvex_source_payload_stream_result *result) {
     (void)context;
     return result && result->complete ? 0 : 1;
 }
 
-/* Purpose: project probe abort facts while preserving the canonical payload stream invariants.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source payload streaming state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 static void payload_probe_abort(void *context,
                                 const yvex_source_payload_failure *failure,
                                 const yvex_source_payload_stream_result *result) {
@@ -765,11 +682,6 @@ static void payload_probe_abort(void *context,
     (void)result;
 }
 
-/* Purpose: measures diagnostic cold-advisory, warm, repeated, or staged exact reads.
- * Inputs: typed source payload streaming arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source payload streaming state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: streamed source bytes are not emitted artifact tensors. */
 int yvex_source_payload_probe(yvex_source_payload_session *session,
                               const yvex_source_payload_plan *plan,
                               yvex_source_payload_probe_mode mode,

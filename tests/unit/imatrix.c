@@ -1,9 +1,4 @@
-/*
- * YVEX - Imatrix manifest tests
- *
- * File: tests/test_imatrix.c
- * Layer: test
- */
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>

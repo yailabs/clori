@@ -1,12 +1,6 @@
-/* Owner: public model ABI.
- * Owns: dtypes, tensor roles, model descriptors, materialized weights, and graph op vocabulary.
- * Does not own: source verification, artifact admission, graph execution, or generation.
- * Invariants: declarations are format-stable, externally consumable, and independently includable.
- * Boundary: artifact-neutral model and tensor contracts.
- * Purpose: Expose artifact-neutral model and tensor contracts.
- * Inputs: Typed caller-owned values and immutable borrowed views as declared below.
- * Effects: Only functions with explicit lifecycle or I/O contracts mutate external state.
- * Failure: Typed status and error outputs remain authoritative; declarations add no capability. */
+/* Model and tensor facts in this ABI are artifact-neutral. They describe admitted logical
+ * structure but do not select a physical encoding, materialize payload bytes, or establish runtime
+ * support. */
 #ifndef YVEX_MODEL_H
 #define YVEX_MODEL_H
 
@@ -80,7 +74,7 @@ int yvex_dtype_tensor_storage_bytes(yvex_dtype dtype,
                                     unsigned long long *out,
                                     yvex_error *err);
 
-/* Compatibility boundary: element_count describes one logical row only. */
+/* The compatibility form interprets element_count as one logical row only. */
 int yvex_dtype_storage_bytes(yvex_dtype dtype,
                              unsigned long long row_element_count,
                              unsigned long long *out,

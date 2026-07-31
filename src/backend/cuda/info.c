@@ -1,21 +1,14 @@
-/* Owner: backend.cuda.info (backend.cuda).
- * Owns: CUDA Driver error translation shared by CUDA admission and execution.
- * Does not own: model policy, graph admission, generation readiness, or higher-stage claims.
- * Invariants: CUDA failures preserve the originating Driver status and typed operation context.
- * Boundary: this owner exposes typed facts only at its admitted subsystem stage.
- * Purpose: Discover the CUDA Driver API and project immutable device admission facts.
- * Inputs: Dynamic-loader state, an ordinal, and caller-owned device fact storage.
- * Effects: Owns only the loaded driver handle and queried device/context facts.
- * Failure: Missing symbols, devices, or context admission fail closed with complete cleanup. */
+/*
+ * Discover the CUDA Driver API and project immutable device admission facts.
+ *
+ * CUDA failures preserve the originating Driver status and typed operation context. This owner
+ * exposes typed facts only at its admitted subsystem stage.
+ */
 #include "src/backend/cuda/private.h"
 #include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
-/* Purpose: Retrieve load symbol from admitted immutable or owned state.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 static int load_symbol(void *library, void **slot, const char *name, yvex_error *err)
 {
     *slot = dlsym(library, name);
@@ -26,11 +19,7 @@ static int load_symbol(void *library, void **slot, const char *name, yvex_error 
     }
     return YVEX_OK;
 }
-/* Purpose: resolve one optional Driver entrypoint without affecting eager admission.
- * Inputs: Loaded Driver library, destination slot, primary symbol, and optional alias.
- * Effects: Writes only the destination function slot.
- * Failure: Missing optional symbols leave the slot null and preserve eager admission.
- * Boundary: Optional CUDA Graph and asynchronous APIs never become base-context requirements. */
+
 static void load_optional_symbol(void *library,
                                  void **slot,
                                  const char *name,
@@ -47,11 +36,7 @@ static void load_optional_symbol(void *library,
             return YVEX_ERR_UNSUPPORTED; \
         } \
     } while (0)
-/* Purpose: Retrieve driver load from admitted immutable or owned state.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
 {
     if (!driver) {
@@ -160,11 +145,7 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: Retrieve driver unload from admitted immutable or owned state.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 void yvex_cuda_driver_unload(yvex_cuda_driver *driver)
 {
     if (!driver) {
@@ -175,20 +156,12 @@ void yvex_cuda_driver_unload(yvex_cuda_driver *driver)
     }
     memset(driver, 0, sizeof(*driver));
 }
-/* Purpose: Implement the canonical state mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 yvex_cuda_backend_state *yvex_cuda_state(const yvex_backend *backend)
 {
     return backend ? (yvex_cuda_backend_state *)backend->impl : NULL;
 }
-/* Purpose: Publish set current only within its admitted destination range.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_set_current(const yvex_backend *backend, const char *where, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -200,11 +173,7 @@ int yvex_cuda_set_current(const yvex_backend *backend, const char *where, yvex_e
     return yvex_cuda_status(&state->driver, state->driver.cuCtxSetCurrent(state->context),
                             where ? where : "cuda.set_current", err);
 }
-/* Purpose: Implement the canonical refresh memory info mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_refresh_memory_info(yvex_backend *backend, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -233,11 +202,7 @@ int yvex_cuda_refresh_memory_info(yvex_backend *backend, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: Implement the canonical tensor ptr mechanism owned by the CUDA backend boundary.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 CUdeviceptr yvex_cuda_tensor_ptr(const yvex_device_tensor *tensor)
 {
     return (CUdeviceptr)(size_t)tensor->data;

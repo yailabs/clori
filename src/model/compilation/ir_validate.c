@@ -1,16 +1,10 @@
-/* Owner: src/model/compilation
- * Owns: insertion-order-independent canonicalization, producer/consumer checks, operation shape/dtype validation,
- *   iterative cycle detection, topological depth, exact source-use accounting, immutable indexes, and
- *   publication.
- * Does not own: family tensor discovery, canonical identity encoding, source IO, GGUF projection, numerical
- *   execution, quantization, or rendering.
- * Invariants: validation is iterative and bounded; each non-source value has one producer; every required source
- *   use and terminal is exact before publish.
- * Boundary: graph admission proves plan consistency, not transformation execution.
- * Purpose: validate and seal artifact-neutral transformation graphs.
- * Inputs: mutable builder arrays and immutable source requirements.
- * Effects: allocates temporary validation indexes and publishes only a sealed IR.
- * Failure: any graph or allocation refusal publishes no partial transformation plan. */
+/*
+ * Validate and seal artifact-neutral transformation graphs.
+ *
+ * Validation is iterative and bounded; each non-source value has one producer; every required
+ * source use and terminal is exact before publish. Graph admission proves plan consistency, not
+ * transformation execution.
+ */
 #include <yvex/internal/compilation.h>
 
 #include <limits.h>
@@ -31,7 +25,6 @@ typedef struct {
     unsigned long long old_index;
 } transform_u64_order;
 
-/* Purpose: compare or copy transform order compare under exact ownership. */
 static int transform_order_compare(const void *left_ptr, const void *right_ptr)
 {
     const transform_order *left = (const transform_order *)left_ptr;
@@ -50,7 +43,6 @@ static int transform_order_compare(const void *left_ptr, const void *right_ptr)
         ? -1 : (left->old_index > right->old_index ? 1 : 0);
 }
 
-/* Purpose: compare or copy transform u64 order compare under exact ownership. */
 static int transform_u64_order_compare(const void *left_ptr,
                                        const void *right_ptr)
 {
@@ -65,7 +57,6 @@ static int transform_u64_order_compare(const void *left_ptr,
         ? -1 : (left->old_index > right->old_index ? 1 : 0);
 }
 
-/* Purpose: compare or copy transform shape equal under exact ownership. */
 static int transform_shape_equal(const yvex_transform_shape *left,
                                  const yvex_transform_shape *right)
 {
@@ -76,12 +67,6 @@ static int transform_shape_equal(const yvex_transform_shape *left,
         if (left->dims[index] != right->dims[index]) return 0;
     return 1;
 }
-
-/* Purpose: register one transform terminal index insert while preserving order and bounds.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 static int transform_terminal_index_insert(yvex_transform_ir *ir,
                                            unsigned long long value_id)
@@ -108,7 +93,6 @@ static int transform_terminal_index_insert(yvex_transform_ir *ir,
     return 0;
 }
 
-/* Purpose: apply the canonical transform value source transformation and invariants. */
 static const yvex_transform_source_value *transform_value_source(
     const yvex_transform_ir *ir, const yvex_transform_value *value)
 {
@@ -117,7 +101,6 @@ static const yvex_transform_source_value *transform_value_source(
     return &ir->sources[value->source_index];
 }
 
-/* Purpose: apply the canonical transform operation fail transformation and invariants. */
 static int transform_operation_fail(yvex_transform_failure *failure,
                                     yvex_transform_failure_code code,
                                     const yvex_transform_node *node,
@@ -134,11 +117,6 @@ static int transform_operation_fail(yvex_transform_failure *failure,
         "transform_operation_validate");
 }
 
-/* Purpose: enforce typed transform validate precision invariants before publication.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_validate_precision(const yvex_transform_value *output,
                                         const yvex_transform_node *node,
                                         yvex_transform_failure *failure,
@@ -206,11 +184,6 @@ static int transform_validate_precision(const yvex_transform_value *output,
     return YVEX_OK;
 }
 
-/* Purpose: enforce typed transform validate basic invariants before publication.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_validate_basic(const yvex_transform_ir *ir,
                                     const yvex_transform_node *node,
                                     const yvex_transform_value *output,
@@ -287,11 +260,6 @@ static int transform_validate_basic(const yvex_transform_ir *ir,
     }
 }
 
-/* Purpose: enforce typed transform validate shape invariants before publication.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_validate_shape(const yvex_transform_node *node,
                                     const yvex_transform_value *output,
                                     const yvex_transform_value *first,
@@ -343,11 +311,6 @@ static int transform_validate_shape(const yvex_transform_node *node,
                                     YVEX_TRANSFORM_OP_COUNT, node->kind, err);
 }
 
-/* Purpose: enforce typed transform validate collection invariants before publication.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_validate_collection(const yvex_transform_ir *ir,
                                          const yvex_transform_node *node,
                                          const yvex_transform_value *output,
@@ -439,11 +402,6 @@ static int transform_validate_collection(const yvex_transform_ir *ir,
     return YVEX_OK;
 }
 
-/* Purpose: enforce typed transform validate experts invariants before publication.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_validate_experts(const yvex_transform_ir *ir,
                                       const yvex_transform_node *node,
                                       const yvex_transform_value *output,
@@ -503,12 +461,6 @@ static int transform_validate_experts(const yvex_transform_ir *ir,
     return YVEX_OK;
 }
 
-/* Purpose: enforce typed transform validate operation invariants before publication.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
-
 static int transform_validate_operation(const yvex_transform_ir *ir,
                                         const yvex_transform_node *node,
                                         yvex_transform_failure *failure,
@@ -565,7 +517,6 @@ static int transform_validate_operation(const yvex_transform_ir *ir,
                                     YVEX_TRANSFORM_OP_COUNT, node->kind, err);
 }
 
-/* Purpose: apply the canonical transform heap push transformation and invariants. */
 static void transform_heap_push(unsigned long long *heap,
                                 unsigned long long *count,
                                 unsigned long long value)
@@ -581,7 +532,6 @@ static void transform_heap_push(unsigned long long *heap,
     heap[cursor] = value;
 }
 
-/* Purpose: apply the canonical transform heap pop transformation and invariants. */
 static unsigned long long transform_heap_pop(unsigned long long *heap,
                                              unsigned long long *count)
 {
@@ -600,11 +550,6 @@ static unsigned long long transform_heap_pop(unsigned long long *heap,
     return result;
 }
 
-/* Purpose: apply the canonical transform release temporary transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static void transform_release_temporary(yvex_transform_allocator *allocator,
                                         void **allocation)
 {
@@ -613,8 +558,6 @@ static void transform_release_temporary(yvex_transform_allocator *allocator,
         *allocation = NULL;
     }
 }
-
-/* Purpose: apply the canonical transform project bytes transformation and invariants. */
 
 static int transform_project_bytes(size_t *total,
                                    unsigned long long count,
@@ -651,11 +594,6 @@ typedef struct {
     size_t sealed_bytes;
 } transform_seal_workspace;
 
-/* Purpose: apply the canonical transform seal project transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_seal_project(const yvex_transform_builder *builder,
                                   transform_seal_workspace *work,
                                   yvex_transform_failure *failure,
@@ -736,11 +674,6 @@ static int transform_seal_project(const yvex_transform_builder *builder,
     return YVEX_OK;
 }
 
-/* Purpose: apply the canonical transform seal allocate one transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_seal_allocate_one(yvex_transform_builder *builder,
                                        void **target,
                                        unsigned long long count,
@@ -768,11 +701,6 @@ static int transform_seal_allocate_one(yvex_transform_builder *builder,
         YVEX_TRANSFORM_IR_NO_ID, bytes, 0u, 0u, err, "transform_ir_seal");
 }
 
-/* Purpose: apply the canonical transform seal allocate transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_seal_allocate(yvex_transform_builder *builder,
                                    transform_seal_workspace *work,
                                    yvex_transform_failure *failure,
@@ -813,11 +741,6 @@ static int transform_seal_allocate(yvex_transform_builder *builder,
     return YVEX_OK;
 }
 
-/* Purpose: apply the canonical transform seal sources values transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_seal_sources_values(
     yvex_transform_builder *builder,
     transform_seal_workspace *work,
@@ -912,11 +835,6 @@ static int transform_seal_sources_values(
     return YVEX_OK;
 }
 
-/* Purpose: apply the canonical transform seal nodes transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_seal_nodes(yvex_transform_builder *builder,
                                 transform_seal_workspace *work,
                                 yvex_transform_failure *failure,
@@ -1032,11 +950,6 @@ static int transform_seal_nodes(yvex_transform_builder *builder,
     return YVEX_OK;
 }
 
-/* Purpose: apply the canonical transform seal topology transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_seal_topology(yvex_transform_builder *builder,
                                    transform_seal_workspace *work,
                                    unsigned long long *topological_count_out,
@@ -1115,11 +1028,6 @@ static int transform_seal_topology(yvex_transform_builder *builder,
         topological_count, 0u, err, "transform_ir_seal");
 }
 
-/* Purpose: apply the canonical transform seal indexes transformation and invariants.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 static int transform_seal_indexes(yvex_transform_builder *builder,
                                   transform_seal_workspace *work,
                                   yvex_transform_failure *failure,
@@ -1180,12 +1088,6 @@ static int transform_seal_indexes(yvex_transform_builder *builder,
     }
     return YVEX_OK;
 }
-
-/* Purpose: enforce typed ir validate and seal invariants before publication.
- * Inputs: typed plan facts are borrowed.
- * Effects: mutates only owned builder or IR state.
- * Failure: publishes no partial plan on refusal.
- * Boundary: performs no payload or artifact execution. */
 
 int yvex_transform_ir_validate_and_seal(
     yvex_transform_builder *builder,

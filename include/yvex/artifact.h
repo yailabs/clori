@@ -1,12 +1,6 @@
-/* Owner: public artifact ABI.
- * Owns: artifact file snapshots, identity, integrity, naming, and admission gates.
- * Does not own: GGUF parsing policy, model execution, or runtime support.
- * Invariants: declarations are format-stable, externally consumable, and independently includable.
- * Boundary: immutable artifact access and complete-artifact admission facts.
- * Purpose: Expose immutable artifact access and complete-artifact admission facts.
- * Inputs: Typed caller-owned values and immutable borrowed views as declared below.
- * Effects: Only functions with explicit lifecycle or I/O contracts mutate external state.
- * Failure: Typed status and error outputs remain authoritative; declarations add no capability. */
+/* Artifact handles borrow no caller storage and remain bound to the file snapshot admitted at
+ * open. Byte access, structural completeness, and runtime support are deliberately separate
+ * contracts. */
 #ifndef YVEX_ARTIFACT_H
 #define YVEX_ARTIFACT_H
 

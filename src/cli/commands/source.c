@@ -1,12 +1,9 @@
-/* Owner: src/cli/commands.
- * Owns: source command dispatch from parsed input to source report builder and renderer.
- * Does not own: source report facts, local scanning, rendering internals, runtime, generation, eval, or benchmark.
- * Invariants: adapter stays thin and does not hide domain behavior.
- * Boundary: command dispatch is not source verification or runtime readiness.
- * Purpose: bind source-manifest report CLI input to the typed source report API.
- * Inputs: argv from yvex compile source manifest report.
- * Effects: renders source report output or parser errors.
- * Failure: returns parser, report-builder, or renderer exit codes. */
+/*
+ * Bind source-manifest report CLI input to the typed source report API.
+ *
+ * Adapter stays thin and does not hide domain behavior. Command dispatch is not source
+ * verification or runtime readiness.
+ */
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
 #include "src/cli/render/private.h"
@@ -59,11 +56,6 @@ static const source_manifest_arg source_manifest_args[] = {
 int yvex_source_manifest_report_command(int argc, char **argv);
 void yvex_source_manifest_help(FILE *fp);
 
-/* Purpose: Parse source parse status into typed CLI state (`source_cli_parse_status`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int source_cli_parse_status(const char *text, yvex_source_status *out) {
     size_t index;
 
@@ -78,7 +70,6 @@ static int source_cli_parse_status(const char *text, yvex_source_status *out) {
     return 0;
 }
 
-/* Purpose: locate one declarative string option without owning parsing policy. */
 static const source_manifest_arg *source_manifest_arg_find(const char *name) {
     size_t index;
 
@@ -88,11 +79,6 @@ static const source_manifest_arg *source_manifest_arg_find(const char *name) {
     return NULL;
 }
 
-/* Purpose: Construct the owned source create manifest state (`source_cli_create_manifest`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int source_cli_create_manifest(int argc, char **argv) {
     yvex_source_manifest_options options;
     yvex_source_manifest_summary summary;
@@ -169,11 +155,6 @@ static int source_cli_create_manifest(int argc, char **argv) {
     return 0;
 }
 
-/* Purpose: Orchestrate the typed compile source manifest command request (`yvex_source_manifest_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_source_manifest_command(int argc, char **argv) {
     if (argc >= 3 && (strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0)) {
         yvex_source_manifest_help(stdout);
@@ -207,11 +188,6 @@ int yvex_source_manifest_command(int argc, char **argv) {
     return 2;
 }
 
-/* Purpose: Render compile source manifest help from typed facts (`yvex_source_manifest_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_source_manifest_help(FILE *fp) {
     yvex_cli_out_writef(fp, "usage: yvex compile source manifest create --hf-repo REPO --revision REV "
                             "--local-path DIR --status STATUS "
@@ -225,12 +201,6 @@ void yvex_source_manifest_help(FILE *fp) {
                             "normal|table|audit|json\n");
 }
 
-/* Purpose: Orchestrate the typed compile source manifest report command request
- * (`yvex_source_manifest_report_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_source_manifest_report_command(int argc, char **argv) {
     yvex_source_args args;
     yvex_source_report_request request;

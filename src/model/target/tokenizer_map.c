@@ -1,14 +1,10 @@
-/* Owner: src/model/target
- * Owns: tokenizer sidecar facts, tokenizer metadata rows, and tokenizer-map report construction.
- * Does not own: CLI parsing, rendering, tokenizer runtime, detokenization, artifact emission, runtime execution,
- *   generation, eval, benchmark, or release decisions.
- * Invariants: tokenizer map facts are sidecar/metadata facts only and do not implement a tokenizer runtime.
- * Boundary: tokenizer mapping is not tokenizer runtime support, generation support, benchmark evidence, or release
- *   readiness.
- * Purpose: derive tokenizer mapping facts from bounded canonical sidecars.
- * Inputs: typed requests and tokenizer/configuration evidence.
- * Effects: updates bounded report state and optional sidecar output.
- * Failure: missing tokenizer evidence remains an explicit blocker. */
+/*
+ * Derive tokenizer mapping facts from bounded canonical sidecars.
+ *
+ * Tokenizer map facts are sidecar/metadata facts only and do not implement a tokenizer runtime.
+ * Tokenizer mapping is not tokenizer runtime support, generation support, benchmark evidence, or
+ * release readiness.
+ */
 #include <yvex/internal/model_target.h>
 
 #include <stdio.h>
@@ -153,23 +149,16 @@ static const yvex_model_target_row_spec tokenizer_normal_rows[] = {
 #undef TOKENIZER_STRING
 #undef TOKENIZER_U64
 
-/* Purpose: project typed tokenizer vocab status vocabulary without lost semantics. */
 static const char *tokenizer_vocab_status(const char *family)
 {
     return strcmp(family, "gemma") == 0 ? "embedded-or-tokenizer-json" : "present";
 }
 
-/* Purpose: project typed tokenizer merges status vocabulary without lost semantics. */
 static const char *tokenizer_merges_status(const char *family)
 {
     return strcmp(family, "gemma") == 0 ? "not-required-or-absent" : "present";
 }
 
-/* Purpose: decode bounded tokenizer parse vocab size evidence without retained input.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void tokenizer_parse_vocab_size(const char *text,
                                        tokenizer_map_probe *probe)
 {
@@ -190,11 +179,6 @@ static void tokenizer_parse_vocab_size(const char *text,
     }
 }
 
-/* Purpose: decode bounded tokenizer probe source evidence without retained input.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void tokenizer_probe_source(const yvex_model_target_request *request,
                                    const char *family,
                                    tokenizer_map_probe *probe)
@@ -246,11 +230,6 @@ static void tokenizer_probe_source(const yvex_model_target_request *request,
     }
 }
 
-/* Purpose: decode bounded tokenizer probe status evidence without retained input.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static const char *tokenizer_probe_status(const yvex_model_target_request *request,
                                           const tokenizer_map_probe *probe)
 {
@@ -275,11 +254,6 @@ static const char *tokenizer_probe_status(const yvex_model_target_request *reque
     return "present-report-only";
 }
 
-/* Purpose: publish tokenizer write sidecar through the bounded output boundary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void tokenizer_write_sidecar(const yvex_model_target_request *request,
                                     const char *family)
 {
@@ -293,7 +267,6 @@ static void tokenizer_write_sidecar(const yvex_model_target_request *request,
                                           "present-report-only", NULL);
 }
 
-/* Purpose: project tokenizer json report from typed facts without capability drift. */
 static void tokenizer_json_report(yvex_model_target_report *report,
                                   const yvex_model_target_request *request,
                                   const char *family,
@@ -311,11 +284,6 @@ static void tokenizer_json_report(yvex_model_target_report *report,
                                          : "V010.QUANT.1");
 }
 
-/* Purpose: construct bounded tokenizer map report build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 int yvex_tokenizer_map_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,

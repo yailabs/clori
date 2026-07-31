@@ -1,12 +1,9 @@
-/* Owner: graph transformer composition.
- * Owns: immutable backbone plans, initial/deferred/final mHC composition, and final RMSNorm.
- * Does not own: family discovery, artifact I/O, attention, MoE routing/experts, runtime state, CLI, or logits.
- * Invariants: component identities and typed global bindings determine one ordered immutable plan.
- * Boundary: reusable family-neutral composition from embedding values to normalized hidden values.
- * Purpose: lower admitted family policy into a transformer plan and execute bounded composition numerics.
- * Inputs: typed family/runtime/component facts, admitted global bindings, and finite caller-owned values.
- * Effects: allocates immutable plans or writes only explicit caller-owned output arrays.
- * Failure: missing bindings, incompatible geometry, overflow, or non-finite arithmetic publishes no plan/output. */
+/*
+ * Lower admitted family policy into a transformer plan and execute bounded composition numerics.
+ *
+ * Component identities and typed global bindings determine one ordered immutable plan. Reusable
+ * family-neutral composition from embedding values to normalized hidden values.
+ */
 #include <yvex/internal/transformer.h>
 
 #include "src/graph/private.h"
@@ -23,14 +20,12 @@ struct yvex_transformer_plan {
     yvex_transformer_layer_plan *layers;
 };
 
-/* Purpose: publish one stable graph transformer refusal. */
 static int transformer_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "graph.transformer", reason);
     return status;
 }
 
-/* Purpose: copy one fixed-width semantic identity without depending on runtime ownership. */
 static void transformer_identity_copy(char destination[YVEX_SHA256_HEX_CAP],
                                       const char *source)
 {
@@ -39,8 +34,6 @@ static void transformer_identity_copy(char destination[YVEX_SHA256_HEX_CAP],
     if (length) memcpy(destination, source, length);
 }
 
-/* Purpose: append canonical F64 bits to an identity stream.
- * Inputs: finite value/hash. Effects: updates hash. Failure: false. Boundary: identity only. */
 static int transformer_hash_f64(yvex_sha256 *hash, double value)
 {
     uint64_t bits;
@@ -49,8 +42,6 @@ static int transformer_hash_f64(yvex_sha256 *hash, double value)
     return yvex_sha256_update_u64(hash, bits);
 }
 
-/* Purpose: identify one ordered layer. Inputs: attention/MoE facts. Effects: fills output.
- * Failure: false. Boundary: no execution. */
 static int transformer_layer_identity(yvex_transformer_layer_plan *out,
                                       const yvex_attention_layer_plan *attention,
                                       const yvex_moe_layer_plan *moe)
@@ -76,8 +67,11 @@ static int transformer_layer_identity(yvex_transformer_layer_plan *out,
     return 1;
 }
 
-/* Purpose: identify the plan field-by-field. Inputs: complete plan. Effects: writes identity.
- * Failure: false. Boundary: no native bytes. */
+/*
+ * Identify the plan field-by-field.
+ *
+ * Writes identity.
+ */
 static int transformer_plan_identity(yvex_transformer_plan *plan)
 {
     yvex_sha256 hash;
@@ -124,9 +118,6 @@ static int transformer_plan_identity(yvex_transformer_plan *plan)
     return 1;
 }
 
-/* Purpose: construct one immutable transformer plan from typed lower-owner facts.
- * Inputs: projected family/runtime facts plus attention and MoE plans.
- * Effects: allocates a sealed plan. Failure: no partially usable plan escapes. Boundary: no payload reads. */
 int yvex_transformer_plan_build(yvex_transformer_plan **out,
                                 const yvex_transformer_plan_facts *facts,
                                 const yvex_attention_plan *attention,
@@ -217,9 +208,11 @@ failure:
     return yvex_error_code(err);
 }
 
-/* Purpose: independently reopen one pointer-free transformer plan representation.
- * Inputs: sealed summary and exact ordered layer directory. Effects: allocates validated immutable copy.
- * Failure: identity/geometry mismatch publishes no plan. Boundary: supports binding/tests without compiler truth. */
+/*
+ * Independently reopen one pointer-free transformer plan representation.
+ *
+ * Identity/geometry mismatch publishes no plan.
+ */
 int yvex_transformer_plan_import(yvex_transformer_plan **out,
                                  const yvex_transformer_plan_summary *summary,
                                  const yvex_transformer_layer_plan *layers,
@@ -268,9 +261,11 @@ invalid:
                               "transformer imported plan identity is stale");
 }
 
-/* Purpose: seal a pointer-free transformer plan representation for transactional publication.
- * Inputs: mutable summary and exact ordered layer directory. Effects: writes only its canonical identity.
- * Failure: malformed facts leave identity empty. Boundary: no allocation, payload access, or capability claim. */
+/*
+ * Seal a pointer-free transformer plan representation for transactional publication.
+ *
+ * Writes only its canonical identity. Malformed facts leave identity empty.
+ */
 int yvex_transformer_plan_seal(yvex_transformer_plan_summary *summary,
                                const yvex_transformer_layer_plan *layers,
                                yvex_error *err)
@@ -301,15 +296,17 @@ int yvex_transformer_plan_seal(yvex_transformer_plan_summary *summary,
     return YVEX_OK;
 }
 
-/* Purpose: borrow one immutable plan summary. Inputs: plan. Effects: none. Failure: NULL.
- * Boundary: borrowed lifetime. */
+/*
+ * Borrow one immutable plan summary.
+ *
+ * Borrowed lifetime.
+ */
 const yvex_transformer_plan_summary *yvex_transformer_plan_summary_get(
     const yvex_transformer_plan *plan)
 {
     return plan ? &plan->summary : NULL;
 }
 
-/* Purpose: release one immutable plan. Inputs: owner. Effects: frees it. Failure: none. Boundary: graph lifecycle. */
 void yvex_transformer_plan_close(yvex_transformer_plan **plan)
 {
     if (!plan || !*plan) return;
@@ -319,9 +316,6 @@ void yvex_transformer_plan_close(yvex_transformer_plan **plan)
     *plan = NULL;
 }
 
-/* Purpose: initialize expanded residual streams from one embedding row per token.
- * Inputs: sealed plan and finite embeddings. Effects: writes BF16-visible expanded values.
- * Failure: invalid/non-finite geometry leaves no admitted output. Boundary: family policy is plan-owned. */
 int yvex_transformer_initial_residual(const yvex_transformer_plan *plan,
                                       const float *embedding, unsigned long long token_count,
                                       float *expanded, yvex_error *err)
@@ -346,10 +340,6 @@ int yvex_transformer_initial_residual(const yvex_transformer_plan *plan,
     return YVEX_OK;
 }
 
-/* Purpose: apply the exact deferred FFN mHC egress after one token-local MoE result.
- * Inputs: residual, MoE combined output, and admitted per-token coefficients.
- * Effects: writes BF16-visible next residual state. Failure: non-finite geometry refuses.
- * Boundary: completes FFN-local deferred post without executing another block. */
 int yvex_transformer_deferred_post(const yvex_transformer_plan *plan,
                                    const float *residual, const float *combined,
                                    const float *post, const float *combination,
@@ -381,9 +371,6 @@ int yvex_transformer_deferred_post(const yvex_transformer_plan *plan,
     return YVEX_OK;
 }
 
-/* Purpose: execute final sigmoid mHC collapse followed by transformer-owned RMSNorm.
- * Inputs: expanded state and decoded exact global weights. Effects: writes normalized hidden rows.
- * Failure: non-finite arithmetic publishes no admitted final stage. Boundary: no output-head/logits work. */
 int yvex_transformer_final_stage(const yvex_transformer_plan *plan,
                                  const float *expanded, unsigned long long token_count,
                                  const float *function, const float *base, const float *scale,

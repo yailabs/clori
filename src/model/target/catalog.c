@@ -1,15 +1,10 @@
-/* Owner: src/model/target
- * Owns: static model-target and target-class catalog facts, target-specific operator path selection, and catalog
- *   reports.
- * Does not own: CLI parsing, command dispatch, rendering, sidecar writing, runtime execution, generation, eval,
- *   benchmark, or release decisions.
- * Invariants: the exact v0.1.0 identity is borrowed from the source owner and remains distinct from support;
- *   catalog facts do not claim runtime or generation.
- * Boundary: target catalog entries are not capability claims.
- * Purpose: project source-owned release identity into model-target catalog reports.
- * Inputs: immutable catalog rows, typed target requests, and source identity facts.
- * Effects: writes caller-owned reports and resolves request-specific operator paths.
- * Failure: invalid targets and path overflow produce typed refusal without capability promotion. */
+/*
+ * Project source-owned release identity into model-target catalog reports.
+ *
+ * The exact v0.1.0 identity is borrowed from the source owner and remains distinct from support;
+ * catalog facts do not claim runtime or generation. Target catalog entries are not capability
+ * claims.
+ */
 #include <yvex/internal/core.h>
 #include <yvex/internal/model_target.h>
 
@@ -86,11 +81,6 @@ static const yvex_model_target_record catalog_model_targets[] = {
      "unsupported", "false"},
 };
 
-/* Purpose: apply the canonical release source paths transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 int yvex_model_target_release_source_paths(
     const yvex_model_target_request *request,
     char *models_root,
@@ -119,11 +109,6 @@ int yvex_model_target_release_source_paths(
         yvex_source_release_identity());
 }
 
-/* Purpose: resolve one find through the canonical index.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 const yvex_model_target_record *yvex_model_target_find(const char *target_id)
 {
     unsigned long i;
@@ -137,25 +122,21 @@ const yvex_model_target_record *yvex_model_target_find(const char *target_id)
     return NULL;
 }
 
-/* Purpose: expose the immutable target-table cardinality to catalog rendering. */
 static unsigned long target_count(void)
 {
     return sizeof(catalog_model_targets) / sizeof(catalog_model_targets[0]);
 }
 
-/* Purpose: resolve one bounds-checked target record for catalog rendering. */
 static const yvex_model_target_record *target_at(unsigned long index)
 {
     return index < target_count() ? &catalog_model_targets[index] : NULL;
 }
 
-/* Purpose: expose the immutable target-class cardinality to catalog rendering. */
 static unsigned long target_class_count(void)
 {
     return sizeof(catalog_model_target_classes) / sizeof(catalog_model_target_classes[0]);
 }
 
-/* Purpose: resolve one bounds-checked class record for catalog rendering. */
 static const yvex_model_target_class_record *target_class_at(unsigned long index)
 {
     return index < target_class_count()
@@ -163,11 +144,6 @@ static const yvex_model_target_class_record *target_class_at(unsigned long index
                : NULL;
 }
 
-/* Purpose: map family key through canonical typed vocabulary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 const char *yvex_model_target_family_key(const char *target_id)
 {
     const yvex_model_target_record *record = yvex_model_target_find(target_id);
@@ -183,11 +159,6 @@ const char *yvex_model_target_family_key(const char *target_id)
     return "unknown";
 }
 
-/* Purpose: apply the canonical supported source target transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 int yvex_model_target_supported_source_target(const char *target_id)
 {
     return target_id && !strstr(target_id, "portability") &&
@@ -198,11 +169,6 @@ int yvex_model_target_supported_source_target(const char *target_id)
             strncmp(target_id, "gemma", 5) == 0);
 }
 
-/* Purpose: project report common tail from typed facts without capability drift.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 void yvex_model_target_report_common_tail(yvex_model_target_report *report)
 {
     yvex_model_target_report_add_row(report, "runtime_claim: unsupported");
@@ -211,7 +177,6 @@ void yvex_model_target_report_common_tail(yvex_model_target_report *report)
     yvex_model_target_report_add_row(report, "release_ready: false");
 }
 
-/* Purpose: form the bounded canonical catalog models root without path drift. */
 static const char *catalog_models_root(const yvex_model_target_request *request,
                                        const char **source)
 {
@@ -230,7 +195,6 @@ static const char *catalog_models_root(const yvex_model_target_request *request,
     return "models";
 }
 
-/* Purpose: form the bounded canonical catalog absolute path without path drift. */
 static void catalog_absolute_path(char *out, size_t cap, const char *path)
 {
     char cwd[512];
@@ -249,7 +213,6 @@ static void catalog_absolute_path(char *out, size_t cap, const char *path)
     (void)snprintf(out, cap, "%s/%s", cwd, path);
 }
 
-/* Purpose: form the bounded canonical catalog source leaf without path drift. */
 static const char *catalog_source_leaf(const yvex_model_target_record *record)
 {
     const char *slash;
@@ -265,7 +228,6 @@ static const char *catalog_source_leaf(const yvex_model_target_record *record)
     return record->model ? record->model : record->target_id;
 }
 
-/* Purpose: apply the canonical catalog registry alias transformation and invariants. */
 static const char *catalog_registry_alias(const yvex_model_target_record *record)
 {
     if (!record) return "none";
@@ -274,7 +236,6 @@ static const char *catalog_registry_alias(const yvex_model_target_record *record
                : "none";
 }
 
-/* Purpose: project typed catalog exists name vocabulary without lost semantics. */
 static const char *catalog_exists_name(const char *path)
 {
     return path && access(path, F_OK) == 0 ? "true" : "false";
@@ -284,11 +245,6 @@ static const char *catalog_source_status(const yvex_model_target_record *rec);
 static const char *catalog_artifact_status(const yvex_model_target_record *rec);
 static const char *catalog_runtime_status(const yvex_model_target_record *rec);
 
-/* Purpose: project catalog path report from typed facts without capability drift.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void catalog_path_report(const yvex_model_target_request *request,
                                 yvex_model_target_report *report,
                                 const yvex_model_target_record *record)
@@ -389,7 +345,6 @@ static void catalog_path_report(const yvex_model_target_request *request,
     }
 }
 
-/* Purpose: apply the canonical catalog unknown subcommand transformation and invariants. */
 static int catalog_unknown_subcommand(const yvex_model_target_request *request,
                                       yvex_model_target_report *report)
 {
@@ -433,11 +388,6 @@ static const catalog_projection_row catalog_projection_rows[] = {
                                 "target/source profile only; no source download/runtime/generation"}},
 };
 
-/* Purpose: project one catalog vocabulary column through the canonical target-class table.
- * Inputs: immutable target record and bounded projection kind.
- * Effects: none.
- * Failure: callers provide an admitted projection kind; unmatched classes use the canonical default.
- * Boundary: vocabulary projection does not change target capability or project state. */
 static const char *catalog_projection(const yvex_model_target_record *rec,
                                       catalog_projection_kind kind)
 {
@@ -451,13 +401,11 @@ static const char *catalog_projection(const yvex_model_target_record *rec,
     return catalog_default_values[kind];
 }
 
-/* Purpose: project typed catalog source status vocabulary without lost semantics. */
 static const char *catalog_source_status(const yvex_model_target_record *rec)
 {
     return catalog_projection(rec, CATALOG_PROJECTION_SOURCE);
 }
 
-/* Purpose: project typed catalog artifact status vocabulary without lost semantics. */
 static const char *catalog_artifact_status(const yvex_model_target_record *rec)
 {
     if (yvex_source_is_release_target(rec->target_id)) {
@@ -468,7 +416,6 @@ static const char *catalog_artifact_status(const yvex_model_target_record *rec)
                : "planned";
 }
 
-/* Purpose: project typed catalog runtime status vocabulary without lost semantics. */
 static const char *catalog_runtime_status(const yvex_model_target_record *rec)
 {
     if (strcmp(rec->target_id, "deepseek4-v4-flash-selected-embed") == 0) {
@@ -480,19 +427,16 @@ static const char *catalog_runtime_status(const yvex_model_target_record *rec)
     return "unsupported";
 }
 
-/* Purpose: project catalog next row from typed facts without capability drift. */
 static const char *catalog_next_row(const yvex_model_target_record *rec)
 {
     return catalog_projection(rec, CATALOG_PROJECTION_NEXT);
 }
 
-/* Purpose: project catalog boundary from typed facts without capability drift. */
 static const char *catalog_boundary(const yvex_model_target_record *rec)
 {
     return catalog_projection(rec, CATALOG_PROJECTION_BOUNDARY);
 }
 
-/* Purpose: apply the canonical catalog runtime shape transformation and invariants. */
 static const char *catalog_runtime_shape(const yvex_model_target_record *rec)
 {
     if (yvex_source_is_release_target(rec->target_id)) {
@@ -630,11 +574,6 @@ static const yvex_model_target_row_spec catalog_list_audit_rows[] = {
     CATALOG_STRING_ROW("tensor_mapping_gate_next_required_row: %s", gate_next)
 };
 
-/* Purpose: project catalog audit project from typed facts without capability drift.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static catalog_audit_facts catalog_audit_project(const yvex_model_target_record *rec)
 {
     int release = yvex_source_is_release_target(rec->target_id);
@@ -661,11 +600,6 @@ static catalog_audit_facts catalog_audit_project(const yvex_model_target_record 
     return facts;
 }
 
-/* Purpose: publish catalog emit inspect audit through the bounded output boundary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void catalog_emit_inspect_audit(const yvex_model_target_record *rec,
                                        yvex_model_target_report *report)
 {
@@ -702,8 +636,6 @@ static void catalog_emit_inspect_audit(const yvex_model_target_record *rec,
         sizeof(catalog_inspect_rows) / sizeof(catalog_inspect_rows[0]), &facts);
 }
 
-/* Purpose: publish catalog emit list audit target through the bounded output boundary. */
-
 static void catalog_emit_list_audit_target(
     const yvex_model_target_record *rec,
     yvex_model_target_report *report)
@@ -718,11 +650,6 @@ static void catalog_emit_list_audit_target(
 #undef CATALOG_LITERAL_ROW
 #undef CATALOG_STRING_ROW
 
-/* Purpose: construct bounded catalog report build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 int yvex_model_target_catalog_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
@@ -875,11 +802,6 @@ int yvex_model_target_catalog_report_build(
     return catalog_unknown_subcommand(request, report);
 }
 
-/* Purpose: construct bounded catalog help report build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 int yvex_model_target_catalog_help_report_build(
     yvex_model_target_report *report,
     yvex_error *err)

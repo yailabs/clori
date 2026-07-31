@@ -1,12 +1,9 @@
-/* Owner: provider.core.
- * Owns: provider-neutral validation, field-wise identities, owned cloning, and canonical wire values.
- * Does not own: HTTP, OpenAI names, local frame tags, tokenizer prompts, generation, or tool execution.
- * Invariants: every published request is bounded, complete, transport-neutral, and identity-authenticated.
- * Boundary: protocol and gateway owners consume this ABI without gaining model/runtime authority.
- * Purpose: admit application intent once before any transport-specific translation or runtime handoff.
- * Inputs: explicit typed spans, arrays, policies, and canonical provider wire bytes.
- * Effects: allocates complete owned clones/decodes and writes semantic identities.
- * Failure: validation, bounds, JSON, identity, or allocation errors publish no partial owner. */
+/*
+ * Admit application intent once before any transport-specific translation or runtime handoff.
+ *
+ * Every published request is bounded, complete, transport-neutral, and identity-authenticated.
+ * Protocol and gateway owners consume this ABI without gaining model/runtime authority.
+ */
 
 #include <yvex/provider.h>
 
@@ -29,10 +26,6 @@ typedef struct {
     size_t count, offset;
 } provider_reader;
 
-/* Purpose: initialize the one provider-neutral greedy sampling default.
- * Inputs: caller-owned sampling storage. Effects: replaces its prior contents.
- * Failure: none for a non-null output; null is ignored.
- * Boundary: adapters may select another explicit policy but do not duplicate defaults. */
 void yvex_provider_sampling_default(yvex_provider_sampling *sampling)
 {
     if (!sampling)
@@ -43,10 +36,11 @@ void yvex_provider_sampling_default(yvex_provider_sampling *sampling)
     sampling->typical_p = 1.0;
 }
 
-/* Purpose: initialize one complete provider request policy without owning request payloads.
- * Inputs: caller-owned request storage. Effects: replaces it with canonical neutral defaults.
- * Failure: none for a non-null output; null is ignored.
- * Boundary: model, messages, tools, stops, and adapter identity remain caller-supplied. */
+/*
+ * Initialize one complete provider request policy without owning request payloads.
+ *
+ * Model, messages, tools, stops, and adapter identity remain caller-supplied.
+ */
 void yvex_provider_request_default(yvex_provider_request *request)
 {
     if (!request)
@@ -59,10 +53,6 @@ void yvex_provider_request_default(yvex_provider_request *request)
     yvex_provider_sampling_default(&request->sampling);
 }
 
-/* Purpose: map one provider role to its stable transport-neutral label.
- * Inputs: provider role enum. Effects: none.
- * Failure: returns null for unknown values.
- * Boundary: labels carry no prompt or transport syntax. */
 const char *yvex_provider_role_name(yvex_provider_role role)
 {
     switch (role) {
@@ -75,10 +65,6 @@ const char *yvex_provider_role_name(yvex_provider_role role)
     return "unknown";
 }
 
-/* Purpose: map one finish class to the stable compatibility vocabulary.
- * Inputs: provider finish enum. Effects: none.
- * Failure: returns null for unknown values.
- * Boundary: mapping does not change the underlying YVEX stop fact. */
 const char *yvex_provider_finish_name(yvex_provider_finish_class finish)
 {
     switch (finish) {
@@ -91,7 +77,6 @@ const char *yvex_provider_finish_name(yvex_provider_finish_class finish)
     return "unknown";
 }
 
-/* Purpose: publish one provider-owned typed refusal. */
 static int provider_refuse(yvex_error *err, yvex_status status,
                            const char *reason)
 {
@@ -99,7 +84,6 @@ static int provider_refuse(yvex_error *err, yvex_status status,
     return status;
 }
 
-/* Purpose: validate one explicit byte span against a semantic extent cap. */
 static int span_valid(yvex_provider_span span, unsigned long long maximum,
                       int allow_empty)
 {
@@ -107,7 +91,6 @@ static int span_valid(yvex_provider_span span, unsigned long long maximum,
            (allow_empty || span.count != 0u) && span.count <= SIZE_MAX;
 }
 
-/* Purpose: validate one bounded provider/function identifier. */
 static int identifier_valid(const char *value, size_t capacity, int allow_empty)
 {
     size_t index, count;
@@ -125,9 +108,6 @@ static int identifier_valid(const char *value, size_t capacity, int allow_empty)
     return 1;
 }
 
-/* Purpose: validate one complete JSON value without accepting trailing bytes.
- * Inputs: explicit bytes and object requirement. Effects: parser scratch only.
- * Failure: typed format/bounds refusal. Boundary: structural JSON, not schema semantics. */
 int yvex_provider_json_value_validate(const unsigned char *bytes,
                                       unsigned long long byte_count,
                                       int require_object, yvex_error *err)
@@ -155,7 +135,6 @@ int yvex_provider_json_value_validate(const unsigned char *bytes,
     return YVEX_OK;
 }
 
-/* Purpose: validate one tool definition and its exact JSON-schema object. */
 static int tool_valid(const yvex_provider_function_tool *tool,
                       yvex_error *err)
 {
@@ -170,11 +149,12 @@ static int tool_valid(const yvex_provider_function_tool *tool,
         tool->parameters_json.bytes, tool->parameters_json.count, 1, err);
 }
 
-/* Purpose: validate one provider message and its optional single typed tool call.
- * Inputs: message and aggregate-byte counter.
- * Effects: advances the counter only for completely valid bounded spans.
- * Failure: returns false for invalid roles, call IDs, JSON, or count overflow.
- * Boundary: validation never constructs model-specific prompt text. */
+/*
+ * Validate one provider message and its optional single typed tool call.
+ *
+ * Advances the counter only for completely valid bounded spans. Returns false for invalid roles,
+ * call IDs, JSON, or count overflow.
+ */
 static int message_valid(const yvex_provider_message *message,
                          yvex_error *err)
 {
@@ -215,9 +195,7 @@ static int message_valid(const yvex_provider_message *message,
     return YVEX_OK;
 }
 
-/* Purpose: validate all provider-neutral semantics without relying on an identity claim.
- * Inputs: borrowed request graph. Effects: none. Failure: typed, with no publication.
- * Boundary: this does not select model-family prompt syntax or execute tools. */
+/* Validate all provider-neutral semantics without relying on an identity claim. */
 static int request_fields_validate(const yvex_provider_request *request,
                                    yvex_error *err)
 {
@@ -306,20 +284,12 @@ static int request_fields_validate(const yvex_provider_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: hash one explicit provider span with its semantic length.
- * Inputs: active SHA state and valid span. Effects: appends length and bytes.
- * Failure: returns false if the hash owner rejects input.
- * Boundary: never hashes pointers or allocation layout. */
 static int hash_span(yvex_sha256 *hash, yvex_provider_span span)
 {
     return yvex_sha256_update_u64_be(hash, span.count) &&
            yvex_sha256_update(hash, span.bytes, (size_t)span.count);
 }
 
-/* Purpose: hash one finite IEEE-754 binary64 value in canonical big-endian form.
- * Inputs: active SHA state and finite value. Effects: appends canonical bits.
- * Failure: returns false for non-finite or hash failure.
- * Boundary: host byte order and struct padding are excluded. */
 static int hash_double(yvex_sha256 *hash, double value)
 {
     uint64_t bits;
@@ -327,10 +297,12 @@ static int hash_double(yvex_sha256 *hash, double value)
     return yvex_sha256_update_u64_be(hash, bits);
 }
 
-/* Purpose: derive the canonical field-wise request identity after complete validation.
- * Inputs: validated mutable request. Effects: writes one field-wise SHA-256 identity.
- * Failure: clears no ownership but returns false when canonical hashing fails.
- * Boundary: excludes pointers, timestamps, and process-local allocation facts. */
+/*
+ * Derive the canonical field-wise request identity after complete validation.
+ *
+ * Writes one field-wise SHA-256 identity. Clears no ownership but returns false when canonical
+ * hashing fails.
+ */
 static int request_identity(yvex_provider_request *request)
 {
     yvex_sha256 hash;
@@ -389,10 +361,12 @@ static int request_identity(yvex_provider_request *request)
     return 1;
 }
 
-/* Purpose: validate and identity-seal one caller-owned provider request transactionally.
- * Inputs: mutable complete request and error output. Effects: writes identity/sealed on success.
- * Failure: clears sealed/identity and reports the exact semantic refusal.
- * Boundary: sealing creates no transport, prompt, session, or model state. */
+/*
+ * Validate and identity-seal one caller-owned provider request transactionally.
+ *
+ * Writes identity/sealed on success. Clears sealed/identity and reports the exact semantic
+ * refusal.
+ */
 int yvex_provider_request_seal(yvex_provider_request *request, yvex_error *err)
 {
     int rc = request_fields_validate(request, err);
@@ -411,10 +385,11 @@ int yvex_provider_request_seal(yvex_provider_request *request, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: reconstruct and compare the complete provider request identity.
- * Inputs: sealed request and error output. Effects: none on the supplied object.
- * Failure: refuses any field mutation or malformed identity.
- * Boundary: validation authenticates provider intent only. */
+/*
+ * Reconstruct and compare the complete provider request identity.
+ *
+ * Refuses any field mutation or malformed identity.
+ */
 int yvex_provider_request_validate(const yvex_provider_request *request,
                                    yvex_error *err)
 {
@@ -434,10 +409,6 @@ int yvex_provider_request_validate(const yvex_provider_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: duplicate one span into exact owned storage.
- * Inputs: valid source span and cleared destination. Effects: allocates/copies exact bytes.
- * Failure: leaves destination empty on allocation or extent failure.
- * Boundary: storage helper does not alter encoding or content. */
 static int span_clone(yvex_provider_span source, yvex_provider_span *target)
 {
     unsigned char *bytes;
@@ -451,10 +422,6 @@ static int span_clone(yvex_provider_span source, yvex_provider_span *target)
     return 1;
 }
 
-/* Purpose: release every allocation belonging to one owned provider request.
- * Inputs: pointer to unique request owner. Effects: frees nested spans/directories and nulls owner.
- * Failure: none; null/cleared owners are accepted.
- * Boundary: caller-owned borrowed requests must not use this lifecycle. */
 void yvex_provider_request_close(yvex_provider_request **request)
 {
     yvex_provider_request *owned;
@@ -483,11 +450,11 @@ void yvex_provider_request_close(yvex_provider_request **request)
     *request = NULL;
 }
 
-/* Purpose: deep-clone one validated request into a unique lifecycle owner.
- * Inputs: sealed source, cleared owner output, and error output.
- * Effects: allocates every nested provider span and preserves exact identity.
- * Failure: closes the partial graph and publishes no owner.
- * Boundary: clone contains no engine, socket, or parser pointers. */
+/*
+ * Deep-clone one validated request into a unique lifecycle owner.
+ *
+ * Allocates every nested provider span and preserves exact identity.
+ */
 int yvex_provider_request_clone(const yvex_provider_request *source,
                                 yvex_provider_request **out, yvex_error *err)
 {
@@ -555,10 +522,6 @@ no_memory:
                            "provider request clone allocation failed");
 }
 
-/* Purpose: append one fixed-width canonical integer to provider wire storage.
- * Inputs: writer and 32-bit value. Effects: advances by four big-endian bytes.
- * Failure: preserves writer count on insufficient capacity.
- * Boundary: primitive wire operation only. */
 static int write_u32(provider_writer *writer, uint32_t value)
 {
     if (!writer || writer->count > writer->capacity ||
@@ -570,10 +533,6 @@ static int write_u32(provider_writer *writer, uint32_t value)
     return 1;
 }
 
-/* Purpose: append one canonical 64-bit value.
- * Inputs: writer and 64-bit value. Effects: advances by eight big-endian bytes.
- * Failure: preserves writer count on insufficient capacity.
- * Boundary: primitive wire operation only. */
 static int write_u64(provider_writer *writer, uint64_t value)
 {
     unsigned int index;
@@ -585,10 +544,6 @@ static int write_u64(provider_writer *writer, uint64_t value)
     return 1;
 }
 
-/* Purpose: append one canonical binary64 value.
- * Inputs: writer and finite binary64. Effects: writes canonical bit representation.
- * Failure: refuses non-finite or insufficient output capacity.
- * Boundary: excludes native struct encoding. */
 static int write_double(provider_writer *writer, double value)
 {
     uint64_t bits;
@@ -596,10 +551,6 @@ static int write_double(provider_writer *writer, double value)
     return write_u64(writer, bits);
 }
 
-/* Purpose: append one explicit-length bounded wire span.
- * Inputs: writer and valid explicit span. Effects: writes length followed by bytes.
- * Failure: preserves the admitted prefix when complete span cannot fit.
- * Boundary: no NUL-terminated semantics are inferred. */
 static int write_span(provider_writer *writer, yvex_provider_span span)
 {
     if (span.count > UINT32_MAX || span.count > SIZE_MAX ||
@@ -611,10 +562,6 @@ static int write_span(provider_writer *writer, yvex_provider_span span)
     return 1;
 }
 
-/* Purpose: project one bounded terminated field as an explicit wire span.
- * Inputs: writer, bounded text, and storage capacity. Effects: writes semantic text extent.
- * Failure: refuses unterminated or oversized input.
- * Boundary: fixed provider identifiers only. */
 static int write_text(provider_writer *writer, const char *text, size_t capacity)
 {
     size_t count = strnlen(text, capacity);
@@ -622,11 +569,7 @@ static int write_text(provider_writer *writer, const char *text, size_t capacity
     return count < capacity && write_span(writer, span);
 }
 
-/* Purpose: encode one sealed provider request in deterministic field order.
- * Inputs: validated request, output bytes/capacity/count, and error output.
- * Effects: publishes one complete canonical provider payload for the protocol-v4 carrier.
- * Failure: reports bounds/validation failure and leaves byte count zero.
- * Boundary: native structures and pointer values never enter the wire. */
+/* Encode one sealed provider request in deterministic field order. */
 int yvex_provider_request_wire_encode(const yvex_provider_request *request,
                                       unsigned char *output,
                                       unsigned long long capacity,
@@ -705,10 +648,6 @@ bounds:
                            "provider request exceeds wire capacity");
 }
 
-/* Purpose: consume one canonical 32-bit provider wire value.
- * Inputs: reader and output value. Effects: advances by four bytes on success.
- * Failure: leaves reader position unchanged on truncation.
- * Boundary: primitive decode only. */
 static int read_u32(provider_reader *reader, uint32_t *value)
 {
     const unsigned char *bytes;
@@ -721,10 +660,6 @@ static int read_u32(provider_reader *reader, uint32_t *value)
     return 1;
 }
 
-/* Purpose: consume one canonical 64-bit provider wire value.
- * Inputs: reader and output value. Effects: advances by eight bytes on success.
- * Failure: leaves reader position unchanged on truncation.
- * Boundary: primitive decode only. */
 static int read_u64(provider_reader *reader, uint64_t *value)
 {
     unsigned int index;
@@ -736,10 +671,6 @@ static int read_u64(provider_reader *reader, uint64_t *value)
     return 1;
 }
 
-/* Purpose: consume one canonical binary64 provider wire value.
- * Inputs: reader and output value. Effects: advances after finite canonical decode.
- * Failure: refuses truncated or non-finite values.
- * Boundary: host representation is reconstructed field-wise. */
 static int read_double(provider_reader *reader, double *value)
 {
     uint64_t bits;
@@ -748,10 +679,6 @@ static int read_double(provider_reader *reader, double *value)
     return 1;
 }
 
-/* Purpose: allocate and consume one explicit provider wire span.
- * Inputs: reader, span output, semantic maximum. Effects: allocates/copies and advances reader.
- * Failure: publishes no span on truncation, bounds, or allocation failure.
- * Boundary: exact bytes are retained without interpretation. */
 static int read_span(provider_reader *reader, yvex_provider_span *span,
                      unsigned long long maximum)
 {
@@ -771,10 +698,6 @@ static int read_span(provider_reader *reader, yvex_provider_span *span,
     return 1;
 }
 
-/* Purpose: consume one explicit wire string into bounded terminated storage.
- * Inputs: reader, fixed output, and capacity. Effects: copies bytes and appends one NUL.
- * Failure: refuses empty/oversized/truncated fields without advancing inconsistently.
- * Boundary: identifier storage only, not semantic message content. */
 static int read_text(provider_reader *reader, char *output, size_t capacity)
 {
     yvex_provider_span span = {0};
@@ -790,11 +713,11 @@ static int read_text(provider_reader *reader, char *output, size_t capacity)
     return valid;
 }
 
-/* Purpose: decode one canonical provider request into a complete owned graph.
- * Inputs: complete wire bytes/count, owner output, and error output.
- * Effects: allocates, validates, and publishes one identity-authenticated request.
- * Failure: closes every partial allocation and leaves output null.
- * Boundary: wire parsing creates no runtime/session/model resources. */
+/*
+ * Decode one canonical provider request into a complete owned graph.
+ *
+ * Allocates, validates, and publishes one identity-authenticated request.
+ */
 int yvex_provider_request_wire_decode(const unsigned char *input,
                                       unsigned long long byte_count,
                                       yvex_provider_request **out,
@@ -928,10 +851,12 @@ no_memory:
                            "provider wire request allocation failed");
 }
 
-/* Purpose: identity-seal one provider output after checked usage and item semantics.
- * Inputs: mutable output and error output. Effects: writes output identity/completed fact.
- * Failure: clears completion/identity and reports inconsistent usage or item fields.
- * Boundary: output evidence only; it does not publish bytes to an application. */
+/*
+ * Identity-seal one provider output after checked usage and item semantics.
+ *
+ * Writes output identity/completed fact. Clears completion/identity and reports inconsistent usage
+ * or item fields. Output evidence only; it does not publish bytes to an application.
+ */
 int yvex_provider_output_seal(yvex_provider_output *output, yvex_error *err)
 {
     yvex_sha256 hash;
@@ -967,10 +892,11 @@ int yvex_provider_output_seal(yvex_provider_output *output, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: recompute and compare every authoritative provider output field.
- * Inputs: sealed output and error output. Effects: none on supplied evidence.
- * Failure: rejects any semantic mutation or malformed identity.
- * Boundary: validation authenticates compatibility evidence, not model quality. */
+/*
+ * Recompute and compare every authoritative provider output field.
+ *
+ * Rejects any semantic mutation or malformed identity.
+ */
 int yvex_provider_output_validate(const yvex_provider_output *output,
                                   yvex_error *err)
 {

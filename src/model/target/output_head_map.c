@@ -1,15 +1,10 @@
-/* Owner: src/model/target
- * Owns: output-head candidate facts, embedding relation facts, tie-policy facts, and output-head sidecar report
- *   facts.
- * Does not own: CLI parsing, rendering, logits execution, tensor payload loading, artifact emission, runtime
- *   execution, generation, eval, benchmark, or release decisions.
- * Invariants: output-head reports are header/metadata mapping facts only and do not create logits support.
- * Boundary: output-head mapping is not runtime logits, generation support, benchmark evidence, or release
- *   readiness.
- * Purpose: derive output-head mapping facts from bounded headers and configuration.
- * Inputs: typed requests and source metadata evidence.
- * Effects: updates report state and explicit sidecar output only.
- * Failure: missing or ambiguous heads remain typed blockers. */
+/*
+ * Derive output-head mapping facts from bounded headers and configuration.
+ *
+ * Output-head reports are header/metadata mapping facts only and do not create logits support.
+ * Output-head mapping is not runtime logits, generation support, benchmark evidence, or release
+ * readiness.
+ */
 #include <yvex/internal/model_target.h>
 
 #include <stdlib.h>
@@ -83,11 +78,6 @@ static const yvex_model_target_row_spec output_head_entry_rows[] = {
 #undef OUTPUT_HEAD_STRING
 #undef OUTPUT_HEAD_INT
 
-/* Purpose: apply the canonical output head json bool field transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int output_head_json_bool_field(const char *text, const char *key,
                                        int *seen_true, int *seen_false)
 {
@@ -124,24 +114,11 @@ static int output_head_json_bool_field(const char *text, const char *key,
 }
 
 /*
- * output_head_probe_source()
+ * Collect bounded local header/config facts for output-head reports.
  *
- * Purpose:
- *   collect bounded local header/config facts for output-head reports.
- *
- * Inputs:
- *   request/family are borrowed; probe is mutated.
- *
- * Effects:
- *   reads safetensors headers and small config metadata only; no payload bytes,
- *   sidecar files, rendering, or artifact emission occur.
- *
- * Failure:
- *   missing local files leave probe fields unset so deterministic fallback
- *   report facts can still be emitted.
- *
- * Boundary:
- *   probe facts are output-head mapping evidence, not logits readiness. */
+ * Missing local files leave probe fields unset so deterministic fallback report facts can still be
+ * emitted.
+ */
 static void output_head_probe_source(const yvex_model_target_request *request,
                                      const char *family,
                                      output_head_probe *probe)
@@ -181,11 +158,6 @@ static void output_head_probe_source(const yvex_model_target_request *request,
     }
 }
 
-/* Purpose: project typed output head status vocabulary without lost semantics.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static const char *output_head_status(const yvex_model_target_request *request,
                                       const char *family,
                                       const output_head_probe *probe)
@@ -224,11 +196,6 @@ static const char *output_head_status(const yvex_model_target_request *request,
     return "output-head-profiled";
 }
 
-/* Purpose: publish output head write sidecar through the bounded output boundary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void output_head_write_sidecar(const yvex_model_target_request *request,
                                       const char *family,
                                       const char *status)
@@ -242,11 +209,6 @@ static void output_head_write_sidecar(const yvex_model_target_request *request,
                                           request->target_id, family, status, NULL);
 }
 
-/* Purpose: construct bounded output head map report build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 int yvex_output_head_map_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,

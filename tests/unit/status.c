@@ -1,25 +1,6 @@
 /*
- * YVEX - Status tests
- *
- * File: tests/test_status.c
- * Layer: test
- *
- * Purpose:
- *   Proves that every core status code maps to a stable string and that
- *   status predicates behave deterministically.
- *
- * Covers:
- *   - yvex_status_name
- *   - yvex_status_is_ok
- *   - yvex_status_is_error
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_status
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises every core status code maps to a stable string and that status predicates behave
+ * deterministically.
  */
 #include <yvex/core.h>
 #include <yvex/internal/core.h>

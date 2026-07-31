@@ -1,27 +1,7 @@
 /*
- * YVEX - tokenizer tests
- *
- * File: tests/test_tokenizer.c
- * Layer: test
- *
- * Purpose:
- *   Proves tokenizer layer tokenizer metadata extraction, vocabulary records, special-token
- *   IDs, fixture encode/decode, malformed tokenizer metadata handling, and
- *   unsupported tokenizer behavior.
- *
- * Covers:
- *   - yvex_tokenizer_from_gguf
- *   - yvex_tokenizer_token_at
- *   - yvex_tokenize_text
- *   - yvex_detokenize_ids
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_tokenizer
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises tokenizer layer tokenizer metadata extraction, vocabulary records, special-token
+ * IDs, fixture encode/decode, malformed tokenizer metadata handling, and unsupported tokenizer
+ * behavior.
  */
 #include <string.h>
 

@@ -1,16 +1,10 @@
-/* Owner: src/model/target
- * Owns: the sole v0.1.0 release-target selection, refusal facts, and current source-to-mapping closure and
- *   payload-streaming handoff facts.
- * Does not own: CLI parsing, command dispatch, rendering, target catalog storage, candidate report ownership,
- *   sidecar writing, runtime execution, generation, eval, benchmark, or release decisions.
- * Invariants: the release decision selects exactly one canonical target while typed architecture and model support
- *   remain separate gates.
- * Boundary: target-decision facts do not select a runtime-ready model and do not imply quantization, artifact
- *   emission, generation, benchmark, or release readiness.
- * Purpose: derive target decision facts without executing downstream capability.
- * Inputs: typed target requests and canonical catalog rows.
- * Effects: mutates only bounded report state.
- * Failure: invalid requests produce typed report refusals. */
+/*
+ * Derive target decision facts without executing downstream capability.
+ *
+ * The release decision selects exactly one canonical target while typed architecture and model
+ * support remain separate gates. Target-decision facts do not select a runtime-ready model and do
+ * not imply quantization, artifact emission, generation, benchmark, or release readiness.
+ */
 #include <yvex/internal/model_target.h>
 
 #include <string.h>
@@ -80,13 +74,11 @@ static const char *const decision_normal_suffix[] = {
     "benchmark not measured"
 };
 
-/* Purpose: project the immutable bounded decision candidate count view. */
 static unsigned long decision_candidate_count(void)
 {
     return sizeof(decision_candidates) / sizeof(decision_candidates[0]);
 }
 
-/* Purpose: resolve one decision find through the canonical index. */
 static const decision_candidate *decision_find(const char *id)
 {
     unsigned long i;
@@ -100,7 +92,6 @@ static const decision_candidate *decision_find(const char *id)
     return NULL;
 }
 
-/* Purpose: apply the canonical decision common tail transformation and invariants. */
 static void decision_common_tail(yvex_model_target_report *report)
 {
     yvex_model_target_report_add_rows(
@@ -109,7 +100,6 @@ static void decision_common_tail(yvex_model_target_report *report)
     yvex_model_target_report_common_tail(report);
 }
 
-/* Purpose: project decision help from typed facts without capability drift. */
 static int decision_help(yvex_model_target_report *report)
 {
     yvex_model_target_report_add_rows(
@@ -118,11 +108,6 @@ static int decision_help(yvex_model_target_report *report)
     return YVEX_OK;
 }
 
-/* Purpose: release owned decision unsupported release resources in dependency order.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int decision_unsupported_release(const yvex_model_target_request *request,
                                         yvex_model_target_report *report)
 {
@@ -135,7 +120,6 @@ static int decision_unsupported_release(const yvex_model_target_request *request
     return YVEX_OK;
 }
 
-/* Purpose: apply the canonical decision missing candidate transformation and invariants. */
 static int decision_missing_candidate(const yvex_model_target_request *request,
                                       yvex_model_target_report *report)
 {
@@ -148,7 +132,6 @@ static int decision_missing_candidate(const yvex_model_target_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: publish decision emit candidate through the bounded output boundary. */
 static void decision_emit_candidate(yvex_model_target_report *report,
                                     unsigned long index,
                                     const decision_candidate *candidate)
@@ -165,11 +148,6 @@ static void decision_emit_candidate(yvex_model_target_report *report,
                                      candidate->next);
 }
 
-/* Purpose: project decision audit from typed facts without capability drift.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int decision_audit(const yvex_model_target_request *request,
                           yvex_model_target_report *report)
 {
@@ -204,11 +182,6 @@ static int decision_audit(const yvex_model_target_request *request,
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded decision report build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 int yvex_model_target_decision_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,

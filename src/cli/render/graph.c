@@ -1,13 +1,9 @@
-/* Owner: src/cli/render
- * Owns: normal, table, audit, and help text rendering for graph reports.
- * Does not own: graph construction, report building, input parsing, command dispatch, backend primitive execution,
- *   reference comparison, stdout/stderr writing, generation, evaluation, benchmark, or release decisions.
- * Invariants: all output goes through src/cli/io writer helpers.
- * Boundary: graph rendering is not graph runtime or generation readiness.
- * Purpose: provide normal, table, audit, and help text rendering for graph reports.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Provide normal, table, audit, and help text rendering for graph reports.
+ *
+ * All output goes through src/cli/io writer helpers. Graph rendering is not graph runtime or
+ * generation readiness.
+ */
 #include "src/cli/render/private.h"
 #include "src/cli/io/private.h"
 #include "src/cli/model_artifacts/private.h"
@@ -1023,7 +1019,7 @@ static const attention_presence_rule attention_presence_rules[] = {
 #undef ATTENTION_PROBE_FIELD
 #undef ATTENTION_BENCHMARK_FIELD
 #undef ATTENTION_TIMING
-/* Purpose: evaluate one typed evidence-presence rule without inspecting metric values. */
+
 static int graph_attention_rule_present(
     const attention_presence_rule *rule,
     const yvex_graph_attention_operator_result *result)
@@ -1040,10 +1036,7 @@ static int graph_attention_rule_present(
     }
     return 0;
 }
-/* Purpose: derive the complete presentation-availability mask from typed result evidence.
- * Inputs: immutable result and requested detail class. Effects: none.
- * Failure: absent evidence leaves its group bit clear.
- * Boundary: zero metric values never determine optional-field presence. */
+
 static unsigned int graph_attention_visible_groups(
     const yvex_graph_attention_operator_result *result, int detailed)
 {
@@ -1055,8 +1048,7 @@ static unsigned int graph_attention_visible_groups(
             visible |= (unsigned int)attention_presence_rules[index].condition;
     return visible;
 }
-/* Purpose: Emit a field group. Inputs: stream/schema/result. Effects: writes. Failure: typed I/O.
- * Boundary: projection only; capability and availability stay runtime-owned. */
+
 static int graph_attention_emit(FILE *fp,
                                 int json,
                                 const yvex_graph_attention_operator_result *result,
@@ -1068,7 +1060,7 @@ static int graph_attention_emit(FILE *fp,
                   : yvex_cli_out_fields(fp, result, fields, count);
     return rc < 0 ? YVEX_ERR_IO : rc;
 }
-/* Purpose: write one RFC 4180 cell through the canonical CLI stream owner. */
+
 static int graph_attention_csv_cell(FILE *fp, const char *text)
 {
     const unsigned char *cursor = (const unsigned char *)(text ? text : "");
@@ -1079,9 +1071,7 @@ static int graph_attention_csv_cell(FILE *fp, const char *text)
     }
     return yvex_cli_out_char(fp, '"') < 0 ? YVEX_ERR_IO : YVEX_OK;
 }
-/* Purpose: serialize one typed field as a stable two-column CSV record.
- * Inputs: output stream, result, and field schema. Effects: writes one escaped record.
- * Failure: returns typed I/O or unsupported-kind refusal. Boundary: derives no domain facts. */
+
 static int graph_csv_field(FILE *fp, const void *object,
                            const yvex_cli_field_spec *field)
 {
@@ -1128,9 +1118,7 @@ static int graph_csv_field(FILE *fp, const void *object,
         return YVEX_ERR_IO;
     return YVEX_OK;
 }
-/* Purpose: render availability-filtered attention fields.
- * Inputs: stream, mode, and typed result. Effects: writes one complete projection.
- * Failure: returns typed I/O refusal. Boundary: omits unavailable facts without deriving capability. */
+
 static int graph_attention_render_fields(FILE *fp,
                                          yvex_graph_report_mode mode,
                                          const yvex_graph_attention_operator_result *result)
@@ -1157,9 +1145,7 @@ static int graph_attention_render_fields(FILE *fp,
     if (json) yvex_cli_json_end(fp);
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-/* Purpose: Render attention result.
- * Inputs: stream, mode, result. Effects: writes fields.
- * Failure: typed I/O refusal. Boundary: presentation only; no graph math. */
+
 int yvex_graph_attention_render(FILE *fp,
                                 yvex_graph_report_mode mode,
                                 const yvex_graph_attention_operator_result *result)
@@ -1167,8 +1153,7 @@ int yvex_graph_attention_render(FILE *fp,
     if (!fp || !result) return YVEX_ERR_INVALID_ARG;
     return graph_attention_render_fields(fp, mode, result);
 }
-/* Purpose: render one typed production MoE result without deriving capability facts.
- * Inputs: result and mode. Effects: writes stream. Failure: I/O status. Boundary: no claims. */
+
 int yvex_graph_moe_render(FILE *fp, yvex_graph_report_mode mode,
                           const yvex_moe_operator_result *result)
 {
@@ -1191,9 +1176,7 @@ int yvex_graph_moe_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-/* Purpose: render one typed transformer result.
- * Inputs: output stream, mode, and domain result. Effects: writes through CLI I/O.
- * Failure: typed I/O refusal. Boundary: never derives capability or executes graph work. */
+
 int yvex_graph_transformer_render(FILE *fp, yvex_graph_report_mode mode,
                                   const yvex_transformer_operator_result *result)
 {
@@ -1218,9 +1201,11 @@ int yvex_graph_transformer_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-/* Purpose: render ordered per-step decode evidence after the flat operator summary.
- * Inputs: typed step directory and output mode. Effects: writes presentation only.
- * Failure: stream refusal. Boundary: no identity or capability derivation. */
+/*
+ * Render ordered per-step decode evidence after the flat operator summary.
+ *
+ * No identity or capability derivation.
+ */
 static int graph_decode_steps_render(FILE *fp, yvex_graph_report_mode mode,
                                      const yvex_decode_operator_result *result)
 {
@@ -1270,9 +1255,7 @@ static int graph_decode_steps_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
-/* Purpose: render one typed repeated-decode operator result and ordered step directory.
- * Inputs: output stream, mode, and domain result. Effects: writes through CLI I/O.
- * Failure: typed I/O refusal. Boundary: never chooses tokens or derives capability. */
+
 int yvex_graph_decode_render(FILE *fp, yvex_graph_report_mode mode,
                              const yvex_decode_operator_result *result)
 {
@@ -1300,11 +1283,11 @@ int yvex_graph_decode_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-/* Purpose: render bounded per-row logits evidence without dumping raw vocabulary values.
- * Inputs: output stream, typed mode, and completed operator row directory.
- * Effects: writes only bounded scalar and identity evidence.
- * Failure: returns typed I/O refusal on write failure.
- * Boundary: rendering does not own or interpret logits capability. */
+/*
+ * Render bounded per-row logits evidence without dumping raw vocabulary values.
+ *
+ * Writes only bounded scalar and identity evidence.
+ */
 static int graph_logits_rows_render(FILE *fp, yvex_graph_report_mode mode,
                                     const yvex_logits_operator_result *result)
 {
@@ -1356,11 +1339,7 @@ static int graph_logits_rows_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
-/* Purpose: render typed output-head and logits evidence through the canonical CLI I/O owner.
- * Inputs: output stream, admitted mode, and typed operator result.
- * Effects: writes one documented human or machine-readable record.
- * Failure: refuses invalid row storage and propagates I/O failure.
- * Boundary: never emits the complete raw logits buffer or selects a token. */
+
 int yvex_graph_logits_render(FILE *fp, yvex_graph_report_mode mode,
                              const yvex_logits_operator_result *result)
 {
@@ -1388,9 +1367,7 @@ int yvex_graph_logits_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-/* Purpose: render bounded selected-token rows without logits or probability-vector dumps.
- * Inputs: stream, mode, and typed rows. Effects: writes only bounded selection facts.
- * Failure: reports I/O status. Boundary: renderer cannot append tokens or create generation authority. */
+
 static int graph_sampling_rows(FILE *fp, yvex_graph_report_mode mode,
                                const yvex_sampling_operator_result *result)
 {
@@ -1432,9 +1409,7 @@ static int graph_sampling_rows(FILE *fp, yvex_graph_report_mode mode,
     if (mode == YVEX_GRAPH_REPORT_MODE_JSON) yvex_cli_out_line(fp, "  ]");
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
-/* Purpose: render typed common-host sampling evidence through canonical CLI I/O.
- * Inputs: stream, mode, and operator result. Effects: writes one schema-owned record.
- * Failure: invalid storage or I/O refuses. Boundary: rendering cannot establish sampling capability. */
+
 int yvex_graph_sampling_render(FILE *fp, yvex_graph_report_mode mode,
                                const yvex_sampling_operator_result *result)
 {
@@ -1462,8 +1437,7 @@ int yvex_graph_sampling_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-/* Purpose: render bounded generation progress. Inputs: stream/mode/result. Effects: writes typed fields.
- * Failure: invalid storage/I/O refuses. Boundary: never executes or promotes generation. */
+
 int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                                  const yvex_generation_operator_result *result)
 {
@@ -1551,8 +1525,7 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
-/* Purpose: render immutable graph help text. Inputs: output stream. Effects: writes static lines.
- * Failure: writer status propagates. Boundary: help text owns no runtime capability. */
+
 int yvex_graph_render_help(FILE *fp)
 {
     yvex_cli_out_lines(fp, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
@@ -1607,9 +1580,7 @@ static const descriptor_role_collection descriptor_role_collections[] = {
 {"moe_expert_gate", "moe"}, {"moe_expert_up", "moe"}, {"moe_expert_down", "moe"}, {"output_head", "output"},
     {"tokenizer_metadata", "tokenizer-runtime-input"},
 };
-/* Purpose: Map a role to its display collection.
- * Inputs: role text. Effects: none.
- * Failure: returns unknown. Boundary: presentation classification. */
+
 static const char *fullmodel_descriptor_role_collection(const char *role)
 {
     size_t index;
@@ -1621,8 +1592,7 @@ static const char *fullmodel_descriptor_role_collection(const char *role)
     }
     return "unknown";
 }
-/* Purpose: Compute fullmodel descriptor role residency for its CLI invariant
- *   (`fullmodel_descriptor_role_residency`). */
+
 static const char *fullmodel_descriptor_role_residency(const char *role,
                                                        const char *backend,
                                                        int present)
@@ -1631,9 +1601,7 @@ static const char *fullmodel_descriptor_role_residency(const char *role,
     if (role && strcmp(role, "tokenizer_metadata") == 0) return "host-runtime-metadata";
     return backend && strcmp(backend, "cuda") == 0 ? "cuda-resident-planned" : "cpu-resident-planned";
 }
-/* Purpose: Render a descriptor role.
- * Inputs: model, collection, role, backend. Effects: writes CLI fields.
- * Failure: stream state. Boundary: descriptor presentation only. */
+
 static void fullmodel_print_descriptor_role(yvex_model_context *ctx,
                                             const yvex_fullmodel_collections *collections,
                                             const char *role,
@@ -1668,11 +1636,12 @@ static void fullmodel_print_descriptor_role(yvex_model_context *ctx,
     yvex_cli_out_writef(stdout, "role.%s.runtime_consumer: %s\n", role ? role : "unknown",
            present ? "planned" : "blocked-missing-role");
 }
-/* Purpose: Render one descriptor collection and its exact runtime requirements.
- * Inputs: Borrowed collection identity, accounting, requirements, and blocker facts.
- * Effects: Writes ordered descriptor fields through CLI I/O.
- * Failure: CLI write failures remain owned by the output boundary.
- * Boundary: Rendering does not make the collection resident or executable. */
+/*
+ * Render one descriptor collection and its exact runtime requirements.
+ *
+ * Borrowed collection identity, accounting, requirements, and blocker facts. Rendering does not
+ * make the collection resident or executable.
+ */
 static void fullmodel_print_descriptor_collection(const char *name,
                                                   unsigned long long count,
                                                   unsigned long long bytes,
@@ -1742,9 +1711,7 @@ static const graph_requirement_spec graph_requirements[] = {
 #undef GRAPH_MLP
 #undef GRAPH_ATTENTION
 #undef GRAPH_FIXED
-/* Purpose: Render graph requirements.
- * Inputs: collections. Effects: writes CLI fields.
- * Failure: stream state. Boundary: descriptor presentation only. */
+
 static void fullmodel_print_descriptor_graph_requirements(const yvex_fullmodel_collections *collections)
 {
     size_t index;
@@ -1817,10 +1784,7 @@ REQUIRED_MASK(0, 0, 0, 0), DESCRIPTOR_BLOCKER_UNKNOWN, "unknown tensor role", "u
 };
 #undef REQUIRED_MASK
 #undef COLLECTION_OFF
-/* Resolve whether a descriptor collection satisfies its exact role contract. */
-/* Purpose: Resolve collection readiness.
- * Inputs: schema, collections, count. Effects: none.
- * Failure: returns false. Boundary: descriptor presentation only. */
+
 static int descriptor_collection_ready(const descriptor_collection_spec *spec,
                                        const yvex_fullmodel_collections *collections,
                                        unsigned long long count)
@@ -1836,9 +1800,7 @@ static int descriptor_collection_ready(const descriptor_collection_spec *spec,
     }
     return 0;
 }
-/* Purpose: Render inventory.
- * Inputs: model, collections, backend. Effects: writes CLI fields.
- * Failure: stream state. Boundary: descriptor presentation only. */
+
 static void fullmodel_print_descriptor_inventory(
     yvex_model_context *ctx,
     const yvex_fullmodel_collections *collections,
@@ -1868,9 +1830,7 @@ static void fullmodel_print_descriptor_inventory(
             ready ? "none" : spec->missing_blocker);
     }
 }
-/* Purpose: Render fullmodel descriptor.
- * Inputs: admitted report facts. Effects: writes CLI report.
- * Failure: stream state. Boundary: presentation does not promote runtime capability. */
+
 void fullmodel_print_descriptor_report(const yvex_cli_fullmodel_options *options,
                                               yvex_model_ref *ref,
                                               yvex_model_context *ctx,

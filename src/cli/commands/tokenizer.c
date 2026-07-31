@@ -1,12 +1,3 @@
-/* Owner: CLI tokenizer command.
- * Owns: tokenizer argv validation, dispatch, help, and compatibility rendering.
- * Does not own: tokenizer parsing, prompt semantics, or generation.
- * Invariants: bytes are written only through the CLI IO owner.
- * Boundary: consumes typed tokenizer APIs and returns process exit status.
- * Purpose: provide tokenizer argv validation, dispatch, help, and compatibility rendering.
- * Inputs: typed command arguments and borrowed domain APIs.
- * Effects: dispatches domain calls and routes operator bytes only through CLI I/O.
- * Failure: returns a stable CLI status while preserving domain ownership. */
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
 #include <yvex/core.h>
@@ -50,9 +41,6 @@ static const char *const literal_lines_3[] = { "usage: yvex execute input tokens
     "       yvex execute input prompt --model FILE_OR_ALIAS --text TEXT",
     "\nInput parses explicit tokens or tokenizer-backed prompt text into validated token input."};
 
-/* Domain-owned command surface moved out of core.c. */
-
-/* Purpose: Render print special id line from typed facts (`print_special_id_line`). */
 static int print_special_id_line(const char *name, int (*fn)(const yvex_tokenizer *, unsigned int *),
     const yvex_tokenizer *tokenizer)
 {
@@ -67,11 +55,6 @@ static int print_special_id_line(const char *name, int (*fn)(const yvex_tokenize
     return YVEX_OK;
 }
 
-/* Purpose: Orchestrate the typed command tokenizer request (`command_tokenizer`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_tokenizer(int arg_count, char **args)
 {
     yvex_model_context ctx;
@@ -130,11 +113,6 @@ static int command_tokenizer(int arg_count, char **args)
     return 0;
 }
 
-/* Purpose: Orchestrate the typed command tokenize request (`command_tokenize`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_tokenize(int arg_count, char **args)
 {
     yvex_model_context ctx;
@@ -231,11 +209,6 @@ static int command_tokenize(int arg_count, char **args)
     return 0;
 }
 
-/* Purpose: Orchestrate the typed command detokenize request (`command_detokenize`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_detokenize(int arg_count, char **args)
 {
     yvex_model_context ctx;
@@ -332,11 +305,6 @@ static int command_detokenize(int arg_count, char **args)
     return 0;
 }
 
-/* Purpose: Orchestrate the typed command prompt request (`command_prompt`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_prompt(int arg_count, char **args)
 {
     yvex_model_context ctx;
@@ -447,8 +415,6 @@ static int command_prompt(int arg_count, char **args)
     return 0;
 }
 
-/* Render the explicit tokens attached to one admitted input request. */
-/* Purpose: Render print token input tokens from typed facts (`print_token_input_tokens`). */
 static void print_token_input_tokens(const yvex_token_input *input)
 {
     unsigned long long i;
@@ -458,12 +424,6 @@ static void print_token_input_tokens(const yvex_token_input *input)
     }
 }
 
-/* Render the stable token-input summary shared by input and prefill commands. */
-/* Purpose: Render print token input summary from typed facts (`print_token_input_summary`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void print_token_input_summary(const yvex_token_input *input,
                                const char *status,
                                const char *bounds_status,
@@ -487,12 +447,6 @@ void print_token_input_summary(const yvex_token_input *input,
                         bounds_status ? bounds_status : "not-checked");
 }
 
-/* Parse, validate, and render an explicit token-list request. */
-/* Purpose: Orchestrate the typed command input tokens request (`command_input_tokens`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_input_tokens(yvex_model_ref *ref,
                                 const char *model_arg,
                                 const char *tokens_text)
@@ -529,7 +483,7 @@ static int command_input_tokens(yvex_model_ref *ref,
 }
 
 /* Render an admitted-model identity failure without attempting tokenization. */
-/* Purpose: Orchestrate the typed command input identity failure request (`command_input_identity_failure`). */
+
 static int command_input_identity_failure(yvex_model_ref *ref,
                                           const char *subcommand,
                                           const char *model_arg,
@@ -545,12 +499,6 @@ static int command_input_identity_failure(yvex_model_ref *ref,
     return exit_for_status(rc);
 }
 
-/* Render a prompt-input failure while preserving the historical output contract. */
-/* Purpose: Orchestrate the typed command input prompt failure request (`command_input_prompt_failure`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_input_prompt_failure(yvex_model_ref *ref,
                                         yvex_model_context *ctx,
                                         const char *model_arg,
@@ -577,12 +525,6 @@ static int command_input_prompt_failure(yvex_model_ref *ref,
     return print_yvex_error(err, exit_for_status(rc));
 }
 
-/* Resolve and validate one explicit input request without executing generation. */
-/* Purpose: Orchestrate the typed command input request (`command_input`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_input(int arg_count, char **args)
 {
     yvex_model_ref ref;
@@ -702,82 +644,42 @@ static int command_input(int arg_count, char **args)
     return rc == YVEX_OK ? 0 : print_yvex_error(&err, exit_for_status(rc));
 }
 
-/* Purpose: Orchestrate the typed detokenize command request (`yvex_detokenize_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_detokenize_command(int arg_count, char **args)
 {
     return command_detokenize(arg_count, args);
 }
 
-/* Purpose: Orchestrate the typed input command request (`yvex_input_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_input_command(int arg_count, char **args)
 {
     return command_input(arg_count, args);
 }
 
-/* Purpose: Orchestrate the typed prompt command request (`yvex_prompt_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_prompt_command(int arg_count, char **args)
 {
     return command_prompt(arg_count, args);
 }
 
-/* Purpose: Orchestrate the typed tokenize command request (`yvex_tokenize_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_tokenize_command(int arg_count, char **args)
 {
     return command_tokenize(arg_count, args);
 }
 
-/* Purpose: Orchestrate the typed tokenizer command request (`yvex_tokenizer_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_tokenizer_command(int arg_count, char **args)
 {
     return command_tokenizer(arg_count, args);
 }
 
-/* Purpose: Render detokenize help from typed facts (`yvex_detokenize_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_detokenize_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
         "usage: yvex execute tokenizer decode <path> --ids IDS\n\nDecodes IDs through the exact artifact tokenizer.\n");
 }
 
-/* Purpose: Render input help from typed facts (`yvex_input_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_input_help(FILE *fp)
 {
     yvex_cli_out_lines(fp, literal_lines_3, sizeof(literal_lines_3) / sizeof(literal_lines_3[0]));
 }
 
-/* Purpose: Render prompt help from typed facts (`yvex_prompt_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_prompt_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
@@ -785,11 +687,6 @@ void yvex_prompt_help(FILE *fp)
         "[--tool TEXT] [--thinking] [--tokens]\n\nRenders the exact bounded DeepSeek prompt policy.\n");
 }
 
-/* Purpose: Render tokenize help from typed facts (`yvex_tokenize_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_tokenize_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
@@ -797,11 +694,6 @@ void yvex_tokenize_help(FILE *fp)
         "Encodes an explicit byte span through the exact artifact tokenizer.\n");
 }
 
-/* Purpose: Render tokenizer help from typed facts (`yvex_tokenizer_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_tokenizer_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,

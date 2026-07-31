@@ -1,12 +1,9 @@
-/* Owner: accounts provider.
- * Owns: provider discovery, bounded execution, observation, and atomic non-secret state.
- * Does not own: source admission, model I/O, rendering, or inference.
- * Invariants: credentials are never persisted and every child is waited.
- * Boundary: account facts do not admit source bytes or runtime capability.
- * Purpose: observe configured provider accounts without exposing credentials.
- * Inputs: provider names, environment facts, local paths, and caller-owned outputs.
- * Effects: runs admitted provider tools and atomically replaces owned account state.
- * Failure: invalid provider, process, path, allocation, or I/O leaves no trusted account state. */
+/*
+ * Observe configured provider accounts without exposing credentials.
+ *
+ * Credentials are never persisted and every child is waited. Account facts do not admit source
+ * bytes or runtime capability.
+ */
 
 #define _POSIX_C_SOURCE 200809L
 
@@ -24,7 +21,6 @@
 #include <yvex/internal/io.h>
 #include <yvex/source.h>
 
-/* Purpose: publish one typed account refusal without duplicating error-state transitions. */
 static int account_refuse(yvex_error *err,
                           yvex_status status,
                           const char *where,
@@ -33,7 +29,6 @@ static int account_refuse(yvex_error *err,
     return status;
 }
 
-/* Purpose: project path format facts while preserving the canonical provider account lifecycle invariants. */
 static int accounts_path_format(
     char *dst, size_t cap, yvex_error *err, const char *where, const char *a, const char *b) {
     int n;
@@ -53,7 +48,7 @@ static int accounts_path_format(
     }
     return YVEX_OK;
 }
-/* Purpose: project json field facts while preserving the canonical provider account lifecycle invariants. */
+
 static void
 accounts_json_field(FILE *fp, const char *indent, const char *key, const char *value, int comma) {
     fputs(indent, fp);
@@ -62,14 +57,12 @@ accounts_json_field(FILE *fp, const char *indent, const char *key, const char *v
     fprintf(fp, "%s\n", comma ? "," : "");
 }
 
-/* Purpose: project json bool facts while preserving the canonical provider account lifecycle invariants. */
 static void
 accounts_json_bool(FILE *fp, const char *indent, const char *key, int value, int comma) {
     fputs(indent, fp);
     fprintf(fp, "\"%s\": %s%s\n", key, value ? "true" : "false", comma ? "," : "");
 }
 
-/* Purpose: project state path facts while preserving the canonical provider account lifecycle invariants. */
 static int accounts_state_path(char *out, size_t cap, yvex_error *err) {
     yvex_paths paths;
     int rc;
@@ -117,11 +110,6 @@ static const account_provider_definition account_providers[] = {
      "status"},
 };
 
-/* Purpose: resolve one admitted provider enum through the immutable provider registry.
- * Inputs: provider enum supplied by a typed account request.
- * Effects: returns a borrowed immutable registry row without mutation.
- * Failure: unknown enum values return null.
- * Boundary: registry lookup does not inspect credentials or execute provider tools. */
 static const account_provider_definition *provider_definition(yvex_account_provider provider) {
     size_t i;
 
@@ -132,11 +120,7 @@ static const account_provider_definition *provider_definition(yvex_account_provi
     return NULL;
 }
 
-/* Purpose: parse a provider name into the canonical provider identity enum.
- * Inputs: typed accounts provider arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned accounts provider state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: account facts do not admit source bytes or runtime capability. */
+/* Parse a provider name into the canonical provider identity enum. */
 int yvex_account_provider_from_name(const char *name, yvex_account_provider *out) {
     size_t i;
 
@@ -152,54 +136,37 @@ int yvex_account_provider_from_name(const char *name, yvex_account_provider *out
     return 0;
 }
 
-/* Purpose: render one canonical provider identity as its stable lowercase name.
- * Inputs: typed accounts provider arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned accounts provider state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: account facts do not admit source bytes or runtime capability. */
+/* Render one canonical provider identity as its stable lowercase name. */
 const char *yvex_account_provider_name(yvex_account_provider provider) {
     const account_provider_definition *definition = provider_definition(provider);
 
     return definition ? definition->name : "unknown";
 }
 
-/* Purpose: return the provider's canonical credential environment variable.
- * Inputs: typed accounts provider arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned accounts provider state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: account facts do not admit source bytes or runtime capability. */
 const char *yvex_account_default_token_env(yvex_account_provider provider) {
     const account_provider_definition *definition = provider_definition(provider);
 
     return definition ? definition->token_env : "";
 }
 
-/* Purpose: project provider env override facts while preserving the canonical provider account lifecycle invariants. */
 static const char *accounts_provider_env_override(yvex_account_provider provider) {
     const account_provider_definition *definition = provider_definition(provider);
 
     return definition ? definition->cli_env : "";
 }
 
-/* Purpose: project provider binary facts while preserving the canonical provider account lifecycle invariants. */
 static const char *accounts_provider_binary(yvex_account_provider provider) {
     const account_provider_definition *definition = provider_definition(provider);
 
     return definition ? definition->binary : "";
 }
 
-/* Purpose: return the admitted legacy CLI binary for provider discovery. */
 static const char *accounts_provider_legacy_binary(yvex_account_provider provider) {
     const account_provider_definition *definition = provider_definition(provider);
 
     return definition ? definition->legacy_binary : "";
 }
 
-/* Purpose: project find in path facts while preserving the canonical provider account lifecycle invariants.
- * Inputs: typed accounts provider arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned accounts provider state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: account facts do not admit source bytes or runtime capability. */
 static int accounts_find_in_path(const char *binary, char *out, size_t cap) {
     const char *path_env;
     const char *start;
@@ -232,11 +199,6 @@ static int accounts_find_in_path(const char *binary, char *out, size_t cap) {
     return 0;
 }
 
-/* Purpose: project find cli facts while preserving the canonical provider account lifecycle invariants.
- * Inputs: typed accounts provider arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned accounts provider state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: account facts do not admit source bytes or runtime capability. */
 static int accounts_find_cli(yvex_account_provider provider,
                              const char *explicit_cli,
                              char *out,
@@ -277,7 +239,6 @@ static int accounts_find_cli(yvex_account_provider provider,
     return 0;
 }
 
-/* Purpose: project first line facts while preserving the canonical provider account lifecycle invariants. */
 static void accounts_first_line(char *value) {
     char *p;
 
@@ -297,11 +258,7 @@ static void accounts_first_line(char *value) {
     }
 }
 
-/* Purpose: run one admitted provider CLI invocation and capture its bounded combined output.
- * Inputs: typed accounts provider arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned accounts provider state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: account facts do not admit source bytes or runtime capability. */
+/* Run one admitted provider CLI invocation and capture its bounded combined output. */
 static int accounts_run_capture(
     const char *const *args, char *out, size_t out_cap, int *exit_code, yvex_error *err) {
     int pipefd[2];
@@ -380,11 +337,6 @@ static int accounts_run_capture(
     return YVEX_OK;
 }
 
-/* Purpose: execute an explicitly selected provider command without persisting credentials.
- * Inputs: typed accounts provider arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned accounts provider state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: account facts do not admit source bytes or runtime capability. */
 int yvex_accounts_run_provider_command(const yvex_account_command_options *options,
                                        yvex_error *err) {
     int stdout_fd = -1;
@@ -457,11 +409,7 @@ int yvex_accounts_run_provider_command(const yvex_account_command_options *optio
     return 1;
 }
 
-/* Purpose: derive non-secret account availability and identity facts from the provider environment.
- * Inputs: typed accounts provider arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned accounts provider state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: account facts do not admit source bytes or runtime capability. */
+/* Derive non-secret account availability and identity facts from the provider environment. */
 int yvex_account_observe(const yvex_account_observe_options *options,
                          yvex_account_observation *out,
                          yvex_error *err) {
@@ -564,11 +512,11 @@ int yvex_account_observe(const yvex_account_observe_options *options,
     return YVEX_OK;
 }
 
-/* Purpose: atomically persist the observed non-secret account state.
- * Inputs: typed accounts provider arguments; borrowed inputs outlive the call.
- * Effects: writes only the explicit accounts provider destination through its transaction.
- * Failure: serialization or I/O failure publishes no partial accounts provider result.
- * Boundary: account facts do not admit source bytes or runtime capability. */
+/*
+ * Atomically persist the observed non-secret account state.
+ *
+ * Writes only the explicit accounts provider destination through its transaction.
+ */
 int yvex_account_write_state(const yvex_account_observation *observations,
                              unsigned long count,
                              yvex_error *err) {
@@ -618,11 +566,6 @@ int yvex_account_write_state(const yvex_account_observation *observations,
     return YVEX_OK;
 }
 
-/* Purpose: observe the selected provider and optionally refresh its local account state.
- * Inputs: typed accounts provider arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned accounts provider state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: account facts do not admit source bytes or runtime capability. */
 int yvex_account_ensure(const yvex_account_ensure_options *options,
                         yvex_account_observation *out,
                         yvex_error *err) {

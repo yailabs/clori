@@ -1,12 +1,8 @@
-/* Owner: live DeepSeek repeated-decode evidence.
- * Owns: selected-artifact CPU/CUDA prefill-to-decode lifecycle and comparison evidence.
- * Does not own: production transformer math, tokenization, logits, sampling, or generation.
- * Invariants: both backends reuse one warm transformer/session and commit exactly once per decode token.
- * Boundary: test-only consumer over the admitted external GGUF and runtime binding.
- * Purpose: prove two real teacher-forced decode steps consume prior KV and publish normalized hidden rows.
- * Inputs: selected GGUF, immutable runtime binding, and one untracked token-input output path.
- * Effects: writes one bounded token stream and executes isolated CPU/CUDA sessions serially.
- * Failure: reports typed production ownership and releases all test-owned resources. */
+/*
+ * Exercises two real teacher-forced decode steps consume prior KV and publish normalized hidden
+ * rows. Both backends reuse one warm transformer/session and commit exactly once per decode
+ * token. Test-only consumer over the admitted external GGUF and runtime binding.
+ */
 #include <yvex/internal/decode.h>
 #include <yvex/internal/runtime.h>
 
@@ -29,7 +25,6 @@ typedef struct {
     yvex_runtime_session_summary before_decode, after_decode;
 } live_decode;
 
-/* Purpose: print one typed live failure without changing its semantic owner. */
 static void live_fail(const char *step, int rc, const yvex_error *err)
 {
     fprintf(stderr, "decode_live step=%s status=%d where=%s reason=%s\n",
@@ -37,7 +32,6 @@ static void live_fail(const char *step, int rc, const yvex_error *err)
             err ? yvex_error_message(err) : "");
 }
 
-/* Purpose: open one isolated warm transformer/decode lifecycle. */
 static int live_decode_open(live_decode *execution, yvex_runtime_model *model,
                             yvex_backend_kind backend,
                             int (*decode_cancel)(void *), void *cancel_context,
@@ -65,7 +59,6 @@ static int live_decode_open(live_decode *execution, yvex_runtime_model *model,
         &decode_options, err);
 }
 
-/* Purpose: release one live decode lifecycle in dependent-first order. */
 static int live_decode_close(live_decode *execution, yvex_error *err)
 {
     yvex_error cleanup;
@@ -84,7 +77,6 @@ static int live_decode_close(live_decode *execution, yvex_error *err)
     return rc;
 }
 
-/* Purpose: seal one numeric token input or subview with canonical identities. */
 static int live_input_open(yvex_transformer_input **input,
                            const yvex_transformer_plan_summary *plan,
                            const unsigned int *tokens,
@@ -115,7 +107,6 @@ static int live_input_open(yvex_transformer_input **input,
     return rc;
 }
 
-/* Purpose: execute one prefix followed by two production decode steps. */
 static int live_decode_run(live_decode *execution,
                            const yvex_transformer_input *prefill_input,
                            const yvex_transformer_input *decode_input,
@@ -187,7 +178,6 @@ static int live_decode_run(live_decode *execution,
     return rc;
 }
 
-/* Purpose: compare all CPU/CUDA decode hidden rows under the composed contract. */
 static int live_compare(const live_decode *cpu, const live_decode *cuda,
                         unsigned long long count, double *maximum, double *rmse)
 {
@@ -209,7 +199,6 @@ static int live_compare(const live_decode *cpu, const live_decode *cuda,
     return 1;
 }
 
-/* Purpose: execute the equivalent full token sequence as one-token transformer chunks. */
 static int live_reference_run(live_decode *execution,
                               const yvex_transformer_input *stream,
                               unsigned long long width, yvex_error *err)
@@ -230,14 +219,13 @@ static int live_reference_run(live_decode *execution,
 
 typedef struct { unsigned int calls; } live_cancel_state;
 
-/* Purpose: cancel only after two repeated-decode steps have completed. */
 static int live_cancel_after_two(void *opaque)
 {
     live_cancel_state *state = (live_cancel_state *)opaque;
     return ++state->calls > 2u;
 }
 
-/* Purpose: prove cancellation after two steps publishes exact typed partial progress. */
+/* Prove cancellation after two steps publishes exact typed partial progress. */
 static int live_partial_run(live_decode *execution,
                             const yvex_transformer_input *prefill_input,
                             const yvex_transformer_input *decode_input,

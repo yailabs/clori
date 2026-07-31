@@ -1,9 +1,4 @@
-/*
- * YVEX - Native weight inventory tests
- *
- * File: tests/test_native_weights.c
- * Layer: test
- */
+
 #include "tests/test.h"
 #include <yvex/internal/source.h>
 #include <yvex/internal/source_payload.h>

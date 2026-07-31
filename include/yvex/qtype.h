@@ -1,12 +1,5 @@
-/* Owner: public qtype ABI.
- * Owns: pinned GGUF qtype identities, storage geometry, and capability projection.
- * Does not own: quantization policy, payload encoding, or backend execution.
- * Invariants: declarations are format-stable, externally consumable, and independently includable.
- * Boundary: format-stable qtype identity and storage geometry.
- * Purpose: Expose format-stable qtype identity and storage geometry.
- * Inputs: Typed caller-owned values and immutable borrowed views as declared below.
- * Effects: Only functions with explicit lifecycle or I/O contracts mutate external state.
- * Failure: Typed status and error outputs remain authoritative; declarations add no capability. */
+/* Qtype identity, storage geometry, codec support, and executable backend support are separate
+ * facts. This ABI owns the stable identity and geometry vocabulary shared across those gates. */
 #ifndef YVEX_QTYPE_H
 #define YVEX_QTYPE_H
 
@@ -151,7 +144,7 @@ yvex_gguf_qtype_storage_status yvex_gguf_qtype_validate_tensor_storage(
     unsigned long long actual_storage_bytes,
     yvex_gguf_qtype_storage_result *out);
 
-/* Compatibility boundary: element_count is one logical row, never a tensor. */
+/* The compatibility form interprets element_count as one logical row, never a tensor. */
 int yvex_gguf_qtype_storage_bytes(unsigned int qtype,
                                   unsigned long long row_element_count,
                                   unsigned long long *out,

@@ -1,12 +1,8 @@
-/* Owner: live DeepSeek transformer evidence.
- * Owns: selected-artifact CPU/CUDA full-backbone, token-input, state, and comparison evidence.
- * Does not own: production transformer math, tokenizer, logits, decode loops, or generation.
- * Invariants: both backends consume one identity-bound token bundle through production APIs.
- * Boundary: test-only consumer over the admitted external GGUF and runtime binding.
- * Purpose: prove one real token traverses embedding, 43 blocks, final head/norm, and persistent state.
- * Inputs: selected GGUF, immutable runtime binding, and an untracked token-input output path.
- * Effects: writes one bounded input and executes isolated CPU/CUDA sessions serially.
- * Failure: reports the typed production owner and releases every test-owned resource. */
+/*
+ * Exercises one real token traverses embedding, 43 blocks, final head/norm, and persistent
+ * state. Both backends consume one identity-bound token bundle through production APIs.
+ * Test-only consumer over the admitted external GGUF and runtime binding.
+ */
 #include <yvex/internal/transformer.h>
 #include <yvex/internal/runtime.h>
 
@@ -25,7 +21,6 @@ typedef struct {
     yvex_runtime_transformer_result result;
 } live_execution;
 
-/* Purpose: print one typed live failure without changing its owner. */
 static void live_fail(const char *step, int rc, const yvex_error *err)
 {
     fprintf(stderr, "transformer_live step=%s status=%d where=%s reason=%s\n",
@@ -33,7 +28,6 @@ static void live_fail(const char *step, int rc, const yvex_error *err)
             err ? yvex_error_message(err) : "");
 }
 
-/* Purpose: open one isolated session and transformer context. */
 static int live_execution_open(live_execution *execution, yvex_runtime_model *model,
                                yvex_backend_kind backend, yvex_error *err)
 {
@@ -50,7 +44,6 @@ static int live_execution_open(live_execution *execution, yvex_runtime_model *mo
         &execution->context, model, execution->session, &options, err);
 }
 
-/* Purpose: release one live session/context pair and caller output. */
 static int live_execution_close(live_execution *execution, yvex_error *err)
 {
     yvex_error cleanup;
@@ -67,7 +60,6 @@ static int live_execution_close(live_execution *execution, yvex_error *err)
     return rc;
 }
 
-/* Purpose: seal one canonical numeric token input against the production plan. */
 static int live_input_open(yvex_transformer_input **input,
                            yvex_transformer_input_summary *summary,
                            const yvex_runtime_model *model,
@@ -104,7 +96,6 @@ static int live_input_open(yvex_transformer_input **input,
     return rc;
 }
 
-/* Purpose: execute one complete token chunk and validate exact per-token structural counters. */
 static int live_execute(live_execution *execution, const yvex_transformer_input *input,
                         yvex_backend_kind backend, unsigned long long chunk_tokens,
                         yvex_error *err)
@@ -149,7 +140,6 @@ static int live_execute(live_execution *execution, const yvex_transformer_input 
     return rc;
 }
 
-/* Purpose: compare the final CPU/CUDA normalized hidden state under the composed contract. */
 static int live_compare(const live_execution *cpu, const live_execution *cuda,
                         unsigned long long width, double *maximum, double *rmse)
 {
@@ -171,7 +161,6 @@ static int live_compare(const live_execution *cpu, const live_execution *cuda,
     return 1;
 }
 
-/* Purpose: prove one token output changes when the same token receives committed prior history. */
 static int live_history_changes(const float *with_history, const float *without_history,
                                 unsigned long long width)
 {

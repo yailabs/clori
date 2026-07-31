@@ -1,27 +1,6 @@
 /*
- * YVEX - model descriptor tests
- *
- * File: tests/test_model_descriptor.c
- * Layer: test
- *
- * Purpose:
- *   Proves that model layer builds descriptor-only model summaries from parsed GGUF
- *   metadata and tensor tables without creating executable model state.
- *
- * Covers:
- *   - yvex_model_descriptor_from_gguf
- *   - yvex_model_arch
- *   - yvex_model_name
- *   - yvex_model_context_length
- *   - yvex_model_total_storage_bytes
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_model_descriptor
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises model layer builds descriptor-only model summaries from parsed GGUF metadata and
+ * tensor tables without creating executable model state.
  */
 #include <string.h>
 

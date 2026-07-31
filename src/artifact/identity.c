@@ -1,12 +1,9 @@
-/* Owner: artifact identity.
- * Owns: SHA-256 over exact artifact bytes and bounded streaming state.
- * Does not own: GGUF semantics, provenance, completeness, or materialization.
- * Invariants: the identity binds every byte and exact length; partial reads never publish.
- * Boundary: physical identity does not prove semantic completeness or support.
- * Purpose: compute canonical identities over exact artifact byte sequences.
- * Inputs: bounded bytes or read callbacks and caller-owned digest storage.
- * Effects: updates hash state and reads only explicitly requested artifact spans.
- * Failure: short read, drift, malformed digest, or I/O publishes no identity. */
+/*
+ * Compute canonical identities over exact artifact byte sequences.
+ *
+ * The identity binds every byte and exact length; partial reads never publish. Physical identity
+ * does not prove semantic completeness or support.
+ */
 #include <ctype.h>
 #include <dlfcn.h>
 #include <limits.h>
@@ -54,11 +51,7 @@ typedef struct {
     yvex_sha256 portable;
     int accelerated;
 } artifact_hash;
-/* Purpose: resolve one optional EVP symbol without a non-standard pointer cast.
- * Inputs: open library, symbol name, and exactly sized function-pointer storage.
- * Effects: copies one resolved address into caller-owned provider state.
- * Failure: returns false without modifying storage when resolution is unsafe or unavailable.
- * Boundary: dynamic loading changes performance only, never SHA-256 semantics. */
+
 static int artifact_hash_symbol(void *library, const char *name, void *destination,
                                 size_t destination_bytes)
 {
@@ -71,11 +64,7 @@ static int artifact_hash_symbol(void *library, const char *name, void *destinati
     memcpy(destination, &symbol, sizeof(symbol));
     return 1;
 }
-/* Purpose: admit a complete optional EVP SHA-256 function set.
- * Inputs: caller-owned empty provider storage and pinned library/symbol names.
- * Effects: owns one dynamic-library handle only when every required symbol resolves.
- * Failure: publishes an unavailable provider after closing any partial library state.
- * Boundary: absence selects the canonical portable implementation. */
+
 static void artifact_hash_provider_open(artifact_hash_provider *provider)
 {
     static const char *const libraries[] = {"libcrypto.so.3", "libcrypto.so"};
@@ -101,11 +90,7 @@ static void artifact_hash_provider_open(artifact_hash_provider *provider)
         memset(provider, 0, sizeof(*provider));
     }
 }
-/* Purpose: release one optionally loaded SHA-256 provider.
- * Inputs: caller-owned provider state from artifact_hash_provider_open.
- * Effects: closes its library handle and clears all borrowed symbol addresses.
- * Failure: null and already-cleared providers are harmless.
- * Boundary: never owns hash contexts, artifact handles, or payload buffers. */
+
 static void artifact_hash_provider_close(artifact_hash_provider *provider)
 {
     if (!provider)
@@ -114,11 +99,7 @@ static void artifact_hash_provider_close(artifact_hash_provider *provider)
         dlclose(provider->library);
     memset(provider, 0, sizeof(*provider));
 }
-/* Purpose: start one canonical SHA-256 computation with admitted acceleration if available.
- * Inputs: empty hash state and an optional immutable provider.
- * Effects: owns an EVP context or initializes portable state.
- * Failure: EVP setup falls back to portable hashing without changing digest semantics.
- * Boundary: the provider is borrowed until finalization or abort. */
+
 static int artifact_hash_init(artifact_hash *hash, const artifact_hash_provider *provider)
 {
     memset(hash, 0, sizeof(*hash));
@@ -136,11 +117,7 @@ static int artifact_hash_init(artifact_hash *hash, const artifact_hash_provider 
     yvex_sha256_init(&hash->portable);
     return 1;
 }
-/* Purpose: append one exact byte range to the selected SHA-256 implementation.
- * Inputs: active hash state and a valid range, allowing null only for zero bytes.
- * Effects: advances only caller-owned digest state.
- * Failure: returns false for invalid input or provider/hash refusal.
- * Boundary: accelerated and portable paths must produce identical bytes. */
+
 static int artifact_hash_update(artifact_hash *hash, const void *bytes, size_t byte_count)
 {
     if (!hash || (!bytes && byte_count))
@@ -149,11 +126,7 @@ static int artifact_hash_update(artifact_hash *hash, const void *bytes, size_t b
         return hash->provider->digest_update(hash->context, bytes, byte_count) == 1;
     return yvex_sha256_update(&hash->portable, bytes, byte_count);
 }
-/* Purpose: finalize one exact SHA-256 digest and release its EVP context.
- * Inputs: active hash state and fixed-width digest output.
- * Effects: writes the digest and consumes accelerated context ownership.
- * Failure: returns false for invalid state, provider failure, or wrong digest width.
- * Boundary: callers own hexadecimal encoding and evidence publication. */
+
 static int artifact_hash_final(artifact_hash *hash,
                                unsigned char digest[YVEX_SHA256_DIGEST_BYTES])
 {
@@ -170,11 +143,7 @@ static int artifact_hash_final(artifact_hash *hash,
     hash->accelerated = 0;
     return ok;
 }
-/* Purpose: discard one unfinished hash computation.
- * Inputs: nullable caller-owned hash state.
- * Effects: frees any live EVP context and clears all mutable state.
- * Failure: repeated or null abort is harmless.
- * Boundary: never publishes a partial digest. */
+
 static void artifact_hash_abort(artifact_hash *hash)
 {
     if (hash && hash->accelerated && hash->context)
@@ -182,11 +151,11 @@ static void artifact_hash_abort(artifact_hash *hash)
     if (hash)
         memset(hash, 0, sizeof(*hash));
 }
-/* Purpose: hash an entire named file through the canonical portable path contract.
- * Inputs: non-empty path, diagnostic class, digest output, and optional size output.
- * Effects: performs bounded sequential reads and publishes size only after full coverage.
- * Failure: typed open, read, arithmetic, or finalization error publishes no digest.
- * Boundary: path APIs remain independent from opened-artifact snapshot admission. */
+/*
+ * Hash an entire named file through the canonical portable path contract.
+ *
+ * Performs bounded sequential reads and publishes size only after full coverage.
+ */
 static int artifact_hash_path(const char *path, unsigned int error_kind,
                               unsigned char digest[YVEX_SHA256_DIGEST_BYTES],
                               unsigned long long *file_size, yvex_error *err)
@@ -236,11 +205,7 @@ static int artifact_hash_path(const char *path, unsigned int error_kind,
         *file_size = size;
     return rc;
 }
-/* Purpose: append one exact artifact interval through bounded positioned reads.
- * Inputs: stable artifact, checked range, reusable buffer, and active hash state.
- * Effects: reads and hashes exactly byte_count bytes without retaining payload.
- * Failure: returns typed range, read, or digest-update failure at the first bad chunk.
- * Boundary: snapshot validation remains the enclosing operation's responsibility. */
+
 static int artifact_hash_range(const yvex_artifact *artifact, unsigned long long start,
                                unsigned long long byte_count, unsigned char *buffer,
                                size_t buffer_bytes, artifact_hash *hash,
@@ -270,11 +235,11 @@ static int artifact_hash_range(const yvex_artifact *artifact, unsigned long long
     }
     return YVEX_OK;
 }
-/* Purpose: compare every stable artifact snapshot fact without filesystem I/O.
- * Inputs: two immutable captured snapshots.
- * Effects: none.
- * Failure: absent input or any identity difference returns false.
- * Boundary: snapshot equality does not validate GGUF semantics or file bytes. */
+/*
+ * Compare every stable artifact snapshot fact without filesystem I/O.
+ *
+ * Absent input or any identity difference returns false.
+ */
 int yvex_artifact_snapshot_equal(const yvex_artifact_snapshot *left,
                                  const yvex_artifact_snapshot *right)
 {
@@ -285,11 +250,11 @@ int yvex_artifact_snapshot_equal(const yvex_artifact_snapshot *left,
            left->ctime_seconds == right->ctime_seconds &&
            left->ctime_nanoseconds == right->ctime_nanoseconds;
 }
-/* Purpose: starts one empty exact-file identity stream without allocation or IO.
- * Inputs: typed artifact identity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact identity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: physical identity does not prove semantic completeness or support. */
+/*
+ * Starts one empty exact-file identity stream without allocation or IO.
+ *
+ * Physical identity does not prove semantic completeness or support.
+ */
 void yvex_artifact_identity_stream_init(yvex_artifact_identity_stream *stream) {
     if (!stream)
         return;
@@ -297,11 +262,11 @@ void yvex_artifact_identity_stream_init(yvex_artifact_identity_stream *stream) {
     yvex_sha256_init(&stream->hash);
     stream->active = 1;
 }
-/* Purpose: appends one ordered byte range and checks aggregate length arithmetic.
- * Inputs: typed artifact identity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact identity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: physical identity does not prove semantic completeness or support. */
+/*
+ * Appends one ordered byte range and checks aggregate length arithmetic.
+ *
+ * Physical identity does not prove semantic completeness or support.
+ */
 int yvex_artifact_identity_stream_update(yvex_artifact_identity_stream *stream,
                                          const unsigned char *bytes,
                                          size_t byte_count,
@@ -326,11 +291,11 @@ int yvex_artifact_identity_stream_update(yvex_artifact_identity_stream *stream,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: finalizes only exact expected coverage and clears mutable hash state.
- * Inputs: typed artifact identity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact identity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: physical identity does not prove semantic completeness or support. */
+/*
+ * Finalizes only exact expected coverage and clears mutable hash state.
+ *
+ * Physical identity does not prove semantic completeness or support.
+ */
 int yvex_artifact_identity_stream_final(yvex_artifact_identity_stream *stream,
                                         unsigned long long expected_bytes,
                                         char out_hex[YVEX_SHA256_HEX_CAP],
@@ -353,11 +318,11 @@ int yvex_artifact_identity_stream_final(yvex_artifact_identity_stream *stream,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: project sha256 hex bytes facts while preserving the canonical artifact identity invariants.
- * Inputs: typed artifact identity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact identity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: physical identity does not prove semantic completeness or support. */
+/*
+ * Project sha256 hex bytes facts while preserving the canonical artifact identity invariants.
+ *
+ * Physical identity does not prove semantic completeness or support.
+ */
 int yvex_artifact_sha256_hex_bytes(const unsigned char *data,
                                    unsigned long long len,
                                    char out_hex[YVEX_SHA256_HEX_CAP],
@@ -391,11 +356,11 @@ int yvex_artifact_sha256_hex_bytes(const unsigned char *data,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: hash the complete artifact byte sequence while detecting short reads and replacement.
- * Inputs: typed artifact identity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact identity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: physical identity does not prove semantic completeness or support. */
+/*
+ * Hash the complete artifact byte sequence while detecting short reads and replacement.
+ *
+ * Physical identity does not prove semantic completeness or support.
+ */
 int yvex_artifact_compute_sha256(const char *path,
                                  char out_hex[YVEX_SHA256_HEX_CAP],
                                  yvex_error *err) {
@@ -413,11 +378,10 @@ int yvex_artifact_compute_sha256(const char *path,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: hash one exact artifact span through a caller-supplied bounded reader.
- * Inputs: typed artifact identity arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned artifact identity state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: physical identity does not prove semantic completeness or support. */
+/*
+ * Hash one exact artifact span through a caller-supplied bounded reader. Physical identity does
+ * not prove semantic completeness or support.
+ */
 int yvex_artifact_identity_read(const char *path,
                                 yvex_artifact_file_identity *out,
                                 yvex_error *err) {
@@ -443,22 +407,22 @@ int yvex_artifact_identity_read(const char *path,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: hash the exact borrowed handle between pre-read and post-read identity checks.
- * Inputs: typed artifact identity arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned artifact identity state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: physical identity does not prove semantic completeness or support. */
+/*
+ * Hash the exact borrowed handle between pre-read and post-read identity checks. Physical identity
+ * does not prove semantic completeness or support.
+ */
 int yvex_artifact_identity_read_open(const yvex_artifact *artifact,
                                      yvex_artifact_file_identity *out,
                                      yvex_error *err)
 {
     return yvex_artifact_identity_read_open_progress(artifact, out, NULL, NULL, err);
 }
-/* Purpose: hash one stable opened artifact while reporting exact byte progress.
- * Inputs: immutable artifact, output, optional callback/context, and error state.
- * Effects: performs bounded reads and invokes the callback after each completed chunk.
- * Failure: callback cancellation or physical drift publishes no partial identity.
- * Boundary: progress observes physical hashing only and cannot alter artifact trust. */
+/*
+ * Hash one stable opened artifact while reporting exact byte progress.
+ *
+ * Performs bounded reads and invokes the callback after each completed chunk. Callback
+ * cancellation or physical drift publishes no partial identity.
+ */
 int yvex_artifact_identity_read_open_progress(
     const yvex_artifact *artifact, yvex_artifact_file_identity *out,
     int (*progress)(void *context, unsigned long long completed,
@@ -525,11 +489,13 @@ failure:
     memset(out, 0, sizeof(*out));
     return rc;
 }
-/* Purpose: hash ordered raw tensor payloads independently from semantic plan identities.
- * Inputs: stable opened artifact, parsed GGUF directory, and bounded streaming budget.
- * Effects: reads each exact raw tensor range and replaces caller-owned evidence on success.
- * Failure: malformed ranges, short reads, allocation, or snapshot drift publish no identity.
- * Boundary: excludes metadata and padding; it does not establish semantic compatibility alone. */
+/*
+ * Hash ordered raw tensor payloads independently from semantic plan identities.
+ *
+ * Stable opened artifact, parsed GGUF directory, and bounded streaming budget. Malformed ranges,
+ * short reads, allocation, or snapshot drift publish no identity. Excludes metadata and padding;
+ * it does not establish semantic compatibility alone.
+ */
 int yvex_artifact_payload_identity_compute(const yvex_artifact *artifact, const yvex_gguf *gguf,
                                            size_t buffer_bytes,
                                            yvex_artifact_payload_identity *out, yvex_error *err)
@@ -630,11 +596,11 @@ done:
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-/* Purpose: check structural validity of the supplied artifact identity facts.
- * Inputs: typed artifact identity arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact identity state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: physical identity does not prove semantic completeness or support. */
+/*
+ * Check structural validity of the supplied artifact identity facts.
+ *
+ * Physical identity does not prove semantic completeness or support.
+ */
 int yvex_sha256_hex_is_valid(const char *hex) {
     return yvex_sha256_hex_valid(hex);
 }

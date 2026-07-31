@@ -1,12 +1,10 @@
-/* Owner: runtime repeated decode contract.
- * Owns: explicit decode phase, one-token steps, repeated orchestration, partial progress, and evidence.
- * Does not own: transformer numerics, KV storage, tokenization, logits, sampling, or generation.
- * Invariants: every successful step consumes one nonzero committed prefix and advances session state once.
- * Boundary: internal runtime/operator ABI over the existing transformer token-input and context owners.
- * Purpose: expose teacher-forced model decode without duplicating transformer or persistent-state resources.
- * Inputs: one paired transformer/session context, identity-bound numeric tokens, and caller-owned outputs.
- * Effects: commits successful steps independently and publishes ordered normalized hidden rows.
- * Failure: the failing step publishes nothing while all earlier successful steps remain authoritative. */
+/*
+ * Expose teacher-forced model decode without duplicating transformer or persistent-state
+ * resources.
+ *
+ * Every successful step consumes one nonzero committed prefix and advances session state once.
+ * Internal runtime/operator ABI over the existing transformer token-input and context owners.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_DECODE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_DECODE_H_INCLUDED
 #include <yvex/internal/transformer.h>

@@ -1,12 +1,7 @@
-/* Owner: artifact.internal (artifact).
- * Owns: artifact identities, materialization plans, and complete-artifact admission.
- * Does not own: GGUF encoding, graph execution, or runtime support.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: artifact-owned internal lifecycle and admission.
- * Purpose: provide the canonical artifact-owned internal lifecycle and admission contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * Artifact owners share identity, integrity, compatibility, and materialization lifecycles through
+ * this ABI. Each stage preserves its own admission boundary.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_ARTIFACT_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_ARTIFACT_H_INCLUDED
 
@@ -31,7 +26,7 @@ int yvex_artifact_cache_release(const yvex_artifact *artifact,
                                 unsigned long long byte_count,
                                 yvex_error *err);
 
-/* Identity contract. */
+/* Identity. */
 typedef struct {
     yvex_sha256 hash;
     unsigned long long bytes;
@@ -60,7 +55,7 @@ int yvex_artifact_payload_identity_compute(const yvex_artifact *artifact, const 
                                            yvex_artifact_payload_identity *out,
                                            yvex_error *err);
 
-/* Roundtrip Gate contract. */
+/* Roundtrip Gate. */
 #define YVEX_GGUF_OFFICIAL_READER_REVISION "af97976c7810cdabb1863172f31c432dab767de7"
 #define YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME "deepseek-v4-flash-q8_0-q2_k-v1.gguf"
 #define YVEX_SELECTED_DEEPSEEK_ARTIFACT_IDENTITY                                                   \
@@ -181,7 +176,7 @@ typedef struct yvex_complete_artifact_admission {
     int complete;
 } yvex_complete_artifact_admission;
 
-/* Physical compatibility contract. */
+/* Physical compatibility. */
 #define YVEX_ARTIFACT_PHYSICAL_COMPATIBILITY_SCHEMA_VERSION 1u
 typedef enum {
     YVEX_ARTIFACT_COMPATIBILITY_OK = 0,
@@ -270,7 +265,7 @@ const char *yvex_artifact_admission_code_name(yvex_artifact_admission_code code)
 int yvex_artifact_descriptor_from_admission(const yvex_complete_artifact_admission *admission,
                                             yvex_artifact_descriptor_fact *fact);
 
-/* Materialize contract. */
+/* Materialize. */
 #define YVEX_MATERIALIZATION_IDENTITY_CAP 65u
 #define YVEX_MATERIALIZATION_NAME_CAP 192u
 #define YVEX_MATERIALIZATION_QTYPE_CAP 43u

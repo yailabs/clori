@@ -1,8 +1,4 @@
-/*
- * tests/test.c - Baseline YVEX test runner.
- *
- * This runner groups non-CUDA unit coverage into domain sections.
- */
+/* This runner groups non-CUDA unit coverage into domain sections. */
 
 #include "tests/test.h"
 
@@ -80,7 +76,6 @@ static int run_test(const char *name, int (*fn)(void))
     return rc;
 }
 
-/* Core */
 static int run_core(void)
 {
     if (run_test("status", yvex_test_status) != 0) return 1;
@@ -90,7 +85,6 @@ static int run_core(void)
     return 0;
 }
 
-/* Filesystem, artifacts, and GGUF */
 static int run_filesystem_artifacts_gguf(void)
 {
     if (run_test("fs", yvex_test_fs) != 0) return 1;
@@ -109,7 +103,6 @@ static int run_filesystem_artifacts_gguf(void)
     return 0;
 }
 
-/* Model and weights */
 static int run_model_weights(void)
 {
     if (run_test("dtype", yvex_test_dtype) != 0) return 1;
@@ -132,7 +125,6 @@ static int run_model_weights(void)
     return 0;
 }
 
-/* Tokenizer and prompt */
 static int run_tokenizer_prompt(void)
 {
     if (run_test("tokenizer", yvex_test_tokenizer) != 0) return 1;
@@ -141,7 +133,6 @@ static int run_tokenizer_prompt(void)
     return 0;
 }
 
-/* Graph and planner */
 static int run_graph_planner(void)
 {
     if (run_test("shape", yvex_test_shape) != 0) return 1;
@@ -152,7 +143,6 @@ static int run_graph_planner(void)
     return 0;
 }
 
-/* CPU backend */
 static int run_cpu_backend(void)
 {
     if (run_test("backend_cpu", yvex_test_backend_cpu) != 0) return 1;
@@ -160,7 +150,6 @@ static int run_cpu_backend(void)
     return 0;
 }
 
-/* Runtime and console */
 static int run_runtime_console(void)
 {
     if (run_test("runtime_benchmark", yvex_test_runtime_benchmark) != 0) return 1;
@@ -178,7 +167,6 @@ static int run_runtime_console(void)
     return 0;
 }
 
-/* Server */
 static int run_server(void)
 {
     if (run_test("protocol", yvex_test_protocol) != 0) return 1;
@@ -188,7 +176,6 @@ static int run_server(void)
     return 0;
 }
 
-/* GGUF and model artifact tools */
 static int run_gguf_model_artifact_tools(void)
 {
     if (run_test("weight_mapping", yvex_test_weight_mapping) != 0) return 1;

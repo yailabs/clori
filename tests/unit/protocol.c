@@ -1,7 +1,5 @@
 /*
- * YVEX - bounded local protocol tests
- *
- * Purpose: prove field-wise request/message roundtrip, embedded bytes, version refusal,
+ * Exercises field-wise request/message roundtrip, embedded bytes, version refusal,
  * malformed-frame refusal, and stable protocol identities without opening an engine.
  */
 #include <stdlib.h>

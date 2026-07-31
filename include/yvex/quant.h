@@ -1,12 +1,5 @@
-/* Owner: public quant ABI.
- * Owns: imatrix manifests, quantization jobs, and role-based policy.
- * Does not own: numeric execution, GGUF writing, or artifact publication.
- * Invariants: declarations are format-stable, externally consumable, and independently includable.
- * Boundary: quantization inputs and policy contracts.
- * Purpose: Expose quantization inputs and policy contracts.
- * Inputs: Typed caller-owned values and immutable borrowed views as declared below.
- * Effects: Only functions with explicit lifecycle or I/O contracts mutate external state.
- * Failure: Typed status and error outputs remain authoritative; declarations add no capability. */
+/* Quantization policy selects a physical representation over admitted logical facts. Planning and
+ * calibration do not themselves produce encoded bytes or a complete artifact. */
 #ifndef YVEX_QUANT_H
 #define YVEX_QUANT_H
 

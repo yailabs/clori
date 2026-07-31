@@ -1,12 +1,5 @@
-/* Owner: public core ABI.
- * Owns: status, errors, filesystem paths, logging vocabulary, and version identity.
- * Does not own: subsystem policy, model state, or operator rendering.
- * Invariants: declarations are format-stable, externally consumable, and independently includable.
- * Boundary: the stable leaf contracts shared by all public YVEX domains.
- * Purpose: Expose the stable leaf contracts shared by all public YVEX domains.
- * Inputs: Typed caller-owned values and immutable borrowed views as declared below.
- * Effects: Only functions with explicit lifecycle or I/O contracts mutate external state.
- * Failure: Typed status and error outputs remain authoritative; declarations add no capability. */
+/* Stable leaf types shared by installed domain headers live here. Status and identity values are
+ * portable data contracts; they never encode pointers, padding, local paths, or process state. */
 #ifndef YVEX_CORE_H
 #define YVEX_CORE_H
 

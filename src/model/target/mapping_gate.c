@@ -1,16 +1,11 @@
-/* Owner: src/model/target
- * Owns: typed projection of canonical DeepSeek mapping-plan facts plus legacy bounded Qwen/Gemma mapping-gate
- *   facts, blockers, and handoff rows.
- * Does not own: CLI parsing, rendering, artifact emission, quantization execution, runtime execution, generation,
- *   eval, benchmark, or release decisions.
- * Invariants: the DeepSeek release path consumes the canonical immutable map; legacy family gates remain
- *   header/sidecar evidence. Neither path marks payload, artifact, runtime, or generation behavior ready.
- * Boundary: mapping gate status is not quantization, artifact emission, runtime readiness, generation readiness,
- *   benchmark evidence, or release readiness.
- * Purpose: evaluate typed mapping-gate evidence from bounded source facts.
- * Inputs: typed target requests and retained report facts.
- * Effects: reads bounded metadata evidence and updates report state.
- * Failure: missing or ambiguous evidence remains an explicit blocker. */
+/*
+ * Evaluate typed mapping-gate evidence from bounded source facts.
+ *
+ * The DeepSeek release path consumes the canonical immutable map; legacy family gates remain
+ * header/sidecar evidence. Neither path marks payload, artifact, runtime, or generation behavior
+ * ready. Mapping gate status is not quantization, artifact emission, runtime readiness, generation
+ * readiness, benchmark evidence, or release readiness.
+ */
 #include <yvex/internal/model_target.h>
 
 #include <yvex/internal/compilation.h>
@@ -131,7 +126,6 @@ static const yvex_model_target_request_rules mapping_gate_rules = {
 #undef MAPPING_STRING
 #undef MAPPING_INT
 
-/* Purpose: apply one immutable blocker fact without duplicating lifecycle state. */
 static void mapping_gate_apply_block(mapping_gate_state *state,
                                      const mapping_gate_block *block)
 {
@@ -148,30 +142,6 @@ static void mapping_gate_apply_block(mapping_gate_state *state,
     state->result = "block";
 }
 
-/*
- * yvex_model_mapping_report_deepseek()
- *
- * Purpose:
- *   verify the exact release source once, build its IR and coverage, then
- *   attach the canonical immutable logical GGUF plan to the typed report.
- *
- * Inputs:
- *   request and err are borrowed; report receives owned coverage/map objects.
- *
- * Effects:
- *   performs source metadata/header IO through the source verifier and reads
- *   zero tensor payload bytes; it does not print or write files.
- *
- * Failure:
- *   mapping refusal becomes a typed blocked report with exit code 5; path
- *   construction failures return an error without publishing partial owners.
- *
- * Cleanup:
- *   report close releases every successfully attached owner.
- *
- * Boundary:
- *   a complete logical plan is not payload conversion, physical GGUF
- *   emission, artifact support, materialization, or runtime execution. */
 int yvex_model_mapping_report_deepseek(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
@@ -297,25 +267,6 @@ cleanup:
     return YVEX_OK;
 }
 
-/*
- * mapping_gate_build_state()
- *
- * Purpose:
- *   gather report-only source/header and metadata coverage facts.
- *
- * Inputs:
- *   request/family are borrowed; state is mutated.
- *
- * Effects:
- *   reads local metadata sidecars and safetensors headers only; tensor payloads
- *   are not loaded and no output is written.
- *
- * Failure:
- *   missing inputs become typed blockers instead of hard failures.
- *
- * Boundary:
- *   coverage facts do not prove role materialization, artifact emission, or
- *   runtime readiness. */
 static void mapping_gate_build_state(const yvex_model_target_request *request,
                                      const char *family,
                                      mapping_gate_state *state)
@@ -354,23 +305,6 @@ static void mapping_gate_build_state(const yvex_model_target_request *request,
     }
 }
 
-/*
- * mapping_gate_prepare()
- *
- * Purpose:
- *   initialize common typed fields for the mapping gate report.
- *
- * Inputs:
- *   request and report are borrowed.
- *
- * Effects:
- *   mutates report fields only; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   none.
- *
- * Boundary:
- *   common fields remain report-only and do not imply quantization readiness. */
 static void mapping_gate_prepare(const yvex_model_target_request *request,
                                  const mapping_gate_state *state,
                                  yvex_model_target_report *report)
@@ -392,23 +326,6 @@ static void mapping_gate_prepare(const yvex_model_target_request *request,
     yvex_model_target_report_prepare(report, request, &profile);
 }
 
-/*
- * mapping_gate_validate()
- *
- * Purpose:
- *   reject impossible typed request combinations for the gate report.
- *
- * Inputs:
- *   request and report are borrowed.
- *
- * Effects:
- *   may append typed error rows and set exit_code; no printing occurs.
- *
- * Failure:
- *   returns 1 when a typed refusal has been populated.
- *
- * Boundary:
- *   refusal rows do not inspect payloads or perform mapping. */
 static int mapping_gate_validate(const yvex_model_target_request *request,
                                  yvex_model_target_report *report)
 {
@@ -429,23 +346,6 @@ static int mapping_gate_validate(const yvex_model_target_request *request,
     return 0;
 }
 
-/*
- * mapping_gate_add_table()
- *
- * Purpose:
- *   append table rows for mapping gate evidence.
- *
- * Inputs:
- *   state/report are borrowed or mutated.
- *
- * Effects:
- *   appends bounded rows only; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   row-cap exhaustion truncates through the shared row helper.
- *
- * Boundary:
- *   table rows report blockers only. */
 static void mapping_gate_add_table(const mapping_gate_state *state,
                                    yvex_model_target_report *report)
 {
@@ -462,23 +362,6 @@ static void mapping_gate_add_table(const mapping_gate_state *state,
         state->next_row);
 }
 
-/*
- * mapping_gate_add_audit()
- *
- * Purpose:
- *   append audit rows for mapping gate evidence.
- *
- * Inputs:
- *   state/report are borrowed or mutated.
- *
- * Effects:
- *   appends bounded rows only; no allocation, IO, or printing occurs.
- *
- * Failure:
- *   row-cap exhaustion truncates through the shared row helper.
- *
- * Boundary:
- *   audit rows do not prove quantization, artifacts, or runtime paths. */
 static void mapping_gate_add_audit(const mapping_gate_state *state,
                                    yvex_model_target_report *report)
 {
@@ -496,26 +379,6 @@ static void mapping_gate_add_audit(const mapping_gate_state *state,
     yvex_model_target_report_common_tail(report);
 }
 
-/*
- * yvex_mapping_gate_report_build()
- *
- * Purpose:
- *   build a typed tensor mapping gate report.
- *
- * Inputs:
- *   request is borrowed; report receives typed rows; err receives invalid
- *   argument failures.
- *
- * Effects:
- *   mutates report only; it does not parse CLI arguments, write output,
- *   inspect tensor payloads, run quantization, or emit artifacts.
- *
- * Failure:
- *   returns invalid-arg for impossible command routing; typed unsupported
- *   target/release refusals are returned through report exit_code.
- *
- * Boundary:
- *   mapping gate reporting is not quantization or runtime readiness. */
 int yvex_mapping_gate_report_build(const yvex_model_target_request *request,
                                    yvex_model_target_report *report,
                                    yvex_error *err)

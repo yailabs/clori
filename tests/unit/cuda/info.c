@@ -1,12 +1,6 @@
 /*
- * YVEX - CUDA info tests
- *
- * File: tests/test_cuda_info.c
- * Layer: test
- *
- * Purpose:
- *   Proves that the CUDA backend CUDA device probe opens a real CUDA backend when the
- *   local driver/device is available. Returns 77 when CUDA is unavailable.
+ * Exercises the CUDA backend CUDA device probe opens a real CUDA backend when the local
+ * driver/device is available. Returns 77 when CUDA is unavailable.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +12,6 @@
 #include <yvex/internal/moe.h>
 #include "tests/test.h"
 
-/* Contract: checks one exact CUDA variant and its admitted bundle/function facts. */
 static int assert_supported_variant(const yvex_backend *backend,
                                     yvex_backend_operation_variant variant)
 {
@@ -83,7 +76,7 @@ typedef struct {
     float *arena;
     unsigned long long used, device_base;
 } moe_fixture_weights;
-/* Purpose: append one exact F32 matrix to the CUDA-addressable fixture arena. */
+
 static void moe_fixture_weight(moe_fixture_weights *fixture,
                                yvex_moe_weight_view *view, yvex_tensor_role role,
                                unsigned long long rows, unsigned long long width,
@@ -105,7 +98,7 @@ static void moe_fixture_weight(moe_fixture_weights *fixture,
     view->device_address = fixture->device_base + fixture->used * sizeof(*values);
     fixture->used += count;
 }
-/* Purpose: project one selected expert from an aggregate direct-address weight view. */
+
 static yvex_moe_weight_view moe_fixture_expert(const yvex_moe_weight_view *aggregate,
                                                unsigned long long expert,
                                                unsigned long long rows)
@@ -119,7 +112,7 @@ static yvex_moe_weight_view moe_fixture_expert(const yvex_moe_weight_view *aggre
     view.row_count = rows;
     return view;
 }
-/* Purpose: bind one caller-owned publication set to a focused MoE result. */
+
 static void moe_fixture_result(yvex_moe_layer_result *result, float combined[2],
                                float routed[2], float shared[2], float post[1],
                                float combination[1])
@@ -136,7 +129,7 @@ static void moe_fixture_result(yvex_moe_layer_result *result, float combined[2],
     result->combination = combination;
     result->combination_capacity = 1ull;
 }
-/* Purpose: prove grouped direct-address MoE is numerically identical to audit dispatch. */
+
 static int assert_grouped_moe(yvex_backend *backend)
 {
     static const float mhc_function[] = {1.0f, 0.0f, 0.0f, 1.0f, 0.5f, 0.5f};

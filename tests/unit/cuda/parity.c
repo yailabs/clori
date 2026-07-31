@@ -1,12 +1,6 @@
 /*
- * YVEX - CPU/CUDA parity tests
- *
- * File: tests/test_cuda_parity.c
- * Layer: test
- *
- * Purpose:
- *   Compares the CUDA backend CUDA F32 embedding op against the backend layer CPU reference op.
- *   Returns 77 when CUDA is unavailable.
+ * Compares the CUDA backend CUDA F32 embedding op against the backend layer CPU reference op.
+ * Returns 77 when CUDA is unavailable.
  */
 #include <stdio.h>
 #include <string.h>

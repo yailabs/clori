@@ -1,8 +1,6 @@
 /*
- * YVEX - runtime host and telemetry tests
- *
- * Purpose: prove configured-host truth, typed event/JSON projection, model-open refusal,
- * privacy defaults, and idempotent graceful close without requiring a model artifact.
+ * Exercises configured-host truth, typed event/JSON projection, model-open refusal, privacy
+ * defaults, and idempotent graceful close without requiring a model artifact.
  */
 #include <string.h>
 
@@ -185,7 +183,6 @@ static int test_bounded_telemetry_overflow(void)
     return 0;
 }
 
-/* Purpose: reserve one loopback port so configured-listener collision can be proved. */
 static int loopback_reserve(unsigned short *port)
 {
     struct sockaddr_in address;
@@ -206,7 +203,6 @@ static int loopback_reserve(unsigned short *port)
     return fd;
 }
 
-/* Purpose: prove enabled HTTP admission is reserved before model open and rolls back exactly. */
 static int test_openai_listener_admission(void)
 {
     yvex_server_options options;
@@ -248,7 +244,7 @@ static int test_openai_listener_admission(void)
     return 0;
 }
 
-/* Purpose: prove provider correlation is identity-bound into the authoritative event stream. */
+/* Prove provider correlation is identity-bound into the authoritative event stream. */
 static int test_provider_telemetry(void)
 {
     static const unsigned char text[] = "hello";

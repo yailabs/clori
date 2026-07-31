@@ -1,5 +1,7 @@
-/* Test-only lifecycle driver for the production in-process OpenAI adapter.
- * It supplies no HTTP, JSON, provider, protocol, or runtime semantics of its own. */
+/*
+ * Test-only lifecycle driver for the production in-process OpenAI adapter. It supplies no HTTP,
+ * JSON, provider, protocol, or runtime semantics of its own.
+ */
 #define _POSIX_C_SOURCE 200809L
 #include "src/server/openai/private.h"
 

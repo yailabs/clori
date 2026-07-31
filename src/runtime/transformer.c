@@ -1,12 +1,11 @@
-/* Owner: runtime transformer execution.
- * Owns: transformer context, exact global-weight access, chunk coordination, state transaction, and publication.
- * Does not own: family semantics, attention/MoE mathematics, tokenizer, logits, repeated decode, CLI, or rendering.
- * Invariants: one attention transaction spans all 43 blocks and final hidden validation before one state commit.
- * Boundary: production numeric-token to normalized-hidden backbone execution over one runtime session.
- * Purpose: compose admitted embedding, attention, MoE, residual, and final-stage owners without rebuilding plans.
- * Inputs: sealed model/session, identity-bound token input, backend/chunk policy, and caller output capacity.
- * Effects: reads selected/global weights, reuses bounded buffers, commits complete chunks, and publishes results.
- * Failure: cancellation, drift, state, resource, or numeric error commits no failing chunk and no hidden output. */
+/*
+ * Compose admitted embedding, attention, MoE, residual, and final-stage owners without rebuilding
+ * plans.
+ *
+ * One attention transaction spans all 43 blocks and final hidden validation before one state
+ * commit. Production numeric-token to normalized-hidden backbone execution over one runtime
+ * session.
+ */
 #include <yvex/internal/transformer.h>
 #include <math.h>
 #include <pthread.h>
@@ -50,9 +49,7 @@ struct yvex_runtime_transformer_context {
 };
 static int transformer_hash_values(yvex_sha256 *hash, const float *values,
                                    unsigned long long count);
-/* Purpose: identify a completed device-resident block when normal serving omits host numerics.
- * Inputs: exact plan/layer/routing facts. Effects: writes one evidence digest.
- * Failure: identity construction returns false. Boundary: this is not a numerical output digest. */
+
 static int transformer_device_block_digest(
     const yvex_transformer_plan_summary *plan, unsigned long long layer,
     const char *routing, char output[YVEX_SHA256_HEX_CAP])
@@ -80,13 +77,13 @@ typedef struct {
     yvex_runtime_transformer_result *result;
     char last_expanded_digest[YVEX_SHA256_HEX_CAP];
 } transformer_chunk_context;
-/* Purpose: publish one stable runtime transformer refusal. */
+
 static int transformer_runtime_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "runtime.transformer", reason);
     return status;
 }
-/* Purpose: resolve one plan binding to its exact immutable materialization record. */
+
 static const yvex_materialized_tensor_binding *transformer_runtime_binding(
     const yvex_runtime_transformer_context *context, yvex_transformer_weight_slot slot)
 {
@@ -97,10 +94,7 @@ static const yvex_materialized_tensor_binding *transformer_runtime_binding(
                      context->model_view->materialization, summary->weights[slot].tensor_id)
                : NULL;
 }
-/* Purpose: project one exact descriptor/materialization binding into pointer-free plan facts.
- * Inputs: model view and required global role. Effects: fills one caller-owned binding fact.
- * Failure: rejects missing geometry or unavailable CPU/CUDA qtype compute.
- * Boundary: runtime import only; no payload bytes are read. */
+
 static int transformer_runtime_binding_project(
     const yvex_runtime_model_view *view, yvex_tensor_role role,
     yvex_transformer_weight_binding *out, yvex_error *err)
@@ -129,10 +123,11 @@ static int transformer_runtime_binding_project(
         binding->encoded_bytes, binding->role, binding->qtype};
     return YVEX_OK;
 }
-/* Purpose: assemble typed family/runtime facts for the family-neutral graph plan.
- * Inputs: sealed model view and registered adapter. Effects: fills pointer-free facts.
- * Failure: missing adapter policy or identities refuse before plan allocation.
- * Boundary: runtime owns adapter/descriptor projection; graph owns plan identity. */
+/*
+ * Assemble typed family/runtime facts for the family-neutral graph plan.
+ *
+ * Runtime owns adapter/descriptor projection; graph owns plan identity.
+ */
 static int transformer_runtime_plan_facts(
     const yvex_runtime_model_view *view, yvex_transformer_plan_facts *facts,
     yvex_error *err)
@@ -162,9 +157,7 @@ static int transformer_runtime_plan_facts(
             return yvex_error_code(err);
     return YVEX_OK;
 }
-/* Purpose: read one exact admitted transformer binding range.
- * Inputs: context, binding, checked range, and destination. Effects: fills destination.
- * Failure: typed range/I/O refusal. Boundary: immutable materialization bytes only. */
+
 static int transformer_runtime_read(yvex_runtime_transformer_context *context,
                                     const yvex_materialized_tensor_binding *binding,
                                     unsigned long long offset, unsigned long long bytes,
@@ -180,9 +173,7 @@ static int transformer_runtime_read(yvex_runtime_transformer_context *context,
                                               offset, destination, (size_t)bytes,
                                               &failure, err);
 }
-/* Purpose: decode one exact qtype extent through the canonical decoder.
- * Inputs: binding and block-exact encoded/output ranges. Effects: fills decoded values.
- * Failure: typed geometry/codec refusal. Boundary: no whole-collection decode. */
+
 static int transformer_runtime_decode(const yvex_materialized_tensor_binding *binding,
                                       const unsigned char *encoded, unsigned long long bytes,
                                       float *decoded, unsigned long long count,
@@ -211,9 +202,7 @@ static int transformer_runtime_decode(const yvex_materialized_tensor_binding *bi
     }
     return YVEX_OK;
 }
-/* Purpose: allocate and decode final transformer globals once per context.
- * Inputs: sealed context and budgets. Effects: owns immutable decoded global weights.
- * Failure: typed allocation/read/decode refusal. Boundary: excludes embedding rows and layer weights. */
+
 static int transformer_runtime_globals(yvex_runtime_transformer_context *context,
                                        yvex_error *err)
 {
@@ -250,10 +239,7 @@ static int transformer_runtime_globals(yvex_runtime_transformer_context *context
     context->host_bytes = total;
     return YVEX_OK;
 }
-/* Purpose: allocate one stable backend tensor with exact byte/element geometry.
- * Inputs: CUDA context, name, dtype, element count, and byte extent.
- * Effects: returns one context-owned device allocation. Failure: typed backend refusal.
- * Boundary: allocation only; no weight or activation bytes are uploaded. */
+
 static int transformer_device_tensor_open(
     yvex_runtime_transformer_context *context, yvex_device_tensor **out,
     const char *name, yvex_dtype dtype, unsigned long long elements,
@@ -267,11 +253,11 @@ static int transformer_device_tensor_open(
     descriptor.bytes = bytes;
     return yvex_backend_tensor_alloc(context->session_view->backend, &descriptor, out, err);
 }
-/* Purpose: seal all stable CUDA transformer activation and final-weight resources.
- * Inputs: exact chunk extents and admitted global/embedding bindings.
- * Effects: allocates device tensors once and uploads decoded immutable final weights.
- * Failure: partial resources remain context-owned for deterministic close.
- * Boundary: no attention, MoE, token execution, or output publication. */
+/*
+ * Seal all stable CUDA transformer activation and final-weight resources.
+ *
+ * Partial resources remain context-owned for deterministic close.
+ */
 static int transformer_device_buffers(yvex_runtime_transformer_context *context,
                                       unsigned long long hidden,
                                       unsigned long long expanded,
@@ -328,9 +314,7 @@ static int transformer_device_buffers(yvex_runtime_transformer_context *context,
     }
     return rc;
 }
-/* Purpose: allocate all chunk buffers once and refuse later growth.
- * Inputs: requested token capacity. Effects: allocates stable host publication/scratch ranges.
- * Failure: no incomplete capacity is admitted. Boundary: no execution or state mutation. */
+
 static int transformer_runtime_buffers(yvex_runtime_transformer_context *context,
                                        unsigned long long tokens, yvex_error *err)
 {
@@ -374,9 +358,7 @@ static int transformer_runtime_buffers(yvex_runtime_transformer_context *context
     context->host_bytes += bytes;
     return transformer_device_buffers(context, hidden, expanded, err);
 }
-/* Purpose: borrow an exact leading byte span from one backend-owned encoded tensor.
- * Inputs: parent device tensor, requested bytes, and output view. Effects: publishes a borrowed subview.
- * Failure: returns false for absent or out-of-bounds storage. Boundary: never allocates or transfers. */
+
 static int transformer_encoded_subview(const yvex_device_tensor *source,
                                        unsigned long long bytes,
                                        yvex_device_tensor *view)
@@ -390,9 +372,7 @@ static int transformer_encoded_subview(const yvex_device_tensor *source,
     view->bytes = bytes;
     return 1;
 }
-/* Purpose: prepare selected embedding rows and exact initial expanded state.
- * Inputs: token chunk and admitted embedding binding. Effects: reads selected rows and fills scratch.
- * Failure: typed range/qtype/numeric refusal. Boundary: never reads the complete vocabulary matrix. */
+
 static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_error *err)
 {
     yvex_runtime_transformer_context *context = chunk->owner;
@@ -462,8 +442,7 @@ static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_
     return yvex_transformer_initial_residual(context->plan, context->embedding,
                                              chunk->token_count, context->expanded_a, err);
 }
-/* Purpose: hash finite F32 values by canonical bits. Inputs: values/hash. Effects: updates hash.
- * Failure: false on non-finite/hash refusal. Boundary: excludes pointers and native aggregate bytes. */
+
 static int transformer_hash_values(yvex_sha256 *hash, const float *values,
                                    unsigned long long count)
 {
@@ -476,9 +455,7 @@ static int transformer_hash_values(yvex_sha256 *hash, const float *values,
     }
     return 1;
 }
-/* Purpose: derive one checked borrowed F32 range without creating device ownership.
- * Inputs: one owned tensor plus element offset/count. Effects: fills a non-owning alias.
- * Failure: false on owner/dtype/range mismatch. Boundary: alias must never be released. */
+
 static int transformer_device_subview(const yvex_device_tensor *source,
                                       unsigned long long offset,
                                       unsigned long long count,
@@ -495,7 +472,7 @@ static int transformer_device_subview(const yvex_device_tensor *source,
     view->data = source->data + offset * sizeof(float);
     return 1;
 }
-/* Purpose: borrow the current internally generated expanded activation for one ordered layer. */
+
 static int transformer_activation_view(void *opaque, unsigned long long layer_ordinal,
                                        unsigned long long token_count, const float **input,
                                        unsigned long long *stride, yvex_error *err)
@@ -511,9 +488,7 @@ static int transformer_activation_view(void *opaque, unsigned long long layer_or
     *stride = s->expanded_width;
     return YVEX_OK;
 }
-/* Purpose: borrow the current and next device-resident activation views for attention.
- * Inputs: exact ordered layer/chunk coordinates. Effects: returns non-owning device aliases.
- * Failure: typed order or geometry refusal. Boundary: CUDA transformer composition only. */
+
 static int transformer_device_view(void *opaque, unsigned long long layer_ordinal,
                                    unsigned long long token_count,
                                    const yvex_device_tensor **input,
@@ -528,11 +503,13 @@ static int transformer_device_view(void *opaque, unsigned long long layer_ordina
     *output = &chunk->device_attention;
     return YVEX_OK;
 }
-/* Purpose: complete one ordered transformer block from its staged attention publication.
- * Inputs: exact layer/token coordinates, active-transaction publication, and output workspace.
- * Effects: executes MoE/deferred mHC post and publishes field-wise block evidence.
- * Failure: cancellation, geometry, routing, backend, or numeric refusal publishes no block result.
- * Boundary: internal production block API; the request coordinator owns attention and KV commit. */
+/*
+ * Complete one ordered transformer block from its staged attention publication.
+ *
+ * Exact layer/token coordinates, active-transaction publication, and output workspace. Executes
+ * MoE/deferred mHC post and publishes field-wise block evidence. Internal production block API;
+ * the request coordinator owns attention and KV commit.
+ */
 int yvex_runtime_transformer_execute_block(
     yvex_runtime_transformer_context *context, unsigned long long layer_ordinal,
     const unsigned int *token_ids, unsigned long long token_count,
@@ -668,11 +645,11 @@ int yvex_runtime_transformer_execute_block(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: complete and advance one ordered block inside the active all-layer transaction.
- * Inputs: ordered callback context, exact backend, and completed attention publication.
- * Effects: executes the block API, accumulates evidence, swaps residual state, and may run final norm.
- * Failure: block, digest, download, or final-stage refusal aborts the outer transaction.
- * Boundary: request coordinator callback only; it neither begins nor commits persistent state. */
+/*
+ * Complete and advance one ordered block inside the active all-layer transaction.
+ *
+ * Block, digest, download, or final-stage refusal aborts the outer transaction.
+ */
 static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                                       const yvex_attention_publication *publication,
                                       yvex_error *err)
@@ -771,7 +748,7 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
             context->candidate_hidden, err);
     return YVEX_OK;
 }
-/* Purpose: copy the complete session persistent-state summary. */
+
 static int transformer_state_summary(const yvex_runtime_execution_session *session,
                                      yvex_graph_attention_state_summary *summary,
                                      yvex_error *err)
@@ -784,9 +761,7 @@ static int transformer_state_summary(const yvex_runtime_execution_session *sessi
                                           "transformer persistent state is unavailable");
     return YVEX_OK;
 }
-/* Purpose: build one exact full-layer attention capacity plan.
- * Inputs: model, start, and token extent. Effects: allocates caller-owned plan.
- * Failure: typed graph refusal. Boundary: no state allocation or execution. */
+
 static int transformer_capacity_build(yvex_graph_attention_capacity_plan **out,
                                       const yvex_runtime_model_view *model,
                                       unsigned long long start, unsigned long long tokens,
@@ -805,9 +780,7 @@ static int transformer_capacity_build(yvex_graph_attention_capacity_plan **out,
                                                      model ? model->attention : NULL,
                                                      &request, err);
 }
-/* Purpose: prepare persistent-state capacity and CUDA attention workspace before mutation.
- * Inputs: context, admitted input/request, and state summary. Effects: seals reusable capacities.
- * Failure: typed budget/position/backend refusal. Boundary: no transformer chunk has begun. */
+
 static int transformer_prepare(yvex_runtime_transformer_context *context,
                                const yvex_transformer_input_summary *input,
                                const yvex_runtime_transformer_request *request,
@@ -887,7 +860,7 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                                    session.workspace_identity);
     return rc;
 }
-/* Purpose: finalize one canonical F32 digest. */
+
 static int transformer_values_digest(const char *domain, const float *values,
                                      unsigned long long count,
                                      char output[YVEX_SHA256_HEX_CAP])
@@ -901,9 +874,11 @@ static int transformer_values_digest(const char *domain, const float *values,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-/* Purpose: allocate and seal one transformer execution context over a model/session pair.
- * Inputs: matching model/session and budgets. Effects: owns plan, MoE context, weights, and mutex.
- * Failure: typed refusal with complete rollback. Boundary: no token execution or state mutation. */
+/*
+ * Allocate and seal one transformer execution context over a model/session pair.
+ *
+ * Typed refusal with complete rollback.
+ */
 int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out,
                                           yvex_runtime_model *model,
                                           yvex_runtime_execution_session *session,
@@ -962,26 +937,23 @@ failure:
     (void)yvex_runtime_transformer_context_close(&context, NULL);
     return rc;
 }
-/* Purpose: borrow one context-owned plan. Inputs: context. Effects: none. Failure: NULL.
- * Boundary: borrowed lifetime ends when the context closes. */
+/*
+ * Borrow one context-owned plan.
+ *
+ * Borrowed lifetime ends when the context closes.
+ */
 const yvex_transformer_plan *yvex_runtime_transformer_context_plan(
     const yvex_runtime_transformer_context *context)
 {
     return context ? context->plan : NULL;
 }
-/* Purpose: borrow the exact execution session paired with one transformer context.
- * Inputs: live context. Effects: none. Failure: NULL. Boundary: enables lifecycle coordinators
- * to prove owner pairing without exposing transformer-private resources. */
+
 const yvex_runtime_execution_session *yvex_runtime_transformer_context_session(
     const yvex_runtime_transformer_context *context)
 {
     return context ? context->session : NULL;
 }
-/* Purpose: seal the semantic execution identity after state and output publication.
- * Inputs: admitted plan/request and one complete mutable result.
- * Effects: writes only the result execution identity.
- * Failure: malformed hash input returns a typed runtime refusal.
- * Boundary: movement and timing evidence do not enter semantic execution identity. */
+
 static int transformer_execution_identity(
     const yvex_transformer_plan_summary *plan,
     const yvex_runtime_transformer_request *request,
@@ -1004,9 +976,11 @@ static int transformer_execution_identity(
     yvex_sha256_hex(digest, result->execution_identity);
     return YVEX_OK;
 }
-/* Purpose: validate one token input against the exact model binding and transformer plan.
- * Inputs: live context and admitted memory/file input. Effects: checks file drift when applicable.
- * Failure: propagates typed identity, payload, or snapshot refusal. Boundary: validation only. */
+/*
+ * Validate one token input against the exact model binding and transformer plan.
+ *
+ * Propagates typed identity, payload, or snapshot refusal.
+ */
 int yvex_runtime_transformer_context_validate_input(
     const yvex_runtime_transformer_context *context,
     const yvex_transformer_input *input, yvex_error *err)
@@ -1017,11 +991,12 @@ int yvex_runtime_transformer_context_validate_input(
     return yvex_transformer_input_validate(input, context->plan,
                                            context->model_view->binding, err);
 }
-/* Purpose: execute an identity-bound token request as independently committed chunks.
- * Inputs: matching context/input/backend, output capacity, and deterministic chunk size.
- * Effects: commits each complete full-stack chunk and publishes normalized hidden rows after commit.
- * Failure: preserves prior chunks and leaves the failing chunk unpublished.
- * Boundary: normalized hidden state only; no logits, decode loop, tokenizer, or generation. */
+/*
+ * Execute an identity-bound token request as independently committed chunks.
+ *
+ * Matching context/input/backend, output capacity, and deterministic chunk size. Commits each
+ * complete full-stack chunk and publishes normalized hidden rows after commit.
+ */
 int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
                                      const yvex_transformer_input *input,
                                      const yvex_runtime_transformer_request *request,
@@ -1216,9 +1191,7 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
     if (rc == YVEX_OK) result->completed = 1;
     return rc;
 }
-/* Purpose: release transformer context resources in reverse ownership order.
- * Inputs: idle context owner. Effects: closes MoE and frees weights/scratch/mutex.
- * Failure: typed retryable dependent cleanup refusal. Boundary: does not close model/session. */
+/* Release transformer context resources in reverse ownership order. */
 int yvex_runtime_transformer_context_close(yvex_runtime_transformer_context **context,
                                            yvex_error *err)
 {
@@ -1276,13 +1249,13 @@ int yvex_runtime_transformer_context_close(yvex_runtime_transformer_context **co
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: adapt one transformer context to the typed cleanup-lease protocol. */
+
 static int transformer_runtime_cleanup(void **opaque, yvex_error *err)
 {
     return yvex_runtime_transformer_context_close(
         (yvex_runtime_transformer_context **)opaque, err);
 }
-/* Purpose: publish one operator refusal without converting the domain status. */
+
 static void transformer_operator_refuse(yvex_transformer_operator_result *result,
                                         const yvex_error *err)
 {
@@ -1291,11 +1264,11 @@ static void transformer_operator_refuse(yvex_transformer_operator_result *result
                         err && yvex_error_is_set(err) ? yvex_error_message(err)
                                                      : "transformer execution refused");
 }
-/* Purpose: execute one production transformer request through operator-owned resources.
- * Inputs: exact artifact/binding/token paths, backend, capacity, and budgets.
- * Effects: opens one model/session/context, executes, closes, and publishes typed facts.
- * Failure: retains only a cleanup lease when deterministic cleanup itself refuses.
- * Boundary: no command parsing, rendering, tokenizer, logits, decode loop, or generation. */
+/*
+ * Execute one production transformer request through operator-owned resources.
+ *
+ * Retains only a cleanup lease when deterministic cleanup itself refuses.
+ */
 int yvex_transformer_operator_execute(const yvex_transformer_operator_request *request,
                                       yvex_transformer_operator_result *result,
                                       yvex_runtime_cleanup_lease **retained_cleanup,

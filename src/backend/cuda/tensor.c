@@ -1,25 +1,16 @@
-/* Owner: src/backend/cuda.
- * Owns: CUDA tensor allocation, zeroing, host/device transfer, device copy, output-written state, checked device
- *   release, and allocation accounting.
- * Does not own: kernel bundles, primitive kernels, graph/model semantics, CLI output, materialization policy, qtype
- *   compute, or runtime generation.
- * Invariants: writes become visible only after synchronization; failed release preserves tensor ownership and
- *   counters; unpublished allocations are cleaned.
- * Boundary: tensor movement is not CUDA graph or generation support.
- * Purpose: Own CUDA tensor allocation, transfer, copy, accounting, and release.
- * Inputs: A ready backend, typed tensor descriptors, checked byte ranges, and host buffers.
- * Effects: Mutates only owned device allocation state and admitted transfer destinations.
- * Failure: Allocation, transfer, synchronization, and cleanup failures preserve coherent accounting. */
+/*
+ * Own CUDA tensor allocation, transfer, copy, accounting, and release.
+ *
+ * Writes become visible only after synchronization; failed release preserves tensor ownership and
+ * counters; unpublished allocations are cleaned. Tensor movement is not CUDA graph or generation
+ * support.
+ */
 #include "src/backend/cuda/private.h"
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-/* Purpose: Reserve budgeted storage for tensor alloc with checked size accounting.
- * Inputs: A validated configuration, checked resource limits, and caller-owned result storage.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_tensor_alloc(yvex_backend *backend,
                            const yvex_backend_tensor_desc *desc,
                            yvex_device_tensor **out,
@@ -108,11 +99,7 @@ allocation_failure:
         *err = primary_error;
     return rc;
 }
-/* Purpose: Release the resources owned by tensor free without changing borrowed inputs.
- * Inputs: An owned object that may be null or already released where its lifecycle permits.
- * Effects: Releases only resources owned by the supplied object and leaves it reset or unusable.
- * Failure: Null and already-released inputs follow the idempotent lifecycle contract.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_tensor_free(yvex_backend *backend,
                           yvex_device_tensor *tensor,
                           yvex_error *err)
@@ -160,11 +147,7 @@ int yvex_cuda_tensor_free(yvex_backend *backend,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: Publish tensor write only within its admitted destination range.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_tensor_write(yvex_backend *backend,
                            yvex_device_tensor *tensor,
                            const void *src,
@@ -202,11 +185,7 @@ int yvex_cuda_tensor_write(yvex_backend *backend,
     tensor->is_written = 1;
     return YVEX_OK;
 }
-/* Purpose: Retrieve tensor read from admitted immutable or owned state.
- * Inputs: Typed caller-owned outputs and immutable values declared by this subsystem ABI.
- * Effects: Updates only caller-owned result storage or lifecycle state explicitly named by the ABI.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
+
 int yvex_cuda_tensor_read(yvex_backend *backend,
                           const yvex_device_tensor *tensor,
                           void *dst,
@@ -238,11 +217,6 @@ int yvex_cuda_tensor_read(yvex_backend *backend,
     return yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_TENSOR_READ,
                                  "yvex_backend_tensor_read", err);
 }
-/* Purpose: Copy tensor copy between compatible admitted ranges without changing semantic identity.
- * Inputs: Typed admitted handles, immutable source ranges, checked dimensions, and an explicit destination.
- * Effects: Mutates only the admitted destination or transaction after every precondition passes.
- * Failure: Returns a typed CUDA refusal and publishes no partial success state.
- * Boundary: CUDA execution; does not infer model topology, profile policy, or runtime support. */
 int yvex_cuda_tensor_copy(yvex_backend *backend,
                           yvex_device_tensor *dst,
                           const yvex_device_tensor *src,

@@ -1,9 +1,8 @@
-/* Owner: DeepSeek graph-family recipe. Owns: schedule, role lowering, compressor recurrence, and composition.
- * Does not own: generic numerics, state transactions, backend kernels, KV, or generation.
- * Invariants: planning reads no payload; incomplete attention remains unsupported. Boundary: family evidence.
- * Purpose: compose admitted generic graph mechanisms for the DeepSeek-V4 schedule.
- * Inputs: immutable architecture, plan, materialization, descriptor, and history facts. Effects: bounded execution.
- * Failure: typed refusal unwinds scratch, state, loaded roles, and unpublished output. */
+/*
+ * Compose admitted generic graph mechanisms for the DeepSeek-V4 schedule.
+ *
+ * Planning reads no payload; incomplete attention remains unsupported. Family evidence.
+ */
 #include "src/graph/private.h"
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/graph_state.h>
@@ -18,24 +17,23 @@ static const yvex_attention_cpu_options cpu_options_template = {
     .max_compressor_rows = 32ull, .max_indexer_rows = 64ull,
     .scratch_limit_bytes = 64ull * 1024ull * 1024ull, .evidence_level = YVEX_ATTENTION_EVIDENCE_FULL
 };
-/* Purpose: default the bounded CPU probe policy.
- * Inputs: optional caller-owned options; Effects: initializes options; Failure: none; Boundary: no execution. */
+
 static void graph_cpu_options_default(yvex_attention_cpu_options *options)
 {
     if (!options) return;
     *options = cpu_options_template;
 }
-/* Purpose: project the exact logical-model identity into the generic plan recipe. */
+
 static int graph_recipe_identity(const void *context, char output[65])
 {
     return yvex_model_register_deepseek_v4()->transform.architecture_identity(
         (const yvex_deepseek_v4_ir *)context, output);
 }
-/* Purpose: admit the family-neutral execution facts shared by CPU and CUDA.
- * Inputs: sealed owners and a typed request.
- * Effects: publishes only a borrowed layer-plan view.
- * Failure: stale identity, publication reuse, invalid scope/shape, or cancellation refuses.
- * Boundary: family geometry admission only; payload and numerical execution remain separate. */
+/*
+ * Admit the family-neutral execution facts shared by CPU and CUDA.
+ *
+ * Stale identity, publication reuse, invalid scope/shape, or cancellation refuses.
+ */
 static int graph_execution_admit(
     const yvex_attention_plan *plan, const void *family_ir,
     yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
@@ -68,11 +66,11 @@ static int graph_execution_admit(
         DEEPSEEK_ATTENTION_CSA_RATIO, DEEPSEEK_ATTENTION_HCA_RATIO, layer,
         failure, err);
 }
-/* Purpose: admit one immutable history view for either production backend.
- * Inputs: admitted layer, request, and whether the backend may construct initial rolling state.
- * Effects: publishes a private immutable view only.
- * Failure: discontinuity, malformed history, or unavailable initial state refuses.
- * Boundary: persistent history ownership remains outside the family executor. */
+/*
+ * Admit one immutable history view for either production backend.
+ *
+ * Persistent history ownership remains outside the family executor.
+ */
 static int graph_history_admit(
     const yvex_attention_layer_plan *layer, const yvex_attention_cpu_options *options,
     int initial_state_supported, yvex_attention_history_view *out,
@@ -107,11 +105,7 @@ static int graph_history_admit(
     out->token_count = options->token_position;
     return YVEX_OK;
 }
-/* Purpose: project one admitted DeepSeek layer into the generic graph recipe.
- * Inputs: immutable family IR and output recipe.
- * Effects: writes only the output recipe.
- * Failure: absent inputs refuse.
- * Boundary: projection does not admit execution. */
+
 static int graph_recipe_layer(const void *context, unsigned long long index, yvex_attention_layer_plan *out)
 {
     const yvex_deepseek_v4_layer_spec *layer = yvex_model_register_deepseek_v4()->ir.layer_at(
@@ -166,11 +160,7 @@ static int graph_recipe_layer(const void *context, unsigned long long index, yve
     out->sparse_topk = layer->sparse_topk;
     return 1;
 }
-/* Purpose: compose the DeepSeek plan recipe without redefining generic numerics.
- * Inputs: family IR, materialization, and descriptor.
- * Effects: delegates immutable plan construction.
- * Failure: propagates typed build refusal.
- * Boundary: planning reads no payload. */
+
 static int graph_plan_build(yvex_attention_plan **out, const void *family_ir,
     const yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
     yvex_attention_failure *failure, yvex_error *err)
@@ -187,11 +177,7 @@ static int graph_plan_build(yvex_attention_plan **out, const void *family_ir,
     };
     return yvex_attention_plan_build(out, &recipe, session, descriptor, failure, err);
 }
-/* Purpose: translate one operator token into the opaque DeepSeek recipe-selection key.
- * Inputs: family token and output.
- * Effects: publishes one stable opaque key.
- * Failure: unknown tokens refuse.
- * Boundary: common runtime never sees attention-class enums. */
+
 static int graph_selection_key_resolve(const char *token,
                                        unsigned long long *selection_key,
                                        yvex_error *err)
@@ -282,7 +268,7 @@ typedef struct {
     unsigned long long trace_topk_stride;
     int rc;
 } cpu_chunk_context;
-/* Purpose: publish one CPU-family refusal with the current layer and error owners. */
+
 static int cpu_chunk_reject(cpu_chunk_context *context,
                             yvex_attention_failure_code code,
                             const yvex_runtime_tensor_binding *binding, yvex_tensor_role role,
@@ -294,11 +280,7 @@ static int cpu_chunk_reject(cpu_chunk_context *context,
                                  context->layer_index, role, expected, actual,
                                  context->err, status, reason);
 }
-/* Purpose: publish one canonical BF16 model-visible numeric boundary.
- * Inputs: active chunk, mutable values, element count, and diagnostic stage.
- * Effects: rounds the supplied working values in place only.
- * Failure: unsupported contracts or non-finite values return typed refusal.
- * Boundary: compressor F32 projections call this only after compression. */
+
 static int cpu_chunk_round(cpu_chunk_context *context, float *values, unsigned long long count, const char *stage)
 {
     if (yvex_attention_compute_round(context->layer_plan->compute_contract,
@@ -308,11 +290,7 @@ static int cpu_chunk_round(cpu_chunk_context *context, float *values, unsigned l
         context, YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, NULL,
         YVEX_TENSOR_ROLE_UNKNOWN, count, 0ull, YVEX_ERR_FORMAT, stage);
 }
-/* Purpose: reserve one checked family-owned scratch extent before allocation.
- * Inputs: mutable execution accounting, element geometry, and a stable refusal reason.
- * Effects: advances owned scratch bytes only when the complete extent is admitted.
- * Failure: overflow or budget exhaustion returns a typed scratch refusal.
- * Boundary: accounts family execution memory without allocating it. */
+
 static int cpu_chunk_scratch_reserve(cpu_chunk_context *context,
                                      unsigned long long count, size_t element_size, const char *reason)
 {
@@ -327,25 +305,25 @@ static int cpu_chunk_scratch_reserve(cpu_chunk_context *context,
             YVEX_ERR_BOUNDS, reason);
     return YVEX_OK;
 }
-/* Purpose: identify whether one rolling recipe participates in the layer class. */
+
 static int cpu_chunk_rolling_active(const cpu_chunk_context *context, unsigned int index)
 {
     return index == CPU_ROLLING_MAIN
         ? context->layer_plan->attention_class != YVEX_ATTENTION_CLASS_SWA
         : context->layer_plan->attention_class == YVEX_ATTENTION_CLASS_CSA;
 }
-/* Purpose: project one rolling recipe onto its canonical history component. */
+
 static yvex_attention_rolling_state_view *cpu_chunk_history_state(cpu_chunk_context *context, unsigned int index)
 {
     return index == CPU_ROLLING_MAIN
         ? &context->history.main_rolling_state
         : &context->history.indexer_rolling_state;
 }
-/* Purpose: allocate one absent rolling state using the recipe's admitted geometry.
- * Inputs: admitted chunk and main/indexer recipe index.
- * Effects: owns initial state buffers and publishes their immutable history view.
- * Failure: scratch or allocation refusal leaves the transaction unopened.
- * Boundary: initializes family recurrence; it does not execute compression. */
+/*
+ * Allocate one absent rolling state using the recipe's admitted geometry.
+ *
+ * Scratch or allocation refusal leaves the transaction unopened.
+ */
 static int cpu_chunk_rolling_initialize(cpu_chunk_context *context, unsigned int index)
 {
     const cpu_rolling_recipe *recipe = &cpu_rolling_recipes[index];
@@ -375,11 +353,7 @@ static int cpu_chunk_rolling_initialize(cpu_chunk_context *context, unsigned int
     if (rc == YVEX_OK) *cpu_chunk_history_state(context, index) = stage->before;
     return rc;
 }
-/* Purpose: admit one bounded CPU chunk from immutable plan and history facts.
- * Inputs: execution context.
- * Effects: binds roles and begins private state staging.
- * Failure: typed refusal leaves no published state.
- * Boundary: admission executes no attention math. */
+
 static int cpu_chunk_admit(cpu_chunk_context *context)
 {
 attention_result_reset(context->result);
@@ -540,12 +514,7 @@ if (context->opts->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE) {
 }
     return YVEX_OK;
 }
-/* Purpose: allocate project buffers and import finite caller activations at
- * the model-visible BF16 boundary before any encoded weight access.
- * Inputs: admitted chunk geometry and explicit caller activation rows.
- * Effects: allocates chunk-owned staging and copies rounded input rows.
- * Failure: cancellation, allocation, or non-finite input publishes no state.
- * Boundary: imports activation state but performs no attention projection. */
+
 static int cpu_chunk_input_prepare(cpu_chunk_context *context)
 {
 context->hidden = (float *)yvex_attention_scratch_calloc(
@@ -597,11 +566,7 @@ context->rc = cpu_chunk_round(
     "DeepSeek attention input could not enter the BF16 compute contract");
 return context->rc;
 }
-/* Purpose: execute admitted Q/KV projections and model-visible numeric boundaries.
- * Inputs: bound chunk context.
- * Effects: fills private query, KV, and sink staging.
- * Failure: typed numeric/read refusal publishes nothing.
- * Boundary: output reduction remains separate. */
+
 static int cpu_chunk_project(cpu_chunk_context *context)
 {
 context->rc = yvex_attention_cancel_check(
@@ -769,11 +734,12 @@ context->rc = yvex_attention_decode_flat(
 if (context->rc != YVEX_OK) return context->rc;
     return YVEX_OK;
 }
-/* Purpose: acquire and allocate one recipe's optional emission-position staging.
- * Inputs: active rolling stage, recipe, and begun state transaction.
- * Effects: acquires only the recipe emission span and its bounded positions.
- * Failure: preserves the main/indexer scratch and allocation refusal stages.
- * Boundary: prepares evidence storage without executing recurrence. */
+/*
+ * Acquire and allocate one recipe's optional emission-position staging.
+ *
+ * Active rolling stage, recipe, and begun state transaction. Acquires only the recipe emission
+ * span and its bounded positions.
+ */
 static int cpu_chunk_emission_prepare(cpu_chunk_context *context, unsigned int index)
 {
     const cpu_rolling_recipe *recipe = &cpu_rolling_recipes[index];
@@ -800,11 +766,12 @@ static int cpu_chunk_emission_prepare(cpu_chunk_context *context, unsigned int i
             ? "DeepSeek attention compressed-position allocation failed"
             : "DeepSeek attention indexer-position allocation failed");
 }
-/* Purpose: prepare one main or indexer rolling compressor from its typed recipe.
- * Inputs: admitted chunk, rolling index, descriptor bindings, and transaction.
- * Effects: acquires candidate spans and allocates bounded projection scratch.
- * Failure: preserves binding, scratch, allocation, and decode refusal stages.
- * Boundary: shares recurrence mechanics without merging family policies. */
+/*
+ * Prepare one main or indexer rolling compressor from its typed recipe.
+ *
+ * Admitted chunk, rolling index, descriptor bindings, and transaction. Acquires candidate spans
+ * and allocates bounded projection scratch.
+ */
 static int cpu_chunk_rolling_prepare(cpu_chunk_context *context, unsigned int index)
 {
     const cpu_rolling_recipe *recipe = &cpu_rolling_recipes[index];
@@ -881,11 +848,11 @@ static int cpu_chunk_rolling_prepare(cpu_chunk_context *context, unsigned int in
         return context->rc;
     return cpu_chunk_emission_prepare(context, index);
 }
-/* Purpose: execute and seal one main or indexer rolling-compressor recurrence.
- * Inputs: prepared rolling stage, immutable recipe, token projections, and APE.
- * Effects: advances only candidate recurrence state and ordered emissions.
- * Failure: preserves every numeric, bounds, and transaction refusal stage.
- * Boundary: common recurrence does not merge main and indexer activation policy. */
+/*
+ * Execute and seal one main or indexer rolling-compressor recurrence.
+ *
+ * Preserves every numeric, bounds, and transaction refusal stage.
+ */
 static int cpu_chunk_rolling_step(cpu_chunk_context *context, unsigned int index)
 {
     const cpu_rolling_recipe *recipe = &cpu_rolling_recipes[index];
@@ -997,11 +964,7 @@ static int cpu_chunk_rolling_step(cpu_chunk_context *context, unsigned int index
     }
     return YVEX_OK;
 }
-/* Purpose: derive CSA index queries and weights from admitted projections.
- * Inputs: prepared CSA chunk.
- * Effects: fills private index-query and index-weight staging.
- * Failure: typed binding, scratch, or numeric refusal.
- * Boundary: selection remains reduction-owned. */
+
 static int cpu_chunk_index_query(cpu_chunk_context *context)
 {
     if (context->layer_plan->attention_class != YVEX_ATTENTION_CLASS_CSA)
@@ -1163,11 +1126,11 @@ static int cpu_chunk_index_query(cpu_chunk_context *context)
         }
     return YVEX_OK;
 }
-/* Purpose: reserve optional CSA top-k trace evidence before reduction.
- * Inputs: admitted chunk and rolling emission counts.
- * Effects: owns bounded trace arrays.
- * Failure: overflow or allocation refusal.
- * Boundary: trace storage cannot affect selection. */
+/*
+ * Reserve optional CSA top-k trace evidence before reduction.
+ *
+ * Owns bounded trace arrays. Overflow or allocation refusal.
+ */
 static int cpu_chunk_trace_prepare(cpu_chunk_context *context)
 {
 if ((context->opts->publication || context->opts->trace) &&
@@ -1222,11 +1185,12 @@ if ((context->opts->publication || context->opts->trace) &&
 }
     return YVEX_OK;
 }
-/* Purpose: reduce complete attention, project output, and atomically commit candidate state.
- * Inputs: projected chunk and prepared history.
- * Effects: seals and commits the private transaction.
- * Failure: typed reduction or commit refusal publishes nothing.
- * Boundary: capture follows commit. */
+/*
+ * Reduce complete attention, project output, and atomically commit candidate state.
+ *
+ * Seals and commits the private transaction. Typed reduction or commit refusal publishes nothing.
+ * Capture follows commit.
+ */
 static int cpu_chunk_reduce_commit(cpu_chunk_context *context)
 {
 context->rc = yvex_attention_reduce_chunk(
@@ -1290,11 +1254,11 @@ context->rc = yvex_attention_state_transaction_commit(
 if (context->rc != YVEX_OK) return context->rc;
     return YVEX_OK;
 }
-/* Purpose: capture committed components and optional execution trace after transaction success.
- * Inputs: committed memory sink and private evidence.
- * Effects: owns the requested trace publication.
- * Failure: missing commit or trace allocation refuses.
- * Boundary: never reconstructs attention facts. */
+/*
+ * Capture committed components and optional execution trace after transaction success.
+ *
+ * Missing commit or trace allocation refuses.
+ */
 static int cpu_chunk_capture(cpu_chunk_context *context)
 {
 const yvex_attention_component_span *const *committed = context->committed;
@@ -1393,11 +1357,7 @@ if (context->opts->publication || context->opts->trace) {
 }
     return YVEX_OK;
 }
-/* Purpose: publish CPU result counters and identities after complete commit and capture.
- * Inputs: successful chunk context.
- * Effects: writes caller result and clears failure state.
- * Failure: none after admission.
- * Boundary: result evidence does not promote KV or generation. */
+/* Publish CPU result counters and identities after complete commit and capture. */
 static void cpu_chunk_publish(cpu_chunk_context *context)
 {
 const yvex_attention_component_span *const *committed = context->committed;
@@ -1440,11 +1400,11 @@ yvex_attention_result_outputs_publish(
 yvex_error_clear(context->err);
 if (context->failure) memset(context->failure, 0, sizeof(*context->failure));
 }
-/* Purpose: orchestrate one complete transactional DeepSeek CPU attention chunk.
- * Inputs: admitted owners and caller options.
- * Effects: publishes only fully committed result state.
- * Failure: aborts transaction and releases all scratch.
- * Boundary: owns no persistent runtime KV. */
+/*
+ * Orchestrate one complete transactional DeepSeek CPU attention chunk.
+ *
+ * Aborts transaction and releases all scratch.
+ */
 static int graph_cpu_chunk_execute(const yvex_attention_plan *plan, const void *family_ir,
     yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
     const yvex_attention_cpu_options *options, yvex_attention_cpu_result *result,
@@ -1562,11 +1522,7 @@ static const yvex_attention_failure_code cuda_failure_map[] = {
     YVEX_DEEPSEEK_ATTENTION_FAILURE_NUMERIC, YVEX_DEEPSEEK_ATTENTION_FAILURE_CANCELLED,
     YVEX_DEEPSEEK_ATTENTION_FAILURE_CLEANUP
 };
-/* Purpose: admit one CUDA phase and allocate complete request-level publication staging.
- * Inputs: immutable owners, explicit token range, backend, and history.
- * Effects: owns a private trace.
- * Failure: typed refusal occurs before dispatch.
- * Boundary: no host numerical completion. */
+
 static int cuda_token_prepare(attention_cuda_context *context)
 {
 if (context->result) memset(context->result, 0, sizeof(*context->result));
@@ -1617,11 +1573,7 @@ if (context->trace.input) {
 }
     return YVEX_OK;
 }
-/* Purpose: project DeepSeek plan, history, policies, and weights into the CUDA job ABI.
- * Inputs: admitted token context.
- * Effects: loads bounded weights and fills private job facts.
- * Failure: typed contract or role-load refusal.
- * Boundary: performs no host attention math. */
+
 static int cuda_token_project(attention_cuda_context *context)
 {
     yvex_backend_host_workspace_summary workspace;
@@ -1756,11 +1708,7 @@ for (context->i = 0u; context->i < sizeof(cuda_roles) / sizeof(cuda_roles[0]);
 }
     return YVEX_OK;
 }
-/* Purpose: dispatch one complete admitted CUDA attention job into private output spans.
- * Inputs: projected job and trace storage.
- * Effects: invokes only the backend attention ABI.
- * Failure: maps backend failure without fallback.
- * Boundary: host code performs no numeric work. */
+
 static int cuda_token_dispatch(attention_cuda_context *context)
 {
 yvex_attention_failure_code graph_failure =
@@ -1827,11 +1775,7 @@ if (context->rc != YVEX_OK) {
 }
     return YVEX_OK;
 }
-/* Purpose: orchestrate one fail-closed DeepSeek CUDA attention phase.
- * Inputs: admitted owners, backend, and phase options.
- * Effects: publishes only complete device evidence.
- * Failure: releases weights and trace without fallback.
- * Boundary: owns no persistent runtime KV. */
+
 static int graph_cuda_request_execute(const yvex_attention_plan *plan, const void *family_ir,
     yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
     yvex_backend *backend, const yvex_attention_cpu_options *options,
@@ -1859,11 +1803,11 @@ static int graph_cuda_request_execute(const yvex_attention_plan *plan, const voi
         memset(context.result, 0, sizeof(*context.result));
     return rc;
 }
-/* Purpose: dispatch one complete device-produced CUDA attention phase.
- * Inputs: admitted plan, materialization, descriptor, backend, and typed request.
- * Effects: publishes one complete CUDA activation and candidate state delta.
- * Failure: typed device or orchestration refusal leaves caller publication unchanged.
- * Boundary: family composition only; persistent KV and host numerical fallback are excluded. */
+/*
+ * Dispatch one complete device-produced CUDA attention phase.
+ *
+ * Family composition only; persistent KV and host numerical fallback are excluded.
+ */
 static const yvex_graph_family_api deepseek_graph_api = {
     .plan_build = graph_plan_build,
     .plan_close = yvex_attention_plan_close,
@@ -1881,12 +1825,12 @@ static const yvex_graph_family_api deepseek_graph_api = {
     .cuda_token_execute = graph_cuda_request_execute,
     .cpu_chunk_execute = graph_cpu_chunk_execute
 };
-/* Purpose: expose recipe. Inputs: none. Effects: none. Failure: none. Boundary: immutable family facts. */
+
 const yvex_graph_family_api *yvex_graph_lower_deepseek_v4(void)
 {
     return &deepseek_graph_api;
 }
-/* Purpose: project exact DeepSeek sequence-mixer support without implementing future categories. */
+
 static int deepseek_runtime_mixer_capability(yvex_sequence_mixer_semantics semantics,
                                              yvex_runtime_mixer_capability *out)
 {
@@ -1905,7 +1849,7 @@ static int deepseek_runtime_mixer_capability(yvex_sequence_mixer_semantics seman
     }
     return 1;
 }
-/* Purpose: hold immutable implementation facts without promoting process resource readiness. */
+
 static const yvex_runtime_capabilities deepseek_runtime_capabilities = {
     .attention_semantics_ready = 1, .attention_core_ready = 1,
     .attention_envelope_ready = 1, .cpu_prefill_eager_ready = 1,
@@ -1917,7 +1861,7 @@ static const yvex_runtime_capabilities deepseek_runtime_capabilities = {
     .moe_router_ready = 1, .moe_routed_expert_ready = 1, .moe_shared_expert_ready = 1,
     .moe_block_ready = 1, .transformer_ready = 1
 };
-/* Purpose: project MoE. Inputs: typed facts. Effects: fills plan. Failure: typed. Boundary: policy only. */
+
 static int deepseek_moe_layer(unsigned long long index, const yvex_runtime_descriptor_summary *runtime,
                               const yvex_attention_layer_plan *attention, yvex_moe_layer_plan *out,
                               yvex_error *err)
@@ -1952,11 +1896,11 @@ static int deepseek_moe_layer(unsigned long long index, const yvex_runtime_descr
 }
 static const yvex_moe_family_api deepseek_moe_api = {
     .adapter_id = 0x44535634ull, .adapter_version = 5ull, .project_layer = deepseek_moe_layer};
-/* Purpose: lookup MoE. Inputs: index. Effects: none. Failure: NULL outside zero. Boundary: registry only. */
+
 const yvex_moe_family_api *yvex_graph_moe_family_at(unsigned long long index) {
     return index == 0ull ? &deepseek_moe_api : NULL;
 }
-/* Purpose: project the exact DeepSeek backbone ordering and final-stage policy. */
+
 static int deepseek_transformer_policy(yvex_transformer_family_policy *out) {
     if (!out) return 0;
     *out = (yvex_transformer_family_policy){
@@ -1967,14 +1911,14 @@ static int deepseek_transformer_policy(yvex_transformer_family_policy *out) {
         .output_norm_epsilon = 1e-5, .attention_then_moe = 1, .deferred_ffn_post = 1, .final_norm_after_head = 1};
     return 1;
 }
-/* Purpose: project the exact separate, unbiased DeepSeek output-head contract. */
+
 static int deepseek_logits_policy(yvex_logits_family_policy *out) {
     if (!out) return 0;
     *out = (yvex_logits_family_policy){.schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1,
         .separate_output_head = 1, .tied_output_head = 0, .output_head_bias = 0};
     return 1;
 }
-/* Purpose: project immutable capabilities. Failure: false on invalid lattice. Boundary: no resource readiness. */
+
 static int deepseek_runtime_execution_capabilities(yvex_runtime_capabilities *out) {
     if (!out) return 0;
     *out = deepseek_runtime_capabilities;
@@ -1994,7 +1938,7 @@ static const yvex_runtime_family_adapter deepseek_runtime_adapter = {
     .execution_capabilities = deepseek_runtime_execution_capabilities,
     .transformer_policy = deepseek_transformer_policy, .logits_policy = deepseek_logits_policy
 };
-/* Purpose: lookup runtime. Inputs: index. Effects: none. Failure: NULL outside zero. Boundary: registry only. */
+
 const struct yvex_runtime_family_adapter *yvex_graph_runtime_family_at(unsigned long long index) {
     return index == 0ull ? &deepseek_runtime_adapter : NULL;
 }

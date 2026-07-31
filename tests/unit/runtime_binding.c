@@ -1,12 +1,6 @@
 /*
- * runtime_binding.c - canonical runtime-binding storage tests.
- *
- * Owner: tests/unit runtime binding.
- * Owns: bounded binding storage, runtime-model/session lifecycle, family-adapter
- *   neutrality, artifact drift, and owned cleanup proof.
- * Does not own: target-scale DeepSeek runtime execution or backend numerics.
- * Invariants: all generated files live under one uniquely owned /tmp directory.
- * Boundary: the fixture proves storage semantics with a tiny admitted GGUF.
+ * All generated files live under one uniquely owned /tmp directory. The fixture proves storage
+ * semantics with a tiny admitted GGUF.
  */
 #define _GNU_SOURCE
 #include <yvex/artifact.h>
@@ -73,7 +67,6 @@ typedef struct {
     yvex_runtime_model_failure_code failure_code;
 } runtime_open_thread;
 
-/* Purpose: initialize one deterministic test-only thread rendezvous. */
 static int runtime_thread_gate_init(runtime_thread_gate *gate)
 {
     memset(gate, 0, sizeof(*gate));
@@ -86,7 +79,6 @@ static int runtime_thread_gate_init(runtime_thread_gate *gate)
     return 1;
 }
 
-/* Purpose: wait until the requested worker count reaches one synchronized checkpoint. */
 static void runtime_thread_gate_wait_ready(runtime_thread_gate *gate, unsigned int count)
 {
     (void)pthread_mutex_lock(&gate->mutex);
@@ -95,7 +87,6 @@ static void runtime_thread_gate_wait_ready(runtime_thread_gate *gate, unsigned i
     (void)pthread_mutex_unlock(&gate->mutex);
 }
 
-/* Purpose: release all workers waiting at one synchronized checkpoint. */
 static void runtime_thread_gate_release(runtime_thread_gate *gate)
 {
     (void)pthread_mutex_lock(&gate->mutex);
@@ -104,14 +95,12 @@ static void runtime_thread_gate_release(runtime_thread_gate *gate)
     (void)pthread_mutex_unlock(&gate->mutex);
 }
 
-/* Purpose: destroy one fully joined test-only thread rendezvous. */
 static void runtime_thread_gate_destroy(runtime_thread_gate *gate)
 {
     (void)pthread_cond_destroy(&gate->condition);
     (void)pthread_mutex_destroy(&gate->mutex);
 }
 
-/* Purpose: hold one real runtime execution acquisition until the test releases it. */
 static void *runtime_execute_thread_main(void *argument)
 {
     runtime_execute_thread *thread = (runtime_execute_thread *)argument;
@@ -133,7 +122,6 @@ static void *runtime_execute_thread_main(void *argument)
     return NULL;
 }
 
-/* Purpose: race one real session open against a model close while an anchor keeps it alive. */
 static void *runtime_open_thread_main(void *argument)
 {
     runtime_open_thread *thread = (runtime_open_thread *)argument;
@@ -156,13 +144,11 @@ static void *runtime_open_thread_main(void *argument)
     return NULL;
 }
 
-/* Purpose: reuse the immutable registered adapter so tests cannot substitute runtime callbacks. */
 static const yvex_runtime_family_adapter *runtime_fixture_adapter(void)
 {
     return yvex_runtime_family_adapter_find("deepseek4-v4-flash");
 }
 
-/* Purpose: prepare one session-local state layer from the registered family recipe. */
 static int runtime_state_prepare_fixture(
     const yvex_runtime_model *model,
     const yvex_attention_state_provider *provider,
@@ -194,7 +180,6 @@ static int runtime_state_prepare_fixture(
                : YVEX_ERR_STATE;
 }
 
-/* Purpose: begin one provider candidate using the model-owned immutable layer plan. */
 static int runtime_state_begin_fixture(
     const yvex_runtime_model *model,
     const yvex_attention_state_provider *provider,
@@ -273,7 +258,7 @@ static int injected_state_identity(void *context, unsigned long long layer_index
     return YVEX_OK;
 }
 static const yvex_attention_history_view injected_state_history = {.immutable = 1};
-/* Purpose: expose one immutable empty test view through the complete provider ABI. */
+
 static const yvex_attention_history_view *injected_state_view(
     void *context, unsigned long long layer_index, yvex_attention_state_view_kind kind)
 {
@@ -459,7 +444,6 @@ static int injected_state_factory_open(
     return YVEX_OK;
 }
 
-/* Purpose: discard factory-owned partial state while preserving it across injected cleanup failure. */
 static int injected_state_factory_discard(
     void *context, yvex_attention_state_provider *candidate, yvex_error *err)
 {
@@ -486,7 +470,6 @@ static int injected_state_factory_discard(
     return YVEX_OK;
 }
 
-/* Purpose: copy one regular fixture without invoking shell or broad cleanup. */
 static int copy_regular_file(const char *source, const char *destination)
 {
     unsigned char buffer[4096];
@@ -519,7 +502,6 @@ done:
     return result;
 }
 
-/* Purpose: compare two bounded binding files without depending on paths or inode metadata. */
 static int regular_files_equal(const char *left_path, const char *right_path)
 {
     yvex_core_file_result result;
@@ -544,7 +526,6 @@ done:
     return equal;
 }
 
-/* Purpose: decode one test-owned little-endian field from a bounded binding image. */
 static int test_binding_u64(const unsigned char *bytes, size_t count, size_t offset,
                             unsigned long long *value)
 {
@@ -557,7 +538,6 @@ static int test_binding_u64(const unsigned char *bytes, size_t count, size_t off
     return 1;
 }
 
-/* Purpose: skip one bounded canonical text field while retaining its payload offset. */
 static int test_binding_text_skip(const unsigned char *bytes, size_t count, size_t *offset,
                                   size_t *payload_offset)
 {
@@ -572,7 +552,6 @@ static int test_binding_text_skip(const unsigned char *bytes, size_t count, size
     return 1;
 }
 
-/* Purpose: skip an exact number of canonical fixed-width scalar fields. */
 static int test_binding_u64_skip(size_t count, size_t *offset, size_t field_count)
 {
     if (!offset || *offset > count || field_count > (count - *offset) / 8u) return 0;
@@ -580,7 +559,6 @@ static int test_binding_u64_skip(size_t count, size_t *offset, size_t field_coun
     return 1;
 }
 
-/* Purpose: locate top-level canonical fields without copying production parser logic. */
 static int test_binding_offsets(const unsigned char *file, size_t count,
                                 size_t *format_text, size_t *format_version,
                                 size_t *capability_value, size_t *compatibility_schema)
@@ -608,7 +586,6 @@ static int test_binding_offsets(const unsigned char *file, size_t count,
     return 8u <= count - offset;
 }
 
-/* Purpose: locate the two derived graph identity payloads in an authenticated binding body. */
 static int test_binding_graph_identity_offsets(
     const unsigned char *file, size_t count,
     size_t *semantic_identity, size_t *executable_identity)
@@ -629,7 +606,6 @@ static int test_binding_graph_identity_offsets(
            *executable_identity <= count && 64u <= count - *executable_identity;
 }
 
-/* Purpose: locate the first variable record count through the canonical schema sequence. */
 static int test_binding_material_count_offset(const unsigned char *file, size_t count,
                                               size_t *material_count)
 {
@@ -665,7 +641,6 @@ static int test_binding_material_count_offset(const unsigned char *file, size_t 
     return 8u <= count - offset;
 }
 
-/* Purpose: encode one test mutation in canonical little-endian width. */
 static void test_binding_put_u64(unsigned char *bytes, size_t offset,
                                  unsigned long long value)
 {
@@ -674,7 +649,6 @@ static void test_binding_put_u64(unsigned char *bytes, size_t offset,
         bytes[offset + index] = (unsigned char)(value >> (index * 8u));
 }
 
-/* Purpose: encode one test-owned GGUF directory scalar in little-endian order. */
 static void test_binding_put_u32(unsigned char *bytes, size_t offset,
                                  unsigned int value)
 {
@@ -683,7 +657,6 @@ static void test_binding_put_u32(unsigned char *bytes, size_t offset,
         bytes[offset + index] = (unsigned char)(value >> (index * 8u));
 }
 
-/* Purpose: turn the copied GGUF into one physically coherent DeepSeek attention binding. */
 static int rewrite_attention_artifact_fixture(const char *path)
 {
     static const char original_name[] = "token_embd.weight";
@@ -773,7 +746,6 @@ done:
     return result;
 }
 
-/* Purpose: readdress one deliberately malformed binding so format checks see authenticated bytes. */
 static int test_binding_readdress(const char *path, unsigned char *file, size_t count,
                                   char addressed_path[YVEX_PATH_CAP])
 {
@@ -818,7 +790,6 @@ done:
     return result;
 }
 
-/* Purpose: open the tiny canonical GGUF fixture through production owners. */
 static int fixture_artifact_open(binding_fixture *fixture, const char *path)
 {
     yvex_artifact_options options;
@@ -837,7 +808,6 @@ static int fixture_artifact_open(binding_fixture *fixture, const char *path)
     return rc == YVEX_OK;
 }
 
-/* Purpose: project complete synthetic admission facts bound to the opened fixture snapshot. */
 static int fixture_admission_build(binding_fixture *fixture)
 {
     yvex_complete_artifact_admission *value = &fixture->admission;
@@ -889,7 +859,6 @@ static int fixture_admission_build(binding_fixture *fixture)
     return yvex_artifact_snapshot_get(fixture->artifact, &value->file_snapshot, NULL) == YVEX_OK;
 }
 
-/* Purpose: construct the exact bounded physical proof consumed by binding serialization. */
 static void fixture_compatibility_build(binding_fixture *fixture)
 {
     yvex_artifact_physical_compatibility *value = &fixture->compatibility;
@@ -936,7 +905,7 @@ static void fixture_compatibility_build(binding_fixture *fixture)
     value->payload_digest_equal = 1;
 }
 
-/* Purpose: construct one identity-bearing synthetic plan through the canonical import owner. */
+/* Construct one identity-bearing synthetic plan through the canonical import owner. */
 static int fixture_attention_build(binding_fixture *fixture)
 {
     const yvex_materialization_summary *materialization;
@@ -1000,7 +969,6 @@ static int fixture_attention_build(binding_fixture *fixture)
     return 1;
 }
 
-/* Purpose: build the complete tiny preparation-plane object chain. */
 static int fixture_build(binding_fixture *fixture, const char *artifact_path)
 {
     yvex_materialization_options options;
@@ -1043,7 +1011,6 @@ static int fixture_build(binding_fixture *fixture, const char *artifact_path)
     return rc == YVEX_OK && fixture_attention_build(fixture);
 }
 
-/* Purpose: release only the objects owned by one synthetic fixture. */
 static void fixture_close(binding_fixture *fixture)
 {
     if (!fixture) return;
@@ -1059,7 +1026,6 @@ static void fixture_close(binding_fixture *fixture)
     memset(fixture, 0, sizeof(*fixture));
 }
 
-/* Purpose: create one isolated corruption directory beneath the owned root. */
 static int variant_path(const char *root, const char *variant, const char *basename,
                         char directory[YVEX_PATH_CAP], char path[YVEX_PATH_CAP])
 {
@@ -1070,7 +1036,6 @@ static int variant_path(const char *root, const char *variant, const char *basen
     return 1;
 }
 
-/* Purpose: detect one exact filename suffix inside an owned test directory. */
 static int directory_has_suffix(const char *path, const char *suffix)
 {
     struct dirent *entry;
@@ -1091,13 +1056,11 @@ static int directory_has_suffix(const char *path, const char *suffix)
     return found;
 }
 
-/* Purpose: prove conflict cleanup leaves no owned temporary publication file. */
 static int directory_has_temporary(const char *path)
 {
     return directory_has_suffix(path, ".tmp");
 }
 
-/* Purpose: bind one fixture chain to the canonical runtime-binding request. */
 static int fixture_binding_request(const binding_fixture *fixture, const char *directory,
                                    yvex_runtime_binding_prepare_request *request)
 {
@@ -1138,7 +1101,6 @@ static int fixture_binding_request(const binding_fixture *fixture, const char *d
            yvex_runtime_capabilities_contract_valid(&request->capabilities);
 }
 
-/* Purpose: prove pre-admission capability implications reject every promotion class. */
 static int test_runtime_capability_contract(void)
 {
     yvex_runtime_capabilities eager = {0}, mutated;
@@ -1195,7 +1157,7 @@ static int test_runtime_capability_contract(void)
     return 0;
 }
 
-/* Purpose: validate prepare, independent reopen, all three imports, and atomic conflict. */
+/* Validate prepare, independent reopen, all three imports, and atomic conflict. */
 static int test_prepare_reopen_import(const binding_fixture *fixture, const char *directory,
                                       yvex_runtime_binding_prepare_result *prepared,
                                       yvex_runtime_binding **binding_out)
@@ -1404,7 +1366,6 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     return 0;
 }
 
-/* Purpose: verify typed refusal for truncation, tail data, legacy schema, and stale content. */
 static int test_corruption_refusals(const yvex_runtime_binding_prepare_result *prepared,
                                     const char *root)
 {
@@ -1467,7 +1428,6 @@ static int test_corruption_refusals(const yvex_runtime_binding_prepare_result *p
     return 0;
 }
 
-/* Purpose: prove authenticated scalar, text, and record-count abuse cannot enter typed records. */
 static int test_canonical_refusals(const yvex_runtime_binding_prepare_result *prepared,
                                    const char *root)
 {
@@ -1528,7 +1488,7 @@ static int test_canonical_refusals(const yvex_runtime_binding_prepare_result *pr
     return 0;
 }
 
-/* Purpose: prove a valid outer content hash cannot authenticate either false graph identity. */
+/* Prove a valid outer content hash cannot authenticate either false graph identity. */
 static int test_graph_identity_refusals(
     const yvex_runtime_binding_prepare_result *prepared, const char *root)
 {
@@ -1576,7 +1536,6 @@ static int test_graph_identity_refusals(
     return 0;
 }
 
-/* Purpose: prove content portability while every reopened artifact receives an exact drift lease. */
 static int test_artifact_copy_portability(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared,
     const char *root)
@@ -1663,7 +1622,6 @@ static int test_artifact_copy_portability(
     return 0;
 }
 
-/* Purpose: open one sealed runtime model from the external binding and copied artifact. */
 static int runtime_model_open_fixture(const binding_fixture *fixture,
                                       const yvex_runtime_binding_prepare_result *prepared,
                                       yvex_runtime_model **model,
@@ -1685,7 +1643,6 @@ typedef struct {
     int cancel_hash;
 } runtime_progress_fixture;
 
-/* Purpose: collect exact phase and hash-byte progress, optionally cancelling the hash. */
 static int runtime_progress_collect(void *opaque, yvex_runtime_lifecycle_phase phase,
                                     unsigned long long completed,
                                     unsigned long long total)
@@ -1704,7 +1661,6 @@ static int runtime_progress_collect(void *opaque, yvex_runtime_lifecycle_phase p
     return 1;
 }
 
-/* Purpose: prove cold lifecycle progress is exact and callback cancellation is fail-closed. */
 static int test_runtime_model_progress(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -1761,7 +1717,6 @@ static int test_runtime_model_progress(
     return 0;
 }
 
-/* Purpose: prove mixer taxonomy remains adapter-driven and future families stay unadmitted. */
 static int test_runtime_family_neutrality(void)
 {
     const yvex_runtime_family_adapter *deepseek =
@@ -1809,7 +1764,6 @@ static int test_runtime_family_neutrality(void)
     return 0;
 }
 
-/* Purpose: prove one cold model owns trust/build work while warm CPU sessions reuse it. */
 static int test_runtime_model_session_reuse(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -2028,7 +1982,6 @@ static int test_runtime_model_session_reuse(
     return 0;
 }
 
-/* Purpose: prove different sessions execute concurrently while one session refuses a second owner. */
 static int test_runtime_concurrent_session_isolation(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -2109,7 +2062,6 @@ static int test_runtime_concurrent_session_isolation(
     return 0;
 }
 
-/* Purpose: race session open with model close and prove the active anchor drains safely. */
 static int test_runtime_concurrent_close_drain(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -2177,7 +2129,6 @@ static int test_runtime_concurrent_close_drain(
     return 0;
 }
 
-/* Purpose: prove model close drains active sessions and rejects new mutable work. */
 static int test_runtime_model_close_drain(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -2242,7 +2193,6 @@ static int test_runtime_model_close_drain(
     return 0;
 }
 
-/* Purpose: prove session close and failed-open cleanup retain their enclosing owner for retry. */
 static int test_runtime_session_owner_retry(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -2329,7 +2279,6 @@ static int test_runtime_session_owner_retry(
     return 0;
 }
 
-/* Purpose: prove failed factory candidates remain owned until discard succeeds or is retried. */
 static int test_runtime_state_factory_candidate_cleanup(
     const binding_fixture *fixture,
     const yvex_runtime_binding_prepare_result *prepared)
@@ -2381,7 +2330,6 @@ static int test_runtime_state_factory_candidate_cleanup(
     return 0;
 }
 
-/* Purpose: prove session lifecycle consumes an opaque provider, including retryable faults. */
 static int test_runtime_injected_state_provider(
     const binding_fixture *fixture,
     const yvex_runtime_binding_prepare_result *prepared)
@@ -2487,7 +2435,6 @@ typedef struct {
     int fail_once;
 } runtime_cleanup_dependent;
 
-/* Purpose: retain one lease-owned dependent on the first release and discharge it on retry. */
 static int runtime_cleanup_dependent_release(void **context, yvex_error *err)
 {
     runtime_cleanup_dependent *dependent =
@@ -2509,7 +2456,7 @@ static int runtime_cleanup_dependent_release(void **context, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: prove one opaque lease transfers complete model/session ownership across cleanup faults. */
+/* Prove one opaque lease transfers complete model/session ownership across cleanup faults. */
 static int test_runtime_cleanup_lease_retry(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -2597,7 +2544,6 @@ static int test_runtime_cleanup_lease_retry(
     return 0;
 }
 
-/* Purpose: prove the session-scoped probe ABI rejects mismatched and caller-owned resources. */
 static int test_runtime_probe_consumer_boundary(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -2721,7 +2667,6 @@ static int test_runtime_probe_consumer_boundary(
     return 0;
 }
 
-/* Purpose: classify CUDA unit execution without hiding a rejected generated kernel bundle. */
 static int runtime_cuda_test_ready(int *ready)
 {
     yvex_backend *backend = NULL;
@@ -2750,7 +2695,7 @@ static int runtime_cuda_test_ready(int *ready)
     return rc;
 }
 
-/* Purpose: prove one CUDA resident pack is shared by isolated session contexts until owner release. */
+/* Prove one CUDA resident pack is shared by isolated session contexts until owner release. */
 static int test_runtime_cuda_session_cleanup_retry(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -2844,7 +2789,6 @@ static int test_runtime_cuda_session_cleanup_retry(
     return 0;
 }
 
-/* Purpose: prove pinned workspace preparation restores the complete session summary on failure. */
 static int test_runtime_cuda_workspace_transaction(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -2946,7 +2890,6 @@ static int test_runtime_cuda_workspace_transaction(
     return 0;
 }
 
-/* Purpose: prove model open resolves immutable registry storage instead of retaining caller adapters. */
 static int test_runtime_model_adapter_refusal(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {
@@ -2977,7 +2920,6 @@ static int test_runtime_model_adapter_refusal(
     return 0;
 }
 
-/* Purpose: mutate the copied artifact and prove one-way model invalidation. */
 static int test_runtime_model_snapshot_drift(
     const binding_fixture *fixture, const yvex_runtime_binding_prepare_result *prepared)
 {

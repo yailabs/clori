@@ -1,8 +1,11 @@
-/* Owner: runtime attention orchestration. Owns: request admission, session execution, trace, timing, evidence.
- * Does not own: graph math, family policy, kernels, state storage, render, or generation.
- * Invariants: one sealed session owns each run; failure publishes no candidate. Boundary: typed activation.
- * Purpose: drive admitted attention through reusable resources and one graph API.
- * Inputs: binding, artifact, request, adapter. Effects: bounded dispatch. Failure: preserves committed state. */
+/*
+ * Runtime graph execution coordinates one session's attention state with reusable backend
+ * resources. State updates remain candidates until device work, numerical validation, and runtime
+ * residency publication all succeed; any failure aborts the same generation on every owner.
+ *
+ * This layer chooses lifecycle and transaction order. Attention arithmetic and family scheduling
+ * stay with graph/backend owners, and no report produced here can promote runtime capability.
+ */
 #include <yvex/internal/core.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/benchmark.h>
@@ -17,21 +20,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-/* Purpose: publish one stable typed runtime refusal and return its status. */
+
 static int runtime_refuse(yvex_error *err, yvex_status status, const char *where, const char *message) {
     if (err && yvex_error_is_set(err)) return yvex_error_code(err);
     yvex_error_set(err, status, where, message);
     return status;
 }
-/* Purpose: convert one non-negative monotonic nanosecond interval to seconds. */
+
 static double runtime_seconds(unsigned long long nanoseconds) {
     return (double)nanoseconds / 1000000000.0;
 }
-/* Purpose: classify the contiguous operator range that owns CUDA graph state. */
+
 static int runtime_attention_is_graph_action(yvex_runtime_operator_action action) {
     return action >= YVEX_RUNTIME_OPERATOR_CAPTURE && action <= YVEX_RUNTIME_OPERATOR_GRAPH_RELEASE;
 }
-/* Purpose: reject selection. Inputs: request. Effects: none. Failure: refusal. Boundary: before admission. */
+
 int yvex_graph_attention_operator_selection_validate(
     const yvex_graph_attention_operator_request *request, yvex_error *err) {
     if (!request || (request->operation_scope != YVEX_RUNTIME_SCOPE_ATTENTION_CORE &&
@@ -72,7 +75,7 @@ static const runtime_attention_request_rule runtime_attention_request_rules[] = 
     {YVEX_ERR_UNSUPPORTED, "runtime.attention", "mixed and speculative phases are not admitted"},
      {YVEX_ERR_INVALID_ARG, "runtime.attention", "attention decode requires one activation row"},
 };
-/* Purpose: validate inputs. Inputs: request. Effects: none. Failure: refusal. Boundary: before admission. */
+
 static int runtime_attention_request_validate(const yvex_graph_attention_operator_request *request, yvex_error *err) {
     unsigned int rule;
     if (!request || !request->target)
@@ -177,16 +180,16 @@ static const runtime_attention_trace_field runtime_attention_trace_fields[] = {
      {offsetof(attn_pub, core_output), ATTN_PUB_TOKENS, offsetof(attn_pub, core_output_width), 0u},
      {offsetof(attn_pub, envelope_output), ATTN_PUB_TOKENS, offsetof(attn_pub, envelope_output_width), 0u},
 };
-/* Purpose: project one bounded typed enum through its stable operator-name table. */
+
 static const char *runtime_attention_name(const char *const *names, unsigned int maximum, unsigned int value) {
     return value <= maximum ? names[value] : "invalid";
 }
-/* Purpose: copy one bounded typed enum name into an operator result field. */
+
 static void runtime_attention_name_copy(char *out, size_t capacity, const char *const *names,
                                         unsigned int maximum, unsigned int value) {
     yvex_core_text_copy(out, capacity, runtime_attention_name(names, maximum, value));
 }
-/* Purpose: retain the maximum exact resource counter without duplicating comparison branches. */
+
 static void runtime_attention_u64_raise(unsigned long long *maximum, unsigned long long candidate) {
     if (candidate > *maximum) *maximum = candidate;
 }
@@ -195,7 +198,7 @@ typedef struct {
     yvex_runtime_trace_policy policy;
     unsigned long long stage_count, value_count;
 } runtime_attention_trace;
-/* Purpose: hash one typed production stage and accumulate exact evidence extents. */
+
 static int runtime_attention_trace_span(runtime_attention_trace *trace, const char *name,
                                         const void *values, unsigned long long rows,
                                         unsigned long long width, size_t element_size) {
@@ -211,7 +214,7 @@ static int runtime_attention_trace_span(runtime_attention_trace *trace, const ch
     trace->stage_count++;
     return YVEX_OK;
 }
-/* Purpose: hash rolling state. Inputs: stage. Effects: digest. Failure: invalid extent. Boundary: read-only. */
+
 static int runtime_attention_trace_rolling(runtime_attention_trace *trace, const char *name,
                                            const yvex_attention_rolling_state_output *state) {
     int rc;
@@ -235,7 +238,7 @@ static int runtime_attention_trace_rolling(runtime_attention_trace *trace, const
                                           state->score_state_extent, 1ull, sizeof(float));
     return rc;
 }
-/* Purpose: consume publications. Inputs: values. Effects: digest. Failure: malformed data. Boundary: no oracle. */
+
 static int runtime_attention_trace_capture(void *context, yvex_backend_kind backend,
                                            const yvex_attention_publication *publication, yvex_error *err) {
     runtime_attention_trace *trace = (runtime_attention_trace *)context;
@@ -289,7 +292,7 @@ static int runtime_attention_trace_capture(void *context, yvex_backend_kind back
         return runtime_refuse(err, rc, "runtime.attention.trace", "production trace evidence hashing failed");
     return YVEX_OK;
 }
-/* Purpose: seed one path-specific execution-evidence identity from immutable request facts. */
+
 static int runtime_attention_trace_begin(runtime_attention_trace *trace,
                                          const yvex_graph_attention_operator_request *request,
                                          const char *selected_mode, yvex_error *err) {
@@ -305,7 +308,7 @@ static int runtime_attention_trace_begin(runtime_attention_trace *trace,
         return runtime_refuse(err, YVEX_ERR_STATE, "runtime.attention.trace", "identity failed");
     return YVEX_OK;
 }
-/* Purpose: finalize path-specific evidence separately from tensor and state digests. */
+
 static int runtime_attention_trace_finish(runtime_attention_trace *trace,
                                           yvex_graph_attention_operator_result *result, yvex_error *err) {
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -322,7 +325,7 @@ static int runtime_attention_trace_finish(runtime_attention_trace *trace,
     result->trace_stage_count = trace->stage_count; result->trace_value_count = trace->value_count;
     return YVEX_OK;
 }
-/* Purpose: seed reachability. Inputs: request. Effects: defaults. Failure: defined fields. Boundary: no claim. */
+
 static void runtime_attention_result_initialize(const yvex_graph_attention_operator_request *request,
                                                 yvex_graph_attention_operator_result *result) {
     const yvex_runtime_family_adapter *adapter;
@@ -374,7 +377,7 @@ static void runtime_attention_result_initialize(const yvex_graph_attention_opera
     result->requested_layer_start = request->layer_start;
     result->requested_layer_count = request->select_layer ? request->layer_count : 0ull;
 }
-/* Purpose: bind identities. Inputs: summaries. Effects: facts. Failure: incomplete. Boundary: admission. */
+
 static int runtime_attention_result_bind(const yvex_runtime_model *model,
                                          yvex_graph_attention_operator_result *result, yvex_error *err) {
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
@@ -427,7 +430,7 @@ static int runtime_attention_result_bind(const yvex_runtime_model *model,
     memcpy(result->lifecycle_seconds, model_summary.lifecycle_seconds, sizeof(result->lifecycle_seconds));
     return 1;
 }
-/* Purpose: retain refusal. Inputs: facts. Effects: clears completion. Failure: stable text. Boundary: CLI renders. */
+
 static void runtime_attention_result_refuse(yvex_graph_attention_operator_result *result, int status,
                                             const yvex_error *err) {
     const char *message = err ? yvex_error_message(err) : "";
@@ -442,7 +445,6 @@ static void runtime_attention_result_refuse(yvex_graph_attention_operator_result
                    yvex_status_name(code), result->failure_where,
                    message[0] ? message : "attention execution refused");
 }
-/* Purpose: bind identity. Inputs: request/result. Effects: digest. Failure: hash. Boundary: excludes process facts. */
 static int runtime_attention_execution_identity(
     const yvex_graph_attention_operator_request *request, const yvex_graph_attention_operator_result *result,
     char output[YVEX_SHA256_HEX_CAP]) {
@@ -473,7 +475,6 @@ static int runtime_attention_execution_identity(
     yvex_sha256_hex(digest, output);
     return 1;
 }
-/* Purpose: project descriptor. Inputs: owners. Effects: identity. Failure: missing facts. Boundary: no evidence. */
 static int runtime_attention_execution_descriptor_identity(
     const yvex_graph_attention_operator_request *request, const yvex_runtime_model *model,
     const yvex_runtime_execution_session *session,
@@ -563,13 +564,13 @@ static int runtime_attention_execution_descriptor_identity(
         return yvex_runtime_execution_descriptor_identity_compute(&facts, output, err);
     }
 }
-/* Purpose: classify commands that dispatch production attention mathematics. */
+
 static int runtime_attention_action_dispatches(yvex_runtime_operator_action action) {
     return action == YVEX_RUNTIME_OPERATOR_EXECUTE ||
            (action >= YVEX_RUNTIME_OPERATOR_STATE_EXERCISE &&
             action <= YVEX_RUNTIME_OPERATOR_QUALIFY);
 }
-/* Purpose: publish state. Inputs: session. Effects: facts. Failure: invalid state. Boundary: no model phase. */
+
 static int runtime_attention_state_summary_publish(
     const yvex_runtime_execution_session *session, int validate,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
@@ -604,7 +605,7 @@ static int runtime_attention_state_summary_publish(
     result->state_transaction_active = summary.transaction_active;
     result->state_validation_passed = validate; return YVEX_OK;
 }
-/* Purpose: select mode. Inputs: request/session. Effects: compatibility. Failure: refusal. Boundary: no downgrade. */
+
 static int runtime_attention_mode_configure(const yvex_graph_attention_operator_request *request,
     yvex_runtime_execution_session *session, yvex_graph_attention_operator_result *result,
     yvex_runtime_execution_mode *selected_mode, yvex_error *err) {
@@ -679,7 +680,7 @@ publish:
                               "required AUTO mode could not select the full CUDA graph");
     return YVEX_OK;
 }
-/* Purpose: bind registry. Inputs: descriptor. Effects: CUDA config. Failure: refusal. Boundary: before dispatch. */
+
 static int runtime_attention_mode_bind_descriptor(const yvex_graph_attention_operator_request *request,
     yvex_runtime_execution_session *session, const yvex_graph_attention_operator_result *result,
     yvex_runtime_execution_mode mode, const yvex_graph_attention_capacity_plan *capacity,
@@ -702,7 +703,7 @@ static int runtime_attention_mode_bind_descriptor(const yvex_graph_attention_ope
         summary->components[YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY].maximum_capacity,
         summary->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY].maximum_capacity, err);
 }
-/* Purpose: copy graph evidence. Inputs: backend. Effects: facts. Failure: incomplete data. Boundary: no promotion. */
+
 static int runtime_attention_graph_summary(yvex_runtime_execution_session *session,
                                            int require_execution,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
@@ -732,7 +733,7 @@ static int runtime_attention_graph_summary(yvex_runtime_execution_session *sessi
     result->cuda_graph_invalidation_count = summary.invalidation_count;
     return YVEX_OK;
 }
-/* Purpose: publish one operator lifecycle event with fail-closed cancellation. */
+
 static int runtime_attention_progress(const yvex_graph_attention_operator_request *request,
                                       yvex_runtime_lifecycle_phase phase, unsigned long long completed,
                                       unsigned long long total, yvex_error *err) {
@@ -741,7 +742,7 @@ static int runtime_attention_progress(const yvex_graph_attention_operator_reques
                               "attention operator lifecycle was cancelled");
     return YVEX_OK;
 }
-/* Purpose: partition graph time. Inputs: counters. Effects: timings. Failure: invalid clocks. Boundary: no math. */
+
 static int runtime_attention_graph_lifecycle_partition(yvex_graph_attention_operator_result *result,
                                                        yvex_error *err) {
     const double nested = result->lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_GRAPH_CAPTURE] +
@@ -766,7 +767,7 @@ typedef struct {
     int hash_output;
     char last_delta_identity[YVEX_SHA256_HEX_CAP];
 } runtime_attention_state_bridge;
-/* Purpose: begin publication. Inputs: state. Effects: candidate. Failure: refusal. Boundary: session-owned. */
+
 static int runtime_attention_state_begin(
     void *context, unsigned long long layer_ordinal, const yvex_attention_layer_plan *layer,
     const yvex_attention_history_view *initial_history,
@@ -781,7 +782,7 @@ static int runtime_attention_state_begin(
         bridge->provider->context, layer_ordinal, layer, initial_history,
         token_position, token_count, cancellation, history, failure, err);
 }
-/* Purpose: hash output. Inputs: publication. Effects: digest. Failure: geometry. Boundary: evidence only. */
+
 static int runtime_attention_state_hash_output(
     runtime_attention_state_bridge *bridge, const yvex_attention_publication *publication) {
     const float *values;
@@ -803,7 +804,7 @@ static int runtime_attention_state_hash_output(
     bridge->output_values += count;
     return 1;
 }
-/* Purpose: stage publication. Inputs: bridge. Effects: candidate bytes. Failure: abortable. Boundary: no math. */
+
 static int runtime_attention_state_stage(
     void *context, const yvex_attention_publication *publication,
     const yvex_attention_cancellation *cancellation, char state_delta_identity[YVEX_SHA256_HEX_CAP],
@@ -824,7 +825,7 @@ static int runtime_attention_state_stage(
         yvex_runtime_identity_copy(bridge->last_delta_identity, state_delta_identity);
     return rc;
 }
-/* Purpose: abort every uncommitted graph publication through typed cleanup. */
+
 static int runtime_attention_state_abort(
     void *context, yvex_attention_failure *failure, yvex_error *err) {
     runtime_attention_state_bridge *bridge = (runtime_attention_state_bridge *)context;
@@ -833,7 +834,7 @@ static int runtime_attention_state_abort(
                               "attention state bridge is required for abort");
     return bridge->provider->abort(bridge->provider->context, failure, err);
 }
-/* Purpose: bind the generic graph state protocol to one runtime-owned provider. */
+
 static yvex_attention_probe_state_provider
 runtime_attention_state_provider(runtime_attention_state_bridge *bridge) {
     yvex_attention_probe_state_provider provider;
@@ -842,7 +843,7 @@ runtime_attention_state_provider(runtime_attention_state_bridge *bridge) {
     provider.stage = runtime_attention_state_stage; provider.abort = runtime_attention_state_abort;
     return provider;
 }
-/* Purpose: prepare state. Inputs: plans. Effects: banks. Failure: refusal. Boundary: capacity remains plan-owned. */
+
 int yvex_runtime_session_prepare_attention_probe_state(yvex_runtime_execution_session *session,
     yvex_runtime_model *model, const yvex_graph_attention_capacity_plan *capacity,
     yvex_attention_failure *failure, yvex_error *err) {
@@ -914,7 +915,7 @@ typedef struct {
     unsigned long long pair_count;
 } runtime_attention_phase_context;
 static int runtime_attention_phase_lane_close(runtime_attention_phase_lane *lane, yvex_error *err);
-/* Purpose: initialize lane. Inputs: layer/scope. Effects: evidence. Failure: hash. Boundary: keeps prior state. */
+
 static int runtime_attention_phase_lane_evidence_begin(
     runtime_attention_phase_lane *lane, unsigned long long layer_ordinal,
     yvex_attention_operation_scope operation_scope, yvex_error *err) {
@@ -933,7 +934,7 @@ static int runtime_attention_phase_lane_evidence_begin(
                               "phase output identity initialization failed");
     return YVEX_OK;
 }
-/* Purpose: open phase lane. Inputs: recipe/budget. Effects: state. Failure: cleanup. Boundary: proof-only seed. */
+
 static int runtime_attention_phase_lane_open(
     runtime_attention_phase_lane *lane, const yvex_graph_family_api *graph,
     const yvex_attention_plan *plan, unsigned long long layer_ordinal,
@@ -969,7 +970,7 @@ static int runtime_attention_phase_lane_open(
     lane->provider = runtime_attention_state_provider(&lane->bridge);
     return YVEX_OK;
 }
-/* Purpose: close lane. Inputs: owner. Effects: release. Failure: retryable. Boundary: keeps shared owners. */
+
 static int runtime_attention_phase_lane_close(runtime_attention_phase_lane *lane, yvex_error *err) {
     int rc;
     if (!lane) return YVEX_OK;
@@ -987,7 +988,7 @@ static int runtime_attention_phase_lane_close(runtime_attention_phase_lane *lane
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: execute phase lane. Inputs: owners/tokens. Effects: evidence. Failure: abort. Boundary: not model phase. */
+
 static int runtime_attention_phase_lane_execute(
     runtime_attention_phase_lane *lane, yvex_runtime_model *model,
     const yvex_graph_family_api *graph, const yvex_attention_probe_request *base_request,
@@ -1066,7 +1067,7 @@ static int runtime_attention_phase_lane_execute(
     }
     return rc;
 }
-/* Purpose: release phase context. Inputs: owner. Effects: closes lanes. Failure: retry. Boundary: keeps runtime. */
+
 static int runtime_attention_phase_context_release(void **owner, yvex_error *err) {
     runtime_attention_phase_context *context = owner ? *owner : NULL;
     yvex_error first, current;
@@ -1094,7 +1095,7 @@ static int runtime_attention_phase_context_release(void **owner, yvex_error *err
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: prepare phase lanes. Inputs: recipes. Effects: pairs. Failure: cleanup. Boundary: local evidence. */
+
 static int runtime_attention_phase_context_open(
     runtime_attention_phase_context *context, const yvex_graph_family_api *graph,
     const yvex_attention_plan *plan, const yvex_graph_attention_capacity_plan *capacity,
@@ -1155,7 +1156,7 @@ static int runtime_attention_phase_context_open(
                             "selected phase-equivalence recipes changed during preparation");
     return rc;
 }
-/* Purpose: prove phase equivalence. Inputs: recipes. Effects: comparison. Failure: mismatch. Boundary: attention. */
+
 static int runtime_attention_phase_equivalence(
     yvex_runtime_execution_session *session, yvex_runtime_model *model,
     const yvex_graph_family_api *graph, const yvex_attention_probe_request *base_request,
@@ -1276,7 +1277,7 @@ static int runtime_attention_phase_equivalence(
     }
     return rc;
 }
-/* Purpose: require batch. Inputs: state. Effects: none. Failure: incomplete. Boundary: before commit. */
+
 static int runtime_attention_batch_validate(yvex_runtime_execution_session *session,
     const yvex_attention_probe_request *request, yvex_error *err) {
     const yvex_runtime_session_view *view = yvex_runtime_session_view_get(session);
@@ -1292,7 +1293,6 @@ static int runtime_attention_batch_validate(yvex_runtime_execution_session *sess
                               "runtime attention state batch is incomplete");
     return YVEX_OK;
 }
-/* Purpose: execute semantic input. Inputs: owners. Effects: state commit. Failure: rollback. Boundary: no prompt. */
 int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session,
     yvex_runtime_model *model, const yvex_attention_probe_request *request,
     yvex_attention_probe_result *result, yvex_runtime_model_failure *model_failure,
@@ -1350,7 +1350,7 @@ int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session
     if (rc == YVEX_OK) *result = probe;
     return rc;
 }
-/* Purpose: execute one persistent-state probe variant without changing its canonical request owner. */
+
 static int runtime_attention_state_probe(yvex_runtime_execution_session *session, yvex_runtime_model *model,
     const yvex_attention_probe_request *base, unsigned long long tokens, unsigned long long position,
     int perturb, yvex_attention_probe_result *result, yvex_runtime_model_failure *failure, yvex_error *err) {
@@ -1361,7 +1361,7 @@ static int runtime_attention_state_probe(yvex_runtime_execution_session *session
     request.perturb_input = perturb;
     return yvex_runtime_attention_probe_execute(session, model, &request, result, failure, err);
 }
-/* Purpose: dispatch action. Inputs: request. Effects: execution. Failure: stops. Boundary: one persistent session. */
+
 static int runtime_attention_operator_dispatch(
     const yvex_graph_attention_operator_request *request,
     yvex_runtime_execution_session *session, yvex_runtime_model *model,
@@ -1502,7 +1502,7 @@ enum {
     RUNTIME_WARM_MONOTONIC_COUNTERS = 12,
     RUNTIME_WARM_COUNTERS = 15
 };
-/* Purpose: capture counters. Inputs: owners. Effects: snapshot. Failure: missing owner. Boundary: no execution. */
+
 static int runtime_attention_warm_snapshot_take(
     yvex_runtime_model *model, yvex_runtime_execution_session *session,
     runtime_attention_warm_snapshot *out, yvex_error *err) {
@@ -1525,7 +1525,7 @@ static int runtime_attention_warm_snapshot_take(
     yvex_core_allocation_epoch_snapshot(&out->host_allocations);
     return YVEX_OK;
 }
-/* Purpose: enforce warm invariants. Inputs: snapshots. Effects: deltas. Failure: transition. Boundary: counters. */
+
 static int runtime_attention_warm_snapshot_publish(const runtime_attention_warm_snapshot *before,
     const runtime_attention_warm_snapshot *after,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
@@ -1576,7 +1576,7 @@ unsigned int index, regressed = before->host_allocations.overflowed ||
     result->warm_d2h_bytes = counters[RUNTIME_WARM_D2H_BYTES].after - counters[RUNTIME_WARM_D2H_BYTES].before;
     return YVEX_OK;
 }
-/* Purpose: publish residency. Inputs: session. Effects: counters. Failure: missing facts. Boundary: no policy. */
+
 static int runtime_attention_session_publish(const yvex_runtime_execution_session *session,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
     yvex_runtime_session_summary summary;
@@ -1598,7 +1598,7 @@ static int runtime_attention_session_publish(const yvex_runtime_execution_sessio
         summary.capabilities.cuda_decode_eager_ready;
     return YVEX_OK;
 }
-/* Purpose: apply graph action. Inputs: session. Effects: registry. Failure: missing entry. Boundary: process-local. */
+
 static int runtime_attention_registry_publish(const yvex_graph_attention_operator_request *request,
     yvex_runtime_execution_session *session,
     yvex_graph_attention_operator_result *result, yvex_error *err) {
@@ -1653,7 +1653,7 @@ static int runtime_attention_registry_publish(const yvex_graph_attention_operato
     }
     return rc;
 }
-/* Purpose: publish dispatch. Inputs: owners. Effects: evidence. Failure: first error. Boundary: no numerical work. */
+
 static int runtime_attention_publish_result(const yvex_graph_attention_operator_request *request,
     yvex_runtime_execution_session *session, runtime_attention_trace *trace,
     unsigned long long warmup, unsigned long long repeat, yvex_graph_attention_operator_result *result,
@@ -1678,7 +1678,7 @@ static int runtime_attention_publish_result(const yvex_graph_attention_operator_
         rc = runtime_attention_progress(request, YVEX_RUNTIME_LIFECYCLE_PUBLICATION, 1ull, 1ull, err);
     return rc;
 }
-/* Purpose: release run. Inputs: lease. Effects: cleanup. Failure: retry ownership. Boundary: preserves artifact. */
+
 static int runtime_attention_cleanup(yvex_runtime_cleanup_lease **lease, double *samples,
     yvex_graph_attention_operator_result *result, int status, yvex_error *err) {
     unsigned long long started = yvex_core_monotonic_ns();
@@ -1695,7 +1695,7 @@ static int runtime_attention_cleanup(yvex_runtime_cleanup_lease **lease, double 
         runtime_seconds(yvex_core_monotonic_ns() - started);
     return status;
 }
-/* Purpose: open runtime. Inputs: request/adapter. Effects: owners. Failure: leased cleanup. Boundary: no capacity. */
+
 static int runtime_attention_open(const yvex_graph_attention_operator_request *request,
     const yvex_runtime_family_adapter *adapter, yvex_runtime_cleanup_lease **cleanup,
     yvex_runtime_model **model, yvex_runtime_execution_session **session,
@@ -1735,7 +1735,7 @@ static int runtime_attention_open(const yvex_graph_attention_operator_request *r
             request, YVEX_RUNTIME_LIFECYCLE_BACKEND_OPEN, 1ull, 1ull, err);
     return rc;
 }
-/* Purpose: derive capacity. Inputs: request/model. Effects: plan. Failure: no publication. Boundary: no storage. */
+
 static int runtime_attention_capacity_build(const yvex_graph_attention_operator_request *request,
     const yvex_runtime_model *model, const yvex_graph_family_api *graph,
     unsigned long long execution_count, yvex_graph_attention_capacity_plan **out, yvex_error *err) {
@@ -1770,7 +1770,7 @@ static const unsigned long long runtime_qualification_counters[] = {
 static const char runtime_quality_matrix_identity[] =
     "f420309313d355606543bcc50cd4cff44ada2be6c06723d328dc70b6db5e3673";
 static const char qualify_where[] = "runtime.attention.qualification";
-/* Purpose: seal qualification. Inputs: facts. Effects: identity. Failure: invariant. Boundary: no oracle. */
+
 static int runtime_attention_qualify(yvex_graph_attention_operator_result *result, yvex_error *err) {
     static const char status[YVEX_RUNTIME_QUALITY_STATUS_COUNT][24] = {
         "pass", "pass", "pass", "available", "pass", "pass", "not_measured"};
@@ -1795,7 +1795,7 @@ static int runtime_attention_qualify(yvex_graph_attention_operator_result *resul
     yvex_sha256_hex(digest, result->qualification_identity);
     return YVEX_OK;
 }
-/* Purpose: execute attention. Inputs: request. Effects: result. Failure: cleanup. Boundary: no compiler/generation. */
+
 int yvex_graph_attention_operator_execute(const yvex_graph_attention_operator_request *request,
     yvex_graph_attention_operator_result *result, yvex_runtime_cleanup_lease **retained_cleanup, yvex_error *err) {
     const yvex_runtime_family_adapter *adapter;

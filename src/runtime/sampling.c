@@ -1,12 +1,9 @@
-/* Owner: runtime.sampling.
- * Owns: immutable sampling policy, real-logits admission, canonical filters, PCG state, and token publication.
- * Does not own: model/artifact open, logits math, KV, decode, token append, tokenizer, stop policy, or generation.
- * Invariants: all vocabulary values participate and failed samples commit neither a token nor an RNG transition.
- * Boundary: family-neutral host sampling over one complete admitted logits row.
- * Purpose: provide reusable deterministic and explicitly seeded stochastic token selection.
- * Inputs: logits plan/row identities, immutable F32 logits, bounded policy, and caller-owned result storage.
- * Effects: reuses fixed workspace and commits only sampling-local RNG state after successful publication.
- * Failure: typed refusal preserves logits, runtime state, prior samples, and uncommitted RNG state. */
+/*
+ * Provide reusable deterministic and explicitly seeded stochastic token selection.
+ *
+ * All vocabulary values participate and failed samples commit neither a token nor an RNG
+ * transition. Family-neutral host sampling over one complete admitted logits row.
+ */
 #include <yvex/internal/sampling.h>
 #include <yvex/internal/core.h>
 
@@ -54,7 +51,6 @@ static int sampling_enter(yvex_runtime_sampling_context *context,
 static void sampling_leave(yvex_runtime_sampling_context *context, int rc,
                            unsigned long long completed);
 
-/* Purpose: publish one typed sampling refusal. */
 static int sampling_refuse(yvex_error *err, yvex_status status,
                            const char *message)
 {
@@ -62,9 +58,6 @@ static int sampling_refuse(yvex_error *err, yvex_status status,
     return status;
 }
 
-/* Purpose: append canonical F32 bits to one semantic identity.
- * Inputs: active hash and finite value. Effects: advances only the hash.
- * Failure: returns false on hash refusal. Boundary: excludes native struct layout. */
 static int sampling_hash_f32(yvex_sha256 *hash, float value)
 {
     uint32_t bits;
@@ -72,9 +65,6 @@ static int sampling_hash_f32(yvex_sha256 *hash, float value)
     return yvex_sha256_update_u64(hash, bits);
 }
 
-/* Purpose: append canonical F64 bits to one semantic identity.
- * Inputs: active hash and finite value. Effects: advances only the hash.
- * Failure: returns false on hash refusal. Boundary: excludes native struct layout. */
 static int sampling_hash_f64(yvex_sha256 *hash, double value)
 {
     uint64_t bits;
@@ -82,9 +72,6 @@ static int sampling_hash_f64(yvex_sha256 *hash, double value)
     return yvex_sha256_update_u64(hash, bits);
 }
 
-/* Purpose: seal one SHA-256 context into its canonical lowercase identity.
- * Inputs: active hash and bounded output. Effects: finalizes the hash into text.
- * Failure: returns false on finalization refusal. Boundary: identity formatting only. */
 static int sampling_hash_finish(yvex_sha256 *hash,
                                 char output[YVEX_SHA256_HEX_CAP])
 {
@@ -94,9 +81,6 @@ static int sampling_hash_finish(yvex_sha256 *hash,
     return 1;
 }
 
-/* Purpose: derive the immutable sampling policy identity field by field.
- * Inputs: complete policy and identity output. Effects: writes only the output identity.
- * Failure: returns false on absent input or hash refusal. Boundary: excludes padding and pointers. */
 static int sampling_policy_identity(
     const yvex_runtime_sampling_policy *policy,
     char output[YVEX_SHA256_HEX_CAP])
@@ -121,9 +105,11 @@ static int sampling_policy_identity(
     return 1;
 }
 
-/* Purpose: validate and seal one explicit immutable policy for an exact vocabulary.
- * Inputs: mutable policy, vocabulary bound, and error. Effects: fills version and identity fields.
- * Failure: invalid strategy, filters, or seed refuse. Boundary: no logits or RNG state is consumed. */
+/*
+ * Validate and seal one explicit immutable policy for an exact vocabulary.
+ *
+ * Fills version and identity fields.
+ */
 int yvex_runtime_sampling_policy_seal(
     yvex_runtime_sampling_policy *policy, unsigned long long vocabulary_size,
     yvex_error *err)
@@ -162,7 +148,6 @@ int yvex_runtime_sampling_policy_seal(
     return YVEX_OK;
 }
 
-/* Purpose: advance the versioned private PCG-XSH-RR 64/32 state once. */
 static uint32_t sampling_pcg_next(uint64_t *state, uint64_t increment)
 {
     uint64_t old = *state;
@@ -172,7 +157,6 @@ static uint32_t sampling_pcg_next(uint64_t *state, uint64_t increment)
     return (shifted >> rotation) | (shifted << ((0u - rotation) & 31u));
 }
 
-/* Purpose: establish the exact PCG v1 seed and fixed-stream policy. */
 static void sampling_pcg_seed(uint64_t seed, uint64_t *state, uint64_t *increment)
 {
     *state = 0ull;
@@ -182,7 +166,6 @@ static void sampling_pcg_seed(uint64_t seed, uint64_t *state, uint64_t *incremen
     (void)sampling_pcg_next(state, *increment);
 }
 
-/* Purpose: identify one RNG transition state without exposing platform layout. */
 static int sampling_rng_identity(const yvex_runtime_sampling_context *context,
                                  uint64_t state, unsigned long long draws,
                                  char output[YVEX_SHA256_HEX_CAP])
@@ -200,10 +183,7 @@ static int sampling_rng_identity(const yvex_runtime_sampling_context *context,
            sampling_hash_finish(&hash, output);
 }
 
-/* Purpose: open one fixed-workspace sampling context without model/session ownership.
- * Inputs: logits plan, sealed policy, resource limits, and empty output.
- * Effects: allocates stable workspaces, lifecycle gate, and private RNG. Failure: publishes no context.
- * Boundary: borrows plan identities and never opens model, artifact, session, or CUDA owners. */
+/* Open one fixed-workspace sampling context without model/session ownership. */
 int yvex_runtime_sampling_context_open(
     yvex_runtime_sampling_context **out,
     const yvex_runtime_logits_plan_summary *logits_plan,
@@ -296,7 +276,6 @@ int yvex_runtime_sampling_context_open(
     return YVEX_OK;
 }
 
-/* Purpose: derive one field-wise sampling source identity over a borrowed complete logits row. */
 static int sampling_source_identity(yvex_runtime_sampling_source *source)
 {
     yvex_sha256 hash;
@@ -315,11 +294,12 @@ static int sampling_source_identity(yvex_runtime_sampling_source *source)
            sampling_hash_finish(&hash, source->source_identity);
 }
 
-/* Purpose: admit one exact immutable logits publication into the sampling boundary.
- * Inputs: context plan, caller-owned complete row, capacity, and logits-owner result.
- * Effects: publishes one borrowed identity-bound source without taking ownership.
- * Failure: logits-owner validation, extent, or identity mismatch publishes no source.
- * Boundary: does not normalize, rank, mutate logits, or access output-head weights. */
+/*
+ * Admit one exact immutable logits publication into the sampling boundary.
+ *
+ * Publishes one borrowed identity-bound source without taking ownership. Logits-owner validation,
+ * extent, or identity mismatch publishes no source.
+ */
 int yvex_runtime_sampling_source_from_logits(
     const yvex_runtime_sampling_context *context,
     yvex_runtime_sampling_source *source, const float *logits,
@@ -366,9 +346,11 @@ int yvex_runtime_sampling_source_from_logits(
     return YVEX_OK;
 }
 
-/* Purpose: revalidate one borrowed source immediately before candidate construction.
- * Inputs: context and immutable source. Effects: rehashes without mutating caller logits.
- * Failure: stale identity, extent, or non-finite values refuse. Boundary: no sampling occurs. */
+/*
+ * Revalidate one borrowed source immediately before candidate construction.
+ *
+ * Stale identity, extent, or non-finite values refuse.
+ */
 static int sampling_source_validate(
     const yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source, yvex_error *err)
@@ -420,7 +402,6 @@ static int sampling_source_validate(
     return YVEX_OK;
 }
 
-/* Purpose: impose probability-descending, token-ascending total order. */
 static int sampling_probability_compare(const void *left, const void *right)
 {
     const sampling_candidate *a = (const sampling_candidate *)left;
@@ -430,7 +411,6 @@ static int sampling_probability_compare(const void *left, const void *right)
     return a->token_id < b->token_id ? -1 : a->token_id > b->token_id;
 }
 
-/* Purpose: impose typical-deviation, probability, token total order. */
 static int sampling_typical_compare(const void *left, const void *right)
 {
     const sampling_candidate *a = (const sampling_candidate *)left;
@@ -440,7 +420,6 @@ static int sampling_typical_compare(const void *left, const void *right)
     return sampling_probability_compare(left, right);
 }
 
-/* Purpose: impose canonical ascending token-ID draw and identity order. */
 static int sampling_token_compare(const void *left, const void *right)
 {
     const sampling_candidate *a = (const sampling_candidate *)left;
@@ -448,10 +427,6 @@ static int sampling_token_compare(const void *left, const void *right)
     return a->token_id < b->token_id ? -1 : a->token_id > b->token_id;
 }
 
-/* Purpose: sort candidates deterministically through the context-owned scratch buffer.
- * Inputs: exclusive context, bounded candidate count, and total-order comparator.
- * Effects: applies a stable bottom-up merge sort and leaves the result in candidates.
- * Failure: none for context-open geometry. Boundary: performs no warm allocation. */
 static void sampling_stable_sort(
     yvex_runtime_sampling_context *context, unsigned long long count,
     int (*compare)(const void *, const void *))
@@ -489,7 +464,6 @@ static void sampling_stable_sort(
                (size_t)count * sizeof(*context->candidates));
 }
 
-/* Purpose: add one finite value using Neumaier compensation. */
 static void sampling_compensated_add(sampling_compensated_sum *total,
                                      double value)
 {
@@ -501,18 +475,12 @@ static void sampling_compensated_add(sampling_compensated_sum *total,
     total->sum = next;
 }
 
-/* Purpose: derive the v2 verification bound from binary64 precision and reduction depth.
- * Inputs: positive candidate count. Effects: none. Failure: none.
- * Boundary: the factor covers normalization division plus two compensated reductions. */
 static double sampling_normalization_tolerance(unsigned long long count)
 {
     double depth = count > 1ull ? ceil(log2((double)count)) : 0.0;
     return 8.0 * DBL_EPSILON * (3.0 + depth);
 }
 
-/* Purpose: normalize candidate weights and enforce the compensated v2 sum contract.
- * Inputs: bounded candidate set and optional error output. Effects: replaces weights with probabilities.
- * Failure: empty, negative, non-finite, or zero mass refuses. Boundary: sampling-local workspace only. */
 static int sampling_normalize(sampling_candidate *candidates,
                               unsigned long long count,
                               double *normalization_error, yvex_error *err)
@@ -551,10 +519,6 @@ static int sampling_normalize(sampling_candidate *candidates,
     return YVEX_OK;
 }
 
-/* Purpose: build the stable full-vocabulary temperature softmax in double precision.
- * Inputs: context policy, immutable logits source, result evidence, and count output.
- * Effects: fills sampling-local candidates. Failure: non-finite or invalid normalization refuses.
- * Boundary: consumes every vocabulary value and publishes no probability vector. */
 static int sampling_softmax(yvex_runtime_sampling_context *context,
                             const yvex_runtime_sampling_source *source,
                             yvex_runtime_sampling_result *result,
@@ -588,7 +552,6 @@ static int sampling_softmax(yvex_runtime_sampling_context *context,
                               &result->normalization_error, err);
 }
 
-/* Purpose: apply deterministic exact-count top-k and renormalize survivors. */
 static int sampling_filter_top_k(yvex_runtime_sampling_context *context,
                                  unsigned long long *count,
                                  yvex_runtime_sampling_result *result,
@@ -606,9 +569,6 @@ static int sampling_filter_top_k(yvex_runtime_sampling_context *context,
     return YVEX_OK;
 }
 
-/* Purpose: apply inclusive relative-to-maximum min-p filtering.
- * Inputs: current candidates, count, policy, and result. Effects: compacts and renormalizes workspace.
- * Failure: empty or invalid mass refuses. Boundary: threshold is relative, never absolute. */
 static int sampling_filter_min_p(yvex_runtime_sampling_context *context,
                                  unsigned long long *count,
                                  yvex_runtime_sampling_result *result,
@@ -637,9 +597,6 @@ static int sampling_filter_min_p(yvex_runtime_sampling_context *context,
     return YVEX_OK;
 }
 
-/* Purpose: apply locally typical prefix filtering with stable total ordering.
- * Inputs: current normalized candidates, policy, result, and count. Effects: ranks and renormalizes workspace.
- * Failure: nonpositive mass or invalid entropy refuses. Boundary: includes the threshold-crossing candidate. */
 static int sampling_filter_typical(yvex_runtime_sampling_context *context,
                                    unsigned long long *count,
                                    yvex_runtime_sampling_result *result,
@@ -685,9 +642,6 @@ static int sampling_filter_typical(yvex_runtime_sampling_context *context,
     return YVEX_OK;
 }
 
-/* Purpose: apply stable nucleus prefix filtering and its final renormalization.
- * Inputs: current candidates, top-p policy, result, and count. Effects: ranks and renormalizes workspace.
- * Failure: invalid mass refuses. Boundary: includes the threshold-crossing candidate. */
 static int sampling_filter_top_p(yvex_runtime_sampling_context *context,
                                  unsigned long long *count,
                                  yvex_runtime_sampling_result *result,
@@ -717,7 +671,6 @@ static int sampling_filter_top_p(yvex_runtime_sampling_context *context,
     return YVEX_OK;
 }
 
-/* Purpose: bind the final ordered survivor token IDs to source and policy. */
 static int sampling_candidate_identity(
     const yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -738,7 +691,6 @@ static int sampling_candidate_identity(
     return sampling_hash_finish(&hash, output);
 }
 
-/* Purpose: derive the selected-token identity from canonical result fields. */
 static int sampling_selected_identity(
     const yvex_runtime_sampling_result *result,
     char output[YVEX_SHA256_HEX_CAP])
@@ -758,10 +710,11 @@ static int sampling_selected_identity(
            sampling_hash_finish(&hash, output);
 }
 
-/* Purpose: derive one complete per-row sampling execution identity.
- * Inputs: completed authoritative result evidence. Effects: writes only the output identity.
- * Failure: returns false on absent input or hash refusal.
- * Boundary: every published evidence field is canonicalized without native structure bytes. */
+/*
+ * Derive one complete per-row sampling execution identity.
+ *
+ * Writes only the output identity.
+ */
 static int sampling_execution_identity(
     const yvex_runtime_sampling_result *result,
     char output[YVEX_SHA256_HEX_CAP])
@@ -813,10 +766,6 @@ static int sampling_execution_identity(
            sampling_hash_finish(&hash, output);
 }
 
-/* Purpose: enter one sampling context exclusively against atomic close admission.
- * Inputs: borrowed context whose owner has not transferred close ownership. Effects: sets ACTIVE atomically.
- * Failure: active or closing contexts refuse without touching their workspace. Boundary: stale aliases after
- * close ownership transfer are forbidden by the caller lifetime contract. */
 static int sampling_enter(yvex_runtime_sampling_context *context, yvex_error *err)
 {
     unsigned int expected = 0u;
@@ -834,9 +783,6 @@ static int sampling_enter(yvex_runtime_sampling_context *context, yvex_error *er
                                : "sampling context is already in use");
 }
 
-/* Purpose: leave one sampling context and wake a close owner after accounting.
- * Inputs: exclusively active context and outcome. Effects: clears ACTIVE while preserving CLOSING.
- * Failure: synchronization cleanup is owned by close. Boundary: the caller performs no context access after leave. */
 static void sampling_leave(yvex_runtime_sampling_context *context, int rc,
                            unsigned long long completed)
 {
@@ -865,9 +811,11 @@ static void sampling_leave(yvex_runtime_sampling_context *context, int rc,
                                     memory_order_release);
 }
 
-/* Purpose: finish field-wise identities before any selected-token publication.
- * Inputs: context, source, and staged result. Effects: seals identities and completion on the staged result.
- * Failure: canonical identity mismatch refuses. Boundary: caller publication and RNG commit follow success. */
+/*
+ * Finish field-wise identities before any selected-token publication.
+ *
+ * Canonical identity mismatch refuses. Caller publication and RNG commit follow success.
+ */
 static int sampling_result_finish(
     const yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -897,9 +845,11 @@ static int sampling_result_finish(
     return YVEX_OK;
 }
 
-/* Purpose: execute the complete-vocabulary deterministic maximum path.
- * Inputs: context workspace, admitted source, and staged result. Effects: fills selection evidence only.
- * Failure: identity derivation refuses. Boundary: scans all logits, consumes zero RNG, and low token wins ties. */
+/*
+ * Execute the complete-vocabulary deterministic maximum path.
+ *
+ * Identity derivation refuses.
+ */
 static int sampling_select_greedy(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -945,9 +895,6 @@ static int sampling_select_greedy(
     return YVEX_OK;
 }
 
-/* Purpose: remove exact zero-mass candidates before entropy or categorical use.
- * Inputs: normalized candidates and count. Effects: canonically compacts in token order.
- * Failure: negative, non-finite, or absent positive mass refuses. Boundary: zero mass is not entropy-bearing. */
 static int sampling_remove_zero_mass(
     yvex_runtime_sampling_context *context, unsigned long long *count,
     yvex_runtime_sampling_result *result, yvex_error *err)
@@ -969,10 +916,6 @@ static int sampling_remove_zero_mass(
     return YVEX_OK;
 }
 
-/* Purpose: execute canonical softmax/filter/draw using a transactional PCG copy.
- * Inputs: exclusive context, source, staged result, and candidate RNG output.
- * Effects: mutates workspace and copied RNG only. Failure: publishes neither token nor RNG transition.
- * Boundary: the caller commits the candidate RNG only after complete result sealing. */
 static int sampling_select_stochastic(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -1036,11 +979,6 @@ static int sampling_select_stochastic(
     return YVEX_OK;
 }
 
-/* Purpose: select one token while the caller owns context exclusion.
- * Inputs: busy reusable context, admitted source, and caller result.
- * Effects: commits one RNG transition only after complete stochastic result sealing.
- * Failure: publishes no completed result and restores the prior RNG authority.
- * Boundary: never appends, decodes, changes KV/session state, or interprets token text. */
 static int sampling_select_owned(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -1092,11 +1030,11 @@ static int sampling_select_owned(
     return rc;
 }
 
-/* Purpose: select one token transactionally from one exact complete logits source.
- * Inputs: reusable context, admitted source, and caller result.
- * Effects: excludes concurrent use and delegates one complete selection.
- * Failure: publishes no completed result and leaves the context reusable.
- * Boundary: one-shot wrapper over the same owned mechanism used by ordered execution. */
+/*
+ * Select one token transactionally from one exact complete logits source.
+ *
+ * One-shot wrapper over the same owned mechanism used by ordered execution.
+ */
 int yvex_runtime_sampling_select(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -1110,9 +1048,11 @@ int yvex_runtime_sampling_select(
     return rc;
 }
 
-/* Purpose: validate structural relations among all authoritative result evidence.
- * Inputs: completed result. Effects: none. Failure: returns false on any semantic inconsistency.
- * Boundary: identity validation remains separate and follows this bounded structural check. */
+/*
+ * Validate structural relations among all authoritative result evidence.
+ *
+ * Identity validation remains separate and follows this bounded structural check.
+ */
 static int sampling_result_structure_valid(
     const yvex_runtime_sampling_result *result)
 {
@@ -1183,9 +1123,12 @@ static int sampling_result_structure_valid(
            (result->effective_top_p != 1.0 || result->top_p_retained_mass == 0.0);
 }
 
-/* Purpose: validate every authoritative field plus selected-token and execution identities after publication.
- * Inputs: completed result and error output. Effects: derives only temporary canonical identities.
- * Failure: malformed fields or identity mutation refuses. Boundary: no source, RNG, or model state changes. */
+/*
+ * Validate every authoritative field plus selected-token and execution identities after
+ * publication.
+ *
+ * Malformed fields or identity mutation refuses.
+ */
 int yvex_runtime_sampling_result_validate(
     const yvex_runtime_sampling_result *result, yvex_error *err)
 {
@@ -1206,9 +1149,6 @@ int yvex_runtime_sampling_result_validate(
     return YVEX_OK;
 }
 
-/* Purpose: seal one repeated sampling result over ordered successful token identities.
- * Inputs: aggregate and completed result prefix. Effects: publishes aggregate identities and status.
- * Failure: hash refusal leaves aggregate incomplete. Boundary: failing and later rows never participate. */
 static int sampling_execution_finish(
     yvex_runtime_sampling_execution *execution,
     const yvex_runtime_sampling_result *results, yvex_error *err)
@@ -1250,11 +1190,11 @@ static int sampling_execution_finish(
     return YVEX_OK;
 }
 
-/* Purpose: sample ordered rows with row-atomic publication and transactional RNG progress.
- * Inputs: one context, ordered sources, and complete caller result directory.
- * Effects: retains prior successful results and stops at the first failed row.
- * Failure: reports exact partial progress; the failing row and its RNG transition remain absent.
- * Boundary: request atomicity is intentionally not provided. */
+/*
+ * Sample ordered rows with row-atomic publication and transactional RNG progress.
+ *
+ * Reports exact partial progress; the failing row and its RNG transition remain absent.
+ */
 int yvex_runtime_sampling_execute(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *sources, unsigned long long source_count,
@@ -1309,9 +1249,11 @@ leave:
     return rc;
 }
 
-/* Purpose: inspect stable workspace, policy, counters, and current RNG authority.
- * Inputs: live context and result output. Effects: copies a synchronized summary.
- * Failure: lock or identity derivation refusal clears output. Boundary: no workspace or RNG mutation. */
+/*
+ * Inspect stable workspace, policy, counters, and current RNG authority.
+ *
+ * Lock or identity derivation refusal clears output.
+ */
 int yvex_runtime_sampling_context_snapshot(
     const yvex_runtime_sampling_context *context,
     yvex_runtime_sampling_context_summary *summary, yvex_error *err)
@@ -1341,10 +1283,12 @@ int yvex_runtime_sampling_context_snapshot(
     return YVEX_OK;
 }
 
-/* Purpose: release fixed sampling workspace without touching borrowed logits or runtime state.
- * Inputs: unique context owner and error output. Effects: atomically closes admission, drains ACTIVE, and frees.
- * Failure: synchronization cleanup retains a retryable closing owner. Boundary: idempotent after successful close;
- * callers must stop initiating operations before transferring the unique close ownership. */
+/*
+ * Release fixed sampling workspace without touching borrowed logits or runtime state.
+ *
+ * Idempotent after successful close; callers must stop initiating operations before transferring
+ * the unique close ownership.
+ */
 int yvex_runtime_sampling_context_close(
     yvex_runtime_sampling_context **context, yvex_error *err)
 {
@@ -1403,9 +1347,7 @@ int yvex_runtime_sampling_context_close(
     return YVEX_OK;
 }
 
-/* Purpose: publish sampling readiness only after real-logits selection completes.
- * Inputs: successful operator result and context summary. Effects: copies resource and capability facts.
- * Failure: none for admitted inputs. Boundary: cannot promote tokenizer, append, CUDA sampling, or generation. */
+/* Publish sampling readiness only after real-logits selection completes. */
 static void sampling_operator_publish(
     yvex_sampling_operator_result *result,
     const yvex_runtime_sampling_context_summary *summary)
@@ -1433,11 +1375,12 @@ static void sampling_operator_publish(
     result->persistent_state_unchanged = 1;
 }
 
-/* Purpose: execute the admitted logits workflow and sample every completed real row.
- * Inputs: exact logits operator request, explicit policy, host workspace budget, and cancellation.
- * Effects: retains bounded logits and sampling evidence while never appending selected tokens.
- * Failure: preserves typed logits/sampling partial progress and any retained runtime cleanup lease.
- * Boundary: this is an operator adapter, not a generation loop or a model/session owner. */
+/*
+ * Execute the admitted logits workflow and sample every completed real row.
+ *
+ * Retains bounded logits and sampling evidence while never appending selected tokens. Preserves
+ * typed logits/sampling partial progress and any retained runtime cleanup lease.
+ */
 int yvex_runtime_sampling_operator_execute(
     const yvex_sampling_operator_request *request,
     yvex_sampling_operator_result *result,
@@ -1551,9 +1494,6 @@ finish:
     return rc;
 }
 
-/* Purpose: release sampling/operator directories in dependency order.
- * Inputs: operator result. Effects: frees samples and retained raw-logits evidence.
- * Failure: none. Boundary: does not touch runtime/session state already closed by the operator. */
 void yvex_runtime_sampling_operator_result_release(
     yvex_sampling_operator_result *result)
 {

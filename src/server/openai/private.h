@@ -1,12 +1,9 @@
-/* Owner: server.openai source-local interface.
- * Owns: bounded HTTP request/result storage and collaboration between OpenAI adapter owners.
- * Does not own: provider semantics, YVEX protocol framing, model execution, or installed ABI.
- * Invariants: only OpenAI adapter translation units consume these daemon-local structures.
- * Boundary: OpenAI syntax remains below this interface and never enters runtime owners.
- * Purpose: share the smallest in-process adapter contracts across independently compiled owners.
- * Inputs: loopback descriptors, explicit bytes, provider requests, and YVEX protocol messages.
- * Effects: declarations only.
- * Failure: implementations own and clear all allocations described here. */
+/*
+ * Share the smallest in-process adapter contracts across independently compiled owners.
+ *
+ * Only OpenAI adapter translation units consume these daemon-local structures. OpenAI syntax
+ * remains below this interface and never enters runtime owners.
+ */
 #ifndef SRC_SERVER_OPENAI_PRIVATE_H_INCLUDED
 #define SRC_SERVER_OPENAI_PRIVATE_H_INCLUDED
 #include <stdatomic.h>

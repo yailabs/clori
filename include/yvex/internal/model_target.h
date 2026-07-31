@@ -1,12 +1,7 @@
-/* Owner: model.target.internal (model.target).
- * Owns: target catalog, decisions, role evidence, and typed reports.
- * Does not own: source payload, graph execution, or CLI rendering.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: model-target facts and reporting ABI.
- * Purpose: provide the canonical model-target facts and reporting ABI contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * Target discovery and reporting exchange architecture signatures, role coverage, and typed
+ * blockers through this ABI. Report presence alone does not establish implementation support.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_MODEL_TARGET_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_MODEL_TARGET_H_INCLUDED
 
@@ -18,7 +13,7 @@
 extern "C" {
 #endif
 
-/* Report contract. */
+/* Target report rows. */
 #define YVEX_MODEL_TARGET_TEXT_CAP 512u
 #define YVEX_MODEL_TARGET_ROW_CAP 384u
 #define YVEX_MODEL_TARGET_TABLE_COL_CAP 8u
@@ -249,7 +244,7 @@ int yvex_model_target_help_report_build(yvex_model_target_report *report,
                                         yvex_error *err);
 void yvex_model_target_report_close(yvex_model_target_report *report);
 
-/* Catalog contract. */
+/* Target catalog. */
 typedef struct {
     const char *class_id;
     const char *capability_claim;
@@ -288,7 +283,6 @@ int yvex_model_target_catalog_help_report_build(
     yvex_model_target_report *report,
     yvex_error *err);
 
-/* Private contract. */
 const char *yvex_model_target_family_key(const char *target_id);
 int yvex_model_target_supported_source_target(const char *target_id);
 void yvex_model_target_report_common_tail(yvex_model_target_report *report);
@@ -296,56 +290,56 @@ void yvex_model_target_report_add_output_contract(yvex_model_target_report *repo
                                                   const char *report_name,
                                                   const char *mode);
 
-/* Candidates contract. */
+/* Candidate targets. */
 int yvex_model_target_candidate_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
     yvex_error *err);
 
-/* Decision contract. */
+/* Target selection decisions. */
 int yvex_model_target_decision_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
     yvex_error *err);
 
-/* Mapping Gate contract. */
+/* Role-mapping admission. */
 int yvex_mapping_gate_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
     yvex_error *err);
 
-/* Missing Role contract. */
+/* Missing-role diagnostics. */
 int yvex_missing_role_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
     yvex_error *err);
 
-/* Model Class Profile contract. */
+/* Model-class profiles. */
 struct yvex_source_verification;
 int yvex_model_class_profile_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
     yvex_error *err);
 
-/* Output Head Map contract. */
+/* Output-head mapping. */
 int yvex_output_head_map_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
     yvex_error *err);
 
-/* Qtype Policy contract. */
+/* Qtype policy. */
 int yvex_qtype_policy_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
     yvex_error *err);
 
-/* Qtype Role Support contract. */
+/* Qtype support by tensor role. */
 int yvex_qtype_role_support_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
     yvex_error *err);
 
-/* Sidecar Write contract. */
+/* Sidecar publication. */
 typedef enum {
     YVEX_MODEL_TARGET_SIDECAR_TENSOR_MAP = 0,
     YVEX_MODEL_TARGET_SIDECAR_OUTPUT_HEAD = 1,
@@ -358,19 +352,19 @@ int yvex_model_target_write_sidecar(yvex_model_target_sidecar_kind kind,
                                     const char *status,
                                     const char *coverage);
 
-/* Tensor Collection contract. */
+/* Tensor collections. */
 int yvex_tensor_collection_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
     yvex_error *err);
 
-/* Tensor Naming contract. */
+/* Tensor naming. */
 int yvex_tensor_naming_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
     yvex_error *err);
 
-/* Tokenizer Map contract. */
+/* Tokenizer mapping. */
 int yvex_tokenizer_map_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,

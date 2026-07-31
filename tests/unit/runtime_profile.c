@@ -1,12 +1,8 @@
-/* Owner: tests.unit.runtime_profile.
- * Owns: profile schema, identity, timing, mutation, overflow, and stale-evidence tests.
- * Does not own: performance claims, CUDA timing, live execution, benchmark files, or rendering.
- * Invariants: deterministic fixture identities are never interpreted as measured runtime evidence.
- * Boundary: focused software tests exercise the internal profiling ABI only.
- * Purpose: prove checked profile mutation and field-wise validation before hot-path integration.
- * Inputs: bounded deterministic identities, counters, and monotonic host spans.
- * Effects: allocates no external resource and writes no file.
- * Failure: the first assertion identifies the violated profiling invariant. */
+/*
+ * Exercises checked profile mutation and field-wise validation before hot-path integration.
+ * Deterministic fixture identities are never interpreted as measured runtime evidence. Focused
+ * software tests exercise the internal profiling ABI only.
+ */
 #include <yvex/internal/profile.h>
 #include <limits.h>
 #include <string.h>
@@ -23,7 +19,7 @@ static const char identity_e[] =
     "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 static const char identity_f[] =
     "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-/* Purpose: construct one valid mutable profile fixture. */
+
 static int profile_fixture(yvex_runtime_profile_record *record, yvex_error *err)
 {
     return runtime_profile_begin(

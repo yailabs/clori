@@ -1,15 +1,9 @@
-/* Owner: model numeric-policy ABI.
- * Owns: artifact-neutral attention classes, position facts, activation fake-quant, transform, scale, tail,
- *   non-finite, and top-k value contracts.
- * Does not own: family schedules, graph plans, byte execution, kernels, payload access, persistent KV, or
- *   generation.
- * Invariants: enum values are versioned identity inputs shared unchanged from architecture admission through
- *   runtime and graph planning.
- * Boundary: a numeric policy value is not graph or backend capability.
- * Purpose: keep model identity-bearing numeric facts upstream of graph consumers.
- * Inputs: typed scalar facts selected by an admitted model-family recipe.
- * Effects: declarations only; no allocation, mutation, or I/O.
- * Failure: consuming owners reject unsupported combinations without promotion. */
+/*
+ * Keep model identity-bearing numeric facts upstream of graph consumers.
+ *
+ * Enum values are versioned identity inputs shared unchanged from architecture admission through
+ * runtime and graph planning. A numeric policy value is not graph or backend capability.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_MODEL_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_MODEL_H_INCLUDED
 

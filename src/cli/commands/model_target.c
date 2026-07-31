@@ -1,16 +1,11 @@
-/* Owner: src/cli/commands
- * Owns: model-target command dispatch only.
- * Does not own: target catalogs, candidate facts, profile specs, tensor/qtype/source scanning, report construction,
- *   sidecar writing, rendering fields, runtime execution, generation, eval, benchmark, or release
- *   decisions.
- * Invariants: adapter flow is parse argv, build typed report, render typed report, return exit code; usage/help
- *   text is rendered through the model-target renderer.
- * Boundary: command dispatch does not create capability, quantization, artifact emission, runtime support,
- *   generation support, benchmark evidence, or release readiness.
- * Purpose: provide model-target command dispatch only.
- * Inputs: typed command arguments and borrowed domain APIs.
- * Effects: dispatches domain calls and routes operator bytes only through CLI I/O.
- * Failure: returns a stable CLI status while preserving domain ownership. */
+/*
+ * Provide model-target command dispatch only.
+ *
+ * Adapter flow is parse argv, build typed report, render typed report, return exit code;
+ * usage/help text is rendered through the model-target renderer. Command dispatch does not create
+ * capability, quantization, artifact emission, runtime support, generation support, benchmark
+ * evidence, or release readiness.
+ */
 #include "src/cli/input/private.h"
 #include "src/cli/render/private.h"
 
@@ -19,11 +14,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Purpose: dispatch model-target CLI requests through typed input, report, and render APIs.
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_model_target_command(int argc, char **argv)
 {
     yvex_model_target_args args;
@@ -60,11 +50,6 @@ int yvex_model_target_command(int argc, char **argv)
     return rc;
 }
 
-/* Purpose: render model-target domain help through the typed renderer.
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_model_target_help(FILE *fp)
 {
     (void)yvex_model_target_render_help(fp);

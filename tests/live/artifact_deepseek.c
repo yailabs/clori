@@ -1,14 +1,7 @@
 /*
- * artifact_deepseek.c - complete DeepSeek GGUF plan and emission proof runner.
- *
- * Owner: tests/live.
- * Owns: target-scale artifact orchestration, pinned-checker invocation,
- *   deterministic second serialization, and structured evidence output.
- * Does not own: writer policy, quantization, source trust, file publication,
- *   artifact admission rules, project claims, or repository assets.
- * Invariants: plan-only mode reads zero payload and creates no output file;
- *   live output is external and publication follows every validation gate.
- * Boundary: this runner proves complete artifacts but never materializes them.
+ * Plan-only mode reads zero payload and creates no output file; live output is external and
+ * publication follows every validation gate. This runner proves complete artifacts but never
+ * materializes them.
  */
 #define _POSIX_C_SOURCE 200809L
 #include <yvex/internal/artifact.h>
@@ -84,7 +77,6 @@ typedef struct {
     int complete;
 } artifact_live_result;
 
-/* Computes monotonic elapsed nanoseconds without allocation or wall-clock IO. */
 static unsigned long long artifact_elapsed_ns(const struct timespec *begin,
                                                const struct timespec *end)
 {
@@ -97,7 +89,6 @@ static unsigned long long artifact_elapsed_ns(const struct timespec *begin,
            (unsigned long long)(begin->tv_nsec - end->tv_nsec);
 }
 
-/* Builds a complete writer plan through the sole tagged production boundary. */
 static int artifact_writer_plan_build(
     yvex_gguf_writer_plan **out, const yvex_quant_plan *quant,
     const yvex_deepseek_payload_handoff *handoff,
@@ -118,7 +109,6 @@ static int artifact_writer_plan_build(
     return yvex_gguf_writer_plan_build(out, &request, failure, error);
 }
 
-/* Builds one bounded external artifact path and refuses truncation. */
 static int artifact_path_build(char *out, size_t out_bytes,
                                const char *models_root,
                                const char *basename)
@@ -130,7 +120,6 @@ static int artifact_path_build(char *out, size_t out_bytes,
     return written >= 0 && (size_t)written < out_bytes;
 }
 
-/* Emits bounded machine-readable progress while the numeric executor runs. */
 static void *artifact_progress_entry(void *opaque)
 {
     artifact_progress_context *context =
@@ -170,7 +159,6 @@ static void *artifact_progress_entry(void *opaque)
     return NULL;
 }
 
-/* Emits bounded synchronous progress from native full-file verification. */
 static void artifact_roundtrip_progress(
     void *opaque,
     const yvex_gguf_roundtrip_summary *summary,
@@ -202,7 +190,6 @@ static void artifact_roundtrip_progress(
     context->last_reported_bytes = summary->bytes_hashed;
 }
 
-/* Prints one typed quant failure without exposing source or output bytes. */
 static void artifact_print_quant_failure(const char *phase,
                                          const yvex_quant_failure *failure,
                                          const yvex_error *error)
@@ -218,7 +205,6 @@ static void artifact_print_quant_failure(const char *phase,
             yvex_error_where(error), yvex_error_message(error));
 }
 
-/* Proves that one current writer plan preserves the admitted selected artifact bytes. */
 static int artifact_plan_compatibility(
     const char *artifact_path,
     const yvex_gguf_writer_plan *writer)
@@ -286,7 +272,6 @@ static int artifact_plan_compatibility(
     return rc == YVEX_OK ? 0 : 1;
 }
 
-/* Builds and prints one complete plan while reading zero source payload bytes. */
 static int artifact_plan_one(
     const yvex_deepseek_payload_handoff *handoff,
     yvex_quant_profile_kind profile,
@@ -467,7 +452,6 @@ static int artifact_official_check(
     return 1;
 }
 
-/* Writes only planned structure into a sparse external fixture for parser ABI proof. */
 static int artifact_structure_one(
     const yvex_deepseek_payload_handoff *handoff,
     yvex_quant_profile_kind profile,
@@ -557,7 +541,6 @@ cleanup:
     return rc == YVEX_OK ? 0 : 1;
 }
 
-/* Emits, verifies, optionally publishes, and optionally admits one profile. */
 static int artifact_execute_one(
     yvex_deepseek_payload_handoff *handoff,
     yvex_quant_profile_kind profile,
@@ -858,7 +841,6 @@ cleanup:
     return rc == YVEX_OK && result->complete ? 0 : 1;
 }
 
-/* Builds variant-adaptive materialization and publishes its exact runtime binding. */
 static int artifact_variant_bind(
     const yvex_deepseek_payload_handoff *handoff, const yvex_quant_plan *quant,
     const artifact_live_result *emitted, const char *binding_directory,

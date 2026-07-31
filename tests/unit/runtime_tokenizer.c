@@ -1,11 +1,8 @@
-/* Owner: tests.unit.runtime_tokenizer.
- * Owns: focused tokenizer runtime, incremental decoder, append, rollback, and lifecycle proof.
- * Does not own: production tokenizer policy, selected-artifact parity, model execution, or generation.
- * Invariants: synthetic pieces exercise only public contracts and never enter production objects.
- * Boundary: sanitizer-visible invariant proof; target-scale BPE parity belongs to the live lane.
- * Purpose: verify mutable tokenizer request state remains isolated and transactional.
- * Inputs: one bounded test-owned tokenizer fixture. Effects: allocates only test-local state.
- * Failure: reports the first violated tokenizer runtime contract. */
+/*
+ * Verify mutable tokenizer request state remains isolated and transactional. Synthetic pieces
+ * exercise only public contracts and never enter production objects. Sanitizer-visible invariant
+ * proof; target-scale BPE parity belongs to the live lane.
+ */
 #include "src/tokenizer/private.h"
 #include "tests/test.h"
 
@@ -32,7 +29,6 @@ typedef struct {
     yvex_tokenizer_decoder **decoder;
 } decoder_test_close;
 
-/* Purpose: hold one admitted decoder call so close and contender transitions are observable. */
 static int decoder_test_cancel(void *opaque)
 {
     decoder_test_gate *gate = (decoder_test_gate *)opaque;
@@ -45,7 +41,6 @@ static int decoder_test_cancel(void *opaque)
     return 1;
 }
 
-/* Purpose: execute the active cancellable decoder call from a test-owned thread. */
 static void *decoder_test_push_main(void *opaque)
 {
     decoder_test_call *call = (decoder_test_call *)opaque;
@@ -56,7 +51,6 @@ static void *decoder_test_push_main(void *opaque)
     return NULL;
 }
 
-/* Purpose: observe typed CLOSING admission while the first call retains active ownership. */
 static void *decoder_test_contender_main(void *opaque)
 {
     decoder_test_call *call = (decoder_test_call *)opaque;
@@ -75,7 +69,6 @@ static void *decoder_test_contender_main(void *opaque)
     return NULL;
 }
 
-/* Purpose: transfer unique close ownership and drain the active decoder call. */
 static void *decoder_test_close_main(void *opaque)
 {
     decoder_test_close *close = (decoder_test_close *)opaque;
@@ -103,7 +96,6 @@ static void fixture_open(yvex_tokenizer *tokenizer, yvex_token_info tokens[4])
     memcpy(tokenizer->plan.tokenizer_plan_identity, identity, sizeof(identity));
 }
 
-/* Purpose: build one sealed provider request for exact DeepSeek prompt/tool projection. */
 static int provider_fixture(yvex_provider_request *request,
                             yvex_provider_message messages[1],
                             yvex_provider_function_tool tools[1],
@@ -138,7 +130,6 @@ static int provider_fixture(yvex_provider_request *request,
     return yvex_provider_request_seal(request, err);
 }
 
-/* Purpose: prove exact family-owned prompt and DSML tool parsing without prose guessing. */
 static int test_provider_projection(void)
 {
     static const unsigned char completion[] =

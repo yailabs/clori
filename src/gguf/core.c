@@ -1,15 +1,10 @@
-/* Owner: src/gguf native reader
- * Owns: GGUF v3 byte decoding, immutable metadata/tensor storage, name indexes, canonical qtype projection,
- *   addressable tensor ranges, and view cleanup.
- * Does not own: global tensor order/overlap/padding admission, model-family metadata, payload reads, writer
- *   emission, materialization, or runtime execution.
- * Invariants: parsing uses exact positioned structural reads; payload bytes read remains zero; every allocation and
- *   declared count is budgeted; failed opens leave the output null and release all partial state.
- * Boundary: a parsed structural view is not a complete or supported model artifact.
- * Purpose: decode immutable GGUF structure from an admitted artifact snapshot.
- * Inputs: file-backed artifact handles and explicit reader budgets.
- * Effects: allocates bounded metadata, tensor views, and deterministic name indexes.
- * Failure: refuses malformed or over-budget structure and unwinds every partial allocation. */
+/*
+ * Decode immutable GGUF structure from an admitted artifact snapshot.
+ *
+ * Parsing uses exact positioned structural reads; payload bytes read remains zero; every
+ * allocation and declared count is budgeted; failed opens leave the output null and release all
+ * partial state. A parsed structural view is not a complete or supported model artifact.
+ */
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -33,11 +28,11 @@ typedef struct {
     size_t capacity;
 } yvex_name_index;
 
-/* Purpose: open one bounded GGUF metadata JSON document.
- * Inputs: caller-owned cursor, path, diagnostic context, and error sink.
- * Effects: owns one bounded file buffer until close.
- * Failure: typed I/O refusal leaves the cursor empty.
- * Boundary: metadata parsing never reads tensor payload bytes. */
+/*
+ * Open one bounded GGUF metadata JSON document.
+ *
+ * Owns one bounded file buffer until close.
+ */
 int yvex_gguf_json_open(yvex_gguf_json *json,
                         const char *path,
                         const char *context,
@@ -64,11 +59,11 @@ int yvex_gguf_json_open(yvex_gguf_json *json,
     return YVEX_OK;
 }
 
-/* Purpose: release one GGUF metadata JSON document cursor idempotently.
- * Inputs: optional caller-owned cursor.
- * Effects: frees its bounded buffer and clears every borrowed view.
- * Failure: none; null and repeated close are safe.
- * Boundary: closing metadata does not affect referenced payloads. */
+/*
+ * Release one GGUF metadata JSON document cursor idempotently.
+ *
+ * Frees its bounded buffer and clears every borrowed view.
+ */
 void yvex_gguf_json_close(yvex_gguf_json *json)
 {
     if (!json) return;
@@ -76,28 +71,17 @@ void yvex_gguf_json_close(yvex_gguf_json *json)
     memset(json, 0, sizeof(*json));
 }
 
-/* Purpose: advance one GGUF metadata document past insignificant JSON whitespace. */
 static void gguf_json_space(yvex_gguf_json *json)
 {
     yvex_json_space(&json->cursor);
 }
 
-/* Purpose: publish one document-specific GGUF JSON format refusal.
- * Inputs: admitted cursor and exact immutable reason.
- * Effects: replaces the typed error record.
- * Failure: always returns the format-error status.
- * Boundary: diagnostics never advance the parser cursor. */
 int yvex_gguf_json_fail(yvex_gguf_json *json, const char *message)
 {
     yvex_error_setf(json->err, YVEX_ERR_FORMAT, json->context, "%s in %s", message, json->path);
     return YVEX_ERR_FORMAT;
 }
 
-/* Purpose: consume whitespace followed by one required GGUF JSON structural byte.
- * Inputs: admitted cursor and expected delimiter.
- * Effects: advances exactly one byte after a match.
- * Failure: format refusal preserves the unmatched cursor.
- * Boundary: delimiter admission does not parse a value. */
 int yvex_gguf_json_expect(yvex_gguf_json *json, char expected)
 {
     gguf_json_space(json);
@@ -107,11 +91,6 @@ int yvex_gguf_json_expect(yvex_gguf_json *json, char expected)
     return YVEX_OK;
 }
 
-/* Purpose: allocate one bounded decoded GGUF metadata JSON string.
- * Inputs: admitted cursor positioned at a string.
- * Effects: advances the cursor and returns caller-owned decoded text.
- * Failure: format refusal returns null without publishing text.
- * Boundary: decoding does not interpret field semantics. */
 char *yvex_gguf_json_string(yvex_gguf_json *json)
 {
     char *value = yvex_json_string_dup(&json->cursor, 16u * 1024u * 1024u);
@@ -120,11 +99,6 @@ char *yvex_gguf_json_string(yvex_gguf_json *json)
     return value;
 }
 
-/* Purpose: skip one complete unknown GGUF metadata JSON value.
- * Inputs: admitted cursor positioned at a value.
- * Effects: advances over exactly one bounded value.
- * Failure: malformed grammar leaves a typed format refusal.
- * Boundary: skipped values cannot affect known document facts. */
 int yvex_gguf_json_skip(yvex_gguf_json *json)
 {
     return yvex_json_skip_value(&json->cursor)
@@ -132,11 +106,6 @@ int yvex_gguf_json_skip(yvex_gguf_json *json)
                : yvex_gguf_json_fail(json, "malformed JSON value");
 }
 
-/* Purpose: consume one object member prefix or its closing delimiter.
- * Inputs: an object cursor plus caller-owned key and completion outputs.
- * Effects: allocates one key only when a member is available.
- * Failure: malformed key or separator publishes no owned key.
- * Boundary: member iteration does not interpret field values. */
 int yvex_gguf_json_member(yvex_gguf_json *json, char **key, int *complete)
 {
     int rc;
@@ -159,11 +128,6 @@ int yvex_gguf_json_member(yvex_gguf_json *json, char **key, int *complete)
     return rc;
 }
 
-/* Purpose: consume the optional comma admitted between parsed object members.
- * Inputs: admitted object cursor.
- * Effects: advances over whitespace and at most one comma.
- * Failure: none; required delimiter checks remain with the enclosing parser.
- * Boundary: compatibility grammar remains unchanged. */
 void yvex_gguf_json_optional_comma(yvex_gguf_json *json)
 {
     gguf_json_space(json);
@@ -171,11 +135,6 @@ void yvex_gguf_json_optional_comma(yvex_gguf_json *json)
         json->cursor.cursor++;
 }
 
-/* Purpose: parse one ordered GGUF metadata array through a typed item callback.
- * Inputs: document cursor, item parser, owner context, and exact refusal messages.
- * Effects: advances through every complete item in document order.
- * Failure: malformed delimiters or item refusal stop without publishing later items.
- * Boundary: array mechanics do not interpret item semantics. */
 int yvex_gguf_json_array(yvex_gguf_json *json,
                          yvex_gguf_json_array_item_fn item,
                          void *context,
@@ -254,9 +213,6 @@ struct yvex_gguf {
     yvex_gguf_reader_stats stats;
 };
 
-/* Purpose: attach cursor coordinates to one typed structural failure.
- * Inputs: cursor, parse code, section, owner label, and reason. Effects: fills result and error.
- * Failure: returns the canonical reader failure status without changing cursor ownership. */
 static int cursor_fail(yvex_file_cursor *cur, yvex_gguf_parse_code code,
                        yvex_gguf_parse_section section, const char *where, const char *reason) {
     return yvex_gguf_reader_fail(cur ? cur->result : NULL, code, section, cur ? cur->offset : 0ull,
@@ -264,9 +220,6 @@ static int cursor_fail(yvex_file_cursor *cur, yvex_gguf_parse_code code,
                                  reason);
 }
 
-/* Purpose: reserve parser-owned bytes under cumulative budget accounting.
- * Inputs: cursor and requested byte count. Effects: advances owned-byte metrics on success.
- * Failure: reports resource refusal without changing the prior counter. Boundary: accounting only. */
 static int reserve_owned(yvex_file_cursor *cur, unsigned long long bytes) {
     if (bytes > ULLONG_MAX - cur->stats->owned_bytes ||
         cur->stats->owned_bytes + bytes > cur->options->max_owned_bytes) {
@@ -277,11 +230,11 @@ static int reserve_owned(yvex_file_cursor *cur, unsigned long long bytes) {
     return YVEX_OK;
 }
 
-/* Purpose: perform one exact bounded structural read at the cursor offset.
- * Inputs: cursor, destination, length, field owner, and failure text.
- * Effects: advances cursor and read facts only after exact delivery.
- * Failure: refuses truncation, budget overflow, or positioned-read failure before partial success.
- * Boundary: structural bytes only; tensor payload remains unread. */
+/*
+ * Perform one exact bounded structural read at the cursor offset.
+ *
+ * Refuses truncation, budget overflow, or positioned-read failure before partial success.
+ */
 static int cursor_read_exact(yvex_file_cursor *cur, void *dst, size_t len, const char *where,
                              const char *field) {
     unsigned long long amount = (unsigned long long)len;
@@ -308,11 +261,6 @@ static int cursor_read_exact(yvex_file_cursor *cur, void *dst, size_t len, const
     return YVEX_OK;
 }
 
-/* Purpose: decode one little-endian 32-bit structural integer.
- * Inputs: cursor, output, field owner, and diagnostic text.
- * Effects: writes the decoded integer after an exact read.
- * Failure: propagates structural read refusal without modifying ownership.
- * Boundary: fixed-width container decoding only. */
 static int cursor_read_u32le(yvex_file_cursor *cur, unsigned int *out, const char *where,
                              const char *field) {
     unsigned char bytes[4];
@@ -323,11 +271,6 @@ static int cursor_read_u32le(yvex_file_cursor *cur, unsigned int *out, const cha
     return YVEX_OK;
 }
 
-/* Purpose: decode one little-endian 64-bit structural integer.
- * Inputs: cursor, output, field owner, and diagnostic text.
- * Effects: writes the decoded integer after an exact read.
- * Failure: propagates structural read refusal without modifying ownership.
- * Boundary: fixed-width container decoding only. */
 static int cursor_read_u64le(yvex_file_cursor *cur, unsigned long long *out, const char *where,
                              const char *field) {
     unsigned char bytes[8];
@@ -341,11 +284,6 @@ static int cursor_read_u64le(yvex_file_cursor *cur, unsigned long long *out, con
     return YVEX_OK;
 }
 
-/* Purpose: validate a bounded UTF-8 sequence including overlong and surrogate refusal.
- * Inputs: byte sequence and exact length.
- * Effects: performs no allocation or mutation.
- * Failure: returns false for truncation, invalid continuation, range, or encoding.
- * Boundary: validates encoding only and does not normalize text. */
 static int utf8_valid(const unsigned char *text, size_t len) {
     size_t i = 0u;
     while (i < len) {
@@ -388,11 +326,6 @@ static int utf8_valid(const unsigned char *text, size_t len) {
     return 1;
 }
 
-/* Purpose: classify malformed string failure by the cursor's structural section.
- * Inputs: cursor and active identifier length policy.
- * Effects: returns one parse-code value without mutation.
- * Failure: has no failure path; zero format limit selects generic malformed string.
- * Boundary: diagnostic classification only. */
 static yvex_gguf_parse_code string_parse_code(const yvex_file_cursor *cur,
                                               unsigned long long format_max) {
     if (format_max == 0ull)
@@ -401,21 +334,11 @@ static yvex_gguf_parse_code string_parse_code(const yvex_file_cursor *cur,
                                                             : YVEX_GGUF_PARSE_MALFORMED_TENSOR_NAME;
 }
 
-/* Purpose: classify an empty key or tensor name by its structural section.
- * Inputs: cursor carrying the active section.
- * Effects: returns one parse-code value without mutation.
- * Failure: has no failure path.
- * Boundary: diagnostic classification only. */
 static yvex_gguf_parse_code empty_identifier_parse_code(const yvex_file_cursor *cur) {
     return cur->section == YVEX_GGUF_PARSE_SECTION_METADATA ? YVEX_GGUF_PARSE_EMPTY_METADATA_KEY
                                                             : YVEX_GGUF_PARSE_EMPTY_TENSOR_NAME;
 }
 
-/* Purpose: read and validate one owned length-delimited GGUF string.
- * Inputs: cursor, outputs, format limits, grammar flags, and failure context.
- * Effects: allocates a terminated copy and updates string/read budgets.
- * Failure: frees partial storage and returns typed truncation, grammar, UTF-8, or budget refusal.
- * Boundary: owns returned storage until the enclosing GGUF view is closed. */
 static int cursor_read_string(yvex_file_cursor *cur, char **out, unsigned long long *out_len,
                               unsigned long long format_max, int reject_empty, int reject_nul,
                               const char *where, const char *field) {
@@ -488,11 +411,6 @@ static int cursor_read_string(yvex_file_cursor *cur, char **out, unsigned long l
     return YVEX_OK;
 }
 
-/* Purpose: validate the pinned lowercase dotted GGUF metadata-key grammar.
- * Inputs: key bytes and exact length.
- * Effects: performs no allocation or mutation.
- * Failure: returns false for empty segments, bad characters, or repeated underscores.
- * Boundary: validates lexical form and does not assign metadata meaning. */
 static int metadata_key_valid(const char *key, unsigned long long len) {
     unsigned long long i;
     int segment_start = 1;
@@ -531,11 +449,6 @@ static int metadata_key_valid(const char *key, unsigned long long len) {
     return !segment_start && !previous_underscore;
 }
 
-/* Purpose: hash an exact identifier byte sequence for deterministic in-memory lookup.
- * Inputs: identifier bytes and exact length.
- * Effects: returns a stable FNV-derived index hash without mutation.
- * Failure: has no failure result.
- * Boundary: in-memory indexing only; this hash is not a semantic identity. */
 static unsigned long long name_hash(const char *name, unsigned long long len) {
     unsigned long long hash = 1469598103934665603ull;
     unsigned long long i;
@@ -546,11 +459,11 @@ static unsigned long long name_hash(const char *name, unsigned long long len) {
     return hash;
 }
 
-/* Purpose: allocate a bounded open-addressed identifier index.
- * Inputs: parser cursor, expected entry count, and zeroed index.
- * Effects: records budget use and owns zeroed slot storage.
- * Failure: refuses size, budget, or allocation overflow without a successful index claim.
- * Boundary: allocates lookup slots but does not insert names. */
+/*
+ * Allocate a bounded open-addressed identifier index.
+ *
+ * Refuses size, budget, or allocation overflow without a successful index claim.
+ */
 static int name_index_allocate(yvex_file_cursor *cur, unsigned long long count,
                                yvex_name_index *index) {
     unsigned long long wanted;
@@ -591,15 +504,11 @@ static int name_index_allocate(yvex_file_cursor *cur, unsigned long long count,
     return YVEX_OK;
 }
 
-/* Purpose: project an identifier hash into the power-of-two index capacity. */
 static size_t name_index_start(const yvex_name_index *index, const char *name,
                                unsigned long long len) {
     return (size_t)(name_hash(name, len) & (unsigned long long)(index->capacity - 1u));
 }
 
-/* Purpose: insert one metadata key and detect duplicate ownership.
- * Inputs: partially built view, cursor, and entry ordinal. Effects: occupies one index slot.
- * Failure: returns a typed duplicate refusal without overwriting the prior entry. */
 static int metadata_index_insert(yvex_gguf *gguf, yvex_file_cursor *cur,
                                  unsigned long long entry_index) {
     yvex_gguf_metadata_entry *entry = &gguf->metadata[entry_index];
@@ -620,9 +529,6 @@ static int metadata_index_insert(yvex_gguf *gguf, yvex_file_cursor *cur,
     return YVEX_OK;
 }
 
-/* Purpose: insert one tensor name and detect duplicate directory ownership.
- * Inputs: partially built view, cursor, and tensor ordinal. Effects: occupies one index slot.
- * Failure: returns a typed duplicate refusal without overwriting the prior tensor. */
 static int tensor_index_insert(yvex_gguf *gguf, yvex_file_cursor *cur,
                                unsigned long long tensor_index) {
     yvex_gguf_tensor_info *tensor = &gguf->tensors[tensor_index];
@@ -643,11 +549,6 @@ static int tensor_index_insert(yvex_gguf *gguf, yvex_file_cursor *cur,
     return YVEX_OK;
 }
 
-/* Purpose: recursively release one owned metadata value and reset its discriminant.
- * Inputs: initialized or zeroed value.
- * Effects: frees strings, arrays, and descendants.
- * Failure: null input is ignored.
- * Boundary: cleanup only; parser accounting remains historical. */
 static void gguf_value_clear(yvex_gguf_value *value) {
     unsigned long long i;
     if (!value)
@@ -664,11 +565,6 @@ static void gguf_value_clear(yvex_gguf_value *value) {
     value->type = YVEX_GGUF_VALUE_INVALID;
 }
 
-/* Purpose: admit a raw GGUF metadata type into the pinned value enum.
- * Inputs: cursor, raw type identifier, and enum output.
- * Effects: writes the admitted type without allocating.
- * Failure: reports an unsupported metadata type.
- * Boundary: type admission only; value bytes are parsed separately. */
 static int parse_value_type(yvex_file_cursor *cur, unsigned int raw, yvex_gguf_value_type *out) {
     if (raw > (unsigned int)YVEX_GGUF_VALUE_FLOAT64) {
         return cursor_fail(cur, YVEX_GGUF_PARSE_UNSUPPORTED_METADATA_TYPE,
@@ -706,11 +602,11 @@ static const scalar_spec scalar_specs[YVEX_GGUF_VALUE_INVALID] = {
     [YVEX_GGUF_VALUE_FLOAT64] = {8u, SCALAR_FLOAT, "truncated float64 metadata value"},
 };
 
-/* Purpose: decode one fixed-width scalar metadata value from canonical little-endian bytes.
- * Inputs: cursor, admitted scalar type, and initialized value destination.
- * Effects: advances the structural cursor and stores the normalized scalar value.
- * Failure: preserves exact-read refusal and rejects bool values outside zero or one.
- * Boundary: string and array ownership remain with parse_value. */
+/*
+ * Decode one fixed-width scalar metadata value from canonical little-endian bytes.
+ *
+ * String and array ownership remain with parse_value.
+ */
 static int parse_scalar(yvex_file_cursor *cur, yvex_gguf_value_type type, yvex_gguf_value *out) {
     const scalar_spec *spec = &scalar_specs[type];
     unsigned char bytes[8];
@@ -750,11 +646,6 @@ static int parse_scalar(yvex_file_cursor *cur, yvex_gguf_value_type type, yvex_g
     return YVEX_OK;
 }
 
-/* Purpose: decode one typed metadata value under depth and cumulative allocation budgets.
- * Inputs: cursor, admitted type, destination, and current array depth.
- * Effects: advances structural reads and allocates owned string/array descendants.
- * Failure: clears partial descendants and returns typed malformed, depth, budget, or I/O refusal.
- * Boundary: decodes container metadata only and never interprets model semantics. */
 static int parse_value(yvex_file_cursor *cur, yvex_gguf_value_type type, yvex_gguf_value *out,
                        unsigned int depth) {
     int rc;
@@ -834,11 +725,6 @@ static int parse_value(yvex_file_cursor *cur, yvex_gguf_value_type type, yvex_gg
     }
 }
 
-/* Purpose: parse and validate the fixed GGUF v3 container header.
- * Inputs: initialized cursor and header output.
- * Effects: advances exactly 24 structural bytes and initializes header facts.
- * Failure: refuses magic, version, count, budget, or truncation errors.
- * Boundary: container facts only; metadata and directory follow separately. */
 static int parse_header(yvex_file_cursor *cur, yvex_gguf_header *out) {
     unsigned int magic;
     int rc;
@@ -876,11 +762,6 @@ static int parse_header(yvex_file_cursor *cur, yvex_gguf_header *out) {
     return YVEX_OK;
 }
 
-/* Purpose: parse the complete metadata table and build its immutable lookup index.
- * Inputs: partial GGUF view and cursor.
- * Effects: allocates entries, keys, values, and index slots.
- * Failure: leaves cleanup-owned partial state for gguf_clear after any typed refusal.
- * Boundary: preserves typed metadata without interpreting model-family semantics. */
 static int parse_metadata(yvex_gguf *gguf, yvex_file_cursor *cur) {
     unsigned long long count = gguf->header.metadata_count;
     unsigned long long bytes;
@@ -941,9 +822,6 @@ static int parse_metadata(yvex_gguf *gguf, yvex_file_cursor *cur) {
     return YVEX_OK;
 }
 
-/* Purpose: derive tensor-data alignment from the optional canonical metadata key.
- * Inputs: parsed metadata view and cursor. Effects: stores a validated nonzero alignment.
- * Failure: rejects a present key with wrong type or range. Boundary: overlap admission is separate. */
 static int derive_alignment(yvex_gguf *gguf, yvex_file_cursor *cur) {
     const yvex_gguf_value *value;
     unsigned long long alignment;
@@ -963,9 +841,6 @@ static int derive_alignment(yvex_gguf *gguf, yvex_file_cursor *cur) {
     return YVEX_OK;
 }
 
-/* Purpose: align one file offset with checked unsigned arithmetic.
- * Inputs: cursor, offset, nonzero alignment, and output. Effects: writes the aligned offset.
- * Failure: reports zero alignment or addition overflow. Boundary: computes no padding contents. */
 static int align_offset(yvex_file_cursor *cur, unsigned long long offset, unsigned int alignment,
                         unsigned long long *out) {
     unsigned long long remainder;
@@ -985,11 +860,6 @@ static int align_offset(yvex_file_cursor *cur, unsigned long long offset, unsign
     return YVEX_OK;
 }
 
-/* Purpose: map qtype storage-geometry refusals into structural parse codes.
- * Inputs: canonical qtype storage status.
- * Effects: returns one parse-code value without mutation.
- * Failure: unknown refusals map to refused-qtype.
- * Boundary: projects qtype authority and does not duplicate its geometry. */
 static yvex_gguf_parse_code qtype_parse_code(yvex_gguf_qtype_storage_status status) {
     if (status == YVEX_GGUF_QTYPE_STORAGE_INVALID_RANK)
         return YVEX_GGUF_PARSE_INVALID_RANK;
@@ -1006,11 +876,6 @@ static yvex_gguf_parse_code qtype_parse_code(yvex_gguf_qtype_storage_status stat
     return YVEX_GGUF_PARSE_REFUSED_QTYPE;
 }
 
-/* Purpose: parse tensor directory entries and compute each addressable physical range.
- * Inputs: metadata-complete view and cursor.
- * Effects: allocates tensor rows, name index, and checked address ranges.
- * Failure: leaves partial storage cleanup-owned after dtype, rank, shape, offset, or budget refusal.
- * Boundary: derives local ranges but does not prove global non-overlap or payload correctness. */
 static int parse_tensors(yvex_gguf *gguf, yvex_file_cursor *cur) {
     unsigned long long count = gguf->header.tensor_count;
     unsigned long long bytes;
@@ -1131,11 +996,6 @@ static int parse_tensors(yvex_gguf *gguf, yvex_file_cursor *cur) {
     return YVEX_OK;
 }
 
-/* Purpose: release every owned string, array, table, and lookup index in a GGUF view.
- * Inputs: initialized, partial, or null view.
- * Effects: frees descendants and clears owner pointers.
- * Failure: null input is ignored.
- * Boundary: does not close the borrowed artifact snapshot. */
 static void gguf_clear(yvex_gguf *gguf) {
     unsigned long long i;
     if (!gguf)
@@ -1157,11 +1017,6 @@ static void gguf_clear(yvex_gguf *gguf) {
     gguf->tensor_index.slots = NULL;
 }
 
-/* Purpose: decode a fixed eight-byte little-endian header field.
- * Inputs: at least eight readable bytes.
- * Effects: returns the decoded integer without mutation.
- * Failure: caller owns buffer admission; this helper has no status result.
- * Boundary: fixed header decoding only. */
 static unsigned long long decode_u64le(const unsigned char *bytes) {
     return (unsigned long long)bytes[0] | ((unsigned long long)bytes[1] << 8) |
            ((unsigned long long)bytes[2] << 16) | ((unsigned long long)bytes[3] << 24) |
@@ -1169,11 +1024,6 @@ static unsigned long long decode_u64le(const unsigned char *bytes) {
            ((unsigned long long)bytes[6] << 48) | ((unsigned long long)bytes[7] << 56);
 }
 
-/* Purpose: read and validate only the fixed GGUF v3 header.
- * Inputs: admitted artifact snapshot, header output, and error output.
- * Effects: performs one positioned structural read and initializes output on success.
- * Failure: refuses invalid arguments, truncation, magic, version, or artifact I/O.
- * Boundary: allocates no parser view and reads zero tensor payload bytes. */
 int yvex_gguf_read_header(const yvex_artifact *artifact, yvex_gguf_header *out, yvex_error *err) {
     unsigned char bytes[YVEX_GGUF_HEADER_BYTES];
     unsigned int magic;
@@ -1208,11 +1058,6 @@ int yvex_gguf_read_header(const yvex_artifact *artifact, yvex_gguf_header *out, 
     return YVEX_OK;
 }
 
-/* Purpose: probe whether an admitted artifact begins with a supported GGUF header.
- * Inputs: artifact snapshot, probe output, and error output.
- * Effects: reads at most fixed header bytes and initializes probe facts.
- * Failure: propagates artifact I/O or supported-header refusal.
- * Boundary: a non-GGUF magic is a successful negative probe. */
 int yvex_gguf_probe_file(const yvex_artifact *artifact, yvex_gguf_probe *out, yvex_error *err) {
     unsigned char bytes[4];
     int rc;
@@ -1238,11 +1083,6 @@ int yvex_gguf_probe_file(const yvex_artifact *artifact, yvex_gguf_probe *out, yv
     return YVEX_OK;
 }
 
-/* Purpose: parse one immutable GGUF structural view under explicit budgets.
- * Inputs: output, borrowed artifact snapshot, optional limits, parse result, and error.
- * Effects: allocates owned metadata, directory, and lookup state until close.
- * Failure: leaves output null and releases all partial state on any refusal.
- * Boundary: borrows the artifact only during parsing and reads no tensor payload. */
 int yvex_gguf_open_ex(yvex_gguf **out, const yvex_artifact *artifact,
                       const yvex_gguf_reader_options *options, yvex_gguf_parse_result *result,
                       yvex_error *err) {
@@ -1326,21 +1166,11 @@ int yvex_gguf_open_ex(yvex_gguf **out, const yvex_artifact *artifact,
     return YVEX_OK;
 }
 
-/* Purpose: open an immutable GGUF view with canonical default parser budgets.
- * Inputs: output, admitted artifact snapshot, and error.
- * Effects: delegates to bounded open_ex and returns its owned view.
- * Failure: preserves open_ex null-output and cleanup semantics.
- * Boundary: convenience ABI only; parser truth remains in open_ex. */
 int yvex_gguf_open(yvex_gguf **out, const yvex_artifact *artifact, yvex_error *err) {
     yvex_gguf_parse_result result;
     return yvex_gguf_open_ex(out, artifact, NULL, &result, err);
 }
 
-/* Purpose: deterministically release an immutable GGUF structural view.
- * Inputs: complete, partial, or null view.
- * Effects: frees all parser-owned state.
- * Failure: null input is a no-op.
- * Boundary: the artifact snapshot has never been retained. */
 void yvex_gguf_close(yvex_gguf *gguf) {
     if (!gguf)
         return;
@@ -1348,58 +1178,31 @@ void yvex_gguf_close(yvex_gguf *gguf) {
     free(gguf);
 }
 
-/* Purpose: borrow the parsed fixed header for the lifetime of its GGUF view.
- * Inputs: immutable GGUF view.
- * Effects: returns a borrowed pointer without mutation.
- * Failure: returns null for no view.
- * Boundary: caller must not retain the pointer after close. */
+/* Borrow the parsed fixed header for the lifetime of its GGUF view. */
 const yvex_gguf_header *yvex_gguf_header_view(const yvex_gguf *gguf) {
     return gguf ? &gguf->header : NULL;
 }
 
-/* Purpose: render one stable metadata value-type diagnostic name.
- * Inputs: value-type enum.
- * Effects: returns immutable static text.
- * Failure: unknown values return the invalid label.
- * Boundary: diagnostics only; text is not capability authority. */
 const char *yvex_gguf_value_type_name(yvex_gguf_value_type type) {
     return type >= YVEX_GGUF_VALUE_UINT8 && type <= YVEX_GGUF_VALUE_INVALID
                ? value_type_names[type]
                : value_type_names[YVEX_GGUF_VALUE_INVALID];
 }
 
-/* Purpose: return the immutable metadata entry count or zero for no view.
- * Inputs: optional GGUF view.
- * Effects: reads one header fact without mutation.
- * Failure: has no status result.
- * Boundary: count access only. */
 unsigned long long yvex_gguf_metadata_count(const yvex_gguf *gguf) {
     return gguf ? gguf->header.metadata_count : 0ull;
 }
 
-/* Purpose: borrow one metadata key by deterministic directory ordinal.
- * Inputs: immutable view and ordinal.
- * Effects: returns a borrowed string without mutation.
- * Failure: returns null for absent view or out-of-range ordinal.
- * Boundary: caller must not retain the key after close. */
+/* Borrow one metadata key by deterministic directory ordinal. */
 const char *yvex_gguf_metadata_key(const yvex_gguf *gguf, unsigned long long index) {
     return gguf && index < gguf->header.metadata_count ? gguf->metadata[index].key : NULL;
 }
 
-/* Purpose: borrow one parsed metadata value by deterministic ordinal.
- * Inputs: immutable view and ordinal.
- * Effects: returns a borrowed value without mutation.
- * Failure: returns null for absent view or out-of-range ordinal.
- * Boundary: caller must not retain the value after close. */
+/* Borrow one parsed metadata value by deterministic ordinal. */
 const yvex_gguf_value *yvex_gguf_metadata_value(const yvex_gguf *gguf, unsigned long long index) {
     return gguf && index < gguf->header.metadata_count ? &gguf->metadata[index].value : NULL;
 }
 
-/* Purpose: find one parsed metadata value by exact key in expected constant time.
- * Inputs: immutable view and null-terminated key.
- * Effects: probes the immutable index without allocation or mutation.
- * Failure: returns null for invalid inputs or absent keys.
- * Boundary: returned value is borrowed until close. */
 const yvex_gguf_value *yvex_gguf_metadata_find(const yvex_gguf *gguf, const char *key) {
     unsigned long long len;
     size_t slot;
@@ -1418,20 +1221,10 @@ const yvex_gguf_value *yvex_gguf_metadata_find(const yvex_gguf *gguf, const char
     return NULL;
 }
 
-/* Purpose: inspect a borrowed metadata value discriminant safely.
- * Inputs: optional metadata value.
- * Effects: returns its type without mutation.
- * Failure: null returns the invalid discriminant.
- * Boundary: type inspection only. */
 yvex_gguf_value_type yvex_gguf_value_type_of(const yvex_gguf_value *value) {
     return value ? value->type : YVEX_GGUF_VALUE_INVALID;
 }
 
-/* Purpose: project an admitted unsigned metadata scalar without conversion.
- * Inputs: typed metadata value and output.
- * Effects: copies its exact unsigned representation.
- * Failure: rejects null or non-unsigned values.
- * Boundary: no signed or floating coercion is performed. */
 int yvex_gguf_value_as_u64(const yvex_gguf_value *value, unsigned long long *out) {
     if (!value || !out)
         return YVEX_ERR_INVALID_ARG;
@@ -1443,11 +1236,6 @@ int yvex_gguf_value_as_u64(const yvex_gguf_value *value, unsigned long long *out
     return YVEX_ERR_INVALID_ARG;
 }
 
-/* Purpose: project an admitted signed metadata scalar without conversion.
- * Inputs: typed metadata value and output.
- * Effects: copies its exact signed representation.
- * Failure: rejects null or non-signed values.
- * Boundary: no unsigned or floating coercion is performed. */
 int yvex_gguf_value_as_i64(const yvex_gguf_value *value, long long *out) {
     if (!value || !out)
         return YVEX_ERR_INVALID_ARG;
@@ -1459,11 +1247,6 @@ int yvex_gguf_value_as_i64(const yvex_gguf_value *value, long long *out) {
     return YVEX_ERR_INVALID_ARG;
 }
 
-/* Purpose: project a parsed floating metadata scalar as its stored double view.
- * Inputs: typed metadata value and output.
- * Effects: copies its normalized floating representation.
- * Failure: rejects null or non-floating values.
- * Boundary: no integer coercion is performed. */
 int yvex_gguf_value_as_f64(const yvex_gguf_value *value, double *out) {
     if (!value || !out)
         return YVEX_ERR_INVALID_ARG;
@@ -1474,11 +1257,6 @@ int yvex_gguf_value_as_f64(const yvex_gguf_value *value, double *out) {
     return YVEX_ERR_INVALID_ARG;
 }
 
-/* Purpose: project an admitted boolean metadata scalar.
- * Inputs: typed metadata value and output.
- * Effects: copies its zero-or-one representation.
- * Failure: rejects null or non-boolean values.
- * Boundary: no numeric coercion is performed. */
 int yvex_gguf_value_as_bool(const yvex_gguf_value *value, int *out) {
     if (!value || !out || value->type != YVEX_GGUF_VALUE_BOOL)
         return YVEX_ERR_INVALID_ARG;
@@ -1486,11 +1264,6 @@ int yvex_gguf_value_as_bool(const yvex_gguf_value *value, int *out) {
     return YVEX_OK;
 }
 
-/* Purpose: borrow one parsed metadata string and its exact length.
- * Inputs: typed value plus data and length outputs.
- * Effects: returns borrowed string storage without copying.
- * Failure: rejects null or non-string values.
- * Boundary: borrowed data expires when the GGUF view closes. */
 int yvex_gguf_value_as_string(const yvex_gguf_value *value, const char **data,
                               unsigned long long *len) {
     if (!value || !data || !len || value->type != YVEX_GGUF_VALUE_STRING) {
@@ -1501,11 +1274,6 @@ int yvex_gguf_value_as_string(const yvex_gguf_value *value, const char **data,
     return YVEX_OK;
 }
 
-/* Purpose: copy immutable array element type and count facts.
- * Inputs: typed value and array-info output.
- * Effects: copies fixed array metadata without allocation.
- * Failure: rejects null or non-array values.
- * Boundary: does not expose mutable item storage. */
 int yvex_gguf_value_array_info(const yvex_gguf_value *value, yvex_gguf_array_info *out) {
     if (!value || !out || value->type != YVEX_GGUF_VALUE_ARRAY)
         return YVEX_ERR_INVALID_ARG;
@@ -1513,11 +1281,6 @@ int yvex_gguf_value_array_info(const yvex_gguf_value *value, yvex_gguf_array_inf
     return YVEX_OK;
 }
 
-/* Purpose: borrow one array element by checked ordinal.
- * Inputs: array value and element ordinal.
- * Effects: returns a borrowed item without mutation.
- * Failure: returns null for wrong type or out-of-range ordinal.
- * Boundary: borrowed item expires when the GGUF view closes. */
 const yvex_gguf_value *yvex_gguf_value_array_at(const yvex_gguf_value *value,
                                                 unsigned long long index) {
     if (!value || value->type != YVEX_GGUF_VALUE_ARRAY || index >= value->as.array.info.count)
@@ -1525,29 +1288,15 @@ const yvex_gguf_value *yvex_gguf_value_array_at(const yvex_gguf_value *value,
     return &value->as.array.items[index];
 }
 
-/* Purpose: return the immutable tensor directory count or zero for no view.
- * Inputs: optional GGUF view.
- * Effects: reads one header fact without mutation.
- * Failure: has no status result.
- * Boundary: count access only. */
 unsigned long long yvex_gguf_tensor_count(const yvex_gguf *gguf) {
     return gguf ? gguf->header.tensor_count : 0ull;
 }
 
-/* Purpose: borrow one tensor directory entry by deterministic ordinal.
- * Inputs: immutable view and ordinal.
- * Effects: returns a borrowed entry without mutation.
- * Failure: returns null for absent view or out-of-range ordinal.
- * Boundary: caller must not retain the entry after close. */
+/* Borrow one tensor directory entry by deterministic ordinal. */
 const yvex_gguf_tensor_info *yvex_gguf_tensor_at(const yvex_gguf *gguf, unsigned long long index) {
     return gguf && index < gguf->header.tensor_count ? &gguf->tensors[index] : NULL;
 }
 
-/* Purpose: find one tensor directory entry by exact name in expected constant time.
- * Inputs: immutable view and tensor name.
- * Effects: probes the immutable index without allocation or mutation.
- * Failure: returns null for invalid inputs or absent names.
- * Boundary: returned entry is borrowed until close. */
 const yvex_gguf_tensor_info *yvex_gguf_tensor_find(const yvex_gguf *gguf, const char *name) {
     unsigned long long len;
     size_t slot;
@@ -1566,38 +1315,20 @@ const yvex_gguf_tensor_info *yvex_gguf_tensor_find(const yvex_gguf *gguf, const 
     return NULL;
 }
 
-/* Purpose: return the checked absolute start of the GGUF tensor-data region.
- * Inputs: optional GGUF view.
- * Effects: reads one immutable offset fact.
- * Failure: returns zero for no view.
- * Boundary: does not read tensor payload. */
 unsigned long long yvex_gguf_tensor_data_offset(const yvex_gguf *gguf) {
     return gguf ? gguf->tensor_data_offset : 0ull;
 }
 
-/* Purpose: return the admitted container alignment or zero for no view.
- * Inputs: optional GGUF view.
- * Effects: reads one immutable alignment fact.
- * Failure: returns zero for no view.
- * Boundary: does not validate file-wide padding. */
+/* File-wide padding is validated separately from this parsed metadata accessor. */
 unsigned int yvex_gguf_alignment(const yvex_gguf *gguf) {
     return gguf ? gguf->alignment : 0u;
 }
 
-/* Purpose: return the immutable artifact size observed during parsing.
- * Inputs: optional GGUF view.
- * Effects: reads one immutable snapshot fact.
- * Failure: returns zero for no view.
- * Boundary: does not restat the artifact. */
 unsigned long long yvex_gguf_file_size(const yvex_gguf *gguf) {
     return gguf ? gguf->stats.file_size : 0ull;
 }
 
-/* Purpose: borrow cumulative structural read and ownership statistics.
- * Inputs: optional GGUF view.
- * Effects: returns an immutable borrowed record.
- * Failure: returns null for no view.
- * Boundary: statistics do not promote artifact capability. */
+/* Borrow cumulative structural read and ownership statistics. */
 const yvex_gguf_reader_stats *yvex_gguf_reader_stats_view(const yvex_gguf *gguf) {
     return gguf ? &gguf->stats : NULL;
 }

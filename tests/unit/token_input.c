@@ -1,12 +1,6 @@
 /*
- * YVEX - token input boundary tests
- *
- * File: tests/unit/token_input.c
- * Layer: test
- *
- * Purpose:
- *   Proves explicit token input parsing, bounded token sequence storage,
- *   vocabulary bounds validation, and selected-token lookup.
+ * Exercises explicit token input parsing, bounded token sequence storage, vocabulary bounds
+ * validation, and selected-token lookup.
  */
 #include <string.h>
 

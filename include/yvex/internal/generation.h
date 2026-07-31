@@ -1,14 +1,9 @@
-/* Owner: runtime autoregressive generation composition contract.
- * Owns: generation plans, prompt-to-prefill orchestration, sampled-token feedback,
- *   stop state, and evidence.
- * Does not own: tokenizer algorithms, Transformer math, KV storage, logits projection,
- *   sampling policy, or CLI rendering.
- * Invariants: every ordinary published token is the exact sampled ID committed by one decode step.
- * Boundary: internal runtime/operator ABI from exact text/messages to model-backed incremental text.
- * Purpose: compose admitted lower owners into one bounded autoregressive lifecycle.
- * Inputs: one model/session, exact prompt input, sampling policy, budgets, and caller cancellation.
- * Effects: advances only the borrowed session through prompt prefill and successful sampled-token decode commits.
- * Failure: preserves typed partial token/model/text progress and never publishes text for an uncommitted token. */
+/*
+ * Compose admitted lower owners into one bounded autoregressive lifecycle.
+ *
+ * Every ordinary published token is the exact sampled ID committed by one decode step. Internal
+ * runtime/operator ABI from exact text/messages to model-backed incremental text.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_GENERATION_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_GENERATION_H_INCLUDED
 #include <yvex/internal/sampling.h>

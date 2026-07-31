@@ -1,15 +1,7 @@
 /*
- * materialize_deepseek.c - target-scale DeepSeek materialization proof.
- *
- * Owner: tests/live.
- * Owns: admitted selected-artifact materialization planning, bounded payload
- *   access walk, lifecycle reuse proof, expert subview accounting, and runtime
- *   descriptor projection evidence for the selected DeepSeek GGUF artifact.
- * Does not own: GGUF emission, artifact mutation, graph execution,
- *   generation, eval, benchmark, or release claims.
- * Invariants: plan-only mode reads zero tensor payload bytes; live mode reads
- *   payload through materialization bindings with one bounded reusable buffer.
- * Boundary: this runner proves materialization and descriptor readiness only.
+ * Plan-only mode reads zero tensor payload bytes; live mode reads payload through
+ * materialization bindings with one bounded reusable buffer. This runner proves materialization
+ * and descriptor readiness only.
  */
 #define _POSIX_C_SOURCE 200809L
 

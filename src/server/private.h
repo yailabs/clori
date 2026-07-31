@@ -1,11 +1,9 @@
-/* Owner: server private source ABI.
- * Owns: shared protocol adapters, telemetry lifecycle, and session-registry orchestration contracts.
- * Does not own: public ABI, model algorithms, terminal rendering, or CLI parsing.
- * Invariants: only server translation units consume these declarations and all mutable owners are opaque.
- * Boundary: source-local interface shared by host, protocol, telemetry, and session owners.
- * Purpose: connect admitted server owners without exposing sockets or engine pointers publicly.
- * Inputs: typed public facts and internal runtime handles. Effects: as declared by each lifecycle.
- * Failure: typed errors preserve unique ownership and prior committed session state. */
+/*
+ * Connect admitted server owners without exposing sockets or engine pointers publicly.
+ *
+ * Only server translation units consume these declarations and all mutable owners are opaque.
+ * Source-local interface shared by host, protocol, telemetry, and session owners.
+ */
 #ifndef SRC_SERVER_PRIVATE_H_INCLUDED
 #define SRC_SERVER_PRIVATE_H_INCLUDED
 

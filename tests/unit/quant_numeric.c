@@ -1,12 +1,6 @@
 /*
- * quant_numeric.c - canonical quantization codec and capability tests.
- *
- * Owner: tests/unit.
- * Owns: scalar edge cases, block golden geometry, independent decode metrics,
- *   direct CPU qtype compute, and exhaustive capability identity coverage.
- * Does not own: release policy, payload IO, CUDA, artifact output, or claims.
- * Invariants: tests retain no model payload and use deterministic bounded data.
- * Boundary: codec arithmetic is not complete-model quantization evidence.
+ * Tests retain no model payload and use deterministic bounded data. Codec arithmetic is not
+ * complete-model quantization evidence.
  */
 #include "tests/test.h"
 
@@ -50,7 +44,6 @@ static int quant_float_bits_equal(float left, float right)
     return left_bits == right_bits;
 }
 
-/* Decodes binary16 independently from the production scalar codec. */
 static float quant_reference_f16(const unsigned char *encoded)
 {
     unsigned int bits = encoded[0] | ((unsigned int)encoded[1] << 8);
@@ -79,7 +72,6 @@ static unsigned int quant_reference_parity_sign(unsigned int low)
     return low | (parity << 7u);
 }
 
-/* Independently unpacks one canonical block without calling production decode. */
 static int quant_reference_block(unsigned int qtype,
                                  const unsigned char *encoded,
                                  float *out)
@@ -266,7 +258,6 @@ static int quant_test_bf16(void)
     return 0;
 }
 
-/* Covers every pinned FP8/E8M0 code and source packed-nibble ordering. */
 static int quant_test_source_formats(void)
 {
     unsigned int code;
@@ -431,7 +422,6 @@ static int quant_test_block(unsigned int qtype,
     return 0;
 }
 
-/* Proves every selected exact scalar format against independent byte decoding. */
 static int quant_test_exact_scalar_blocks(void)
 {
     static const struct {
@@ -468,7 +458,6 @@ static int quant_test_exact_scalar_blocks(void)
     return 0;
 }
 
-/* Verifies the one canonical capability answer for all pinned identities. */
 static int quant_test_registry(void)
 {
     unsigned int qtype;
@@ -510,7 +499,6 @@ static int quant_test_registry(void)
     return 0;
 }
 
-/* Proves pinned packing bytes and malformed-scale refusal independently. */
 static int quant_test_golden_blocks(void)
 {
     float q8_source[YVEX_QUANT_Q8_0_ELEMENTS] = {0};

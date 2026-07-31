@@ -1,12 +1,8 @@
-/* Owner: runtime activation-prefill tests.
- * Owns: bounded activation-input format, identity, view, drift, and cleanup evidence.
- * Does not own: production attention equations, model artifacts, CLI rendering, or generation.
- * Invariants: canonical facts admit identically from memory and file, while malformed files refuse.
- * Boundary: focused internal-ABI coverage; no fixture enters production objects.
- * Purpose: prove the tensor-file boundary before target-scale runtime execution.
- * Inputs: three deterministic layer activations and exact pointer-free records.
- * Effects: publishes files only beneath one test-owned temporary directory.
- * Failure: any format, identity, bounds, drift, or cleanup mismatch fails the unit runner. */
+/*
+ * Exercises the tensor-file boundary before target-scale runtime execution. Canonical facts
+ * admit identically from memory and file, while malformed files refuse. Focused internal-ABI
+ * coverage; no fixture enters production objects.
+ */
 #define _GNU_SOURCE
 #include "tests/test.h"
 
@@ -26,14 +22,12 @@ typedef struct {
     float payload[18];
 } prefill_fixture;
 
-/* Purpose: publish one deterministic SHA-256-shaped fixture identity. */
 static void prefill_identity(char output[YVEX_SHA256_HEX_CAP],
                              unsigned int value)
 {
     (void)snprintf(output, YVEX_SHA256_HEX_CAP, "%064x", value);
 }
 
-/* Purpose: construct three exact contiguous activation records. */
 static void prefill_fixture_open(prefill_fixture *fixture)
 {
     const unsigned long long widths[] = {2ull, 3ull, 4ull};
@@ -67,7 +61,6 @@ static void prefill_fixture_open(prefill_fixture *fixture)
         fixture->payload[value] = (float)(value + 1ull) / 16.0f;
 }
 
-/* Purpose: prove canonical memory admission and checked token views. */
 static int prefill_test_memory(void)
 {
     prefill_fixture fixture, changed;
@@ -124,7 +117,6 @@ static int prefill_test_memory(void)
     return 0;
 }
 
-/* Purpose: append one byte to create an exact trailing-data refusal fixture. */
 static int prefill_append_byte(const char *path)
 {
     const unsigned char value = 0xa5u;
@@ -134,7 +126,7 @@ static int prefill_append_byte(const char *path)
     return ok;
 }
 
-/* Purpose: prove secure bounded file admission, drift refusal, and cleanup. */
+/* Prove secure bounded file admission, drift refusal, and cleanup. */
 static int prefill_test_file(void)
 {
     prefill_fixture fixture;

@@ -1,12 +1,9 @@
-/* Owner: tokenizer.core.
- * Owns: tokenizer metadata, vocabulary lifecycle, and retained fixture transforms.
- * Does not own: exact BPE execution, incremental decoding, prompt policy, generation loops, or CLI presentation.
- * Invariants: vocabulary views remain bound to admitted metadata and token buffers own storage.
- * Boundary: tokenizer ABI over GGUF facts; text generation remains downstream.
- * Purpose: construct tokenizer state and perform bounded text, token, and prompt transforms.
- * Inputs: admitted GGUF metadata, immutable text or token IDs, and typed prompt messages.
- * Effects: allocates tokenizer, vocabulary, token, and rendered-prompt storage explicitly.
- * Failure: rejects malformed metadata, bounds, allocation, and unsupported tokenizer behavior. */
+/*
+ * Construct tokenizer state and perform bounded text, token, and prompt transforms.
+ *
+ * Vocabulary views remain bound to admitted metadata and token buffers own storage. Tokenizer ABI
+ * over GGUF facts; text generation remains downstream.
+ */
 
 #include "src/tokenizer/private.h"
 #include <yvex/gguf.h>
@@ -24,11 +21,6 @@ static int tokenizer_load_specials(yvex_tokenizer *tokenizer,
                                    yvex_error *err);
 static void tokenizer_free_metadata(yvex_tokenizer *tokenizer);
 
-/* Purpose: copy one admitted GGUF string into owned terminated storage.
- * Inputs: nullable typed value and optional length result.
- * Effects: allocates a byte-exact copy and publishes its length.
- * Failure: wrong type, excess length, or allocation failure returns NULL.
- * Boundary: metadata copying; value admission remains GGUF-owned. */
 static char *copy_string_value(const yvex_gguf_value *value, unsigned long long *out_len)
 {
     const char *data;
@@ -58,7 +50,6 @@ static char *copy_string_value(const yvex_gguf_value *value, unsigned long long 
     return copy;
 }
 
-/* Purpose: map tokenizer model spelling to the closed tokenizer-kind enumeration. */
 static yvex_tokenizer_kind kind_from_model(const char *model)
 {
     if (!model) {
@@ -73,7 +64,6 @@ static yvex_tokenizer_kind kind_from_model(const char *model)
     return YVEX_TOKENIZER_KIND_UNKNOWN;
 }
 
-/* Purpose: project truthful implementation support for one tokenizer kind. */
 static yvex_tokenizer_support support_for_kind(yvex_tokenizer_kind kind)
 {
     switch (kind) {
@@ -92,11 +82,6 @@ static yvex_tokenizer_support support_for_kind(yvex_tokenizer_kind kind)
     return YVEX_TOKENIZER_SUPPORT_UNSUPPORTED;
 }
 
-/* Purpose: construct tokenizer state from admitted GGUF metadata.
- * Inputs: result slot, immutable GGUF, optional model descriptor, and error output.
- * Effects: allocates tokenizer state and copies vocabulary, template, and special-token facts.
- * Failure: validation, allocation, or metadata errors publish no tokenizer.
- * Boundary: tokenizer admission; it does not execute generation. */
 int yvex_tokenizer_from_gguf(yvex_tokenizer **out,
                              const yvex_gguf *gguf,
                              const yvex_model_descriptor *model,
@@ -160,11 +145,6 @@ int yvex_tokenizer_from_gguf(yvex_tokenizer **out,
     return YVEX_OK;
 }
 
-/* Purpose: release all storage owned by one tokenizer.
- * Inputs: nullable owned tokenizer.
- * Effects: frees vocabulary, metadata, and root allocation.
- * Failure: none; NULL is accepted.
- * Boundary: terminal tokenizer lifecycle operation. */
 void yvex_tokenizer_close(yvex_tokenizer *tokenizer)
 {
     if (!tokenizer) {
@@ -176,31 +156,16 @@ void yvex_tokenizer_close(yvex_tokenizer *tokenizer)
     free(tokenizer);
 }
 
-/* Purpose: read the admitted tokenizer kind.
- * Inputs: nullable immutable tokenizer.
- * Effects: none.
- * Failure: NULL projects the unknown kind.
- * Boundary: immutable metadata view. */
 yvex_tokenizer_kind yvex_tokenizer_kind_of(const yvex_tokenizer *tokenizer)
 {
     return tokenizer ? tokenizer->kind : YVEX_TOKENIZER_KIND_UNKNOWN;
 }
 
-/* Purpose: read the bounded tokenizer support classification.
- * Inputs: nullable immutable tokenizer.
- * Effects: none.
- * Failure: NULL projects unsupported.
- * Boundary: support fact, not generation readiness. */
 yvex_tokenizer_support yvex_tokenizer_support_of(const yvex_tokenizer *tokenizer)
 {
     return tokenizer ? tokenizer->support : YVEX_TOKENIZER_SUPPORT_UNSUPPORTED;
 }
 
-/* Purpose: map tokenizer kind to its stable diagnostic spelling.
- * Inputs: typed tokenizer kind.
- * Effects: none; returned storage is static.
- * Failure: unknown values map to "unknown".
- * Boundary: label projection only. */
 const char *yvex_tokenizer_kind_name(yvex_tokenizer_kind kind)
 {
     switch (kind) {
@@ -215,11 +180,6 @@ const char *yvex_tokenizer_kind_name(yvex_tokenizer_kind kind)
     return "unknown";
 }
 
-/* Purpose: map tokenizer support state to stable public wording.
- * Inputs: typed support state.
- * Effects: none; returned storage is static.
- * Failure: unrecognized values map to "unsupported".
- * Boundary: label projection, not capability admission. */
 const char *yvex_tokenizer_support_name(yvex_tokenizer_support support)
 {
     switch (support) {
@@ -232,11 +192,11 @@ const char *yvex_tokenizer_support_name(yvex_tokenizer_support support)
     return "unsupported";
 }
 
-/* Purpose: expose the tokenizer's immutable chat-template bytes.
- * Inputs: tokenizer and required data/length outputs.
- * Effects: writes a borrowed view valid for tokenizer lifetime.
- * Failure: invalid inputs or missing template return typed refusal.
- * Boundary: metadata view; prompt rendering is separate. */
+/*
+ * Expose the tokenizer's immutable chat-template bytes.
+ *
+ * Writes a borrowed view valid for tokenizer lifetime.
+ */
 int yvex_tokenizer_chat_template(const yvex_tokenizer *tokenizer,
                                  const char **data,
                                  unsigned long long *len)
@@ -254,11 +214,6 @@ int yvex_tokenizer_chat_template(const yvex_tokenizer *tokenizer,
     return YVEX_OK;
 }
 
-/* Purpose: release dynamic metadata strings owned by a tokenizer.
- * Inputs: nullable mutable tokenizer.
- * Effects: frees and clears model and chat-template storage.
- * Failure: none; cleared state is accepted.
- * Boundary: tokenizer-local cleanup. */
 static void tokenizer_free_metadata(yvex_tokenizer *tokenizer)
 {
     if (!tokenizer) {
@@ -271,11 +226,6 @@ static void tokenizer_free_metadata(yvex_tokenizer *tokenizer)
     tokenizer->chat_template_len = 0;
 }
 
-/* Purpose: release an owned token sequence.
- * Inputs: nullable mutable token container.
- * Effects: frees token IDs and restores empty state.
- * Failure: none; empty state is accepted.
- * Boundary: token-buffer lifecycle. */
 void yvex_tokens_free(yvex_tokens *tokens)
 {
     if (!tokens) {
@@ -285,7 +235,6 @@ void yvex_tokens_free(yvex_tokens *tokens)
     yvex_tokens_clear(tokens);
 }
 
-/* Purpose: decide whether one admitted token type contributes text bytes. */
 static int token_emits_text(yvex_token_type type)
 {
     return type == YVEX_TOKEN_TYPE_NORMAL ||
@@ -294,11 +243,11 @@ static int token_emits_text(yvex_token_type type)
            type == YVEX_TOKEN_TYPE_BYTE;
 }
 
-/* Purpose: decode admitted fixture token IDs into caller-bounded text.
- * Inputs: tokenizer, ID sequence, output storage/capacity, and error output.
- * Effects: writes a terminated concatenation of text-emitting vocabulary entries.
- * Failure: unsupported kind, invalid ID, or capacity overflow leaves typed refusal.
- * Boundary: fixture decode proof; it is not model generation. */
+/*
+ * Decode admitted fixture token IDs into caller-bounded text.
+ *
+ * Unsupported kind, invalid ID, or capacity overflow leaves typed refusal.
+ */
 int yvex_detokenize_ids(const yvex_tokenizer *tokenizer,
                         const unsigned int *ids,
                         unsigned long long len,
@@ -374,11 +323,6 @@ int yvex_detokenize_ids(const yvex_tokenizer *tokenizer,
     return YVEX_OK;
 }
 
-/* Purpose: restore a token container to empty borrowed-free state.
- * Inputs: nullable mutable token container.
- * Effects: clears pointer, count, and capacity without freeing storage.
- * Failure: none; NULL is accepted.
- * Boundary: initialization/reset helper; callers own prior allocation cleanup. */
 void yvex_tokens_clear(yvex_tokens *tokens)
 {
     if (!tokens) {
@@ -389,11 +333,6 @@ void yvex_tokens_clear(yvex_tokens *tokens)
     tokens->cap = 0;
 }
 
-/* Purpose: append one ID to an owned growable token sequence.
- * Inputs: mutable token buffer, ID, and error output.
- * Effects: may reallocate storage and increments count exactly once.
- * Failure: capacity overflow or allocation failure preserves a valid buffer.
- * Boundary: tokenizer-local buffer growth. */
 static int tokens_append(yvex_tokens *tokens, unsigned int id, yvex_error *err)
 {
     unsigned int *next;
@@ -418,11 +357,6 @@ static int tokens_append(yvex_tokens *tokens, unsigned int id, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: select the longest deterministic vocabulary prefix at one text position.
- * Inputs: immutable tokenizer, remaining text, and optional matched-byte output.
- * Effects: writes match length and returns a borrowed vocabulary entry.
- * Failure: no match returns NULL with zero length.
- * Boundary: fixture tokenizer matching policy. */
 static const yvex_token_info *find_longest_match(const yvex_tokenizer *tokenizer,
                                                  const char *text,
                                                  unsigned long long remaining)
@@ -447,11 +381,12 @@ static const yvex_token_info *find_longest_match(const yvex_tokenizer *tokenizer
     return best;
 }
 
-/* Purpose: encode text through the admitted fixture vocabulary.
- * Inputs: tokenizer, immutable text, result token container, and error output.
- * Effects: allocates and publishes an ordered ID sequence on exact completion.
- * Failure: unsupported kind, unmatched input, overflow, or allocation aborts output.
- * Boundary: bounded tokenizer execution, not model inference. */
+/*
+ * Encode text through the admitted fixture vocabulary.
+ *
+ * Unsupported kind, unmatched input, overflow, or allocation aborts output. Bounded tokenizer
+ * execution, not model inference.
+ */
 int yvex_tokenize_text(const yvex_tokenizer *tokenizer,
                        const char *text,
                        yvex_tokens *out,
@@ -528,11 +463,6 @@ int yvex_tokenize_text(const yvex_tokenizer *tokenizer,
     return YVEX_OK;
 }
 
-/* Purpose: load one optional special-token ID with vocabulary bounds validation.
- * Inputs: GGUF, key, vocabulary size, destination slot, and error output.
- * Effects: marks and writes the special ID only when metadata is present.
- * Failure: malformed type or out-of-range ID returns typed refusal.
- * Boundary: tokenizer special-token admission. */
 static int load_special(const yvex_gguf *gguf,
                         const char *key,
                         tokenizer_special_id *slot,
@@ -566,11 +496,6 @@ static int load_special(const yvex_gguf *gguf,
     return YVEX_OK;
 }
 
-/* Purpose: admit the closed set of tokenizer special IDs.
- * Inputs: mutable tokenizer, immutable GGUF, and error output.
- * Effects: populates BOS, EOS, UNK, PAD, and SEP slots in deterministic order.
- * Failure: the first malformed or out-of-range value aborts construction.
- * Boundary: metadata population during tokenizer construction. */
 static int tokenizer_load_specials(yvex_tokenizer *tokenizer,
                                    const yvex_gguf *gguf,
                                    yvex_error *err)
@@ -588,7 +513,6 @@ static int tokenizer_load_specials(yvex_tokenizer *tokenizer,
     return load_special(gguf, "tokenizer.ggml.separator_token_id", &tokenizer->sep, tokenizer->vocab_size, err);
 }
 
-/* Purpose: project one optional special-ID slot through the public sentinel convention. */
 static int special_id_get(const yvex_tokenizer *tokenizer,
                           const tokenizer_special_id *slot,
                           unsigned int *out)
@@ -603,51 +527,27 @@ static int special_id_get(const yvex_tokenizer *tokenizer,
     return YVEX_OK;
 }
 
-/* Purpose: read the admitted beginning-of-sequence token ID.
- * Inputs: tokenizer and required result storage.
- * Effects: writes the ID only when present.
- * Failure: invalid or absent state returns typed refusal.
- * Boundary: special-token metadata view. */
 int yvex_tokenizer_bos_id(const yvex_tokenizer *tokenizer, unsigned int *out)
 {
     return special_id_get(tokenizer, tokenizer ? &tokenizer->bos : 0, out);
 }
 
-/* Purpose: read the admitted end-of-sequence token ID.
- * Inputs: tokenizer and required result storage.
- * Effects: writes the ID only when present.
- * Failure: invalid or absent state returns typed refusal.
- * Boundary: immutable EOS metadata projection. */
 int yvex_tokenizer_eos_id(const yvex_tokenizer *tokenizer, unsigned int *out)
 {
     return special_id_get(tokenizer, tokenizer ? &tokenizer->eos : 0, out);
 }
 
-/* Purpose: read the admitted unknown-token ID.
- * Inputs: tokenizer and required output.
- * Effects: publishes one scalar ID when available.
- * Failure: missing state is reported without output mutation.
- * Boundary: immutable UNK metadata projection. */
 int yvex_tokenizer_unk_id(const yvex_tokenizer *tokenizer, unsigned int *out)
 {
     return special_id_get(tokenizer, tokenizer ? &tokenizer->unk : 0, out);
 }
 
-/* Purpose: read the admitted padding-token ID.
- * Inputs: tokenizer and required output.
- * Effects: publishes one scalar ID when present.
- * Failure: invalid arguments or absent metadata return refusal.
- * Boundary: immutable PAD metadata projection. */
+/* Read the admitted padding-token ID. */
 int yvex_tokenizer_pad_id(const yvex_tokenizer *tokenizer, unsigned int *out)
 {
     return special_id_get(tokenizer, tokenizer ? &tokenizer->pad : 0, out);
 }
 
-/* Purpose: validate and expose one GGUF metadata array's element type and count.
- * Inputs: value, expected type, output, error context, and metadata key.
- * Effects: writes immutable array facts on success.
- * Failure: absent or mismatched arrays return typed format refusal.
- * Boundary: tokenizer validation over the GGUF value ABI. */
 static int read_array_info(const yvex_gguf_value *value,
                            yvex_gguf_value_type expected,
                            yvex_gguf_array_info *out,
@@ -666,11 +566,6 @@ static int read_array_info(const yvex_gguf_value *value,
     return YVEX_OK;
 }
 
-/* Purpose: allocate a terminated copy of one bounded vocabulary token.
- * Inputs: immutable bytes and exact length.
- * Effects: allocates and returns owned string storage.
- * Failure: unrepresentable length or allocation failure returns NULL.
- * Boundary: vocabulary-entry ownership helper. */
 static char *copy_text(const char *data, unsigned long long len)
 {
     char *copy;
@@ -689,11 +584,11 @@ static char *copy_text(const char *data, unsigned long long len)
     return copy;
 }
 
-/* Purpose: load exact vocabulary entries and optional score/type arrays from GGUF.
- * Inputs: mutable tokenizer, immutable GGUF, and error output.
- * Effects: allocates ordered token facts bound to admitted vocabulary cardinality.
- * Failure: type, count, overflow, or allocation errors leave cleanup to construction unwind.
- * Boundary: vocabulary admission; tokenizer support policy stays explicit. */
+/*
+ * Load exact vocabulary entries and optional score/type arrays from GGUF.
+ *
+ * Type, count, overflow, or allocation errors leave cleanup to construction unwind.
+ */
 static int tokenizer_load_vocab(yvex_tokenizer *tokenizer,
                                 const yvex_gguf *gguf,
                                 yvex_error *err)
@@ -817,11 +712,6 @@ static int tokenizer_load_vocab(yvex_tokenizer *tokenizer,
     return YVEX_OK;
 }
 
-/* Purpose: release every vocabulary entry and its owning array.
- * Inputs: nullable mutable tokenizer.
- * Effects: frees token strings and clears vocabulary state.
- * Failure: none; partially constructed vocabulary is accepted.
- * Boundary: construction unwind and tokenizer teardown. */
 static void tokenizer_free_vocab(yvex_tokenizer *tokenizer)
 {
     unsigned long long i;
@@ -838,21 +728,16 @@ static void tokenizer_free_vocab(yvex_tokenizer *tokenizer)
     tokenizer->vocab_size = 0;
 }
 
-/* Purpose: read admitted vocabulary cardinality.
- * Inputs: nullable immutable tokenizer.
- * Effects: none.
- * Failure: NULL projects zero.
- * Boundary: scalar metadata view. */
 unsigned long long yvex_tokenizer_vocab_size(const yvex_tokenizer *tokenizer)
 {
     return tokenizer ? tokenizer->vocab_size : 0;
 }
 
-/* Purpose: retrieve one immutable vocabulary entry by exact ID.
- * Inputs: tokenizer and zero-based token ID.
- * Effects: none; returned view follows tokenizer lifetime.
- * Failure: invalid or out-of-range ID returns NULL.
- * Boundary: borrowed vocabulary lookup. */
+/*
+ * Retrieve one immutable vocabulary entry by exact ID.
+ *
+ * None; returned view follows tokenizer lifetime.
+ */
 const yvex_token_info *yvex_tokenizer_token_at(const yvex_tokenizer *tokenizer,
                                                unsigned long long id)
 {

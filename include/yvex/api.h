@@ -1,12 +1,5 @@
-/* Owner: abi.public umbrella.
- * Owns: one convenience include for the complete installed YVEX C ABI.
- * Does not own: declarations, internal contracts, implementation policy, or capability truth.
- * Invariants: includes only canonical domain headers; production never imports it.
- * Boundary: external convenience surface over independently includable domain contracts.
- * Purpose: Provide one opt-in include for external consumers of the installed ABI.
- * Inputs: Canonical public domain headers.
- * Effects: None.
- * Failure: Compilation fails when any public domain contract is not self-contained. */
+/* External consumers may opt into the complete installed ABI here. Production code names its
+ * domain dependencies explicitly, so this umbrella never becomes an internal coupling point. */
 #ifndef YVEX_API_H
 #define YVEX_API_H
 

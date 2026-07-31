@@ -1,5 +1,5 @@
 #!/bin/sh
-# Purpose: prove the role-based build and package expose exactly yvex and yvexd.
+# Verifies that builds and packages expose only the two admitted product executables.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}

@@ -1,15 +1,11 @@
-/* Owner: src/cli/render
- * Owns: normal/table/audit/help rendering for typed model-target reports.
- * Does not own: CLI argument parsing, command dispatch, target catalogs, report construction, sidecar writing,
- *   runtime execution, generation, eval, benchmark, or release decisions.
- * Invariants: this typed renderer writes only through src/cli/io helpers and renders typed report rows supplied by
- *   model-target report builders.
- * Boundary: model-target rendering serializes existing report-only facts and does not prove quantization, artifact
- *   emission, runtime execution, generation, evaluation, benchmark, throughput, or release readiness.
- * Purpose: provide normal/table/audit/help rendering for typed model-target reports.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Provide normal/table/audit/help rendering for typed model-target reports.
+ *
+ * This typed renderer writes only through src/cli/io helpers and renders typed report rows
+ * supplied by model-target report builders. Model-target rendering serializes existing report-only
+ * facts and does not prove quantization, artifact emission, runtime execution, generation,
+ * evaluation, benchmark, throughput, or release readiness.
+ */
 #include "src/cli/render/private.h"
 
 #include "src/cli/io/private.h"
@@ -157,7 +153,6 @@ static const yvex_cli_field_spec architecture_report_tail[] = {
 #undef TARGET_TEXT
 #undef TARGET_PTR
 
-/* Purpose: Render model target render rows from typed facts (`model_target_render_rows`). */
 static int model_target_render_rows(FILE *fp,
                                     const yvex_model_target_text_value *rows,
                                     unsigned long count)
@@ -174,11 +169,6 @@ static int model_target_render_rows(FILE *fp,
     return rc;
 }
 
-/* Purpose: Render model target render help rows from typed facts (`model_target_render_help_rows`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_target_render_help_rows(FILE *fp,
                                          yvex_model_target_command_kind kind)
 {
@@ -213,11 +203,6 @@ static int model_target_render_help_rows(FILE *fp,
             "diagnostic, transitional-layout\n");
 }
 
-/* Purpose: Render model target render table rows from typed facts (`model_target_render_table_rows`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_target_render_table_rows(FILE *fp,
                                           const yvex_model_target_report *report)
 {
@@ -244,12 +229,6 @@ static int model_target_render_table_rows(FILE *fp,
     return rc;
 }
 
-/* Serializes the immutable logical emission plan without deriving map policy. */
-/* Purpose: Render model target render deepseek map from typed facts (`model_target_render_deepseek_map`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_target_render_deepseek_map(
     FILE *fp,
     yvex_model_target_render_mode mode,
@@ -327,12 +306,6 @@ static int model_target_render_deepseek_map(
     return rc < 0 ? rc : 0;
 }
 
-/* Serializes an already admitted one-to-one tensor coverage result. */
-/* Purpose: Render model target render deepseek coverage from typed facts (`model_target_render_deepseek_coverage`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_target_render_deepseek_coverage(
     FILE *fp,
     yvex_model_target_render_mode mode,
@@ -413,12 +386,6 @@ static int model_target_render_deepseek_coverage(
     return rc < 0 ? rc : 0;
 }
 
-/* Formats the compact architecture view from the immutable typed IR. */
-/* Purpose: Render model target render deepseek normal from typed facts (`model_target_render_deepseek_normal`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_target_render_deepseek_normal(
     FILE *fp,
     const yvex_model_target_report *report,
@@ -455,8 +422,6 @@ static int model_target_render_deepseek_normal(
     return rc < 0 ? rc : 0;
 }
 
-/* Formats one table row without deriving architecture state in the renderer. */
-/* Purpose: Render model target render deepseek table from typed facts (`model_target_render_deepseek_table`). */
 static int model_target_render_deepseek_table(
     FILE *fp,
     const yvex_model_target_report *report,
@@ -476,12 +441,6 @@ static int model_target_render_deepseek_table(
     return rc < 0 ? rc : 0;
 }
 
-/* Formats complete audit evidence while preserving the IR as semantic owner. */
-/* Purpose: Render model target render deepseek audit from typed facts (`model_target_render_deepseek_audit`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_target_render_deepseek_audit(
     FILE *fp,
     const yvex_model_target_report *report,
@@ -548,12 +507,6 @@ static int model_target_render_deepseek_audit(
     return rc < 0 ? rc : 0;
 }
 
-/* Formats the machine-readable summary from already-decided typed fields. */
-/* Purpose: Serialize the admitted DeepSeek target summary as one JSON object.
- * Inputs: Borrowed typed report and architecture facts.
- * Effects: Writes escaped JSON through CLI I/O only.
- * Failure: Returns the first output failure; inputs remain unchanged.
- * Boundary: JSON projection does not alter target admission or support. */
 static int model_target_render_deepseek_json(
     FILE *fp,
     const yvex_model_target_report *report,
@@ -576,12 +529,6 @@ static int model_target_render_deepseek_json(
         report->next_row);
 }
 
-/* Selects presentation only; the model owner has already decided every fact. */
-/* Purpose: Render model target render deepseek ir from typed facts (`model_target_render_deepseek_ir`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int model_target_render_deepseek_ir(
     FILE *fp,
     yvex_model_target_render_mode mode,
@@ -607,11 +554,6 @@ static int model_target_render_deepseek_ir(
         fp, report, ir, model);
 }
 
-/* Purpose: render typed model-target report rows.
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_model_target_render(FILE *fp,
                              yvex_model_target_render_mode mode,
                              const yvex_model_target_report *report)
@@ -644,11 +586,6 @@ int yvex_model_target_render(FILE *fp,
     return model_target_render_rows(fp, report->rows, report->row_count);
 }
 
-/* Purpose: Render model target render errors from typed facts (`yvex_model_target_render_errors`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_model_target_render_errors(FILE *fp,
                                     const yvex_model_target_report *report)
 {
@@ -659,11 +596,6 @@ int yvex_model_target_render_errors(FILE *fp,
                                     report->error_row_count);
 }
 
-/* Purpose: render model-target help as a typed report.
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_model_target_render_help(FILE *fp)
 {
     yvex_model_target_report report;

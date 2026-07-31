@@ -1,30 +1,4 @@
-/*
- * YVEX - GGUF artifact ABI tests
- *
- * File: tests/unit/gguf_artifact_abi.c
- * Layer: test
- *
- * Purpose:
- *   Proves the operational file-backed GGUF reader and layout ABI directly.
- *
- * Covers:
- *   - yvex_gguf_open_ex and yvex_gguf_layout_validate
- *   - invalid magic refusal
- *   - unsupported version refusal
- *   - malformed metadata refusal
- *   - tensor_info refusal
- *   - range refusal
- *   - target-scale directory budgets and indexed duplicate detection
- *   - sparse 160 GiB structural parsing with zero payload reads
- *
- * Commands:
- *   - make test-core
- *   - sh tests/test_gguf_artifact_abi.sh
- *
- * Expected:
- *   - exits 0 on success
- *   - does not prove writer, roundtrip, materialization, or runtime support
- */
+/* Exercises the operational file-backed GGUF reader and layout ABI directly. */
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>

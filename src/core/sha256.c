@@ -1,30 +1,20 @@
-/* Owner: src/core.
- * Owns: standards-conformant SHA-256 compression and incremental accounting.
- * Does not own: IO, provider digest authority, manifests, payloads, or logging.
- * Invariants: byte length is checked before mutation and finalization is one-shot.
- * Boundary: callers decide whether a computed digest is identity or trust evidence.
- * Purpose: compute incremental SHA-256 and explicit-width identity-field encodings.
- * Inputs: caller-owned hash contexts, borrowed byte ranges, scalars, and text.
- * Effects: advances only the supplied hash context and writes explicit digest outputs.
- * Failure: invalid, overflowed, or finalized contexts refuse without publishing a digest. */
+/*
+ * Compute incremental SHA-256 and explicit-width identity-field encodings.
+ *
+ * Byte length is checked before mutation and finalization is one-shot. Callers decide whether a
+ * computed digest is identity or trust evidence.
+ */
 #include <yvex/internal/core.h>
 
 #include <ctype.h>
 #include <limits.h>
 #include <string.h>
 
-/* Purpose: Compute sha256 rotate right for its core invariant (`sha256_rotate_right`). */
 static uint32_t sha256_rotate_right(uint32_t value, unsigned int bits)
 {
     return (value >> bits) | (value << (32u - bits));
 }
 
-/* Mutates only caller-owned state by applying one complete compression block. */
-/* Purpose: Compute sha256 transform for its core invariant (`sha256_transform`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 static void sha256_transform(yvex_sha256 *context,
                              const unsigned char block[64])
 {
@@ -89,12 +79,6 @@ static void sha256_transform(yvex_sha256 *context,
     context->state[6] += g; context->state[7] += h;
 }
 
-/* Initializes caller-owned state and performs no allocation or IO. */
-/* Purpose: Construct the owned sha256 init state (`yvex_sha256_init`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 void yvex_sha256_init(yvex_sha256 *context)
 {
     if (!context) return;
@@ -109,12 +93,6 @@ void yvex_sha256_init(yvex_sha256 *context)
     context->state[7] = 0x5be0cd19u;
 }
 
-/* Borrows input bytes, checks total length, and mutates no state on refusal. */
-/* Purpose: Compute sha256 update for its core invariant (`yvex_sha256_update`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_sha256_update(yvex_sha256 *context, const void *data, size_t length)
 {
     const unsigned char *bytes = (const unsigned char *)data;
@@ -137,12 +115,6 @@ int yvex_sha256_update(yvex_sha256 *context, const void *data, size_t length)
     return 1;
 }
 
-/* Finalizes once, clears transient block bytes, and writes a fixed digest. */
-/* Purpose: Compute sha256 final for its core invariant (`yvex_sha256_final`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_sha256_final(yvex_sha256 *context,
                       unsigned char digest[YVEX_SHA256_DIGEST_BYTES])
 {
@@ -179,11 +151,7 @@ int yvex_sha256_final(yvex_sha256 *context,
 }
 
 /* Converts a borrowed binary digest to lowercase hexadecimal without allocation. */
-/* Purpose: Compute sha256 hex for its core invariant (`yvex_sha256_hex`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
+
 void yvex_sha256_hex(const unsigned char digest[YVEX_SHA256_DIGEST_BYTES],
                      char output[YVEX_SHA256_HEX_BYTES])
 {
@@ -198,12 +166,6 @@ void yvex_sha256_hex(const unsigned char digest[YVEX_SHA256_DIGEST_BYTES],
     output[64] = '\0';
 }
 
-/* Validates exactly 64 hexadecimal digits and performs no normalization. */
-/* Purpose: Compute sha256 hex valid for its core invariant (`yvex_sha256_hex_valid`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_sha256_hex_valid(const char *text)
 {
     size_t index;
@@ -215,11 +177,11 @@ int yvex_sha256_hex_valid(const char *text)
     return text[64] == '\0';
 }
 
-/* Purpose: append one unsigned scalar through the canonical little-endian identity encoding.
- * Inputs: mutable SHA-256 context and exact-width scalar.
- * Effects: advances only the supplied hash stream by eight bytes.
- * Failure: invalid or finalized context returns false without publishing a digest.
- * Boundary: never hashes native object representation or padding. */
+/*
+ * Append one unsigned scalar through the canonical little-endian identity encoding.
+ *
+ * Never hashes native object representation or padding.
+ */
 int yvex_sha256_update_u64(yvex_sha256 *context, unsigned long long value)
 {
     unsigned char bytes[8];
@@ -231,11 +193,7 @@ int yvex_sha256_update_u64(yvex_sha256 *context, unsigned long long value)
     return yvex_sha256_update(context, bytes, sizeof(bytes));
 }
 
-/* Purpose: append nullable text through the canonical length-delimited identity encoding.
- * Inputs: mutable SHA-256 context and borrowed NUL-terminated text; null means empty.
- * Effects: advances the stream by an encoded length and the exact text bytes.
- * Failure: invalid or finalized context returns false without publishing a digest.
- * Boundary: text encoding is byte-preserving and performs no domain validation. */
+/* Append nullable text through the canonical length-delimited identity encoding. */
 int yvex_sha256_update_text(yvex_sha256 *context, const char *text)
 {
     size_t length = text ? strlen(text) : 0u;

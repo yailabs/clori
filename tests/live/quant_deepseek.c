@@ -1,12 +1,6 @@
 /*
- * quant_deepseek.c - target-scale DeepSeek quantization plan/execution proof.
- *
- * Owner: tests/live.
- * Owns: read-only handoff construction, exact plan assertions, and structured
- *   proof output consumed by the V010.QUANT.2 validation targets.
- * Does not own: profile policy, codecs, payload access, output bytes, or claims.
- * Invariants: plan mode reads zero payload bytes and never writes an artifact.
- * Boundary: execution mode is added only through the canonical discard sink.
+ * Plan mode reads zero payload bytes and never writes an artifact. Execution mode is added only
+ * through the canonical discard sink.
  */
 #define _POSIX_C_SOURCE 200809L
 #include <yvex/internal/artifact.h>
@@ -83,7 +77,6 @@ static int quant_plan_physical_equal(const yvex_quant_plan *left,
     return 1;
 }
 
-/* Prints typed terminal/lowering facts for a live refusal without payload data. */
 static void quant_print_terminal_context(
     const yvex_deepseek_payload_handoff *handoff,
     unsigned long long ordinal)

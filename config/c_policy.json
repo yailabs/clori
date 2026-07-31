@@ -65,23 +65,40 @@
     "forbid_umbrella_in_source": true,
     "forwarding_header_allow": ["include/yvex/api.h"]
   },
-  "contracts": {
-    "file_fields": ["Owner", "Owns", "Does not own", "Invariants", "Boundary", "Purpose", "Inputs", "Effects", "Failure"],
-    "function_full_fields": ["Purpose", "Inputs", "Effects", "Failure", "Boundary"],
-    "function_short_fields": ["Purpose"],
-    "nontrivial_name_fragments": ["alloc", "build", "close", "commit", "create", "decode", "encode", "execute", "free", "hash", "init", "load", "open", "parse", "publish", "read", "release", "seal", "stream", "validate", "verify", "write"],
-    "nontrivial_call_names": ["calloc", "close", "fopen", "free", "fstat", "fsync", "malloc", "mmap", "munmap", "open", "pread", "pthread_create", "pthread_join", "pwrite", "read", "realloc", "write"],
-    "forbidden_fragments": [
-      "boundary consumed by repository",
-      "match config/source_owners.tsv",
-      "moving this contract requires an ownership-manifest change",
-      "responsibilities assigned",
-      "consumes only typed",
-      "uses typed refusals or defined cli exit behavior",
-      "mutates only explicitly owned",
-      "performs cli adaptation or output only"
+  "commentary": {
+    "roots": ["src", "include/yvex", "tests", "tools"],
+    "suffixes": [".c", ".cu", ".h", ".py", ".sh"],
+    "build_files": ["Makefile"],
+    "excluded_prefixes": ["build/"],
+    "generated_prefixes": ["build/generated/"],
+    "third_party_prefixes": [],
+    "exact_fixture_prefixes": ["tests/fixtures/gguf/"],
+    "interface_header_tiers": ["public", "internal", "source"],
+    "interface_module_comment_minimum_characters": 24,
+    "duplicate_minimum_characters": 80,
+    "obsolete_labels": [
+      "Owner",
+      "Owns",
+      "Does not own",
+      "Invariants",
+      "Boundary",
+      "Purpose",
+      "Inputs",
+      "Effects",
+      "Failure"
     ],
-    "duplicate_contract_limit": 1
+    "forbidden_boilerplate_fragments": [
+      "borrowed typed facts",
+      "mutates declared cli state only",
+      "typed refusal; outputs remain defined",
+      "declarations have one owner, stable ordering",
+      "for its core invariant",
+      "mechanism owned by the",
+      "transformation and invariants",
+      "from typed facts (`"
+    ],
+    "stale_topology_names": ["yvex-dev", "yvex-openai"],
+    "admitted_todo_pattern": "(?:TODO|FIXME)\\(#[1-9][0-9]*\\):"
   },
   "dependencies": {
     "forbidden_edges": [

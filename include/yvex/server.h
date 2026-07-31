@@ -1,14 +1,5 @@
-/* Owner: public local runtime-host and client protocol ABI.
- * Owns: local protocol facts, host lifecycle, session operations, typed runtime events,
- *   metrics snapshots, and the thin client connection boundary.
- * Does not own: model math, generation composition, tokenizer policy, terminal rendering,
- *   public-network serving, authentication, or CLI argument parsing.
- * Invariants: clients exchange bounded versioned frames and never receive engine pointers.
- * Boundary: yvexd host and local yvex client communicate through one Unix-domain protocol.
- * Purpose: expose the process/session product topology without linking clients to inference.
- * Inputs: explicit paths, bounded requests, and caller-owned result storage.
- * Effects: host APIs own runtime resources; client APIs own only one local socket.
- * Failure: typed refusal publishes no partial frame, session, or false readiness. */
+/* The local client and yvexd exchange bounded versioned frames without sharing engine pointers.
+ * The daemon alone owns model, worker, queue, session, and KV lifetimes. */
 #ifndef YVEX_SERVER_H
 #define YVEX_SERVER_H
 #include <yvex/artifact.h>

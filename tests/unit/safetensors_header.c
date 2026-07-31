@@ -1,9 +1,4 @@
-/*
- * YVEX - Safetensors header parser tests
- *
- * File: tests/test_safetensors_header.c
- * Layer: test
- */
+
 #include "tests/test.h"
 
 #include <errno.h>

@@ -1,12 +1,5 @@
-/* Owner: public registry ABI.
- * Owns: model references, registry entries, aliases, and metadata snapshots.
- * Does not own: artifact parsing, source trust, or runtime admission.
- * Invariants: declarations are format-stable, externally consumable, and independently includable.
- * Boundary: persistent model discovery and reference resolution contracts.
- * Purpose: Expose persistent model discovery and reference resolution contracts.
- * Inputs: Typed caller-owned values and immutable borrowed views as declared below.
- * Effects: Only functions with explicit lifecycle or I/O contracts mutate external state.
- * Failure: Typed status and error outputs remain authoritative; declarations add no capability. */
+/* Registry entries describe locally available model references. Registry membership, selected
+ * startup configuration, and the model currently open in yvexd remain independent facts. */
 #ifndef YVEX_REGISTRY_H
 #define YVEX_REGISTRY_H
 

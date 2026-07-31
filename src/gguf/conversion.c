@@ -1,12 +1,9 @@
-/* Owner: bounded legacy GGUF conversion and family-name mapping.
- * Owns: selected-tensor conversion plans, proof-file serialization, and legacy adapter lookup.
- * Does not own: trusted full-model quantization, canonical lowering, writer publication, or runtime.
- * Invariants: proof conversion remains explicitly selected-tensor and cannot promote artifact support.
- * Boundary: legacy file serialization and compatibility mapping behind the canonical GGUF ABI.
- * Purpose: preserve bounded historical conversion consumers while projecting canonical qtype facts.
- * Inputs: admitted native tensor inventories, explicit selections, and optional proof templates.
- * Effects: may allocate selected payloads or write explicitly requested proof files and plan JSON.
- * Failure: returns typed mapping, allocation, I/O, qtype, and roundtrip refusals with full cleanup. */
+/*
+ * Preserve bounded historical conversion consumers while projecting canonical qtype facts.
+ *
+ * Proof conversion remains explicitly selected-tensor and cannot promote artifact support. Legacy
+ * file serialization and compatibility mapping behind the canonical GGUF ABI.
+ */
 
 #include <errno.h>
 #include <limits.h>
@@ -89,11 +86,6 @@ static int conversion_report_plan_json(FILE *fp, const yvex_conversion_options *
                                        const yvex_conversion_tensor_plan *plans,
                                        unsigned long long plan_count, yvex_error *err);
 
-/* Purpose: render one stable per-tensor conversion result name.
- * Inputs: tensor status.
- * Effects: returns immutable static text.
- * Failure: unknown values return the unknown label.
- * Boundary: diagnostics only. */
 const char *yvex_convert_tensor_status_name(yvex_convert_tensor_status status) {
     return status >= YVEX_CONVERT_TENSOR_STATUS_UNKNOWN &&
                    (size_t)status < sizeof(tensor_status_names) / sizeof(tensor_status_names[0])
@@ -101,7 +93,6 @@ const char *yvex_convert_tensor_status_name(yvex_convert_tensor_status status) {
                : tensor_status_names[YVEX_CONVERT_TENSOR_STATUS_UNKNOWN];
 }
 
-/* Purpose: choose the bounded legacy proof qtype for one admitted tensor role. */
 static const char *conversion_default_qtype(yvex_tensor_role role) {
     switch (role) {
     case YVEX_TENSOR_ROLE_OUTPUT_NORM:
@@ -113,11 +104,7 @@ static const char *conversion_default_qtype(yvex_tensor_role role) {
     }
 }
 
-/* Purpose: delegate deterministic proof-artifact naming to the artifact authority.
- * Inputs: output, capacity, and explicit naming fields.
- * Effects: writes one admitted name.
- * Failure: propagates artifact naming refusal.
- * Boundary: does not create or admit an artifact. */
+/* Delegate deterministic proof-artifact naming to the artifact authority. */
 int yvex_conversion_suggest_artifact_name(char *out, unsigned long long out_size,
                                           const char *family, const char *model, const char *scope,
                                           const char *artifact_class, const char *qprofile,
@@ -127,11 +114,6 @@ int yvex_conversion_suggest_artifact_name(char *out, unsigned long long out_size
                                       qprofile, calibration, producer, schema, err);
 }
 
-/* Purpose: map one selected native tensor to legacy GGUF proof conversion facts.
- * Inputs: family tag, native row, optional qtype, output plan, and error.
- * Effects: initializes one bounded plan from canonical mapping and qtype registries.
- * Failure: rejects invalid family/input; unmapped and unavailable qtypes remain typed plan states.
- * Boundary: selected-tensor compatibility only, not the sealed full-model Transformation IR. */
 static int conversion_map_tensor(const char *arch, const yvex_native_weight_info *native,
                                  const char *target_qtype, yvex_conversion_tensor_plan *out,
                                  yvex_error *err) {
@@ -194,11 +176,11 @@ static int conversion_map_tensor(const char *arch, const yvex_native_weight_info
     return YVEX_OK;
 }
 
-/* Purpose: emit one explicitly selected tensor as a proof GGUF.
- * Inputs: conversion options, summary output, and error.
- * Effects: reads, converts, writes, and validates the selected tensor.
- * Failure: frees payload/table ownership and reports mapping, qtype, I/O, or roundtrip refusal.
- * Boundary: cannot emit or promote a complete model artifact. */
+/*
+ * Emit one explicitly selected tensor as a proof GGUF.
+ *
+ * Frees payload/table ownership and reports mapping, qtype, I/O, or roundtrip refusal.
+ */
 int yvex_conversion_emit_gguf(const yvex_conversion_options *options,
                               yvex_conversion_summary *summary_out, yvex_error *err) {
     yvex_native_weight_options no;
@@ -278,9 +260,6 @@ int yvex_conversion_emit_gguf(const yvex_conversion_options *options,
     return YVEX_OK;
 }
 
-/* Purpose: preserve the historical proof-path F32-to-F16 projection. Inputs: one scalar.
- * Effects: returns legacy bits without allocation. Failure: saturates by the historical policy.
- * Boundary: canonical release numeric conversion lives in the quant codec owner. */
 static unsigned int float_to_f16_bits(float f) {
     uint32_t x;
     uint32_t sign;
@@ -298,9 +277,6 @@ static unsigned int float_to_f16_bits(float f) {
     return sign | ((unsigned int)exp << 10) | (mant >> 13);
 }
 
-/* Purpose: decode historical proof-path F16 bits to F32. Inputs: low 16 bits.
- * Effects: returns one scalar without allocation. Failure: follows legacy special-value behavior.
- * Boundary: canonical release decoding lives in the quant codec owner. */
 static float f16_bits_to_float(unsigned int h) {
     uint32_t sign = (h & 0x8000u) << 16;
     uint32_t exp = (h >> 10) & 0x1fu;
@@ -318,7 +294,6 @@ static float f16_bits_to_float(unsigned int h) {
     return f;
 }
 
-/* Purpose: decode one BF16 bit pattern into an F32 proof-path scalar. */
 static float bf16_bits_to_float(unsigned int b) {
     uint32_t x = (uint32_t)b << 16;
     float f;
@@ -326,21 +301,11 @@ static float bf16_bits_to_float(unsigned int b) {
     return f;
 }
 
-/* Purpose: encode the low 16 bits of one scalar in little-endian order.
- * Inputs: writable two-byte destination and integer.
- * Effects: writes exactly two bytes.
- * Failure: caller owns buffer admission; this helper has no status result.
- * Boundary: historical proof scalar encoding only. */
 static void write_u16le(unsigned char *p, unsigned int v) {
     p[0] = (unsigned char)(v & 0xffu);
     p[1] = (unsigned char)((v >> 8) & 0xffu);
 }
 
-/* Purpose: encode one native F32 bit pattern in little-endian order.
- * Inputs: writable four-byte destination and scalar.
- * Effects: writes exactly four bytes.
- * Failure: caller owns buffer admission; this helper has no status result.
- * Boundary: historical proof scalar encoding only. */
 static void write_f32le(unsigned char *p, float f) {
     uint32_t v;
     memcpy(&v, &f, sizeof(v));
@@ -350,11 +315,6 @@ static void write_f32le(unsigned char *p, float f) {
     p[3] = (unsigned char)((v >> 24) & 0xffu);
 }
 
-/* Purpose: read one selected Safetensors payload into legacy proof scratch.
- * Inputs: source directory, admitted inventory row, outputs, and error.
- * Effects: opens one shard and allocates the complete selected tensor payload.
- * Failure: closes file and frees scratch on path, offset, allocation, or short-read refusal.
- * Boundary: historical bounded capability; the release path uses trusted payload streaming. */
 static int conversion_read_payload(const char *native_source_dir,
                                    const yvex_native_weight_info *native, unsigned char **out,
                                    unsigned long long *out_len, yvex_error *err) {
@@ -426,11 +386,6 @@ static int conversion_read_payload(const char *native_source_dir,
     return YVEX_OK;
 }
 
-/* Purpose: convert one selected scalar payload among admitted exact proof encodings.
- * Inputs: source bytes/dtype, conversion plan, outputs, and error.
- * Effects: allocates and fills one complete selected output tensor.
- * Failure: frees output on unsupported dtype/qtype or allocation refusal.
- * Boundary: historical selected-tensor arithmetic, never full-model quantization. */
 static int conversion_convert_payload(const unsigned char *src, unsigned long long src_len,
                                       yvex_native_dtype src_dtype,
                                       const yvex_conversion_tensor_plan *plan, unsigned char **out,
@@ -502,11 +457,6 @@ static int conversion_convert_payload(const unsigned char *src, unsigned long lo
     return YVEX_OK;
 }
 
-/* Purpose: serialize a bounded selected-conversion plan as diagnostic JSON.
- * Inputs: explicit options, destination path, summary, and error.
- * Effects: scans native headers, builds temporary plans, and writes one requested report.
- * Failure: closes file/table and frees plans after mapping, allocation, or I/O refusal.
- * Boundary: report output cannot promote conversion or artifact capability. */
 int yvex_conversion_plan_write_json(const yvex_conversion_options *options,
                                     const char *plan_out_path, yvex_conversion_summary *summary_out,
                                     yvex_error *err) {
@@ -591,11 +541,6 @@ int yvex_conversion_plan_write_json(const yvex_conversion_options *options,
 
 #define CV_ALIGN 32ull
 
-/* Purpose: test whether a proof output path already opens as a readable file.
- * Inputs: path string.
- * Effects: opens and immediately closes a readable file.
- * Failure: returns false when open fails.
- * Boundary: conflict probe only; it does not establish safe path admission. */
 static int exists_path(const char *path) {
     FILE *fp = fopen(path, "rb");
     if (!fp)
@@ -604,9 +549,6 @@ static int exists_path(const char *path) {
     return 1;
 }
 
-/* Purpose: write one little-endian 32-bit proof-container field.
- * Inputs: open stream, value, and error. Effects: writes exactly four bytes.
- * Failure: reports short write. Boundary: legacy proof writer only. */
 static int w32(FILE *fp, unsigned int v, yvex_error *err) {
     unsigned char b[4];
     b[0] = (unsigned char)(v & 0xffu);
@@ -620,9 +562,6 @@ static int w32(FILE *fp, unsigned int v, yvex_error *err) {
     return YVEX_OK;
 }
 
-/* Purpose: write one little-endian 64-bit proof-container field.
- * Inputs: open stream, value, and error. Effects: writes exactly eight bytes.
- * Failure: reports short write. Boundary: legacy proof writer only. */
 static int w64(FILE *fp, unsigned long long v, yvex_error *err) {
     unsigned char b[8];
     unsigned int i;
@@ -635,9 +574,6 @@ static int w64(FILE *fp, unsigned long long v, yvex_error *err) {
     return YVEX_OK;
 }
 
-/* Purpose: write one length-prefixed proof-container string.
- * Inputs: open stream, optional text, and error. Effects: writes length and exact bytes.
- * Failure: reports length or body write refusal. Boundary: legacy proof writer only. */
 static int wstr(FILE *fp, const char *s, yvex_error *err) {
     unsigned long long len;
     if (!s)
@@ -652,9 +588,6 @@ static int wstr(FILE *fp, const char *s, yvex_error *err) {
     return YVEX_OK;
 }
 
-/* Purpose: write one string-valued metadata entry to a proof GGUF.
- * Inputs: open stream, key, value, and error. Effects: writes key, type, and value.
- * Failure: propagates exact field write refusal. Boundary: fixed legacy metadata subset. */
 static int meta_string(FILE *fp, const char *key, const char *value, yvex_error *err) {
     if (wstr(fp, key, err) != YVEX_OK)
         return YVEX_ERR_IO;
@@ -663,9 +596,6 @@ static int meta_string(FILE *fp, const char *key, const char *value, yvex_error 
     return wstr(fp, value, err);
 }
 
-/* Purpose: write one uint32-valued metadata entry to a proof GGUF.
- * Inputs: open stream, key, value, and error. Effects: writes key, type, and value.
- * Failure: propagates exact field write refusal. Boundary: fixed legacy metadata subset. */
 static int meta_u32(FILE *fp, const char *key, unsigned int value, yvex_error *err) {
     if (wstr(fp, key, err) != YVEX_OK)
         return YVEX_ERR_IO;
@@ -674,9 +604,6 @@ static int meta_u32(FILE *fp, const char *key, unsigned int value, yvex_error *e
     return w32(fp, value, err);
 }
 
-/* Purpose: zero-pad a proof stream to its fixed 32-byte tensor-data boundary.
- * Inputs: seekable stream and error. Effects: appends at most 31 zero bytes.
- * Failure: reports position or short-write failure. Boundary: legacy proof writer alignment only. */
 static int pad(FILE *fp, yvex_error *err) {
     long pos = ftell(fp);
     unsigned long long rem;
@@ -696,11 +623,6 @@ static int pad(FILE *fp, yvex_error *err) {
     return YVEX_OK;
 }
 
-/* Purpose: validate a selected proof file through canonical parse and CPU materialization.
- * Inputs: emitted path and error.
- * Effects: opens and closes all transient admission owners.
- * Failure: propagates first open, parse, tensor, backend, or materialization refusal.
- * Boundary: proves one selected tensor, never complete-artifact support. */
 static int conversion_validate_roundtrip(const char *path, yvex_error *err) {
     yvex_artifact_options ao;
     yvex_artifact *artifact = NULL;
@@ -733,11 +655,6 @@ static int conversion_validate_roundtrip(const char *path, yvex_error *err) {
     return rc;
 }
 
-/* Purpose: serialize and roundtrip one selected converted tensor as a proof GGUF.
- * Inputs: options, plan, payload, summary, and error.
- * Effects: writes and validates the explicit output path.
- * Failure: closes the stream and reports conflict, field, payload, or validation failure.
- * Boundary: non-transactional historical proof output, not the release writer. */
 static int conversion_write_single_gguf(const yvex_conversion_options *options,
                                         const yvex_conversion_tensor_plan *plan,
                                         const unsigned char *payload,
@@ -807,11 +724,7 @@ static int conversion_write_single_gguf(const yvex_conversion_options *options,
     return YVEX_OK;
 }
 
-/* Purpose: render selected conversion-plan facts as deterministic JSON.
- * Inputs: stream, options, summary, plan array/count, and error.
- * Effects: writes diagnostic JSON in plan order.
- * Failure: reports invalid input or stream error.
- * Boundary: presentation of typed facts; it does not own conversion decisions. */
+/* Render selected conversion-plan facts as deterministic JSON. */
 static int conversion_report_plan_json(FILE *fp, const yvex_conversion_options *options,
                                        const yvex_conversion_summary *summary,
                                        const yvex_conversion_tensor_plan *plans,
@@ -846,18 +759,12 @@ static int conversion_report_plan_json(FILE *fp, const yvex_conversion_options *
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
 
-/* Purpose: admit the bounded legacy family tags understood by compatibility mapping. */
 static int wm_supported_arch(const char *architecture) {
     return architecture &&
            (strcmp(architecture, "deepseek4") == 0 || strcmp(architecture, "deepseek") == 0 ||
             strcmp(architecture, "qwen3") == 0 || strcmp(architecture, "qwen") == 0);
 }
 
-/* Purpose: render one stable compatibility mapping status name.
- * Inputs: mapping status.
- * Effects: returns immutable static text.
- * Failure: unknown values return the unknown label.
- * Boundary: diagnostics only. */
 const char *yvex_weight_mapping_status_name(yvex_weight_mapping_status status) {
     return status >= YVEX_WEIGHT_MAPPING_STATUS_UNKNOWN &&
                    (size_t)status < sizeof(mapping_status_names) / sizeof(mapping_status_names[0])
@@ -865,11 +772,6 @@ const char *yvex_weight_mapping_status_name(yvex_weight_mapping_status status) {
                : mapping_status_names[YVEX_WEIGHT_MAPPING_STATUS_UNKNOWN];
 }
 
-/* Purpose: render one stable compatibility mapping issue name.
- * Inputs: issue enum.
- * Effects: returns immutable static text.
- * Failure: unknown values return the unknown-native label.
- * Boundary: diagnostics only. */
 const char *yvex_weight_mapping_issue_kind_name(yvex_weight_mapping_issue_kind issue) {
     return issue >= YVEX_WEIGHT_MAPPING_ISSUE_NONE &&
                    (size_t)issue < sizeof(mapping_issue_names) / sizeof(mapping_issue_names[0])
@@ -877,11 +779,6 @@ const char *yvex_weight_mapping_issue_kind_name(yvex_weight_mapping_issue_kind i
                : mapping_issue_names[YVEX_WEIGHT_MAPPING_ISSUE_UNKNOWN_NATIVE_NAME];
 }
 
-/* Purpose: compare native and target shapes, admitting exact rank-2 transpose.
- * Inputs: native row, target row, and transpose output.
- * Effects: initializes the transpose fact.
- * Failure: returns false for missing or incompatible geometry.
- * Boundary: shape comparison only. */
 static int wm_same_shape_native_target(const yvex_native_weight_info *native,
                                        const yvex_tensor_info *target, int *requires_transpose) {
     unsigned int i;
@@ -908,11 +805,6 @@ static int wm_same_shape_native_target(const yvex_native_weight_info *native,
     return 0;
 }
 
-/* Purpose: find the first template tensor matching one role and compatible shape.
- * Inputs: immutable tensor table, role, native row, and transpose output.
- * Effects: performs deterministic table iteration without allocation.
- * Failure: returns null when inputs are invalid or no match exists.
- * Boundary: returned tensor is borrowed from the table. */
 static const yvex_tensor_info *wm_find_by_role_shape(const yvex_tensor_table *table,
                                                      yvex_tensor_role role,
                                                      const yvex_native_weight_info *native,
@@ -937,11 +829,6 @@ static const yvex_tensor_info *wm_find_by_role_shape(const yvex_tensor_table *ta
     return NULL;
 }
 
-/* Purpose: append one independently owned compatibility mapping row.
- * Inputs: table, native/target facts, status, transpose fact, and error.
- * Effects: grows the row array and duplicates stable diagnostic strings.
- * Failure: frees partial row strings and leaves count unchanged on allocation refusal.
- * Boundary: owns mapping storage but does not infer family topology. */
 static int mapping_table_add(yvex_weight_mapping_table *table,
                              const yvex_native_weight_info *native, const char *architecture,
                              const char *target_name, yvex_tensor_role role,
@@ -999,11 +886,6 @@ static int mapping_table_add(yvex_weight_mapping_table *table,
     return YVEX_OK;
 }
 
-/* Purpose: open an optional proof template through artifact, GGUF, and tensor owners.
- * Inputs: mapping table, optional path, and error.
- * Effects: retains admitted template views.
- * Failure: propagates first admission refusal; table close owns partial cleanup.
- * Boundary: template evidence only and not artifact support admission. */
 static int wm_open_template(yvex_weight_mapping_table *table, const char *template_path,
                             yvex_error *err) {
     yvex_artifact_options artifact_options;
@@ -1023,11 +905,6 @@ static int wm_open_template(yvex_weight_mapping_table *table, const char *templa
     return rc;
 }
 
-/* Purpose: derive one compatibility mapping row from family adapter and optional template.
- * Inputs: table, native row, mapping options, and error.
- * Effects: appends one owned result row.
- * Failure: propagates adapter storage failure; semantic mismatches become typed row states.
- * Boundary: legacy name/shape proof, not canonical DeepSeek lowering truth. */
 static int wm_map_native_row(yvex_weight_mapping_table *table,
                              const yvex_native_weight_info *native,
                              const yvex_weight_mapping_options *options, yvex_error *err) {
@@ -1073,11 +950,7 @@ static int wm_map_native_row(yvex_weight_mapping_table *table,
                              issue, target, requires_transpose, err);
 }
 
-/* Purpose: build a deterministic compatibility mapping table for admitted native headers.
- * Inputs: output, family/source/template options, and error.
- * Effects: owns the native inventory, optional template, and result rows.
- * Failure: closes every partial owner and leaves output null after admission or completeness refusal.
- * Boundary: header-level compatibility proof; no source payload or transformation execution. */
+/* Build a deterministic compatibility mapping table for admitted native headers. */
 int yvex_weight_mapping_table_build(yvex_weight_mapping_table **out,
                                     const yvex_weight_mapping_options *options, yvex_error *err) {
     yvex_weight_mapping_table *table;
@@ -1162,11 +1035,11 @@ int yvex_weight_mapping_table_build(yvex_weight_mapping_table **out,
     return YVEX_OK;
 }
 
-/* Purpose: release a compatibility mapping table and all retained source/template owners.
- * Inputs: complete, partial, or null table.
- * Effects: frees rows, strings, views, and inventories.
- * Failure: null input is a no-op.
- * Boundary: deterministic cleanup only. */
+/*
+ * Release a compatibility mapping table and all retained source/template owners.
+ *
+ * Deterministic cleanup only.
+ */
 void yvex_weight_mapping_table_close(yvex_weight_mapping_table *table) {
     unsigned long long i;
 
@@ -1185,20 +1058,11 @@ void yvex_weight_mapping_table_close(yvex_weight_mapping_table *table) {
     free(table);
 }
 
-/* Purpose: return the immutable compatibility row count or zero for no table.
- * Inputs: optional mapping table.
- * Effects: reads one count fact.
- * Failure: has no status result.
- * Boundary: count access only. */
 unsigned long long yvex_weight_mapping_table_count(const yvex_weight_mapping_table *table) {
     return table ? table->count : 0;
 }
 
-/* Purpose: borrow one compatibility mapping row by deterministic ordinal.
- * Inputs: immutable table and ordinal.
- * Effects: returns a borrowed row.
- * Failure: returns null for absent table or out-of-range ordinal.
- * Boundary: borrowed until table close. */
+/* Borrow one compatibility mapping row by deterministic ordinal. */
 const yvex_weight_mapping_info *yvex_weight_mapping_table_at(const yvex_weight_mapping_table *table,
                                                              unsigned long long index) {
     if (!table || index >= table->count)
@@ -1206,11 +1070,11 @@ const yvex_weight_mapping_info *yvex_weight_mapping_table_at(const yvex_weight_m
     return &table->items[index];
 }
 
-/* Purpose: find one compatibility row by exact native tensor name.
- * Inputs: immutable table and name.
- * Effects: performs deterministic read-only lookup.
- * Failure: returns null for invalid inputs or absent name.
- * Boundary: borrowed until table close. */
+/*
+ * Find one compatibility row by exact native tensor name.
+ *
+ * Performs deterministic read-only lookup.
+ */
 const yvex_weight_mapping_info *
 yvex_weight_mapping_table_find_native(const yvex_weight_mapping_table *table,
                                       const char *native_name) {
@@ -1226,7 +1090,6 @@ yvex_weight_mapping_table_find_native(const yvex_weight_mapping_table *table,
     return NULL;
 }
 
-/* Purpose: commit one exact DeepSeek compatibility target, role, and clear issue. */
 static int ds_set(char *target, size_t target_cap, yvex_tensor_role *role,
                   yvex_weight_mapping_issue_kind *issue, yvex_tensor_role value, const char *name) {
     if (!target || target_cap == 0 || !role || !issue || !name) {
@@ -1242,7 +1105,6 @@ static int ds_set(char *target, size_t target_cap, yvex_tensor_role *role,
     return 1;
 }
 
-/* Purpose: test an exact string suffix without allocating or modifying either string. */
 static int text_ends_with(const char *text, const char *suffix) {
     size_t text_len;
     size_t suffix_len;
@@ -1254,7 +1116,6 @@ static int text_ends_with(const char *text, const char *suffix) {
     return suffix_len <= text_len && strcmp(text + text_len - suffix_len, suffix) == 0;
 }
 
-/* Purpose: parse one admitted DeepSeek layer pattern with an exact suffix. */
 static int ds_layer_suffix(const char *native_name, int plain,
                            const char *suffix, unsigned int *layer_out) {
     unsigned int layer;
@@ -1272,11 +1133,6 @@ static int ds_layer_suffix(const char *native_name, int plain,
     return 1;
 }
 
-/* Purpose: parse one admitted DeepSeek layer/expert pattern with an exact suffix.
- * Inputs: immutable tensor name, format selector, suffix, and index outputs.
- * Effects: writes layer and expert only after the complete pattern matches.
- * Failure: malformed or mismatched names return false without publishing indices.
- * Boundary: parsing compatibility names does not infer tensor roles or qtypes. */
 static int ds_expert_suffix(const char *native_name, int plain,
                             const char *suffix, unsigned int *layer_out,
                             unsigned int *expert_out) {
@@ -1353,9 +1209,6 @@ static const adapter_suffix_rule qwen_layer_rules[] = {
     {".mlp.down_proj.weight", "ffn_down.weight", YVEX_TENSOR_ROLE_FFN_DOWN, 0},
 };
 
-/* Purpose: admit already lowered DeepSeek template-style names through typed rules.
- * Inputs: source name and mapping outputs. Effects: writes one target/role on rule match.
- * Failure: returns false without a successful mapping. Boundary: compatibility rules only. */
 static int ds_template_style(const char *native_name, char *target, size_t target_cap,
                              yvex_tensor_role *role, yvex_weight_mapping_issue_kind *issue) {
     size_t i;
@@ -1417,7 +1270,6 @@ static const adapter_suffix_rule ds_plain_expert_rules[] = {
     {"w3.weight", "up.weight", YVEX_TENSOR_ROLE_MOE_EXPERT_UP, 0},
 };
 
-/* Purpose: format one DeepSeek layer target from a typed suffix rule. */
 static int ds_set_layer(char *target, size_t target_cap, yvex_tensor_role *role,
                         yvex_weight_mapping_issue_kind *issue, unsigned int layer,
                         const adapter_suffix_rule *rule) {
@@ -1427,7 +1279,6 @@ static int ds_set_layer(char *target, size_t target_cap, yvex_tensor_role *role,
     return 1;
 }
 
-/* Purpose: format one DeepSeek expert target from typed layer/expert facts. */
 static int ds_set_expert(char *target, size_t target_cap, yvex_tensor_role *role,
                          yvex_weight_mapping_issue_kind *issue, unsigned int layer,
                          unsigned int expert, const adapter_suffix_rule *rule) {
@@ -1437,11 +1288,7 @@ static int ds_set_expert(char *target, size_t target_cap, yvex_tensor_role *role
     return 1;
 }
 
-/* Purpose: map one legacy DeepSeek native name through deterministic typed rule tables.
- * Inputs: native name, target buffer/capacity, role, and issue outputs.
- * Effects: writes one compatibility target and role on exact rule match.
- * Failure: returns false with unknown-role issue for invalid or unmapped names.
- * Boundary: compatibility adapter; canonical full-model lowering has an independent typed owner. */
+/* Map one legacy DeepSeek native name through deterministic typed rule tables. */
 int yvex_gguf_map_deepseek_name(const char *native_name, char *target, size_t target_cap,
                                 yvex_tensor_role *role, yvex_weight_mapping_issue_kind *issue) {
     unsigned int layer;
@@ -1482,22 +1329,20 @@ int yvex_gguf_map_deepseek_name(const char *native_name, char *target, size_t ta
     return 0;
 }
 
-/* Purpose: extract one Qwen layer index from its canonical native prefix. */
 static int extract_layer(const char *name, unsigned int *layer) {
     return name && sscanf(name, "model.layers.%u.", layer) == 1;
 }
 
-/* Purpose: format one checked Qwen layer target name. */
 static int set_target(char *target, size_t cap, const char *suffix, unsigned int layer) {
     int n = snprintf(target, cap, "blk.%u.%s", layer, suffix);
     return n > 0 && (size_t)n < cap;
 }
 
-/* Purpose: map one legacy Qwen native name through deterministic typed rule tables.
- * Inputs: native name, target buffer/capacity, role, and issue outputs.
- * Effects: writes one compatibility target and role on exact rule match.
- * Failure: returns false with unknown-name issue for invalid or unmapped names.
- * Boundary: bounded Qwen engineering evidence, not release artifact support. */
+/*
+ * Map one legacy Qwen native name through deterministic typed rule tables.
+ *
+ * Bounded Qwen engineering evidence, not release artifact support.
+ */
 int yvex_qwen_adapter_map_name(const char *native_name, char *target, size_t target_cap,
                                yvex_tensor_role *role, yvex_weight_mapping_issue_kind *issue) {
     unsigned int layer = 0;

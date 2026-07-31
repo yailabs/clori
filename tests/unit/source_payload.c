@@ -1,13 +1,5 @@
 #define _XOPEN_SOURCE 700
-/*
- * source_payload.c - verified source payload unit and fault-injection tests.
- *
- * Owner: tests/unit.
- * Owns: tiny payload fixtures, sinks, concurrency probes, and syscall faults.
- * Does not own: production source policy, external model files, or capability claims.
- * Invariants: fixtures are generated under build and raw bytes are never printed.
- * Boundary: fixture proof is not DeepSeek live payload trust.
- */
+
 #include "tests/test.h"
 
 #include <yvex/internal/core.h>
@@ -121,7 +113,6 @@ static void *payload_binding_allocate(size_t size, void *context)
     return allocation;
 }
 
-/* Accounts every binding allocation released after success or refusal. */
 static void payload_binding_release(void *allocation, void *context)
 {
     payload_binding_allocator *state =
@@ -185,7 +176,6 @@ static void payload_quant_sink_abort(
     }
 }
 
-/* Injects failure before a worker becomes runnable. */
 static int payload_quant_thread_fail(
     pthread_t *thread,
     void *(*entry)(void *),
@@ -199,7 +189,6 @@ static int payload_quant_thread_fail(
     return 1;
 }
 
-/* Proves the allocation-free common source/artifact shard-index foundation. */
 static int test_storage_shard_index_foundation(void)
 {
     yvex_shard_index_entry entries[] = {
@@ -457,7 +446,6 @@ static void payload_fixture_close(payload_fixture *fixture)
     (void)system(command);
 }
 
-/* Builds one sealed artifact-neutral plan bound to the fixture alpha range. */
 static int payload_fixture_transform_ir(
     yvex_transform_ir **out,
     yvex_source_payload_session *session,
@@ -556,7 +544,6 @@ static int payload_fixture_transform_ir(
     return rc;
 }
 
-/* Proves fail-closed payload binding and a non-mutating physical sidecar. */
 static int test_payload_transform_binding(
     payload_fixture *fixture,
     const yvex_source_payload_session_facts *facts)
@@ -1093,7 +1080,6 @@ static int test_payload_transform_binding_untrusted(payload_fixture *fixture)
     return 0;
 }
 
-/* Reopens a fixture through the production admission boundary after path mutation. */
 static int payload_fixture_reopen_policy(payload_fixture *fixture,
                                          unsigned int handles,
                                          int allow_local_seal,
@@ -1119,7 +1105,6 @@ static int payload_fixture_reopen_policy(payload_fixture *fixture,
         &fixture->session, &open_options, ops, failure, err);
 }
 
-/* Reopens with the fixture's normal local-seal policy. */
 static int payload_fixture_reopen(payload_fixture *fixture,
                                   unsigned int handles,
                                   const yvex_source_payload_ops *ops,
@@ -1130,7 +1115,6 @@ static int payload_fixture_reopen(payload_fixture *fixture,
         fixture, handles, 1, ops, failure, err);
 }
 
-/* Replaces retained truth with one configurable row for range admission tests. */
 static int payload_fixture_replace_snapshot_facts(
     payload_fixture *fixture,
     const char *tensor_shard_name,
@@ -1182,7 +1166,6 @@ static int payload_fixture_replace_snapshot_facts(
     return 1;
 }
 
-/* Preserves the ordinary one-row fixture shape for path and data-region tests. */
 static int payload_fixture_replace_snapshot(payload_fixture *fixture,
                                             const char *shard_name,
                                             unsigned long long data_end,
@@ -1289,7 +1272,6 @@ static void payload_blocking_sink_make(yvex_source_payload_sink *sink,
     sink->context = state;
 }
 
-/* Runs one stream in a worker and retains its typed result for the parent. */
 static void *payload_stream_thread_run(void *opaque)
 {
     payload_stream_thread *thread = (payload_stream_thread *)opaque;
@@ -1314,7 +1296,6 @@ static void payload_gate_wait(payload_stream_gate *gate, unsigned int count)
     pthread_mutex_unlock(&gate->mutex);
 }
 
-/* Releases every callback waiting in one test-owned gate. */
 static void payload_gate_release(payload_stream_gate *gate)
 {
     pthread_mutex_lock(&gate->mutex);
@@ -2034,7 +2015,6 @@ static int test_payload_consumer_cancel_and_publication_failure(void)
     return 0;
 }
 
-/* Exercises construction failures and proves every owned allocation unwinds. */
 static int test_payload_construction_faults(void)
 {
     payload_fixture fixture;
@@ -2167,7 +2147,6 @@ static int test_payload_construction_faults(void)
     return 0;
 }
 
-/* Refuses missing, symlinked, non-regular, and size-drifted shard paths. */
 static int test_payload_path_admission(void)
 {
     payload_fixture fixture;
@@ -2382,7 +2361,6 @@ static int test_payload_path_admission(void)
     return 0;
 }
 
-/* Proves active-stream refusal, bounded contention, and concurrent positioned reads. */
 static int test_payload_concurrency_and_contention(void)
 {
     payload_fixture fixture;

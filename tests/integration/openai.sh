@@ -1,5 +1,5 @@
 #!/bin/sh
-# Purpose: exercise the production adapter modules over HTTP/SSE and the real local protocol v4.
+# Exercises production HTTP/SSE translation over the real local protocol v4 codec.
 set -eu
 
 YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}

@@ -1,15 +1,10 @@
-/* Owner: src/gguf
- * Owns: pinned GGUF qtype identity and admission, scalar/block storage geometry, row-aware tensor byte calculation,
- *   and typed storage refusal facts.
- * Does not own: reference decoders, quantizers, qtype policy, artifact emission, backend arithmetic,
- *   materialization, or runtime.
- * Invariants: dimension zero is the GGML row width; block rows divide exactly; storage admission never implies a
- *   decoder, emitter, quantizer, or compute kernel.
- * Boundary: this owner reads tensor geometry only and never reads tensor payload bytes.
- * Purpose: define pinned qtype identity, row geometry, storage accounting, and refusal facts.
- * Inputs: qtype IDs, canonical names, tensor dimensions, and parsed directory views.
- * Effects: writes caller-owned storage and ABI result records; performs no allocation or I/O.
- * Failure: unknown/removed identities, invalid shapes, and arithmetic overflow refuse distinctly. */
+/*
+ * Define pinned qtype identity, row geometry, storage accounting, and refusal facts.
+ *
+ * Dimension zero is the GGML row width; block rows divide exactly; storage admission never implies
+ * a decoder, emitter, quantizer, or compute kernel. This owner reads tensor geometry only and
+ * never reads tensor payload bytes.
+ */
 #include <limits.h>
 #include <stddef.h>
 #include <string.h>
@@ -115,42 +110,29 @@ static const char *const identity_status_names[] = {
     "admitted", "removed", "reserved", "outside-baseline", "unknown",
 };
 
-/* Purpose: expose the complete pinned qtype identity-table cardinality.
- * Inputs: none.
- * Effects: none.
- * Failure: none.
- * Boundary: the count includes admitted, removed, and outside-baseline identities. */
+/* Expose the complete pinned qtype identity-table cardinality. */
 size_t yvex_gguf_qtype_geometry_count(void) {
     return sizeof(qtype_geometry) / sizeof(qtype_geometry[0]);
 }
 
-/* Purpose: borrow one immutable geometry row by registry ordinal.
- * Inputs: zero-based table index.
- * Effects: none.
- * Failure: an out-of-range index returns null.
- * Boundary: returned storage remains owned by the static registry. */
 const yvex_gguf_qtype_geometry *yvex_gguf_qtype_geometry_at(size_t index) {
     if (index >= yvex_gguf_qtype_geometry_count())
         return NULL;
     return &qtype_geometry[index];
 }
 
-/* Purpose: borrow one immutable geometry row by exact numeric qtype identity.
- * Inputs: canonical qtype ID.
- * Effects: none.
- * Failure: identities beyond the pinned registry return null.
- * Boundary: lookup does not imply storage or compute admission. */
+/* Borrow one immutable geometry row by exact numeric qtype identity. */
 const yvex_gguf_qtype_geometry *yvex_gguf_qtype_geometry_find(unsigned int qtype) {
     if (qtype > YVEX_GGUF_QTYPE_ABI_UPSTREAM_MAX_ID)
         return NULL;
     return &qtype_geometry[qtype];
 }
 
-/* Purpose: resolve an immutable geometry row by its exact canonical name.
- * Inputs: optional case-sensitive qtype name.
- * Effects: none.
- * Failure: null or unknown names return null.
- * Boundary: names are projected from the numeric identity registry, never reparsed elsewhere. */
+/*
+ * Resolve an immutable geometry row by its exact canonical name.
+ *
+ * Names are projected from the numeric identity registry, never reparsed elsewhere.
+ */
 const yvex_gguf_qtype_geometry *yvex_gguf_qtype_geometry_find_by_name(const char *name) {
     size_t i;
 
@@ -163,22 +145,18 @@ const yvex_gguf_qtype_geometry *yvex_gguf_qtype_geometry_find_by_name(const char
     return NULL;
 }
 
-/* Purpose: project the canonical pinned name for one numeric qtype identity.
- * Inputs: qtype ID.
- * Effects: none.
- * Failure: unknown identities yield the stable UNKNOWN label.
- * Boundary: name projection does not classify capability. */
+/* Project the canonical pinned name for one numeric qtype identity. */
 const char *yvex_gguf_qtype_name(unsigned int qtype) {
     const yvex_gguf_qtype_geometry *geometry = yvex_gguf_qtype_geometry_find(qtype);
 
     return geometry ? geometry->name : "UNKNOWN";
 }
 
-/* Purpose: render qtype identity admission as stable diagnostic text.
- * Inputs: identity-status enum.
- * Effects: none.
- * Failure: out-of-range values yield unknown.
- * Boundary: identity status remains distinct from storage and codec support. */
+/*
+ * Render qtype identity admission as stable diagnostic text.
+ *
+ * Identity-status enum. Identity status remains distinct from storage and codec support.
+ */
 const char *yvex_gguf_qtype_identity_status_name(yvex_gguf_qtype_identity_status status) {
     return status >= YVEX_GGUF_QTYPE_IDENTITY_ADMITTED && status <= YVEX_GGUF_QTYPE_IDENTITY_UNKNOWN
                ? identity_status_names[status]
@@ -209,11 +187,6 @@ static const storage_status_text storage_status_texts[] = {
      "GGUF tensor storage bytes do not match qtype row geometry"},
 };
 
-/* Purpose: render one typed qtype storage result as stable text.
- * Inputs: storage-status enum.
- * Effects: none.
- * Failure: out-of-range values yield unknown-storage-status.
- * Boundary: status text is a projection of typed refusal truth. */
 const char *yvex_gguf_qtype_storage_status_name(yvex_gguf_qtype_storage_status status) {
     return status >= YVEX_GGUF_QTYPE_STORAGE_OK &&
                    (size_t)status < sizeof(storage_status_texts) / sizeof(storage_status_texts[0])
@@ -221,11 +194,6 @@ const char *yvex_gguf_qtype_storage_status_name(yvex_gguf_qtype_storage_status s
                : "unknown-storage-status";
 }
 
-/* Purpose: classify registry identity and geometry for structural storage admission.
- * Inputs: optional immutable geometry row.
- * Effects: none.
- * Failure: missing, removed, reserved, outside-baseline, or geometryless rows refuse distinctly.
- * Boundary: admission checks storage geometry only. */
 static yvex_gguf_qtype_storage_status
 qtype_admission_status(const yvex_gguf_qtype_geometry *geometry) {
     if (!geometry)
@@ -249,7 +217,6 @@ qtype_admission_status(const yvex_gguf_qtype_geometry *geometry) {
     return YVEX_GGUF_QTYPE_STORAGE_OK;
 }
 
-/* Purpose: project the stable reason attached to one typed storage status. */
 static const char *storage_status_reason(yvex_gguf_qtype_storage_status status) {
     return status >= YVEX_GGUF_QTYPE_STORAGE_OK &&
                    (size_t)status < sizeof(storage_status_texts) / sizeof(storage_status_texts[0])
@@ -257,7 +224,6 @@ static const char *storage_status_reason(yvex_gguf_qtype_storage_status status) 
                : "unknown GGUF qtype storage refusal";
 }
 
-/* Purpose: atomically install a storage status and its canonical reason in a result. */
 static yvex_gguf_qtype_storage_status set_storage_status(yvex_gguf_qtype_storage_result *out,
                                                          yvex_gguf_qtype_storage_status status) {
     if (out) {
@@ -267,11 +233,12 @@ static yvex_gguf_qtype_storage_status set_storage_status(yvex_gguf_qtype_storage
     return status;
 }
 
-/* Purpose: calculate exact contiguous tensor storage from row-aware qtype geometry.
- * Inputs: qtype identity, dimensions, rank, and writable result.
- * Effects: replaces the result with checked row, element, and total-byte facts.
- * Failure: invalid identity/rank/dimension, block mismatch, or overflow refuses distinctly.
- * Boundary: storage accounting performs no payload read, encoding, decoding, or allocation. */
+/*
+ * Calculate exact contiguous tensor storage from row-aware qtype geometry.
+ *
+ * Qtype identity, dimensions, rank, and writable result. Invalid identity/rank/dimension, block
+ * mismatch, or overflow refuses distinctly.
+ */
 yvex_gguf_qtype_storage_status yvex_gguf_qtype_tensor_storage(unsigned int qtype,
                                                               const unsigned long long *dims,
                                                               unsigned int rank,
@@ -329,11 +296,6 @@ yvex_gguf_qtype_storage_status yvex_gguf_qtype_tensor_storage(unsigned int qtype
     return set_storage_status(out, YVEX_GGUF_QTYPE_STORAGE_OK);
 }
 
-/* Purpose: compare one declared tensor byte span against canonical row-aware geometry.
- * Inputs: qtype, dimensions, rank, actual byte count, and writable result.
- * Effects: publishes expected and actual storage facts.
- * Failure: geometry refusal or unequal byte count returns the corresponding typed status.
- * Boundary: span validation does not read or interpret tensor bytes. */
 yvex_gguf_qtype_storage_status
 yvex_gguf_qtype_validate_tensor_storage(unsigned int qtype, const unsigned long long *dims,
                                         unsigned int rank, unsigned long long actual_storage_bytes,
@@ -350,11 +312,11 @@ yvex_gguf_qtype_validate_tensor_storage(unsigned int qtype, const unsigned long 
     return status;
 }
 
-/* Purpose: report whether one pinned qtype has structurally admitted storage geometry.
- * Inputs: qtype ID and optional borrowed reason output.
- * Effects: writes only the reason pointer.
- * Failure: every non-admitted identity returns false with its canonical reason.
- * Boundary: storage support remains separate from encoding and reference decoding. */
+/*
+ * Report whether one pinned qtype has structurally admitted storage geometry.
+ *
+ * Every non-admitted identity returns false with its canonical reason.
+ */
 int yvex_gguf_qtype_supported_for_storage(unsigned int qtype, const char **reason) {
     yvex_gguf_qtype_storage_status status =
         qtype_admission_status(yvex_gguf_qtype_geometry_find(qtype));
@@ -364,11 +326,11 @@ int yvex_gguf_qtype_supported_for_storage(unsigned int qtype, const char **reaso
     return status == YVEX_GGUF_QTYPE_STORAGE_OK;
 }
 
-/* Purpose: calculate exact encoded bytes for one logical row through the compatibility ABI.
- * Inputs: qtype, row element count, writable byte count, and optional reason.
- * Effects: clears then publishes byte count only for admitted block-divisible geometry.
- * Failure: null output, invalid qtype, partial block, or overflow returns false.
- * Boundary: multidimensional callers must use the full tensor-storage contract. */
+/*
+ * Calculate exact encoded bytes for one logical row through the compatibility ABI.
+ *
+ * Null output, invalid qtype, partial block, or overflow returns false.
+ */
 int yvex_gguf_qtype_storage_bytes(unsigned int qtype, unsigned long long row_element_count,
                                   unsigned long long *out, const char **reason) {
     yvex_gguf_qtype_storage_result result;

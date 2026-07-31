@@ -1,12 +1,6 @@
-/* Owner: public tokenizer ABI.
- * Owns: tokenizer views, tokenization, detokenization, and prompt rendering.
- * Does not own: model admission, runtime sessions, or sampling.
- * Invariants: declarations are format-stable, externally consumable, and independently includable.
- * Boundary: tokenizer and prompt contracts derived from admitted metadata.
- * Purpose: Expose tokenizer and prompt contracts derived from admitted metadata.
- * Inputs: Typed caller-owned values and immutable borrowed views as declared below.
- * Effects: Only functions with explicit lifecycle or I/O contracts mutate external state.
- * Failure: Typed status and error outputs remain authoritative; declarations add no capability. */
+/* Tokenization and prompt rendering are derived from admitted artifact metadata and share one
+ * immutable plan. Producing token IDs or text fragments neither mutates model state nor selects a
+ * generated token. */
 #ifndef YVEX_TOKENIZER_H
 #define YVEX_TOKENIZER_H
 

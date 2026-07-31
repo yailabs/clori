@@ -1,12 +1,6 @@
-/* Owner: public application-provider ABI.
- * Owns: provider-neutral messages, function tools, sampling, output policy, identities, and results.
- * Does not own: HTTP/OpenAI syntax, local socket framing, model prompts, generation, or tool execution.
- * Invariants: every admitted request is explicitly bounded, field-wise identity-sealed, and transport-neutral.
- * Boundary: applications and protocol adapters exchange typed intent without engine or transport pointers.
- * Purpose: expose the smallest common application request/result contract consumed by compatibility gateways.
- * Inputs: explicit byte spans, typed roles, policies, tools, and caller-owned output storage.
- * Effects: sealing writes identities; clone/decode lifecycles allocate only complete owned requests.
- * Failure: malformed, oversized, ambiguous, or unsupported requests publish no sealed identity or partial owner. */
+/* Compatibility adapters exchange bounded application intent through this transport-neutral ABI.
+ * Requests and results are field-wise identity-sealed and contain neither engine ownership nor
+ * transport pointers. */
 #ifndef YVEX_PROVIDER_H
 #define YVEX_PROVIDER_H
 

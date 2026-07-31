@@ -1,12 +1,8 @@
-/* Owner: OpenAI server-adapter focused tests.
- * Owns: bounded profile request, rendering, and HTTP admission checks.
- * Does not own: model execution, external SDK environments, or live runtime proof.
- * Invariants: profile syntax reaches provider facts and refusals publish no request.
- * Boundary: tests may inspect the adapter source-local interface without entering production objects.
- * Purpose: exercise the compatibility adapter independently of a model or daemon.
- * Inputs: deterministic JSON and socket-pair HTTP fixtures.
- * Effects: allocates only test-local request/result storage.
- * Failure: any semantic mismatch returns one focused test failure. */
+/*
+ * Exercise the compatibility adapter independently of a model or daemon. Profile syntax reaches
+ * provider facts and refusals publish no request. Tests may inspect the adapter source-local
+ * interface without entering production objects.
+ */
 
 #include "tests/test.h"
 
@@ -17,7 +13,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-/* Purpose: admit one explicit JSON fixture through the selected profile endpoint. */
 static int admit_fixture(const char *json, openai_endpoint endpoint,
                          openai_admitted_request *admitted, yvex_error *err)
 {
@@ -29,7 +24,6 @@ static int admit_fixture(const char *json, openai_endpoint endpoint,
                              admitted, err);
 }
 
-/* Purpose: prove Chat fields map to sealed provider-neutral facts. */
 static int test_chat_admission(void)
 {
     static const char basic[] =
@@ -78,7 +72,7 @@ static int test_chat_admission(void)
     return 0;
 }
 
-/* Purpose: prove unsupported, duplicate, and multimodal fields fail closed. */
+/* Prove unsupported, duplicate, and multimodal fields fail closed. */
 static int test_request_refusals(void)
 {
     static const char duplicate[] =
@@ -124,7 +118,6 @@ static int test_request_refusals(void)
     return 0;
 }
 
-/* Purpose: prove Responses instructions and continuity references remain typed. */
 static int test_responses_admission(void)
 {
     static const char json[] =
@@ -157,7 +150,6 @@ static int test_responses_admission(void)
     return 0;
 }
 
-/* Purpose: prove both endpoint result and streaming documents are valid JSON. */
 static int test_rendering(void)
 {
     openai_generation_result result = {0};
@@ -206,7 +198,6 @@ static int test_rendering(void)
     return 0;
 }
 
-/* Purpose: prove strict Content-Length admission and request-smuggling refusal. */
 static int test_http_admission(void)
 {
     static const char good[] =
@@ -245,7 +236,6 @@ static int test_http_admission(void)
     return 0;
 }
 
-/* Purpose: prove bounded HTTP peer observation distinguishes an open socket from FIN. */
 static int test_http_peer_liveness(void)
 {
     int pair[2], closed = -1;
@@ -263,7 +253,6 @@ static int test_http_peer_liveness(void)
     return 0;
 }
 
-/* Purpose: run the bounded compatibility-adapter unit matrix. */
 int yvex_test_openai(void)
 {
     if (test_chat_admission() != 0) return 1;

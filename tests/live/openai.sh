@@ -1,5 +1,5 @@
 #!/bin/sh
-# Purpose: prove one yvexd PID serves Unix and OpenAI Chat/Responses/SSE over one resident model.
+# One resident daemon must serve Unix and OpenAI Chat/Responses/SSE without reopening the model.
 set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}

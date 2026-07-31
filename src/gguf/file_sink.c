@@ -1,15 +1,10 @@
-/* Owner: gguf.artifact file sink (TRACK.ARTIFACT).
- * Owns: safe destination admission, filesystem capacity/preallocation, exact pwrite loops, terminal state, digest
- *   fan-out, fsync, no-replace publication, parent-directory durability, and owned-temp cleanup.
- * Does not own: encoded-byte production, source IO, GGUF semantics, reader validation, artifact identity, support
- *   admission, runtime, or rendering.
- * Invariants: writes stay inside disjoint preplanned ranges; one terminal is monotonic; no incomplete/aborted
- *   session publishes; existing files survive.
- * Boundary: this sink writes bytes but cannot declare artifact completeness.
- * Purpose: transactionally persist planned tensor bytes into one external artifact.
- * Inputs: sealed writer/quant plans, safe destination, chunks, and validation proof.
- * Effects: owns temporary-file lifecycle, exact writes, durability, and publication.
- * Failure: poisons the session, preserves prior destinations, and cleans owned temps. */
+/*
+ * Transactionally persist planned tensor bytes into one external artifact.
+ *
+ * Writes stay inside disjoint preplanned ranges; one terminal is monotonic; no incomplete/aborted
+ * session publishes; existing files survive. This sink writes bytes but cannot declare artifact
+ * completeness.
+ */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -73,11 +68,6 @@ struct yvex_gguf_file_sink {
     int published;
 };
 
-/* Purpose: poison one constructed session after an observable protocol refusal.
- * Inputs: optional mutable file sink.
- * Effects: records permanent failure while holding the session mutex.
- * Failure: absent or not-yet-synchronized sinks are ignored safely.
- * Boundary: poisoning blocks future success but performs no cleanup itself. */
 static void file_sink_poison(yvex_gguf_file_sink *sink) {
     if (!sink || !sink->mutex_initialized)
         return;
@@ -86,11 +76,11 @@ static void file_sink_poison(yvex_gguf_file_sink *sink) {
     pthread_mutex_unlock(&sink->mutex);
 }
 
-/* Purpose: account immutable source ranges consumed by one terminal operation.
- * Inputs: sealed sink/quant decision and caller-owned range/byte totals.
- * Effects: writes exact source range and byte counts.
- * Failure: returns false for invalid binding, missing range, or overflow.
- * Boundary: traverses admitted references and reads zero source payload bytes. */
+/*
+ * Account immutable source ranges consumed by one terminal operation.
+ *
+ * Returns false for invalid binding, missing range, or overflow.
+ */
 static int file_terminal_source_account(const yvex_gguf_file_sink *sink,
                                         const yvex_quant_decision *decision,
                                         unsigned long long *range_count,
@@ -126,11 +116,6 @@ static int file_terminal_source_account(const yvex_gguf_file_sink *sink,
     return 1;
 }
 
-/* Purpose: publish one structured transactional file-sink refusal.
- * Inputs: typed code, system error, terminal/range facts, and status.
- * Effects: resets the failure record and updates the shared error object.
- * Failure: returns the supplied status without changing cleanup ownership.
- * Boundary: centralizes diagnostics while callers own state transitions. */
 static int file_sink_fail(yvex_gguf_file_failure *failure, yvex_gguf_file_code code,
                           int system_error, unsigned long long terminal,
                           unsigned long long expected, unsigned long long actual,
@@ -149,11 +134,6 @@ static int file_sink_fail(yvex_gguf_file_failure *failure, yvex_gguf_file_code c
     return status;
 }
 
-/* Purpose: compare core regular-file identity without following a path.
- * Inputs: captured sink summary and descriptor-derived stat record.
- * Effects: none.
- * Failure: returns false for non-regular, negative-size, or mismatched files.
- * Boundary: compares device/inode/size only; time fields have separate stages. */
 static int file_stat_core_matches(const yvex_gguf_file_sink_summary *summary,
                                   const struct stat *file_stat) {
     return summary && file_stat && S_ISREG(file_stat->st_mode) && file_stat->st_size >= 0 &&
@@ -162,11 +142,6 @@ static int file_stat_core_matches(const yvex_gguf_file_sink_summary *summary,
            (unsigned long long)file_stat->st_size == summary->file_size;
 }
 
-/* Purpose: capture post-flush timestamps required by independent validation.
- * Inputs: mutable sink summary and descriptor-derived stat record.
- * Effects: stores validated mtime and ctime fields.
- * Failure: admitted records make the field copy infallible.
- * Boundary: device/inode/size were already captured by temporary-file admission. */
 static void file_stat_capture_validated(yvex_gguf_file_sink_summary *summary,
                                         const struct stat *file_stat) {
     summary->validated_mtime_seconds = (long long)file_stat->st_mtim.tv_sec;
@@ -175,11 +150,6 @@ static void file_stat_capture_validated(yvex_gguf_file_sink_summary *summary,
     summary->validated_ctime_nanoseconds = (long long)file_stat->st_ctim.tv_nsec;
 }
 
-/* Purpose: detect mutation between finalization and no-replace publication.
- * Inputs: finalized summary and current descriptor stat record.
- * Effects: none.
- * Failure: returns false for any core or validated-time mismatch.
- * Boundary: validates the open inode without resolving a pathname. */
 static int file_stat_validated_matches(const yvex_gguf_file_sink_summary *summary,
                                        const struct stat *file_stat) {
     return file_stat_core_matches(summary, file_stat) &&
@@ -189,11 +159,6 @@ static int file_stat_validated_matches(const yvex_gguf_file_sink_summary *summar
            (long long)file_stat->st_ctim.tv_nsec == summary->validated_ctime_nanoseconds;
 }
 
-/* Purpose: capture path-visible timestamps after durable publication.
- * Inputs: mutable sink summary and published-path stat record.
- * Effects: stores published mtime and ctime for guarded withdrawal.
- * Failure: admitted records make this copy infallible.
- * Boundary: called only after parent-directory durability succeeds. */
 static void file_stat_capture_published(yvex_gguf_file_sink_summary *summary,
                                         const struct stat *file_stat) {
     summary->published_mtime_seconds = (long long)file_stat->st_mtim.tv_sec;
@@ -202,11 +167,6 @@ static void file_stat_capture_published(yvex_gguf_file_sink_summary *summary,
     summary->published_ctime_nanoseconds = (long long)file_stat->st_ctim.tv_nsec;
 }
 
-/* Purpose: protect withdrawal from deleting a modified published file.
- * Inputs: published sink summary and current no-follow path stat.
- * Effects: none.
- * Failure: returns false for core or publication-time mismatch.
- * Boundary: cleanup may unlink only the exact inode this session published. */
 static int file_stat_published_matches(const yvex_gguf_file_sink_summary *summary,
                                        const struct stat *file_stat) {
     return file_stat_core_matches(summary, file_stat) &&
@@ -216,11 +176,6 @@ static int file_stat_published_matches(const yvex_gguf_file_sink_summary *summar
            (long long)file_stat->st_ctim.tv_nsec == summary->published_ctime_nanoseconds;
 }
 
-/* Purpose: duplicate one bounded filesystem string into sink ownership.
- * Inputs: optional NUL-terminated text.
- * Effects: allocates and copies an independent string.
- * Failure: returns null for absent text, impossible length, or allocation failure.
- * Boundary: copies path components only and performs no normalization. */
 static char *file_string_copy(const char *text) {
     size_t length;
     char *copy;
@@ -235,11 +190,6 @@ static char *file_string_copy(const char *text) {
     return copy;
 }
 
-/* Purpose: reject traversal, ambiguous separators, and control bytes in paths.
- * Inputs: candidate destination path.
- * Effects: none.
- * Failure: returns false for empty components, dot traversal, escapes, or trailing slash.
- * Boundary: lexical admission precedes descriptor-relative no-follow operations. */
 static int file_destination_path_safe(const char *path) {
     const char *cursor;
 
@@ -266,11 +216,12 @@ static int file_destination_path_safe(const char *path) {
     return cursor > path && cursor[-1] != '/';
 }
 
-/* Purpose: split a safe destination into owned directory and basename fields.
- * Inputs: constructed sink and lexically admitted destination path.
- * Effects: allocates directory/name/full-path strings under sink ownership.
- * Failure: returns false for invalid basename, overflow, or allocation failure.
- * Boundary: does not open or create filesystem objects. */
+/*
+ * Split a safe destination into owned directory and basename fields.
+ *
+ * Allocates directory/name/full-path strings under sink ownership. Returns false for invalid
+ * basename, overflow, or allocation failure.
+ */
 static int file_destination_split(yvex_gguf_file_sink *sink, const char *path) {
     const char *slash;
     size_t directory_length;
@@ -297,11 +248,6 @@ static int file_destination_split(yvex_gguf_file_sink *sink, const char *path) {
     return sink->destination_path != NULL;
 }
 
-/* Purpose: create one unique no-follow temporary file beside the destination.
- * Inputs: sink with open directory descriptor and admitted basename.
- * Effects: owns temporary name/path strings and an exclusive file descriptor.
- * Failure: returns false after bounded collisions, system error, or allocation failure.
- * Boundary: never replaces or opens the final destination. */
 static int file_temp_create(yvex_gguf_file_sink *sink) {
     unsigned int attempt;
     size_t cap = strlen(sink->destination_name) + 96u;
@@ -339,11 +285,6 @@ static int file_temp_create(yvex_gguf_file_sink *sink) {
     return 1;
 }
 
-/* Purpose: open a destination directory while refusing symlink resolution.
- * Inputs: admitted directory path.
- * Effects: returns one read-only close-on-exec directory descriptor.
- * Failure: returns negative descriptor on unsafe or unavailable paths.
- * Boundary: prefers openat2 constraints and fails closed in the fallback. */
 static int file_directory_open(const char *path) {
 #if defined(__linux__) && defined(SYS_openat2)
     struct open_how how;
@@ -361,11 +302,6 @@ static int file_directory_open(const char *path) {
     return open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
 }
 
-/* Purpose: perform one exact positioned write with partial/EINTR handling.
- * Inputs: active sink, borrowed bytes, exact count, and absolute file offset.
- * Effects: writes only the requested range and advances physical-write counters.
- * Failure: returns false on offset, injected, system, or accounting failure.
- * Boundary: caller has already proven the write lies inside one terminal range. */
 static int file_pwrite_exact(yvex_gguf_file_sink *sink, const unsigned char *bytes,
                              size_t byte_count, unsigned long long offset) {
     size_t delivered = 0u;
@@ -416,11 +352,11 @@ static int file_pwrite_exact(yvex_gguf_file_sink *sink, const unsigned char *byt
     return 1;
 }
 
-/* Purpose: begin one terminal transaction in both file and digest sinks.
- * Inputs: opaque file sink and canonical borrowed quant decision.
- * Effects: transitions EMPTY through BEGINNING to ACTIVE under synchronization.
- * Failure: poisons session and returns refusal for identity or lifecycle mismatch.
- * Boundary: callback is synchronous and retains no decision pointer. */
+/*
+ * Begin one terminal transaction in both file and digest sinks.
+ *
+ * Poisons session and returns refusal for identity or lifecycle mismatch.
+ */
 static int file_sink_begin(void *opaque, const yvex_quant_decision *decision) {
     yvex_gguf_file_sink *sink = (yvex_gguf_file_sink *)opaque;
     file_terminal_record *record;
@@ -461,11 +397,11 @@ static int file_sink_begin(void *opaque, const yvex_quant_decision *decision) {
     return refused;
 }
 
-/* Purpose: deliver one monotonic terminal chunk to file and digest evidence.
- * Inputs: active sink, canonical decision, logical offset, bytes, and count.
- * Effects: exact positioned write plus synchronized chunk/accounting advancement.
- * Failure: poisons session for bounds, order, write, digest, or overflow refusal.
- * Boundary: borrowed chunk bytes are consumed synchronously and never retained. */
+/*
+ * Deliver one monotonic terminal chunk to file and digest evidence.
+ *
+ * Poisons session for bounds, order, write, digest, or overflow refusal.
+ */
 static int file_sink_chunk(void *opaque, const yvex_quant_decision *decision,
                            unsigned long long output_offset, const unsigned char *bytes,
                            size_t byte_count) {
@@ -532,11 +468,6 @@ static int file_sink_chunk(void *opaque, const yvex_quant_decision *decision,
     return 0;
 }
 
-/* Purpose: commit one exact terminal after file and digest delivery completes.
- * Inputs: active sink, canonical decision, and delivered byte total.
- * Effects: seals digest terminal and advances committed source/output accounting.
- * Failure: poisons session for incomplete bytes, invalid state, or digest refusal.
- * Boundary: terminal commit does not finalize or publish the artifact file. */
 static int file_sink_commit(void *opaque, const yvex_quant_decision *decision,
                             unsigned long long delivered_bytes) {
     yvex_gguf_file_sink *sink = (yvex_gguf_file_sink *)opaque;
@@ -583,11 +514,6 @@ static int file_sink_commit(void *opaque, const yvex_quant_decision *decision,
     return refused;
 }
 
-/* Purpose: abort one terminal transaction and permanently poison the session.
- * Inputs: sink, canonical decision, typed quant failure, and delivered count.
- * Effects: propagates digest abort and records one terminal abort exactly once.
- * Failure: invalid decision identity still poisons the entire session.
- * Boundary: abort publishes no successful terminal or artifact state. */
 static void file_sink_abort(void *opaque, const yvex_quant_decision *decision,
                             const yvex_quant_failure *failure, unsigned long long delivered_bytes) {
     yvex_gguf_file_sink *sink = (yvex_gguf_file_sink *)opaque;
@@ -611,11 +537,6 @@ static void file_sink_abort(void *opaque, const yvex_quant_decision *decision,
     pthread_mutex_unlock(&sink->mutex);
 }
 
-/* Purpose: initialize transactional file-sink options with safe capacity margin.
- * Inputs: caller-owned options storage.
- * Effects: clears all injection fields and selects canonical disk margin.
- * Failure: a null destination is ignored.
- * Boundary: defaults perform no filesystem operations. */
 void yvex_gguf_file_sink_options_default(yvex_gguf_file_sink_options *options) {
     if (!options)
         return;
@@ -623,11 +544,6 @@ void yvex_gguf_file_sink_options_default(yvex_gguf_file_sink_options *options) {
     options->safety_margin_bytes = 1024ull * 1024ull * 1024ull;
 }
 
-/* Purpose: admit destination directory, no-replace path, and safe capacity.
- * Inputs: allocated sink, sealed writer size, and failure outputs.
- * Effects: owns split paths/open directory and records capacity evidence.
- * Failure: releases the entire sink on unsafe path, conflict, or insufficient space.
- * Boundary: completes preflight before creating a temp or reading source payload. */
 static int file_sink_prepare_destination(yvex_gguf_file_sink **sink_address,
                                          const yvex_gguf_writer_plan_summary *writer,
                                          yvex_gguf_file_failure *failure, yvex_error *err) {
@@ -686,11 +602,6 @@ static int file_sink_prepare_destination(yvex_gguf_file_sink **sink_address,
     return YVEX_OK;
 }
 
-/* Purpose: create, preallocate, snapshot, and prefix the owned temporary file.
- * Inputs: preflighted sink, sealed writer plan, and failure outputs.
- * Effects: initializes synchronization/records, owns temp fd, and writes prefix.
- * Failure: releases sink and removes only its temporary file on any refusal.
- * Boundary: detects ENOSPC before terminal execution and publishes nothing. */
 static int file_sink_prepare_temporary(yvex_gguf_file_sink **sink_address,
                                        const yvex_gguf_writer_plan_summary *writer,
                                        yvex_gguf_file_failure *failure, yvex_error *err) {
@@ -761,11 +672,11 @@ static int file_sink_prepare_temporary(yvex_gguf_file_sink **sink_address,
     return YVEX_OK;
 }
 
-/* Purpose: install digest fan-out and prove complete owned-memory accounting.
- * Inputs: initialized sink, sealed quant summary, and failure outputs.
- * Effects: owns digest sink/adapter and records peak owned bytes/temp path.
- * Failure: releases complete sink for digest allocation or accounting overflow.
- * Boundary: adds execution evidence without retaining encoded tensor payload. */
+/*
+ * Install digest fan-out and prove complete owned-memory accounting.
+ *
+ * Releases complete sink for digest allocation or accounting overflow.
+ */
 static int file_sink_prepare_digest(yvex_gguf_file_sink **sink_address,
                                     const yvex_quant_plan_summary *quant,
                                     yvex_gguf_file_failure *failure, yvex_error *err) {
@@ -810,11 +721,6 @@ static int file_sink_prepare_digest(yvex_gguf_file_sink **sink_address,
     return YVEX_OK;
 }
 
-/* Purpose: create a preallocated transactional file sink for matching plans.
- * Inputs: sealed writer/quant plans, destination options, and caller outputs.
- * Effects: returns an owned temp session with exact structural prefix written.
- * Failure: typed refusal leaves destination unchanged and no owned temp behind.
- * Boundary: reads zero source payload and never replaces an existing destination. */
 int yvex_gguf_file_sink_create(yvex_gguf_file_sink **out, const yvex_gguf_writer_plan *writer_plan,
                                const yvex_quant_plan *quant_plan,
                                const yvex_gguf_file_sink_options *options,
@@ -868,11 +774,12 @@ int yvex_gguf_file_sink_create(yvex_gguf_file_sink **out, const yvex_gguf_writer
     return YVEX_OK;
 }
 
-/* Purpose: project a file sink into the quant executor's transactional ABI.
- * Inputs: optional sink and caller-owned output adapter.
- * Effects: installs synchronous begin/chunk/commit/abort callbacks.
- * Failure: null sink yields a cleared unusable adapter.
- * Boundary: adapter borrows sink lifetime and retains no callback arguments. */
+/*
+ * Project a file sink into the quant executor's transactional ABI.
+ *
+ * Installs synchronous begin/chunk/commit/abort callbacks. Adapter borrows sink lifetime and
+ * retains no callback arguments.
+ */
 void yvex_gguf_file_sink_adapter(yvex_gguf_file_sink *sink, yvex_quant_output_sink *out) {
     if (!out)
         return;
@@ -886,11 +793,11 @@ void yvex_gguf_file_sink_adapter(yvex_gguf_file_sink *sink, yvex_quant_output_si
     out->context = sink;
 }
 
-/* Purpose: seal execution identity and flush an exact unpublished artifact.
- * Inputs: completed file sink, caller summary, and failure outputs.
- * Effects: writes zero padding, finalizes digest, fsyncs, and snapshots inode.
- * Failure: refuses incomplete terminals, digest mismatch, I/O, or snapshot drift.
- * Boundary: finalization does not rename or expose the destination path. */
+/*
+ * Seal execution identity and flush an exact unpublished artifact.
+ *
+ * Writes zero padding, finalizes digest, fsyncs, and snapshots inode.
+ */
 int yvex_gguf_file_sink_finalize(yvex_gguf_file_sink *sink, yvex_gguf_file_sink_summary *out,
                                  yvex_gguf_file_failure *failure, yvex_error *err) {
     const yvex_gguf_writer_plan_summary *writer;
@@ -972,11 +879,6 @@ int yvex_gguf_file_sink_finalize(yvex_gguf_file_sink *sink, yvex_gguf_file_sink_
     return YVEX_OK;
 }
 
-/* Purpose: atomically publish a temp basename without replacing a destination.
- * Inputs: finalized sink with source and destination names in one directory.
- * Effects: renames, or link/unlinks, the owned temporary directory entry.
- * Failure: returns false and preserves errno when no-replace publication fails.
- * Boundary: parent-directory durability and validation remain caller responsibilities. */
 static int file_rename_noreplace(yvex_gguf_file_sink *sink) {
 #ifdef SYS_renameat2
     if (syscall(SYS_renameat2, sink->directory_fd, sink->temporary_name, sink->directory_fd,
@@ -997,11 +899,7 @@ static int file_rename_noreplace(yvex_gguf_file_sink *sink) {
     return 1;
 }
 
-/* Purpose: publish a finalized temp only after exact native validation.
- * Inputs: sink, matching roundtrip summary, caller summary, and failure outputs.
- * Effects: revalidates inode, no-replace renames, fsyncs directory, records path.
- * Failure: rolls back owned publication where possible and returns typed refusal.
- * Boundary: accepts artifact verification but does not grant support admission. */
+/* Publish a finalized temp only after exact native validation. */
 int yvex_gguf_file_sink_publish(yvex_gguf_file_sink *sink,
                                 const yvex_gguf_roundtrip_summary *roundtrip,
                                 yvex_gguf_file_sink_summary *out, yvex_gguf_file_failure *failure,
@@ -1083,11 +981,11 @@ int yvex_gguf_file_sink_publish(yvex_gguf_file_sink *sink,
     return YVEX_OK;
 }
 
-/* Purpose: withdraw only this session's unchanged publication after gate refusal.
- * Inputs: published sink and caller failure/error outputs.
- * Effects: unlinks exact inode, fsyncs directory, and clears published state.
- * Failure: refuses cleanup when path identity drifted or durability fails.
- * Boundary: cannot delete pre-existing or externally modified files. */
+/*
+ * Withdraw only this session's unchanged publication after gate refusal.
+ *
+ * Refuses cleanup when path identity drifted or durability fails.
+ */
 int yvex_gguf_file_sink_withdraw(yvex_gguf_file_sink *sink, yvex_gguf_file_failure *failure,
                                  yvex_error *err) {
     struct stat current;
@@ -1110,29 +1008,19 @@ int yvex_gguf_file_sink_withdraw(yvex_gguf_file_sink *sink, yvex_gguf_file_failu
     return YVEX_OK;
 }
 
-/* Purpose: borrow the quant digest sink paired with file delivery.
- * Inputs: optional file sink.
- * Effects: none.
- * Failure: returns null when no sink exists.
- * Boundary: digest lifetime remains owned by the file sink. */
+/*
+ * Borrow the quant digest sink paired with file delivery.
+ *
+ * Digest lifetime remains owned by the file sink.
+ */
 yvex_quant_digest_sink *yvex_gguf_file_sink_digest(yvex_gguf_file_sink *sink) {
     return sink ? sink->digest : NULL;
 }
 
-/* Purpose: borrow the current unpublished temporary artifact path.
- * Inputs: optional file sink.
- * Effects: none.
- * Failure: returns null after publication or for an absent sink.
- * Boundary: borrowed path is diagnostic and cannot outlive the sink. */
 const char *yvex_gguf_file_sink_temporary_path(const yvex_gguf_file_sink *sink) {
     return sink && !sink->published ? sink->temporary_path : NULL;
 }
 
-/* Purpose: copy bounded progress without exposing mutable sink state.
- * Inputs: synchronized sink and caller-owned summary.
- * Effects: acquires the mutex and copies the current typed counters.
- * Failure: returns invalid-argument for absent/uninitialized inputs.
- * Boundary: summary copy contains no payload bytes or mutable pointers. */
 int yvex_gguf_file_sink_summary_get(yvex_gguf_file_sink *sink, yvex_gguf_file_sink_summary *out) {
     if (!sink || !out || !sink->mutex_initialized)
         return YVEX_ERR_INVALID_ARG;
@@ -1142,11 +1030,6 @@ int yvex_gguf_file_sink_summary_get(yvex_gguf_file_sink *sink, yvex_gguf_file_si
     return YVEX_OK;
 }
 
-/* Purpose: release a file sink and remove only its unpublished temporary file.
- * Inputs: address of an optional sink handle.
- * Effects: nulls handle, closes descriptors, releases digest/records/paths/mutex.
- * Failure: cleanup is best-effort and never removes an already published artifact.
- * Boundary: borrowed writer and quant plans remain untouched. */
 void yvex_gguf_file_sink_release(yvex_gguf_file_sink **sink_address) {
     yvex_gguf_file_sink *sink;
     if (!sink_address || !*sink_address)

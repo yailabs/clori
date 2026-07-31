@@ -1,12 +1,9 @@
-/* Owner: graph attention state.
- * Owns: family-projected persistent state layout, history, candidate deltas, and commit lifecycle.
- * Does not own: family geometry policy, attention equations, backend work, or generation.
- * Invariants: storage follows sealed component recipes and committed history is immutable in a transaction.
- * Boundary: runtime retains an opaque provider handle and supplies optional backend residency.
- * Purpose: retain bounded typed persistent state across phase-neutral attention executions.
- * Inputs: sealed attention plan, family recipe ABI, immutable component recipes, and publications.
- * Effects: preallocates two recipe-defined banks per prepared layer and atomically swaps on commit.
- * Failure: refusal, cancellation, or abort preserves the previously committed state exactly. */
+/*
+ * Retain bounded typed persistent state across phase-neutral attention executions.
+ *
+ * Storage follows sealed component recipes and committed history is immutable in a transaction.
+ * Runtime retains an opaque provider handle and supplies optional backend residency.
+ */
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/core.h>
 #include <limits.h>
@@ -58,11 +55,7 @@ typedef struct {
     const unsigned long long *positions;
     unsigned long long count, width;
 } state_history_span;
-/* Purpose: append an ordered scalar field set to one canonical identity.
- * Inputs: initialized digest state and a non-null fixed-width field range.
- * Effects: advances only the caller-owned digest state in array order.
- * Failure: a canonical hash-update refusal returns false.
- * Boundary: callers still own field meaning, versioning, and identity publication. */
+
 static int state_hash_u64s(yvex_sha256 *hash, const unsigned long long *values,
                            size_t count) {
     size_t index;
@@ -70,11 +63,7 @@ static int state_hash_u64s(yvex_sha256 *hash, const unsigned long long *values,
         if (!yvex_sha256_update_u64(hash, values[index])) return 0;
     return 1;
 }
-/* Purpose: validate one component's generic storage shape without interpreting family policy.
- * Inputs: complete recipe authority and one pointer-free component.
- * Effects: none.
- * Failure: returns false for malformed binding, storage, rolling, or identity facts.
- * Boundary: validates representation only; the family owns capacity and rolling policy. */
+
 static int state_component_recipe_shape_valid(
     const yvex_attention_state_recipe *recipe,
     const yvex_attention_state_component_recipe *component) {
@@ -99,11 +88,7 @@ static int state_component_recipe_shape_valid(
            strcmp(rolling->attention_plan_identity,
                   recipe->attention_plan_identity) == 0;
 }
-/* Purpose: append one pointer-free component recipe to its canonical owner identity.
- * Inputs: active hash and one validated component.
- * Effects: serializes canonical scalar fields in schema order.
- * Failure: hash refusal returns false without publishing a trusted recipe.
- * Boundary: excludes pointers, storage contents, native padding, and runtime resources. */
+
 static int state_component_recipe_hash(
     yvex_sha256 *hash,
     const yvex_attention_state_component_recipe *component) {
@@ -124,11 +109,11 @@ static int state_component_recipe_hash(
            state_hash_u64s(hash, fields, sizeof(fields) / sizeof(fields[0])) &&
            yvex_sha256_update_text(hash, rolling->attention_plan_identity);
 }
-/* Purpose: seal one family-projected recipe using only canonical component fields.
- * Inputs: mutable unpublished recipe and typed error output.
- * Effects: validates ordered unique components and publishes component and recipe identities.
- * Failure: malformed or unhashable facts return a typed error with no trusted recipe identity.
- * Boundary: does not infer family policy, allocate state, or execute graph mathematics. */
+/*
+ * Seal one family-projected recipe using only canonical component fields.
+ *
+ * Malformed or unhashable facts return a typed error with no trusted recipe identity.
+ */
 static int state_recipe_seal_unchecked(yvex_attention_state_recipe *recipe,
                                        yvex_error *err) {
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -183,11 +168,11 @@ identity_failure:
                    "state recipe identity could not be sealed");
     return YVEX_ERR_STATE;
 }
-/* Purpose: seal an unpublished recipe or independently validate a sealed one.
- * Inputs: mutable unpublished or identity-bearing family recipe and typed error output.
- * Effects: publishes identities only when absent; validation uses private stack storage.
- * Failure: malformed or stale component and recipe identities return a typed refusal.
- * Boundary: admission neither infers family policy nor allocates state storage. */
+/*
+ * Seal an unpublished recipe or independently validate a sealed one.
+ *
+ * Mutable unpublished or identity-bearing family recipe and typed error output.
+ */
 int yvex_attention_state_recipe_seal(yvex_attention_state_recipe *recipe,
                                      yvex_error *err) {
     yvex_attention_state_recipe candidate;
@@ -226,7 +211,7 @@ static const yvex_graph_attention_state_summary initial_state_summary = {
     .sealed = 1, .persistent = 1, .position_consistent = 1,
     .generation = 1ull};
 static void state_close(attention_state **state_ptr);
-/* Purpose: project one typed history binding from the public attention-history envelope. */
+
 static state_history_span state_history_project(
     const yvex_attention_history_view *view,
     const yvex_attention_state_component_recipe *component) {
@@ -246,7 +231,7 @@ static state_history_span state_history_project(
     default: return (state_history_span){0};
     }
 }
-/* Purpose: select one immutable rolling view through its typed recipe binding. */
+
 static const yvex_attention_rolling_state_view *state_rolling_view(
     const yvex_attention_history_view *view,
     yvex_attention_state_binding binding) {
@@ -256,7 +241,7 @@ static const yvex_attention_rolling_state_view *state_rolling_view(
         return &view->indexer_rolling_state;
     return NULL;
 }
-/* Purpose: publish one state-lifecycle refusal through the existing typed attention failure. */
+
 static int state_reject(yvex_attention_failure *failure, unsigned long long layer,
                         unsigned long long expected, unsigned long long actual,
                         const char *reason, yvex_status status, yvex_error *err) {
@@ -275,7 +260,7 @@ static int state_reject(yvex_attention_failure *failure, unsigned long long laye
                     reason, layer, expected, actual);
     return status;
 }
-/* Purpose: acquire one provider lifecycle lock before state mutation. */
+
 static int state_lock(attention_state *state, unsigned long long layer,
                       yvex_attention_failure *failure, yvex_error *err) {
     if (state && state->mutex_ready && pthread_mutex_lock(&state->mutex) == 0)
@@ -283,11 +268,7 @@ static int state_lock(attention_state *state, unsigned long long layer,
     return state_reject(failure, layer, 1ull, 0ull,
                         "attention state synchronization is unavailable", YVEX_ERR_STATE, err);
 }
-/* Purpose: validate one state-operation owner and acquire its lifecycle lock.
- * Inputs: provider, failure coordinate, null-owner diagnostic, and typed outputs.
- * Effects: acquires only the provider mutex after owner validation.
- * Failure: preserves invalid-argument versus synchronization refusal semantics.
- * Boundary: callers retain all operation-specific state validation. */
+
 static int state_enter(attention_state *state, unsigned long long layer,
                        unsigned long long actual, const char *invalid_reason,
                        yvex_attention_failure *failure, yvex_error *err) {
@@ -296,7 +277,7 @@ static int state_enter(attention_state *state, unsigned long long layer,
                             YVEX_ERR_INVALID_ARG, err);
     return state_lock(state, layer, failure, err);
 }
-/* Purpose: release one provider lock and normalize the shared success result contract. */
+
 static int state_unlock_result(attention_state *state, int rc,
                                yvex_attention_failure *failure, yvex_error *err) {
     (void)pthread_mutex_unlock(&state->mutex);
@@ -305,21 +286,13 @@ static int state_unlock_result(attention_state *state, int rc,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: poison a failed active batch before releasing its lifecycle lock.
- * Inputs: locked provider, operation result, and typed diagnostics.
- * Effects: latches abort-required on failure and delegates lock release.
- * Failure: preserves the primary operation result.
- * Boundary: only abort may clear the latched transaction failure. */
+
 static int state_transaction_result(attention_state *state, int rc,
                                     yvex_attention_failure *failure, yvex_error *err) {
     if (rc != YVEX_OK && state->transaction.active) state->transaction.failed = 1;
     return state_unlock_result(state, rc, failure, err);
 }
-/* Purpose: evaluate and account one borrowed cancellation view at a provider safe point.
- * Inputs: locked provider, optional predicate, logical layer, and typed diagnostics.
- * Effects: increments cancellation evidence or latches invalidation on counter overflow.
- * Failure: malformed predicates, requested cancellation, and overflow return typed errors.
- * Boundary: observes caller-owned cancellation without resetting or retaining its context. */
+
 static int state_cancel_check(attention_state *state,
                               const yvex_attention_cancellation *cancellation,
                               unsigned long long layer, const char *reason,
@@ -340,11 +313,7 @@ static int state_cancel_check(attention_state *state,
     }
     return YVEX_OK;
 }
-/* Purpose: allocate one checked zeroed range and account its exact bytes.
- * Inputs: output slot, element count, element width, and cumulative byte counter.
- * Effects: stores one owned allocation and advances accounting only for valid geometry.
- * Failure: overflow or allocation failure returns false with a null output.
- * Boundary: allocates provider memory only; policy and resource budgets remain callers' work. */
+
 static int state_allocate(void **out, unsigned long long count, size_t width,
                           unsigned long long *accounted) {
     unsigned long long bytes;
@@ -357,11 +326,7 @@ static int state_allocate(void **out, unsigned long long count, size_t width,
     *out = calloc((size_t)count, width);
     return *out != NULL;
 }
-/* Purpose: release every allocation owned by one state bank and clear borrowed views.
- * Inputs: exclusively owned bank or null.
- * Effects: frees all history and rolling ranges, then clears the bank.
- * Failure: null and partially initialized banks are harmless.
- * Boundary: never releases graph plans, provider synchronization, or external history. */
+
 static void state_bank_release(attention_state_bank *bank) {
     unsigned int index;
     if (!bank) return;
@@ -375,11 +340,14 @@ static void state_bank_release(attention_state_bank *bank) {
 static int state_bank_identity(attention_state_bank *bank,
                                const attention_layer_state *layer,
                                const char *plan_identity);
-/* Purpose: return one prepared bank to its canonical empty state without reallocating storage.
- * Inputs: prepared bank, immutable layer geometry, and sealed attention-plan identity.
- * Effects: clears every owned span, resets dynamic counters, and replaces the state identity.
- * Failure: canonical identity failure returns false after clearing the unusable bank.
- * Boundary: allocation geometry, borrowed pointers, and layout identity remain unchanged. */
+/*
+ * Return one prepared bank to its canonical empty state without reallocating storage.
+ *
+ * Prepared bank, immutable layer geometry, and sealed attention-plan identity. Clears every owned
+ * span, resets dynamic counters, and replaces the state identity. Canonical identity failure
+ * returns false after clearing the unusable bank. Allocation geometry, borrowed pointers, and
+ * layout identity remain unchanged.
+ */
 static int state_bank_reset(attention_state_bank *bank,
                             const attention_layer_state *layer,
                             const char *plan_identity) {
@@ -416,11 +384,11 @@ static int state_bank_reset(attention_state_bank *bank,
     }
     return state_bank_identity(bank, layer, plan_identity);
 }
-/* Purpose: bind one bank's owned arrays into its immutable history view.
- * Inputs: initialized bank storage and immutable layer geometry.
- * Effects: refreshes every borrowed pointer and marks the projected view immutable.
- * Failure: callers provide validated storage, so binding cannot fail.
- * Boundary: publishes an in-process view only and transfers no ownership. */
+/*
+ * Bind one bank's owned arrays into its immutable history view.
+ *
+ * Publishes an in-process view only and transfers no ownership.
+ */
 static void state_bank_bind(attention_state_bank *bank,
                             const attention_layer_state *layer) {
     unsigned int index;
@@ -451,11 +419,7 @@ static void state_bank_bind(attention_state_bank *bank,
     }
     bank->view.immutable = 1;
 }
-/* Purpose: allocate one reusable state bank by iterating its sealed component recipe.
- * Inputs: empty bank, prepared component recipe, and checked byte accounting.
- * Effects: owns every declared history or rolling range without interpreting family policy.
- * Failure: checked allocation or malformed component storage releases the entire partial bank.
- * Boundary: creates one allocation-stable candidate/committed persistent-state bank. */
+
 static int state_bank_open(attention_state_bank *bank,
                            attention_layer_state *layer,
                            unsigned long long *bytes,
@@ -500,11 +464,7 @@ static int state_bank_open(attention_state_bank *bank,
     state_bank_bind(bank, layer);
     return YVEX_OK;
 }
-/* Purpose: transfer one immutable history view into a preallocated provider bank.
- * Inputs: destination bank, admitted layer, source history, and validation policy.
- * Effects: copies every logical history and rolling value into runtime-owned ranges.
- * Failure: checked imports reject incompatible capacity, extent, or arithmetic.
- * Boundary: unchecked transfers clone a provider-owned committed bank of equal geometry. */
+
 static int state_bank_transfer(attention_state_bank *bank,
                                const attention_layer_state *layer,
                                const yvex_attention_history_view *source,
@@ -563,32 +523,20 @@ static int state_bank_transfer(attention_state_bank *bank,
     state_bank_bind(bank, layer);
     return 1;
 }
-/* Purpose: copy committed state into the second preallocated candidate bank.
- * Inputs: distinct preallocated banks and their shared immutable layer geometry.
- * Effects: clones logical values and identity while preserving destination allocations.
- * Failure: admitted equal-capacity banks make this operation infallible.
- * Boundary: performs no allocation and never changes which bank is committed. */
+
 static void state_bank_copy(attention_state_bank *destination,
                             const attention_state_bank *source,
     const attention_layer_state *layer) {
     (void)state_bank_transfer(destination, layer, &source->view, 0);
     memmove(destination->state_identity, source->state_identity, sizeof(destination->state_identity));
 }
-/* Purpose: hash one float by explicit IEEE-754 bits rather than native structure bytes.
- * Inputs: active canonical hash and one scalar.
- * Effects: appends the scalar's exact 32-bit representation as a canonical integer.
- * Failure: propagates hash-update failure.
- * Boundary: preserves signed zero and NaN payload bits without numerical normalization. */
+
 static int state_hash_float(yvex_sha256 *hash, float value) {
     uint32_t bits;
     memcpy(&bits, &value, sizeof(bits));
     return yvex_sha256_update_u64(hash, (unsigned long long)bits);
 }
-/* Purpose: hash one canonical float range in logical element order.
- * Inputs: active hash, optional range, and explicit element count.
- * Effects: appends count and every scalar bit pattern in order.
- * Failure: null nonempty ranges or hash failures return false.
- * Boundary: excludes allocation capacity and unused padding from identity. */
+
 static int state_hash_floats(yvex_sha256 *hash, const float *values,
                              unsigned long long count) {
     unsigned long long index;
@@ -598,11 +546,7 @@ static int state_hash_floats(yvex_sha256 *hash, const float *values,
         if (!state_hash_float(hash, values[index])) return 0;
     return 1;
 }
-/* Purpose: bind every canonical rolling-layout fact without hashing dynamic state content.
- * Inputs: initialized digest state and one admitted rolling-state view.
- * Effects: appends presence and exact typed geometry in canonical order.
- * Failure: a canonical hash-update refusal returns false.
- * Boundary: excludes fill, cursor, positions, values, pointers, and allocation addresses. */
+
 static int state_rolling_layout_hash(
     yvex_sha256 *hash, const yvex_attention_rolling_state_view *view) {
     const unsigned long long fields[] = {
@@ -616,11 +560,13 @@ static int state_rolling_layout_hash(
     return state_hash_u64s(hash, fields, sizeof(fields) / sizeof(fields[0])) &&
            yvex_sha256_update_text(hash, view->attention_plan_identity);
 }
-/* Purpose: compute one semantic state identity from explicit history fields and values.
- * Inputs: complete bank, immutable layer geometry, and sealed attention-plan identity.
- * Effects: replaces the bank identity with a deterministic canonical digest.
- * Failure: arithmetic, missing range, or hash failure returns false.
- * Boundary: excludes pointers, bank selection, allocation capacity, and transaction counters. */
+/*
+ * Compute one semantic state identity from explicit history fields and values.
+ *
+ * Complete bank, immutable layer geometry, and sealed attention-plan identity. Replaces the bank
+ * identity with a deterministic canonical digest. Excludes pointers, bank selection, allocation
+ * capacity, and transaction counters.
+ */
 static int state_bank_identity(attention_state_bank *bank,
                                const attention_layer_state *layer,
                                const char *plan_identity) {
@@ -664,11 +610,13 @@ static int state_bank_identity(attention_state_bank *bank,
     yvex_sha256_hex(digest, bank->state_identity);
     return 1;
 }
-/* Purpose: compute provider layout identity from plan geometry and one optional unpublished layer.
- * Inputs: sealed provider, optional candidate ordinal/storage, and caller-owned digest output.
- * Effects: writes one complete deterministic digest only after every field hashes successfully.
- * Failure: missing plan facts or hash failure leaves provider ownership and summary unchanged.
- * Boundary: layout identity excludes history values, pointers, and allocation addresses. */
+/*
+ * Compute provider layout identity from plan geometry and one optional unpublished layer.
+ *
+ * Writes one complete deterministic digest only after every field hashes successfully. Missing
+ * plan facts or hash failure leaves provider ownership and summary unchanged. Layout identity
+ * excludes history values, pointers, and allocation addresses.
+ */
 static int state_layout_identity(const attention_state *state,
                                  unsigned long long candidate_index,
                                  const attention_layer_state *candidate,
@@ -699,9 +647,7 @@ static int state_layout_identity(const attention_state *state,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-/* Purpose: identify the complete committed or staged provider content without hashing pointers.
- * Inputs: exact owner facts. Effects: updates only declared state.
- * Failure: returns typed status without partial publication. Boundary: owner-local. */
+
 static int state_content_identity(const attention_state *state,
                                   unsigned long long candidate_index,
                                   const attention_layer_state *candidate,
@@ -734,7 +680,7 @@ static int state_content_identity(const attention_state *state,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-/* Purpose: validate and copy one rolling publication into candidate-owned storage. */
+
 static int state_rolling_apply(yvex_attention_rolling_state_view *view,
                                float *kv, float *score,
                                const yvex_attention_rolling_state_output *output) {
@@ -750,7 +696,7 @@ static int state_rolling_apply(yvex_attention_rolling_state_view *view,
     view->score_state = score;
     return 1;
 }
-/* Purpose: project one production rolling output through its typed state binding. */
+
 static const yvex_attention_rolling_state_output *state_publication_rolling(
     const yvex_attention_publication *publication,
     yvex_attention_state_binding binding) {
@@ -760,7 +706,7 @@ static const yvex_attention_rolling_state_output *state_publication_rolling(
         return &publication->next_indexer_rolling_state;
     return NULL;
 }
-/* Purpose: resolve one immutable component recipe by its stable graph binding. */
+
 static const yvex_attention_state_component_recipe *state_component_recipe_find(
     const attention_layer_state *layer, yvex_attention_state_binding binding) {
     unsigned int index;
@@ -769,11 +715,7 @@ static const yvex_attention_state_component_recipe *state_component_recipe_find(
             return &layer->recipe.components[index];
     return NULL;
 }
-/* Purpose: project one production history span through its generic state binding.
- * Inputs: immutable publication and declared recipe binding.
- * Effects: returns one borrowed span without copying values.
- * Failure: non-history bindings return an empty span.
- * Boundary: projection defines no family capacity or rolling policy. */
+
 static state_history_span state_publication_history(
     const yvex_attention_publication *publication,
     yvex_attention_state_binding binding) {
@@ -795,7 +737,7 @@ static state_history_span state_publication_history(
     default: return (state_history_span){0};
     }
 }
-/* Purpose: select one mutable history count through its generic state binding. */
+
 static unsigned long long *state_history_count(
     yvex_attention_history_view *view, yvex_attention_state_binding binding) {
     if (binding == YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY)
@@ -806,11 +748,11 @@ static unsigned long long *state_history_count(
         return &view->indexer_entry_count;
     return NULL;
 }
-/* Purpose: preflight one publication before mutating the candidate bank.
- * Inputs: active transaction and one complete production publication.
- * Effects: reads geometry and capacity facts only.
- * Failure: malformed, noncontiguous, incomplete, or oversized publications return false.
- * Boundary: validates state delta transport and does not inspect attention numerics. */
+/*
+ * Preflight one publication before mutating the candidate bank.
+ *
+ * Active transaction and one complete production publication.
+ */
 static int state_publication_validate(const attention_state_transaction *transaction,
                                       const yvex_attention_publication *publication) {
     const attention_layer_state *layer = transaction->layer;
@@ -852,11 +794,7 @@ static int state_publication_validate(const attention_state_transaction *transac
     }
     return 1;
 }
-/* Purpose: append every recipe-owned history span without executing family mathematics.
- * Inputs: candidate bank, immutable component recipe, and validated publication spans.
- * Effects: retains implicit-position rows as a suffix and appends explicit-position emissions.
- * Failure: preflight makes all extent and storage operations infallible.
- * Boundary: copies production output only; it never compresses, indexes, or selects values. */
+
 static void state_history_append(attention_state_bank *bank,
                                  const attention_layer_state *layer,
                                  const yvex_attention_publication *publication) {
@@ -889,11 +827,13 @@ static void state_history_append(attention_state_bank *bank,
         }
     }
 }
-/* Purpose: derive one candidate delta identity from prior and complete candidate state.
- * Inputs: active transaction with fully applied token publications.
- * Effects: fills candidate counters and replaces its state-delta identity.
- * Failure: hash failure returns false and leaves the transaction uncommittable.
- * Boundary: identity names the proposed change but does not publish the candidate bank. */
+/*
+ * Derive one candidate delta identity from prior and complete candidate state.
+ *
+ * Active transaction with fully applied token publications. Fills candidate counters and replaces
+ * its state-delta identity. Hash failure returns false and leaves the transaction uncommittable.
+ * Identity names the proposed change but does not publish the candidate bank.
+ */
 static int state_delta_identity(attention_state_transaction *transaction) {
     const attention_layer_state *layer = transaction->layer;
     const attention_state_bank *candidate = &layer->bank[1u - layer->committed_bank];
@@ -926,11 +866,12 @@ static int state_delta_identity(attention_state_transaction *transaction) {
     yvex_sha256_hex(digest, transaction->delta.state_delta_identity);
     return 1;
 }
-/* Purpose: open one empty session-local provider without preparing heavyweight layer banks.
- * Inputs: admitted family graph ABI, sealed plan, memory budget, and output ownership slot.
- * Effects: owns synchronization and immutable per-layer plan copies; allocates no history bank.
- * Failure: invalid owners, allocation, plan lookup, or identity failure releases all partial state.
- * Boundary: allocates session-owned persistent state and no backend placement. */
+/*
+ * Open one empty session-local provider without preparing heavyweight layer banks.
+ *
+ * Admitted family graph ABI, sealed plan, memory budget, and output ownership slot. Invalid
+ * owners, allocation, plan lookup, or identity failure releases all partial state.
+ */
 static int state_open(
     attention_state **out, const yvex_graph_family_api *family,
     const yvex_attention_plan *plan, unsigned long long maximum_host_bytes,
@@ -983,11 +924,11 @@ static int state_open(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: prepare two allocation-stable banks for one layer and optional immutable prior state.
- * Inputs: sealed provider, layer ordinal, explicit capacities, optional seed, and budget.
- * Effects: atomically installs equal committed/candidate banks and updates layout identity.
- * Failure: geometry, duplicate prepare, allocation, import, or budget refusal publishes no bank.
- * Boundary: preparation reads no artifact bytes and never infers family policy. */
+/*
+ * Prepare two allocation-stable banks for one layer and optional immutable prior state.
+ *
+ * Atomically installs equal committed/candidate banks and updates layout identity.
+ */
 static int state_prepare(
     attention_state *state, unsigned long long layer_index,
     const yvex_attention_state_recipe *recipe,
@@ -1121,11 +1062,7 @@ static int state_prepare(
 done:
     return state_unlock_result(state, rc, failure, err);
 }
-/* Purpose: borrow one committed or in-transaction immutable history view until mutation.
- * Inputs: provider, layer ordinal, and explicit committed/candidate selection.
- * Effects: none.
- * Failure: invalid, unprepared, inactive, failed, or mismatched candidate views return null.
- * Boundary: the borrowed view transfers no ownership and requires external session exclusion. */
+
 static const yvex_attention_history_view *state_view(
     const attention_state *state, unsigned long long layer_index,
     yvex_attention_state_view_kind kind) {
@@ -1150,7 +1087,7 @@ static const yvex_attention_history_view *state_view(
     (void)pthread_mutex_unlock(&mutable_state->mutex);
     return view;
 }
-/* Purpose: add one history class to a synchronized summary with checked totals and maximum. */
+
 static int state_summary_add(unsigned long long entries,
                              unsigned long long capacity,
                              yvex_graph_attention_state_component_summary *summary) {
@@ -1163,11 +1100,13 @@ static int state_summary_add(unsigned long long entries,
         summary->maximum_capacity = capacity;
     return 1;
 }
-/* Purpose: copy the canonical identity of one committed session-local layer state.
- * Inputs: synchronized provider, prepared layer ordinal, and fixed identity output.
- * Effects: copies identity bytes while holding the provider lifecycle lock.
- * Failure: rejects unprepared or out-of-range layers without exposing candidate state.
- * Boundary: identity covers persistent attention history without pointers or backend placement. */
+/*
+ * Copy the canonical identity of one committed session-local layer state.
+ *
+ * Synchronized provider, prepared layer ordinal, and fixed identity output. Copies identity bytes
+ * while holding the provider lifecycle lock. Identity covers persistent attention history without
+ * pointers or backend placement.
+ */
 static int state_identity_copy(
     attention_state *state, unsigned long long layer_index,
     char output[YVEX_SHA256_HEX_CAP], yvex_error *err) {
@@ -1193,11 +1132,11 @@ static int state_identity_copy(
     yvex_core_text_copy(output, YVEX_SHA256_HEX_CAP, layer->bank[layer->committed_bank].state_identity);
     return state_unlock_result(state, YVEX_OK, NULL, err);
 }
-/* Purpose: copy synchronized state lifecycle, capacity, and committed-entry facts.
- * Inputs: open provider and caller-owned output.
- * Effects: reads all prepared layers under the provider mutex without exposing mutable pointers.
- * Failure: malformed ownership or aggregate overflow publishes no partial snapshot.
- * Boundary: snapshot evidence reports state and cannot authorize higher runtime capabilities. */
+/*
+ * Copy synchronized state lifecycle, capacity, and committed-entry facts.
+ *
+ * Malformed ownership or aggregate overflow publishes no partial snapshot.
+ */
 static int state_summary_copy(
     const attention_state *state,
     yvex_graph_attention_state_summary *out, yvex_error *err) {
@@ -1247,7 +1186,7 @@ static int state_summary_copy(
     }
     return state_unlock_result(mutable_state, YVEX_OK, NULL, err);
 }
-/* Purpose: clear only the current layer candidate while retaining its provider-wide batch. */
+
 static void state_candidate_clear(attention_state_transaction *transaction) {
     transaction->layer = NULL;
     transaction->layer_ordinal = transaction->token_position =
@@ -1255,11 +1194,11 @@ static void state_candidate_clear(attention_state_transaction *transaction) {
     transaction->candidate_active = 0;
     memset(&transaction->delta, 0, sizeof(transaction->delta));
 }
-/* Purpose: start one allocation-free layer candidate inside a provider-wide batch.
- * Inputs: prepared unstaged layer, contiguous token range, cancellation view, and failures.
- * Effects: clones committed bytes into the alternate bank without publishing another layer.
- * Failure: busy, cancelled, duplicate, or noncontiguous requests preserve all committed banks.
- * Boundary: the batch remains private until one atomic publish after complete graph execution. */
+/*
+ * Start one allocation-free layer candidate inside a provider-wide batch.
+ *
+ * The batch remains private until one atomic publish after complete graph execution.
+ */
 static int state_begin(
     attention_state *state, unsigned long long layer_index,
     unsigned long long token_position, unsigned long long token_count,
@@ -1368,11 +1307,7 @@ static int state_begin(
 done:
     return state_transaction_result(state, rc, failure, err);
 }
-/* Purpose: copy one production publication and stage its bank when the token range is complete.
- * Inputs: active candidate, production publication, cancellation view, and delta output.
- * Effects: appends history, replaces rolling state, derives identities, and seals complete ranges.
- * Failure: malformed, cancelled, numeric, or family-validation refusal poisons the candidate.
- * Boundary: mutates only the alternate bank; the committed prior remains unchanged. */
+
 static int state_apply(
     attention_state *state,
     const yvex_attention_publication *publication,
@@ -1464,11 +1399,11 @@ static int state_apply(
 done:
     return state_transaction_result(state, rc, failure, err);
 }
-/* Purpose: publish every staged layer as one all-or-none attention state transition.
- * Inputs: valid batch with no current candidate and one or more staged layers.
- * Effects: preflights all facts, then swaps every selector without a later fallible step.
- * Failure: malformed, invalidated, injected, or overflowed batches leave every prior committed.
- * Boundary: this is the only atomic multi-layer persistent-state publication point. */
+/*
+ * Publish every staged layer as one all-or-none attention state transition.
+ *
+ * This is the only atomic multi-layer persistent-state publication point.
+ */
 static int state_publish(
     attention_state *state,
     yvex_attention_failure *failure, yvex_error *err) {
@@ -1538,11 +1473,7 @@ static int state_publish(
 done:
     return state_transaction_result(state, rc, failure, err);
 }
-/* Purpose: discard the current and every staged layer without changing committed history.
- * Inputs: provider with any batch state and typed failure output.
- * Effects: clears reversible candidates and increments one batch-abort counter when needed.
- * Failure: synchronization or counter failure retains the batch for checked cleanup retry.
- * Boundary: candidate bytes remain allocated but unreachable until a later begin overwrites them. */
+
 static int state_abort(
     attention_state *state,
     yvex_attention_failure *failure, yvex_error *err) {
@@ -1571,11 +1502,7 @@ static int state_abort(
     state->summary.abort_count = next;
     return state_unlock_result(state, YVEX_OK, failure, err);
 }
-/* Purpose: restore every prepared bank to one empty reusable session state.
- * Inputs: valid idle provider with allocation-stable prepared layers.
- * Effects: clears committed and candidate contents, advances generation/reset evidence, and allocates nothing.
- * Failure: active, cancelled, invalidated, overflowed, or malformed state fails closed.
- * Boundary: reset preserves the persistent layout, capacity, and allocation. */
+
 static int state_reset(
     attention_state *state,
     yvex_attention_failure *failure, yvex_error *err) {
@@ -1639,11 +1566,11 @@ static int state_reset(
 done:
     return state_unlock_result(state, rc, failure, err);
 }
-/* Purpose: poison every candidate and permanently invalidate one provider generation.
- * Inputs: open session-owned state provider and typed error output.
- * Effects: latches invalidation/cancellation and prevents all later state operations.
- * Failure: missing ownership or generation overflow fails closed.
- * Boundary: invalidation releases no memory while a session may still be executing. */
+/*
+ * Poison every candidate and permanently invalidate one provider generation.
+ *
+ * Missing ownership or generation overflow fails closed.
+ */
 static int state_invalidate(attention_state *state, yvex_error *err) {
     unsigned long long next;
     if (!state) {
@@ -1672,11 +1599,7 @@ static int state_invalidate(attention_state *state, yvex_error *err) {
     if (state->transaction.active) state->transaction.failed = 1;
     return state_unlock_result(state, YVEX_OK, NULL, err);
 }
-/* Purpose: close one provider through pointer ownership so repeated cleanup is idempotent.
- * Inputs: address of the exclusively owned provider pointer.
- * Effects: nulls caller ownership, releases every bank and lock, then frees the provider.
- * Failure: null and already closed ownership are harmless.
- * Boundary: never deletes artifacts, bindings, graph plans, or external state. */
+
 static void state_close(attention_state **state_ptr) {
     attention_state *state;
     unsigned long long layer, bank;
@@ -1695,7 +1618,7 @@ static void state_close(attention_state **state_ptr) {
     memset(state, 0, sizeof(*state));
     free(state);
 }
-/* Purpose: project one recipe into the canonical persistent state implementation. */
+
 static int provider_persistent_prepare(void *context, unsigned long long layer_index,
                                       const yvex_attention_state_recipe *recipe,
                                       const yvex_attention_history_view *initial_history,
@@ -1703,26 +1626,26 @@ static int provider_persistent_prepare(void *context, unsigned long long layer_i
     return state_prepare((attention_state *)context, layer_index, recipe, initial_history,
                          failure, err);
 }
-/* Purpose: copy provider lifecycle facts without exposing concrete storage. */
+
 static int provider_persistent_summary(void *context, yvex_graph_attention_state_summary *out,
                                       yvex_error *err) {
     return state_summary_copy((const attention_state *)context, out, err);
 }
-/* Purpose: borrow one immutable committed or candidate history through the provider ABI. */
+
 static const yvex_attention_history_view *provider_persistent_view(
     void *context, unsigned long long layer_index, yvex_attention_state_view_kind kind) {
     return state_view((const attention_state *)context, layer_index, kind);
 }
-/* Purpose: copy one committed layer identity through the opaque provider boundary. */
+
 static int provider_persistent_identity(void *context, unsigned long long layer_index,
                                        char output[YVEX_SHA256_HEX_CAP], yvex_error *err) {
     return state_identity_copy((attention_state *)context, layer_index, output, err);
 }
-/* Purpose: begin one default state candidate and return its immutable committed prior.
- * Inputs: prepared provider, exact layer and contiguous token range.
- * Effects: opens one candidate transaction and borrows its committed history.
- * Failure: invalid or non-contiguous state preserves the committed bank.
- * Boundary: the provider owns persistent session state but no family geometry or backend placement. */
+/*
+ * Begin one default state candidate and return its immutable committed prior.
+ *
+ * Opens one candidate transaction and borrows its committed history.
+ */
 static int provider_persistent_begin(void *context, unsigned long long layer_ordinal,
     const yvex_attention_layer_plan *layer,
     const yvex_attention_history_view *initial_history,
@@ -1751,7 +1674,7 @@ static int provider_persistent_begin(void *context, unsigned long long layer_ord
     if (rc == YVEX_OK) *history = committed;
     return rc;
 }
-/* Purpose: apply and stage one complete publication in the default provider. */
+
 static int provider_persistent_stage(void *context,
     const yvex_attention_publication *publication,
     const yvex_attention_cancellation *cancellation,
@@ -1760,38 +1683,26 @@ static int provider_persistent_stage(void *context,
     return state_apply((attention_state *)context, publication, cancellation,
                        state_delta_identity, failure, err);
 }
-/* Purpose: commit every staged default-provider candidate atomically.
- * Inputs: active provider transaction and typed failure outputs.
- * Effects: swaps all staged banks as one publication.
- * Failure: graph-state publication preserves the previous committed generation.
- * Boundary: commits persistent attention state only; model phases remain external. */
+
 static int provider_persistent_commit(void *context, yvex_attention_failure *failure,
                                      yvex_error *err) {
     return state_publish((attention_state *)context, failure, err);
 }
-/* Purpose: discard every staged default-provider candidate without changing priors. */
+
 static int provider_persistent_abort(void *context, yvex_attention_failure *failure,
                                     yvex_error *err) {
     return state_abort((attention_state *)context, failure, err);
 }
-/* Purpose: reset the default provider while retaining its prepared allocation layout. */
+
 static int provider_persistent_reset(void *context, yvex_attention_failure *failure,
                                     yvex_error *err) {
     return state_reset((attention_state *)context, failure, err);
 }
-/* Purpose: invalidate the default provider after artifact or model drift.
- * Inputs: open provider context and typed error output.
- * Effects: latches invalidation for every prepared layer.
- * Failure: synchronization refusal leaves state fail-closed.
- * Boundary: invalidation does not release storage or mutate external KV. */
+
 static int provider_persistent_invalidate(void *context, yvex_error *err) {
     return state_invalidate((attention_state *)context, err);
 }
-/* Purpose: release one default provider through retry-safe pointer ownership.
- * Inputs: address of an optional exclusively owned context.
- * Effects: closes graph state and nulls the provider context.
- * Failure: incomplete cleanup retains exact ownership for retry.
- * Boundary: never releases a runtime model, artifact, or external state provider. */
+
 static int provider_persistent_release(void **context, yvex_error *err) {
     attention_state *state;
     if (!context || !*context) {
@@ -1809,11 +1720,7 @@ static int provider_persistent_release(void **context, yvex_error *err) {
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: open the canonical persistent implementation of the graph state-provider ABI.
- * Inputs: family state recipe, sealed plan, host budget, and caller-owned output.
- * Effects: owns one bounded graph-state context behind the provider interface.
- * Failure: invalid input or state allocation publishes no provider.
- * Boundary: runtime may consume this default; KV may supply another implementation. */
+
 int yvex_attention_state_provider_open_persistent(
     const yvex_graph_family_api *family, const yvex_attention_plan *plan,
     unsigned long long maximum_host_bytes, yvex_attention_state_provider *out,

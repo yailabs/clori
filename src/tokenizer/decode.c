@@ -1,12 +1,10 @@
-/* Owner: tokenizer.decode.
- * Owns: ByteLevel batch decoding, transactional incremental UTF-8 state, classification, and decoder lifecycle.
- * Does not own: BPE encoding, prompt construction, model state, stop-loop decisions, or generation.
- * Invariants: a pushed token either publishes one complete fragment and state transition or changes nothing.
- * Boundary: converts admitted numeric IDs to bytes/events; it never advances KV or declares generation complete.
- * Purpose: provide batch and one-token-at-a-time decoding over the exact shared tokenizer plan.
- * Inputs: immutable tokenizer, bounded token IDs, decode policy, and caller-owned context handle.
- * Effects: allocates result fragments and advances only decoder-local pending-byte state.
- * Failure: invalid IDs, malformed token pieces, UTF-8, concurrency, or allocation preserve prior state. */
+/*
+ * Provide batch and one-token-at-a-time decoding over the exact shared tokenizer plan.
+ *
+ * A pushed token either publishes one complete fragment and state transition or changes nothing.
+ * Converts admitted numeric IDs to bytes/events; it never advances KV or declares generation
+ * complete.
+ */
 
 #include "src/tokenizer/private.h"
 
@@ -38,8 +36,6 @@ typedef struct {
     unsigned long long count, capacity;
 } decode_builder;
 
-/* Purpose: observe one optional cancellation safe point without transferring callback ownership.
- * Inputs: copied callback policy. Effects: none. Failure: cancellation. Boundary: decode operation. */
 static int decode_cancelled(const yvex_tokenizer_decode_options *options, yvex_error *err)
 {
     if (!options || !options->cancelled || !options->cancelled(options->cancel_context))
@@ -49,8 +45,6 @@ static int decode_cancelled(const yvex_tokenizer_decode_options *options, yvex_e
     return YVEX_ERR_CANCELLED;
 }
 
-/* Purpose: map one ByteLevel code point back to its unique raw byte.
- * Inputs: Unicode scalar. Effects: writes one byte. Failure: false. Boundary: ByteLevel decoder. */
 static int codepoint_byte(uint32_t point, unsigned char *byte)
 {
     unsigned int candidate, extra = 0u;
@@ -76,8 +70,6 @@ static int codepoint_byte(uint32_t point, unsigned char *byte)
     return 0;
 }
 
-/* Purpose: classify one token from exact vocabulary and special policy facts.
- * Inputs: sealed plan and ID. Effects: publishes facts. Failure: bounds. Boundary: tokenizer policy. */
 int yvex_tokenizer_token_classify(
     const yvex_tokenizer *tokenizer, unsigned int token_id,
     yvex_tokenizer_token_classification *classification, yvex_error *err)
@@ -100,8 +92,6 @@ int yvex_tokenizer_token_classify(
     return YVEX_OK;
 }
 
-/* Purpose: decode one token piece into newly allocated raw bytes under exact ByteLevel rules.
- * Inputs: sealed plan and ID. Effects: owns bytes. Failure: format/allocation. Boundary: decoder. */
 static int tokenizer_piece_decode(const yvex_tokenizer *tokenizer, unsigned int token_id,
                                   int skip_special, unsigned char **bytes,
                                   unsigned long long *byte_count, int *suppressed,
@@ -156,8 +146,6 @@ static int tokenizer_piece_decode(const yvex_tokenizer *tokenizer, unsigned int 
     return YVEX_OK;
 }
 
-/* Purpose: grow one batch decode builder before exact append.
- * Inputs: required bytes. Effects: reallocates candidate. Failure: bounds/memory. Boundary: batch decode. */
 static int decode_reserve(decode_builder *builder, unsigned long long add, yvex_error *err)
 {
     unsigned long long need, capacity;
@@ -185,8 +173,6 @@ static int decode_reserve(decode_builder *builder, unsigned long long add, yvex_
     return YVEX_OK;
 }
 
-/* Purpose: append one already decoded piece to batch-owned storage.
- * Inputs: builder and span. Effects: copies bytes. Failure: reserve. Boundary: batch decode. */
 static int decode_append(decode_builder *builder, const unsigned char *bytes,
                          unsigned long long count, yvex_error *err)
 {
@@ -198,8 +184,6 @@ static int decode_append(decode_builder *builder, const unsigned char *bytes,
     return rc;
 }
 
-/* Purpose: derive ordered token and decoded-byte identities for one complete batch.
- * Inputs: IDs and decoded bytes. Effects: seals digests. Failure: hash. Boundary: decode evidence. */
 static int decode_identities(const yvex_tokenizer *tokenizer, const unsigned int *ids,
                              unsigned long long count, yvex_tokenizer_decode_result *result)
 {
@@ -231,8 +215,6 @@ static int decode_identities(const yvex_tokenizer *tokenizer, const unsigned int
     return 1;
 }
 
-/* Purpose: batch-decode one complete token sequence transactionally.
- * Inputs: sealed plan, IDs, policy. Effects: publishes owned result. Failure: typed. Boundary: tokenizer. */
 int yvex_tokenizer_decode(const yvex_tokenizer *tokenizer,
                           const unsigned int *ids,
                           unsigned long long count,
@@ -295,8 +277,6 @@ int yvex_tokenizer_decode(const yvex_tokenizer *tokenizer,
     return YVEX_OK;
 }
 
-/* Purpose: release one owned batch decode result.
- * Inputs: result owner. Effects: frees and clears. Failure: none. Boundary: caller ownership. */
 void yvex_tokenizer_decode_result_clear(yvex_tokenizer_decode_result *result)
 {
     if (!result) return;
@@ -304,8 +284,6 @@ void yvex_tokenizer_decode_result_clear(yvex_tokenizer_decode_result *result)
     memset(result, 0, sizeof(*result));
 }
 
-/* Purpose: derive incremental decoder state identity from pending bytes and processed count.
- * Inputs: plan, policy, pending state. Effects: writes digest. Failure: hash. Boundary: decoder state. */
 static int decoder_state_identity(const yvex_tokenizer_decoder *decoder,
                                   const unsigned char pending[4],
                                   unsigned long long pending_count,
@@ -328,8 +306,6 @@ static int decoder_state_identity(const yvex_tokenizer_decoder *decoder,
     return 1;
 }
 
-/* Purpose: enter one decoder exclusively before a close owner can transfer lifecycle.
- * Inputs: decoder. Effects: OPEN to ACTIVE. Failure: busy/closing. Boundary: lifecycle gate. */
 static int decoder_enter(yvex_tokenizer_decoder *decoder, yvex_error *err)
 {
     unsigned int expected = DECODER_OPEN;
@@ -342,8 +318,6 @@ static int decoder_enter(yvex_tokenizer_decoder *decoder, yvex_error *err)
     return YVEX_ERR_STATE;
 }
 
-/* Purpose: leave one decoder after all staged state and fragment publication decisions complete.
- * Inputs: active decoder. Effects: clears ACTIVE and wakes close. Failure: none. Boundary: lifecycle gate. */
 static void decoder_leave(yvex_tokenizer_decoder *decoder)
 {
     unsigned int observed = atomic_load_explicit(&decoder->lifecycle, memory_order_acquire);
@@ -360,8 +334,6 @@ static void decoder_leave(yvex_tokenizer_decoder *decoder)
                                     memory_order_release);
 }
 
-/* Purpose: distinguish a valid incomplete UTF-8 tail from malformed complete bytes.
- * Inputs: at most three bytes. Effects: none. Failure: false. Boundary: incremental UTF-8. */
 static int utf8_tail_valid(const unsigned char *bytes, unsigned long long count)
 {
     unsigned int needed;
@@ -384,7 +356,6 @@ static int utf8_tail_valid(const unsigned char *bytes, unsigned long long count)
     return 1;
 }
 
-/* Purpose: find the complete publishable UTF-8 prefix and retain only an admissible tail. */
 static int utf8_prefix(const unsigned char *bytes, unsigned long long count,
                        unsigned long long *prefix)
 {
@@ -404,8 +375,6 @@ static int utf8_prefix(const unsigned char *bytes, unsigned long long count,
     return 1;
 }
 
-/* Purpose: seal one fragment identity over every published event and state transition fact.
- * Inputs: completed fragment. Effects: writes digest. Failure: hash. Boundary: decoder evidence. */
 static int fragment_identity(yvex_tokenizer_fragment *fragment)
 {
     yvex_sha256 hash;
@@ -428,8 +397,6 @@ static int fragment_identity(yvex_tokenizer_fragment *fragment)
     return 1;
 }
 
-/* Purpose: open one generation-local incremental decoder over shared immutable tokenizer structures.
- * Inputs: sealed plan and policy. Effects: allocates state. Failure: typed. Boundary: local decoder. */
 int yvex_tokenizer_decoder_open(yvex_tokenizer_decoder **out,
                                 const yvex_tokenizer *tokenizer,
                                 const yvex_tokenizer_decode_options *options,
@@ -477,8 +444,11 @@ int yvex_tokenizer_decoder_open(yvex_tokenizer_decoder **out,
     return YVEX_OK;
 }
 
-/* Purpose: stage, validate, and atomically publish one token's incremental decoded fragment.
- * Inputs: active decoder and ID. Effects: commits state/fragment. Failure: rollback. Boundary: decoder. */
+/*
+ * Stage, validate, and atomically publish one token's incremental decoded fragment.
+ *
+ * Rollback.
+ */
 int yvex_tokenizer_decoder_push(yvex_tokenizer_decoder *decoder,
                                 unsigned int token_id,
                                 yvex_tokenizer_fragment *fragment,
@@ -568,8 +538,6 @@ int yvex_tokenizer_decoder_push(yvex_tokenizer_decoder *decoder,
     return rc;
 }
 
-/* Purpose: flush or refuse the final pending UTF-8 tail without changing processed-token history.
- * Inputs: active decoder. Effects: publishes finish event. Failure: UTF-8/cancel. Boundary: decoder. */
 int yvex_tokenizer_decoder_finish(yvex_tokenizer_decoder *decoder,
                                   yvex_tokenizer_fragment *fragment,
                                   yvex_error *err)
@@ -605,10 +573,11 @@ int yvex_tokenizer_decoder_finish(yvex_tokenizer_decoder *decoder,
     return rc;
 }
 
-/* Purpose: return one idle incremental decoder to its canonical empty-turn state.
- * Inputs: open decoder with no concurrent operation. Effects: clears only decoder-local pending
- * bytes and processed count. Failure: busy/closing or identity failure preserves prior state.
- * Boundary: model, tokenizer plan, token ledger, and KV are untouched. */
+/*
+ * Return one idle incremental decoder to its canonical empty-turn state.
+ *
+ * Busy/closing or identity failure preserves prior state.
+ */
 int yvex_tokenizer_decoder_reset(yvex_tokenizer_decoder *decoder,
                                  yvex_error *err)
 {
@@ -641,8 +610,6 @@ int yvex_tokenizer_decoder_reset(yvex_tokenizer_decoder *decoder,
     return rc;
 }
 
-/* Purpose: release one owned incremental fragment.
- * Inputs: fragment owner. Effects: frees and clears. Failure: none. Boundary: caller ownership. */
 void yvex_tokenizer_fragment_clear(yvex_tokenizer_fragment *fragment)
 {
     if (!fragment) return;
@@ -650,8 +617,7 @@ void yvex_tokenizer_fragment_clear(yvex_tokenizer_fragment *fragment)
     memset(fragment, 0, sizeof(*fragment));
 }
 
-/* Purpose: transfer unique close ownership only while no push/finish call is active.
- * Inputs: unique handle. Effects: closes, drains, frees. Failure: retained for retry. Boundary: lifecycle. */
+/* Transfer unique close ownership only while no push/finish call is active. */
 void yvex_tokenizer_decoder_close(yvex_tokenizer_decoder **decoder)
 {
     yvex_tokenizer_decoder *owner;

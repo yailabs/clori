@@ -740,7 +740,6 @@ static int fixture_build_map(int globals_last,
     return rc;
 }
 
-/* Purpose: expose one complete test-only DeepSeek map to cross-owner integration fixtures. */
 int yvex_test_deepseek_map_fixture_build(yvex_deepseek_gguf_map **out)
 {
     yvex_deepseek_gguf_map_failure failure;
@@ -749,7 +748,6 @@ int yvex_test_deepseek_map_fixture_build(yvex_deepseek_gguf_map **out)
     return out ? fixture_build_map(0, out, &failure, NULL) : YVEX_ERR_INVALID_ARG;
 }
 
-/* Builds only the complete artifact-neutral plan and releases all input owners. */
 static int fixture_build_transform(
     int globals_last,
     yvex_transform_ir **transform_ir,

@@ -1,12 +1,7 @@
-/* Owner: backend.internal (backend).
- * Owns: backend resource state and typed capability reports.
- * Does not own: graph policy, model topology, or CLI rendering.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: backend-private lifecycle and projection.
- * Purpose: provide the canonical backend-private lifecycle and projection contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * Backend implementations share lifecycle, capability, tensor, and report types through this
+ * non-installed ABI. Model topology and family policy never cross this boundary.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_BACKEND_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_BACKEND_H_INCLUDED
 #include <limits.h>
@@ -243,14 +238,14 @@ struct yvex_backend {
 };
 #define YVEX_BACKEND_LIFECYCLE_CLOSING (1ull << 63)
 #define YVEX_BACKEND_LIFECYCLE_CHILD_MASK (YVEX_BACKEND_LIFECYCLE_CLOSING - 1ull)
-/* Purpose: report whether checked close has made one backend cleanup-only. */
+/* Report whether checked close has made one backend cleanup-only. */
 static inline int backend_cleanup_only(const yvex_backend *backend)
 {
     return backend &&
            (atomic_load_explicit(&backend->lifecycle, memory_order_acquire) &
             YVEX_BACKEND_LIFECYCLE_CLOSING) != 0ull;
 }
-/* Purpose: refuse numerical or allocating dispatch through a terminal backend owner. */
+/* Refuse numerical or allocating dispatch through a terminal backend owner. */
 static inline int backend_dispatch_admit(const yvex_backend *backend,
                                          const char *where, yvex_error *err)
 {
@@ -263,7 +258,7 @@ static inline int backend_dispatch_admit(const yvex_backend *backend,
     return YVEX_OK;
 }
 int yvex_backend_close_admit(yvex_backend *backend, yvex_error *err);
-/* Purpose: project one exact admitted variant without promoting an aggregate capability. */
+/* Project one exact admitted variant without promoting an aggregate capability. */
 static inline int backend_variant_supported(const yvex_backend *backend,
                                             yvex_backend_operation_variant variant)
 {
@@ -287,18 +282,19 @@ struct yvex_device_tensor {
     unsigned char *data, *host_data;
     int is_written, host_accessible;
 };
-/* Purpose: prove exact F32 storage geometry for one backend-owned tensor view. */
+/* Prove exact F32 storage geometry for one backend-owned tensor view. */
 static inline int backend_tensor_f32_elements(const yvex_device_tensor *tensor,
                                               unsigned long long elements)
 {
     return tensor && elements <= ULLONG_MAX / sizeof(float) &&
            tensor->bytes == elements * (unsigned long long)sizeof(float);
 }
-/* Purpose: commit one admitted allocation to the backend counters.
- * Inputs: mutable backend counters and an already admitted byte extent.
- * Effects: increments live, event, and peak accounting without allocating.
- * Failure: none after the caller's overflow and capacity admission.
- * Boundary: concrete storage ownership remains with the backend implementation. */
+/*
+ * Commit one admitted allocation to the backend counters.
+ *
+ * None after the caller's overflow and capacity admission. Concrete storage ownership remains with
+ * the backend implementation.
+ */
 static inline void backend_memory_acquire(yvex_backend *backend, unsigned long long bytes)
 {
     backend->stats.allocated_bytes += bytes;
@@ -307,11 +303,7 @@ static inline void backend_memory_acquire(yvex_backend *backend, unsigned long l
     if (backend->stats.allocated_bytes > backend->stats.peak_allocated_bytes)
         backend->stats.peak_allocated_bytes = backend->stats.allocated_bytes;
 }
-/* Purpose: release one owned allocation from the backend counters.
- * Inputs: mutable backend counters and the exact released byte extent.
- * Effects: decrements live allocation accounting and records a release event.
- * Failure: defensive saturation preserves valid counters after an invalid duplicate release.
- * Boundary: counter release does not free concrete backend storage. */
+/* Release one owned allocation from the backend counters. */
 static inline void backend_memory_release(yvex_backend *backend, unsigned long long bytes)
 {
     backend->stats.allocated_bytes =
@@ -321,19 +313,19 @@ static inline void backend_memory_release(yvex_backend *backend, unsigned long l
         backend->stats.release_events += 1ull;
     }
 }
-/* Purpose: admit one tensor only when its live owner identity matches the backend. */
+/* Admit one tensor only when its live owner identity matches the backend. */
 static inline int backend_tensor_owner_is(const yvex_backend *backend,
                                           const yvex_device_tensor *tensor)
 {
     return backend && tensor && tensor->owner == backend && tensor->owner_id != 0ull;
 }
-/* Purpose: rewind a serialized device workspace while preserving its stable address and peak. */
+/* Rewind a serialized device workspace while preserving its stable address and peak. */
 static inline void backend_workspace_reset(yvex_backend *backend)
 {
     if (backend)
         backend->workspace_cursor = 0ull;
 }
-/* Purpose: rewind a serialized host workspace while preserving its storage and peak. */
+/* Rewind a serialized host workspace while preserving its storage and peak. */
 static inline void backend_host_workspace_reset(yvex_backend *backend)
 {
     if (backend)
@@ -553,7 +545,7 @@ typedef enum {
 int yvex_backend_cuda_attention_graph_registry_apply(
     yvex_backend *backend, yvex_backend_cuda_graph_registry_action action,
     unsigned long long *affected, yvex_error *err);
-/* Report contract. */
+/* Immutable backend reports. */
 typedef enum {
     YVEX_BACKEND_REPORT_CAPABILITIES = 0,
     YVEX_BACKEND_REPORT_CUDA_INFO

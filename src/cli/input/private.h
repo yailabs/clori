@@ -1,12 +1,4 @@
-/* Owner: cli.input.private (cli.input).
- * Owns: typed CLI argument records and parsers.
- * Does not own: domain policy, rendering, or command execution.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: CLI input adaptation.
- * Purpose: provide the canonical CLI input adaptation contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/* CLI parsers produce typed requests but perform no domain work or operator output. */
 #ifndef SRC_CLI_INPUT_PRIVATE_H_INCLUDED
 #define SRC_CLI_INPUT_PRIVATE_H_INCLUDED
 
@@ -130,7 +122,7 @@ void yvex_tokenizer_help(FILE *fp);
 int yvex_tensors_command(int arg_count, char **args);
 void yvex_tensors_help(FILE *fp);
 
-/* Backend contract. */
+/* Backend arguments. */
 typedef struct {
     yvex_backend_report_request request;
     int help;
@@ -138,7 +130,7 @@ typedef struct {
 int yvex_backend_args_parse(int argc, char **argv, yvex_backend_args *out, yvex_error *err);
 int yvex_cuda_info_args_parse(int argc, char **argv, yvex_backend_args *out, yvex_error *err);
 
-/* Graph contract. */
+/* Graph arguments. */
 typedef enum {
     YVEX_GRAPH_ATTENTION_ACTION_NONE = 0,
     YVEX_GRAPH_ATTENTION_ACTION_PREPARE,
@@ -214,7 +206,7 @@ typedef struct {
 } yvex_graph_args;
 int yvex_graph_args_parse(int argc, char **argv, yvex_graph_args *out, yvex_error *err);
 
-/* Model Target contract. */
+/* Model-target arguments. */
 typedef struct {
     yvex_model_target_request request;
     int help_requested;
@@ -224,7 +216,7 @@ typedef struct {
 int yvex_model_target_args_parse(int argc, char **argv, yvex_model_target_args *out,
                                  yvex_error *err);
 
-/* Source contract. */
+/* Source arguments. */
 typedef struct {
     const char *family;
     const char *release;

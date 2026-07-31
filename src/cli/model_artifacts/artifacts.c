@@ -1,13 +1,7 @@
-/* Owner: src/cli/model_artifacts
- * Owns: CLI-only artifacts list/status command-family surface.
- * Does not own: artifact identity, model gates, runtime generation, artifact emission, eval, benchmark, or release
- *   claims.
- * Invariants: CLI-only and excluded from libyvex.a; preserves existing list/status behavior.
- * Boundary: discovered artifacts are report-only facts.
- * Purpose: provide cLI-only artifacts list/status command-family surface.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Scan registry and artifact metadata for finite CLI reports. Discovery never performs artifact
+ * admission or opens a runtime model.
+ */
 #include "src/cli/model_artifacts/private.h"
 
 #include <dirent.h>
@@ -76,11 +70,6 @@ typedef struct {
     unsigned int count;
 } yvex_models_artifact_rows;
 
-/* Purpose: Parse artifacts parse output mode into typed CLI state (`artifacts_parse_output_mode`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int artifacts_parse_output_mode(const char *value,
                                        yvex_artifacts_output_mode *mode)
 {
@@ -104,11 +93,6 @@ static int artifacts_parse_output_mode(const char *value,
     return 0;
 }
 
-/* Purpose: Parse parse models artifacts options into typed CLI state (`parse_models_artifacts_options`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int parse_models_artifacts_options(int arg_count,
                                           char **args,
                                           yvex_cli_models_artifacts_options *options)
@@ -175,14 +159,12 @@ static int parse_models_artifacts_options(int arg_count,
     return 0;
 }
 
-/* Purpose: Compute artifacts family allowed for its CLI invariant (`artifacts_family_allowed`). */
 static int artifacts_family_allowed(const yvex_cli_models_artifacts_options *options,
                                     const char *family)
 {
     return !options || !options->family || strcmp(options->family, family) == 0;
 }
 
-/* Purpose: Compute artifacts rows find for its CLI invariant (`artifacts_rows_find`). */
 static int artifacts_rows_find(yvex_models_artifact_rows *rows,
                                const char *target,
                                const char *family)
@@ -199,11 +181,6 @@ static int artifacts_rows_find(yvex_models_artifact_rows *rows,
     return -1;
 }
 
-/* Purpose: Compute artifacts rows append for its CLI invariant (`artifacts_rows_append`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static yvex_models_artifact_row *artifacts_rows_append(
     yvex_models_artifact_rows *rows,
     const char *target,
@@ -228,11 +205,6 @@ static yvex_models_artifact_row *artifacts_rows_append(
     return row;
 }
 
-/* Purpose: Compute artifacts relative path for its CLI invariant (`artifacts_relative_path`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void artifacts_relative_path(const yvex_operator_paths *operator_paths,
                                     const char *path,
                                     char *out,
@@ -257,7 +229,6 @@ static void artifacts_relative_path(const yvex_operator_paths *operator_paths,
     snprintf(out, out_cap, "%s", path);
 }
 
-/* Purpose: Compute artifacts strip suffix for its CLI invariant (`artifacts_strip_suffix`). */
 static void artifacts_strip_suffix(char *text, const char *suffix)
 {
     if (!yvex_source_ends_with(text, suffix))
@@ -265,7 +236,6 @@ static void artifacts_strip_suffix(char *text, const char *suffix)
     text[strlen(text) - strlen(suffix)] = '\0';
 }
 
-/* Purpose: Compute artifacts target from gguf name for its CLI invariant (`artifacts_target_from_gguf_name`). */
 static void artifacts_target_from_gguf_name(const char *file_name,
                                             char *out,
                                             size_t out_cap)
@@ -278,7 +248,6 @@ static void artifacts_target_from_gguf_name(const char *file_name,
     artifacts_strip_suffix(out, "-F16-noimatrix-yvex-v1");
 }
 
-/* Purpose: Compute artifacts class from name for its CLI invariant (`artifacts_class_from_name`). */
 static const char *artifacts_class_from_name(const char *file_name)
 {
     if (file_name && strstr(file_name, "controlled")) return "yvex-controlled-gguf";
@@ -286,7 +255,6 @@ static const char *artifacts_class_from_name(const char *file_name)
     return "unknown-gguf";
 }
 
-/* Purpose: Compute artifacts stat file for its CLI invariant (`artifacts_stat_file`). */
 static int artifacts_stat_file(const char *path, unsigned long long *size_out)
 {
     struct stat st;
@@ -297,11 +265,6 @@ static int artifacts_stat_file(const char *path, unsigned long long *size_out)
     return 1;
 }
 
-/* Purpose: Compute artifacts classify dynamic row for its CLI invariant (`artifacts_classify_dynamic_row`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void artifacts_classify_dynamic_row(const yvex_operator_paths *operator_paths,
                                            yvex_models_artifact_row *row)
 {
@@ -369,7 +332,6 @@ static void artifacts_classify_dynamic_row(const yvex_operator_paths *operator_p
     }
 }
 
-/* Purpose: Compute artifacts row next for its CLI invariant (`artifacts_row_next`). */
 static const char *artifacts_row_next(const yvex_models_artifact_row *row)
 {
     if (!row || strcmp(row->prepare_status, "blocked") != 0) return "none";
@@ -387,11 +349,6 @@ static const char *artifacts_row_next(const yvex_models_artifact_row *row)
     return "V010.MAP.8";
 }
 
-/* Purpose: Compute artifacts add dynamic target for its CLI invariant (`artifacts_add_dynamic_target`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void artifacts_add_dynamic_target(
     const yvex_operator_paths *operator_paths,
     yvex_models_artifact_rows *rows,
@@ -436,11 +393,6 @@ static void artifacts_add_dynamic_target(
     artifacts_classify_dynamic_row(operator_paths, row);
 }
 
-/* Purpose: Compute artifacts scan gguf family for its CLI invariant (`artifacts_scan_gguf_family`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void artifacts_scan_gguf_family(const yvex_operator_paths *operator_paths,
                                        yvex_models_artifact_rows *rows,
                                        const char *family)
@@ -489,11 +441,6 @@ static void artifacts_scan_gguf_family(const yvex_operator_paths *operator_paths
     closedir(dir);
 }
 
-/* Purpose: Compute artifacts scan dynamic sidecar dir for its CLI invariant (`artifacts_scan_dynamic_sidecar_dir`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void artifacts_scan_dynamic_sidecar_dir(
     const yvex_operator_paths *operator_paths,
     yvex_models_artifact_rows *rows,
@@ -544,11 +491,6 @@ static void artifacts_scan_dynamic_sidecar_dir(
     closedir(dir);
 }
 
-/* Purpose: Compute artifacts collect for its CLI invariant (`artifacts_collect`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int artifacts_collect(const yvex_cli_models_artifacts_options *options,
                              const yvex_operator_paths *operator_paths,
                              yvex_models_artifact_rows *rows,
@@ -593,7 +535,6 @@ static int artifacts_collect(const yvex_cli_models_artifacts_options *options,
     return YVEX_OK;
 }
 
-/* Purpose: Render artifacts print table header from typed facts (`artifacts_print_table_header`). */
 static void artifacts_print_table_header(void)
 {
     yvex_cli_out_writef(stdout, "artifacts\n\n");
@@ -601,7 +542,6 @@ static void artifacts_print_table_header(void)
            "TARGET", "FAMILY", "CLASS", "STATUS", "PREPARE", "SIZE", "PATH");
 }
 
-/* Purpose: Render artifacts print row table from typed facts (`artifacts_print_row_table`). */
 static void artifacts_print_row_table(const yvex_models_artifact_row *row)
 {
     char size_text[32];
@@ -622,7 +562,6 @@ static void artifacts_print_row_table(const yvex_models_artifact_row *row)
            row->display_path[0] ? row->display_path : "-");
 }
 
-/* Purpose: Compute artifacts json string for its CLI invariant (`artifacts_json_string`). */
 static void artifacts_json_string(const char *value)
 {
     const unsigned char *p = (const unsigned char *)(value ? value : "");
@@ -644,11 +583,6 @@ static void artifacts_json_string(const char *value)
     yvex_cli_out_char(stdout, '"');
 }
 
-/* Purpose: Render artifacts print list from typed facts (`artifacts_print_list`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void artifacts_print_list(const yvex_cli_models_artifacts_options *options,
                                  const yvex_operator_paths *operator_paths,
                                  const yvex_models_artifact_rows *rows)
@@ -715,7 +649,6 @@ static void artifacts_print_list(const yvex_cli_models_artifacts_options *option
     yvex_cli_out_writef(stdout, "\nstatus: artifacts-list\n");
 }
 
-/* Purpose: Compute artifacts find target for its CLI invariant (`artifacts_find_target`). */
 static const yvex_models_artifact_row *artifacts_find_target(
     const yvex_models_artifact_rows *rows,
     const char *target)
@@ -731,11 +664,6 @@ static const yvex_models_artifact_row *artifacts_find_target(
     return NULL;
 }
 
-/* Purpose: Render artifacts print status from typed facts (`artifacts_print_status`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void artifacts_print_status(const yvex_cli_models_artifacts_options *options,
                                    const yvex_operator_paths *operator_paths,
                                    const yvex_models_artifact_row *row)
@@ -810,11 +738,6 @@ static void artifacts_print_status(const yvex_cli_models_artifacts_options *opti
     yvex_cli_out_writef(stdout, "status: artifacts-status\n");
 }
 
-/* Purpose: Orchestrate the typed models artifacts surface command request (`yvex_models_artifacts_surface_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_models_artifacts_surface_command(int arg_count, char **args)
 {
     yvex_cli_models_artifacts_options options;

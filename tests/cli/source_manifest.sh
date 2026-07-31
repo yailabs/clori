@@ -1,13 +1,6 @@
 #!/bin/sh
-#
-# YVEX - Source manifest CLI smoke test
-#
-# File: tests/cli/source_manifest.sh
-# Layer: test
-#
-# Purpose:
-#   Proves the open-weight intake source-manifest create command over a tiny fake local
-#   source tree. The script does not download or commit model files.
+# Exercises source-manifest creation against a tiny local tree without downloading or committing
+# model payloads.
 
 set -eu
 

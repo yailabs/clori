@@ -1,12 +1,9 @@
-/* Owner: tests.unit.runtime_benchmark.
- * Owns: benchmark baseline identity, publication, reopen, comparison, corruption, and SVG evidence tests.
- * Does not own: production measurement, runtime execution, benchmark policy, or operator rendering.
- * Invariants: every external fixture lives beneath one unique owned temporary directory and is removed exactly.
- * Boundary: bounded fixtures prove the runtime benchmark file lifecycle without promoting measured capability.
- * Purpose: verify canonical benchmark evidence survives independent storage and rejects unsafe or stale input.
- * Inputs: deterministic identity keys, nanosecond metrics, and process-owned temporary paths.
- * Effects: creates only fixture baselines/charts and exact corruption copies beneath the owned directory.
- * Failure: assertions report the first violated storage invariant and cleanup removes only named fixtures. */
+/*
+ * Verify canonical benchmark evidence survives independent storage and rejects unsafe or stale
+ * input. Every external fixture lives beneath one unique owned temporary directory and is
+ * removed exactly. Bounded fixtures prove the runtime benchmark file lifecycle without promoting
+ * measured capability.
+ */
 #define _GNU_SOURCE
 #include <yvex/internal/benchmark.h>
 #include <yvex/internal/runtime.h>
@@ -37,13 +34,12 @@ typedef struct {
     char symlink_parent[YVEX_PATH_CAP];
 } benchmark_fixture;
 
-/* Purpose: copy one bounded literal into an identity field used by the test record. */
 static void fixture_text(char *output, size_t capacity, const char *text)
 {
     (void)snprintf(output, capacity, "%s", text);
 }
 
-/* Purpose: fill one independently valid benchmark record with deterministic real-shape metadata. */
+/* Fill one independently valid benchmark record with deterministic real-shape metadata. */
 static void fixture_record(yvex_runtime_benchmark_baseline *record)
 {
     memset(record, 0, sizeof(*record));
@@ -165,7 +161,6 @@ static void fixture_record(yvex_runtime_benchmark_baseline *record)
     record->metrics.state_bytes = 524288ull;
 }
 
-/* Purpose: create one collision-free fixture root and every exact owned output path. */
 static int fixture_open(benchmark_fixture *fixture)
 {
     char root[] = "/tmp/yvex-runtime-benchmark.XXXXXX";
@@ -193,7 +188,6 @@ static int fixture_open(benchmark_fixture *fixture)
     return 1;
 }
 
-/* Purpose: remove only exact files and links created by this fixture before removing its owned root. */
 static int fixture_close(const benchmark_fixture *fixture)
 {
     const char *const files[] = {
@@ -212,7 +206,6 @@ static int fixture_close(const benchmark_fixture *fixture)
     return ok;
 }
 
-/* Purpose: read one bounded fixture file for exact digest and XML assertions. */
 static char *fixture_read(const char *path, size_t *count)
 {
     struct stat state;
@@ -244,7 +237,6 @@ static char *fixture_read(const char *path, size_t *count)
     return data;
 }
 
-/* Purpose: hash exact chart bytes with the same canonical SHA implementation as production. */
 static int fixture_digest(const char *data, size_t count,
                           char output[YVEX_SHA256_HEX_BYTES])
 {
@@ -256,7 +248,6 @@ static int fixture_digest(const char *data, size_t count,
     return 1;
 }
 
-/* Purpose: prove one owner computes complete host/device distributions and typed unavailability. */
 static int test_sample_distributions(void)
 {
     double host[] = {0.004, 0.001, 0.003, 0.002};
@@ -301,7 +292,7 @@ static int test_sample_distributions(void)
     return 0;
 }
 
-/* Purpose: prove record identities are deterministic and cover every measured and compatibility fact. */
+/* Prove record identities are deterministic and cover every measured and compatibility fact. */
 static int test_seal_identity(void)
 {
     yvex_runtime_benchmark_baseline first, second;
@@ -465,7 +456,6 @@ static int test_seal_identity(void)
     return 0;
 }
 
-/* Purpose: prove transactional no-replace publication and independent canonical reopen. */
 static int test_publication(const benchmark_fixture *fixture,
                             yvex_runtime_benchmark_baseline *record)
 {
@@ -526,7 +516,6 @@ static int test_publication(const benchmark_fixture *fixture,
     return 0;
 }
 
-/* Purpose: prove compatible comparisons expose raw deltas while key mismatch refuses without policy. */
 static int test_comparison(const yvex_runtime_benchmark_baseline *baseline,
                            yvex_runtime_benchmark_baseline *current)
 {
@@ -619,7 +608,6 @@ static int test_comparison(const yvex_runtime_benchmark_baseline *baseline,
     return yvex_runtime_benchmark_baseline_seal(current, &failure, &err) == YVEX_OK ? 0 : 1;
 }
 
-/* Purpose: prove explicit policy covers resource regressions while warm allocations remain correctness failures. */
 static int test_regression_dimensions(const yvex_runtime_benchmark_baseline *baseline)
 {
     yvex_runtime_benchmark_regression_policy policy = {.enabled = 1};
@@ -651,7 +639,6 @@ static int test_regression_dimensions(const yvex_runtime_benchmark_baseline *bas
     return 0;
 }
 
-/* Purpose: prove baseline and chart publication are independent authoritative operations. */
 static int test_independent_publication(const benchmark_fixture *fixture,
                                         const yvex_runtime_benchmark_baseline *current)
 {
@@ -709,7 +696,7 @@ static int test_independent_publication(const benchmark_fixture *fixture,
     return 0;
 }
 
-/* Purpose: prove malformed bytes, truncation, and symlink traversal fail closed. */
+/* Prove malformed bytes, truncation, and symlink traversal fail closed. */
 static int test_refusals(const benchmark_fixture *fixture,
                          const yvex_runtime_benchmark_baseline *record)
 {
@@ -802,7 +789,7 @@ static int test_refusals(const benchmark_fixture *fixture,
     return 0;
 }
 
-/* Purpose: prove SVG bytes are escaped, identity-bound, deterministic, and never overwritten. */
+/* Prove SVG bytes are escaped, identity-bound, deterministic, and never overwritten. */
 static int test_chart(const benchmark_fixture *fixture,
                       const yvex_runtime_benchmark_baseline *current,
                       const yvex_runtime_benchmark_baseline *baseline)
@@ -899,7 +886,6 @@ static int test_chart(const benchmark_fixture *fixture,
     return 0;
 }
 
-/* Purpose: prove a cleanup fault is typed without publishing or retaining an owned SVG name. */
 static int test_chart_cleanup_fault(const benchmark_fixture *fixture,
                                     const yvex_runtime_benchmark_baseline *current)
 {
@@ -931,7 +917,6 @@ static int test_chart_cleanup_fault(const benchmark_fixture *fixture,
     return 0;
 }
 
-/* Purpose: execute the complete bounded runtime benchmark baseline and chart lifecycle suite. */
 int yvex_test_runtime_benchmark(void)
 {
     benchmark_fixture fixture;

@@ -1,19 +1,11 @@
-/* Owner: model.target.lowering
- * Owns: artifact-format tensor naming reports and the deterministic DeepSeek Transformation-IR-to-GGUF lowering
- *   projection.
- * Does not own: architecture semantics, transform construction, source payload access, physical encoding policy,
- *   artifact emission, or runtime.
- * Invariants: the mapping preserves canonical terminal order, exhaustive source contribution ownership, and
- *   identity 1aecbbe25b04de0d.
- * Boundary: adding names, qtypes, and metadata after the sealed IR does not redefine logical model or
- *   Transformation IR identity.
- * Purpose: project admitted model facts into format-specific GGUF naming and layout facts while retaining bounded
- *   lexical reports for other families.
- * Inputs: immutable family architecture facts, sealed Transformation IR, and typed model-target report requests.
- * Effects: allocates only owned lowering maps or bounded report state; reads no source payload and performs no
- *   artifact I/O.
- * Failure: typed lowering refusals publish no partial map; report failures retain their established deterministic
- *   status surface. */
+/*
+ * Project admitted model facts into format-specific GGUF naming and layout facts while retaining
+ * bounded lexical reports for other families.
+ *
+ * The mapping preserves canonical terminal order, exhaustive source contribution ownership, and
+ * identity 1aecbbe25b04de0d. Adding names, qtypes, and metadata after the sealed IR does not
+ * redefine logical model or Transformation IR identity.
+ */
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/compilation.h>
@@ -44,11 +36,6 @@ static const yvex_deepseek_gguf_map_failure cleared_map_failure = {
     .expert_index = YVEX_DEEPSEEK_GGUF_NO_INDEX
 };
 
-/* Purpose: enforce typed naming validate invariants before publication.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int naming_validate(const yvex_model_target_request *request,
                            yvex_model_target_report *report)
 {
@@ -88,25 +75,11 @@ typedef struct {
 } yvex_tensor_naming_config_probe;
 
 /*
- * naming_probe_header()
+ * Inspect safetensors header text for bounded tensor naming facts.
  *
- * Purpose:
- *   inspect safetensors header text for bounded tensor naming facts.
- *
- * Inputs:
- *   path is borrowed; probe is mutated.
- *
- * Effects:
- *   reads only the safetensors JSON header into temporary memory and records
- *   lexical presence facts; tensor payload bytes are never read.
- *
- * Failure:
- *   silently leaves checked false when the file/header cannot be read, because
- *   report builders still need deterministic fallback facts.
- *
- * Boundary:
- *   header probing is not tensor role verification, payload trust, artifact
- *   emission, runtime execution, or generation support. */
+ * Silently leaves checked false when the file/header cannot be read, because report builders still
+ * need deterministic fallback facts.
+ */
 static void naming_probe_header(const char *path,
                                 yvex_tensor_naming_header_probe *probe)
 {
@@ -138,24 +111,6 @@ static void naming_probe_header(const char *path,
     free(json);
 }
 
-/*
- * naming_probe_config()
- *
- * Purpose:
- *   read bounded config metadata needed to classify tied output-head coverage.
- *
- * Inputs:
- *   request/family are borrowed; probe is mutated.
- *
- * Effects:
- *   reads a small config.json sidecar only; no tensor payloads, rendering, or
- *   artifact files are touched.
- *
- * Failure:
- *   missing config leaves checked false and preserves header-only fallback.
- *
- * Boundary:
- *   config metadata is tensor-map evidence, not runtime or logits readiness. */
 static void naming_probe_config(const yvex_model_target_request *request,
                                 const char *family,
                                 yvex_tensor_naming_config_probe *probe)
@@ -178,11 +133,6 @@ static void naming_probe_config(const yvex_model_target_request *request,
         strstr(buf, "\"tie_word_embeddings\": true") != NULL;
 }
 
-/* Purpose: apply the canonical naming counts transformation and invariants.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void naming_counts(const yvex_model_target_request *request,
                           const char *family,
                           const char **status,
@@ -270,11 +220,6 @@ static void naming_counts(const yvex_model_target_request *request,
     }
 }
 
-/* Purpose: publish naming maybe write sidecar through the bounded output boundary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void naming_maybe_write_sidecar(const yvex_model_target_request *request,
                                        const char *family,
                                        const char *status,
@@ -404,11 +349,6 @@ static const char *const moe_mapping_rows[] = {
     "-> model.layers.0.moe.shared_expert.down_proj.weight"
 };
 
-/* Purpose: project naming audit rows from typed facts without capability drift.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void naming_audit_rows(yvex_model_target_report *report,
                               const yvex_model_target_request *request,
                               const char *family,
@@ -484,11 +424,6 @@ static void naming_audit_rows(yvex_model_target_report *report,
 #undef NAMING_LITERAL_ROW
 #undef NAMING_STRING_ROW
 
-/* Purpose: construct bounded naming report build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 int yvex_tensor_naming_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
@@ -595,8 +530,6 @@ static void lowering_close(yvex_deepseek_gguf_map *map);
 static const char *lowering_failure_name(
     yvex_deepseek_gguf_map_failure_code code);
 static yvex_tensor_scope map_scope(yvex_transform_scope scope);
-
-/* Purpose: map lowering family ir through canonical typed vocabulary. */
 
 static const yvex_model_family_ir_api *lowering_family_ir(void)
 {
@@ -794,50 +727,28 @@ static const map_metadata_spec map_metadata_specs[] = {
     {"yvex.deepseek4.mtp.name_prefix", M_STR, M_LIT, 0u, {.string = "yvex.mtp.v1"}}
 };
 
-/* Purpose: map map default allocate through canonical typed vocabulary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void *map_default_allocate(size_t size, void *context)
 {
     (void)context;
     return malloc(size);
 }
 
-/* Purpose: release owned map default release resources in dependency order.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void map_default_release(void *allocation, void *context)
 {
     (void)context;
     free(allocation);
 }
 
-/* Purpose: encode map hash string fields in canonical identity order.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static unsigned long long map_hash_string(const char *text)
 {
     return yvex_core_hash_mix_bytes(1469598103934665603ull, text, strlen(text) + 1u);
 }
 
-/* Purpose: project typed map failure clear vocabulary without lost semantics. */
 static void map_failure_clear(yvex_deepseek_gguf_map_failure *failure)
 {
     if (!failure) return;
     *failure = cleared_map_failure;
 }
-
-/* Purpose: enforce typed map reject invariants before publication.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int map_reject(map_builder *builder,
                       yvex_deepseek_gguf_map_failure_code code,
@@ -882,7 +793,6 @@ static int map_reject(map_builder *builder,
     return status;
 }
 
-/* Purpose: reject a map-wide invariant without manufacturing tensor context. */
 static int map_reject_global(map_builder *builder,
                              yvex_deepseek_gguf_map_failure_code code,
                              const char *subject,
@@ -895,7 +805,6 @@ static int map_reject_global(map_builder *builder,
                       subject, NULL, expected, actual);
 }
 
-/* Purpose: reject one descriptor while preserving its exact diagnostic key. */
 static int map_reject_descriptor(map_builder *builder,
                                  yvex_deepseek_gguf_map_failure_code code,
                                  const yvex_deepseek_gguf_descriptor *descriptor,
@@ -910,7 +819,6 @@ static int map_reject_descriptor(map_builder *builder,
                       expert, source, emitted, expected, actual);
 }
 
-/* Purpose: reject one logical key before a descriptor is safely available. */
 static int map_reject_key(map_builder *builder,
                           yvex_deepseek_gguf_map_failure_code code,
                           const yvex_transform_logical_key *key,
@@ -927,11 +835,6 @@ static int map_reject_key(map_builder *builder,
                       YVEX_DEEPSEEK_GGUF_NO_INDEX, NULL, NULL, expected, actual);
 }
 
-/* Purpose: map map allocate zero through canonical typed vocabulary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void *map_allocate_zero(yvex_deepseek_gguf_map *map, size_t size)
 {
     void *allocation = map->allocator.allocate(size, map->allocator.context);
@@ -939,7 +842,6 @@ static void *map_allocate_zero(yvex_deepseek_gguf_map *map, size_t size)
     return allocation;
 }
 
-/* Purpose: register one map index insert while preserving order and bounds. */
 static int map_index_insert(map_index_slot *slots,
                             unsigned long long capacity,
                             unsigned long long hash,
@@ -961,11 +863,6 @@ static int map_index_insert(map_index_slot *slots,
     return 0;
 }
 
-/* Purpose: register one map emitted index insert while preserving order and bounds.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int map_unique_index_equal(const yvex_deepseek_gguf_map *map,
                                   int emitted,
                                   unsigned long long left,
@@ -981,11 +878,6 @@ static int map_unique_index_equal(const yvex_deepseek_gguf_map *map,
                          current->predictor_index == candidate->predictor_index;
 }
 
-/* Purpose: insert one descriptor into a uniqueness-aware canonical index.
- * Inputs: sealed map, selected index kind, canonical hash, and descriptor ordinal.
- * Effects: publishes one occupied index slot only when its key is unique.
- * Failure: returns false on a duplicate key or exhausted index without replacing a slot.
- * Boundary: indexes admitted descriptor facts and never changes tensor naming semantics. */
 static int map_unique_index_insert(yvex_deepseek_gguf_map *map,
                                    int emitted,
                                    unsigned long long hash,
@@ -1012,7 +904,6 @@ static int map_unique_index_insert(yvex_deepseek_gguf_map *map,
     return 0;
 }
 
-/* Purpose: register one emitted name while preserving uniqueness. */
 static int map_emitted_index_insert(yvex_deepseek_gguf_map *map,
                                     unsigned long long hash,
                                     unsigned long long value)
@@ -1020,7 +911,6 @@ static int map_emitted_index_insert(yvex_deepseek_gguf_map *map,
     return map_unique_index_insert(map, 1, hash, value);
 }
 
-/* Purpose: register one logical role key while preserving uniqueness. */
 static int map_role_index_insert(yvex_deepseek_gguf_map *map,
                                  unsigned long long hash,
                                  unsigned long long value)
@@ -1028,18 +918,12 @@ static int map_role_index_insert(yvex_deepseek_gguf_map *map,
     return map_unique_index_insert(map, 0, hash, value);
 }
 
-/* Purpose: map map scope through canonical typed vocabulary. */
 static yvex_tensor_scope map_scope(yvex_transform_scope scope)
 {
     return (unsigned int)scope < MAP_SCOPE_COUNT ? map_scopes[(unsigned int)scope]
                                                   : YVEX_TENSOR_SCOPE_GLOBAL;
 }
 
-/* Purpose: map map collection through canonical typed vocabulary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static yvex_tensor_collection map_collection(
     yvex_transform_subsystem subsystem)
 {
@@ -1047,11 +931,6 @@ static yvex_tensor_collection map_collection(
         ? map_collections[(unsigned int)subsystem] : YVEX_TENSOR_COLLECTION_COUNT;
 }
 
-/* Purpose: map map transform through canonical typed vocabulary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int map_transform(const yvex_transform_node *node,
                          yvex_deepseek_gguf_transform *transform,
                          unsigned int *qtype)
@@ -1067,7 +946,6 @@ static int map_transform(const yvex_transform_node *node,
     return 1;
 }
 
-/* Purpose: map map contribution kind through canonical typed vocabulary. */
 static yvex_deepseek_gguf_contribution_kind map_contribution_kind(
     yvex_deepseek_gguf_transform transform,
     unsigned long long input)
@@ -1079,12 +957,6 @@ static yvex_deepseek_gguf_contribution_kind map_contribution_kind(
         ? map_contribution_kinds[(unsigned int)transform][secondary]
         : YVEX_DEEPSEEK_GGUF_CONTRIBUTION_PRIMARY;
 }
-
-/* Purpose: map map descriptor begin through canonical typed vocabulary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int map_descriptor_begin(map_builder *builder,
                                 const yvex_transform_value *terminal,
@@ -1186,12 +1058,6 @@ static int map_descriptor_begin(map_builder *builder,
     return YVEX_OK;
 }
 
-/* Purpose: register one map descriptor add source while preserving order and bounds.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
-
 static int map_descriptor_add_source(
     map_builder *builder,
     const yvex_transform_node *node,
@@ -1252,12 +1118,6 @@ static int map_descriptor_add_source(
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded map build descriptors state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
-
 static int map_build_descriptors(map_builder *builder)
 {
     const yvex_transform_ir_summary *summary =
@@ -1307,11 +1167,6 @@ static int map_build_descriptors(map_builder *builder)
     return YVEX_OK;
 }
 
-/* Purpose: register one map add metadata string while preserving order and bounds.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int map_metadata_begin(map_builder *builder,
                               const char *key,
                               yvex_deepseek_gguf_metadata **out)
@@ -1333,11 +1188,6 @@ static int map_metadata_begin(map_builder *builder,
     return YVEX_OK;
 }
 
-/* Purpose: project one typed metadata specification from immutable family facts.
- * Inputs: builder, immutable specification, family facts, and bounded layer vectors.
- * Effects: appends exactly one metadata entry in specification order.
- * Failure: propagates typed cardinality, duplicate-key, and metadata-capacity refusals.
- * Boundary: table projection preserves the canonical metadata values and serialized order. */
 static int map_add_metadata_spec(map_builder *builder,
                                  const map_metadata_spec *spec,
                                  const model_t *model,
@@ -1388,12 +1238,6 @@ static int map_add_metadata_spec(map_builder *builder,
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded map build metadata state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
-
 static int map_build_metadata(map_builder *builder)
 {
     const model_t *model =
@@ -1421,12 +1265,6 @@ static int map_build_metadata(map_builder *builder)
     }
     return YVEX_OK;
 }
-
-/* Purpose: map map finalize through canonical typed vocabulary.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 
 static int map_finalize(map_builder *builder)
 {
@@ -1469,11 +1307,6 @@ static int map_finalize(map_builder *builder)
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded lowering build with allocator state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int lowering_build_with_allocator(
     yvex_deepseek_gguf_map **out,
     const yvex_deepseek_v4_ir *architecture,
@@ -1579,11 +1412,6 @@ static int lowering_build_with_allocator(
     return YVEX_OK;
 }
 
-/* Purpose: construct bounded lowering build state from admitted inputs.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static int lowering_build(
     yvex_deepseek_gguf_map **out,
     const yvex_deepseek_v4_ir *architecture,
@@ -1599,11 +1427,6 @@ static int lowering_build(
         out, architecture, transform_ir, &allocator, failure, err);
 }
 
-/* Purpose: release owned lowering close resources in dependency order.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static void lowering_close(yvex_deepseek_gguf_map *map)
 {
     yvex_deepseek_gguf_map_allocator allocator;
@@ -1622,14 +1445,12 @@ static void lowering_close(yvex_deepseek_gguf_map *map)
     allocator.release(map, allocator.context);
 }
 
-/* Purpose: project the immutable bounded lowering summary view. */
 static const yvex_deepseek_gguf_map_summary *lowering_summary(
     const yvex_deepseek_gguf_map *map)
 {
     return map ? &map->summary : NULL;
 }
 
-/* Purpose: project the immutable bounded lowering at view. */
 static const yvex_deepseek_gguf_descriptor *lowering_at(
     const yvex_deepseek_gguf_map *map,
     unsigned long long index)
@@ -1637,7 +1458,6 @@ static const yvex_deepseek_gguf_descriptor *lowering_at(
     return map && index < map->summary.descriptor_count ? &map->descriptors[index] : NULL;
 }
 
-/* Purpose: project the immutable bounded lowering contribution at view. */
 static const yvex_deepseek_gguf_contribution *
 lowering_contribution_at(
     const yvex_deepseek_gguf_map *map,
@@ -1646,11 +1466,6 @@ lowering_contribution_at(
     return map && index < map->summary.source_contribution_count ? &map->contributions[index] : NULL;
 }
 
-/* Purpose: resolve one map find name through the canonical index.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static const yvex_deepseek_gguf_descriptor *map_find_name(
     const yvex_deepseek_gguf_map *map,
     const char *name,
@@ -1685,7 +1500,6 @@ static const yvex_deepseek_gguf_descriptor *map_find_name(
     return NULL;
 }
 
-/* Purpose: resolve one lowering find source through the canonical index. */
 static const yvex_deepseek_gguf_descriptor *lowering_find_source(
     const yvex_deepseek_gguf_map *map,
     const char *source_name)
@@ -1693,7 +1507,6 @@ static const yvex_deepseek_gguf_descriptor *lowering_find_source(
     return map_find_name(map, source_name, 0);
 }
 
-/* Purpose: resolve one lowering find emitted through the canonical index. */
 static const yvex_deepseek_gguf_descriptor *lowering_find_emitted(
     const yvex_deepseek_gguf_map *map,
     const char *emitted_name)
@@ -1701,11 +1514,6 @@ static const yvex_deepseek_gguf_descriptor *lowering_find_emitted(
     return map_find_name(map, emitted_name, 1);
 }
 
-/* Purpose: resolve one lowering find role through the canonical index.
- * Inputs: typed facts are borrowed.
- * Effects: updates bounded report or plan state.
- * Failure: preserves typed refusal and cleanup.
- * Boundary: never promotes payload or runtime execution. */
 static const yvex_deepseek_gguf_descriptor *lowering_find_role(
     const yvex_deepseek_gguf_map *map,
     yvex_tensor_role role,
@@ -1737,7 +1545,6 @@ static const yvex_deepseek_gguf_descriptor *lowering_find_role(
     return NULL;
 }
 
-/* Purpose: project the immutable bounded lowering metadata at view. */
 static const yvex_deepseek_gguf_metadata *lowering_metadata_at(
     const yvex_deepseek_gguf_map *map,
     unsigned long long index)
@@ -1745,7 +1552,6 @@ static const yvex_deepseek_gguf_metadata *lowering_metadata_at(
     return map && index < map->summary.metadata_count ? &map->metadata[index] : NULL;
 }
 
-/* Purpose: resolve one lowering metadata find through the canonical index. */
 static const yvex_deepseek_gguf_metadata *lowering_metadata_find(
     const yvex_deepseek_gguf_map *map,
     const char *key)
@@ -1758,7 +1564,6 @@ static const yvex_deepseek_gguf_metadata *lowering_metadata_find(
     return NULL;
 }
 
-/* Purpose: project typed lowering transform name vocabulary without lost semantics. */
 static const char *lowering_transform_name(
     yvex_deepseek_gguf_transform transform)
 {
@@ -1766,7 +1571,6 @@ static const char *lowering_transform_name(
         ? lowering_transform_names[transform] : "unknown";
 }
 
-/* Purpose: project typed lowering failure name vocabulary without lost semantics. */
 static const char *lowering_failure_name(
     yvex_deepseek_gguf_map_failure_code code)
 {
@@ -1774,12 +1578,12 @@ static const char *lowering_failure_name(
         ? lowering_failure_names[code] : "unknown";
 }
 
-/* Purpose: publish the immutable GGUF-lowering operation table used by the
- * family registration without exporting its implementation helpers.
- * Inputs: none.
- * Effects: returns process-lifetime immutable storage; no allocation or I/O.
- * Failure: cannot fail.
- * Boundary: the table projects format facts and is not transformation truth. */
+/*
+ * Publish the immutable GGUF-lowering operation table used by the family registration without
+ * exporting its implementation helpers.
+ *
+ * Returns process-lifetime immutable storage; no allocation or I/O.
+ */
 const yvex_model_family_lowering_api *yvex_model_deepseek_lowering_api(void)
 {
     static const yvex_model_family_lowering_api api = {

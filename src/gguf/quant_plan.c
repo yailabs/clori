@@ -1,15 +1,10 @@
-/* Owner: gguf.quant plan (TRACK.QUANT).
- * Owns: candidate accounting, fixed v0.1 selection, terminal decisions, descriptor bijection, canonical profile
- *   identity, indexes, and cleanup.
- * Does not own: IR semantics, source IO, GGUF naming/mapping identity, numeric conversion, calibration collection,
- *   writing, runtime, or rendering.
- * Invariants: 1,360 canonical terminals and descriptors biject after complete typed-field validation; construction
- *   reads zero payload bytes.
- * Boundary: this chooses physical encodings but produces no encoded payload.
- * Purpose: seal deterministic physical decisions over immutable transform plans.
- * Inputs: admitted IR/binding, lowering descriptors, profile, and resource budget.
- * Effects: allocates indexed decision plans with canonical semantic identities.
- * Failure: typed refusal releases partial ownership and reads no payload bytes. */
+/*
+ * Seal deterministic physical decisions over immutable transform plans.
+ *
+ * 1,360 canonical terminals and descriptors biject after complete typed-field validation;
+ * construction reads zero payload bytes. This chooses physical encodings but produces no encoded
+ * payload.
+ */
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -71,31 +66,16 @@ struct yvex_quant_plan {
     void *allocator_context;
 };
 
-/* Purpose: provide the default zero-initialized quant-plan allocator.
- * Inputs: requested allocation size and ignored allocator context.
- * Effects: allocates caller-owned heap storage.
- * Failure: returns null when the system allocator cannot satisfy the request.
- * Boundary: default seam only; custom allocators remain plan-owned policy. */
 static void *quant_plan_default_allocate(size_t size, void *context) {
     (void)context;
     return calloc(1u, size);
 }
 
-/* Purpose: release storage created by the default quant-plan allocator.
- * Inputs: optional heap allocation and ignored allocator context.
- * Effects: returns storage to the system allocator.
- * Failure: releasing null is accepted by the underlying allocator.
- * Boundary: never releases borrowed IR, binding, or lowering owners. */
 static void quant_plan_default_release(void *allocation, void *context) {
     (void)context;
     free(allocation);
 }
 
-/* Purpose: publish one structured quantization-plan refusal.
- * Inputs: typed code, terminal/source facts, qtype, operation, and status.
- * Effects: resets the failure record and updates the shared error object.
- * Failure: returns the supplied status without exposing a sealed plan.
- * Boundary: centralizes diagnostics while callers retain decision policy. */
 static int quant_plan_fail(yvex_quant_failure *failure, yvex_quant_failure_code code,
                            unsigned long long terminal, unsigned long long source,
                            unsigned long long expected, unsigned long long actual,
@@ -117,11 +97,6 @@ static int quant_plan_fail(yvex_quant_failure *failure, yvex_quant_failure_code 
     return status;
 }
 
-/* Purpose: fold one explicit-width value into the logical-key hash.
- * Inputs: current FNV-style hash and unsigned 64-bit value.
- * Effects: none outside the returned hash.
- * Failure: deterministic arithmetic wraps by the defined unsigned rules.
- * Boundary: lookup hash only; canonical identity uses SHA-256 encoding. */
 static unsigned long long quant_hash_u64(unsigned long long hash, unsigned long long value) {
     unsigned int index;
     for (index = 0u; index < 8u; ++index) {
@@ -131,11 +106,6 @@ static unsigned long long quant_hash_u64(unsigned long long hash, unsigned long 
     return hash;
 }
 
-/* Purpose: hash every typed logical-key field for immutable indexing.
- * Inputs: valid artifact-neutral logical tensor key.
- * Effects: none.
- * Failure: admitted keys always yield a deterministic non-authoritative hash.
- * Boundary: excludes GGUF names and physical encoding decisions. */
 static unsigned long long quant_key_hash(const yvex_transform_logical_key *key) {
     unsigned long long hash = 1469598103934665603ull;
     hash = quant_hash_u64(hash, key->scope);
@@ -146,11 +116,6 @@ static unsigned long long quant_key_hash(const yvex_transform_logical_key *key) 
     return quant_hash_u64(hash, key->group_index);
 }
 
-/* Purpose: compare artifact-neutral logical tensor keys exactly.
- * Inputs: two admitted logical keys.
- * Effects: none.
- * Failure: returns false on any semantic-field mismatch.
- * Boundary: equality ignores allocation and emitted-name details. */
 static int quant_key_equal(const yvex_transform_logical_key *left,
                            const yvex_transform_logical_key *right) {
     return left->scope == right->scope && left->subsystem == right->subsystem &&
@@ -159,11 +124,6 @@ static int quant_key_equal(const yvex_transform_logical_key *left,
            left->group_index == right->group_index;
 }
 
-/* Purpose: add one ownership size without diagnostic arithmetic wrap.
- * Inputs: size operands and caller-owned result.
- * Effects: writes the sum or a saturated failure sentinel.
- * Failure: returns false for null output or overflow.
- * Boundary: tracks memory ownership only, not encoded model bytes. */
 static int quant_size_add(size_t left, size_t right, size_t *out) {
     if (!out)
         return 0;
@@ -175,11 +135,6 @@ static int quant_size_add(size_t left, size_t right, size_t *out) {
     return 1;
 }
 
-/* Purpose: compute logical element count with rank and overflow refusal.
- * Inputs: immutable transform shape and caller-owned count.
- * Effects: writes exact element count on success.
- * Failure: returns false for invalid rank/dimensions or product overflow.
- * Boundary: interprets logical shape only, not qtype row geometry. */
 static int quant_transform_element_count(const yvex_transform_shape *shape,
                                          unsigned long long *out) {
     unsigned long long count = 1u;
@@ -198,11 +153,6 @@ static int quant_transform_element_count(const yvex_transform_shape *shape,
     return 1;
 }
 
-/* Purpose: project transform scope into the typed DeepSeek lowering scope.
- * Inputs: admitted transform scope.
- * Effects: none.
- * Failure: non-global/non-main values map to the admitted MTP scope.
- * Boundary: typed projection only; no lexical scope parsing occurs. */
 static yvex_tensor_scope quant_map_scope(yvex_transform_scope scope) {
     if (scope == YVEX_TRANSFORM_SCOPE_GLOBAL)
         return YVEX_TENSOR_SCOPE_GLOBAL;
@@ -211,11 +161,6 @@ static yvex_tensor_scope quant_map_scope(yvex_transform_scope scope) {
     return YVEX_TENSOR_SCOPE_MTP;
 }
 
-/* Purpose: project supported transform operations into lowering semantics.
- * Inputs: typed artifact-neutral operation kind.
- * Effects: none.
- * Failure: unsupported kinds map to the explicit invalid sentinel.
- * Boundary: maps semantics without selecting qtypes or executing bytes. */
 static yvex_deepseek_gguf_transform quant_map_operation(yvex_transform_operation_kind operation) {
     size_t index;
     for (index = 0u; index < sizeof(operation_lowerings) / sizeof(operation_lowerings[0]); ++index)
@@ -224,11 +169,6 @@ static yvex_deepseek_gguf_transform quant_map_operation(yvex_transform_operation
     return (yvex_deepseek_gguf_transform)-1;
 }
 
-/* Purpose: select exact scalar GGUF storage for one logical dtype.
- * Inputs: typed transform value dtype.
- * Effects: none.
- * Failure: unsupported dtypes return the unsigned invalid sentinel.
- * Boundary: exact storage selection excludes lossy profile policy. */
 static unsigned int quant_exact_qtype(yvex_transform_dtype dtype) {
     return ((dtype >= YVEX_TRANSFORM_DTYPE_F32 && dtype <= YVEX_TRANSFORM_DTYPE_I32) ||
             dtype == YVEX_TRANSFORM_DTYPE_REAL)
@@ -236,11 +176,6 @@ static unsigned int quant_exact_qtype(yvex_transform_dtype dtype) {
                : UINT_MAX;
 }
 
-/* Purpose: select candidate encoding from typed operation and precision facts.
- * Inputs: candidate profile plus immutable terminal and producer node.
- * Effects: none.
- * Failure: unsupported logical dtypes yield the invalid qtype sentinel.
- * Boundary: never parses source or emitted tensor names. */
 static unsigned int quant_candidate_qtype(yvex_quant_profile_kind profile,
                                           const yvex_transform_value *terminal,
                                           const yvex_transform_node *node) {
@@ -258,11 +193,6 @@ static unsigned int quant_candidate_qtype(yvex_quant_profile_kind profile,
     return quant_exact_qtype(terminal->dtype);
 }
 
-/* Purpose: prove one IR terminal bijects with one lowering descriptor and inputs.
- * Inputs: sealed IR, terminal/node, lowering map/descriptor, and ordinal.
- * Effects: may publish the first typed mismatch failure.
- * Failure: refuses roles, axes, shapes, operations, or contributions that diverge.
- * Boundary: compares canonical facts and performs no source or payload I/O. */
 static int
 quant_descriptor_matches(const yvex_transform_ir *ir, const yvex_transform_value *terminal,
                          const yvex_transform_node *node, const yvex_deepseek_gguf_map *map,
@@ -321,11 +251,6 @@ quant_descriptor_matches(const yvex_transform_ir *ir, const yvex_transform_value
     return YVEX_OK;
 }
 
-/* Purpose: derive exact qtype storage geometry for a physical decision.
- * Inputs: mutable decision, explicit dimensions/rank, and failure outputs.
- * Effects: fills row, element, shape, and encoded-byte fields on success.
- * Failure: maps canonical geometry refusal into typed quant recovery classes.
- * Boundary: consumes qtype geometry authority and never duplicates its tables. */
 static int quant_decision_geometry_dims(yvex_quant_decision *decision,
                                         const unsigned long long *dims, unsigned int rank,
                                         yvex_quant_failure *failure, yvex_error *err) {
@@ -353,11 +278,6 @@ static int quant_decision_geometry_dims(yvex_quant_decision *decision,
     return YVEX_OK;
 }
 
-/* Purpose: map numeric-registry refusal into the plan recovery taxonomy.
- * Inputs: optional immutable qtype capability row.
- * Effects: none.
- * Failure: absent/unknown capability maps to unknown-qtype refusal.
- * Boundary: projects canonical capability truth without redefining support. */
 static yvex_quant_failure_code
 quant_capability_failure(const yvex_quant_numeric_capability *capability) {
     if (!capability || !capability->identity_known)
@@ -371,11 +291,6 @@ quant_capability_failure(const yvex_quant_numeric_capability *capability) {
     return YVEX_QUANT_FAILURE_ENCODER_UNAVAILABLE;
 }
 
-/* Purpose: derive decision geometry from one canonical lowering descriptor.
- * Inputs: mutable decision, descriptor physical shape, and failure outputs.
- * Effects: fills exact qtype row and byte accounting.
- * Failure: propagates canonical geometry refusal.
- * Boundary: thin typed adapter; dimension logic remains in the shared helper. */
 static int quant_decision_geometry(yvex_quant_decision *decision,
                                    const yvex_deepseek_gguf_descriptor *descriptor,
                                    yvex_quant_failure *failure, yvex_error *err) {
@@ -383,11 +298,11 @@ static int quant_decision_geometry(yvex_quant_decision *decision,
                                         descriptor->logical_rank, failure, err);
 }
 
-/* Purpose: derive deterministic identity for one complete physical decision.
- * Inputs: populated decision with logical key, operation, shape, and constraints.
- * Effects: writes SHA-256 identity into the owned decision.
- * Failure: returns false when canonical encoding or hash finalization fails.
- * Boundary: excludes pointers, names, allocation order, and runtime counters. */
+/*
+ * Derive deterministic identity for one complete physical decision.
+ *
+ * Writes SHA-256 identity into the owned decision.
+ */
 static int quant_decision_identity(yvex_quant_decision *decision) {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -432,11 +347,11 @@ static int quant_decision_identity(yvex_quant_decision *decision) {
     return 1;
 }
 
-/* Purpose: account one decision into its candidate profile summary.
- * Inputs: mutable candidate counters and immutable sealed decision.
- * Effects: advances bytes, qtype counts, compute, and calibration facts.
- * Failure: returns false for invalid qtype or any counter overflow.
- * Boundary: accounting does not select the final candidate. */
+/*
+ * Account one decision into its candidate profile summary.
+ *
+ * Returns false for invalid qtype or any counter overflow.
+ */
 static int quant_summary_add(yvex_quant_candidate_summary *summary,
                              const yvex_quant_decision *decision) {
     unsigned long long *class_bytes;
@@ -469,11 +384,12 @@ static int quant_summary_add(yvex_quant_candidate_summary *summary,
     return 1;
 }
 
-/* Purpose: build one candidate decision from typed IR and numeric capability.
- * Inputs: profile, binding, terminal/node, lowering descriptor, and ordinal.
- * Effects: fills decision geometry, constraints, compute facts, and identity.
- * Failure: typed refusal covers precision, codec, binding, geometry, or identity.
- * Boundary: plans physical bytes but performs no conversion or payload read. */
+/*
+ * Build one candidate decision from typed IR and numeric capability.
+ *
+ * Fills decision geometry, constraints, compute facts, and identity. Typed refusal covers
+ * precision, codec, binding, geometry, or identity.
+ */
 static int quant_build_qtype_decision(unsigned int qtype,
                                           const yvex_transform_binding *binding,
                                           const yvex_transform_value *terminal,
@@ -550,11 +466,6 @@ static int quant_build_qtype_decision(unsigned int qtype,
     return YVEX_OK;
 }
 
-/* Purpose: project one fixed compatibility profile into the common qtype decision builder.
- * Inputs: profile, sealed terminal/lowering facts, ordinal, and diagnostic outputs.
- * Effects: writes one complete caller-owned candidate decision.
- * Failure: propagates geometry, capability, or precision refusal.
- * Boundary: compatibility presets use the same physical decision mechanism as policy plans. */
 static int quant_build_candidate_decision(yvex_quant_profile_kind profile,
                                           const yvex_transform_binding *binding,
                                           const yvex_transform_value *terminal,
@@ -566,21 +477,11 @@ static int quant_build_candidate_decision(yvex_quant_profile_kind profile,
                                       terminal, node, descriptor, ordinal, decision, failure, err);
 }
 
-/* Purpose: encode one payload scalar.
- * Inputs: active hash and explicit-width value.
- * Effects: advances the hash.
- * Failure: returns false on overflow.
- * Boundary: recipe identity only. */
 static int payload_u64(yvex_sha256 *hash, unsigned long long value)
 {
     return yvex_sha256_update_u64(hash, value);
 }
 
-/* Purpose: bind one source value exactly as consumed by byte execution.
- * Inputs: canonical hash and immutable source value.
- * Effects: advances only the supplied hash.
- * Failure: returns false on malformed shape or canonical encoding failure.
- * Boundary: excludes logical display keys and allocation identities. */
 static int quant_payload_source_identity(yvex_sha256 *hash,
                                          const yvex_transform_source_value *source)
 {
@@ -600,11 +501,11 @@ static int quant_payload_source_identity(yvex_sha256 *hash,
            payload_u64(hash, source->expert_index) && payload_u64(hash, source->required_uses);
 }
 
-/* Purpose: bind one transformation node and its ordered byte inputs.
- * Inputs: canonical hash, immutable IR, and terminal producer.
- * Effects: advances only the supplied hash.
- * Failure: unresolved inputs or encoding failure return false.
- * Boundary: records execution geometry without the enclosing Transform IR identity. */
+/*
+ * Bind one transformation node and its ordered byte inputs.
+ *
+ * Records execution geometry without the enclosing Transform IR identity.
+ */
 static int quant_payload_node_identity(yvex_sha256 *hash, const yvex_transform_ir *ir,
                                        const yvex_transform_node *node)
 {
@@ -644,11 +545,6 @@ static int quant_payload_node_identity(yvex_sha256 *hash, const yvex_transform_i
     return 1;
 }
 
-/* Purpose: bind one selected physical encoding decision.
- * Inputs: canonical hash and immutable decision.
- * Effects: advances only the supplied hash.
- * Failure: returns false for invalid rank or encoding failure.
- * Boundary: excludes logical role and terminal/node allocation IDs. */
 static int quant_payload_decision_identity(yvex_sha256 *hash,
                                            const yvex_quant_decision *decision)
 {
@@ -666,11 +562,12 @@ static int quant_payload_decision_identity(yvex_sha256 *hash,
            payload_u64(hash, decision->calibration) && payload_u64(hash, decision->numeric_contract_version);
 }
 
-/* Purpose: derive the byte-execution recipe identity independently from semantic IR identity.
- * Inputs: sealed construction state with canonical source edges, operations, and decisions.
- * Effects: writes only the payload-plan identity.
- * Failure: unresolved recipe facts or canonical encoding failure return false.
- * Boundary: excludes GGUF names, mapping provenance, and layout; writer identity binds those. */
+/*
+ * Derive the byte-execution recipe identity independently from semantic IR identity.
+ *
+ * Writes only the payload-plan identity. Excludes GGUF names, mapping provenance, and layout;
+ * writer identity binds those.
+ */
 static int quant_payload_plan_identity(yvex_quant_plan *plan)
 {
     yvex_sha256 hash;
@@ -702,11 +599,11 @@ static int quant_payload_plan_identity(yvex_quant_plan *plan)
     return 1;
 }
 
-/* Purpose: derive canonical identity for one complete physical quant plan.
- * Inputs: populated plan summary and canonical-ordinal decision identities.
- * Effects: writes the profile identity into the owned summary.
- * Failure: returns false when any explicit-width hash update fails.
- * Boundary: binds semantics and execution requirements, not temporary resources. */
+/*
+ * Derive canonical identity for one complete physical quant plan.
+ *
+ * Writes the profile identity into the owned summary.
+ */
 static int quant_plan_identity(yvex_quant_plan *plan) {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
@@ -757,11 +654,6 @@ typedef struct {
     int explicit_plan;
 } quant_build_context;
 
-/* Purpose: prove the immutable binding names exactly the supplied IR snapshot.
- * Inputs: build context containing admitted IR and binding summaries.
- * Effects: may publish one typed identity mismatch.
- * Failure: refuses transform, source snapshot, or payload identity divergence.
- * Boundary: validates identity binding before allocation and payload execution. */
 static int quant_binding_identity_validate(quant_build_context *context) {
     if (strcmp(context->ir_summary->transform_identity,
                context->binding_summary->transform_identity) != 0)
@@ -783,11 +675,6 @@ static int quant_binding_identity_validate(quant_build_context *context) {
     return YVEX_OK;
 }
 
-/* Purpose: apply allocator defaults and create bounded plan arrays/indexes.
- * Inputs: admitted build context and optional resource/allocator options.
- * Effects: allocates initialized plan, decisions, and open-addressing index.
- * Failure: typed refusal covers geometry, budget, or allocation failure.
- * Boundary: borrows IR/binding/lowering and owns only plan storage. */
 static int quant_build_allocate(quant_build_context *context,
                                 const yvex_quant_plan_options *options) {
     size_t decision_bytes;
@@ -881,11 +768,6 @@ static int quant_build_allocate(quant_build_context *context,
     return YVEX_OK;
 }
 
-/* Purpose: insert one immutable logical decision into expected-O(1) index.
- * Inputs: build context, completed decision, ordinal, and diagnostics.
- * Effects: installs one slot and advances decision/qtype/role counters.
- * Failure: refuses duplicate logical keys or exhausted probe capacity.
- * Boundary: indexing order cannot change canonical terminal ordering. */
 static int quant_index_add(quant_build_context *context, yvex_quant_decision *decision,
                            unsigned long long ordinal, const char *duplicate_message,
                            const char *exhausted_message) {
@@ -927,11 +809,11 @@ static int quant_index_add(quant_build_context *context, yvex_quant_decision *de
     return YVEX_OK;
 }
 
-/* Purpose: validate and materialize one caller-selected physical decision.
- * Inputs: build context, explicit decision specification, ordinal, and summary.
- * Effects: fills one decision, accounts candidate bytes, and indexes its key.
- * Failure: typed refusal covers binding, codec, shape, precision, or identity.
- * Boundary: accepts physical choices without mutating Transformation IR. */
+/*
+ * Validate and materialize one caller-selected physical decision.
+ *
+ * Typed refusal covers binding, codec, shape, precision, or identity.
+ */
 static int quant_explicit_decision_build(quant_build_context *context,
                                          const yvex_quant_explicit_decision *spec,
                                          unsigned long long ordinal,
@@ -1034,11 +916,6 @@ static int quant_explicit_decision_build(quant_build_context *context,
                            "explicit decision index exhausted");
 }
 
-/* Purpose: copy selected candidate accounting into the canonical plan summary.
- * Inputs: mutable plan summary and immutable candidate totals.
- * Effects: updates selected bytes and calibration fields.
- * Failure: admitted summaries make this field projection infallible.
- * Boundary: copies accounting only and does not select the candidate. */
 static void quant_summary_select(yvex_quant_plan_summary *summary,
                                  const yvex_quant_candidate_summary *candidate) {
     summary->encoded_bytes = candidate->encoded_bytes;
@@ -1050,11 +927,12 @@ static void quant_summary_select(yvex_quant_plan_summary *summary,
     summary->calibration_required = candidate->calibration_required;
 }
 
-/* Purpose: build and seal a caller-described physical plan over a complete binding.
- * Inputs: IR/binding identities, lowering identity, exact decisions, and budget.
- * Effects: returns an independently owned, indexed, immutable quant plan.
- * Failure: releases partial ownership and publishes a typed plan refusal.
- * Boundary: performs no I/O and cannot replace or mutate transform semantics. */
+/*
+ * Build and seal a caller-described physical plan over a complete binding.
+ *
+ * IR/binding identities, lowering identity, exact decisions, and budget. Releases partial
+ * ownership and publishes a typed plan refusal.
+ */
 int yvex_quant_plan_build_explicit(yvex_quant_plan **out, const yvex_transform_ir *ir,
                                    const yvex_transform_binding *binding, const char *profile_name,
                                    unsigned long long lowering_identity,
@@ -1138,11 +1016,11 @@ int yvex_quant_plan_build_explicit(yvex_quant_plan **out, const yvex_transform_i
     return YVEX_OK;
 }
 
-/* Purpose: account both DeepSeek candidates and index one selected terminal.
- * Inputs: target-scale context, selected profile, and canonical ordinal.
- * Effects: builds reference/release decisions and stores the selected one.
- * Failure: propagates bijection, codec, geometry, accounting, or index refusal.
- * Boundary: candidate comparison remains deterministic and payload-free. */
+/*
+ * Account both DeepSeek candidates and index one selected terminal.
+ *
+ * Candidate comparison remains deterministic and payload-free.
+ */
 static int quant_deepseek_decision_build(quant_build_context *context,
                                          yvex_quant_profile_kind profile,
                                          unsigned long long ordinal) {
@@ -1195,11 +1073,6 @@ static int quant_deepseek_decision_build(quant_build_context *context,
                            "quantization decision index is exhausted");
 }
 
-/* Purpose: seal selected target-scale accounting and canonical profile identity.
- * Inputs: fully populated DeepSeek context and selected profile kind.
- * Effects: marks candidate evidence, copies totals, hashes identity, and seals state.
- * Failure: refuses incomplete decisions, calibration, compute, or identity failure.
- * Boundary: sealing freezes the plan and records zero payload bytes read. */
 static int quant_deepseek_plan_seal(quant_build_context *context, yvex_quant_profile_kind profile) {
     yvex_quant_candidate_summary *selected = &context->plan->summary.candidates[profile];
 
@@ -1219,7 +1092,6 @@ static int quant_deepseek_plan_seal(quant_build_context *context, yvex_quant_pro
     return YVEX_OK;
 }
 
-/* Purpose: match the policy-v2 bounded wildcard form against one emitted tensor name. */
 static int quant_policy_pattern_matches(const char *pattern, const char *name) {
     const char *star;
     size_t prefix;
@@ -1240,7 +1112,6 @@ static int quant_policy_pattern_matches(const char *pattern, const char *name) {
            strcmp(name + length - suffix, star + 1) == 0;
 }
 
-/* Purpose: map one public policy qtype action to the canonical GGUF numeric identity. */
 static unsigned int quant_policy_qtype(yvex_quant_qtype qtype) {
     switch (qtype) {
     case YVEX_QUANT_QTYPE_F32: return YVEX_GGUF_QTYPE_F32;
@@ -1261,11 +1132,6 @@ static unsigned int quant_policy_qtype(yvex_quant_qtype qtype) {
     }
 }
 
-/* Purpose: test every conjunctive matcher field against one canonical terminal descriptor.
- * Inputs: immutable rule, terminal, producer operation, and lowering descriptor.
- * Effects: returns a Boolean without mutation.
- * Failure: malformed policies are rejected earlier; non-matches return false.
- * Boundary: matching selects no qtype and reads no payload bytes. */
 static int quant_policy_rule_matches(const yvex_quant_policy_rule *rule,
                                      const yvex_transform_value *terminal,
                                      const yvex_transform_node *node,
@@ -1303,7 +1169,6 @@ static int quant_policy_rule_matches(const yvex_quant_policy_rule *rule,
     return 1;
 }
 
-/* Purpose: compare equal-priority actions for deterministic coalescing. */
 static int quant_policy_actions_equal(const yvex_quant_policy_rule *left,
                                       const yvex_quant_policy_rule *right) {
     return left->qtype == right->qtype &&
@@ -1312,11 +1177,11 @@ static int quant_policy_actions_equal(const yvex_quant_policy_rule *left,
            left->requires_cuda_compute == right->requires_cuda_compute;
 }
 
-/* Purpose: resolve one highest-priority non-conflicting policy action.
- * Inputs: sealed policy and one canonical terminal/lowering tuple.
- * Effects: publishes one borrowed rule and its ordinal.
- * Failure: missing coverage or conflicting equal-priority actions refuse.
- * Boundary: resolution is deterministic and independent of payload bytes and rule allocation. */
+/*
+ * Resolve one highest-priority non-conflicting policy action.
+ *
+ * Resolution is deterministic and independent of payload bytes and rule allocation.
+ */
 static int quant_policy_resolve(const yvex_quant_policy *policy,
                                 const yvex_transform_value *terminal,
                                 const yvex_transform_node *node,
@@ -1351,11 +1216,6 @@ static int quant_policy_resolve(const yvex_quant_policy *policy,
     return YVEX_OK;
 }
 
-/* Purpose: bind the selected rule and policy identity into one physical decision.
- * Inputs: populated decision, immutable policy summary, selected rule, and ordinal.
- * Effects: writes rule evidence and reseals the decision identity.
- * Failure: canonical identity failure returns false.
- * Boundary: no rule is re-resolved and no qtype arithmetic executes. */
 static int quant_policy_bind_decision(yvex_quant_decision *decision,
                                       const yvex_quant_policy_summary *policy_summary,
                                       const yvex_quant_policy_rule *rule,
@@ -1381,11 +1241,11 @@ static int quant_policy_bind_decision(yvex_quant_decision *decision,
     return quant_decision_identity(decision);
 }
 
-/* Purpose: build baseline comparisons plus one policy-selected terminal decision.
- * Inputs: active build context, sealed policy, policy summary, and terminal ordinal.
- * Effects: accounts both baselines and writes one indexed selected decision.
- * Failure: incomplete lowering, policy conflict, unsupported qtype, or identity failure refuses.
- * Boundary: complete policy resolution performs zero source payload reads. */
+/*
+ * Build baseline comparisons plus one policy-selected terminal decision.
+ *
+ * Incomplete lowering, policy conflict, unsupported qtype, or identity failure refuses.
+ */
 static int quant_deepseek_policy_decision_build(
     quant_build_context *context, const yvex_quant_policy *policy,
     const yvex_quant_policy_summary *policy_summary, unsigned long long ordinal,
@@ -1490,11 +1350,12 @@ static int quant_deepseek_policy_decision_build(
                            "policy decision index exhausted");
 }
 
-/* Purpose: resolve one sealed policy over every canonical DeepSeek terminal without payload reads.
- * Inputs: complete IR/binding/lowering, sealed policy, optional imatrix identity, and budget.
- * Effects: returns one immutable identity-bound physical-variant plan.
- * Failure: missing/conflicting rules, unavailable compute, calibration, or geometry release all state.
- * Boundary: policy resolution chooses physical bytes but performs no source or imatrix payload IO. */
+/*
+ * Resolve one sealed policy over every canonical DeepSeek terminal without payload reads.
+ *
+ * Complete IR/binding/lowering, sealed policy, optional imatrix identity, and budget. Returns one
+ * immutable identity-bound physical-variant plan.
+ */
 int yvex_quant_plan_build_deepseek_policy(
     yvex_quant_plan **out, const yvex_transform_ir *ir,
     const yvex_transform_binding *binding, const yvex_deepseek_gguf_map *map,
@@ -1604,11 +1465,6 @@ int yvex_quant_plan_build_deepseek_policy(
     return YVEX_OK;
 }
 
-/* Purpose: build both DeepSeek candidates and seal the caller-selected profile.
- * Inputs: complete IR/binding/lowering, admitted profile, and resource options.
- * Effects: returns independently owned canonical decisions and candidate totals.
- * Failure: releases all construction state and returns typed mismatch/refusal.
- * Boundary: performs zero source I/O and never mutates payload or upstream plans. */
 int yvex_quant_plan_build_deepseek_profile(yvex_quant_plan **out, const yvex_transform_ir *ir,
                                            const yvex_transform_binding *binding,
                                            const yvex_deepseek_gguf_map *map,
@@ -1691,11 +1547,7 @@ int yvex_quant_plan_build_deepseek_profile(yvex_quant_plan **out, const yvex_tra
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: release all independently owned quant-plan storage idempotently.
- * Inputs: address of an optional quant-plan handle.
- * Effects: nulls the handle and releases index, decisions, and plan via its allocator.
- * Failure: absent handles are accepted; cleanup exposes no recoverable error.
- * Boundary: borrowed IR, binding, and lowering owners remain untouched. */
+
 void yvex_quant_plan_release(yvex_quant_plan **plan_address) {
     yvex_quant_plan *plan;
     yvex_quant_release_fn release;
@@ -1715,20 +1567,10 @@ void yvex_quant_plan_release(yvex_quant_plan **plan_address) {
     release(plan, context);
 }
 
-/* Purpose: borrow the current immutable quant-plan summary.
- * Inputs: optional quant plan in any lifecycle state.
- * Effects: none.
- * Failure: returns null only when the plan handle is absent.
- * Boundary: caller must inspect typed lifecycle/complete fields before consumption. */
 const yvex_quant_plan_summary *yvex_quant_plan_summary_get(const yvex_quant_plan *plan) {
     return plan ? &plan->summary : NULL;
 }
 
-/* Purpose: retrieve one sealed physical decision by canonical ordinal.
- * Inputs: immutable plan and requested terminal ordinal.
- * Effects: none.
- * Failure: returns null for unsealed plans or out-of-range ordinals.
- * Boundary: returned decision view remains plan-owned. */
 const yvex_quant_decision *yvex_quant_plan_decision_at(const yvex_quant_plan *plan,
                                                        unsigned long long ordinal) {
     return plan && plan->summary.state == YVEX_QUANT_PLAN_SEALED &&
@@ -1737,11 +1579,6 @@ const yvex_quant_decision *yvex_quant_plan_decision_at(const yvex_quant_plan *pl
                : NULL;
 }
 
-/* Purpose: find a sealed decision by artifact-neutral logical key.
- * Inputs: immutable plan and exact typed logical key.
- * Effects: performs lookup without mutating counters or plan state.
- * Failure: returns null for invalid state, absent key, or exhausted probe chain.
- * Boundary: expected-O(1) index lookup never parses GGUF tensor names. */
 const yvex_quant_decision *yvex_quant_plan_find(const yvex_quant_plan *plan,
                                                 const yvex_transform_logical_key *key) {
     unsigned long long hash;
@@ -1765,29 +1602,24 @@ const yvex_quant_decision *yvex_quant_plan_find(const yvex_quant_plan *plan,
     return NULL;
 }
 
-/* Purpose: expose the transform IR borrowed by a quant plan.
- * Inputs: optional plan.
- * Effects: none.
- * Failure: returns null for an absent plan.
- * Boundary: lifetime and ownership remain with the upstream IR owner. */
+/*
+ * Expose the transform IR borrowed by a quant plan.
+ *
+ * Lifetime and ownership remain with the upstream IR owner.
+ */
 const yvex_transform_ir *yvex_quant_plan_transform_ir(const yvex_quant_plan *plan) {
     return plan ? plan->ir : NULL;
 }
 
-/* Purpose: expose the immutable transform binding borrowed by a quant plan.
- * Inputs: optional plan.
- * Effects: none.
- * Failure: returns null for an absent plan.
- * Boundary: quant-plan release never releases or mutates the binding. */
 const yvex_transform_binding *yvex_quant_plan_binding(const yvex_quant_plan *plan) {
     return plan ? plan->binding : NULL;
 }
 
-/* Purpose: expose the format lowering borrowed by a quant plan.
- * Inputs: optional plan.
- * Effects: none.
- * Failure: returns null when explicit plans have no lowering or plan is absent.
- * Boundary: lowering stays independent from quant decision ownership. */
+/*
+ * Expose the format lowering borrowed by a quant plan.
+ *
+ * Lowering stays independent from quant decision ownership.
+ */
 const yvex_deepseek_gguf_map *yvex_quant_plan_lowering(const yvex_quant_plan *plan) {
     return plan ? plan->map : NULL;
 }

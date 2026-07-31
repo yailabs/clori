@@ -1,12 +1,9 @@
-/* Owner: tokenizer source-local interface.
- * Owns: shared tokenizer representation and exact execution lifecycle hooks.
- * Does not own: CLI rendering, model runtime coordination, or generation.
- * Invariants: only tokenizer translation units include this header; borrowed token text follows tokenizer lifetime.
- * Boundary: source-local ABI shared by metadata, execution, and decoder owners.
- * Purpose: keep one tokenizer object while separating its admitted algorithms and mutable decoders.
- * Inputs: admitted GGUF/model facts and explicitly owned indexes.
- * Effects: declarations only.
- * Failure: implementation functions preserve typed publication rules. */
+/*
+ * Keep one tokenizer object while separating its admitted algorithms and mutable decoders.
+ *
+ * Only tokenizer translation units include this header; borrowed token text follows tokenizer
+ * lifetime. Source-local ABI shared by metadata, execution, and decoder owners.
+ */
 #ifndef SRC_TOKENIZER_PRIVATE_H_INCLUDED
 #define SRC_TOKENIZER_PRIVATE_H_INCLUDED
 

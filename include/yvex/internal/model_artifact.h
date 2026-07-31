@@ -1,12 +1,7 @@
-/* Owner: model.artifacts.internal (model.artifacts).
- * Owns: model-artifact references, reports, gates, and state publication.
- * Does not own: artifact byte ownership, runtime, or rendering.
- * Invariants: declarations have one owner, stable ordering, and no hidden capability promotion.
- * Boundary: model-facing artifact control.
- * Purpose: provide the canonical model-facing artifact control contract.
- * Inputs: typed immutable facts and explicitly owned mutable lifecycle objects.
- * Effects: only declared lifecycle, allocation, I/O, and publication operations mutate state.
- * Failure: typed refusals leave outputs defined and preserve caller-owned state. */
+/*
+ * Model admission consumes artifact proofs through these typed gates and reports. The interface
+ * cannot promote an incomplete artifact into runtime capability.
+ */
 #ifndef INCLUDE_YVEX_INTERNAL_MODEL_ARTIFACT_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_MODEL_ARTIFACT_H_INCLUDED
 
@@ -19,7 +14,7 @@
 extern "C" {
 #endif
 
-/* Gate contract. */
+/* Model-facing artifact gates. */
 typedef struct {
     yvex_model_gate_status status;
     yvex_model_support_level support_level;
@@ -37,7 +32,6 @@ int yvex_model_artifact_gate_from_admission(
     yvex_model_complete_artifact_gate_fact *fact,
     yvex_error *err);
 
-/* Private contract. */
 typedef struct {
     char *alias;
     char *family;
@@ -75,7 +69,7 @@ struct yvex_model_registry {
     unsigned long long cap;
 };
 
-/* Write contract. */
+/* Binding publication. */
 int yvex_model_registry_write_json_file(const yvex_model_registry *registry,
                                         const char *path,
                                         yvex_error *err);

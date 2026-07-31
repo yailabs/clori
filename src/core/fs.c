@@ -1,13 +1,10 @@
-/* Owner: src/core
- * Owns: local filesystem paths, run identifiers, and run directory creation.
- * Does not own: model target identity, source verification, model artifacts, runtime execution, or generation.
- * Invariants: target-specific path facts are consumed from their canonical owner and path construction performs
- *   checked capacity handling.
- * Boundary: resolving a local path does not verify the source or support a model.
- * Purpose: resolve canonical local paths and create explicitly requested run directories.
- * Inputs: path kinds, admitted model-root facts, run identifiers, and bounded outputs.
- * Effects: writes caller-owned path buffers and may create the requested local directory.
- * Failure: invalid, overflowed, or failed filesystem operations preserve output ownership. */
+/*
+ * Resolve canonical local paths and create explicitly requested run directories.
+ *
+ * Target-specific path facts are consumed from their canonical owner and path construction
+ * performs checked capacity handling. Resolving a local path does not verify the source or support
+ * a model.
+ */
 
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -84,11 +81,6 @@ static const path_projection run_file_fields[] = {
     {offsetof(yvex_run_dir, receipt_path), YVEX_PATH_CAP, "/receipt.json"},
 };
 
-/* Purpose: Compute path format for its core invariant (`path_format`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 static int path_format(char *dst,
                             size_t cap,
                             yvex_error *err,
@@ -117,7 +109,6 @@ static int path_format(char *dst,
     return YVEX_OK;
 }
 
-/* Purpose: Compute env or null for its core invariant (`env_or_null`). */
 static const char *env_or_null(const char *name)
 {
     const char *value = getenv(name);
@@ -127,13 +118,11 @@ static const char *env_or_null(const char *name)
     return value;
 }
 
-/* Purpose: Compute copy path for its core invariant (`copy_path`). */
 static int copy_path(char *dst, const char *value, yvex_error *err, const char *where)
 {
     return path_format(dst, YVEX_PATH_CAP, err, where, "%s", value);
 }
 
-/* Purpose: project one root into a typed set of bounded path fields. */
 static int path_fields_project(void *owner, const path_projection *fields,
                                size_t count, const char *root,
                                const char *where, yvex_error *err)
@@ -149,11 +138,6 @@ static int path_fields_project(void *owner, const path_projection *fields,
     return YVEX_OK;
 }
 
-/* Purpose: Compute paths default for its core invariant (`yvex_paths_default`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_paths_default(yvex_paths *out, yvex_error *err)
 {
     const char *home;
@@ -189,11 +173,7 @@ int yvex_paths_default(yvex_paths *out, yvex_error *err)
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/* Purpose: Compute paths project for its core invariant (`yvex_paths_project`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
+
 int yvex_paths_project(yvex_paths *out, const char *project_root, yvex_error *err)
 {
     int rc;
@@ -218,7 +198,6 @@ int yvex_paths_project(yvex_paths *out, const char *project_root, yvex_error *er
     return YVEX_OK;
 }
 
-/* Purpose: Compute path is dir for its core invariant (`path_is_dir`). */
 static int path_is_dir(const char *path, int *out_is_dir, yvex_error *err, const char *where)
 {
     struct stat st;
@@ -236,11 +215,6 @@ static int path_is_dir(const char *path, int *out_is_dir, yvex_error *err, const
     return YVEX_OK;
 }
 
-/* Purpose: Compute mkdir one for its core invariant (`mkdir_one`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 static int mkdir_one(const char *path, const char *where, yvex_error *err)
 {
     int is_dir;
@@ -269,11 +243,6 @@ static int mkdir_one(const char *path, const char *where, yvex_error *err)
     return YVEX_ERR_IO;
 }
 
-/* Purpose: Compute mkdir p for its core invariant (`mkdir_p`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 static int mkdir_p(const char *path, const char *where, yvex_error *err)
 {
     char tmp[YVEX_PATH_CAP];
@@ -314,11 +283,6 @@ static int mkdir_p(const char *path, const char *where, yvex_error *err)
     return mkdir_one(tmp, where, err);
 }
 
-/* Purpose: create every missing directory component that owns one output path.
- * Inputs: immutable file path, stable diagnostic owner, and caller error state.
- * Effects: creates only parent directories using process umask policy.
- * Failure: invalid, oversized, colliding, or failed paths return typed refusal.
- * Boundary: directory creation does not open, publish, or validate the output file. */
 int yvex_core_mkdir_parent(const char *path, const char *where, yvex_error *err)
 {
     char parent[YVEX_PATH_CAP];
@@ -344,11 +308,11 @@ int yvex_core_mkdir_parent(const char *path, const char *where, yvex_error *err)
     return mkdir_p(parent, where, err);
 }
 
-/* Purpose: format the current UTC instant for bounded operator metadata.
- * Inputs: caller-owned output and exact capacity.
- * Effects: reads the system clock and writes an RFC 3339 UTC timestamp or unknown.
- * Failure: clock or formatting failure produces the stable unknown value.
- * Boundary: diagnostic time never contributes to semantic identity. */
+/*
+ * Format the current UTC instant for bounded operator metadata.
+ *
+ * Diagnostic time never contributes to semantic identity.
+ */
 void yvex_core_timestamp_utc(char *out, size_t capacity)
 {
     time_t now;
@@ -365,11 +329,6 @@ void yvex_core_timestamp_utc(char *out, size_t capacity)
         snprintf(out, capacity, "unknown");
 }
 
-/* Purpose: read one bounded text prefix and terminate it for metadata probes.
- * Inputs: immutable path and a caller-owned non-empty buffer.
- * Effects: reads at most capacity minus one bytes and always terminates successful output.
- * Failure: invalid arguments or open failure return false; truncation remains an admitted prefix read.
- * Boundary: a prefix read does not validate JSON syntax or filesystem trust. */
 int yvex_core_file_read_text_prefix(const char *path, char *buffer, size_t capacity)
 {
     FILE *file;
@@ -387,11 +346,6 @@ int yvex_core_file_read_text_prefix(const char *path, char *buffer, size_t capac
     return 1;
 }
 
-/* Purpose: publish one exact core file-lifecycle failure with stable stage and byte facts.
- * Inputs: caller result, failure stage, system error, expected/actual facts, and diagnostic text.
- * Effects: replaces only caller-owned result and error state.
- * Failure: always returns the supplied typed status.
- * Boundary: core reports filesystem mechanics and never maps them to domain policy. */
 static int core_file_fail(yvex_core_file_result *result, yvex_core_file_stage stage,
                           int system_error, unsigned long long expected,
                           unsigned long long actual, int status, const char *reason,
@@ -408,11 +362,6 @@ static int core_file_fail(yvex_core_file_result *result, yvex_core_file_stage st
     return status;
 }
 
-/* Purpose: open the exact parent directory without following any path-component symlink.
- * Inputs: bounded path plus caller-owned directory descriptor and basename outputs.
- * Effects: returns one owned directory descriptor on success.
- * Failure: rejects traversal, empty components, symlinks, and overlong basenames.
- * Boundary: the caller owns final-file access and descriptor cleanup. */
 static int core_file_parent_open(const char *path, int *directory_fd,
                                  char name[CORE_FILE_NAME_CAP],
                                  yvex_core_file_result *result, yvex_error *err)
@@ -462,11 +411,6 @@ unsafe:
                           YVEX_ERR_IO, "file path or parent directory is unsafe", err);
 }
 
-/* Purpose: transfer one complete byte span while retrying interrupted writes.
- * Inputs: owned writable descriptor and immutable byte span.
- * Effects: advances the descriptor offset and writes exactly the requested contents.
- * Failure: returns false on zero, short-final, or hard write failure.
- * Boundary: synchronization and publication remain caller-owned. */
 static int core_file_write_exact(int fd, const void *source, size_t count)
 {
     const unsigned char *data = (const unsigned char *)source;
@@ -481,11 +425,6 @@ static int core_file_write_exact(int fd, const void *source, size_t count)
     return 1;
 }
 
-/* Purpose: transfer one exact positioned byte span while retrying interrupted reads.
- * Inputs: stable readable descriptor and caller-owned output span.
- * Effects: fills the span without mutating the shared descriptor offset.
- * Failure: returns false on EOF, zero, or hard read failure.
- * Boundary: snapshot validation remains caller-owned. */
 static int core_file_read_exact(int fd, unsigned char *data, size_t count)
 {
     size_t offset = 0u;
@@ -499,7 +438,6 @@ static int core_file_read_exact(int fd, unsigned char *data, size_t count)
     return 1;
 }
 
-/* Purpose: retain the first cleanup operation that failed after a publication refusal. */
 static void core_file_cleanup_note(yvex_core_file_result *result,
                                    yvex_core_file_cleanup_stage stage,
                                    int system_error)
@@ -509,7 +447,6 @@ static void core_file_cleanup_note(yvex_core_file_result *result,
     result->cleanup_system_error = system_error ? system_error : EIO;
 }
 
-/* Purpose: unlink one exact owner-created name while treating an already absent name as clean. */
 static int core_file_unlink_owned(int directory_fd, const char *name)
 {
     int rc;
@@ -520,11 +457,6 @@ static int core_file_unlink_owned(int directory_fd, const char *name)
     return rc == 0 || errno == ENOENT;
 }
 
-/* Purpose: transactionally publish exact bytes after optional domain validation of the reopened candidate.
- * Inputs: safe destination, immutable bytes, lifecycle faults, optional validator, and outputs.
- * Effects: creates and syncs one temporary, reopens it read-only, validates it, then links and syncs it.
- * Failure: removes only its temporary or newly linked candidate and preserves prior destinations.
- * Boundary: core owns file mechanics; the callback interprets bytes only through the reopened descriptor. */
 int yvex_core_file_publish_noreplace(
     const char *path, const void *data, size_t count,
     const yvex_core_file_faults *faults, yvex_core_file_validator validator,
@@ -686,11 +618,11 @@ done:
     return rc;
 }
 
-/* Purpose: read one exact stable regular-file snapshot through a no-symlink path.
- * Inputs: safe path, nonzero byte bound, and caller-owned buffer/count/result outputs.
- * Effects: allocates and fills one NUL-terminated byte buffer owned by the caller.
- * Failure: rejects unsafe, empty, oversized, short, changed, or unreadable snapshots.
- * Boundary: core validates only file mechanics; domain parsing and identity remain upstream. */
+/*
+ * Read one exact stable regular-file snapshot through a no-symlink path.
+ *
+ * Core validates only file mechanics; domain parsing and identity remain upstream.
+ */
 int yvex_core_file_read_snapshot(const char *path, size_t maximum_bytes,
                                  unsigned char **data, size_t *count,
                                  yvex_core_file_result *result, yvex_error *err)
@@ -760,7 +692,6 @@ done:
     return rc;
 }
 
-/* Purpose: resolve the operator configuration directory or its single owned file. */
 static int operator_config_location(const yvex_paths *paths,
                                     int include_file,
                                     char *out,
@@ -780,17 +711,11 @@ static int operator_config_location(const yvex_paths *paths,
     return path_format(out, cap, err, "operator_paths", ".yvex%s", suffix);
 }
 
-/* Purpose: Compute path has newline for its core invariant (`path_has_newline`). */
 static int path_has_newline(const char *value)
 {
     return value && (strchr(value, '\n') || strchr(value, '\r'));
 }
 
-/* Purpose: Compute operator normalize root for its core invariant (`operator_normalize_root`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 static int operator_normalize_root(const char *value,
                                         char *out,
                                         size_t cap,
@@ -833,11 +758,6 @@ static int operator_normalize_root(const char *value,
     return path_format(out, cap, err, where, "%s/%s", cwd, value);
 }
 
-/* Purpose: Compute operator fill for its core invariant (`operator_fill`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 static int operator_fill(yvex_operator_paths *out,
                               const char *source,
                               const char *models_root,
@@ -863,11 +783,6 @@ static int operator_fill(yvex_operator_paths *out,
                             "operator_paths", "%s", config_path);
 }
 
-/* Purpose: Transfer bounded operator read config data (`operator_read_config`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 static int operator_read_config(const yvex_paths *paths,
                                      char *out_root,
                                      size_t cap,
@@ -939,11 +854,6 @@ static int operator_read_config(const yvex_paths *paths,
     return YVEX_OK;
 }
 
-/* Purpose: Construct the owned operator paths resolve state (`yvex_operator_paths_resolve`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_operator_paths_resolve(const yvex_paths *paths,
                                 const char *explicit_models_root,
                                 yvex_operator_paths *out,
@@ -1006,11 +916,6 @@ int yvex_operator_paths_resolve(const yvex_paths *paths,
     return operator_fill(out, "builtin", builtin, config_path, err);
 }
 
-/* Purpose: Compute operator paths configure for its core invariant (`yvex_operator_paths_configure`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_operator_paths_configure(const yvex_paths *paths,
                                   const char *models_root,
                                   int create_dirs,
@@ -1063,11 +968,6 @@ int yvex_operator_paths_configure(const yvex_paths *paths,
     return YVEX_OK;
 }
 
-/* Purpose: Release or reset owned operator paths reset state (`yvex_operator_paths_reset`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_operator_paths_reset(const yvex_paths *paths,
                               int *out_removed,
                               yvex_operator_paths *out,
@@ -1099,11 +999,6 @@ int yvex_operator_paths_reset(const yvex_paths *paths,
     return yvex_operator_paths_resolve(paths, NULL, out, err);
 }
 
-/* Purpose: Construct the owned operator paths create state (`yvex_operator_paths_create`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_operator_paths_create(const yvex_operator_paths *operator_paths, yvex_error *err)
 {
     const char *const family_names[] = {"deepseek", "glm", "qwen", "gemma"};
@@ -1140,11 +1035,6 @@ int yvex_operator_paths_create(const yvex_operator_paths *operator_paths, yvex_e
     return YVEX_OK;
 }
 
-/* Purpose: Compute run id make for its core invariant (`yvex_run_id_make`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_run_id_make(char *out, unsigned long cap, yvex_error *err)
 {
     time_t now;
@@ -1184,11 +1074,6 @@ int yvex_run_id_make(char *out, unsigned long cap, yvex_error *err)
     return YVEX_OK;
 }
 
-/* Purpose: Construct the owned run dir prepare state (`yvex_run_dir_prepare`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_run_dir_prepare(yvex_run_dir *out, const yvex_paths *paths, const char *run_id, yvex_error *err)
 {
     char generated[YVEX_RUN_ID_CAP];
@@ -1244,11 +1129,6 @@ int yvex_run_dir_prepare(yvex_run_dir *out, const yvex_paths *paths, const char 
     return YVEX_OK;
 }
 
-/* Purpose: Construct the owned run dir create state (`yvex_run_dir_create`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: Core mechanism only. */
 int yvex_run_dir_create(const yvex_run_dir *run, yvex_error *err)
 {
     int rc;

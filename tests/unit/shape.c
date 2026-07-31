@@ -1,25 +1,6 @@
 /*
- * YVEX - shape tests
- *
- * File: tests/test_shape.c
- * Layer: test
- *
- * Purpose:
- *   Proves that graph planner shape helpers reject invalid ranks/dimensions and compute
- *   deterministic products used by graph and memory-plan estimates.
- *
- * Covers:
- *   - yvex_shape_product
- *   - yvex_shape_equal
- *   - yvex_shape_copy
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_shape
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises graph planner shape helpers reject invalid ranks/dimensions and compute
+ * deterministic products used by graph and memory-plan estimates.
  */
 #include <limits.h>
 

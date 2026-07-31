@@ -1,12 +1,6 @@
 /*
- * transform_ir.c - artifact-neutral Transformation IR contract tests.
- *
- * Owner: tests/unit.
- * Owns: generic graph, identity, scale, lifecycle, and refusal evidence.
- * Does not own: production transformation semantics, GGUF lowering, payload IO,
- *   quantization, artifact emission, runtime behavior, or operator rendering.
- * Invariants: fixtures remain deterministic and inspect only typed immutable APIs.
- * Boundary: test mutation deliberately probes refusal and never becomes an API.
+ * Fixtures remain deterministic and inspect only typed immutable APIs. Test mutation
+ * deliberately probes refusal and never becomes an API.
  */
 #include "tests/test.h"
 
@@ -96,7 +90,6 @@ static yvex_transform_precision_constraint transform_test_paired(void)
     return precision;
 }
 
-/* Constructs one valid typed source specification for focused mutation tests. */
 static void transform_test_source_spec(
     yvex_transform_source_spec *source,
     const char *name,
@@ -147,7 +140,6 @@ static int transform_test_add_source(
         builder, &source, value, failure, err);
 }
 
-/* Constructs one typed terminal specification without registering a producer. */
 static void transform_test_terminal_spec(
     yvex_transform_value_spec *value,
     unsigned long long ordinal,
@@ -197,7 +189,6 @@ static int transform_test_add_terminal(
         builder, node, &node_id, failure, err);
 }
 
-/* Builds equal semantics in either registration order. */
 static int transform_test_build_direct(int reverse,
                                        unsigned long long width,
                                        const yvex_transform_builder_options *options,
@@ -249,7 +240,6 @@ static int transform_test_build_direct(int reverse,
     return rc;
 }
 
-/* Builds one two-output graph with configurable dtype and semantic edge wiring. */
 static int transform_test_build_direct_variant(
     yvex_native_dtype native_dtype,
     yvex_transform_dtype value_dtype,
@@ -786,7 +776,6 @@ static int test_transform_negative_graphs(void)
     return 0;
 }
 
-/* Seals one F32 operation fixture and returns its typed validation refusal. */
 static yvex_transform_failure_code transform_test_operation_failure(
     yvex_transform_operation_kind kind,
     unsigned long long input_count,
@@ -848,7 +837,6 @@ static yvex_transform_failure_code transform_test_operation_failure(
     return rc == YVEX_OK ? YVEX_TRANSFORM_FAILURE_NONE : failure.code;
 }
 
-/* Exercises operation-specific rank, shape, axis, and arity refusals. */
 static int test_transform_operation_refusals(void)
 {
     yvex_transform_shape square = transform_test_shape(2u, 2u);
@@ -1084,7 +1072,6 @@ static int test_transform_ownership_refusals(void)
     return 0;
 }
 
-/* Seals a two-expert aggregation with one deliberate expert-index defect. */
 static yvex_transform_failure_code transform_test_expert_failure(
     unsigned long long second_expert,
     unsigned long long declared_experts)

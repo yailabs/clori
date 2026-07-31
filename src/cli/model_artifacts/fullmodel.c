@@ -1,14 +1,7 @@
-/* Owner: src/cli/render
- * Owns: typed option parsing, inventory classification, descriptor and materialization diagnostics, report
- *   rendering, and help projection.
- * Does not own: runtime generation, graph execution, artifact emission, eval, benchmark, or release claims.
- * Invariants: CLI-only and excluded from libyvex.a; preserves existing fullmodel behavior.
- * Boundary: fullmodel reports are diagnostic/report-only unless a lower layer proves otherwise.
- * Purpose: provide typed option parsing, inventory classification, descriptor and materialization diagnostics,
- *   report rendering, and help projection.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Compose inventory, descriptor, and materialization diagnostics for the finite CLI lane. Lower
+ * owners retain every admission decision; this file only presents their typed facts.
+ */
 #include "src/cli/model_artifacts/private.h"
 
 #include <stddef.h>
@@ -22,11 +15,6 @@ typedef struct {
     unsigned long long bytes;
 } fullmodel_dtype_bucket;
 
-/* Purpose: Compute fullmodel file size for its CLI invariant (`fullmodel_file_size`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int fullmodel_file_size(const char *path,
                                unsigned long long *bytes)
 {
@@ -38,11 +26,6 @@ int fullmodel_file_size(const char *path,
     return 1;
 }
 
-/* Purpose: Compute fullmodel family from arch for its CLI invariant (`fullmodel_family_from_arch`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 const char *fullmodel_family_from_arch(yvex_arch arch)
 {
     switch (arch) {
@@ -60,7 +43,6 @@ const char *fullmodel_family_from_arch(yvex_arch arch)
 static const char *const literal_pair_0[] = { "fullmodel: report",
     "status: fullmodel-report"};
 
-/* Purpose: Compute fullmodel csv append for its CLI invariant (`fullmodel_csv_append`). */
 static void fullmodel_csv_append(char *buf,
                                  size_t cap,
                                  const char *item)
@@ -75,7 +57,6 @@ static void fullmodel_csv_append(char *buf,
     if (n < 0 || (size_t)n >= cap - used) buf[cap - 1u] = '\0';
 }
 
-/* Purpose: Compute fullmodel collection add for its CLI invariant (`fullmodel_collection_add`). */
 static void fullmodel_collection_add(unsigned long long *count,
                                      unsigned long long *bytes,
                                      const yvex_tensor_info *tensor)
@@ -228,8 +209,6 @@ static const char *const detectable_families[] = {"deepseek", "glm", "qwen"};
 
 #undef COLLECTION_RULE
 
-/* Match one tensor name rule while preserving its ordered fallback semantics. */
-/* Purpose: Compute tensor collection name matches for its CLI invariant (`tensor_collection_name_matches`). */
 static int tensor_collection_name_matches(const tensor_collection_rule *rule,
                                           const char *name)
 {
@@ -240,8 +219,6 @@ static int tensor_collection_name_matches(const tensor_collection_rule *rule,
     return rule->names_must_both_match ? a && b : a || b;
 }
 
-/* Match one logical descriptor role against typed or legacy tensor facts. */
-/* Purpose: Compute descriptor tensor rule matches for its CLI invariant (`descriptor_tensor_rule_matches`). */
 static int descriptor_tensor_rule_matches(const descriptor_tensor_rule *rule,
                                           const yvex_tensor_info *tensor,
                                           const char *name)
@@ -257,8 +234,6 @@ static int descriptor_tensor_rule_matches(const descriptor_tensor_rule *rule,
     return rule->names_must_both_match ? a && b : a || b;
 }
 
-/* Apply one admitted collection rule to typed counters and role presence. */
-/* Purpose: Compute tensor collection apply for its CLI invariant (`tensor_collection_apply`). */
 static void tensor_collection_apply(const tensor_collection_rule *rule,
                                     const yvex_tensor_info *tensor,
                                     yvex_fullmodel_collections *collections)
@@ -270,11 +245,6 @@ static void tensor_collection_apply(const tensor_collection_rule *rule,
     *(int *)(base + rule->flag_offset) = 1;
 }
 
-/* Purpose: Compute fullmodel record dtype for its CLI invariant (`fullmodel_record_dtype`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_record_dtype(fullmodel_dtype_bucket buckets[32],
                                    unsigned int *bucket_count,
                                    const yvex_tensor_info *tensor)
@@ -299,11 +269,6 @@ static void fullmodel_record_dtype(fullmodel_dtype_bucket buckets[32],
     }
 }
 
-/* Purpose: Compute fullmodel dtype summary for its CLI invariant (`fullmodel_dtype_summary`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_dtype_summary(char *out,
                                     size_t out_cap,
                                     const fullmodel_dtype_bucket buckets[32],
@@ -331,11 +296,6 @@ static void fullmodel_dtype_summary(char *out,
     if (bucket_count == 0u) snprintf(out, out_cap, "none");
 }
 
-/* Purpose: Compute fullmodel record largest for its CLI invariant (`fullmodel_record_largest`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_record_largest(fullmodel_largest_tensor top[16],
                                      unsigned int *top_count,
                                      unsigned int limit,
@@ -365,11 +325,6 @@ static void fullmodel_record_largest(fullmodel_largest_tensor top[16],
     top[pos].bytes = tensor->storage_bytes;
 }
 
-/* Purpose: Compute fullmodel classify tensor for its CLI invariant (`fullmodel_classify_tensor`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void fullmodel_classify_tensor(const yvex_tensor_info *tensor,
                                       yvex_fullmodel_collections *collections)
 {
@@ -393,11 +348,6 @@ void fullmodel_classify_tensor(const yvex_tensor_info *tensor,
     fullmodel_collection_add(&collections->unknown, &collections->unknown_bytes, tensor);
 }
 
-/* Purpose: Compute fullmodel is selected target for its CLI invariant (`fullmodel_is_selected_target`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int fullmodel_is_selected_target(const char *text)
 {
     return text &&
@@ -405,8 +355,6 @@ int fullmodel_is_selected_target(const char *text)
             strcmp(text, "deepseek4-v4-flash-selected-embed-rmsnorm") == 0);
 }
 
-/* Purpose: Compute fullmodel descriptor tensor matches for its CLI invariant
- *   (`fullmodel_descriptor_tensor_matches`). */
 static int fullmodel_descriptor_tensor_matches(const yvex_tensor_info *tensor,
                                                const char *role)
 {
@@ -423,11 +371,6 @@ static int fullmodel_descriptor_tensor_matches(const yvex_tensor_info *tensor,
     return 0;
 }
 
-/* Purpose: Compute fullmodel descriptor find tensor for its CLI invariant (`fullmodel_descriptor_find_tensor`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 const yvex_tensor_info *fullmodel_descriptor_find_tensor(yvex_model_context *ctx,
                                                                 const char *role)
 {
@@ -443,11 +386,6 @@ const yvex_tensor_info *fullmodel_descriptor_find_tensor(yvex_model_context *ctx
     return NULL;
 }
 
-/* Purpose: Compute fullmodel detect family for its CLI invariant (`fullmodel_detect_family`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 const char *fullmodel_detect_family(const yvex_cli_fullmodel_options *options,
                                            yvex_arch arch,
                                            const char *target_id)
@@ -466,11 +404,6 @@ const char *fullmodel_detect_family(const yvex_cli_fullmodel_options *options,
     return "unknown";
 }
 
-/* Purpose: Compute fullmodel family request matches for its CLI invariant (`fullmodel_family_request_matches`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int fullmodel_family_request_matches(const char *requested,
                                             const char *detected)
 {
@@ -480,11 +413,6 @@ int fullmodel_family_request_matches(const char *requested,
     return detected && strcmp(requested, detected) == 0;
 }
 
-/* Purpose: Compute fullmodel role status from tensor for its CLI invariant (`fullmodel_role_status_from_tensor`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 const char *fullmodel_role_status_from_tensor(yvex_model_context *ctx,
                                                      const yvex_fullmodel_collections *collections,
                                                      const char *role)
@@ -495,11 +423,6 @@ const char *fullmodel_role_status_from_tensor(yvex_model_context *ctx,
     return fullmodel_descriptor_find_tensor(ctx, role) ? "present" : "missing";
 }
 
-/* Purpose: Compute fullmodel identity status for its CLI invariant (`fullmodel_identity_status`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 const char *fullmodel_identity_status(const yvex_model_ref *ref,
                                              unsigned long long artifact_bytes)
 {
@@ -511,11 +434,6 @@ const char *fullmodel_identity_status(const yvex_model_ref *ref,
     return "registered-size-match";
 }
 
-/* Purpose: Compute fullmodel probe backend fit for its CLI invariant (`fullmodel_probe_backend_fit`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void fullmodel_probe_backend_fit(const char *backend,
                                         unsigned long long required_bytes,
                                         yvex_fullmodel_backend_fit *fit)
@@ -580,11 +498,6 @@ void fullmodel_probe_backend_fit(const char *backend,
     yvex_backend_close(opened);
 }
 
-/* Purpose: Compute fullmodel has attention collection for its CLI invariant (`fullmodel_has_attention_collection`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int fullmodel_has_attention_collection(const yvex_fullmodel_collections *collections)
 {
     return collections &&
@@ -594,11 +507,6 @@ int fullmodel_has_attention_collection(const yvex_fullmodel_collections *collect
            collections->has_attention_out;
 }
 
-/* Purpose: Compute fullmodel has mlp collection for its CLI invariant (`fullmodel_has_mlp_collection`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int fullmodel_has_mlp_collection(const yvex_fullmodel_collections *collections)
 {
     return collections &&
@@ -607,12 +515,6 @@ int fullmodel_has_mlp_collection(const yvex_fullmodel_collections *collections)
            collections->has_ffn_down;
 }
 
-/* Purpose: Compute fullmodel has normalization collection for its CLI invariant
- * (`fullmodel_has_normalization_collection`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int fullmodel_has_normalization_collection(const yvex_fullmodel_collections *collections)
 {
     return collections &&
@@ -621,12 +523,6 @@ int fullmodel_has_normalization_collection(const yvex_fullmodel_collections *col
             collections->has_output_norm);
 }
 
-/* Purpose: Compute fullmodel tensor is materialize required for its CLI invariant
- * (`fullmodel_tensor_is_materialize_required`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int fullmodel_tensor_is_materialize_required(const yvex_tensor_info *tensor)
 {
     const char *name;
@@ -645,11 +541,6 @@ static int fullmodel_tensor_is_materialize_required(const yvex_tensor_info *tens
     return 0;
 }
 
-/* Purpose: Compute fullmodel role present for its CLI invariant (`fullmodel_role_present`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 typedef struct {
     const char *name;
     size_t offset;
@@ -708,7 +599,6 @@ static const fullmodel_collection_presence fullmodel_collection_presence_table[]
 
 #undef ROLE_PRESENCE
 
-/* Purpose: resolve one required-role flag through the canonical role-presence table. */
 static int fullmodel_role_present(const yvex_fullmodel_collections *collections,
                                   const char *role)
 {
@@ -724,8 +614,6 @@ static int fullmodel_role_present(const yvex_fullmodel_collections *collections,
     return 0;
 }
 
-/* Purpose: Compute fullmodel collection present by name for its CLI invariant
- *   (`fullmodel_collection_present_by_name`). */
 static int fullmodel_collection_present_by_name(const yvex_fullmodel_collections *collections,
                                                 const char *collection)
 {
@@ -747,11 +635,6 @@ static int fullmodel_collection_present_by_name(const yvex_fullmodel_collections
     return 0;
 }
 
-/* Purpose: Compute fullmodel materialize missing roles for its CLI invariant (`fullmodel_materialize_missing_roles`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_materialize_missing_roles(const yvex_cli_fullmodel_options *options,
                                                 const yvex_fullmodel_collections *collections,
                                                 char *out,
@@ -779,7 +662,6 @@ static void fullmodel_materialize_missing_roles(const yvex_cli_fullmodel_options
     if (!out[0]) snprintf(out, out_cap, "none");
 }
 
-/* Purpose: Compute fullmodel fail after for its CLI invariant (`fullmodel_fail_after`). */
 static int fullmodel_fail_after(const yvex_cli_fullmodel_options *options,
                                 const char *phase)
 {
@@ -787,11 +669,6 @@ static int fullmodel_fail_after(const yvex_cli_fullmodel_options *options,
            strcmp(options->fail_after_phase, phase) == 0;
 }
 
-/* Purpose: Construct the owned fullmodel open requested backend state (`fullmodel_open_requested_backend`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int fullmodel_open_requested_backend(const char *backend_name,
                                             yvex_backend **out,
                                             yvex_error *err)
@@ -808,11 +685,6 @@ static int fullmodel_open_requested_backend(const char *backend_name,
     return yvex_backend_open(out, &options, err);
 }
 
-/* Purpose: Construct the owned fullmodel allocate required tensors state (`fullmodel_allocate_required_tensors`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int fullmodel_allocate_required_tensors(const yvex_cli_fullmodel_options *options,
                                                yvex_model_context *ctx,
                                                unsigned long long *materialized_count,
@@ -914,12 +786,6 @@ static const fullmodel_materialize_report materialize_report_defaults = {
         "sampling/generation remain unsupported-full-model",
 };
 
-/* Seed the transactional materialization report before any faultable phase. */
-/* Purpose: Construct the owned fullmodel materialize report init state (`fullmodel_materialize_report_init`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_materialize_report_init(fullmodel_materialize_report *report,
                                               const yvex_cli_fullmodel_options *options,
                                               const yvex_model_ref *ref,
@@ -951,12 +817,6 @@ static void fullmodel_materialize_report_init(fullmodel_materialize_report *repo
                                  : "cpu-resident-controlled-proof";
 }
 
-/* Apply the fault seam for phases completed before role admission. */
-/* Purpose: Construct the owned fullmodel materialize initial fault state (`fullmodel_materialize_initial_fault`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int fullmodel_materialize_initial_fault(const yvex_cli_fullmodel_options *options,
                                                fullmodel_materialize_report *report)
 {
@@ -975,11 +835,6 @@ static int fullmodel_materialize_initial_fault(const yvex_cli_fullmodel_options 
     return 0;
 }
 
-/* Purpose: Orchestrate the typed fullmodel materialize command run request (`fullmodel_materialize_command_run`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int fullmodel_materialize_command_run(const yvex_cli_fullmodel_options *options,
                                              yvex_model_ref *ref,
                                              yvex_model_context *ctx,
@@ -1323,12 +1178,6 @@ static const char *const unsupported_runtime_roles[] = {
 
 #undef MISSING_ROLE
 
-/* Handle the admitted source-only target without opening a GGUF model context. */
-/* Purpose: Compute fullmodel source only dispatch for its CLI invariant (`fullmodel_source_only_dispatch`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int fullmodel_source_only_dispatch(const yvex_cli_fullmodel_options *options,
                                           int *handled)
 {
@@ -1352,12 +1201,6 @@ static int fullmodel_source_only_dispatch(const yvex_cli_fullmodel_options *opti
     return print_fullmodel_source_only_report(target, options->backend);
 }
 
-/* Collect tensor directory facts once for every downstream fullmodel report mode. */
-/* Purpose: Compute fullmodel surface inventory for its CLI invariant (`fullmodel_surface_inventory`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_surface_inventory(fullmodel_surface_state *state,
                                         const yvex_cli_fullmodel_options *options)
 {
@@ -1386,12 +1229,6 @@ static void fullmodel_surface_inventory(fullmodel_surface_state *state,
                             state->dtype_buckets, bucket_count);
 }
 
-/* Derive role coverage and explicit unsupported runtime boundaries from inventory facts. */
-/* Purpose: Compute fullmodel surface roles for its CLI invariant (`fullmodel_surface_roles`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_surface_roles(fullmodel_surface_state *state,
                                     const yvex_cli_fullmodel_options *options)
 {
@@ -1416,12 +1253,6 @@ static void fullmodel_surface_roles(fullmodel_surface_state *state,
                                         sizeof(state->descriptor_missing_roles));
 }
 
-/* Resolve the artifact, retain one model context, and build the immutable command view. */
-/* Purpose: Construct the owned fullmodel surface prepare state (`fullmodel_surface_prepare`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int fullmodel_surface_prepare(yvex_cli_fullmodel_options *options,
                                      fullmodel_surface_state *state)
 {
@@ -1489,12 +1320,6 @@ static int fullmodel_surface_prepare(yvex_cli_fullmodel_options *options,
     return YVEX_OK;
 }
 
-/* Dispatch non-report commands and compact report mode from one admitted view. */
-/* Purpose: Compute fullmodel surface dispatch for its CLI invariant (`fullmodel_surface_dispatch`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int fullmodel_surface_dispatch(fullmodel_surface_view *view, int *handled)
 {
     yvex_cli_fullmodel_options *options = view->options;
@@ -1558,12 +1383,6 @@ static int fullmodel_surface_dispatch(fullmodel_surface_view *view, int *handled
     return rc;
 }
 
-/* Render the detailed report after command-specific dispatch declines it. */
-/* Purpose: Render fullmodel surface render audit from typed facts (`fullmodel_surface_render_audit`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int fullmodel_surface_render_audit(fullmodel_surface_view *view)
 {
     const yvex_cli_fullmodel_options *options = view->options;
@@ -1626,12 +1445,6 @@ static int fullmodel_surface_render_audit(fullmodel_surface_view *view)
     return 0;
 }
 
-/* Purpose: Orchestrate the typed model artifacts surface fullmodel command request
- * (`yvex_model_artifacts_surface_fullmodel_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_model_artifacts_surface_fullmodel_command(int arg_count, char **args)
 {
     yvex_cli_fullmodel_options options;

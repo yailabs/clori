@@ -1,12 +1,9 @@
-/* Owner: source provenance.
- * Owns: release identity, provider metadata, manifest parsing, and Git-blob proof.
- * Does not own: downloads, config semantics, header inventory, writes, or rendering.
- * Invariants: pinned revisions and index OIDs fail closed; payload is not hashed.
- * Boundary: provider provenance is not full shard payload trust.
- * Purpose: bind pinned source identity to local provider evidence.
- * Inputs: release facts, bounded metadata, manifest bytes, and caller outputs.
- * Effects: reads metadata and publishes only fully validated provenance facts.
- * Failure: parse, revision, identity, allocation, or I/O leaves output untrusted. */
+/*
+ * Bind pinned source identity to local provider evidence.
+ *
+ * Pinned revisions and index OIDs fail closed; payload is not hashed. Provider provenance is not
+ * full shard payload trust.
+ */
 #define _XOPEN_SOURCE 700
 #include <ctype.h>
 #include <limits.h>
@@ -19,7 +16,6 @@
 #include <yvex/internal/source.h>
 #include <yvex/internal/source_payload.h>
 
-/* Purpose: publish one typed provenance refusal without duplicating error-state transitions. */
 static int provenance_refuse(yvex_error *err,
                              yvex_status status,
                              const char *where,
@@ -46,29 +42,25 @@ static const yvex_source_target_identity release_source_identity = {
     YVEX_SOURCE_RELEASE_CONFIG_ARCHITECTURE,
 };
 
-/* Purpose: expose the immutable release source identity owned by provenance.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source provenance; cleanup remains deterministic.
- * Failure: null or released source provenance handles remain harmless.
- * Boundary: provider provenance is not full shard payload trust. */
+/*
+ * Expose the immutable release source identity owned by provenance.
+ *
+ * Releases only resources owned by source provenance; cleanup remains deterministic.
+ */
 const yvex_source_target_identity *yvex_source_release_identity(void) {
     return &release_source_identity;
 }
 
-/* Purpose: test target equality without importing model-catalog policy.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source provenance; cleanup remains deterministic.
- * Failure: null or released source provenance handles remain harmless.
- * Boundary: provider provenance is not full shard payload trust. */
+/*
+ * Test target equality without importing model-catalog policy.
+ *
+ * Releases only resources owned by source provenance; cleanup remains deterministic.
+ */
 int yvex_source_is_release_target(const char *target_id) {
     return target_id && strcmp(target_id, release_source_identity.target_id) == 0;
 }
 
-/* Purpose: derive the canonical source directory for an admitted identity.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
+/* Derive the canonical source directory for an admitted identity. */
 int yvex_source_target_path(char *out,
                             size_t cap,
                             const char *models_root,
@@ -91,16 +83,11 @@ typedef struct {
     size_t block_length;
 } source_sha1;
 
-/* Purpose: project sha1 rotl facts while preserving the canonical source provenance invariants. */
 static uint32_t source_sha1_rotl(uint32_t value, unsigned int bits) {
     return (value << bits) | (value >> (32u - bits));
 }
 
-/* Purpose: applies one SHA-1 compression block to caller-owned Git identity state.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
+/* Applies one SHA-1 compression block to caller-owned Git identity state. */
 static void source_sha1_transform(source_sha1 *ctx, const unsigned char block[64]) {
     uint32_t words[80];
     uint32_t a;
@@ -155,11 +142,6 @@ static void source_sha1_transform(source_sha1 *ctx, const unsigned char block[64
     ctx->state[4] += e;
 }
 
-/* Purpose: initialize source provenance state to its canonical empty or default value.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
 static void source_sha1_init(source_sha1 *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     ctx->state[0] = 0x67452301u;
@@ -169,7 +151,6 @@ static void source_sha1_init(source_sha1 *ctx) {
     ctx->state[4] = 0xc3d2e1f0u;
 }
 
-/* Purpose: adds bounded bytes to SHA-1 state without owning the input buffer. */
 static void source_sha1_update(source_sha1 *ctx, const unsigned char *data, size_t length) {
     size_t offset = 0u;
 
@@ -187,11 +168,6 @@ static void source_sha1_update(source_sha1 *ctx, const unsigned char *data, size
     }
 }
 
-/* Purpose: finalizes SHA-1 padding and writes the fixed-size digest to the caller.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
 static void source_sha1_final(source_sha1 *ctx, unsigned char digest[20]) {
     unsigned long long bits = ctx->length * 8ull;
     unsigned int i;
@@ -215,11 +191,7 @@ static void source_sha1_final(source_sha1 *ctx, unsigned char digest[20]) {
     }
 }
 
-/* Purpose: computes Git's SHA-1 blob identity for one bounded metadata file.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
+/* Computes Git's SHA-1 blob identity for one bounded metadata file. */
 int yvex_source_git_blob_oid_file(const char *path, char out_hex[41], yvex_error *err) {
     unsigned long long size;
     char header[64];
@@ -269,11 +241,7 @@ int yvex_source_git_blob_oid_file(const char *path, char out_hex[41], yvex_error
     return YVEX_OK;
 }
 
-/* Purpose: computes Git's blob identity over the exact bytes retained by a caller.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
+/* Computes Git's blob identity over the exact bytes retained by a caller. */
 static int
 source_git_blob_oid_bytes(const unsigned char *bytes, size_t byte_count, char out_hex[41]) {
     char header[64];
@@ -428,11 +396,6 @@ static const manifest_field manifest_payload_fields[] = {
     {"shards", 256u, MANIFEST_PAYLOAD_SHARDS, 0u, 0u},
 };
 
-/* Purpose: decode one scalar manifest field selected by immutable schema.
- * Inputs: active JSON cursor, schema row, and caller-owned destination object.
- * Effects: mutates only the exact destination field named by the schema row.
- * Failure: malformed or non-representable values leave the object unadmitted.
- * Boundary: scalar manifest parsing never reads shard payload bytes. */
 static int manifest_field_parse(yvex_json *json, const manifest_field *field, void *object) {
     unsigned char *base = (unsigned char *)object;
 
@@ -456,11 +419,6 @@ static int manifest_field_parse(yvex_json *json, const manifest_field *field, vo
     return 1;
 }
 
-/* Purpose: parse one scalar-only manifest object through immutable schema rows.
- * Inputs: active cursor, schema, required field mask, and caller-owned object.
- * Effects: applies each known field once and skips unknown fields deterministically.
- * Failure: malformed syntax, duplicate fields, or missing required coverage refuses.
- * Boundary: schema parsing records provider facts but does not establish payload trust. */
 static int manifest_object_parse(yvex_json *json,
                                  const manifest_field *fields,
                                  size_t field_count,
@@ -491,16 +449,6 @@ static int manifest_object_parse(yvex_json *json,
     return item == YVEX_JSON_ITEM_END && (seen & required) == required;
 }
 
-/* Purpose: parses exact repository and revision declarations from a manifest source.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
-/* Purpose: parse exact repository and revision declarations through immutable schema.
- * Inputs: active manifest cursor and caller-owned verification output.
- * Effects: fills only source-kind, repository, and revision declaration fields.
- * Failure: malformed, duplicate, or missing repository evidence refuses the object.
- * Boundary: source declaration parsing does not establish local payload trust. */
 static int source_manifest_parse_source(yvex_json *json, yvex_source_verification *out) {
     return manifest_object_parse(json,
                                  manifest_source_fields,
@@ -509,11 +457,6 @@ static int source_manifest_parse_source(yvex_json *json, yvex_source_verificatio
                                  out);
 }
 
-/* Purpose: parses the manifest local path without resolving or trusting it.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
 static int source_manifest_parse_local(yvex_json *json, char *path, size_t cap) {
     char key[YVEX_JSON_KEY_CAP];
     int seen = 0;
@@ -535,16 +478,8 @@ static int source_manifest_parse_local(yvex_json *json, char *path, size_t cap) 
     return item == YVEX_JSON_ITEM_END && seen;
 }
 
-/* Purpose: parses the canonical target identity declared by a verifier-owned manifest.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
-/* Purpose: parse the canonical target identity through immutable schema.
- * Inputs: active manifest cursor and caller-owned verification output.
- * Effects: fills only the declared target identity field.
- * Failure: malformed, duplicate, or missing target evidence refuses the object.
- * Boundary: target declaration does not prove that local bytes match it. */
+/* Parses the canonical target identity declared by a verifier-owned manifest. */
+
 static int source_manifest_parse_target(yvex_json *json, yvex_source_verification *out) {
     return manifest_object_parse(json,
                                  manifest_target_fields,
@@ -553,16 +488,6 @@ static int source_manifest_parse_target(yvex_json *json, yvex_source_verificatio
                                  out);
 }
 
-/* Purpose: parses verifier stage, inventory authority, counts, and payload non-trust.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
-/* Purpose: parse verifier stage, authority, and count facts through immutable schema.
- * Inputs: active manifest cursor and caller-owned verification output.
- * Effects: fills only declared verifier-owned manifest facts.
- * Failure: malformed, duplicate, or incomplete verification evidence refuses the object.
- * Boundary: parsed verifier facts are revalidated before source admission. */
 static int source_manifest_parse_verification(yvex_json *json, yvex_source_verification *out) {
     return manifest_object_parse(
         json,
@@ -572,16 +497,6 @@ static int source_manifest_parse_verification(yvex_json *json, yvex_source_verif
         out);
 }
 
-/* Purpose: validates one published payload shard and returns stable aggregate facts.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
-/* Purpose: validate one published payload shard through immutable schema and trust rules.
- * Inputs: active cursor, expected ordinal, previous canonical name, and caller outputs.
- * Effects: publishes exact file bytes and trust authority only after full validation.
- * Failure: malformed, unordered, mismatched, or incomplete shard facts publish nothing.
- * Boundary: manifest shard validation consumes digests but does not read payload bytes. */
 static int source_manifest_parse_payload_shard(yvex_json *json,
                                                unsigned long long expected_id,
                                                char previous_name[YVEX_PATH_CAP],
@@ -619,11 +534,7 @@ static int source_manifest_parse_payload_shard(yvex_json *json,
     return 1;
 }
 
-/* Purpose: parses deterministic canonical-order shard rows and returns their exact count.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
+/* Parses deterministic canonical-order shard rows and returns their exact count. */
 static int source_manifest_parse_payload_shards(yvex_json *json,
                                                 unsigned long long *count,
                                                 unsigned long long *total_file_bytes) {
@@ -655,16 +566,8 @@ static int source_manifest_parse_payload_shards(yvex_json *json,
     return all_upstream_trust ? 2 : 1;
 }
 
-/* Purpose: parses v3 aggregate payload identity and validates all published shard rows.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
-/* Purpose: parse and validate aggregate payload trust through immutable schema rows.
- * Inputs: active manifest cursor and caller-owned verification output.
- * Effects: publishes aggregate payload facts only after every shard row validates.
- * Failure: malformed, inconsistent, or incomplete payload evidence publishes no trust.
- * Boundary: payload manifests bind digests but do not read shard payload bytes. */
+/* Parses v3 aggregate payload identity and validates all published shard rows. */
+
 static int source_manifest_parse_payload(yvex_json *json, yvex_source_verification *out) {
     manifest_payload payload;
 
@@ -707,11 +610,6 @@ static int source_manifest_parse_payload(yvex_json *json, yvex_source_verificati
     return 1;
 }
 
-/* Purpose: parses one supported manifest and distinguishes unsupported schema versions.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
 static int source_manifest_parse(const char *data,
                                  size_t length,
                                  yvex_source_verification *out,
@@ -774,11 +672,6 @@ static int source_manifest_parse(const char *data,
     return -1;
 }
 
-/* Purpose: resolves explicit or canonical external manifest placement without source mutation.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
 static int source_manifest_path(const yvex_source_verify_options *options, char *out, size_t cap) {
     char candidate[YVEX_PATH_CAP];
     int n;
@@ -816,11 +709,6 @@ static int source_manifest_path(const yvex_source_verify_options *options, char 
     return n >= 0 && (size_t)n < cap;
 }
 
-/* Purpose: reads and parses the current manifest while preserving missing/stale blockers.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source provenance state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: provider provenance is not full shard payload trust. */
 int yvex_source_provenance_manifest_read(const yvex_source_verify_options *options,
                                          yvex_source_verification *out,
                                          yvex_error *err) {
@@ -876,11 +764,6 @@ int yvex_source_provenance_manifest_read(const yvex_source_verify_options *optio
     return YVEX_OK;
 }
 
-/* Purpose: reads Hugging Face provider metadata for one local snapshot file.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source provenance state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: provider provenance is not full shard payload trust. */
 static int source_metadata_read(const char *source_path,
                                 const char *name,
                                 char *revision,
@@ -921,11 +804,6 @@ static int source_metadata_read(const char *source_path,
     return fclose(fp) == 0;
 }
 
-/* Purpose: projects an authoritative Hugging Face LFS SHA-256 bound to the pinned revision.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
 int yvex_source_provenance_payload_digest(const yvex_source_verification *verification,
                                           const char *canonical_name,
                                           yvex_source_payload_digest_fact *out,
@@ -972,7 +850,6 @@ int yvex_source_provenance_payload_digest(const yvex_source_verification *verifi
     return YVEX_OK;
 }
 
-/* Purpose: project oid is sha1 facts while preserving the canonical source provenance invariants. */
 static int source_oid_is_sha1(const char *oid) {
     size_t i;
 
@@ -985,7 +862,6 @@ static int source_oid_is_sha1(const char *oid) {
     return 1;
 }
 
-/* Purpose: accepts a single canonical source-root file name without path traversal. */
 static int source_metadata_name_valid(const char *name) {
     const char *cursor;
 
@@ -997,11 +873,7 @@ static int source_metadata_name_valid(const char *name) {
     return 1;
 }
 
-/* Purpose: bind one bounded sidecar to its pinned revision and provider Git blob identity.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
+/* Bind one bounded sidecar to its pinned revision and provider Git blob identity. */
 static int source_metadata_identity(const yvex_source_verification *verification,
                                     const char *canonical_name,
                                     yvex_source_metadata_identity_fact *out,
@@ -1059,11 +931,7 @@ static int source_metadata_identity(const yvex_source_verification *verification
     return YVEX_OK;
 }
 
-/* Purpose: retain one identity-verified sidecar in bounded memory after a post-read check.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source provenance state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: provider provenance is not full shard payload trust. */
+/* Retain one identity-verified sidecar in bounded memory after a post-read check. */
 int yvex_source_provenance_metadata_read(const yvex_source_verification *verification,
                                          const char *canonical_name,
                                          size_t maximum_bytes,
@@ -1142,11 +1010,11 @@ int yvex_source_provenance_metadata_read(const yvex_source_verification *verific
     return YVEX_OK;
 }
 
-/* Purpose: releases one metadata blob and resets every observable fact.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: releases only resources owned by source provenance; cleanup remains deterministic.
- * Failure: null or released source provenance handles remain harmless.
- * Boundary: provider provenance is not full shard payload trust. */
+/*
+ * Releases one metadata blob and resets every observable fact.
+ *
+ * Releases only resources owned by source provenance; cleanup remains deterministic.
+ */
 void yvex_source_metadata_blob_release(yvex_source_metadata_blob *blob) {
     if (!blob)
         return;
@@ -1154,11 +1022,6 @@ void yvex_source_metadata_blob_release(yvex_source_metadata_blob *blob) {
     memset(blob, 0, sizeof(*blob));
 }
 
-/* Purpose: verifies one sidecar revision and, when requested, its pinned Git blob OID.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: reads bounded evidence and updates only caller-owned source provenance state.
- * Failure: invalid, short, inconsistent, or I/O input yields typed refusal.
- * Boundary: provider provenance is not full shard payload trust. */
 int yvex_source_provenance_verify_file(const yvex_source_verify_options *options,
                                        const char *name,
                                        int verify_upstream_index,
@@ -1208,11 +1071,6 @@ int yvex_source_provenance_verify_file(const yvex_source_verify_options *options
     return YVEX_OK;
 }
 
-/* Purpose: reconciles all observed provider revisions into exact repository provenance.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
 void yvex_source_provenance_finalize(const yvex_source_verify_options *options,
                                      yvex_source_verification *out) {
     size_t i;
@@ -1252,11 +1110,6 @@ void yvex_source_provenance_finalize(const yvex_source_verify_options *options,
     out->revision_verified = 1;
 }
 
-/* Purpose: checks every verifier-owned manifest field against current canonical facts.
- * Inputs: typed source provenance arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned source provenance state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: provider provenance is not full shard payload trust. */
 int yvex_source_provenance_manifest_matches(const yvex_source_verify_options *options,
                                             const yvex_source_verification *out) {
     int schema_v2;

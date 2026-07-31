@@ -1,7 +1,7 @@
-/* Test-only fake YVEX protocol host for OpenAI adapter integration.
- * Purpose: provide deterministic status, session, text, JSON, and tool-call protocol-v4 facts.
- * Inputs: one private Unix socket path. Effects: serves bounded local requests until signalled.
- * Failure: exits nonzero on socket/protocol errors. Boundary: never enters production objects. */
+/*
+ * Provide deterministic status, session, text, JSON, and tool-call protocol-v4 facts. Never
+ * enters production objects.
+ */
 
 #include "src/server/private.h"
 
@@ -23,14 +23,12 @@ static int listener_fd = -1;
 
 static int serve_connection(int fd, yvex_error *err);
 
-/* Purpose: request deterministic fake-host shutdown. */
 static void stop_handler(int signal_number)
 {
     (void)signal_number;
     stopped = 1;
 }
 
-/* Purpose: populate one successful protocol message with common correlation facts. */
 static void message_base(yvex_client_message *message,
                          yvex_client_message_kind kind,
                          const yvex_client_request *request)
@@ -51,7 +49,6 @@ static void message_base(yvex_client_message *message,
     }
 }
 
-/* Purpose: send one successful handshake acknowledgement. */
 static int send_ack(int fd, const yvex_client_request *request,
                     yvex_error *err)
 {
@@ -61,7 +58,6 @@ static int send_ack(int fd, const yvex_client_request *request,
     return yvex_server_protocol_send(fd, &message, err);
 }
 
-/* Purpose: send an authoritative ready status without engine ownership. */
 static int send_status(int fd, const yvex_client_request *request,
                        yvex_error *err)
 {
@@ -87,7 +83,6 @@ static int send_status(int fd, const yvex_client_request *request,
     return yvex_server_protocol_send(fd, &message, err);
 }
 
-/* Purpose: send one deterministic provider fragment from already-committed fake state. */
 static int send_fragment(int fd, const yvex_client_request *request,
                          yvex_provider_output_kind kind,
                          const char *bytes, const char *call_id,
@@ -104,7 +99,6 @@ static int send_fragment(int fd, const yvex_client_request *request,
     return yvex_server_protocol_send(fd, &message, err);
 }
 
-/* Purpose: find one ASCII proof marker inside typed provider message bytes. */
 static int request_contains(const yvex_provider_request *request,
                             const char *marker)
 {
@@ -120,7 +114,6 @@ static int request_contains(const yvex_provider_request *request,
     return 0;
 }
 
-/* Purpose: send one exact fake generation turn for text, JSON, or tool-loop pressure. */
 static int send_generation(int fd, const yvex_client_request *request,
                            yvex_error *err)
 {
@@ -221,7 +214,6 @@ static int send_generation(int fd, const yvex_client_request *request,
     return yvex_server_protocol_send(fd, &message, err);
 }
 
-/* Purpose: serve the one post-handshake request expected on a gateway client connection. */
 static int serve_connection(int fd, yvex_error *err)
 {
     yvex_client_request request;
@@ -273,7 +265,6 @@ done:
     return rc;
 }
 
-/* Purpose: run one private Unix protocol fixture until signalled. */
 int main(int argc, char **argv)
 {
     struct sockaddr_un address;

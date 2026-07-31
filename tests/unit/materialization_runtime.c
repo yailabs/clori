@@ -1,15 +1,6 @@
 /*
- * materialization_runtime.c - materialization and runtime descriptor tests.
- *
- * Owner: tests/unit.
- * Owns: focused fixture coverage for complete-admission materialization plans,
- *   bounded payload access, lifecycle refusal, and runtime descriptor
- *   projection.
- * Does not own: target-scale DeepSeek proof, graph execution, generation, or
- *   release claims.
- * Invariants: uses only tiny GGUF fixtures and synthetic complete-admission
- *   facts bound to the opened fixture snapshot.
- * Boundary: fixture materialization is not full runtime support.
+ * Uses only tiny GGUF fixtures and synthetic complete-admission facts bound to the opened
+ * fixture snapshot. Fixture materialization is not full runtime support.
  */
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/families/deepseek_v4.h>
@@ -37,7 +28,6 @@ typedef struct {
     int failed;
 } fixture_resident_read_thread;
 
-/* Purpose: resolve the single fixture tensor from a borrowed immutable byte span. */
 static int fixture_resident_resolve(const void *context,
                                     const yvex_materialized_tensor_binding *binding,
                                     const unsigned char **data, unsigned long long *bytes)
@@ -51,7 +41,6 @@ static int fixture_resident_resolve(const void *context,
     return YVEX_MATERIALIZATION_READ_HIT;
 }
 
-/* Purpose: account one provider access; the materialization owner serializes this callback. */
 static int fixture_resident_note(const void *context, unsigned long long bytes)
 {
     fixture_resident_span *span = (fixture_resident_span *)context;
@@ -63,7 +52,6 @@ static int fixture_resident_note(const void *context, unsigned long long bytes)
     return 1;
 }
 
-/* Purpose: record the exact synchronous provider-detach notification. */
 static void fixture_resident_detached(const void *context)
 {
     fixture_resident_span *span = (fixture_resident_span *)context;
@@ -71,7 +59,6 @@ static void fixture_resident_detached(const void *context)
     if (span) span->detach_calls++;
 }
 
-/* Purpose: exercise actual concurrent resident reads through one synchronized materialization owner. */
 static void *fixture_resident_read_worker(void *context)
 {
     fixture_resident_read_thread *thread = (fixture_resident_read_thread *)context;
@@ -312,7 +299,7 @@ static int test_materialization_refusals(void)
     return 0;
 }
 
-/* Purpose: prove a sealed resident provider replaces only its exact tensor's physical reads. */
+/* Prove a sealed resident provider replaces only its exact tensor's physical reads. */
 static int test_materialization_resident_provider(void)
 {
     yvex_artifact *artifact = NULL;

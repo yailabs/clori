@@ -14,6 +14,7 @@ import argparse
 import bisect
 import csv
 import hashlib
+import io
 import json
 import os
 import re
@@ -21,6 +22,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import tokenize
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -356,54 +358,6 @@ def parse_unit(path: Path) -> CUnit:
     )
 
 
-def contract_fields(text: str) -> dict[str, str]:
-    names = {
-        "Owner",
-        "Owns",
-        "Does not own",
-        "Invariants",
-        "Boundary",
-        "Purpose",
-        "Inputs",
-        "Effects",
-        "Failure",
-    }
-    fields: dict[str, str] = {}
-    current: str | None = None
-    values: list[str] = []
-
-    def publish() -> None:
-        nonlocal current, values
-        if current is not None:
-            value = " ".join(part for part in values if part).strip().rstrip("/").strip()
-            fields.setdefault(current, value)
-        current = None
-        values = []
-
-    for raw in text.splitlines():
-        line = re.sub(r"^\s*(?:/\*+|\*+|//+)\s?", "", raw)
-        line = re.sub(r"\s*\*/\s*$", "", line).strip()
-        matches = list(
-            re.finditer(
-                r"(Owner|Owns|Does not own|Invariants|Boundary|Purpose|Inputs|Effects|Failure)"
-                r"\s*:\s*",
-                line,
-            )
-        )
-        if matches:
-            publish()
-            for index, match in enumerate(matches):
-                current = match.group(1)
-                end = matches[index + 1].start() if index + 1 < len(matches) else len(line)
-                values = [line[match.end() : end].strip()]
-                if index + 1 < len(matches):
-                    publish()
-        elif current is not None and line:
-            values.append(line)
-    publish()
-    return fields
-
-
 def adjacent_comment(unit: CUnit, position: int) -> Comment | None:
     prior = [comment for comment in unit.comments if comment.end <= position]
     if not prior:
@@ -574,6 +528,55 @@ class Audit:
             return None
         return first
 
+    def commentary_paths(self) -> list[Path]:
+        """Return every first-party code or build file governed by commentary policy."""
+        policy = self.policy["commentary"]
+        suffixes = set(policy["suffixes"])
+        paths: set[Path] = set()
+        for root_name in policy["roots"]:
+            root = ROOT / root_name
+            if not root.exists():
+                continue
+            paths.update(
+                path for path in root.rglob("*")
+                if path.is_file() and path.suffix in suffixes
+            )
+        paths.update(ROOT / name for name in policy["build_files"] if (ROOT / name).is_file())
+        excluded = tuple(policy["excluded_prefixes"])
+        return sorted(path for path in paths if not relative(path).startswith(excluded))
+
+    @staticmethod
+    def normalize_comment(text: str) -> str:
+        lines = []
+        for raw in text.splitlines():
+            line = re.sub(r"\s*\*/\s*$", "", raw)
+            line = re.sub(r"^\s*(?:/\*+|\*+|//+|#+)\s?", "", line).strip()
+            if line:
+                lines.append(line)
+        return re.sub(r"\s+", " ", " ".join(lines)).strip()
+
+    def commentary_comments(self) -> Iterator[tuple[str, int, str]]:
+        """Yield C, Python, shell, and Make comments without scanning literals as prose."""
+        for path in self.commentary_paths():
+            name = relative(path)
+            if path.suffix in {".c", ".cu", ".h"}:
+                for comment in parse_unit(path).comments:
+                    yield name, comment.start_line, self.normalize_comment(comment.text)
+                continue
+            if path.suffix == ".py":
+                try:
+                    tokens = tokenize.generate_tokens(io.StringIO(path.read_text()).readline)
+                    for token in tokens:
+                        if token.type == tokenize.COMMENT and not token.string.startswith("#!"):
+                            yield name, token.start[0], token.string.lstrip("#").strip()
+                except (SyntaxError, tokenize.TokenError) as exc:
+                    yield name, 0, f"COMMENTARY_SCANNER_PARSE_ERROR {exc}"
+                continue
+            for number, line in enumerate(path.read_text(errors="ignore").splitlines(), 1):
+                stripped = line.lstrip()
+                if stripped.startswith("#") and not stripped.startswith("#!"):
+                    yield name, number, stripped.lstrip("#").strip()
+
     def metrics(self) -> dict[str, object]:
         physical = blank = comment_only = code = executable = 0
         functions: list[tuple[str, Function]] = []
@@ -610,15 +613,11 @@ class Audit:
                             executable += 1
 
         tiers = Counter(self.header_tier(path) or "invalid" for path in self.headers)
-        documented = 0
-        full = 0
+        commented = 0
         for name, function in functions:
             comment = adjacent_comment(self.units[name], function.start)
             if comment:
-                documented += 1
-                fields = contract_fields(comment.text)
-                if all(field in fields for field in self.policy["contracts"]["function_full_fields"]):
-                    full += 1
+                commented += 1
 
         archive = self.archive_snapshot()
         largest_file = max(file_lines, key=file_lines.get, default="")
@@ -662,8 +661,11 @@ class Audit:
                 "line": largest_function[1].start_line if largest_function else 0,
                 "lines": largest_function[1].lines if largest_function else 0,
             },
-            "documented_functions": documented,
-            "full_function_contracts": full,
+            "functions_with_adjacent_commentary": commented,
+            "interface_headers_with_module_commentary": sum(
+                self.leading_contract(unit) is not None for unit in self.headers.values()
+            ),
+            "reviewed_commentary_files": len(self.commentary_paths()),
             "hard_width_violations": long_lines,
             "same_stem_pairs": len(self.same_stem_pairs()),
             "include_facts": include_facts,
@@ -919,21 +921,6 @@ class Audit:
                     errors.append(f"invalid family owner path: {path}")
             elif "/families/" in path:
                 errors.append(f"family path lacks family scope: {path}")
-
-            unit = self.units.get(path)
-            if unit:
-                contract = self.leading_contract(unit)
-                fields = contract_fields(contract.text) if contract else {}
-                contract_owner = fields.get("Owner", "")
-                owner_words = set(re.findall(r"[a-z0-9]+", contract_owner.lower()))
-                subsystem_words = set(re.findall(r"[a-z0-9]+", subsystem.lower()))
-                if not contract_owner or not subsystem_words.intersection(owner_words):
-                    errors.append(
-                        f"manifest/file owner mismatch: {path}: "
-                        f"subsystem={subsystem} contract={contract_owner or 'missing'}"
-                    )
-                if not fields.get("Boundary"):
-                    errors.append(f"manifest/file boundary is missing: {path}: {boundary}")
 
         maximum = self.policy["limits"]["files_per_semantic_owner"]
         for owner, owner_paths in sorted(owners.items()):
@@ -1399,42 +1386,11 @@ class Audit:
 
     def natural_violations(self) -> list[str]:
         errors: list[str] = []
-        contract_policy = self.policy["contracts"]
-        duplicate_contracts: dict[str, list[str]] = defaultdict(list)
-        for name, unit in self.units.items():
-            contract = self.leading_contract(unit)
-            fields = contract_fields(contract.text) if contract else {}
-            missing = [field for field in contract_policy["file_fields"] if field not in fields]
-            if missing:
-                errors.append(f"missing file contract fields: {name}: {missing}")
-            if contract:
-                lowered = contract.text.lower()
-                for fragment in contract_policy["forbidden_fragments"]:
-                    if fragment.lower() in lowered:
-                        errors.append(f"boilerplate file contract: {name}: {fragment}")
+        policy = self.policy["commentary"]
+        duplicates: dict[str, list[str]] = defaultdict(list)
 
+        for name, unit in self.units.items():
             for function in unit.functions:
-                comment = adjacent_comment(unit, function.start)
-                if not comment:
-                    errors.append(
-                        f"undocumented function: {name}:{function.start_line}: {function.name}"
-                    )
-                    continue
-                function_fields = contract_fields(comment.text)
-                nontrivial = self.function_requires_full_contract(function, unit)
-                required = (
-                    contract_policy["function_full_fields"]
-                    if nontrivial
-                    else contract_policy["function_short_fields"]
-                )
-                missing = [field for field in required if field not in function_fields]
-                if missing:
-                    errors.append(
-                        f"incomplete function contract: {name}:{function.start_line}: "
-                        f"{function.name}: {missing}"
-                    )
-                normalized = re.sub(r"\s+", " ", comment.text).strip().lower()
-                duplicate_contracts[normalized].append(f"{name}:{function.start_line}")
                 if function.lines > self.policy["limits"]["function_lines"]:
                     errors.append(
                         f"function exceeds line limit: {name}:{function.start_line}: "
@@ -1443,26 +1399,58 @@ class Audit:
                 if function.is_static and function.name.startswith(self.policy["symbols"]["namespace"]):
                     errors.append(f"private static function retains public prefix: {name}: {function.name}")
 
-        duplicate_limit = contract_policy["duplicate_contract_limit"]
-        for normalized, locations in duplicate_contracts.items():
-            if normalized and len(locations) > duplicate_limit:
-                errors.append(f"duplicated function contract: {locations}")
+        for name, unit in self.headers.items():
+            if self.header_tier(name) not in policy["interface_header_tiers"]:
+                continue
+            comment = self.leading_contract(unit)
+            normalized = self.normalize_comment(comment.text) if comment else ""
+            if len(normalized) < policy["interface_module_comment_minimum_characters"]:
+                errors.append(f"interface header lacks module commentary: {name}")
+
+        old_label = re.compile(
+            r"(?:^|\s)(?:" + "|".join(re.escape(label) for label in policy["obsolete_labels"])
+            + r")\s*:\s*",
+            re.IGNORECASE,
+        )
+        todo = re.compile(r"\b(?:TODO|FIXME|XXX|HACK)\b", re.IGNORECASE)
+        commented_code = re.compile(
+            r"(?:#\s*(?:include|define|if|endif)\b|"
+            r"(?:return|break|continue|goto)\b[^;]*;|"
+            r"(?:if|for|while|switch)\s*\([^)]*\)\s*\{?|"
+            r"[A-Za-z_][A-Za-z0-9_]*\s*\([^;{}]*\)\s*;)",
+        )
+        for name, line, comment in self.commentary_comments():
+            if not comment:
+                continue
+            location = f"{name}:{line}"
+            if comment.startswith("COMMENTARY_SCANNER_PARSE_ERROR"):
+                errors.append(f"commentary scan failed: {location}: {comment}")
+                continue
+            if old_label.search(comment):
+                errors.append(f"obsolete commentary label: {location}")
+            lowered = comment.lower()
+            for fragment in policy["forbidden_boilerplate_fragments"]:
+                if fragment.lower() in lowered:
+                    errors.append(f"synthetic commentary boilerplate: {location}: {fragment}")
+            for stale in policy["stale_topology_names"]:
+                if stale.lower() in lowered:
+                    errors.append(f"stale topology name in commentary: {location}: {stale}")
+            marker = todo.search(comment)
+            if marker and not re.search(policy["admitted_todo_pattern"], comment):
+                errors.append(f"ownerless maintenance marker: {location}: {marker.group(0)}")
+            if commented_code.fullmatch(comment.strip()):
+                errors.append(f"commented-out code: {location}")
+            normalized = re.sub(r"\s+", " ", lowered).strip()
+            if len(normalized) >= policy["duplicate_minimum_characters"]:
+                duplicates[normalized].append(location)
+
+        for locations in duplicates.values():
+            if len(locations) > 1:
+                errors.append(f"duplicated commentary: {locations}")
 
         errors.extend(self.output_and_shell_violations())
         errors.extend(self.claim_violations())
         return errors
-
-    def function_requires_full_contract(self, function: Function, unit: CUnit) -> bool:
-        if not function.is_static or function.lines > self.policy["limits"]["short_helper_lines"]:
-            return True
-        lowered = function.name.lower()
-        if any(fragment in lowered for fragment in self.policy["contracts"]["nontrivial_name_fragments"]):
-            return True
-        body = unit.masked[function.body_start : function.end]
-        return any(
-            re.search(rf"\b{re.escape(call)}\s*\(", body)
-            for call in self.policy["contracts"]["nontrivial_call_names"]
-        )
 
     def output_and_shell_violations(self) -> list[str]:
         errors: list[str] = []
@@ -1537,23 +1525,17 @@ class Audit:
 
 def self_test() -> None:
     sample = """/*
- * Owner: fixture.owner.
- * Purpose: exercise the scanner.
+ * The fixture exercises comment-aware parsing without imposing prose templates.
  */
 #include <stddef.h>
 /*
- * Purpose: add two values.
- * Inputs: two integers.
- * Effects: none.
- * Failure: none.
- * Boundary: pure fixture.
+ * Addition is kept out of a macro so the scanner sees one ordinary definition.
  */
 int fixture_add(int left, int right)
 {
     return left + right;
 }
 
-// Purpose: return zero.
 static int zero(void) { return 0; }
 """
     masked, stripped, comments = lex_c(sample)
@@ -1563,7 +1545,7 @@ static int zero(void) { return 0; }
     assert functions[1].is_static
     unit = CUnit(Path("fixture.c"), sample, masked, stripped, comments, parse_includes(sample), functions)
     assert adjacent_comment(unit, functions[0].start) is not None
-    assert contract_fields(adjacent_comment(unit, functions[0].start).text)["Purpose"]
+    assert "macro" in adjacent_comment(unit, functions[0].start).text
     assert parse_includes(sample)[0].name == "stddef.h"
     assert strongly_connected({"a": {"b"}, "b": {"a"}}) == [["a", "b"]]
     with tempfile.TemporaryDirectory() as directory:

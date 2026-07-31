@@ -1,12 +1,9 @@
-/* Owner: generic graph numeric primitives and bounded primitive proofs.
- * Owns: normalization, RoPE/YaRN, Hadamard, top-k, activation codecs, and fixture numeric runners.
- * Does not own: source quantization, qtype geometry, family policy, materialization, CUDA, or generation.
- * Invariants: runtime policy comes from immutable plans and reference algorithms remain test-owned.
- * Boundary: reproducible primitives and fixture proofs do not establish complete attention support.
- * Purpose: provide deterministic scalar mechanisms shared by graph construction and family execution.
- * Inputs: finite bounded arrays, explicit geometry, numeric policies, and typed report sinks.
- * Effects: mutates caller-owned numeric outputs and proof facts only.
- * Failure: invalid geometry, non-finite policy violations, or backend refusal publish no capability. */
+/*
+ * Provide deterministic scalar mechanisms shared by graph construction and family execution.
+ *
+ * Runtime policy comes from immutable plans and reference algorithms remain test-owned.
+ * Reproducible primitives and fixture proofs do not establish complete attention support.
+ */
 #include "src/graph/private.h"
 
 static const double attention_pi =
@@ -197,7 +194,6 @@ static const attention_compare_step attention_state_steps[] = {
      offsetof(yvex_attention_rolling_state_output, score_state_extent), 0u, NULL, 0u, NULL},
 };
 
-/* Purpose: compare one typed exact field without comparing structure padding. */
 static int attention_compare_field_equal(const unsigned char *left, const unsigned char *right,
                                          const attention_compare_field *field)
 {
@@ -208,7 +204,6 @@ static int attention_compare_field_equal(const unsigned char *left, const unsign
     return memcmp(left, right, field->extent) == 0;
 }
 
-/* Purpose: record the first ordered comparison failure in one aggregate verdict. */
 static void attention_compare_fail(attention_compare_cursor *cursor,
                                    yvex_attention_comparison_stage stage,
                                    unsigned long long coordinate, int exact_failure)
@@ -223,11 +218,11 @@ static void attention_compare_fail(attention_compare_cursor *cursor,
     }
 }
 
-/* Purpose: accumulate one F32 span under the canonical finite/tolerance contract.
- * Inputs: two equally sized spans, finite tolerances, typed stage, cursor, and error sink.
- * Effects: advances exact counts, extrema, squared error, bitwise evidence, and first failure.
- * Failure: malformed storage or aggregate-count overflow returns a typed failure.
- * Boundary: scans one span and neither allocates nor publishes attention state. */
+/*
+ * Accumulate one F32 span under the canonical finite/tolerance contract.
+ *
+ * Malformed storage or aggregate-count overflow returns a typed failure.
+ */
 static int attention_compare_f32(const float *left, const float *right,
                                  unsigned long long count, double absolute_tolerance,
                                  double relative_tolerance, unsigned int flags,
@@ -280,11 +275,11 @@ static int attention_compare_f32(const float *left, const float *right,
     return YVEX_OK;
 }
 
-/* Purpose: execute the canonical ordered state-comparison descriptor table.
- * Inputs: two immutable publications, finite tolerances, initialized cursor, and error sink.
- * Effects: visits each admitted geometry, numeric, and position step exactly once in order.
- * Failure: malformed storage or arithmetic overflow stops before publishing caller output.
- * Boundary: compares candidate attention state only and never commits persistent state. */
+/*
+ * Execute the canonical ordered state-comparison descriptor table.
+ *
+ * Malformed storage or arithmetic overflow stops before publishing caller output.
+ */
 static int attention_compare_state(const yvex_attention_publication *left,
                                    const yvex_attention_publication *right,
                                    double absolute_tolerance, double relative_tolerance,
@@ -355,11 +350,7 @@ static int attention_compare_state(const yvex_attention_publication *left,
     return YVEX_OK;
 }
 
-/* Purpose: compare two finite F32 ranges under one deterministic numeric contract.
- * Inputs: equally sized arrays plus finite non-negative absolute and relative tolerances.
- * Effects: replaces caller-owned metrics; performs no allocation or I/O.
- * Failure: invalid geometry refuses; non-finite values produce a typed failed verdict.
- * Boundary: bitwise equality is observed separately from tolerance admission. */
+/* Compare two finite F32 ranges under one deterministic numeric contract. */
 int yvex_graph_f32_compare(const float *left, const float *right,
                            unsigned long long count, double absolute_tolerance,
                            double relative_tolerance, yvex_graph_f32_comparison *out,
@@ -381,11 +372,11 @@ int yvex_graph_f32_compare(const float *left, const float *right,
     return rc;
 }
 
-/* Purpose: compare the complete attention-owned candidate state delta across production paths.
- * Inputs: two publications plus finite non-negative absolute and relative tolerances.
- * Effects: replaces caller-owned aggregate metrics; performs no allocation or publication.
- * Failure: malformed ranges or overflow preserve caller output and return typed failure.
- * Boundary: compares emitted and rolling state only, never output tensors or persistent KV. */
+/*
+ * Compare the complete attention-owned candidate state delta across production paths.
+ *
+ * Malformed ranges or overflow preserve caller output and return typed failure.
+ */
 int yvex_attention_state_compare(const yvex_attention_publication *left,
                                  const yvex_attention_publication *right,
                                  double absolute_tolerance, double relative_tolerance,
@@ -409,11 +400,6 @@ int yvex_attention_state_compare(const yvex_attention_publication *left,
     return rc;
 }
 
-/* Purpose: compare complete output and state publications and aggregate numeric evidence.
- * Inputs: two complete publications, explicit tolerances, aggregate result, and error sum.
- * Effects: advances comparison counters only after output and state comparisons complete.
- * Failure: malformed geometry or state preserves caller-owned publication bytes.
- * Boundary: numerical conformance only; it owns no oracle, backend, or persistent state. */
 int yvex_attention_publication_compare(
     const yvex_attention_publication *left,
     const yvex_attention_publication *right,
@@ -486,11 +472,6 @@ int yvex_attention_publication_compare(
                ? YVEX_ERR_FORMAT : YVEX_OK;
 }
 
-/* Purpose: select the publication's exact committed output span.
- * Inputs: immutable publication and caller-owned width slot.
- * Effects: writes the selected core or envelope width and returns borrowed values.
- * Failure: missing arguments return null without changing publication state.
- * Boundary: selection follows publication scope and performs no hashing itself. */
 static const float *attention_hash_output_values(
     const yvex_attention_publication *publication, unsigned long long *width)
 {
@@ -503,11 +484,6 @@ static const float *attention_hash_output_values(
     return publication->output;
 }
 
-/* Purpose: hash exact IEEE-754 values in canonical logical order.
- * Inputs: initialized hash plus one optional, explicitly counted F32 range.
- * Effects: advances the hash with count framing and canonical U64 bit fields.
- * Failure: missing non-empty storage or SHA-256 update failure returns false.
- * Boundary: preserves signed zero and NaN payload bytes as execution evidence. */
 static int attention_hash_floats(yvex_sha256 *hash, const float *values,
                                  unsigned long long count)
 {
@@ -522,11 +498,6 @@ static int attention_hash_floats(yvex_sha256 *hash, const float *values,
     return 1;
 }
 
-/* Purpose: hash exact ordinal or position values in canonical logical order.
- * Inputs: initialized hash plus one optional, explicitly counted U64 range.
- * Effects: advances the hash with count framing and each ordered value.
- * Failure: missing non-empty storage or SHA-256 update failure returns false.
- * Boundary: discrete positions are never folded into numeric tolerance evidence. */
 static int attention_hash_u64s(yvex_sha256 *hash, const unsigned long long *values,
                                unsigned long long count)
 {
@@ -538,11 +509,11 @@ static int attention_hash_u64s(yvex_sha256 *hash, const unsigned long long *valu
     return 1;
 }
 
-/* Purpose: hash ordered typed scalar fields without serializing object padding.
- * Inputs: initialized digest, immutable object, and its canonical field schema.
- * Effects: advances only the caller-owned digest in schema order.
- * Failure: malformed field kinds or digest-update failure return false.
- * Boundary: numeric identity hashes declared values, never native object representation. */
+/*
+ * Hash ordered typed scalar fields without serializing object padding.
+ *
+ * Numeric identity hashes declared values, never native object representation.
+ */
 static int attention_hash_fields(yvex_sha256 *hash, const void *object,
                                  const attention_compare_field *fields, size_t count)
 {
@@ -572,11 +543,6 @@ static int attention_hash_fields(yvex_sha256 *hash, const void *object,
     return 1;
 }
 
-/* Purpose: hash one complete rolling-state delta using explicit geometry and exact values.
- * Inputs: initialized hash and one immutable main or indexer rolling publication.
- * Effects: advances the hash with presence, metadata, extents, and numeric spans.
- * Failure: malformed present storage or SHA-256 update failure returns false.
- * Boundary: hashes candidate state only and never commits persistent KV. */
 static int attention_hash_rolling(yvex_sha256 *hash,
                                   const yvex_attention_rolling_state_output *state)
 {
@@ -590,11 +556,11 @@ static int attention_hash_rolling(yvex_sha256 *hash,
            attention_hash_floats(hash, state->score_state, state->score_state_extent);
 }
 
-/* Purpose: append one complete publication to distinct output and state evidence digests.
- * Inputs: caller-owned output/state hashes and one immutable complete publication.
- * Effects: advances output geometry plus exact raw, emitted, position, and rolling state fields.
- * Failure: incomplete geometry, missing storage, overflow, or hash refusal returns false.
- * Boundary: keeps output and candidate-state domains separate and never commits persistent KV. */
+/*
+ * Append one complete publication to distinct output and state evidence digests.
+ *
+ * Incomplete geometry, missing storage, overflow, or hash refusal returns false.
+ */
 int yvex_attention_publication_hash_update(
     yvex_sha256 *output_hash, yvex_sha256 *state_hash,
     const yvex_attention_publication *publication)
@@ -630,11 +596,7 @@ int yvex_attention_publication_hash_update(
            attention_hash_rolling(state_hash, &publication->next_indexer_rolling_state);
 }
 
-/* Purpose: apply the identity-bearing DeepSeek activation storage boundary.
- * Inputs: one admitted compute contract and finite F32 working values.
- * Effects: rounds values in place to their model-visible storage precision.
- * Failure: unknown contracts or non-finite values refuse without partial success.
- * Boundary: storage rounding only; accumulation remains owned by each operation. */
+/* Apply the identity-bearing DeepSeek activation storage boundary. */
 int yvex_attention_compute_round(yvex_attention_compute_contract contract,
                                  float *values,
                                  unsigned long long count)
@@ -651,11 +613,6 @@ int yvex_attention_compute_round(yvex_attention_compute_contract contract,
     return 1;
 }
 
-/* Purpose: apply the shared RMS normalization equation with optional learned weights.
- * Inputs: finite values, optional finite weights, positive count, and positive epsilon.
- * Effects: replaces values with their normalized projection.
- * Failure: invalid or non-finite input returns false without claiming a valid result.
- * Boundary: the caller selects whether the equation has learned or unit weights. */
 static int attention_rms_norm_apply(float *values, unsigned long long count,
                                     const float *weights, double epsilon)
 {
@@ -682,22 +639,16 @@ static int attention_rms_norm_apply(float *values, unsigned long long count,
     return 1;
 }
 
-/* Purpose: apply RMS normalization with one learned weight per value.
- * Inputs: finite value and weight arrays, positive count, and positive epsilon.
- * Effects: replaces values with their weighted normalized projection.
- * Failure: malformed or non-finite input returns false without a valid result.
- * Boundary: weight ownership and attention composition remain with the caller. */
+/*
+ * Apply RMS normalization with one learned weight per value.
+ *
+ * Weight ownership and attention composition remain with the caller.
+ */
 int yvex_attention_rms_norm(float *values, unsigned long long count,
                             const float *weights, double epsilon)
 {
     return weights && attention_rms_norm_apply(values, count, weights, epsilon);
 }
-
-// Purpose: Return the admitted unit rms norm fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 
 int yvex_attention_unit_rms_norm(float *values,
                                  unsigned long long count,
@@ -706,11 +657,6 @@ int yvex_attention_unit_rms_norm(float *values,
     return attention_rms_norm_apply(values, count, NULL, epsilon);
 }
 
-/* Purpose: validate the generic hyper-connection geometry before numeric work.
- * Inputs: one immutable attention layer plan.
- * Effects: none.
- * Failure: returns false for incomplete, overflowing, or non-finite geometry.
- * Boundary: validates reusable mHC math without selecting a model family. */
 static int attention_mhc_geometry(const yvex_attention_layer_plan *layer)
 {
     unsigned long long expanded;
@@ -732,7 +678,6 @@ static int attention_mhc_geometry(const yvex_attention_layer_plan *layer)
            layer->mhc_residual_post_multiplier > 0.0;
 }
 
-/* Purpose: evaluate one stable sigmoid without overflowing exponential range. */
 static double attention_sigmoid(double value)
 {
     if (value >= 0.0) {
@@ -745,11 +690,6 @@ static double attention_sigmoid(double value)
     }
 }
 
-/* Purpose: normalize one mHC combination matrix through the versioned Sinkhorn schedule.
- * Inputs: finite row-major square matrix, stream count, iteration count, and epsilon.
- * Effects: replaces the caller-owned matrix with its balanced form.
- * Failure: returns false on non-finite or degenerate normalization.
- * Boundary: implements only reusable Sinkhorn arithmetic, not family composition. */
 static int attention_mhc_sinkhorn(float *matrix, unsigned long long streams,
                                   unsigned long long iterations, double epsilon)
 {
@@ -795,11 +735,6 @@ static int attention_mhc_sinkhorn(float *matrix, unsigned long long streams,
     return 1;
 }
 
-/* Purpose: execute mHC attention ingress from expanded residual streams to one core activation.
- * Inputs: admitted layer geometry, raw linear mixes, exact scale/base tensors, and finite residuals.
- * Effects: writes collapsed BF16-visible activation plus F32 post and combination coefficients.
- * Failure: malformed geometry or non-finite arithmetic publishes a typed numeric refusal.
- * Boundary: owns generic mHC arithmetic; the family adapter owns role binding and invocation. */
 int yvex_attention_mhc_pre(const yvex_attention_mhc_pre_args *args,
                            yvex_attention_failure *failure, yvex_error *err)
 {
@@ -876,11 +811,6 @@ numeric:
         "attention mHC ingress produced non-finite values");
 }
 
-/* Purpose: execute mHC attention egress from core output and immutable residual streams.
- * Inputs: admitted coefficients, core output, residual input, and explicit strides.
- * Effects: writes one BF16-visible expanded attention-envelope output.
- * Failure: malformed geometry or non-finite arithmetic publishes a typed refusal.
- * Boundary: completes the immediate attention residual only; it never executes FFN/MoE work. */
 int yvex_attention_mhc_post(const yvex_attention_mhc_post_args *args,
                             yvex_attention_failure *failure, yvex_error *err)
 {
@@ -930,11 +860,6 @@ numeric:
         "attention mHC egress produced non-finite values");
 }
 
-// Purpose: Implement the graph-local yarn frequency semantic operation.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static double attention_yarn_frequency(
     const yvex_attention_position_policy *position,
     unsigned long long pair,
@@ -977,12 +902,6 @@ static double attention_yarn_frequency(
     return frequency;
 }
 
-// Purpose: Return the admitted rope apply fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
-
 int yvex_attention_rope_apply(
     float *values,
     unsigned long long count,
@@ -1021,14 +940,12 @@ typedef struct {
     unsigned long long index;
 } attention_topk_candidate;
 
-// Purpose: Apply the checked graph-local score equal invariant.
 static int attention_score_equal(float left, float right)
 {
     if (left == 0.0f && right == 0.0f) return 1;
     return left == right;
 }
 
-// Purpose: Implement the graph-local candidate before semantic operation.
 static int attention_candidate_before(const attention_topk_candidate *left,
                                       const attention_topk_candidate *right)
 {
@@ -1037,7 +954,6 @@ static int attention_candidate_before(const attention_topk_candidate *left,
     return left->ordinal < right->ordinal;
 }
 
-// Purpose: Implement the graph-local candidate ordinal compare semantic operation.
 static int attention_candidate_ordinal_compare(const void *left,
                                                const void *right)
 {
@@ -1051,7 +967,6 @@ static int attention_candidate_ordinal_compare(const void *left,
     return 0;
 }
 
-// Purpose: Implement the graph-local candidate rank compare semantic operation.
 static int attention_candidate_rank_compare(const void *left,
                                             const void *right)
 {
@@ -1065,7 +980,6 @@ static int attention_candidate_rank_compare(const void *left,
     return 0;
 }
 
-// Purpose: Return the admitted power of two ceil fact without transferring ownership.
 static float attention_power_of_two_ceil(float value)
 {
     int exponent;
@@ -1076,12 +990,6 @@ static float attention_power_of_two_ceil(float value)
     if (mantissa > 0.5f) exponent++;
     return ldexpf(1.0f, exponent - 1);
 }
-
-// Purpose: Return the admitted hadamard cpu fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 
 int yvex_attention_hadamard_cpu(
     const float *input,
@@ -1161,17 +1069,6 @@ int yvex_attention_hadamard_cpu(
     return YVEX_OK;
 }
 
-/* Purpose: select the canonical sparse candidates by score and ordinal.
- * Inputs: finite scores, unique ordinals, bounded k, and writable result facts.
- * Effects: allocates bounded sorting scratch and publishes only a complete selection.
- * Failure: invalid input, non-finite score, duplicate ordinal, or allocation refusal.
- * Boundary: selection is a reusable numeric mechanism, not attention execution. */
-// Purpose: Return the admitted topk select fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
-
 int yvex_attention_topk_select(
     const float *scores,
     const unsigned long long *ordinals,
@@ -1243,11 +1140,6 @@ int yvex_attention_topk_select(
     return YVEX_OK;
 }
 
-// Purpose: Return the admitted ue8m0 encode scale fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static unsigned char attention_ue8m0_encode_scale(float value)
 {
     int exponent;
@@ -1262,11 +1154,6 @@ static unsigned char attention_ue8m0_encode_scale(float value)
     return (unsigned char)exponent;
 }
 
-// Purpose: Return the admitted ue8m0 decode scale fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static float attention_ue8m0_decode_scale(unsigned char code)
 {
     return yvex_quant_e8m0_decode(code);
@@ -1274,11 +1161,6 @@ static float attention_ue8m0_decode_scale(unsigned char code)
 
 static float attention_fp8_e4m3fn_decode(unsigned char code);
 
-// Purpose: Return the admitted fp8 e4m3fn encode fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static unsigned char attention_fp8_e4m3fn_encode(float value)
 {
     static const float finite_max = 448.0f;
@@ -1303,11 +1185,6 @@ static unsigned char attention_fp8_e4m3fn_encode(float value)
     return negative ? (unsigned char)(best | 0x80u) : best;
 }
 
-// Purpose: Return the admitted fp8 e4m3fn decode fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static float attention_fp8_e4m3fn_decode(unsigned char code)
 {
     return yvex_quant_fp8_e4m3fn_decode(code);
@@ -1316,11 +1193,6 @@ static float attention_fp8_e4m3fn_decode(unsigned char code)
 typedef unsigned char (*attention_fake_encode_fn)(float value);
 typedef float (*attention_fake_decode_fn)(unsigned char code);
 
-/* Purpose: apply the shared UE8M0 block-scale fake-quantization lifecycle.
- * Inputs: finite activations, output buffers, codec range/floor, and scalar codec functions.
- * Effects: publishes one scale code, encoded values, and BF16-rounded decoded values.
- * Failure: invalid input, non-finite activation, or invalid scale returns a typed refusal.
- * Boundary: codec-specific scalar rounding remains owned by the supplied FP8 or FP4 codec. */
 static int attention_fake_quant_block(
     const float *input, unsigned long long count, float *dequantized,
     unsigned char *codes, unsigned char *scale_code, float finite_max,
@@ -1371,12 +1243,6 @@ static int attention_fake_quant_block(
     return YVEX_OK;
 }
 
-// Purpose: Return the admitted fp8 fake quant block fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
-
 int yvex_attention_fp8_fake_quant_block(
     const float *input,
     unsigned long long count,
@@ -1394,11 +1260,6 @@ int yvex_attention_fp8_fake_quant_block(
         "FP8 fake quant produced invalid UE8M0 scale", failure, err);
 }
 
-// Purpose: Return the admitted fp4 e2m1 encode fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static unsigned char attention_fp4_e2m1_encode(float value)
 {
     static const float values[] = {
@@ -1423,11 +1284,6 @@ static unsigned char attention_fp4_e2m1_encode(float value)
     return signbit(value) ? (unsigned char)(best | 0x8u) : best;
 }
 
-// Purpose: Return the admitted fp4 e2m1 decode fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 static float attention_fp4_e2m1_decode(unsigned char code)
 {
     static const float values[] = {
@@ -1438,12 +1294,6 @@ static float attention_fp4_e2m1_decode(unsigned char code)
 
     return (code & 0x8u) ? -value : value;
 }
-
-// Purpose: Return the admitted fp4 fake quant block fact without transferring ownership.
-// Inputs: typed caller-owned values accepted by the graph private ABI.
-// Effects: mutates only explicit outputs or graph-owned state; performs no operator I/O.
-// Failure: returns a typed refusal or neutral result without partial capability publication.
-// Boundary: remains graph-local and cannot promote attention, KV, or generation support.
 
 int yvex_attention_fp4_fake_quant_block(
     const float *input,

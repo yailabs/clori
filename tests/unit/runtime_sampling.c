@@ -1,8 +1,7 @@
-/* Owner: tests.unit.runtime_sampling.
- * Owns: focused sampling policy, source, arithmetic, RNG, identity, and lifecycle proof.
- * Does not own: target-scale output-head execution or generation behavior.
- * Invariants: fixtures are sealed as complete logits rows before production admission.
- * Boundary: unit/integration evidence over the common real-logits sampling owner. */
+/*
+ * Fixtures are sealed as complete logits rows before production admission. Unit/integration
+ * evidence over the common real-logits sampling owner.
+ */
 #include <yvex/internal/sampling.h>
 
 #include <math.h>
@@ -15,14 +14,12 @@
 #include "tests/reference/sampling.h"
 #include "tests/test.h"
 
-/* Purpose: fill one deterministic valid SHA-256 identity. */
 static void sampling_test_identity(char output[YVEX_SHA256_HEX_CAP], char digit)
 {
     memset(output, digit, YVEX_SHA256_HEX_CAP - 1u);
     output[YVEX_SHA256_HEX_CAP - 1u] = '\0';
 }
 
-/* Purpose: hash canonical F32 logits exactly as the production logits owner publishes them. */
 static int sampling_test_raw_digest(const float *values, unsigned long long count,
                                     char output[YVEX_SHA256_HEX_CAP])
 {
@@ -41,7 +38,7 @@ static int sampling_test_raw_digest(const float *values, unsigned long long coun
     return 1;
 }
 
-/* Purpose: seal one synthetic but fully identity-bound logits publication. */
+/* Seal one synthetic but fully identity-bound logits publication. */
 static int sampling_test_row(const yvex_runtime_logits_plan_summary *plan,
                              const float *values, unsigned long long count,
                              unsigned long long position,
@@ -82,7 +79,6 @@ static int sampling_test_row(const yvex_runtime_logits_plan_summary *plan,
     return 1;
 }
 
-/* Purpose: establish a minimal exact output-head plan for bounded sampling tests. */
 static void sampling_test_plan(yvex_runtime_logits_plan_summary *plan,
                                unsigned long long vocabulary_size)
 {
@@ -93,7 +89,6 @@ static void sampling_test_plan(yvex_runtime_logits_plan_summary *plan,
     sampling_test_identity(plan->output_head_plan_identity, 'a');
 }
 
-/* Purpose: execute one bounded sealed fixture through a fresh production context. */
 static int sampling_test_select_fixture(
     const float *logits, unsigned long long count,
     yvex_runtime_sampling_policy policy,
@@ -129,7 +124,6 @@ static int sampling_test_select_fixture(
     return rc;
 }
 
-/* Purpose: return one neutral explicitly seeded stochastic fixture policy. */
 static yvex_runtime_sampling_policy sampling_test_neutral_stochastic(void)
 {
     yvex_runtime_sampling_policy policy = {
@@ -140,7 +134,6 @@ static yvex_runtime_sampling_policy sampling_test_neutral_stochastic(void)
     return policy;
 }
 
-/* Purpose: reproduce target-scale normalization and legitimate softmax underflow. */
 static int sampling_test_numeric_boundaries(void)
 {
     const unsigned long long vocabulary = 129280ull;
@@ -173,7 +166,7 @@ static int sampling_test_numeric_boundaries(void)
     return 0;
 }
 
-/* Purpose: prove explicit strategy validation and canonical identity mutation. */
+/* Prove explicit strategy validation and canonical identity mutation. */
 static int sampling_test_policy(void)
 {
     yvex_runtime_sampling_policy greedy = {
@@ -227,7 +220,6 @@ static int sampling_test_policy(void)
     return 0;
 }
 
-/* Purpose: prove complete greedy scan, stable low-ID ties, mutation refusal, and zero RNG use. */
 static int sampling_test_greedy(void)
 {
     float logits[6] = {-9.0f, 1.0f, 4.0f, 4.0f, -2.0f, 3.0f};
@@ -286,7 +278,7 @@ static int sampling_test_greedy(void)
     return 0;
 }
 
-/* Purpose: exercise each canonical filter, endpoint tie order, and stable softmax edge. */
+/* Exercise each canonical filter, endpoint tie order, and stable softmax edge. */
 static int sampling_test_filter_matrix(void)
 {
     const float equal[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -356,7 +348,6 @@ static int sampling_test_filter_matrix(void)
     return 0;
 }
 
-/* Purpose: prove canonical filtering and PCG selection against an independent oracle. */
 static int sampling_test_stochastic(void)
 {
     const float logits[8] = {3.0f, 2.0f, 1.5f, 1.0f, 0.5f, 0.0f, -1.0f, -2.0f};
@@ -413,13 +404,11 @@ static int sampling_test_stochastic(void)
     return 0;
 }
 
-/* Purpose: mutate one valid hexadecimal identity without changing its shape. */
 static void sampling_test_mutate_identity(char identity[YVEX_SHA256_HEX_CAP])
 {
     identity[0] = identity[0] == 'a' ? 'b' : 'a';
 }
 
-/* Purpose: mutate every authoritative evidence class independently. */
 static void sampling_test_mutate_result(yvex_runtime_sampling_result *result,
                                         unsigned int mutation)
 {
@@ -466,7 +455,6 @@ static void sampling_test_mutate_result(yvex_runtime_sampling_result *result,
     }
 }
 
-/* Purpose: prove every rendered evidence mutation invalidates the sealed result. */
 static int sampling_test_evidence_mutations(void)
 {
     const float logits[8] = {3.0f, 2.0f, 1.5f, 1.0f, 0.5f, 0.0f, -1.0f, -2.0f};
@@ -492,7 +480,6 @@ static int sampling_test_evidence_mutations(void)
     return 0;
 }
 
-/* Purpose: pin the v1 PCG draw mapping and prove distinct seeds participate causally. */
 static int sampling_test_rng_vectors(void)
 {
     const float logits[8] = {0.0f, 0.0f, 0.0f, 0.0f,
@@ -568,7 +555,6 @@ typedef struct {
     int rc;
 } sampling_test_close_thread;
 
-/* Purpose: attempt one same-context selection while the outer owner is busy. */
 static int sampling_test_reenter(void *opaque)
 {
     sampling_test_reentry *state = (sampling_test_reentry *)opaque;
@@ -582,7 +568,6 @@ static int sampling_test_reenter(void *opaque)
     return 0;
 }
 
-/* Purpose: hold one admitted selection active until the close-race test releases it. */
 static int sampling_test_hold_active(void *opaque)
 {
     sampling_test_thread_gate *gate = (sampling_test_thread_gate *)opaque;
@@ -595,7 +580,6 @@ static int sampling_test_hold_active(void *opaque)
     return 0;
 }
 
-/* Purpose: execute one selection from a test-owned thread. */
 static void *sampling_test_select_thread_main(void *opaque)
 {
     sampling_test_select_thread *thread = (sampling_test_select_thread *)opaque;
@@ -606,7 +590,6 @@ static void *sampling_test_select_thread_main(void *opaque)
     return NULL;
 }
 
-/* Purpose: wait until close owns admission and prove the typed closing refusal. */
 static void *sampling_test_contender_thread_main(void *opaque)
 {
     sampling_test_select_thread *thread = (sampling_test_select_thread *)opaque;
@@ -626,7 +609,6 @@ static void *sampling_test_contender_thread_main(void *opaque)
     return NULL;
 }
 
-/* Purpose: close one context from a test-owned thread while another call is active. */
 static void *sampling_test_close_thread_main(void *opaque)
 {
     sampling_test_close_thread *thread = (sampling_test_close_thread *)opaque;
@@ -635,7 +617,6 @@ static void *sampling_test_close_thread_main(void *opaque)
     return NULL;
 }
 
-/* Purpose: prove close drains an active call and rejects another concurrent entrant. */
 static int sampling_test_close_entry_race(void)
 {
     const float logits[4] = {1.0f, 3.0f, 2.0f, 0.0f};
@@ -700,7 +681,6 @@ static int sampling_test_close_entry_race(void)
     return 0;
 }
 
-/* Purpose: prove bounded open, same-context refusal, and reusable lifecycle counters. */
 static int sampling_test_lifecycle(void)
 {
     const float logits[4] = {1.0f, 3.0f, 2.0f, 0.0f};
@@ -754,7 +734,6 @@ static int sampling_test_lifecycle(void)
 
 typedef struct { unsigned int calls, cancel_at; } sampling_test_cancel;
 
-/* Purpose: request cancellation at one exact sampling safe point. */
 static int sampling_test_cancel_requested(void *opaque)
 {
     sampling_test_cancel *state = (sampling_test_cancel *)opaque;
@@ -762,7 +741,7 @@ static int sampling_test_cancel_requested(void *opaque)
     return state->calls >= state->cancel_at;
 }
 
-/* Purpose: prove repeated partial progress retains only published rows and committed RNG draws. */
+/* Prove repeated partial progress retains only published rows and committed RNG draws. */
 static int sampling_test_partial(void)
 {
     const float logits[4] = {0.0f, 1.0f, 2.0f, 3.0f};
@@ -817,7 +796,6 @@ static int sampling_test_partial(void)
     return 0;
 }
 
-/* Purpose: reproduce partial logits publication and downstream prefix admission. */
 static int sampling_test_partial_logits_prefix(void)
 {
     float logits[8] = {0.0f, 1.0f, 2.0f, 3.0f, 91.0f, 92.0f, 93.0f, 94.0f};

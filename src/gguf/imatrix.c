@@ -1,12 +1,9 @@
-/* Owner: gguf.imatrix
- * Owns: immutable calibration manifests, admitted llama.cpp imatrix snapshots, coverage, and IO.
- * Does not own: quantization policy, quantization jobs, numeric codecs, or artifacts.
- * Invariants: documents own their strings; data views retain one stable regular-file mapping.
- * Boundary: calibration evidence informs numeric policy but never selects artifact qtypes.
- * Purpose: own calibration metadata and numeric weight lifecycles as one resource boundary.
- * Inputs: typed manifest options, bounded JSON, or a sealed imatrix data snapshot.
- * Effects: allocates metadata/index state, maps one immutable data file, and performs explicit IO.
- * Failure: typed errors publish no partial manifest and cleanup releases every owned allocation. */
+/*
+ * Own calibration metadata and numeric weight lifecycles as one resource boundary.
+ *
+ * Documents own their strings; data views retain one stable regular-file mapping. Calibration
+ * evidence informs numeric policy but never selects artifact qtypes.
+ */
 #include <fcntl.h>
 #include <math.h>
 #include <stddef.h>
@@ -48,13 +45,11 @@ struct yvex_imatrix_data {
     yvex_imatrix_data_summary summary;
 };
 
-/* Purpose: read one canonical little-endian U32 without depending on host alignment. */
 static unsigned int imatrix_data_u32(const unsigned char *bytes) {
     return (unsigned int)bytes[0] | ((unsigned int)bytes[1] << 8) |
            ((unsigned int)bytes[2] << 16) | ((unsigned int)bytes[3] << 24);
 }
 
-/* Purpose: reserve one bounded interval while parsing an immutable mapped snapshot. */
 static int imatrix_data_take(size_t *offset, size_t count, size_t limit, yvex_error *err) {
     if (!offset || count > limit || *offset > limit - count) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "imatrix.data", "imatrix interval is truncated");
@@ -64,11 +59,6 @@ static int imatrix_data_take(size_t *offset, size_t count, size_t limit, yvex_er
     return YVEX_OK;
 }
 
-/* Purpose: allocate one terminated copy of an admitted non-NUL byte span.
- * Inputs: bounded immutable bytes, explicit length, and error sink.
- * Effects: returns one caller-owned text allocation.
- * Failure: invalid text or allocation failure returns null with typed error.
- * Boundary: copies metadata text only and never calibration values. */
 static char *imatrix_data_text(const unsigned char *bytes, size_t length, yvex_error *err) {
     char *text;
 
@@ -86,11 +76,6 @@ static char *imatrix_data_text(const unsigned char *bytes, size_t length, yvex_e
     return text;
 }
 
-/* Purpose: validate all calibration scalars in one entry and count them exactly.
- * Inputs: canonical little-endian value bytes and exact scalar count.
- * Effects: reads the supplied span without retaining or modifying it.
- * Failure: negative or non-finite values return a format refusal.
- * Boundary: validates numeric admissibility without interpreting tensor coverage. */
 static int imatrix_data_values_validate(const unsigned char *bytes, unsigned long long count,
                                         yvex_error *err) {
     unsigned long long index;
@@ -108,11 +93,6 @@ static int imatrix_data_values_validate(const unsigned char *bytes, unsigned lon
     return YVEX_OK;
 }
 
-/* Purpose: parse the pinned llama.cpp imatrix layout into a bounded immutable index.
- * Inputs: mapped regular-file snapshot and zeroed data owner.
- * Effects: allocates entry names/index and dataset name; retains values in the mapping.
- * Failure: malformed geometry or values publish no complete data summary.
- * Boundary: parsing authenticates calibration bytes but does not select qtypes. */
 static int imatrix_data_parse(yvex_imatrix_data *data, yvex_error *err) {
     size_t offset = 0u;
     unsigned long long entry_count;
@@ -208,11 +188,6 @@ static int imatrix_data_parse(yvex_imatrix_data *data, yvex_error *err) {
     return YVEX_OK;
 }
 
-/* Purpose: derive file and semantic calibration identities field by field.
- * Inputs: parsed immutable mapped data and caller error sink.
- * Effects: writes only canonical digests in the data summary.
- * Failure: hash failure returns state refusal without publishing completion.
- * Boundary: identities exclude paths, mappings, pointers, and native layouts. */
 static int imatrix_data_identity(yvex_imatrix_data *data, yvex_error *err) {
     yvex_sha256 file_hash;
     yvex_sha256 semantic_hash;
@@ -244,11 +219,12 @@ static int imatrix_data_identity(yvex_imatrix_data *data, yvex_error *err) {
     return YVEX_OK;
 }
 
-/* Purpose: open one stable regular-file calibration snapshot and its immutable entry index.
- * Inputs: explicit path, identity provenance, producer facts, and mapping budget.
- * Effects: retains one file descriptor, read-only mapping, and bounded metadata index.
- * Failure: unsafe path, drift, malformed bytes, or resource refusal leaves output null.
- * Boundary: data admission authenticates calibration; quant-plan policy remains separate. */
+/*
+ * Open one stable regular-file calibration snapshot and its immutable entry index.
+ *
+ * Explicit path, identity provenance, producer facts, and mapping budget. Retains one file
+ * descriptor, read-only mapping, and bounded metadata index.
+ */
 int yvex_imatrix_data_open(yvex_imatrix_data **out, const yvex_imatrix_data_options *options,
                            yvex_error *err) {
     yvex_imatrix_data *data;
@@ -324,11 +300,11 @@ int yvex_imatrix_data_open(yvex_imatrix_data **out, const yvex_imatrix_data_opti
     return YVEX_OK;
 }
 
-/* Purpose: release the mapped calibration snapshot and every bounded index allocation.
- * Inputs: nullable data owner.
- * Effects: unmaps, closes, frees, and invalidates the handle.
- * Failure: cleanup is infallible and null is accepted.
- * Boundary: no source model or policy ownership is released. */
+/*
+ * Release the mapped calibration snapshot and every bounded index allocation.
+ *
+ * No source model or policy ownership is released.
+ */
 void yvex_imatrix_data_close(yvex_imatrix_data *data) {
     unsigned long long index;
 
@@ -349,11 +325,11 @@ void yvex_imatrix_data_close(yvex_imatrix_data *data) {
     free(data);
 }
 
-/* Purpose: revalidate path identity and immutable file metadata after admission.
- * Inputs: complete admitted data and error sink.
- * Effects: observes current filesystem metadata only.
- * Failure: incomplete identity or snapshot drift returns typed refusal.
- * Boundary: validation does not remap or reread calibration values. */
+/*
+ * Revalidate path identity and immutable file metadata after admission.
+ *
+ * Incomplete identity or snapshot drift returns typed refusal.
+ */
 int yvex_imatrix_data_validate(const yvex_imatrix_data *data, yvex_error *err) {
     struct stat current;
 
@@ -376,11 +352,6 @@ int yvex_imatrix_data_validate(const yvex_imatrix_data *data, yvex_error *err) {
     return YVEX_OK;
 }
 
-/* Purpose: copy immutable calibration summary facts without exposing owner internals.
- * Inputs: admitted data and caller-owned summary output.
- * Effects: copies one value-only summary with borrowed immutable text fields.
- * Failure: absent inputs return invalid-argument refusal.
- * Boundary: mapped values and entry index remain private. */
 int yvex_imatrix_data_get_summary(const yvex_imatrix_data *data,
                                   yvex_imatrix_data_summary *out, yvex_error *err) {
     if (!data || !out) {
@@ -392,11 +363,6 @@ int yvex_imatrix_data_get_summary(const yvex_imatrix_data *data,
     return YVEX_OK;
 }
 
-/* Purpose: find one exact calibration entry without scanning numeric payload values.
- * Inputs: admitted data, exact physical tensor name, and output record.
- * Effects: publishes one borrowed-name entry summary on exact match.
- * Failure: missing inputs or name return typed refusal.
- * Boundary: lookup reads only the immutable bounded name index. */
 int yvex_imatrix_data_find(const yvex_imatrix_data *data, const char *name,
                            yvex_imatrix_entry_summary *out, yvex_error *err) {
     unsigned long long index;
@@ -419,11 +385,12 @@ int yvex_imatrix_data_find(const yvex_imatrix_data *data, const char *name,
     return YVEX_ERR_FORMAT;
 }
 
-/* Purpose: decode one bounded calibration interval from canonical little-endian F32 bytes.
- * Inputs: admitted entry ordinal, value interval, and caller-owned F32 output.
- * Effects: copies only the requested complete interval.
- * Failure: invalid entry or bounds publish no out-of-range values.
- * Boundary: range access does not cache or reinterpret calibration policy. */
+/*
+ * Decode one bounded calibration interval from canonical little-endian F32 bytes.
+ *
+ * Invalid entry or bounds publish no out-of-range values. Range access does not cache or
+ * reinterpret calibration policy.
+ */
 int yvex_imatrix_data_read(const yvex_imatrix_data *data, unsigned long long entry_ordinal,
                            unsigned long long value_offset, float *out, size_t value_count,
                            yvex_error *err) {
@@ -530,12 +497,10 @@ static const imatrix_json_field imatrix_json_fields[] = {
      offsetof(yvex_imatrix_manifest, producer)},
 };
 
-/* Purpose: resolve one manifest-owned string slot by declarative field ordinal. */
 static char **manifest_text(yvex_imatrix_manifest *manifest, size_t index) {
     return (char **)((unsigned char *)manifest + imatrix_text_fields[index].manifest_offset);
 }
 
-/* Purpose: project one declarative JSON field onto its immutable manifest value. */
 static const char *manifest_json_value(const yvex_imatrix_manifest *manifest,
                                        const imatrix_json_field *field) {
     if (field->kind == IMATRIX_JSON_STATUS)
@@ -545,14 +510,12 @@ static const char *manifest_json_value(const yvex_imatrix_manifest *manifest,
     return *(const char *const *)((const unsigned char *)manifest + field->offset);
 }
 
-/* Purpose: resolve one immutable manifest-option string by declarative field ordinal. */
 static const char *manifest_option_text(const yvex_imatrix_manifest_options *options,
                                         size_t index) {
     return *(const char *const *)((const unsigned char *)options +
                                  imatrix_text_fields[index].option_offset);
 }
 
-/* Purpose: locate one imatrix text field in an exact schema-owned interval. */
 static char **manifest_text_find(yvex_imatrix_manifest *manifest, const char *key, size_t begin,
                                  size_t end) {
     size_t index;
@@ -578,7 +541,6 @@ typedef struct {
     const char *name;
 } quant_name;
 
-/* Purpose: map one admitted enum value through a compact immutable name table. */
 static const char *quant_name_of(const quant_name *rows, size_t count, int value,
                                  const char *fallback) {
     size_t i;
@@ -589,7 +551,6 @@ static const char *quant_name_of(const quant_name *rows, size_t count, int value
     return fallback;
 }
 
-/* Purpose: resolve one exact document spelling without accepting partial matches. */
 static int quant_value_of(const quant_name *rows, size_t count, const char *name, int fallback) {
     size_t i;
     if (!name)
@@ -641,84 +602,44 @@ static const quant_name imatrix_issue_names[] = {
     {YVEX_IMATRIX_ISSUE_IO, "io"},
 };
 
-/* Purpose: render one calibration-manifest status through the canonical table.
- * Inputs: status enum.
- * Effects: returns borrowed immutable text.
- * Failure: unknown values map to unknown.
- * Boundary: rendering cannot alter manifest admission. */
 const char *yvex_imatrix_status_name(yvex_imatrix_status status) {
     return quant_name_of(imatrix_status_names, QUANT_NAMES_COUNT(imatrix_status_names), status,
                          "unknown");
 }
 
-/* Purpose: parse one exact calibration-manifest status spelling.
- * Inputs: nullable status text.
- * Effects: returns a value without allocation.
- * Failure: null or unknown text maps to the unknown status.
- * Boundary: enum parsing does not validate a manifest. */
 yvex_imatrix_status yvex_imatrix_status_from_name(const char *name) {
     return (yvex_imatrix_status)quant_value_of(imatrix_status_names,
                                                QUANT_NAMES_COUNT(imatrix_status_names), name,
                                                YVEX_IMATRIX_STATUS_UNKNOWN);
 }
 
-/* Purpose: render one calibration format through the canonical table.
- * Inputs: format enum.
- * Effects: returns borrowed immutable text.
- * Failure: unknown values map to unknown.
- * Boundary: naming does not admit calibration bytes. */
 const char *yvex_imatrix_format_name(yvex_imatrix_format format) {
     return quant_name_of(imatrix_format_names, QUANT_NAMES_COUNT(imatrix_format_names), format,
                          "unknown");
 }
 
-/* Purpose: parse one exact calibration-format spelling.
- * Inputs: nullable format text.
- * Effects: returns a value without allocation.
- * Failure: null or unknown text maps to the unknown format.
- * Boundary: parsing a name does not inspect a calibration file. */
 yvex_imatrix_format yvex_imatrix_format_from_name(const char *name) {
     return (yvex_imatrix_format)quant_value_of(imatrix_format_names,
                                                QUANT_NAMES_COUNT(imatrix_format_names), name,
                                                YVEX_IMATRIX_FORMAT_UNKNOWN);
 }
 
-/* Purpose: render one calibration coverage kind through the canonical table.
- * Inputs: coverage-kind enum.
- * Effects: returns borrowed immutable text.
- * Failure: unknown values map to unknown.
- * Boundary: rendering does not establish tensor coverage. */
 const char *yvex_imatrix_coverage_kind_name(yvex_imatrix_coverage_kind kind) {
     return quant_name_of(imatrix_coverage_names, QUANT_NAMES_COUNT(imatrix_coverage_names), kind,
                          "unknown");
 }
 
-/* Purpose: parse one exact calibration coverage-kind spelling.
- * Inputs: nullable coverage text.
- * Effects: returns a value without allocation.
- * Failure: null or unknown text maps to unknown coverage.
- * Boundary: parsing does not resolve a tensor selector. */
 yvex_imatrix_coverage_kind yvex_imatrix_coverage_kind_from_name(const char *name) {
     return (yvex_imatrix_coverage_kind)quant_value_of(imatrix_coverage_names,
                                                       QUANT_NAMES_COUNT(imatrix_coverage_names),
                                                       name, YVEX_IMATRIX_COVERAGE_UNKNOWN);
 }
 
-/* Purpose: render one typed calibration issue for reports and callers.
- * Inputs: issue enum.
- * Effects: returns borrowed immutable text.
- * Failure: unknown values map to format refusal.
- * Boundary: issue rendering does not classify new failures. */
 const char *yvex_imatrix_issue_kind_name(yvex_imatrix_issue_kind issue) {
     return quant_name_of(imatrix_issue_names, QUANT_NAMES_COUNT(imatrix_issue_names), issue,
                          "format");
 }
 
-/* Purpose: append one owned coverage row to a mutable manifest under construction.
- * Inputs: manifest, known kind, optional selector and purpose, and typed error sink.
- * Effects: may grow the coverage array and takes owned copies of both strings.
- * Failure: invalid input or allocation failure leaves the row count unchanged.
- * Boundary: appending a declaration does not prove actual calibration coverage. */
 static int manifest_add_coverage(yvex_imatrix_manifest *manifest, yvex_imatrix_coverage_kind kind,
                                  const char *selector, const char *purpose, yvex_error *err) {
     yvex_imatrix_coverage *next;
@@ -757,11 +678,6 @@ static int manifest_add_coverage(yvex_imatrix_manifest *manifest, yvex_imatrix_c
     return YVEX_OK;
 }
 
-/* Purpose: construct one owned calibration manifest from typed options.
- * Inputs: output slot, required options, and typed error sink.
- * Effects: allocates the manifest, strings, default coverage, and summary state.
- * Failure: invalid input or any allocation failure leaves the output null.
- * Boundary: construction records calibration intent but does not read calibration data. */
 int yvex_imatrix_manifest_create(yvex_imatrix_manifest **out,
                                  const yvex_imatrix_manifest_options *options, yvex_error *err) {
     yvex_imatrix_manifest *manifest;
@@ -801,11 +717,6 @@ int yvex_imatrix_manifest_create(yvex_imatrix_manifest **out,
     return YVEX_OK;
 }
 
-/* Purpose: release an owned calibration manifest and every nested allocation.
- * Inputs: nullable manifest owner.
- * Effects: frees strings, coverage rows, and the manifest object.
- * Failure: cannot report failure; null is a no-op.
- * Boundary: callers must not retain borrowed summary strings after close. */
 void yvex_imatrix_manifest_close(yvex_imatrix_manifest *manifest) {
     unsigned long long i;
     size_t index;
@@ -822,21 +733,11 @@ void yvex_imatrix_manifest_close(yvex_imatrix_manifest *manifest) {
     free(manifest);
 }
 
-/* Purpose: serialize one admitted manifest through the canonical JSON writer.
- * Inputs: destination path, immutable manifest, and typed error sink.
- * Effects: writes or replaces the requested document according to writer semantics.
- * Failure: typed argument or I/O errors never report successful publication.
- * Boundary: serialization does not create calibration evidence. */
 int yvex_imatrix_manifest_write_json(const char *out_path, const yvex_imatrix_manifest *manifest,
                                      yvex_error *err) {
     return manifest_write_json_file(out_path, manifest, err);
 }
 
-/* Purpose: parse and validate one bounded calibration-manifest document.
- * Inputs: output slot, source path, and typed error sink.
- * Effects: allocates an owned manifest only after successful parsing.
- * Failure: malformed, unavailable, or invalid documents leave no successful output.
- * Boundary: opening the manifest does not read the referenced imatrix payload. */
 int yvex_imatrix_manifest_open(yvex_imatrix_manifest **out, const char *path, yvex_error *err) {
     int rc = manifest_parse_json(out, path, err);
     if (rc == YVEX_OK) {
@@ -845,11 +746,6 @@ int yvex_imatrix_manifest_open(yvex_imatrix_manifest **out, const char *path, yv
     return rc;
 }
 
-/* Purpose: project the current immutable manifest summary into caller storage.
- * Inputs: manifest, output summary, and typed error sink.
- * Effects: copies a summary whose strings remain borrowed from the manifest.
- * Failure: null inputs return a typed invalid-argument result.
- * Boundary: a summary is evidence projection, not calibration admission. */
 int yvex_imatrix_manifest_get_summary(const yvex_imatrix_manifest *manifest,
                                       yvex_imatrix_summary *out, yvex_error *err) {
     if (!manifest || !out) {
@@ -861,11 +757,6 @@ int yvex_imatrix_manifest_get_summary(const yvex_imatrix_manifest *manifest,
     return YVEX_OK;
 }
 
-/* Purpose: derive manifest status and issue counters from owned document facts.
- * Inputs: immutable manifest and caller-owned summary.
- * Effects: refreshes borrowed views and probes the declared imatrix path for existence.
- * Failure: null input is ignored; absence is recorded as data rather than raised.
- * Boundary: existence probing does not validate imatrix format or numeric contents. */
 static void manifest_refresh_summary(const yvex_imatrix_manifest *manifest,
                                      yvex_imatrix_summary *summary) {
     if (!manifest || !summary)
@@ -894,11 +785,6 @@ static void manifest_refresh_summary(const yvex_imatrix_manifest *manifest,
     }
 }
 
-/* Purpose: parse one known nested imatrix or calibration object.
- * Inputs: bounded cursor, manifest under construction, and admitted object name.
- * Effects: replaces owned manifest strings and skips unknown fields structurally.
- * Failure: malformed JSON or allocation failure leaves typed error context.
- * Boundary: parsing records paths and provenance but does not open referenced payloads. */
 static int ij_parse_named_object(yvex_gguf_json *j, yvex_imatrix_manifest *manifest,
                                  const char *object_name) {
     size_t begin = strcmp(object_name, "imatrix") == 0 ? 4u : 5u;
@@ -935,11 +821,6 @@ static int ij_parse_named_object(yvex_gguf_json *j, yvex_imatrix_manifest *manif
     return yvex_gguf_json_fail(j, "unterminated nested object");
 }
 
-/* Purpose: parse and append one calibration coverage declaration.
- * Inputs: bounded cursor and manifest under construction.
- * Effects: allocates temporary fields and one owned manifest coverage row.
- * Failure: malformed rows or allocation failure append no partial row.
- * Boundary: declared coverage remains distinct from measured calibration evidence. */
 static int ij_parse_coverage_row(yvex_gguf_json *j, void *context) {
     yvex_imatrix_manifest *manifest = context;
     char *kind = NULL;
@@ -978,11 +859,6 @@ done:
     return rc;
 }
 
-/* Purpose: parse one complete bounded JSON document into an owned manifest.
- * Inputs: output slot, source path, and typed error sink.
- * Effects: reads metadata bytes, allocates manifest state, and refreshes its summary.
- * Failure: schema, grammar, I/O, or allocation failure releases all partial state.
- * Boundary: document parsing performs zero reads from the referenced imatrix payload. */
 static int manifest_parse_json(yvex_imatrix_manifest **out, const char *path, yvex_error *err) {
     yvex_imatrix_manifest *manifest;
     yvex_gguf_json j;
@@ -1091,11 +967,6 @@ fail:
     return rc;
 }
 
-/* Purpose: serialize one complete calibration manifest deterministically.
- * Inputs: destination path, immutable manifest, and typed error sink.
- * Effects: creates or replaces the requested JSON file and closes its stream.
- * Failure: invalid arguments, open failure, or close failure return typed errors.
- * Boundary: the writer publishes a manifest document, never calibration tensor data. */
 static int manifest_write_json_file(const char *out_path, const yvex_imatrix_manifest *manifest,
                                     yvex_error *err) {
     FILE *fp;
@@ -1140,11 +1011,6 @@ static int manifest_write_json_file(const char *out_path, const yvex_imatrix_man
     return YVEX_OK;
 }
 
-/* Purpose: validate calibration availability and policy coverage for one manifest.
- * Inputs: immutable manifest and typed error sink.
- * Effects: refreshes its owned summary and may read a referenced policy document.
- * Failure: invalid input returns typed refusal; unavailable evidence remains summary state.
- * Boundary: validation does not decode or numerically consume imatrix data. */
 int yvex_imatrix_manifest_validate(const yvex_imatrix_manifest *manifest, yvex_error *err) {
     yvex_imatrix_summary *summary;
 

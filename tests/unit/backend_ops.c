@@ -1,29 +1,6 @@
 /*
- * YVEX - backend op tests
- *
- * File: tests/test_backend_ops.c
- * Layer: test
- *
- * Purpose:
- *   Proves that backend layer CPU backend capabilities are explicit and that the minimal
- *   F32 embedding reference op works over backend tensors.
- *
- * Covers:
- *   - yvex_backend_supports
- *   - yvex_backend_capability_name
- *   - yvex_backend_op_embed
- *   - yvex_backend_op_rope
- *   - yvex_backend_op_matmul
- *   - yvex_backend_op_mlp
- *   - yvex_backend_op_attention
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_backend_ops
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises backend layer CPU backend capabilities are explicit and that the minimal F32
+ * embedding reference op works over backend tensors.
  */
 #include <limits.h>
 #include <string.h>
@@ -855,7 +832,7 @@ static int test_mlp_success_and_failures(void)
     return 0;
 }
 
-/* Purpose: create one sealed backend-neutral recipe with alignment and token scaling. */
+/* Create one sealed backend-neutral recipe with alignment and token scaling. */
 static int attention_workspace_recipe_make(yvex_attention_workspace_recipe *recipe,
                                            unsigned long long token_capacity,
                                            yvex_attention_evidence_level evidence_level,
@@ -905,7 +882,7 @@ static int attention_workspace_recipe_make(yvex_attention_workspace_recipe *reci
     return yvex_attention_workspace_recipe_seal(recipe, err);
 }
 
-/* Purpose: prove recipe lowering is exact, deterministic, identity-bound, and checked. */
+/* Prove recipe lowering is exact, deterministic, identity-bound, and checked. */
 static int test_attention_workspace_recipe_lowering(void)
 {
     yvex_attention_workspace_recipe recipe, full_recipe;

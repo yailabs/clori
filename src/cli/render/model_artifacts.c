@@ -1,14 +1,9 @@
-/* Owner: src/cli/render
- * Owns: help and typed normal/table/audit rendering for model artifact reports.
- * Does not own: report building, registry lookup, model gate checks, backend calls, file writing, artifact
- *   emission, runtime generation, eval, benchmark, or release decisions.
- * Invariants: this renderer formats typed facts only and uses src/cli/io writers.
- * Boundary: rendered reports do not imply artifact emission, runtime generation, benchmark evidence, or release
- *   readiness.
- * Purpose: provide help and typed normal/table/audit rendering for model artifact reports.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Provide help and typed normal/table/audit rendering for model artifact reports.
+ *
+ * This renderer formats typed facts only and uses src/cli/io writers. Rendered reports do not
+ * imply artifact emission, runtime generation, benchmark evidence, or release readiness.
+ */
 #include "src/cli/render/private.h"
 #include "src/cli/model_artifacts/private.h"
 #include "src/cli/io/private.h"
@@ -884,12 +879,6 @@ static const char *const materialize_phases[] = {
 #undef FAILURE_IDENTITY_FIELD
 #undef FULLMODEL_LINE_GROUP
 
-/* Render one source-backed prepare refusal from typed report facts. */
-/* Purpose: Render model prepare source report render from typed facts (`model_prepare_source_report_render`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void model_prepare_source_report_render(
     const yvex_models_prepare_source_report *report,
     yvex_models_output_mode mode)
@@ -923,32 +912,16 @@ void model_prepare_source_report_render(
                              sizeof(prepare_result_fields[0]));
 }
 
-/* Purpose: Render print fullmodel common boundaries from typed facts (`print_fullmodel_common_boundaries`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void print_fullmodel_common_boundaries(void)
 {
     yvex_cli_out_lines(stdout, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
 }
 
-/* Purpose: Emit one declarative field group from a renderer-owned typed view. */
 static void fullmodel_print_field_group(const void *object, fullmodel_field_group group)
 {
     render_object_fields(stdout, object, group.fields, group.count);
 }
 
-/* Purpose: Compute fullmodel descriptor role collection for its CLI invariant (`fullmodel_descriptor_role_collection`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
-/* Purpose: Render fullmodel print family runtime phases from typed facts (`fullmodel_print_family_runtime_phases`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_print_family_runtime_phases(const char *adapter_status,
                                                   const char *failure_phase)
 {
@@ -974,7 +947,6 @@ static void fullmodel_print_family_runtime_phases(const char *adapter_status,
     }
 }
 
-/* Purpose: Compute fullmodel attention rule status for its CLI invariant (`fullmodel_attention_rule_status`). */
 static const char *fullmodel_attention_rule_status(const yvex_fullmodel_collections *collections)
 {
     if (!collections ||
@@ -987,11 +959,6 @@ static const char *fullmodel_attention_rule_status(const yvex_fullmodel_collecti
     return "blocked-full-transformer-integration";
 }
 
-/* Purpose: Render fullmodel print unsupported family from typed facts (`fullmodel_print_unsupported_family`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int fullmodel_print_unsupported_family(
     const yvex_cli_fullmodel_options *options,
     const yvex_model_ref *ref,
@@ -1022,11 +989,6 @@ static int fullmodel_print_unsupported_family(
     return 5;
 }
 
-/* Purpose: Render fullmodel print family runtime report from typed facts (`fullmodel_print_family_runtime_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int fullmodel_print_family_runtime_report(const yvex_cli_fullmodel_options *options,
                                                  yvex_model_ref *ref,
                                                  yvex_model_context *ctx,
@@ -1142,11 +1104,6 @@ int fullmodel_print_family_runtime_report(const yvex_cli_fullmodel_options *opti
     return 0;
 }
 
-/* Purpose: Render fullmodel print materialize phase set from typed facts (`fullmodel_print_materialize_phase_set`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void fullmodel_print_materialize_phase_set(const char *terminal_phase,
                                                   const char *failed_phase)
 {
@@ -1174,11 +1131,6 @@ static void fullmodel_print_materialize_phase_set(const char *terminal_phase,
     }
 }
 
-/* Purpose: Render fullmodel print materialize report from typed facts (`fullmodel_print_materialize_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void fullmodel_print_materialize_report(const fullmodel_materialize_report *report)
 {
     static const fullmodel_materialize_report empty_report;
@@ -1231,11 +1183,6 @@ void fullmodel_print_materialize_report(const fullmodel_materialize_report *repo
                                           report->failed_phase);
 }
 
-/* Purpose: Render fullmodel print report normal from typed facts (`fullmodel_print_report_normal`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void fullmodel_print_report_normal(const yvex_cli_fullmodel_options *options,
                                           const char *status,
                                           const char *target_id,
@@ -1258,11 +1205,6 @@ void fullmodel_print_report_normal(const yvex_cli_fullmodel_options *options,
     yvex_cli_out_writef(stdout, "boundary: report-only, no full model execution\n");
 }
 
-/* Purpose: Render fullmodel print plan normal from typed facts (`fullmodel_print_plan_normal`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void fullmodel_print_plan_normal(const yvex_cli_fullmodel_options *options,
                                         const char *status,
                                         const char *target_class,
@@ -1281,11 +1223,6 @@ void fullmodel_print_plan_normal(const yvex_cli_fullmodel_options *options,
     yvex_cli_out_lines(stdout, literal_pair_13, sizeof(literal_pair_13) / sizeof(literal_pair_13[0]));
 }
 
-/* Purpose: Render fullmodel print descriptor normal from typed facts (`fullmodel_print_descriptor_normal`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void fullmodel_print_descriptor_normal(const yvex_cli_fullmodel_options *options,
                                               const char *target_id,
                                               const char *target_class,
@@ -1306,11 +1243,6 @@ void fullmodel_print_descriptor_normal(const yvex_cli_fullmodel_options *options
     yvex_cli_out_lines(stdout, literal_pair_12, sizeof(literal_pair_12) / sizeof(literal_pair_12[0]));
 }
 
-/* Purpose: Render fullmodel print family runtime normal from typed facts (`fullmodel_print_family_runtime_normal`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void fullmodel_print_family_runtime_normal(const yvex_cli_fullmodel_options *options,
                                                   const char *target_id,
                                                   const char *target_class,
@@ -1333,11 +1265,6 @@ void fullmodel_print_family_runtime_normal(const yvex_cli_fullmodel_options *opt
     yvex_cli_out_writef(stdout, "boundary: report-only, no runtime execution\n");
 }
 
-/* Purpose: Render print fullmodel source only report from typed facts (`print_fullmodel_source_only_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int print_fullmodel_source_only_report(const char *target,
                                               const char *backend)
 {
@@ -1384,7 +1311,6 @@ static const descriptor_phase_spec descriptor_phases[] = {
 {"cleanup", DESCRIPTOR_PHASE_PASS},
 };
 
-/* Purpose: select one phase status from immutable phase kind and caller-owned outcomes. */
 static const char *descriptor_phase_status(descriptor_phase_kind kind,
                                            const char *role_status,
                                            const char *collection_status,
@@ -1403,11 +1329,6 @@ static const char *descriptor_phase_status(descriptor_phase_kind kind,
     return "pass";
 }
 
-/* Purpose: render the declared descriptor lifecycle with exact failure cutover.
- * Inputs: role and collection status plus optional failing phase name.
- * Effects: writes ordered phase facts through CLI I/O.
- * Failure: unknown failure names leave the ordinary phase sequence intact.
- * Boundary: rendering never changes descriptor admission. */
 void fullmodel_print_descriptor_phases(const char *role_status,
                                        const char *collection_status,
                                        const char *failure_phase)
@@ -1425,11 +1346,6 @@ void fullmodel_print_descriptor_phases(const char *role_status,
     }
 }
 
-/* Purpose: Render print fullmodel source only plan from typed facts (`print_fullmodel_source_only_plan`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int print_fullmodel_source_only_plan(const yvex_cli_fullmodel_options *options,
                                             const char *target)
 {
@@ -1460,11 +1376,6 @@ int print_fullmodel_source_only_plan(const yvex_cli_fullmodel_options *options,
     return 5;
 }
 
-/* Purpose: Render print fullmodel source only materialize from typed facts (`print_fullmodel_source_only_materialize`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int print_fullmodel_source_only_materialize(const yvex_cli_fullmodel_options *options,
                                                    const char *target)
 {
@@ -1475,11 +1386,6 @@ int print_fullmodel_source_only_materialize(const yvex_cli_fullmodel_options *op
     return 5;
 }
 
-/* Purpose: Render print fullmodel source only descriptor from typed facts (`print_fullmodel_source_only_descriptor`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int print_fullmodel_source_only_descriptor(const yvex_cli_fullmodel_options *options,
                                                   const char *target)
 {
@@ -1496,12 +1402,6 @@ int print_fullmodel_source_only_descriptor(const yvex_cli_fullmodel_options *opt
     return 5;
 }
 
-/* Purpose: Render print fullmodel source only family runtime from typed facts
- * (`print_fullmodel_source_only_family_runtime`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int print_fullmodel_source_only_family_runtime(const yvex_cli_fullmodel_options *options,
                                                       const char *target)
 {
@@ -1521,11 +1421,6 @@ int print_fullmodel_source_only_family_runtime(const yvex_cli_fullmodel_options 
     return 5;
 }
 
-/* Purpose: Render print fullmodel failed plan fields from typed facts (`print_fullmodel_failed_plan_fields`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static void print_fullmodel_failed_plan_fields(const yvex_cli_fullmodel_options *options,
                                                const char *phase,
                                                const char *reason,
@@ -1548,17 +1443,11 @@ static void print_fullmodel_failed_plan_fields(const yvex_cli_fullmodel_options 
     yvex_cli_out_lines(stdout, literal_lines_30, sizeof(literal_lines_30) / sizeof(literal_lines_30[0]));
 }
 
-/* Purpose: Emit one immutable group of failure-report lines in canonical order. */
 static void fullmodel_print_line_group(fullmodel_line_group group)
 {
     yvex_cli_out_lines(stdout, group.lines, group.count);
 }
 
-/* Purpose: Render one typed fullmodel failure shared by missing and malformed artifacts.
- * Inputs: Borrowed CLI options, optional admitted model reference, resolved path, reason, and byte count.
- * Effects: Writes the selected report mode through CLI I/O only.
- * Failure: Returns the supplied typed exit status without changing domain state.
- * Boundary: This renderer does not inspect or repair artifacts. */
 static int fullmodel_print_failure(const yvex_cli_fullmodel_options *options,
                                    const yvex_model_ref *ref,
                                    const char *resolved_path,
@@ -1644,11 +1533,6 @@ static int fullmodel_print_failure(const yvex_cli_fullmodel_options *options,
     return exit_for_status(rc);
 }
 
-/* Purpose: Render print fullmodel missing report from typed facts (`print_fullmodel_missing_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int print_fullmodel_missing_report(const yvex_cli_fullmodel_options *options,
                                           const char *resolved_path)
 {
@@ -1656,11 +1540,6 @@ int print_fullmodel_missing_report(const yvex_cli_fullmodel_options *options,
                                    "artifact path does not exist", 0ull, YVEX_ERR_IO, 0u);
 }
 
-/* Purpose: Parse print fullmodel parse failure report into typed CLI state (`print_fullmodel_parse_failure_report`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int print_fullmodel_parse_failure_report(const yvex_cli_fullmodel_options *options,
                                                 const yvex_model_ref *ref,
                                                 const char *reason,
@@ -1673,12 +1552,6 @@ int print_fullmodel_parse_failure_report(const yvex_cli_fullmodel_options *optio
                                    artifact_bytes, rc, 1u);
 }
 
-/* Purpose: Render model artifacts surface fullmodel help from typed facts
- * (`yvex_model_artifacts_surface_fullmodel_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_model_artifacts_surface_fullmodel_help(FILE *fp)
 {
     yvex_cli_out_lines(fp, fullmodel_usage_lines,

@@ -1,6 +1,4 @@
-/*
- * YVEX - Controlled GGUF emitter tests
- */
+
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>

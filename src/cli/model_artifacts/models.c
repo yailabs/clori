@@ -1,12 +1,9 @@
-/* Owner: src/cli/model_artifacts
- * Owns: models namespace routing and registry-backed models commands.
- * Does not own: download lifecycle, prepare/check gates, artifact reports, runtime generation, or release claims.
- * Invariants: preserves existing models command syntax; CLI-only and excluded from libyvex.a.
- * Boundary: registry command output is operator CLI surface, not domain ownership.
- * Purpose: provide models namespace routing and registry-backed models commands.
- * Inputs: typed domain facts, requested output mode, and caller-owned render state.
- * Effects: formats admitted facts through CLI I/O without changing domain state.
- * Failure: formatting or I/O refusal cannot alter capability facts. */
+/*
+ * Provide models namespace routing and registry-backed models commands.
+ *
+ * Preserves existing models command syntax; CLI-only and excluded from libyvex.a. Registry command
+ * output is operator CLI surface, not domain ownership.
+ */
 #include "src/cli/model_artifacts/private.h"
 
 #include <yvex/artifact.h>
@@ -260,11 +257,6 @@ static const char *const models_help_lines[] = {
         "source conversion, run prefill, decode, produce logits, sample, generate, evaluate, or benchmark."
 };
 
-/* Purpose: Parse registry and optional presentation arguments for registry-backed commands.
- * Inputs: Borrowed typed facts.
- * Effects: Updates caller-owned path and, when supplied, output mode.
- * Failure: Preserves the existing command-specific usage refusal text.
- * Boundary: Parsing selects presentation only and owns no registry policy. */
 static int parse_models_registry_options(int arg_count,
                                          char **args,
                                          int start,
@@ -306,11 +298,6 @@ static int parse_models_registry_options(int arg_count,
     return 0;
 }
 
-/* Purpose: Parse parse models add options into typed CLI state (`parse_models_add_options`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int parse_models_add_options(int arg_count, char **args,
                                     models_add_options *options)
 {
@@ -341,13 +328,6 @@ static int parse_models_add_options(int arg_count, char **args,
     return 0;
 }
 
-/* Registry-backed models subcommands. */
-
-/* Purpose: Orchestrate the typed command models scan request (`command_models_scan`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_models_scan(int arg_count, char **args)
 {
     yvex_model_registry_entry *entries = NULL;
@@ -398,11 +378,6 @@ static int command_models_scan(int arg_count, char **args)
     return 0;
 }
 
-/* Purpose: Orchestrate the typed command models add request (`command_models_add`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_models_add(int arg_count, char **args)
 {
     models_add_options cli_options;
@@ -484,11 +459,6 @@ static int command_models_add(int arg_count, char **args)
     return 0;
 }
 
-/* Purpose: Orchestrate the typed command models list request (`command_models_list`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_models_list(int arg_count, char **args)
 {
     yvex_model_registry *registry = NULL;
@@ -533,11 +503,12 @@ static int command_models_list(int arg_count, char **args)
     return 0;
 }
 
-/* Purpose: Verify one registered file and its metadata without deriving CLI presentation.
- * Inputs: Immutable registry entry and caller-owned identity, metadata, error, and result storage.
- * Effects: Reads the registered artifact and fills one typed verification result.
- * Failure: Records the exact identity or metadata refusal without mutating the registry.
- * Boundary: Verification establishes registry consistency, not runtime admission. */
+/*
+ * Verify one registered file and its metadata without deriving CLI presentation.
+ *
+ * Immutable registry entry and caller-owned identity, metadata, error, and result storage. Records
+ * the exact identity or metadata refusal without mutating the registry.
+ */
 static void verify_registered_artifact(const yvex_model_registry_entry *entry,
                                        yvex_artifact_file_identity *identity,
                                        yvex_model_metadata_snapshot *current,
@@ -604,11 +575,6 @@ static void verify_registered_artifact(const yvex_model_registry_entry *entry,
     }
 }
 
-/* Purpose: Render one registered/current metadata pair in canonical audit order.
- * Inputs: Pair schema, registered entry, current entry, and metadata availability.
- * Effects: Writes exactly two audit fields through CLI I/O.
- * Failure: Stream errors do not mutate verification facts.
- * Boundary: Rendering does not reinterpret metadata or readiness. */
 static void print_verify_pair(const models_verify_pair *pair,
                               const yvex_model_registry_entry *registered,
                               const yvex_model_registry_entry *current,
@@ -629,11 +595,11 @@ static void print_verify_pair(const models_verify_pair *pair,
     (void)yvex_cli_out_fields(stdout, current, &field, 1u);
 }
 
-/* Purpose: Render the complete verification audit from one typed result.
- * Inputs: Immutable registry, file identity, metadata, drift, and verification facts.
- * Effects: Writes the historical audit field sequence through CLI I/O.
- * Failure: Stream errors leave domain and verification state unchanged.
- * Boundary: Audit output cannot promote artifact or runtime capability. */
+/*
+ * Render the complete verification audit from one typed result.
+ *
+ * Immutable registry, file identity, metadata, drift, and verification facts.
+ */
 static void print_models_verify_audit(const yvex_model_registry_entry *entry,
                                       const yvex_artifact_file_identity *identity,
                                       const yvex_model_metadata_snapshot *current,
@@ -665,11 +631,6 @@ static void print_models_verify_audit(const yvex_model_registry_entry *entry,
     yvex_cli_out_writef(stdout, "status: %s\n", result->status);
 }
 
-/* Purpose: Validate command models verify before downstream use (`command_models_verify`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_models_verify(int arg_count, char **args)
 {
     yvex_model_registry *registry = NULL;
@@ -731,11 +692,6 @@ static int command_models_verify(int arg_count, char **args)
     return result.pass ? 0 : exit_for_status(YVEX_ERR_STATE);
 }
 
-/* Purpose: Orchestrate the typed command models remove request (`command_models_remove`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_models_remove(int arg_count, char **args)
 {
     yvex_model_registry *registry = NULL;
@@ -766,11 +722,6 @@ static int command_models_remove(int arg_count, char **args)
     return 0;
 }
 
-/* Purpose: Orchestrate the typed command models inspect request (`command_models_inspect`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 static int command_models_inspect(int arg_count, char **args)
 {
     yvex_model_registry *registry = NULL;
@@ -867,11 +818,6 @@ static const yvex_models_subcommand model_subcommands[] = {
     { "remove", command_models_remove }
 };
 
-/* Purpose: Dispatch one models subcommand without owning registry or artifact policy.
- * Inputs: Borrowed argv words after top-level CLI selection.
- * Effects: Invokes one typed command adapter and writes only through CLI I/O.
- * Failure: Returns usage or selected-command status; caller-owned argv is unchanged.
- * Boundary: Dispatch cannot promote model, artifact, or runtime capability. */
 static int command_models(int arg_count, char **args)
 {
     unsigned long i;
@@ -895,22 +841,11 @@ static int command_models(int arg_count, char **args)
     return 2;
 }
 
-/* Purpose: Orchestrate the typed model artifacts surface models command request
- * (`yvex_model_artifacts_surface_models_command`).
- * Inputs: Borrowed typed facts.
- * Effects: Mutates declared CLI state only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 int yvex_model_artifacts_surface_models_command(int arg_count, char **args)
 {
     return command_models(arg_count, args);
 }
 
-/* Purpose: Render model artifacts surface models help from typed facts (`yvex_model_artifacts_surface_models_help`).
- * Inputs: Borrowed typed facts.
- * Effects: Writes through CLI I/O only.
- * Failure: Typed refusal; outputs remain defined.
- * Boundary: No capability policy. */
 void yvex_model_artifacts_surface_models_help(FILE *fp)
 {
     yvex_cli_out_lines(fp, models_help_lines,

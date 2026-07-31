@@ -1,12 +1,9 @@
-/* Owner: backend.cuda.family.deepseek_v4
- * Owns: bounded Driver-API allocation, transfer, and launch lifecycle for encoded DeepSeek attention.
- * Does not own: artifact IO, graph identity, persistent KV, references, CLI, transformers, or generation.
- * Invariants: weights stay encoded; numerical work uses generated PTX; publication follows device completion.
- * Boundary: device-complete request execution is not persistent KV or a decode loop.
- * Purpose: execute admitted encoded DeepSeek attention requests through generated CUDA kernels.
- * Inputs: an admitted CUDA backend, immutable request job, and caller-owned output views.
- * Effects: allocates temporary device ranges, transfers bounded data, launches, synchronizes, copies.
- * Failure: typed validation, budget, allocation, copy, launch, numeric, synchronization, and cleanup. */
+/*
+ * Execute admitted encoded DeepSeek attention requests through generated CUDA kernels.
+ *
+ * Weights stay encoded; numerical work uses generated PTX; publication follows device completion.
+ * Device-complete request execution is not persistent KV or a decode loop.
+ */
 #include <yvex/internal/backend.h>
 #include "src/backend/cuda/private.h"
 #include <limits.h>
@@ -125,29 +122,25 @@ typedef enum {
 static int attn_stage_layout(attn_run *run, unsigned char *base, size_t *total);
 static int attn_extent(const attn_run *run, attn_extent_kind kind, unsigned long long *out);
 static const void *attn_allocation_source(const attn_run *run, attn_source_kind source);
-/* Purpose: distinguish an explicit captured schedule from eager execution. */
+
 static int attn_graph_mode(const attn_run *run) {
     return run->state->attention_graph_configured &&
            run->state->attention_mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER;
 }
-/* Purpose: delegate one run-scoped typed refusal to the generic CUDA owner. */
+
 static int attn_run_fail(attn_run *run, yvex_backend_attention_failure_code code,
                                    const char *stage, unsigned long long expected, unsigned long long actual,
                                    yvex_status status, const char *message) {
     return run->ops->fail(
         run->failure, code, stage, expected, actual, run->err, status, message);
 }
-/* Purpose: delegate safe cancellation around pending device work. */
+
 static int attn_cancel(attn_run *run, const char *stage, int device_work_pending) {
     return run->ops->cancel(
         run->backend, run->job, stage, device_work_pending,
         run->failure, run->err);
 }
-/* Purpose: register one output transfer descriptor.
- * Inputs: staging/publication capacities, used count, width, and stage.
- * Effects: appends one plan row and its exact D2H byte count.
- * Failure: invalid ranges or accounting overflow refuse without caller mutation.
- * Boundary: performs no copy or publication. */
+
 static int attn_transfer_add(attn_run *run, CUdeviceptr *device, void *output,
                                        unsigned long long output_capacity, unsigned long long capacity,
                                        unsigned long long *used, size_t width, const char *stage) {
@@ -208,11 +201,7 @@ static const attn_transfer_spec attn_transfers[] = {
       EXT_INDEX_ROLLING, SPAN_FLOAT, 2u, 0u, 0, "index_score_state")
 };
 #undef T
-/* Purpose: describe every output and state span returned by one run.
- * Inputs: validated geometry and caller publication capacities.
- * Effects: installs the ordered transfer plan.
- * Failure: invalid spans refuse before mutation.
- * Boundary: plans transfers only. */
+
 static int attn_transfer_plan(attn_run *run) {
     size_t index;
     int rc;
@@ -308,11 +297,7 @@ static const attn_upload_spec attn_uploads[] = {
     U(phase_index_score, SRC_INDEX_SCORE, EXT_INDEX_STATE, EXT_INDEX_ROLLING, sizeof(float), 0, "index_score_state")
 };
 #undef U
-/* Purpose: enumerate every dynamic input consumed by captured execution.
- * Inputs: geometry, prior state, and activations.
- * Effects: installs pinned-staging descriptors.
- * Failure: invalid spans refuse atomically.
- * Boundary: plans H2D transfers without copying. */
+
 static int attn_upload_plan(attn_run *run) {
     size_t index;
     for (index = 0u; index < sizeof(attn_uploads) /
@@ -347,11 +332,7 @@ static int attn_upload_plan(attn_run *run) {
     }
     return YVEX_OK;
 }
-/* Purpose: refuse unsafe host aliasing.
- * Inputs: derived extents and output spans.
- * Effects: reads only.
- * Failure: invalid range or any non-empty overlap.
- * Boundary: Host alias admission; no device or caller mutation. */
+
 static int attn_alias_validate(attn_run *run) {
     int verdict = run->ops->validate_alias(
         run->job, run->transfers, run->transfer_count, run->local_extent,
@@ -367,7 +348,7 @@ static int attn_alias_validate(attn_run *run) {
         verdict ? "CUDA attention output aliases another output or immutable input"
                 : "CUDA attention host range is not representable");
 }
-/* Purpose: project one declarative weight-shape dimension from admitted runtime facts. */
+
 static unsigned long long attn_dimension_value(const attn_run *run,
                                                          attn_dimension dimension) {
     const unsigned long long values[] = {
@@ -381,11 +362,7 @@ static unsigned long long attn_dimension_value(const attn_run *run,
     };
     return (unsigned int)dimension < sizeof(values) / sizeof(values[0]) ? values[dimension] : 0ull;
 }
-/* Purpose: enforce derived admission.
- * Inputs: run with checked common extents.
- * Effects: derives class extents.
- * Failure: typed interdependent-contract refusal.
- * Boundary: Completes validation before dispatch. */
+
 static int attn_validate_derived(attn_run *run) {
     unsigned long long ratio = run->job->compression_ratio, candidate_count = 0ull, group_width = 0ull;
     size_t i;
@@ -574,8 +551,7 @@ static int attn_validate_derived(attn_run *run) {
     if (rc == YVEX_OK) rc = attn_alias_validate(run);
     return rc;
 }
-/* Purpose: resolve one dynamic input. Inputs: run and target. Effects: records its generated fact.
- * Failure: null means no slot. Boundary: eager mode retains the caller source. */
+
 static const void *attn_upload_source(const attn_run *run, const CUdeviceptr *target, int *generated) {
     size_t i;
     for (i = 0u; i < run->upload_count; ++i) {
@@ -585,11 +561,11 @@ static const void *attn_upload_source(const attn_run *run, const CUdeviceptr *ta
     }
     return NULL;
 }
-/* Purpose: allocate typed device values.
- * Inputs: run, extent, and source/zero policy.
- * Effects: delegates to the resource owner.
- * Failure: typed size/allocation/copy refusal.
- * Boundary: cleanup remains transaction-owned. */
+/*
+ * Allocate typed device values.
+ *
+ * Cleanup remains transaction-owned.
+ */
 static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
                              unsigned long long count, size_t width,
                              const void *source, int zero, const char *stage) {
@@ -723,11 +699,7 @@ static const attn_allocation_spec attn_allocations[] = {
     A(valid_indexes, EXT_CANDIDATES, SRC_NONE, sizeof(unsigned long long), 1, 0, "valid_indexes")
 };
 #undef A
-/* Purpose: resolve one checked request-arena extent shared by allocation and transfer plans.
- * Inputs: immutable run geometry and a closed extent selector.
- * Effects: publishes the exact element count only.
- * Failure: false when the selector or checked product is invalid.
- * Boundary: derives allocation geometry without acquiring storage. */
+
 static int attn_extent(const attn_run *run,
                                  attn_extent_kind kind,
                                  unsigned long long *out) {
@@ -787,11 +759,7 @@ static int attn_extent(const attn_run *run,
     }
     return yvex_core_u64_mul(left, right, out);
 }
-/* Purpose: resolve one immutable source selected by the allocation catalog.
- * Inputs: admitted request and a closed source selector.
- * Effects: none.
- * Failure: invalid selectors return null for downstream refusal.
- * Boundary: does not copy, stage, or mutate caller storage. */
+
 static const void *attn_allocation_source(
     const attn_run *run, attn_source_kind source) {
     const void *values[] = {
@@ -803,11 +771,12 @@ static const void *attn_allocation_source(
     };
     return (unsigned int)source < sizeof(values) / sizeof(values[0]) ? values[source] : NULL;
 }
-/* Purpose: execute one interval from the immutable device-allocation catalog.
- * Inputs: admitted run and a bounded catalog interval.
- * Effects: acquires request-lifetime device ranges through the resource owner.
- * Failure: returns the first checked extent, allocation, or transfer refusal.
- * Boundary: catalog execution performs no numerical kernel launch. */
+/*
+ * Execute one interval from the immutable device-allocation catalog.
+ *
+ * Admitted run and a bounded catalog interval. Acquires request-lifetime device ranges through the
+ * resource owner.
+ */
 static int attn_allocations_execute(attn_run *run,
                                               size_t first, size_t count) {
     size_t index;
@@ -833,11 +802,7 @@ static int attn_allocations_execute(attn_run *run,
     }
     return YVEX_OK;
 }
-/* Purpose: prepare an execution.
- * Inputs: initialized run, immutable job, and output views.
- * Effects: derives extents and admits context.
- * Failure: typed geometry/capability refusal.
- * Boundary: no device allocation or numerical execution. */
+
 static int attn_prepare(attn_run *run) {
     const char *injected = getenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
     unsigned long long phase_end, local_storage, compressed_end, indexer_end;
@@ -999,11 +964,7 @@ static int attn_prepare(attn_run *run) {
     run->resources.budget = run->job->max_device_bytes;
     return YVEX_OK;
 }
-/* Purpose: acquire base device ranges.
- * Inputs: admitted run and checked extents.
- * Effects: allocates/copies under one owner.
- * Failure: returns the first typed resource refusal.
- * Boundary: allocation only; launches no numerical kernel. */
+
 static int attn_allocate_base(attn_run *run) {
     const size_t allocation_count =
         sizeof(attn_allocations) / sizeof(attn_allocations[0]);
@@ -1050,11 +1011,11 @@ static int attn_allocate_base(attn_run *run) {
         run->initial_indexer_count * sizeof(unsigned long long);
     return YVEX_OK;
 }
-/* Purpose: bind one token ordinal to disjoint request arenas and prior device state.
- * Inputs: one admitted request arena and an ordinal below token_count.
- * Effects: updates only launch parameters; all numerical dependencies remain device-resident.
- * Failure: impossible after checked phase preparation.
- * Boundary: host scheduling performs no attention arithmetic or state publication. */
+/*
+ * Bind one token ordinal to disjoint request arenas and prior device state.
+ *
+ * Updates only launch parameters; all numerical dependencies remain device-resident.
+ */
 static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     yvex_backend_attention_job *job = &run->request;
     unsigned long long position = run->phase_start_position + ordinal;
@@ -1147,11 +1108,7 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     run->rolling[ROLL_INDEX].value_count = emit;
     run->rolling[ROLL_INDEX].value_extent = emit * job->indexer_head_dimension;
 }
-/* Purpose: execute the optional mHC ingress and input normalization entirely on device.
- * Inputs: allocated envelope ranges and admitted encoded weights.
- * Effects: produces one BF16 core input plus egress coefficients.
- * Failure: typed decode, projection, launch, or numeric refusal.
- * Boundary: no-op for core scope; performs no host numerical completion. */
+
 static int attn_envelope_pre(attn_run *run) {
     unsigned long long streams = run->job->residual_stream_count, width = run->job->residual_stream_width;
     int rc;
@@ -1200,11 +1157,7 @@ static int attn_envelope_pre(attn_run *run) {
             "cuda.deepseek_attention.input_norm", run->failure, run->err);
     return rc;
 }
-/* Purpose: produce current Q/KV and sinks.
- * Inputs: allocated run, weights, policy.
- * Effects: enqueues projection/norm/RoPE/activation.
- * Failure: first typed stage error.
- * Boundary: current-token projection only; no history reduction or host copy. */
+
 static int attn_project(attn_run *run) {
     int rc = YVEX_OK;
     if (run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_CORE)
@@ -1279,11 +1232,7 @@ static int attn_project(attn_run *run) {
         run->job->query_heads, run->sinks, run->device_status,
         "cuda.deepseek_attention.sinks", run->failure, run->err);
 }
-/* Purpose: execute rolling compression.
- * Inputs: allocated run and state selector.
- * Effects: enqueues the recurrence pipeline.
- * Failure: returns a typed geometry, resource, or stage refusal.
- * Boundary: candidate state remains private until publication. */
+
 static int attn_rolling_execute(attn_run *run, unsigned int kind) {
     const int index = kind == ROLL_INDEX;
     const yvex_backend_attention_rolling *rolling = index
@@ -1356,11 +1305,7 @@ static int attn_rolling_execute(attn_run *run, unsigned int kind) {
         &run->resources, device->value, 1ull, activation_width, activation,
         run->device_status, stage, run->failure, run->err);
 }
-/* Purpose: execute CSA selection.
- * Inputs: indexed run, history, and policy.
- * Effects: allocates scratch and enqueues top-k.
- * Failure: returns a typed geometry, resource, or stage refusal.
- * Boundary: selected values feed the later reduction. */
+
 static int attn_index_topk(attn_run *run) {
     int rc;
     rc = run->ops->matvec(
@@ -1414,7 +1359,7 @@ static int attn_index_topk(attn_run *run) {
             params, "cuda.deepseek_attention.topk", run->failure, run->err);
     }
 }
-/* Purpose: compose class-specific rolling compression and sparse selection. */
+
 static int attn_compress(attn_run *run) {
     int rc;
     if (run->job->attention_class == YVEX_BACKEND_ATTENTION_SWA) return YVEX_OK;
@@ -1424,11 +1369,7 @@ static int attn_compress(attn_run *run) {
     rc = attn_rolling_execute(run, ROLL_INDEX);
     return rc == YVEX_OK ? attn_index_topk(run) : rc;
 }
-/* Purpose: reduce and project output.
- * Inputs: projected run, histories, selection.
- * Effects: enqueues reduction/OUT_A/OUT_B.
- * Failure: typed geometry/launch refusal.
- * Boundary: final device numerical stage; host output remains uncommitted. */
+
 static int attn_reduce(attn_run *run) {
     unsigned long long group;
     unsigned int attention_class = (unsigned int)run->job->attention_class;
@@ -1488,11 +1429,11 @@ static int attn_reduce(attn_run *run) {
         1, run->device_status, "cuda.deepseek_attention.output_b",
         run->failure, run->err);
 }
-/* Purpose: execute the optional immediate mHC residual egress on device.
- * Inputs: completed core output and device-resident ingress coefficients.
- * Effects: publishes one expanded BF16 attention-envelope activation.
- * Failure: typed launch or numeric refusal.
- * Boundary: no-op for core scope and stops before all FFN/MoE work. */
+/*
+ * Execute the optional immediate mHC residual egress on device.
+ *
+ * Completed core output and device-resident ingress coefficients.
+ */
 static int attn_envelope_post(attn_run *run) {
     unsigned long long expanded = run->job->residual_expanded_width;
     unsigned long long streams = run->job->residual_stream_count;
@@ -1526,11 +1467,7 @@ static int (*const attn_kernel_stages[YVEX_CUDA_ATTENTION_STAGE_COUNT])(attn_run
         attn_envelope_pre, attn_project, attn_compress,
         attn_reduce, attn_envelope_post
 };
-/* Purpose: enqueue every base initialization required by one captured run.
- * Inputs: stable device ranges and pinned source descriptors.
- * Effects: emits ordered H2D and memset nodes into the active graph.
- * Failure: returns the first typed Driver refusal without publication.
- * Boundary: runs only in the first graph piece and never allocates. */
+
 static int attn_initializers_enqueue(attn_run *run) {
     size_t i;
     int rc;
@@ -1559,11 +1496,7 @@ static int attn_initializers_enqueue(attn_run *run) {
     }
     return YVEX_OK;
 }
-/* Purpose: collect every result and state span after one completed device run.
- * Inputs: completed device ranges and stable pinned destination spans.
- * Effects: copies exact result bytes into transactional host staging.
- * Failure: invalid extents or Driver refusal leave caller output unpublished.
- * Boundary: host result collection is outside numerical graphs; validation remains transactional. */
+
 static int attn_downloads_enqueue(attn_run *run) {
     size_t i;
     int rc = run->ops->download(
@@ -1596,11 +1529,7 @@ static int attn_downloads_enqueue(attn_run *run) {
     }
     return rc;
 }
-/* Purpose: enqueue one exact contiguous subset of the production attention kernels.
- * Inputs: one prepared run, a nonempty stage interval, and capture-versus-update policy.
- * Effects: stages boundary transfers and either launches or updates every active kernel.
- * Failure: returns the first typed staging, launch, or parameter-update refusal.
- * Boundary: schedules an admitted piece without selecting scope, class, or graph mode. */
+
 static int attn_graph_enqueue(void *opaque, int enqueue_kernels, yvex_error *err) {
     attn_graph_piece *piece = (attn_graph_piece *)opaque;
     unsigned long long token;
@@ -1624,11 +1553,7 @@ static int attn_graph_enqueue(void *opaque, int enqueue_kernels, yvex_error *err
     piece->run->resources.prepare_only = 0;
     return rc;
 }
-/* Purpose: execute one exact captured attention stage interval.
- * Inputs: stable prepared run and nonempty canonical stage interval.
- * Effects: captures once or replays the matching session graph.
- * Failure: graph lifecycle refusal leaves caller output and state unchanged.
- * Boundary: never falls back to eager/CPU work or publishes caller data. */
+
 static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int last) {
     attn_graph_piece piece = {run, first, last};
     yvex_backend_cuda_graph_info info;
@@ -1662,11 +1587,7 @@ static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int la
     if (rc == YVEX_OK) run->resources.launches += info.inventory.kernel_node_count;
     return rc;
 }
-/* Purpose: execute the complete schedule selected for a prepared attention run.
- * Inputs: admitted eager, piecewise, or full mode and stable run resources.
- * Effects: enqueues all numerical stages in canonical dependency order.
- * Failure: unsupported mode, stage, or graph failure refuses without fallback.
- * Boundary: scheduling changes no attention mathematics or publication rules. */
+
 static int attn_numerical_execute(attn_run *run) {
     const unsigned int first_end = YVEX_CUDA_ATTENTION_STAGE_COMPRESS;
     const unsigned int last_begin = YVEX_CUDA_ATTENTION_STAGE_REDUCE;
@@ -1738,11 +1659,7 @@ static int attn_numerical_execute(attn_run *run) {
             run, "cuda.deepseek_attention.cancel.after_graph_piece", 1);
     return rc;
 }
-/* Purpose: admit numerical completion and import only synchronized staging facts.
- * Inputs: executed work and its bounded staging layout.
- * Effects: synchronizes eager work and validates staged status and counts.
- * Failure: completion refusal prevents publication.
- * Boundary: caller output remains untouched. */
+
 static int attn_synchronize(attn_run *run) {
     unsigned long long expected_topk, token;
     size_t index;
@@ -1795,7 +1712,7 @@ static int attn_synchronize(attn_run *run) {
             "CUDA attention device numerical stage refused its input");
     return YVEX_OK;
 }
-/* Purpose: project the family catalogs into the generic host-staging layout. */
+
 static int attn_stage_layout(attn_run *run, unsigned char *base, size_t *total) {
     unsigned long long csa_tokens =
         run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA
@@ -1805,11 +1722,7 @@ static int attn_stage_layout(attn_run *run, unsigned char *base, size_t *total) 
         run->transfer_count, csa_tokens, &run->staged_status,
         &run->staged_selected_count, &run->staged_candidate_count, total);
 }
-/* Purpose: acquire the stable page-locked staging arena for one run.
- * Inputs: exact extent and the session workspace owner.
- * Effects: binds every staging span once.
- * Failure: allocation, pinning, or capacity refusal leaves no borrowed span.
- * Boundary: borrows session storage. */
+
 static int attn_stage_allocate(attn_run *run) {
     const char *injected = getenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
     size_t actual = run->host_stage_bytes;
@@ -1827,11 +1740,7 @@ static int attn_stage_allocate(attn_run *run) {
         "cuda.deepseek_attention.host_stage.layout", run->host_stage_bytes,
         actual, YVEX_ERR_BOUNDS, "CUDA attention host staging layout drifted");
 }
-/* Purpose: refresh graph inputs.
- * Inputs: caller spans and stable staging plan.
- * Effects: copies each request input into its pinned slot.
- * Failure: invalid extent refuses without publication.
- * Boundary: host staging only; no device work. */
+
 static int attn_stage_inputs(attn_run *run) {
     size_t i;
     for (i = 0u; i < run->upload_count; ++i) {
@@ -1881,11 +1790,11 @@ static int attn_stage_inputs(attn_run *run) {
     }
     return YVEX_OK;
 }
-/* Purpose: publish one fully admitted attention result transaction.
- * Inputs: synchronized staging and caller-owned output spans.
- * Effects: commits result/state bytes, counts, identities, and resource evidence.
- * Failure: none after prior admission.
- * Boundary: sole caller-visible commit step. */
+/*
+ * Publish one fully admitted attention result transaction.
+ *
+ * Sole caller-visible commit step.
+ */
 static int attn_publish(attn_run *run) {
     yvex_backend_host_workspace_summary workspace;
     unsigned long long backend_h2d, backend_d2h;
@@ -1950,10 +1859,7 @@ static const attn_transaction_phase attn_transaction[] = {
     {attn_numerical_execute, "cuda.deepseek_attention.cancel.before_commit", 1},
     {attn_synchronize, "cuda.deepseek_attention.cancel.after_copy", 0}
 };
-/* Purpose: execute one admitted request-level CUDA attention phase. Inputs: backend, job, and output storage.
- * Effects: runs transactional device work.
- * Failure: returns a typed admission, resource, or stage refusal.
- * Boundary: no CPU fallback, KV, decode, or generation. */
+
 int yvex_backend_attention_execute(yvex_backend *backend, const yvex_backend_attention_job *job,
                                    yvex_backend_attention_output *output,
                                    yvex_backend_attention_failure *failure, yvex_error *err) {

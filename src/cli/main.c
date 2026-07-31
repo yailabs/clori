@@ -1,12 +1,9 @@
-/* Owner: client.yvex entrypoint.
- * Owns: canonical descriptor resolution, syntax admission, and typed lane dispatch.
- * Does not own: domain capability, runtime hosting, protocol serialization, or help rendering.
- * Invariants: one descriptor selects one lane; runtime commands never fall through to engine adapters.
- * Boundary: generated immutable operator metadata over typed runtime-client and offline adapters.
- * Purpose: make the canonical operator registry the sole executable command-path authority.
- * Inputs: process argv and compiled registry descriptors.
- * Effects: invokes exactly one typed adapter and closes any retained offline cleanup lease.
- * Failure: syntax and unknown-path refusals occur before domain or daemon side effects. */
+/*
+ * Make the canonical operator registry the sole executable command-path authority.
+ *
+ * One descriptor selects one lane; runtime commands never fall through to engine adapters.
+ * Generated immutable operator metadata over typed runtime-client and offline adapters.
+ */
 
 #include <stdio.h>
 #include <stdint.h>
@@ -22,10 +19,6 @@
 
 typedef int (*offline_handler)(int argc, char **argv);
 
-/* Purpose: resolve one exact compiled command prefix and prefer the deepest leaf.
- * Inputs: process argv and consumed-word output. Effects: none.
- * Failure: returns null when no canonical path or admitted alias matches.
- * Boundary: resolution reads immutable descriptors and invokes no adapter. */
 static const yvex_operator_descriptor *descriptor_find(int argc, char **argv,
                                                         size_t *consumed)
 {
@@ -63,7 +56,6 @@ static const yvex_operator_descriptor *descriptor_find(int argc, char **argv,
     return best;
 }
 
-/* Purpose: join the command portion of process arguments for one bounded diagnostic. */
 static int command_text(int argc, char **argv, char output[256])
 {
     size_t count = 0u;
@@ -81,7 +73,6 @@ static int command_text(int argc, char **argv, char output[256])
     return count != 0u;
 }
 
-/* Purpose: compute one bounded edit distance for an unambiguous command hint. */
 static size_t command_distance(const char *left, const char *right)
 {
     size_t prior[256], next[256], left_count = strlen(left), right_count = strlen(right);
@@ -103,10 +94,6 @@ static size_t command_distance(const char *left, const char *right)
     return prior[right_count];
 }
 
-/* Purpose: select a single nearby canonical command path, never a compatibility alias.
- * Inputs: process argv and bounded input storage. Effects: writes normalized input storage.
- * Failure: returns null for ambiguous, distant, or oversized text.
- * Boundary: diagnostics never alter command resolution or execute a hint. */
 static const char *nearest_command(int argc, char **argv, char input[256])
 {
     const char *best = NULL;
@@ -131,7 +118,6 @@ static const char *nearest_command(int argc, char **argv, char input[256])
     return best;
 }
 
-/* Purpose: match a removed path without manufacturing an executable compatibility alias. */
 static int removed_path_matches(const char *path, int argc, char **argv)
 {
     const char *cursor = path;
@@ -149,7 +135,6 @@ static int removed_path_matches(const char *path, int argc, char **argv)
     return 0;
 }
 
-/* Purpose: refuse retired syntax with its one registry-owned migration hint. */
 static int removed_path_refusal(int argc, char **argv)
 {
     size_t index;
@@ -164,10 +149,6 @@ static int removed_path_refusal(int argc, char **argv)
     return 0;
 }
 
-/* Purpose: invoke one statically typed finite offline adapter.
- * Inputs: admitted adapter enum, adapted argv, and cleanup lease output.
- * Effects: calls exactly one finite engine adapter. Failure: returns that adapter's status.
- * Boundary: no runtime-client or persistent-host fallback exists. */
 static int offline_invoke(yvex_operator_offline_adapter adapter, int argc, char **argv,
                           yvex_runtime_cleanup_lease **cleanup)
 {
@@ -213,10 +194,6 @@ static int offline_invoke(yvex_operator_offline_adapter adapter, int argc, char 
     return 2;
 }
 
-/* Purpose: reconstruct one existing typed offline adapter argv from registry metadata.
- * Inputs: descriptor, original argv, and consumed command extent.
- * Effects: allocates a null-terminated borrowed-string vector. Failure: returns null on allocation.
- * Boundary: reconstruction changes syntax projection, never domain values. */
 static char **offline_argv(const yvex_operator_descriptor *operation, int argc,
                            char **argv, size_t consumed, int *adapted_count)
 {
@@ -235,10 +212,6 @@ static char **offline_argv(const yvex_operator_descriptor *operation, int argc,
     return adapted;
 }
 
-/* Purpose: dispatch one finite offline operation and close its optional retained cleanup lease.
- * Inputs: admitted offline descriptor and original process arguments.
- * Effects: allocates adapted argv, invokes one adapter, and closes its lease.
- * Failure: reports allocation, adapter, or cleanup status. Boundary: finite offline lane only. */
 static int offline_dispatch(const yvex_operator_descriptor *operation, int argc,
                             char **argv, size_t consumed)
 {
@@ -263,10 +236,6 @@ static int offline_dispatch(const yvex_operator_descriptor *operation, int argc,
     return status;
 }
 
-/* Purpose: select one descriptor and one lane after canonical syntax admission.
- * Inputs: process argument vector. Effects: invokes exactly one typed adapter or renders refusal.
- * Failure: returns stable parser, discovery, runtime-client, offline, or availability status.
- * Boundary: the entrypoint owns routing, not domain policy or runtime authority. */
 int main(int argc, char **argv)
 {
     const yvex_operator_descriptor *operation;

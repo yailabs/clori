@@ -1,12 +1,9 @@
-/* Owner: artifact descriptor projection.
- * Owns: complete-admission projection and typed descriptor refusals.
- * Does not own: runtime binding, graph execution, backend work, or generation.
- * Invariants: an executable descriptor requires complete canonical admission evidence.
- * Boundary: descriptor facts do not bind memory or execute graphs.
- * Purpose: project complete artifact admission into immutable descriptor facts.
- * Inputs: canonical admission and caller-owned descriptor storage.
- * Effects: writes one descriptor or one typed refusal without payload reads.
- * Failure: missing admission evidence leaves the descriptor refused. */
+/*
+ * Project complete artifact admission into immutable descriptor facts.
+ *
+ * An executable descriptor requires complete canonical admission evidence. Descriptor facts do not
+ * bind memory or execute graphs.
+ */
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/deepseek_v4.h>
@@ -14,7 +11,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Purpose: refuses descriptor projection without canonical admission evidence. */
 static void refuse_missing_gguf(yvex_artifact_descriptor_fact *fact) {
     if (!fact)
         return;
@@ -25,11 +21,6 @@ static void refuse_missing_gguf(yvex_artifact_descriptor_fact *fact) {
     fact->next_row = "V010.ARTIFACT.MATERIALIZE.0";
 }
 
-/* Purpose: projects only canonical complete admission into materialization intake.
- * Inputs: typed artifact descriptor projection arguments; borrowed inputs outlive the call.
- * Effects: mutates only explicit caller-owned artifact descriptor projection state.
- * Failure: invalid, bounds, allocation, or I/O failure publishes no partial result.
- * Boundary: descriptor facts do not bind memory or execute graphs. */
 int yvex_artifact_descriptor_from_admission(const yvex_complete_artifact_admission *admission,
                                             yvex_artifact_descriptor_fact *fact) {
     if (!fact)
@@ -52,7 +43,6 @@ int yvex_artifact_descriptor_from_admission(const yvex_complete_artifact_admissi
     return 1;
 }
 
-/* Purpose: retain one descriptor-preparation refusal without leaking family policy to runtime import. */
 static int runtime_descriptor_refuse(yvex_runtime_descriptor_failure *failure,
                                      yvex_runtime_descriptor_failure_code code,
                                      const char *name, unsigned long long index,
@@ -72,11 +62,6 @@ static int runtime_descriptor_refuse(yvex_runtime_descriptor_failure *failure,
     return status;
 }
 
-/* Purpose: hash one activation policy in the pinned runtime-numeric field order.
- * Inputs: initialized hash and immutable policy fields.
- * Effects: appends canonical unsigned values without hashing native structure bytes.
- * Failure: SHA state records any update failure for finalization.
- * Boundary: this helper reproduces the versioned preparation identity contract only. */
 static void runtime_descriptor_hash_activation(
     yvex_sha256 *hash, const yvex_attention_activation_policy *policy)
 {
@@ -87,11 +72,6 @@ static void runtime_descriptor_hash_activation(
 #undef HASH
 }
 
-/* Purpose: hash one deterministic sparse-selection policy in canonical field order.
- * Inputs: initialized hash and immutable top-k policy.
- * Effects: appends canonical unsigned values without hashing native structure bytes.
- * Failure: SHA state records any update failure for finalization.
- * Boundary: this helper reproduces the versioned preparation identity contract only. */
 static void runtime_descriptor_hash_topk(yvex_sha256 *hash,
                                          const yvex_attention_topk_policy *policy)
 {
@@ -102,11 +82,12 @@ static void runtime_descriptor_hash_topk(yvex_sha256 *hash,
 #undef HASH
 }
 
-/* Purpose: derive complete family facts for the family-neutral descriptor builder.
- * Inputs: sealed DeepSeek architecture and caller-owned fact/identity storage.
- * Effects: fills deterministic values and hashes no pointers or local paths.
- * Failure: malformed runtime numeric authority publishes no partial descriptor.
- * Boundary: family semantics are compiled here; runtime only imports serialized facts. */
+/*
+ * Derive complete family facts for the family-neutral descriptor builder.
+ *
+ * Sealed DeepSeek architecture and caller-owned fact/identity storage. Fills deterministic values
+ * and hashes no pointers or local paths.
+ */
 static int runtime_descriptor_family_facts(
     const yvex_deepseek_v4_ir *ir, yvex_runtime_descriptor_family_facts *facts,
     char logical[YVEX_SHA256_HEX_CAP], char numeric[YVEX_SHA256_HEX_CAP],
@@ -169,7 +150,6 @@ static int runtime_descriptor_family_facts(
     return YVEX_OK;
 }
 
-/* Purpose: find one emitted tensor without assuming map/materialization ordinal equivalence. */
 static const yvex_runtime_tensor_binding *runtime_descriptor_find_name(
     const yvex_runtime_descriptor *descriptor, unsigned long long count, const char *name)
 {
@@ -182,11 +162,6 @@ static const yvex_runtime_tensor_binding *runtime_descriptor_find_name(
     return NULL;
 }
 
-/* Purpose: construct the DeepSeek descriptor in the artifact preparation plane.
- * Inputs: admitted artifact/materialization, canonical lowering map, and sealed family IR.
- * Effects: invokes the generic builder with immutable family facts, then proves map bijection.
- * Failure: releases the candidate and publishes no descriptor on any mismatch.
- * Boundary: runtime import consumes only serialized facts and never calls this entrypoint. */
 int yvex_runtime_descriptor_build_deepseek(
     yvex_runtime_descriptor **out, const yvex_complete_artifact_admission *admission,
     const yvex_materialization_session *session, const yvex_deepseek_gguf_map *map,

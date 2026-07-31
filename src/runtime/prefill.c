@@ -1,12 +1,9 @@
-/* Owner: runtime activation prefill.
- * Owns: activation-input identity, tensor-file lifecycle, admission, and chunk coordination.
- * Does not own: prompt text, embeddings, attention equations, family policy, MoE, or generation.
- * Invariants: records are canonical and every successful chunk commits all prepared attention layers.
- * Boundary: consumes the common runtime model/session and graph executor without reconstructing compiler truth.
- * Purpose: admit production activation chunks and execute them through persistent runtime state.
- * Inputs: versioned activation facts, admitted runtime identities, and session-owned resources.
- * Effects: maps immutable input, coordinates chunk transactions, and publishes bounded result identities.
- * Failure: refuses stale or malformed input and preserves the last fully committed chunk. */
+/*
+ * Admit production activation chunks and execute them through persistent runtime state.
+ *
+ * Records are canonical and every successful chunk commits all prepared attention layers. Consumes
+ * the common runtime model/session and graph executor without reconstructing compiler truth.
+ */
 #define _GNU_SOURCE
 #include <yvex/internal/runtime_prefill.h>
 #include <yvex/internal/core.h>
@@ -46,7 +43,6 @@ struct yvex_runtime_activation_input {
     struct stat snapshot;
 };
 
-/* Purpose: publish one activation-input refusal with a stable semantic owner. */
 static int activation_refuse(yvex_error *err, yvex_status status,
                              const char *reason)
 {
@@ -54,14 +50,12 @@ static int activation_refuse(yvex_error *err, yvex_status status,
     return status;
 }
 
-/* Purpose: report whether native floats match the canonical little-endian F32 encoding. */
 static int activation_host_supported(void)
 {
     const uint32_t one = 1u;
     return sizeof(float) == 4u && *(const unsigned char *)&one == 1u;
 }
 
-/* Purpose: encode a 32-bit integer in canonical little-endian order. */
 static void activation_put_u32(unsigned char *out, uint32_t value)
 {
     unsigned int index;
@@ -69,7 +63,6 @@ static void activation_put_u32(unsigned char *out, uint32_t value)
         out[index] = (unsigned char)(value >> (index * 8u));
 }
 
-/* Purpose: encode a 64-bit integer in canonical little-endian order. */
 static void activation_put_u64(unsigned char *out, uint64_t value)
 {
     unsigned int index;
@@ -77,7 +70,6 @@ static void activation_put_u64(unsigned char *out, uint64_t value)
         out[index] = (unsigned char)(value >> (index * 8u));
 }
 
-/* Purpose: decode one canonical little-endian 32-bit integer. */
 static uint32_t activation_get_u32(const unsigned char *input)
 {
     uint32_t value = 0u;
@@ -87,7 +79,6 @@ static uint32_t activation_get_u32(const unsigned char *input)
     return value;
 }
 
-/* Purpose: decode one canonical little-endian 64-bit integer. */
 static uint64_t activation_get_u64(const unsigned char *input)
 {
     uint64_t value = 0ull;
@@ -97,7 +88,6 @@ static uint64_t activation_get_u64(const unsigned char *input)
     return value;
 }
 
-/* Purpose: convert one fixed raw identity to terminated text. */
 static void activation_identity_get(char output[YVEX_SHA256_HEX_CAP],
                                     const unsigned char *input)
 {
@@ -105,9 +95,6 @@ static void activation_identity_get(char output[YVEX_SHA256_HEX_CAP],
     output[ACTIVATION_IDENTITY_BYTES] = '\0';
 }
 
-/* Purpose: append scalar fields to a digest.
- * Inputs: initialized hash and bounded fields. Effects: advances the hash.
- * Failure: returns false on codec failure. Boundary: hashes canonical integers only. */
 static int activation_hash_u64s(yvex_sha256 *hash,
                                 const unsigned long long *fields, size_t count)
 {
@@ -117,9 +104,6 @@ static int activation_hash_u64s(yvex_sha256 *hash,
     return 1;
 }
 
-/* Purpose: hash exact activation payload bytes.
- * Inputs: bounded immutable F32 payload. Effects: writes one hexadecimal digest.
- * Failure: returns false on invalid extent or hash failure. Boundary: no metadata enters the digest. */
 static int activation_payload_digest(
     const float *payload, unsigned long long bytes,
     char output[YVEX_SHA256_HEX_CAP])
@@ -136,9 +120,11 @@ static int activation_payload_digest(
     return 1;
 }
 
-/* Purpose: derive the canonical input identity.
- * Inputs: pointer-free summary and ordered records. Effects: writes one digest.
- * Failure: returns false on hash failure. Boundary: excludes paths, pointers, padding, and timing. */
+/*
+ * Derive the canonical input identity.
+ *
+ * Excludes paths, pointers, padding, and timing.
+ */
 static int activation_input_identity(
     const yvex_runtime_activation_input_summary *summary,
     const yvex_runtime_activation_layer_record *records,
@@ -177,7 +163,6 @@ static int activation_input_identity(
     return 1;
 }
 
-/* Purpose: reject malformed summary fields before record or payload traversal. */
 static int activation_summary_valid(
     const yvex_runtime_activation_input_summary *summary)
 {
@@ -193,9 +178,11 @@ static int activation_summary_valid(
            yvex_sha256_hex_valid(summary->attention_plan_identity);
 }
 
-/* Purpose: validate record ordering, extents, uniqueness, and finite payload.
- * Inputs: summary, record directory, payload, and identity policy. Effects: publishes no mutation.
- * Failure: returns a typed format refusal. Boundary: validates exact contiguous canonical geometry. */
+/*
+ * Validate record ordering, extents, uniqueness, and finite payload.
+ *
+ * Summary, record directory, payload, and identity policy.
+ */
 static int activation_records_validate(
     const yvex_runtime_activation_input_summary *summary,
     const yvex_runtime_activation_layer_record *records,
@@ -239,9 +226,11 @@ static int activation_records_validate(
     return YVEX_OK;
 }
 
-/* Purpose: derive one runtime-plan layer identity.
- * Inputs: plan identity, ordinal, layer facts, and scope. Effects: writes one digest.
- * Failure: refuses incomplete facts or hash failure. Boundary: no activation bytes enter this identity. */
+/*
+ * Derive one runtime-plan layer identity.
+ *
+ * Plan identity, ordinal, layer facts, and scope. No activation bytes enter this identity.
+ */
 int yvex_runtime_activation_layer_identity_compute(
     const char *attention_plan_identity, unsigned long long ordinal,
     const yvex_attention_layer_plan *layer,
@@ -278,9 +267,6 @@ int yvex_runtime_activation_layer_identity_compute(
     return YVEX_OK;
 }
 
-/* Purpose: seal one in-memory activation input.
- * Inputs: mutable summary, ordered records, and immutable payload. Effects: writes payload/input identities.
- * Failure: leaves no admitted input. Boundary: canonical facts are shared with the file representation. */
 int yvex_runtime_activation_input_seal(
     yvex_runtime_activation_input_summary *summary,
     yvex_runtime_activation_layer_record *records,
@@ -311,9 +297,11 @@ int yvex_runtime_activation_input_seal(
     return YVEX_OK;
 }
 
-/* Purpose: serialize one sealed activation input.
- * Inputs: canonical summary, records, and payload. Effects: allocates one caller-released byte buffer.
- * Failure: publishes no buffer. Boundary: never serializes native structures or padding. */
+/*
+ * Serialize one sealed activation input.
+ *
+ * Never serializes native structures or padding.
+ */
 static int activation_serialize(
     const yvex_runtime_activation_input_summary *summary,
     const yvex_runtime_activation_layer_record *records,
@@ -385,9 +373,6 @@ static int activation_serialize(
     return YVEX_OK;
 }
 
-/* Purpose: publish one sealed activation tensor file transactionally.
- * Inputs: new path and canonical activation facts. Effects: creates one no-replace regular file.
- * Failure: removes temporary publication state. Boundary: the caller retains all source memory. */
 int yvex_runtime_activation_input_write(
     const char *path, const yvex_runtime_activation_input_summary *summary,
     const yvex_runtime_activation_layer_record *records,
@@ -410,9 +395,6 @@ int yvex_runtime_activation_input_write(
     return rc;
 }
 
-/* Purpose: parse one mapped activation file.
- * Inputs: bounded read-only mapping. Effects: allocates a decoded record directory and binds payload views.
- * Failure: leaves cleanup to the input owner. Boundary: decodes fields without native-layout trust. */
 static int activation_parse_mapping(
     yvex_runtime_activation_input *input, yvex_error *err)
 {
@@ -483,9 +465,6 @@ static int activation_parse_mapping(
     return YVEX_OK;
 }
 
-/* Purpose: verify stored activation identities.
- * Inputs: admitted memory or mapped input. Effects: recomputes payload and input digests.
- * Failure: returns a typed format refusal. Boundary: validates exact bytes without changing them. */
 static int activation_input_verify(
     const yvex_runtime_activation_input *input, yvex_error *err)
 {
@@ -511,9 +490,6 @@ static int activation_input_verify(
     return YVEX_OK;
 }
 
-/* Purpose: open and admit one bounded activation tensor file.
- * Inputs: regular non-symlink path and explicit byte limit. Effects: retains one fd and read-only mapping.
- * Failure: closes every partial resource. Boundary: source bytes remain external and immutable. */
 int yvex_runtime_activation_input_open_file(
     yvex_runtime_activation_input **out, const char *path,
     const yvex_runtime_activation_input_limits *limits, yvex_error *err)
@@ -569,9 +545,11 @@ fail:
     return rc;
 }
 
-/* Purpose: admit caller-owned activation memory.
- * Inputs: sealed summary, records, and immutable payload. Effects: copies records and borrows payload.
- * Failure: releases partial owner state. Boundary: caller keeps payload lifetime until close. */
+/*
+ * Admit caller-owned activation memory.
+ *
+ * Caller keeps payload lifetime until close.
+ */
 int yvex_runtime_activation_input_open_memory(
     yvex_runtime_activation_input **out,
     const yvex_runtime_activation_input_summary *summary,
@@ -613,9 +591,11 @@ int yvex_runtime_activation_input_open_memory(
     return YVEX_OK;
 }
 
-/* Purpose: admit input against one sealed runtime model.
- * Inputs: input and exact runtime/plan expectation. Effects: verifies every layer identity and geometry.
- * Failure: refuses stale, missing, duplicate, or mismatched facts. Boundary: no numerical dispatch occurs. */
+/*
+ * Admit input against one sealed runtime model.
+ *
+ * Verifies every layer identity and geometry.
+ */
 static int activation_input_admit(
     const yvex_runtime_activation_input *input,
     const yvex_runtime_activation_input_expectation *expectation,
@@ -671,9 +651,6 @@ static int activation_input_admit(
     return YVEX_OK;
 }
 
-/* Purpose: revalidate activation bytes and file snapshot.
- * Inputs: live input owner. Effects: compares current handle facts and recomputes identities.
- * Failure: drift or malformed content refuses. Boundary: does not reopen or replace the file. */
 int yvex_runtime_activation_input_validate(
     const yvex_runtime_activation_input *input, yvex_error *err)
 {
@@ -697,9 +674,11 @@ int yvex_runtime_activation_input_validate(
     return activation_input_verify(input, err);
 }
 
-/* Purpose: borrow the immutable typed activation summary.
- * Inputs: optional live input owner. Effects: returns one immutable pointer.
- * Failure: returns null for no owner. Boundary: does not transfer ownership. */
+/*
+ * Borrow the immutable typed activation summary.
+ *
+ * Does not transfer ownership.
+ */
 const yvex_runtime_activation_input_summary *
 yvex_runtime_activation_input_summary_get(
     const yvex_runtime_activation_input *input)
@@ -707,9 +686,6 @@ yvex_runtime_activation_input_summary_get(
     return input ? &input->summary : NULL;
 }
 
-/* Purpose: borrow one immutable ordered activation record.
- * Inputs: live input and layer ordinal. Effects: returns one immutable pointer.
- * Failure: returns null outside the directory. Boundary: does not transfer ownership. */
 static const yvex_runtime_activation_layer_record *
 activation_input_record_at(
     const yvex_runtime_activation_input *input, unsigned long long ordinal)
@@ -718,9 +694,6 @@ activation_input_record_at(
                ? &input->records[ordinal] : NULL;
 }
 
-/* Purpose: borrow one checked layer-token activation view.
- * Inputs: admitted input, layer ordinal, and token range. Effects: writes borrowed values and stride.
- * Failure: returns bounds refusal without publishing a view. Boundary: never copies payload bytes. */
 int yvex_runtime_activation_input_view(
     const yvex_runtime_activation_input *input, unsigned long long ordinal,
     unsigned long long token_offset, unsigned long long token_count,
@@ -748,9 +721,11 @@ int yvex_runtime_activation_input_view(
     return YVEX_OK;
 }
 
-/* Purpose: close one activation input owner.
- * Inputs: optional owner pointer. Effects: unmaps, closes, releases records, and clears caller ownership.
- * Failure: best-effort OS close has no recoverable partial owner. Boundary: never frees borrowed memory payload. */
+/*
+ * Close one activation input owner.
+ *
+ * Unmaps, closes, releases records, and clears caller ownership.
+ */
 void yvex_runtime_activation_input_close(
     yvex_runtime_activation_input **input_ptr)
 {
@@ -774,9 +749,6 @@ typedef struct {
     unsigned long long layer_count;
 } activation_prefill_context;
 
-/* Purpose: borrow one exact chunk for the graph executor.
- * Inputs: prefill context and layer/token request. Effects: increments deterministic view evidence.
- * Failure: injected or invalid requests publish no view. Boundary: delegates checked addressing to input owner. */
 static int activation_prefill_view(
     void *opaque, unsigned long long layer_ordinal,
     unsigned long long token_count, const float **input,
@@ -802,9 +774,6 @@ static int activation_prefill_view(
         input, input_stride, err);
 }
 
-/* Purpose: hash one attention publication independently of chunk boundaries.
- * Inputs: complete finite publication. Effects: advances its ordered layer output hash.
- * Failure: refuses malformed output. Boundary: hashes tensor geometry and bytes, not backend evidence. */
 static int activation_prefill_evidence(
     void *opaque, yvex_backend_kind backend,
     const yvex_attention_publication *publication, yvex_error *err)
@@ -853,9 +822,11 @@ static int activation_prefill_evidence(
     return YVEX_OK;
 }
 
-/* Purpose: allocate and initialize per-layer output hashes.
- * Inputs: admitted layer directory. Effects: owns one hash array in the prefill context.
- * Failure: leaves no usable evidence set. Boundary: initialization excludes input identity and backend. */
+/*
+ * Allocate and initialize per-layer output hashes.
+ *
+ * Initialization excludes input identity and backend.
+ */
 static int activation_prefill_hashes_open(
     activation_prefill_context *context, yvex_error *err)
 {
@@ -886,9 +857,11 @@ static int activation_prefill_hashes_open(
     return YVEX_OK;
 }
 
-/* Purpose: finalize ordered layer output hashes.
- * Inputs: completed per-layer hash set. Effects: writes one tensor-output digest.
- * Failure: refuses incomplete hash state. Boundary: output identity is chunk/backend independent. */
+/*
+ * Finalize ordered layer output hashes.
+ *
+ * Output identity is chunk/backend independent.
+ */
 static int activation_prefill_hashes_close(
     activation_prefill_context *context,
     char output[YVEX_SHA256_HEX_CAP], yvex_error *err)
@@ -916,7 +889,6 @@ fail:
         "activation prefill output digest finalization failed");
 }
 
-/* Purpose: read one complete session-owned state summary. */
 static int activation_prefill_state_summary(
     const yvex_runtime_execution_session *session,
     yvex_graph_attention_state_summary *summary, yvex_error *err)
@@ -933,9 +905,6 @@ static int activation_prefill_state_summary(
     return YVEX_OK;
 }
 
-/* Purpose: build an exact full-layer state capacity plan.
- * Inputs: runtime model and declared token extent. Effects: allocates one caller-closed plan.
- * Failure: publishes no plan. Boundary: uses family recipes without canonical probe policy. */
 static int activation_prefill_capacity_build(
     yvex_graph_attention_capacity_plan **out,
     const yvex_runtime_model_view *model,
@@ -956,9 +925,6 @@ static int activation_prefill_capacity_build(
         out, graph, model ? model->attention : NULL, &request, err);
 }
 
-/* Purpose: prepare stable state and CUDA workspace.
- * Inputs: model, session, request, input extent, and prior state. Effects: seals reusable bounded resources.
- * Failure: leaves position unchanged and closes temporary plans. Boundary: performs no attention execution. */
 static int activation_prefill_prepare(
     yvex_runtime_model *model, yvex_runtime_execution_session *session,
     const yvex_runtime_activation_prefill_request *request,
@@ -1024,9 +990,6 @@ static int activation_prefill_prepare(
     return rc;
 }
 
-/* Purpose: validate runtime/request/input compatibility.
- * Inputs: sealed model, matching session, input, and request. Effects: performs admission only.
- * Failure: refuses before state mutation. Boundary: accepts eager CPU/CUDA attention scope only. */
 static int activation_prefill_admit(
     yvex_runtime_model *model, yvex_runtime_execution_session *session,
     const yvex_runtime_activation_input *input,
@@ -1069,9 +1032,11 @@ static int activation_prefill_admit(
     return activation_input_admit(input, &expectation, err);
 }
 
-/* Purpose: derive the final prefill execution identity.
- * Inputs: request and committed result facts. Effects: writes one execution digest.
- * Failure: returns false on canonical hash failure. Boundary: identity includes path policy, not local paths. */
+/*
+ * Derive the final prefill execution identity.
+ *
+ * Identity includes path policy, not local paths.
+ */
 static int activation_prefill_execution_identity(
     const yvex_runtime_activation_prefill_request *request,
     const yvex_runtime_activation_prefill_result *result,
@@ -1100,10 +1065,6 @@ static int activation_prefill_execution_identity(
     return 1;
 }
 
-/* Purpose: execute one admitted activation prefill request.
- * Inputs: model, session, input, chunk policy, cancellation, and result owners.
- * Effects: executes all layers and commits each complete chunk to persistent state.
- * Failure: aborts only the failing chunk and reports the committed prefix. Boundary: attention, not transformer. */
 int yvex_runtime_activation_prefill_execute(
     yvex_runtime_model *model, yvex_runtime_execution_session *session,
     const yvex_runtime_activation_input *input,
@@ -1226,9 +1187,6 @@ int yvex_runtime_activation_prefill_execute(
     return rc;
 }
 
-/* Purpose: publish one admitted prefill result to the operator schema.
- * Inputs: complete request, model/session summaries, and execution result. Effects: writes typed result fields.
- * Failure: refuses incomplete summaries. Boundary: publication creates no capability or numerical work. */
 static int activation_prefill_operator_publish(
     const yvex_graph_attention_operator_request *request,
     const yvex_runtime_model *model,
@@ -1400,9 +1358,6 @@ static int activation_prefill_operator_publish(
     return YVEX_OK;
 }
 
-/* Purpose: publish one operator refusal.
- * Inputs: mutable result, status, and optional error. Effects: writes typed failure fields only.
- * Failure: cannot fail. Boundary: preserves the domain error taxonomy without text classification. */
 static void activation_prefill_operator_refuse(
     yvex_graph_attention_operator_result *result, int rc,
     const yvex_error *err)
@@ -1425,9 +1380,6 @@ static void activation_prefill_operator_refuse(
             : "activation prefill refused");
 }
 
-/* Purpose: adapt graph-attention CLI facts to production activation prefill.
- * Inputs: typed operator request and empty cleanup output. Effects: owns one model/session/input lifecycle.
- * Failure: publishes refusal and retains retryable cleanup when required. Boundary: no parsing or rendering. */
 int yvex_runtime_activation_prefill_operator_execute(
     const yvex_graph_attention_operator_request *request,
     yvex_graph_attention_operator_result *result,

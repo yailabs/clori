@@ -1,12 +1,7 @@
-/* Owner: tests.reference.sampling.
- * Owns: independent sampling arithmetic used only as a conformance oracle.
- * Does not own: production policy, identities, lifecycle, CLI, or capability.
- * Invariants: no production sampling helper is called.
- * Boundary: test-only greedy, filtering, PCG, and categorical selection.
- * Purpose: independently verify canonical sampling results.
- * Inputs: finite logits, sealed policy, and test-owned RNG state.
- * Effects: allocates temporary test storage and advances only the supplied oracle RNG.
- * Failure: invalid arithmetic returns false without publishing a result. */
+/*
+ * Independently verify canonical sampling results. No production sampling helper is called.
+ * Test-only greedy, filtering, PCG, and categorical selection.
+ */
 #include "tests/reference/sampling.h"
 
 #include <math.h>
@@ -22,7 +17,6 @@ typedef struct {
     double probability, deviation;
 } ref_candidate;
 
-/* Purpose: independently advance PCG-XSH-RR 64/32. */
 static uint32_t ref_pcg_next(uint64_t *state, uint64_t increment)
 {
     uint64_t old = *state;
@@ -32,7 +26,6 @@ static uint32_t ref_pcg_next(uint64_t *state, uint64_t increment)
     return (shifted >> rotation) | (shifted << ((0u - rotation) & 31u));
 }
 
-/* Purpose: independently establish the fixed-stream PCG seed contract. */
 void yvex_test_sampling_reference_seed(unsigned long long seed,
                                        yvex_test_sampling_rng *rng)
 {
@@ -44,7 +37,6 @@ void yvex_test_sampling_reference_seed(unsigned long long seed,
     (void)ref_pcg_next(&rng->state, rng->increment);
 }
 
-/* Purpose: impose probability descending and token ascending ties. */
 static int ref_probability_compare(const void *left, const void *right)
 {
     const ref_candidate *a = (const ref_candidate *)left;
@@ -54,7 +46,6 @@ static int ref_probability_compare(const void *left, const void *right)
     return a->token < b->token ? -1 : a->token > b->token;
 }
 
-/* Purpose: impose typical deviation, probability, and token ordering. */
 static int ref_typical_compare(const void *left, const void *right)
 {
     const ref_candidate *a = (const ref_candidate *)left;
@@ -64,7 +55,6 @@ static int ref_typical_compare(const void *left, const void *right)
     return ref_probability_compare(left, right);
 }
 
-/* Purpose: impose ascending token order for the categorical draw. */
 static int ref_token_compare(const void *left, const void *right)
 {
     const ref_candidate *a = (const ref_candidate *)left;
@@ -72,7 +62,6 @@ static int ref_token_compare(const void *left, const void *right)
     return a->token < b->token ? -1 : a->token > b->token;
 }
 
-/* Purpose: independently normalize one nonempty candidate set. */
 static int ref_normalize(ref_candidate *candidates, unsigned long long count)
 {
     double total = 0.0;
@@ -89,7 +78,6 @@ static int ref_normalize(ref_candidate *candidates, unsigned long long count)
     return 1;
 }
 
-/* Purpose: independently produce stable full-vocabulary probabilities. */
 static int ref_softmax(const float *logits, unsigned long long count,
                        double temperature, ref_candidate *candidates)
 {
@@ -110,7 +98,6 @@ static int ref_softmax(const float *logits, unsigned long long count,
     return isfinite(total) && total > 0.0 && ref_normalize(candidates, count);
 }
 
-/* Purpose: independently remove exact zero mass before entropy-bearing filters. */
 static unsigned long long ref_compact_positive(ref_candidate *candidates,
                                                unsigned long long count)
 {
@@ -125,7 +112,6 @@ static unsigned long long ref_compact_positive(ref_candidate *candidates,
     return write && ref_normalize(candidates, write) ? write : 0ull;
 }
 
-/* Purpose: independently retain one cumulative prefix including its crossing candidate. */
 static unsigned long long ref_mass_prefix(ref_candidate *candidates,
                                           unsigned long long count,
                                           double requested)
@@ -139,7 +125,6 @@ static unsigned long long ref_mass_prefix(ref_candidate *candidates,
     return count;
 }
 
-/* Purpose: independently select greedily or through the canonical stochastic pipeline. */
 int yvex_test_sampling_reference_select(
     const float *logits, unsigned long long count,
     const yvex_runtime_sampling_policy *policy,

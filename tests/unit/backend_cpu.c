@@ -1,26 +1,6 @@
 /*
- * YVEX - CPU backend tests
- *
- * File: tests/test_backend_cpu.c
- * Layer: test
- *
- * Purpose:
- *   Proves that backend layer opens the CPU reference backend and supports tensor
- *   allocation, memory stats, read/write, copy, sync, and memory-limit errors.
- *
- * Covers:
- *   - yvex_backend_open_cpu
- *   - yvex_backend_tensor_alloc/free
- *   - yvex_backend_tensor_write/read/copy
- *   - yvex_backend_memory_stats
- *
- * Commands:
- *   - make test-core
- *   - build/tests/test_backend_cpu
- *
- * Expected:
- *   - exits 0 on success
- *   - prints concise failure to stderr
+ * Exercises backend layer opens the CPU reference backend and supports tensor allocation, memory
+ * stats, read/write, copy, sync, and memory-limit errors.
  */
 #include <string.h>
 

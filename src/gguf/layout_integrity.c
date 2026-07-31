@@ -1,15 +1,9 @@
-/* Owner: src/gguf global layout integrity
- * Owns: power-of-two alignment, directory-order tensor packing, padded interval continuation, aggregate span
- *   arithmetic, zero padding, tail policy, and opened-file drift checks.
- * Does not own: emitted runtime-role layout mapping, payload interpretation, model-family completeness, digest
- *   policy, materialization, backend work, or generation.
- * Invariants: validation is one linear tensor pass; it reads only directory and tensor padding and reports zero
- *   tensor payload bytes read.
- * Boundary: accepted layout is structural container admission only.
- * Purpose: admit one canonical GGUF byte layout through checked interval and padding validation.
- * Inputs: an opened immutable artifact snapshot and its parsed GGUF directory view.
- * Effects: reads only required padding ranges and replaces the caller-owned layout result.
- * Failure: malformed geometry, overflow, nonzero padding, truncation, or drift refuse deterministically. */
+/*
+ * Admit one canonical GGUF byte layout through checked interval and padding validation.
+ *
+ * Validation is one linear tensor pass; it reads only directory and tensor padding and reports
+ * zero tensor payload bytes read. Accepted layout is structural container admission only.
+ */
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
@@ -32,11 +26,6 @@ static const char *const layout_code_names[] = {
     "tensor-info-missing", "tensor-range-mismatch",
 };
 
-/* Purpose: initialize one self-contained fail-closed layout result.
- * Inputs: writable result storage.
- * Effects: clears all counters and installs invalid-argument/not-evaluated state.
- * Failure: none; callers provide non-null storage.
- * Boundary: initialization performs no artifact I/O. */
 static void layout_result_init(yvex_gguf_layout_result *result) {
     memset(result, 0, sizeof(*result));
     result->code = YVEX_GGUF_LAYOUT_INVALID_ARGUMENT;
@@ -44,11 +33,12 @@ static void layout_result_init(yvex_gguf_layout_result *result) {
     yvex_core_text_copy(result->reason, sizeof(result->reason), "layout not evaluated");
 }
 
-/* Purpose: add one layout counter without unsigned overflow.
- * Inputs: current value, addition, and writable result.
- * Effects: writes the sum only when representable.
- * Failure: null output or overflow returns a typed layout code.
- * Boundary: this arithmetic helper owns no file or layout state. */
+/*
+ * Add one layout counter without unsigned overflow.
+ *
+ * Null output or overflow returns a typed layout code. This arithmetic helper owns no file or
+ * layout state.
+ */
 yvex_gguf_layout_code yvex_gguf_layout_sum_checked(unsigned long long current,
                                                    unsigned long long addition,
                                                    unsigned long long *out) {
@@ -60,7 +50,6 @@ yvex_gguf_layout_code yvex_gguf_layout_sum_checked(unsigned long long current,
     return YVEX_GGUF_LAYOUT_OK;
 }
 
-/* Purpose: align one offset upward through checked power-of-two mask arithmetic. */
 static int align_up_power_of_two(unsigned long long value, unsigned int alignment,
                                  unsigned long long *out) {
     unsigned long long mask;
@@ -74,11 +63,12 @@ static int align_up_power_of_two(unsigned long long value, unsigned int alignmen
     return 1;
 }
 
-/* Purpose: derive exact raw and padded ends for one relative tensor interval.
- * Inputs: relative start, raw bytes, power-of-two alignment, and writable end values.
- * Effects: publishes both ends only through checked arithmetic.
- * Failure: invalid alignment, null outputs, or overflow return distinct layout codes.
- * Boundary: interval measurement reads no directory or payload bytes. */
+/*
+ * Derive exact raw and padded ends for one relative tensor interval.
+ *
+ * Relative start, raw bytes, power-of-two alignment, and writable end values. Invalid alignment,
+ * null outputs, or overflow return distinct layout codes.
+ */
 yvex_gguf_layout_code yvex_gguf_layout_interval_measure(unsigned long long relative_offset,
                                                         unsigned long long raw_size,
                                                         unsigned int alignment,
@@ -101,7 +91,6 @@ yvex_gguf_layout_code yvex_gguf_layout_interval_measure(unsigned long long relat
     return YVEX_GGUF_LAYOUT_OK;
 }
 
-/* Purpose: publish a stable layout refusal in both typed result and error vocabulary. */
 static int layout_fail(yvex_gguf_layout_result *result, yvex_gguf_layout_code code,
                        const char *reason, yvex_error *err) {
     result->accepted = 0;
@@ -112,11 +101,11 @@ static int layout_fail(yvex_gguf_layout_result *result, yvex_gguf_layout_code co
     return YVEX_ERR_FORMAT;
 }
 
-/* Purpose: prove that one exact required padding interval contains only zero bytes.
- * Inputs: admitted artifact, absolute offset, length, refusal code, and writable diagnostics.
- * Effects: performs bounded positioned reads and advances padding-byte/call counters.
- * Failure: I/O or first nonzero byte records its absolute location and typed refusal.
- * Boundary: the reader never crosses the requested interval into tensor payload. */
+/*
+ * Prove that one exact required padding interval contains only zero bytes.
+ *
+ * Performs bounded positioned reads and advances padding-byte/call counters.
+ */
 static int read_zero_padding(const yvex_artifact *artifact, unsigned long long offset,
                              unsigned long long length, yvex_gguf_layout_code nonzero_code,
                              yvex_gguf_layout_result *result, yvex_error *err) {
@@ -151,11 +140,6 @@ static int read_zero_padding(const yvex_artifact *artifact, unsigned long long o
     return YVEX_OK;
 }
 
-/* Purpose: render one canonical layout result code as stable diagnostic text.
- * Inputs: layout code value.
- * Effects: none.
- * Failure: out-of-range values yield unknown-layout-failure.
- * Boundary: text does not become layout admission truth. */
 const char *yvex_gguf_layout_code_name(yvex_gguf_layout_code code) {
     return code >= YVEX_GGUF_LAYOUT_OK &&
                    (size_t)code < sizeof(layout_code_names) / sizeof(layout_code_names[0])
@@ -169,11 +153,12 @@ typedef struct {
     unsigned long long previous_raw_end;
 } layout_cursor;
 
-/* Purpose: validate one directory tensor and advance the canonical physical cursor.
- * Inputs: artifact/view, directory index, mutable cursor/result, and diagnostics.
- * Effects: checks geometry/ranges, reads only its padding, and advances counters on success.
- * Failure: overlap, gap, overflow, truncation, nonzero padding, or mismatch leaves typed refusal.
- * Boundary: tensor payload bytes are never read or interpreted. */
+/*
+ * Validate one directory tensor and advance the canonical physical cursor.
+ *
+ * Checks geometry/ranges, reads only its padding, and advances counters on success. Overlap, gap,
+ * overflow, truncation, nonzero padding, or mismatch leaves typed refusal.
+ */
 static int layout_validate_tensor(const yvex_artifact *artifact, const yvex_gguf *gguf,
                                   unsigned long long index, layout_cursor *cursor,
                                   yvex_gguf_layout_result *out, yvex_error *err) {
@@ -286,11 +271,12 @@ static int layout_validate_tensor(const yvex_artifact *artifact, const yvex_gguf
     return YVEX_OK;
 }
 
-/* Purpose: validate the complete canonical directory order and padded file span.
- * Inputs: matching immutable artifact/view plus writable result and diagnostics.
- * Effects: performs one linear padding-only pass and two snapshot-drift validations.
- * Failure: any geometry, range, padding, tail, I/O, or drift violation refuses the whole layout.
- * Boundary: successful structure admission is not complete-artifact or runtime support. */
+/*
+ * Validate the complete canonical directory order and padded file span.
+ *
+ * Performs one linear padding-only pass and two snapshot-drift validations. Any geometry, range,
+ * padding, tail, I/O, or drift violation refuses the whole layout.
+ */
 int yvex_gguf_layout_validate(const yvex_artifact *artifact, const yvex_gguf *gguf,
                               yvex_gguf_layout_result *out, yvex_error *err) {
     const yvex_gguf_reader_stats *stats;
