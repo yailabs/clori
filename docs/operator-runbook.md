@@ -31,16 +31,54 @@ Backend selection never falls back silently.
 
 ## First verified startup
 
-Start the host directly in the first terminal:
+First check whether this user already owns a ready host:
 
 ```sh
-./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages --openai on --openai-port 8001
+./yvex runtime status
 ```
 
-Foreground operation is intentional. Keep this terminal open and wait for the
-`runtime.ready` JSONL event before connecting a client. The daemon authenticates
-the artifact and binding, builds immutable residency once, publishes its private
-local socket, and reports one model-open lifecycle.
+If it reports `ready`, do not start another daemon; proceed to chat or runtime
+inspection. If it refuses because no host is present, start the host through
+the public `yvex` command in the first terminal:
+
+```sh
+./yvex runtime start \
+  --model "$YVEX_MODEL_ARTIFACT" \
+  --runtime-binding "$YVEX_RUNTIME_BINDING" \
+  --target deepseek4-v4-flash \
+  --backend cuda \
+  --context 4096 \
+  --console raw \
+  --trace-level stages \
+  --openai on \
+  --openai-port 8001
+```
+
+`runtime start` replaces its finite client process with the sibling `yvexd`
+binary. Foreground operation is intentional: keep this terminal open. Exactly
+one daemon owns the model, sessions, KV, worker, local socket, OpenAI listener,
+and telemetry.
+
+Wait for the `runtime.ready` JSONL event before connecting a client. Startup
+authenticates the artifact and binding, creates the immutable runtime model,
+builds residency once, and only then publishes the local socket. A refusal or
+startup failure leaves no partially ready listener.
+
+## What “load the model” means
+
+There is no separate hosted model-load command. The relevant commands have
+different responsibilities:
+
+- `yvex model select ...` records an inert startup configuration for a future
+  launch; it does not read the artifact or change a running daemon;
+- `yvex runtime start ...` opens and authenticates the artifact and binding,
+  materializes runtime-owned resources, copies the encoded payload into the
+  daemon's host arena, and keeps the resulting runtime model open;
+- `yvex runtime model` reports the identities actually open in the daemon;
+- `yvex runtime memory` reports current process, mapped, host-resident, and
+  device-resident memory facts;
+- `yvex chat` and `yvex run` use the already resident model through the local
+  protocol and never create another model copy.
 
 The host admits the mapped artifact, then copies every encoded model tensor
 into one process-lifetime anonymous RAM arena before publishing `runtime.ready`.
@@ -59,7 +97,16 @@ three model copies.
 Terminal 1 owns the host and raw typed events:
 
 ```sh
-./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages --openai on --openai-port 8001
+./yvex runtime start \
+  --model "$YVEX_MODEL_ARTIFACT" \
+  --runtime-binding "$YVEX_RUNTIME_BINDING" \
+  --target deepseek4-v4-flash \
+  --backend cuda \
+  --context 4096 \
+  --console raw \
+  --trace-level stages \
+  --openai on \
+  --openai-port 8001
 ```
 
 Terminal 2 renders the operational engine view:
@@ -77,6 +124,9 @@ Terminal 3 owns the interactive conversation:
 Start Terminal 1 first. Terminals 2 and 3 may attach in either order after
 `runtime.ready`. Raw and operational views derive from the same typed event
 sequence. Default telemetry excludes prompt and answer content.
+
+If observation is not needed, two terminals are sufficient: keep `runtime
+start` in the first and run `runtime status`, then `chat`, in the second.
 
 ## One-shot requests
 
@@ -146,7 +196,13 @@ Use compact status for normal operation:
 ```sh
 ./yvex runtime status
 ./yvex runtime status --json
+./yvex runtime model
+./yvex runtime memory
 ```
+
+`runtime model` proves which artifact, binding, physical variant, target, and
+backend are actually open. `runtime memory` separates mapped artifact bytes,
+the process-lifetime host arena, and device-resident allocations.
 
 Subscribe to compact engine activity or the typed trace independently of the
 daemon console:
@@ -154,7 +210,12 @@ daemon console:
 ```sh
 ./yvex runtime watch
 ./yvex runtime trace
+./yvex runtime trace --json
 ```
+
+`watch` requests the compact stage stream, while `trace` requests the detailed
+event stream. Their current human renderers are transitional and can look
+similar; `trace --json` is the unambiguous canonical JSONL projection.
 
 Raw daemon JSONL is selected at host startup with `--console raw`. Increase
 `--trace-level` from `summary` to `stages`, `tokens`, or `full` only when the
@@ -179,7 +240,12 @@ After the explicit startup path succeeds, a private XDG configuration can store
 an inert model selection for shorter future starts:
 
 ```sh
-./yvex model select deepseek --artifact "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --target deepseek4-v4-flash --backend cuda --context 4096
+./yvex model select deepseek \
+  --artifact "$YVEX_MODEL_ARTIFACT" \
+  --runtime-binding "$YVEX_RUNTIME_BINDING" \
+  --target deepseek4-v4-flash \
+  --backend cuda \
+  --context 4096
 ./yvex model selected
 ./yvex model list
 ./yvex runtime start
@@ -190,7 +256,9 @@ artifact, open a model, or change a running host. `model selected` reads only
 that inert private selection; `model list` reads real registry entries; and
 `runtime model` reads the identities actually open in `yvexd`. These states may
 differ without being conflated. The daemon still authenticates the selected
-artifact and binding on every process start. Applying another selection
+artifact and binding on every process start. The short `runtime start` form
+uses daemon defaults and remains in the foreground; verify readiness from
+another terminal with `yvex runtime status`. Applying another selection
 requires a daemon restart.
 
 ## Local paths
@@ -209,7 +277,7 @@ fallback.
 
 ## Recovery
 
-- Missing socket: repeat the explicit first startup and wait for
+- Missing socket: repeat the explicit `yvex runtime start` procedure and wait for
   `runtime.ready`.
 - Stale or unsafe socket: verify UID, mode, runtime-directory ownership, and
   singleton-lock ownership; never delete another user's socket.
@@ -221,8 +289,9 @@ fallback.
   CUDA request falls back silently.
 - Queue refusal: wait for current work or reduce client concurrency; do not
   launch another daemon against the same socket.
-- OpenAI `503 runtime_unavailable`: start `yvexd`, wait for `runtime.ready`, and
-  confirm `openai_ready` in `yvex runtime status --json`.
+- OpenAI `503 runtime_unavailable`: start the host with `yvex runtime start`,
+  wait for `runtime.ready`, and confirm `openai_ready` in
+  `yvex runtime status --json`.
 - OpenAI `422 unsupported_parameter`: remove the named unsupported field;
   fields are never ignored silently.
 

@@ -9,16 +9,24 @@ gates live in [`ROADMAP.md`](../../ROADMAP.md).
 
 Export the admitted DeepSeek artifact and binding, then follow the explicit
 first-start procedure in the [operator runbook](../operator-runbook.md). That
-procedure starts `yvexd` directly; configured model defaults are optional and
-are not artifact admission.
+procedure uses `yvex runtime start` to enter the sole persistent `yvexd`
+process. The command authenticates the artifact and binding and builds the
+resident runtime model; configured model defaults are optional and are not
+artifact admission.
 
-After `runtime.ready`, observe and use the same host from two additional
-terminals:
+After `runtime.ready`, verify and use the same resident model from another
+terminal:
 
 ```sh
-./yvex runtime watch
+./yvex runtime status
+./yvex runtime model
+./yvex runtime memory
 ./yvex chat --session main
 ```
+
+An optional third terminal may run `yvex runtime watch`. Status, watch, and
+chat are clients of the same daemon; none reloads weights or opens a second
+runtime model.
 
 The daemon opens one model and retains the complete encoded model payload in
 one immutable process-lifetime host arena together with tokenizer, attention,

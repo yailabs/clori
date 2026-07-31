@@ -41,42 +41,76 @@ preserves exact earlier progress.
 
 ## Quick start
 
-Build the two product executables:
+### 1. Build YVEX
 
 ```sh
 make -j4 all
 ```
 
-Provide one admitted complete GGUF artifact and its exact runtime binding as
-external operator assets:
+### 2. Identify the artifact and binding
+
+Starting a runtime requires one admitted complete GGUF artifact and its exact
+runtime binding. Keep both outside the repository and use absolute paths:
 
 ```sh
 export YVEX_MODEL_ARTIFACT=/absolute/model.gguf
 export YVEX_RUNTIME_BINDING=/absolute/model.yvex-runtime-binding
+test -r "$YVEX_MODEL_ARTIFACT" && test -r "$YVEX_RUNTIME_BINDING"
 ```
 
-Start the resident host and wait for `runtime.ready`:
+### 3. Start the runtime and load the model
+
+If `./yvex runtime status` already reports `ready`, do not start a second host;
+continue with step 5. Otherwise, run this in the first terminal:
 
 ```sh
-./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages --openai on --openai-port 8001
+./yvex runtime start \
+  --model "$YVEX_MODEL_ARTIFACT" \
+  --runtime-binding "$YVEX_RUNTIME_BINDING" \
+  --target deepseek4-v4-flash \
+  --backend cuda \
+  --context 4096 \
+  --console raw \
+  --trace-level stages \
+  --openai on \
+  --openai-port 8001
 ```
 
-In another terminal, open a retained session:
+There is no separate model-load command. `runtime start` starts `yvexd`,
+authenticates the artifact and binding, copies the encoded weights into the
+daemon's process-lifetime host arena, builds runtime residency, and keeps that
+runtime model open. Leave this foreground terminal running and wait for the
+`runtime.ready` event.
+
+### 4. Verify the resident runtime
+
+In a second terminal:
+
+```sh
+./yvex runtime status
+./yvex runtime model
+./yvex runtime memory
+```
+
+These commands report readiness, the model actually open in `yvexd`, and its
+current host/device memory accounting. They do not load another model.
+
+### 5. Start chat
 
 ```sh
 ./yvex chat --session main
 ```
 
-Or run one ephemeral streamed turn against the same resident model:
+The named session retains conversation and KV state while sharing the one
+resident runtime model. Alternatively, run one ephemeral streamed turn:
 
 ```sh
 ./yvex run "Explain attention in one sentence."
 ```
 
-Inspect the runtime and discover commands without parsing prose:
+Discover commands without parsing prose:
 
 ```sh
-./yvex runtime status
 ./yvex help
 ./yvex help --advanced
 ./yvex help --json

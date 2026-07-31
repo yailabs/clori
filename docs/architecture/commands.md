@@ -52,6 +52,17 @@ hot-switch a running daemon. `model list` and `model show` inspect registry
 entries, `model selected` reads the inert selection, and `runtime model` reads
 the model actually open in `yvexd`.
 
+### Hosted startup semantics
+
+There is no independent hosted `load` operation. With explicit artifact and
+binding arguments, `yvex runtime start` executes the sibling `yvexd` in the
+foreground. The daemon authenticates those identities, creates one immutable
+runtime model, establishes host/device residency, then publishes readiness.
+`yvex chat` and `yvex run` are protocol clients of that resident model; they do
+not link into runtime execution or open weights locally. The complete operator
+sequence and memory interpretation live in the
+[local runtime runbook](../operator-runbook.md).
+
 `yvex` and `yvex chat` require a TTY. `yvex run` is the noninteractive one-shot
 form. A missing daemon produces one concise refusal plus the exact runtime-start
 hint. Unknown and duplicate options follow the product parser's typed refusal
