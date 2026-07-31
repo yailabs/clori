@@ -255,12 +255,9 @@ The milestone closes only when:
 - no second parser, operation owner, or session authority is introduced; and
 - no numerical-performance claim is made.
 
-## Transition
+## Downstream consumer
 
-On accepted closure:
-
-```text
-V010.OPERATOR.REPL.CONSOLE.0 = complete
-V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0 = active
-Active Next = V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
-```
+The measured GB10 runtime-optimization boundary consumes the completed console
+without making terminal rendering a numerical owner. Only
+[`ROADMAP.md`](../../ROADMAP.md) activates that consumer or records milestone
+state.

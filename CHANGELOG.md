@@ -1,0 +1,48 @@
+# Changelog
+
+All externally meaningful YVEX changes are recorded here. The project is not
+yet released; entries remain under **Unreleased** until release qualification
+and a version tag are accepted.
+
+This changelog follows the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
+without treating every internal milestone, test, or refactor as a public
+change. Git history preserves implementation chronology.
+
+## Unreleased
+
+### Added
+
+- Complete daemon-backed DeepSeek-V4-Flash source-to-streamed-text execution
+  through native and bounded OpenAI-compatible local surfaces.
+- Exact server-owned multi-turn sessions with committed-prefix reuse,
+  cancellation, partial-progress truth, and one persistent model lifecycle.
+- Registry-driven command discovery, advanced help, JSON discovery, and Bash,
+  Zsh, and Fish completion.
+
+### Changed
+
+- Consolidated the product topology to the public `yvex` command and the
+  long-lived `yvexd` host; the OpenAI-compatible listener now runs inside the
+  daemon.
+- Replaced implementation-era top-level command buckets with the canonical
+  `compile`, `artifact`, `inspect`, `execute`, `profile`, and `system`
+  projections.
+- Advanced the private local protocol to version 4, separating selected model
+  configuration from the live runtime model and removing false artifact/model
+  facade operations.
+- Reorganized documentation by authority and lifecycle, with canonical
+  terminology, family records, contracts, operator procedures, frozen audits,
+  and validated migration paths.
+
+### Removed
+
+- Retired the separate `yvex-dev` and `yvex-openai` product executables.
+- Removed the old top-level `evidence`, `graph`, `quant`, `source`, `tensor`,
+  and `tokenizer` command namespaces; migration hints do not execute hidden
+  aliases.
+
+### Security
+
+- The hosted protocol and OpenAI-compatible endpoint remain local-only and
+  fail closed. Authentication, TLS, CORS, and remote exposure are not part of
+  the current compatibility profile.

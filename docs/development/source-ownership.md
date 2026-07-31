@@ -1,13 +1,12 @@
-# YVEX System Target
+# Source and Module Ownership
 
-Date: 2026-07-29
-Status: filesystem and module ownership contract
-Authority: filesystem and module topology; current project state belongs only
-to `ROADMAP.md`
+Status: current filesystem and module ownership contract
+Authority: source/module topology and placement; current project state belongs
+only to [`ROADMAP.md`](../../ROADMAP.md).
 
-This document records the target filesystem architecture for the execution-core
-and control-plane boundary. It is an implementation contract, not a capability
-claim.
+This document records the current filesystem architecture for the
+execution-core and control-plane boundary. It is an implementation contract,
+not a capability claim.
 
 ## Current Actual Tree
 
@@ -34,13 +33,13 @@ src/backend/             backend abstraction, compute admission and platform imp
 src/runtime/             common immutable model, binding, execution sessions, state and benchmark
 ```
 
-## Target Tree Summary
+## Ownership flow
 
 ```text
 registry JSON -> strict build validation -> immutable compiled descriptors -> yvex dispatch/help
 product argv -> protocol v4 -> yvexd worker/session -> typed events/results -> client render
 application -> OpenAI profile -> provider contract -> local protocol -> same yvexd worker/session
-developer argv -> nested owner route -> report/domain -> developer render -> cli/io
+engineering argv -> nested owner route -> report/domain -> engineering render -> cli/io
 
 file writer -> explicit local files only
 source facts -> architecture IR -> coverage -> contribution map -> transformation IR
@@ -53,28 +52,6 @@ persistent KV -> model prefill -> transformer -> logits -> sampling -> generatio
 
 No domain file owns command grammar or operator byte output. No renderer owns
 domain algorithms. No writer owns command output.
-
-## Gap Table
-
-| Area | Current state | Target state | Next row |
-| --- | --- | --- | --- |
-| GGUF artifact ABI | scalable file-backed v3 reader, typed refusal, target-scale budgets, immutable view, and zero payload reads | preserve the structural reader as input to canonical layout and later artifact admission | see `ROADMAP.md` |
-| GGUF qtype storage | pinned IDs 0-39, exact row geometry, and typed refusal are canonical | preserve storage independently from decoder, quantizer, emitter, and compute support | see `ROADMAP.md` |
-| GGUF layout integrity | canonical directory-order spans, power-of-two alignment, zero padding, truncation/tail refusal, and snapshot drift checks | preserve global layout as input to complete-model artifact admission | see `ROADMAP.md` |
-| CUDA truth | context, bundle, functions, and exact variants are typed; no-bundle builds refuse kernels and generated-bundle variants have GB10 reference proof | preserve fail-closed admission while later architecture/runtime rows define and prove the DeepSeek operation set | see `ROADMAP.md` |
-| Architecture IR | immutable typed DeepSeek-V4-Flash model, 43 main-layer, and MTP topology consumed by release-target profiling | preserve the source-to-IR boundary and feed complete tensor-role derivation without source reparsing | see `ROADMAP.md` |
-| Tensor coverage | the IR-derived 69,187-slot DeepSeek requirement set reconciles exactly against one retained verified header snapshot | preserve one-to-one source coverage as the admission input to GGUF mapping | see `ROADMAP.md` |
-| GGUF names/layout | immutable 69,187-contribution to 1,360-descriptor concrete DeepSeek GGUF lowering plan | preserve the format projection while moving artifact-neutral transformation semantics to the compilation owner | see `ROADMAP.md` |
-| Source payload | verified snapshot-bound shard/range indexes, payload trust, and bounded transactional streaming | preserve as artifact-neutral byte input to transformation execution without decoding or reinterpretation | see `ROADMAP.md` |
-| Transformation plan | sealed artifact-neutral IR binds all 69,187 source values to 1,360 terminal tensors and exact payload identity | preserve immutable transformation truth as the input to physical-profile decisions and execution | see `ROADMAP.md` |
-| Quantization | selected profile encodes all 1,360 terminals with canonical codecs, reference decoding, numeric evidence, and direct selected-qtype CPU/CUDA compute | preserve the profile and execution identities independently from artifact serialization | see `ROADMAP.md` |
-| GGUF writer | deterministic v3 plan and transactional file writer complete | preserve checked layout and atomic publication for admitted profiles | see `ROADMAP.md` |
-| Artifact emission | source-faithful and selected complete DeepSeek artifacts emitted outside the repository | preserve exact physical identities and complete metadata/tokenizer evidence | see `ROADMAP.md` |
-| GGUF roundtrip | both complete artifacts pass native full-byte and pinned official-reader admission; the selected artifact has deterministic second-serialization proof | preserve reader/writer equivalence and corruption refusal | see `ROADMAP.md` |
-| Materialization | family-neutral materialization and a full bounded selected-artifact walk are complete; the runtime owns an attention-only resident pack, not full-model device residency | preserve exact physical bindings while later owners add KV, MoE and output-head residency | see `ROADMAP.md` |
-| Runtime descriptor | immutable DeepSeek descriptor binds all 1,360 admitted tensors and topology facts and is consumed by the common attention, MoE, transformer, and persistent-state owners | feed repeated decode and output-head execution without rebuilding compiler truth | see `ROADMAP.md` |
-| Graph/backend | complete DeepSeek attention, token-local MoE, selected-row embedding, 43-block transformer composition, final mHC collapse, and final RMSNorm execute on CPU and GB10 CUDA; committed state spans the whole request | preserve the admitted backbone while decode and logits consume it | see `ROADMAP.md` |
-| Common runtime | content-addressed binding, immutable family-neutral model, server-owned execution sessions, exact multi-turn KV, generation turns, protocol streaming, and CPU/CUDA execution | preserve one model lifetime, isolated session mutation, exact suffix reuse, and typed partial progress while evaluation consumes the hosted path | see `ROADMAP.md` |
 
 ## Owner Rules
 
@@ -116,7 +93,7 @@ domain algorithms. No writer owns command output.
   facts but performs no source transform, quantization, or artifact emission.
 - The compilation owner consumes architecture, coverage, source-contribution,
   and payload-range facts to construct immutable transformation plans and
-  derivation identities. Future physical-variant planning may consume typed
+  derivation identities. Physical-variant planning may consume typed
   format, quantization, residency, backend, evaluation, and benchmark
   requirements. Neither path performs source IO, quantization, writing,
   allocation, kernel execution, evaluation, or benchmark measurement.
@@ -164,7 +141,7 @@ domain algorithms. No writer owns command output.
 - Compilation coordination that reimplements source IO, quantization, writing,
   residency, backend execution, evaluation, or benchmark measurement.
 
-## GGUF Target Map
+## GGUF ownership map
 
 | Owner | Boundary |
 | --- | --- |
@@ -180,7 +157,7 @@ domain algorithms. No writer owns command output.
 | `src/model/target/tensor_naming.c` | emitted GGUF tensor names and layout projection |
 | `src/gguf/descriptor.c` | GGUF descriptor facts |
 
-## Artifact And Materialization Target Map
+## Artifact and materialization ownership map
 
 | Owner | Boundary |
 | --- | --- |
@@ -188,7 +165,7 @@ domain algorithms. No writer owns command output.
 | `src/artifact/materialize.c` | admitted artifact materialization, range binding, and lifecycle |
 | `src/artifact/roundtrip_gate.c` | emitted artifact roundtrip gate |
 
-## Runtime Target Map
+## Runtime ownership map
 
 | Owner | Boundary |
 | --- | --- |
@@ -203,7 +180,7 @@ domain algorithms. No writer owns command output.
 | `src/server/protocol.c` | bounded versioned local framing and thin protocol client |
 | `src/server/telemetry.c` | one typed event sequence, subscribers and metrics accumulation |
 
-## Model Architecture Target Map
+## Model architecture ownership map
 
 | Owner | Boundary |
 | --- | --- |
@@ -216,7 +193,7 @@ domain algorithms. No writer owns command output.
 | `src/model/target/model_class_profile.c` | strict source-verification coordination and report ownership for the canonical release target; Qwen/Gemma lexical evidence remains separate |
 | `src/cli/render/model_target.c` | presentation of typed IR facts without architecture decisions |
 
-## Graph And Backend Target Map
+## Graph and backend ownership map
 
 | Owner | Boundary |
 | --- | --- |
@@ -233,7 +210,7 @@ domain algorithms. No writer owns command output.
 | `src/backend/cuda/kernels.cu` | canonical bounded device kernels; generated bundle remains build output |
 | `src/backend/cuda/qtype.c` | CUDA qtype capability/refusal facts |
 
-## Client And Developer Target Map
+## Client and engineering ownership map
 
 | Layer | Owner |
 | --- | --- |
@@ -260,7 +237,7 @@ reports zero payload bytes. The separate canonical layout owner borrows the
 opened artifact and parsed view, enforces power-of-two alignment and exact
 directory-order padded continuation, validates zero padding and the complete
 file span, and detects snapshot drift. It reads padding only and reports zero
-tensor payload bytes. Complete-model artifact admission remains separate.
+tensor payload bytes. Complete-artifact admission remains separate.
 
 ## GGUF Qtype ABI Boundary
 
@@ -270,7 +247,7 @@ outside-baseline identities, and derives bytes from the complete shape with
 owners project these facts instead of copying geometry. This boundary does not
 provide reference dequantization, quantization, emission, backend arithmetic,
 artifact completion, or runtime support. Current milestone state belongs only
-to `ROADMAP.md`.
+to [`ROADMAP.md`](../../ROADMAP.md).
 
 ## Forbidden Claims
 
@@ -283,7 +260,7 @@ This target does not claim:
 
 Attention-local prefill/decode phases operate on activation tensors and an
 explicit state view. Runtime-local benchmark/profile output and deterministic
-SVG charts measure cold/warm latency plus identity-bound residency, transfer,
-allocation and graph-launch facts for that boundary only. The curated chart
-set may be retained under `assets/benchmarks/attention/`; raw evidence remains
-external.
+charts measure cold/warm latency plus identity-bound residency, transfer,
+allocation, and graph-launch facts for that boundary only. Raw measurements,
+generated charts, and machine-specific evidence remain external operator
+assets.

@@ -1,7 +1,9 @@
-# DeepSeek-V4-Flash Local Runtime
+# Operating DeepSeek-V4-Flash
 
-DeepSeek-V4-Flash is the first complete hosted YVEX vertical. Exact current
-identities, variants, and gates live in [`ROADMAP.md`](../../ROADMAP.md).
+DeepSeek-V4-Flash is the first complete hosted YVEX vertical. Family identities
+and architecture facts live in the
+[DeepSeek technical record](../model-families/deepseek-v4-flash.md); current
+gates live in [`ROADMAP.md`](../../ROADMAP.md).
 
 ## Product path
 
@@ -54,7 +56,7 @@ curl -fsS http://127.0.0.1:8001/v1/models
 
 OpenAI Python and JavaScript SDKs use
 `base_url=http://127.0.0.1:8001/v1`. Chat Completions and Responses translate
-typed messages through the DeepSeek tokenizer/prompt owner; the gateway never
+typed messages through the DeepSeek tokenizer/prompt owner; the adapter never
 constructs DeepSeek control-token syntax. Function tools return typed calls for
 the application to execute. See the
 [bounded compatibility profile](../openai-compatibility.md).

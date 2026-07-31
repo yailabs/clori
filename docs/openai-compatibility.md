@@ -1,5 +1,13 @@
 # YVEX OpenAI Compatibility Profile v1
 
+Status: normative implemented compatibility contract
+
+Authority: HTTP request/response/SSE compatibility projected by
+`src/server/openai/` and `src/provider/`. Producer: the loopback listener inside
+`yvexd`. Consumers: explicitly configured local OpenAI-compatible clients. The
+adapter follows the hosted runtime lifecycle and owns no model, session, KV,
+worker, or telemetry authority.
+
 `yvex.openai.compat.v1` is a bounded, local application-provider profile. It
 adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v4 and
 the existing `yvexd` model host. It is not a claim of full OpenAI API or OpenAI

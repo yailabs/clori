@@ -1,7 +1,6 @@
-# Common Operator Runbook
+# Build and Validation
 
-Date: 2026-07-29
-Status: repository validation and hygiene
+Status: current repository validation and hygiene procedure
 
 ## Purpose
 
@@ -48,7 +47,7 @@ Safe to rerun:
   yes.
 
 Stop after:
-  the project ledger, documentation ownership, exact target, unsupported
+  project control, documentation ownership, exact target, unsupported
   boundaries, and canonical terminology guards pass.
 
 Boundary:
@@ -57,6 +56,7 @@ Boundary:
 ```sh
 make check-docs
 sh tests/test_docs_surface.sh
+python3 tests/documentation_architecture.py
 ```
 
 ## Full Repository Validation
@@ -84,6 +84,7 @@ make smoke
 make check
 make check-docs
 sh tests/test_docs_surface.sh
+python3 tests/documentation_architecture.py
 sh tests/test_surface.sh
 sh tests/test_source_layout.sh
 sh tests/test_code_natural.sh
@@ -160,17 +161,14 @@ Boundary:
 ```sh
 sh tests/test_code_natural.sh
 sh tests/test_docs_surface.sh
-git diff -- docs MODEL_ARTIFACTS.md AGENTS.md
+git diff -- README.md ROADMAP.md CHANGELOG.md CONTRIBUTING.md AGENTS.md docs config/documentation_owners.tsv
 ```
 
 ## Operator-Local Cleanup
 
-Never add source weights, emitted artifacts, runtime bindings, registries,
-benchmark baselines, JSON/CSV reports, ad hoc SVG charts, logs, pid files,
-caches, partial downloads, or generated backend outputs to git. The only chart
-exception is the validated deterministic attention set under
-`../assets/benchmarks/attention/`, regenerated through its canonical Make
-target from external raw evidence.
+Never add source weights, emitted artifacts, runtime bindings, local
+registries, benchmark baselines, JSON/CSV reports, generated charts, logs, pid
+files, caches, partial downloads, or generated backend outputs to Git.
 
 Before committing:
 
@@ -184,8 +182,9 @@ changes. Do not use an all-files stage operation in a mixed worktree.
 
 ## Current Product Boundary
 
-`../../ROADMAP.md` alone owns current project state and sequencing.
-`../v010-release-doctrine.md` defines gate semantics, while `deepseek.md`
+[`ROADMAP.md`](../../ROADMAP.md) alone owns current project state and sequencing.
+The [release doctrine](../releases/doctrine.md) defines gate semantics, while
+[`deepseek.md`](deepseek.md)
 defines the current operator boundary.
 
 This common runbook contains no model run because model-specific hosted

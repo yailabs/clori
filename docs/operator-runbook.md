@@ -3,6 +3,9 @@
 This runbook owns first startup and routine operation of the installed local
 runtime host and clients. It begins with explicit artifact and binding inputs;
 configured model defaults are an optional convenience after that path works.
+Its commands follow the canonical operation registry. The current REPL
+renderer is transitional; the intended console is owned by the active
+[runtime-console milestone](milestones/runtime-console-repl.md).
 It is not a capability ledger: consult [`ROADMAP.md`](../ROADMAP.md) for current
 gates.
 
@@ -224,7 +227,7 @@ fallback.
   fields are never ignored silently.
 
 DeepSeek-specific operation is documented in
-[`runbooks/deepseek.md`](runbooks/deepseek.md). Direct component execution,
+[`operations/deepseek.md`](operations/deepseek.md). Direct component execution,
 tokenizer conformance, artifact inspection, and physical-compilation
 diagnostics use the advanced `inspect`, `execute`, `profile`, and `system`
 surfaces in the finite offline lane. Discover them with

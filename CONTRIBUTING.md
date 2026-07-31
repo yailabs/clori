@@ -114,7 +114,7 @@ no-`nvcc`, sanitizer, cancellation, rollback, and live CPU/CUDA evidence.
 Build-topology or generated-dependency changes require two consecutive
 successful checks without cleaning.
 
-Do not add a test to production objects. Keep full model artifacts, runtime
+Do not add a test to production objects. Keep complete artifacts, runtime
 bindings, traces, benchmark/profile records, generated charts, downloaded
 dependencies, and local registries outside Git.
 
@@ -157,7 +157,7 @@ Use the lowest truthful evidence class:
 - agent runtime evaluation; or
 - release qualification.
 
-A fixture is not a complete model. A complete artifact is not a supported
+A fixture is not a complete text path. A complete artifact is not a supported
 artifact. Component timing is not a model benchmark. OpenAI-compatible JSON is
 not model evaluation. One successful request is not release qualification.
 
@@ -182,11 +182,20 @@ claim authentication/TLS without a separately admitted security boundary.
 | --- | --- |
 | current milestones, dependency order, gates, non-claims | `ROADMAP.md` |
 | repository ownership and contribution invariants | `AGENTS.md` |
-| technical architecture | `docs/reference-architecture.md` |
-| runtime behavior and failure | `docs/contract.md` |
-| installed/internal API lifetimes | `docs/api.md` |
-| release-gate meanings | `docs/v010-release-doctrine.md` |
-| exact operator workflow | `docs/operator-runbook.md` and runbooks |
+| documentation classes and update policy | `docs/development/documentation-policy.md` |
+| canonical terminology | `docs/doctrine/glossary.md` |
+| implementation-independent architecture | `docs/reference/verified-inference.md` |
+| implemented system architecture | `docs/architecture/` |
+| runtime behavior and failure | `docs/contracts/runtime.md` |
+| installed/internal API lifetimes | `docs/contracts/c-api.md` |
+| release-gate meanings | `docs/releases/doctrine.md` |
+| exact operator workflow | `docs/operator-runbook.md` and `docs/operations/` |
 | durable architectural choice | `docs/decisions/` |
 | bounded implementation work | GitHub issue |
 | implementation review and validation evidence | pull request |
+
+Before editing documentation, identify the admitted implementation or doctrine
+fact, update its canonical owner, and change only projections whose navigation
+or bounded summary is affected. Do not request or perform a generic “update all
+docs” pass. README changes only when the public entry, public capability,
+minimal workflow, release status, limits, or documentation map changes.

@@ -76,7 +76,7 @@
 	test-artifact-live-structure test-artifact-live test-transform-ir-live-plan \
 	test-source-payload-live-plan test-source-payload-live test-gguf-artifact-abi \
 	test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural \
-	test-project-control test-docs-surface test-surface test-source-ownership \
+	test-project-control test-docs-surface test-documentation-architecture test-surface test-source-ownership \
 	test-repository-layout test-architecture-boundaries smoke check check-docs \
 	check-guardrails clean
 
@@ -448,13 +448,6 @@ CLIENT_CUTOVER_TEST := tests/client_cutover.sh
 REPL_PTY_TEST := tests/repl_pty.sh
 CLIENT_REFOUNDATION_LIVE_TEST := tests/live/client_refoundation.sh
 OPENAI_INTEGRATION_TEST := tests/integration/openai.sh
-
-CURRENT_DOCS := README.md AGENTS.md ROADMAP.md CONTRIBUTING.md MODEL_ARTIFACTS.md NOTICE.md \
-	docs/api.md docs/contract.md docs/model-families.md \
-	docs/operator-runbook.md docs/openai-compatibility.md \
-	docs/cli-output-architecture.md \
-	docs/reference-architecture.md docs/v010-release-doctrine.md \
-	docs/topology-closure-audit.md docs/system-target.md
 
 info:
 	@echo "yvex: native C/CUDA verified-artifact inference system"
@@ -1450,6 +1443,10 @@ test-project-control: tests/test_project_control.sh ROADMAP.md CONTRIBUTING.md
 test-docs-surface: tests/test_docs_surface.sh
 	sh tests/test_docs_surface.sh
 
+test-documentation-architecture: tests/documentation_architecture.py \
+		config/documentation_owners.tsv config/frozen_documents.tsv
+	python3 tests/documentation_architecture.py
+
 test-surface: tests/test_surface.sh
 	sh tests/test_surface.sh
 
@@ -1467,7 +1464,7 @@ test-architecture-boundaries: $(LIBYVEX) $(YVEX_BIN) $(YVEXD_BIN) $(TEST_REFEREN
 
 smoke: test-cli
 
-check: check-docs check-guardrails lib cli server test test-cuda-no-nvcc test-gguf-artifact-abi test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural test-project-control test-docs-surface test-surface test-source-ownership test-repository-layout test-architecture-boundaries smoke
+check: check-docs check-guardrails lib cli server test test-cuda-no-nvcc test-gguf-artifact-abi test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural test-project-control test-docs-surface test-documentation-architecture test-surface test-source-ownership test-repository-layout test-architecture-boundaries smoke
 	@echo "yvex check: ok"
 
 $(LIBYVEX): $(CORE_OBJS)
@@ -1628,53 +1625,8 @@ $(CUDA_TEST_RUNNER): $(CUDA_TEST_MAIN_OBJ) $(CUDA_TEST_UNIT_OBJS) $(LIBYVEX) tes
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(CUDA_TEST_MAIN_OBJ) $(CUDA_TEST_UNIT_OBJS) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
-check-docs:
-	@test -f README.md
-	@test -f NOTICE.md
-	@test -f AGENTS.md
-	@test -f ROADMAP.md
-	@test -f CONTRIBUTING.md
-	@test ! -e PROJECT.md
-	@test -f MODEL_ARTIFACTS.md
-	@test ! -e docs/spine.md
-	@test -f docs/api.md
-	@test -f docs/contract.md
-	@test -f docs/model-families.md
-	@test -f docs/operator-runbook.md
-	@test -f docs/openai-compatibility.md
-	@test -f docs/v010-release-doctrine.md
-	@test -f docs/topology-closure-audit.md
-	@test -f docs/system-target.md
-	@test -f docs/reference-architecture.md
-	@test -z "$$(find docs -maxdepth 1 -type d -name repair -print -quit)"
-	@! find docs -maxdepth 1 -type f -name '*.md' \
-		! -name api.md \
-		! -name contract.md \
-		! -name model-families.md \
-		! -name operator-runbook.md \
-		! -name openai-compatibility.md \
-		! -name cli-output-architecture.md \
-		! -name v010-release-doctrine.md \
-		! -name topology-closure-audit.md \
-		! -name system-target.md \
-		! -name reference-architecture.md \
-		-print | grep .
-	@grep -F "YVEX Roadmap" ROADMAP.md >/dev/null
-	@grep -F "## Current sequence" ROADMAP.md >/dev/null
-	@grep -F "Active Next: V010.OPERATOR.REPL.CONSOLE.0" ROADMAP.md >/dev/null
-	@grep -F "Contributing to YVEX" CONTRIBUTING.md >/dev/null
-	@grep -E '^# YVEX$$' README.md >/dev/null
-	@grep -F "Transformation IR" README.md >/dev/null
-	@grep -F "ROADMAP.md" README.md >/dev/null
-	@sh tests/test_project_control.sh >/dev/null
-	@grep -F "YVEX System Target" docs/system-target.md >/dev/null
-	@grep -F "Reference Architecture for Verified Transformer Inference" \
-		docs/reference-architecture.md >/dev/null
-	@grep -F "YVEX API" docs/api.md >/dev/null
-	@grep -F "YVEX Runtime Contract" docs/contract.md >/dev/null
-	@grep -F "YVEX Operator Runbook" docs/operator-runbook.md >/dev/null
-	@grep -F "YVEX OpenAI Compatibility Profile v1" \
-		docs/openai-compatibility.md >/dev/null
+check-docs: test-documentation-architecture test-project-control test-docs-surface
+	@echo "yvex documentation: ok"
 
 check-guardrails: $(LIBYVEX) $(YVEX_BIN) $(TEST_REFERENCE_OBJS)
 	@sh tests/test_source_ownership.sh
@@ -1686,7 +1638,7 @@ check-guardrails: $(LIBYVEX) $(YVEX_BIN) $(TEST_REFERENCE_OBJS)
 	@test ! -d docs/spines
 	@test ! -d docs/integration
 	@test ! -d docs/benchmark
-	@test ! -e docs/README.md
+	@test -f docs/README.md
 	@test ! -e docs/backend-contract.md
 	@test ! -e docs/cli-commands.md
 	@test ! -e docs/cli-interface-spine.md

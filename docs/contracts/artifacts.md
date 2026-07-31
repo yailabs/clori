@@ -1,9 +1,13 @@
-# YVEX Model Artifacts
+# Artifact and Admission Contract
 
-Date: 2026-07-29
-Status: artifact policy
+Status: normative implemented contract
 
-Complete and supported model artifacts are external operator assets. They are
+Authority: artifact terminology, complete-artifact admission, repository
+payload policy, and the boundary between artifact, materialization, runtime,
+and release support. Producers are compilation/GGUF owners; consumers are
+artifact admission, materialization, runtime binding, and operator inspection.
+
+Complete and supported artifacts are external operator assets. They are
 never committed to this repository. The repository may contain only tiny GGUF
 fixtures under `tests/`.
 
@@ -12,8 +16,8 @@ fixtures under `tests/`.
 | Term | Meaning |
 | --- | --- |
 | Tensor proof artifact | A file containing one tensor or a bounded tensor subset, used only to prove a named parser, range, materialization, primitive, or reference property. |
-| Complete model artifact | A file containing every tensor and metadata item required to execute one exact model. |
-| Supported model artifact | A complete model artifact that passes integrity, materialization, runtime, generation, evaluation, benchmark, and release gates. |
+| Complete artifact | A file containing every tensor and metadata item required to execute one exact logical model. |
+| Supported artifact | A complete artifact that passes integrity, materialization, runtime, generation, evaluation, benchmark, and release-qualification gates for its declared scope. |
 
 The unqualified term "model artifact" does not refer to a selected-tensor proof
 file. A structurally valid GGUF is not necessarily complete or supported.
@@ -30,39 +34,11 @@ contributions under explicit format, precision, hardware, memory, quality, and
 workload constraints. An artifact serializes one such variant; GGUF is the
 v0.1.0 release lowering, not the identity of the logical model.
 
-## v0.1.0 Target
-
-Exact source:
-
-```text
-$HOME/lab/models/hf/deepseek/DeepSeek-V4-Flash
-```
-
-Canonical full target:
-
-```text
-deepseek4-v4-flash
-```
-
-Required artifact outcome:
-
-```text
-a complete GGUF for DeepSeek-V4-Flash produced by YVEX
-```
-
-Three complete DeepSeek-V4-Flash model artifacts currently exist outside the
-repository: the source-faithful profile, the Q8_0/Q2_K baseline, and the
-DS4-like IQ2_XXS/Q2_K candidate. All three passed their owned writer/reader
-admission. The baseline has complete hosted prompt-to-text, retained-session,
-CPU, and admitted GB10 CUDA evidence. The DS4-like candidate passed
-variant-adaptive materialization, binding, mixed-qtype CPU/CUDA execution, and
-generation smoke.
-
-These are complete artifacts, but none is yet a supported model artifact.
-Evaluation, the release-path full-model benchmark, release-profile selection,
-and release qualification remain incomplete as recorded in `ROADMAP.md`. The
-DS4-like candidate is not promoted to the release profile by size or execution
-smoke alone.
+Current DeepSeek physical variants and their admitted evidence are recorded in
+the [family technical record](../model-families/deepseek-v4-flash.md).
+Version-specific release requirements belong to the
+[v0.1 readiness contract](../releases/v0.1.md). Neither record changes this
+general admission contract.
 
 ## Source Payload Handoff
 
@@ -106,11 +82,11 @@ first tensor at relative offset zero, exact directory-order padded
 continuation, zero directory/tensor padding, an exact aggregate data span, and
 no trailing bytes. It reads only padding intervals and reports zero tensor
 payload bytes read. Typed layout acceptance is a container property, not a
-complete-model or supported-artifact claim.
+complete-artifact or supported-artifact claim.
 
 ## Admission Contract
 
-A complete model artifact must record or prove:
+A complete artifact must record or prove:
 
 - exact source and target identity;
 - architecture and tokenizer metadata;
@@ -121,8 +97,9 @@ A complete model artifact must record or prove:
 - artifact identity and corruption refusal;
 - materialization and runtime descriptor compatibility.
 
-A supported model artifact additionally requires the runtime, generation,
-evaluation, benchmark, and release gates in `docs/v010-release-doctrine.md`.
+A supported artifact additionally requires the runtime, generation,
+evaluation, benchmark, and release gates in
+[Release Doctrine](../releases/doctrine.md).
 
 ## Existing Proof Files
 
@@ -132,9 +109,8 @@ proof artifacts only. Their digest, range, materialization, or primitive
 evidence must be named by the specific proof and must not be promoted to model
 support.
 
-The canonical decommission obligations and consuming milestones are recorded in
-`ROADMAP.md`. This policy does not retain an artifact card or historical
-validation catalogue for those files.
+This contract does not retain an artifact card or historical validation
+catalogue for those files. Their retired chronology is recoverable from Git.
 
 ## Repository Guardrail
 
@@ -152,8 +128,6 @@ Expected result:
 
 ## Non-Claims
 
-This policy records the completed quantization, GGUF emission, roundtrip,
-variant-adaptive materialization, runtime, and hosted-generation evidence named
-above. It does not claim that any complete artifact is a supported model
+This contract does not claim that any complete artifact is a supported
 artifact, nor does it claim a selected release profile, model behavior or
 quality evaluation, a release-path full-model benchmark, or release readiness.

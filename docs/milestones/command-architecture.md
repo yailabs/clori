@@ -160,13 +160,8 @@ The milestone closes only when:
   corrected operation contract; and
 - refs agree and the worktree is clean.
 
-## Transition
+## Downstream consumer
 
-On accepted closure:
-
-```text
-V010.OPERATOR.COMMAND.ARCHITECTURE.0 = complete
-V010.OPERATOR.REPL.CONSOLE.0 = active
-V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0 = blocked
-Active Next = V010.OPERATOR.REPL.CONSOLE.0
-```
+The mature runtime-console boundary consumes the registry, protocol facts, and
+slash projections established here. Only [`ROADMAP.md`](../../ROADMAP.md)
+activates that consumer or records milestone state.

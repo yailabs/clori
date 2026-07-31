@@ -11,7 +11,7 @@ build/tests/test >"$out" 2>&1
 grep -nF 'test: gguf_qtype_abi' "$out" >/dev/null
 
 grep -nF 'af97976c7810cdabb1863172f31c432dab767de7' \
-  include/yvex/qtype.h docs/reference-architecture.md >/dev/null
+  include/yvex/qtype.h docs/reference/verified-inference.md >/dev/null
 grep -nF 'yvex_gguf_qtype_tensor_storage' src/gguf/qtype.c >/dev/null
 grep -nF 'yvex_gguf_qtype_tensor_storage' src/gguf/core.c >/dev/null
 grep -nF 'yvex_gguf_qtype_tensor_storage' \

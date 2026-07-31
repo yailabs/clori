@@ -1,383 +1,153 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="YVEX logo" width="160">
+  <img src="docs/logo.svg" alt="YVEX logo" width="132">
 </p>
 
 # YVEX
 
 YVEX is a native C/CUDA model compiler and local inference runtime for
-identity-bound, verified open-weight execution. It turns a verified source
-snapshot into an explicit physical model variant, admits the resulting artifact,
-and executes it through a long-lived runtime host with isolated sessions.
+identity-bound, verified open-weight execution. It derives explicit physical
+variants from verified source snapshots, admits complete artifacts, and runs
+them through one long-lived host with isolated sessions.
 
-Today, the complete product path is available for DeepSeek-V4-Flash on CPU and
-the admitted NVIDIA GB10 CUDA path. The model stays open in `yvexd`; native
-clients use the private local protocol and applications may use the bounded
-`yvex.openai.compat.v1` HTTP/SSE listener in the same daemon. Evaluation, release benchmarking, and
-release qualification remain open gates.
+The current complete vertical is DeepSeek-V4-Flash on CPU and the admitted
+mixed NVIDIA GB10 CUDA path. `yvexd` keeps one model open; `yvex` provides the
+public command surface; local applications may use the bounded
+`yvex.openai.compat.v1` HTTP/SSE profile in the same daemon. Evaluation,
+release benchmarking, and release qualification remain open.
 
-Start here:
+## Why YVEX
 
-- [Run YVEX](#run-yvex) for the first local session.
-- [Product topology](#product-topology) for the process and binary boundaries.
-- [What YVEX guarantees](#what-yvex-guarantees) for the execution contract.
-- [Documentation](#documentation) for operator, architecture, and API detail.
-- [`ROADMAP.md`](ROADMAP.md) for current milestones, gates, and non-claims.
+Open weights are not executable merely because their bytes can be read. YVEX
+makes the entire derivation and execution chain explicit:
 
-## Run YVEX
+```text
+verified source snapshot
+  -> logical model and transformation plan
+  -> policy-selected physical variant
+  -> complete artifact and runtime binding
+  -> immutable runtime model
+  -> isolated session state
+  -> admitted CPU/CUDA execution
+  -> committed streamed text
+```
 
-### Prerequisites
+Each boundary has a distinct identity, owner, lifecycle, failure contract, and
+evidence scope. Unsupported qtypes, stale bindings, missing resources, unsafe
+paths, capacity violations, and unavailable CUDA operations fail closed.
+Persistent state commits transactionally, and a failed or cancelled request
+preserves exact earlier progress.
 
-You need:
+![YVEX system overview: verified sources become an identity-bound artifact served by one long-lived runtime host to isolated sessions and local clients.](docs/diagrams/system_overview.svg)
 
-- a built YVEX checkout;
-- one complete YVEX-produced GGUF outside the repository;
-- the runtime binding produced for that exact artifact;
-- enough host and device memory for the selected physical variant;
-- a supported CUDA environment for the GB10 path, or the admitted CPU path.
+## Quick start
 
-Build the product binaries:
+Build the two product executables:
 
 ```sh
 make -j4 all
 ```
 
-For the examples below, point two shell variables at external operator assets:
+Provide one admitted complete GGUF artifact and its exact runtime binding as
+external operator assets:
 
 ```sh
 export YVEX_MODEL_ARTIFACT=/absolute/model.gguf
 export YVEX_RUNTIME_BINDING=/absolute/model.yvex-runtime-binding
 ```
 
-The normal workflow uses three terminals around one daemon. It does not load
-three copies of the model.
-
-### Terminal 1 — runtime and raw events
-
-Start the long-lived host and select the structured runtime-event stream:
+Start the resident host and wait for `runtime.ready`:
 
 ```sh
 ./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --console raw --trace-level stages --openai on --openai-port 8001
 ```
 
-Wait for the `runtime.ready` JSONL event. The daemon authenticates the artifact
-and binding, copies the complete encoded model payload into its process-lifetime
-host RAM arena, builds the accelerator residency once, then accepts local client
-connections. Raw events exclude prompt and response text by default.
-
-### Terminal 2 — engine watch
-
-Subscribe to the same event authority through the compact operational view:
-
-```sh
-./yvex runtime watch
-```
-
-This view shows startup, queueing, prompt tokens, exact prefix reuse, prefill,
-time to first token, decode rate, memory, stop reasons, and shutdown. It does
-not print logits, tensors, KV contents, or conversation text.
-
-### Terminal 3 — REPL
-
-Open or attach to a named multi-turn session:
+In another terminal, open a retained session:
 
 ```sh
 ./yvex chat --session main
 ```
 
-The session belongs to the daemon, not the terminal. Detaching and reconnecting
-preserves its exact committed token ledger and KV state. A later turn reuses KV
-only when the newly rendered prompt has the committed ledger as an exact token
-prefix.
-
-The REPL supports `/new`, `/sessions`, `/attach`, `/status`, `/reset`,
-`/cancel`, `/detach`, `/close`, `/help`, and `/quit`. `Ctrl-C` first cancels an
-active turn; a later interrupt or end-of-file exits according to the terminal
-state.
-
-### One-shot run
-
-Use the existing daemon for one streamed response:
+Or run one ephemeral streamed turn against the same resident model:
 
 ```sh
 ./yvex run "Explain attention in one sentence."
 ```
 
-By default, `run` creates an ephemeral session, closes that session when the
-turn ends, and leaves the daemon and model alive. An explicit `--session NAME`
-uses an admitted existing session instead.
-
-### OpenAI-compatible applications
-
-The daemon prepares the loopback listener during startup and admits HTTP work
-only after `runtime.ready`. Verify the integrated endpoint:
-
-```sh
-curl -fsS http://127.0.0.1:8001/health
-```
-
-Point an OpenAI-compatible client at `http://127.0.0.1:8001/v1` with any local
-non-secret API-key placeholder. The admitted profile covers model discovery,
-Chat Completions, Responses, SSE, bounded function calls, usage, stop strings,
-and JSON-object validation. YVEX never executes application tools. See the
-[compatibility profile](docs/openai-compatibility.md) for exact fields and
-refusals.
-
-### Status and shutdown
-
-Inspect the authoritative runtime snapshot:
+Inspect the runtime and discover commands without parsing prose:
 
 ```sh
 ./yvex runtime status
-./yvex runtime status --json
-```
-
-Stop the host through the local protocol:
-
-```sh
-./yvex runtime stop
-```
-
-Shutdown refuses new work, drains or cancels active work under typed rules,
-closes sessions, closes the model once, and removes the private socket.
-
-For model selection through private XDG configuration instead of explicit start
-arguments, see the [operator runbook](docs/operator-runbook.md).
-
-### Command discovery
-
-The ordinary help view stays focused on chat, runtime, session, model,
-compilation, and artifact workflows. Advanced inspection and direct component
-operations are available without a separate developer binary:
-
-```sh
 ./yvex help
 ./yvex help --advanced
-./yvex help runtime trace
-./yvex completion bash
+./yvex help --json
 ```
 
-Automation uses `./yvex help --json`, whose
-`yvex.command.discovery.v1` document carries stable operation IDs and the
-compiled command-registry identity. Human help is not an automation schema.
+The [operator runbook](docs/operator-runbook.md) owns complete startup,
+three-terminal observation, sessions, shutdown, configuration, and recovery.
 
-## Product topology
+## Product boundary
 
-![YVEX system overview: verified sources become an identity-bound artifact served by one long-lived runtime host to isolated sessions, CPU or CUDA execution, and local clients.](docs/diagrams/system_overview.svg)
+| Component | Responsibility |
+| --- | --- |
+| `yvex` | Public REPL, one-shot and administrative protocol client, plus finite offline compile, artifact, inspect, execute, profile, and system operations |
+| `yvexd` | One long-lived model, worker, queue, session/KV registry, private protocol, loopback OpenAI adapter, and telemetry authority |
+| `libyvex` | Reusable compilation, artifact, runtime, graph, backend, tokenizer, and generation implementation |
 
-*One compiler path produces admitted artifacts; one daemon owns model execution;
-multiple clients project the same session and telemetry authorities. See the
-[editable diagram source](docs/diagrams/system_overview.mmd) and the
-[detailed architecture](docs/reference-architecture.md).*
+Runtime-facing `yvex` operations always cross private local protocol v4. The
+finite offline lane may link engine owners but never hosts a persistent model.
+One compiled operation registry drives command paths, syntax, help, JSON
+discovery, completion, and slash schemas without becoming a domain-policy
+owner.
 
-The product separates process and linkage responsibilities:
-
-| Component | Responsibility | Engine linkage |
-| --- | --- | --- |
-| `libyvex` | Compilation, artifact admission, runtime, backend, tokenizer, and generation domain owners | engine |
-| `yvexd` | One long-lived model host, bounded worker queue, session registry, local protocol, integrated loopback OpenAI listener, telemetry, and graceful shutdown | yes |
-| `yvex` | REPL, one-shot and administrative protocol client plus finite offline compile, artifact, inspect, execute, profile, and system operations | yes; offline lane only |
-
-Runtime-facing `yvex` routes cannot open a model, materialize weights, execute a
-Transformer, or run generation in-process. They communicate over a private,
-version-4 Unix-domain protocol. Offline engineering routes share the same
-executable but retain separate dispatch and object dependencies; they are
-finite operations and never become a second persistent model host.
-
-One strict versioned registry is validated at build time and compiled into
-`yvex` as immutable C descriptors. It drives canonical paths, syntax admission,
-help, machine discovery, completion, and REPL slash projections without
-becoming a runtime-loaded policy file. Semantic defaults and capability
-validation remain with their domain owners.
-
-The runtime layers remain distinct:
-
-```text
-verified source
-  -> logical model and Transformation IR
-  -> policy-selected physical variant
-  -> complete GGUF and runtime binding
-  -> yvexd immutable runtime model
-  -> server-owned execution sessions and KV
-  -> CPU/CUDA model execution
-  -> committed streamed text
-```
-
-One typed event sequence feeds the daemon JSONL stream, engine watch, metrics,
-and client progress. Renderers do not infer state by parsing another renderer's
-text.
-
-## What YVEX guarantees
-
-### Identity-bound derivation
-
-Source snapshots, logical models, transformation plans, physical variants,
-artifacts, runtime bindings, sessions, executions, and evidence retain separate
-canonical identities. Semantic identities exclude pointers, native padding,
-local paths, process IDs, and wall-clock values.
-
-### Logical and physical separation
-
-The model definition does not force one qtype profile. A sealed policy resolves
-each terminal tensor into one admissible physical representation. The writer,
-materializer, and runtime consume that resolved plan or artifact truth; they do
-not independently choose quantization.
-
-### Fail-closed execution
-
-Unsupported qtypes, stale bindings, invalid identities, unsafe paths, capacity
-violations, unavailable CUDA operations, malformed protocol frames, and
-incompatible continuation prefixes refuse explicitly. A CUDA request never
-silently becomes CPU execution.
-
-### Transactional state
-
-Prompt suffixes and generated tokens update persistent model state only after
-their owning execution boundary succeeds. Failed or cancelled work preserves
-the exact earlier committed prefix. Streamed bytes are sent only after model,
-decoder, and internal text commits.
-
-### Explicit lifecycle ownership
-
-The daemon owns one immutable runtime model. Each server session owns mutable
-KV, token ledger, transcript, decoder, RNG policy, and turn state. A client
-connection is neither of those lifetimes, so disconnect does not imply model
-close or session reset.
-
-### Scoped evidence
-
-Software tests, numerical conformance, runtime qualification, component
-measurements, model evaluation, full-model benchmarks, and release
-qualification are different evidence classes. A lower class never promotes a
-higher capability.
-
-## Current vertical
-
-DeepSeek-V4-Flash is the sole complete model-to-text vertical in the current
-v0.1 line.
-
-Implemented facts include:
-
-- exact verification of the pinned source snapshot and tokenizer material;
-- complete source coverage and an immutable artifact-neutral Transformation IR;
-- policy-driven physical compilation over all 1,360 terminal tensors;
-- complete YVEX-produced source-faithful, Q8_0/Q2_K, and mixed
-  IQ2_XXS/Q2_K GGUF variants outside the repository;
-- variant-adaptive materialization and identity-bound runtime bindings;
-- the 43-layer Transformer, persistent DeepSeek state, MoE, logits over the
-  complete 129,280-token vocabulary, sampling, and exact tokenizer execution;
-- complete prompt-to-text generation on CPU and the admitted mixed GB10 path;
-- a long-lived local host with streaming one-shot and exact multi-turn sessions;
-- a bounded OpenAI-compatible listener inside the same hosted process.
-
-The CUDA product path executes the model backbone and output head on CUDA while
-sampling, tokenizer work, protocol handling, and orchestration remain on the
-host. YVEX does not call that GPU-resident end-to-end generation.
-
-No physical variant is selected as the release profile merely because it is
-smaller or executable. Evaluation and the full-model benchmark own that later
-decision. Exact artifact terminology and admission live in
-[`MODEL_ARTIFACTS.md`](MODEL_ARTIFACTS.md); current gates live in
+The current REPL is functional but transitional. A mature daemon-backed
+console with semantic progress, complete typed metrics, watch, and human trace
+is the next project boundary; current state is recorded only in
 [`ROADMAP.md`](ROADMAP.md).
-
-## Build
-
-Build the engine, unified command client, and daemon:
-
-```sh
-make -j4 all
-```
-
-Run the repository checks twice when validating a topology or generated-
-dependency change:
-
-```sh
-make -j2 check
-make -j2 check
-```
-
-Validate the admitted CUDA build separately:
-
-```sh
-make check-cuda
-```
-
-Build a product package manifest and staged package:
-
-```sh
-make package
-```
-
-Model weights, complete GGUF files, runtime bindings, logs, traces, generated
-text, benchmark output, and build products remain untracked. The full validation
-and hygiene workflow is in the [common runbook](docs/runbooks/common.md).
 
 ## Documentation
 
-### Operate YVEX
-
-- [Operator runbook](docs/operator-runbook.md): explicit first startup, the
-  three-terminal workflow, sessions, status, shutdown, and recovery.
-- [DeepSeek runbook](docs/runbooks/deepseek.md): exact model-specific product
-  and developer workflows.
-
-### Understand YVEX
-
-- [Reference architecture](docs/reference-architecture.md): complete planes,
-  identities, lifecycles, execution, state, and evidence model.
-- [Model families](docs/model-families.md): family integration and DeepSeek
-  semantics.
-- [Model artifacts](MODEL_ARTIFACTS.md): artifact terminology, admission, and
-  support boundary.
-
-### Integrate YVEX
-
-- [C API](docs/api.md): installed and internal interfaces and lifetimes.
-- [Runtime contract](docs/contract.md): admission, publication, failure,
-  cleanup, protocol, and server behavior.
-- [OpenAI compatibility](docs/openai-compatibility.md): exact local endpoints,
-  request fields, streaming events, SDK profile, and explicit refusals.
-
-### Develop YVEX
-
-- [Repository rules](AGENTS.md): source ownership, boundaries, tests, and claim
-  discipline.
-- [System target](docs/system-target.md): filesystem and module ownership.
-- [Validation runbook](docs/runbooks/common.md): build, checks, CUDA, and
-  artifact hygiene.
-- [Client and terminal architecture](docs/cli-output-architecture.md): runtime,
-  offline engineering, raw, operational, and conversation surfaces.
-
-### Track YVEX
-
-- [Project roadmap](ROADMAP.md): the sole live milestone, gate, non-claim, and
-  Active Next authority.
-- [Contributing](CONTRIBUTING.md): issue, change, validation, and pull-request
-  workflow.
-- [Release doctrine](docs/v010-release-doctrine.md): v0.1 gate meanings and
-  closure rules.
+- [Documentation map](docs/README.md) — canonical owners and navigation.
+- [YVEX principles](docs/doctrine/principles.md) and
+  [glossary](docs/doctrine/glossary.md) — stable thesis and terminology.
+- [Verified inference reference](docs/reference/verified-inference.md) —
+  implementation-independent architecture.
+- [Implemented system](docs/architecture/system.md),
+  [compilation](docs/architecture/compilation.md), and
+  [runtime](docs/architecture/runtime.md) — current YVEX architecture.
+- [DeepSeek-V4-Flash record](docs/model-families/deepseek-v4-flash.md) — exact
+  family facts and present evidence boundary.
+- [Runtime](docs/contracts/runtime.md),
+  [artifact](docs/contracts/artifacts.md),
+  [local protocol](docs/contracts/local-protocol.md), and
+  [OpenAI compatibility](docs/openai-compatibility.md) — normative contracts.
+- [Contributing](CONTRIBUTING.md) and
+  [documentation policy](docs/development/documentation-policy.md) —
+  repository workflow and information governance.
+- [Roadmap](ROADMAP.md), [changelog](CHANGELOG.md), and
+  [v0.1 readiness](docs/releases/v0.1.md) — current sequence, public changes,
+  and release scope.
 
 ## Current limits
 
 YVEX does not currently claim:
 
-- a public or remote production server;
-- the full OpenAI API, Anthropic compatibility, authentication, TLS, or remote
-  security;
-- multi-model hosting, hot model reload, continuous batching, or distributed
-  serving;
+- public or remote serving, authentication, TLS, or remote security;
+- complete OpenAI API or another provider compatibility surface;
+- multi-model hosting, hot reload, continuous batching, or distributed serving;
 - session persistence across daemon restart;
-- GPU-resident sampling, tokenizer execution, or complete device-side
-  orchestration;
-- model behavior or model quality evaluation;
-- a release-grade full-model benchmark;
-- release qualification;
+- complete accelerator residency, device-side sampling, or tokenizer execution;
 - MTP or speculative execution;
-- a second complete model-family vertical.
+- model behavior or quality evaluation;
+- a release-grade full-model benchmark;
+- a second complete model-family vertical;
+- release qualification.
 
-The local protocol is private and UID-scoped. Operational timings are useful
-runtime facts, but they are not evaluation or release benchmark evidence.
+Operational timings are runtime facts, not evaluation or release benchmark
+evidence. A complete artifact is not a supported artifact until every later
+gate closes.
 
 ## License
 
-YVEX is licensed under [`LICENSE`](LICENSE). Third-party notices are recorded
-in [`NOTICE.md`](NOTICE.md).
+YVEX is licensed under [`LICENSE`](LICENSE). Third-party notices are in
+[`NOTICE.md`](NOTICE.md). Public changes are recorded in
+[`CHANGELOG.md`](CHANGELOG.md).

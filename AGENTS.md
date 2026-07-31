@@ -7,6 +7,12 @@ verified open-weight inference. Every patch must make the repository more
 executable, more tested, or more internally coherent. Documentation records
 implemented truth; it does not create capability.
 
+Documentation changes name the admitted fact that changed and its canonical
+owning document under `docs/development/documentation-policy.md`. Generic
+instructions to “update all docs” and unrestricted README rewrites are not an
+accepted documentation scope. Projections may summarize and link, but they do
+not copy mutable authority or redefine the owning contract.
+
 Work in this order unless the delivery explicitly owns a doctrine boundary:
 
 1. code;
@@ -389,8 +395,8 @@ Use the lowest true evidence stage from the project ledger. A fixture, selected
 slice, report, digest, artifact, primitive, or external runner cannot promote
 the next boundary.
 
-Do not claim full model support, runtime readiness, generation, evaluation,
-benchmark results, or release readiness without implementation, focused tests,
+Do not claim complete model-family support, runtime readiness, generation,
+evaluation, benchmark results, or release readiness without implementation, focused tests,
 failure proof, and an executable downstream consumer. DeepSeek-V4-Flash is the
 v0.1.0 release target; it is not automatically supported by naming or artifact
 presence. Qwen, Gemma, and other families remain at their independently proven
@@ -399,8 +405,8 @@ stages.
 Canonical artifact terms:
 
 - tensor proof artifact: one tensor or a bounded subset;
-- complete model artifact: every required tensor and metadata item;
-- supported model artifact: a complete artifact that passes materialization,
+- complete artifact: every required tensor and metadata item;
+- supported artifact: a complete artifact that passes materialization,
   runtime, generation, evaluation, benchmark, and release gates.
 
 ### Quality and evaluation taxonomy

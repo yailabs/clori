@@ -1,8 +1,13 @@
-# Client And Terminal Architecture
+# Command and Operation Architecture
 
-This document owns the incompatible v2 client, terminal, and output doctrine.
-The former flat command catalog and selectable `normal|table|audit` layouts are
-retired; they are not compatibility surfaces.
+Status: current implemented architecture
+
+This document owns the implemented command, operation, and output-projection
+architecture. The former flat command catalog and selectable
+`normal|table|audit` layouts are retired; they are not compatibility surfaces.
+The final console presentation is deliberately excluded and belongs to the
+active [`V010.OPERATOR.REPL.CONSOLE.0`](../milestones/runtime-console-repl.md)
+boundary.
 
 ## Binary boundaries
 
@@ -95,9 +100,12 @@ retain semantic validation and defaults.
 
 ### Conversation
 
-The REPL prints a short banner, `you>` prompt, streamed committed assistant
-bytes, and one concise turn summary. It never prints raw events, logits,
-identities, tensor facts, or capability walls.
+The current REPL is a transitional projection over the canonical slash and
+protocol schemas. Its present role labels and compact turn summary are not the
+intended interface. The successor console will use one `yvex>` prompt, direct
+committed model output, semantic progress, and typed final metrics without
+changing operation ownership. Conversation output never includes raw events,
+logits, tensor facts, or capability walls.
 
 ### Compact status
 
@@ -107,10 +115,12 @@ It includes at most one blocker and one actionable hint.
 
 ### Operational stream
 
-`yvex runtime watch` projects the typed event sequence into chronological,
-rate-limited lines. It shows authoritative startup, request, queue, suffix
-prefill, TTFT, decode rate, final position, stop, cancellation, failure, and
-shutdown facts. It excludes content and per-token rows by default.
+`yvex runtime watch` subscribes to the typed event sequence. Its current
+renderer is transitional: it prints the event kind and generic numeric slots
+rather than a complete semantic interpretation. Those slot labels are not an
+operator contract. The successor console owns the compact semantic mapping for
+startup, queue, prefill, first token, decode, commit, stop, cancellation,
+failure, and shutdown. Content remains excluded by default.
 
 ### Raw stream
 
@@ -139,7 +149,7 @@ The OpenAI adapter inside `yvexd` is not a third terminal renderer. It returns
 the documented compatibility JSON or SSE schema over loopback HTTP. Its
 response objects project typed provider and YVEX protocol facts; they never
 scrape `yvex` or daemon-console text. The exact profile lives in
-[`openai-compatibility.md`](openai-compatibility.md).
+[`openai-compatibility.md`](../openai-compatibility.md).
 
 ## Typed event fan-out
 

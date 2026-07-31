@@ -1,12 +1,19 @@
-# YVEX API
+# YVEX C API
+
+Status: installed and internal interface reference
+
+Authority: installed headers under `include/yvex/` and non-installed headers
+under `include/yvex/internal/`. This document projects their ownership,
+lifetime, inputs, outputs, side effects, failure, and compatibility policy;
+the headers remain exact ABI authority.
 
 This document maps the installed C ABI and the non-installed contracts used by
-the engine-linked daemon and developer tools. It describes ownership and
-lifetime; it does not turn an internal runtime boundary into a public
+the engine-linked daemon and finite engineering operations. It describes
+ownership and lifetime; it does not turn an internal runtime boundary into a public
 compatibility promise.
 
-Runtime behavior is governed by [the runtime contract](contract.md). Project
-state and decommission obligations in `ROADMAP.md` remain authoritative.
+Runtime behavior is governed by [the hosted runtime contract](runtime.md).
+Project state remains authoritative only in [`ROADMAP.md`](../../ROADMAP.md).
 
 ## Header Tiers
 
@@ -89,14 +96,14 @@ support remain separate facts.
 
 Complete-artifact admission under `<yvex/artifact.h>` binds physical structure,
 required metadata, tokenizer evidence, tensor inventory and exact file
-identity. The admitted file remains external operator data. A complete model
-artifact is still not a supported generation artifact.
+identity. The admitted file remains external operator data. A complete
+artifact is still not a supported artifact.
 
 ## Model, Materialization, And Backend
 
 `<yvex/model.h>` exposes canonical dtype, tensor-role and model-descriptor
 facts. Materialized-weight objects describe bounded backend-owned storage; their
-presence does not imply complete model residency.
+presence does not imply complete runtime-model residency.
 
 `<yvex/backend.h>` exposes backend discovery, capability facts, device tensor
 lifecycle and admitted primitives. Backend code consumes typed operations and
@@ -408,7 +415,7 @@ The source-separated OpenAI adapter inside `yvexd` consumes only the provider
 contract, protocol client, and bounded HTTP/JSON/SSE owners. It opens no second
 artifact or model, owns no KV, and cannot call Transformer, generation, or CUDA
 owners directly. The exact HTTP profile is documented in
-[`openai-compatibility.md`](openai-compatibility.md).
+[`openai-compatibility.md`](../openai-compatibility.md).
 
 ## Internal Generation And Hosted Turn Boundary
 
@@ -524,13 +531,10 @@ bytes, resident H2D bytes, and kernel/graph launch, capture, replay, and node
 counters, optionally against a compatible baseline. The schema-five baseline
 seals those structural counters, timings and complete reproducibility identity.
 Schemas one through four require regeneration.
-Baseline and SVG publication are independently atomic and
-no-replace; an SVG failure never withdraws an already admitted baseline. JSON,
-CSV, baseline and ad hoc SVG outputs are external operator assets. The
-repository publication target validates a complete external lane and copies
-only its six deterministic SVG documentation snapshots into
-`docs/assets/benchmarks/attention/`. Tracked snapshots are not full-model
-benchmark or release evidence.
+Baseline and SVG publication are independently atomic and no-replace; an SVG
+failure never withdraws an already admitted baseline. JSON, CSV, baseline, and
+generated SVG outputs are external operator assets and are not tracked. They
+are not full-model benchmark or release evidence.
 
 ## Capability And Claim Boundary
 

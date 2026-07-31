@@ -1,0 +1,15 @@
+transitional_term	canonical_replacement	scope	result
+complete model	complete artifact or complete Transformer/text path	active documentation	qualified
+developer binary	finite offline-engine lane in yvex	product topology	replaced
+evidence command namespace	inspect execute profile or system operation	command documentation	removed
+full model	complete artifact complete Transformer or complete text path	active documentation	qualified
+gateway	in-process OpenAI-compatible adapter	current topology	replaced
+graph	semantic graph executable graph or launch graph	architecture	qualified
+graph command namespace	operation-specific inspect execute or profile projection	command documentation	removed
+loaded model	runtime model	lifecycle documentation	replaced
+model artifact	artifact complete artifact supported artifact or tensor proof artifact	active documentation	qualified
+model file	artifact or source snapshot	active documentation	qualified
+model support	exact target and evidence stage	family documentation	qualified
+runtime artifact	artifact or runtime binding	active documentation	replaced
+yvex-dev	engineering operations in yvex	historical command topology	removed
+yvex-openai	OpenAI-compatible adapter in yvexd	historical process topology	removed

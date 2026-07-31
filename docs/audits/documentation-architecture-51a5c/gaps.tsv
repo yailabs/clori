@@ -1,0 +1,8 @@
+gap_id	class	status	semantic_owner	blocking_documentation	consumer_impact	assigned_milestone	non_claim
+DOCGAP-001	optimization_debt	open	runtime/backend	no	console may render slow but authoritative progress	V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0	warm decode optimized
+DOCGAP-002	deferred_depth	open	operator console	no	current REPL remains transitional	V010.OPERATOR.REPL.CONSOLE.0	mature REPL implemented
+DOCGAP-003	evidence_gap	open	evaluation	no	model behavior and quality remain unknown	V010.EVAL.DEEPSEEK.0	model evaluation ready
+DOCGAP-004	evidence_gap	open	benchmark	no	release throughput and reliability remain unmeasured	V010.BENCH.DEEPSEEK.0	full-model benchmark ready
+DOCGAP-005	boundary_incomplete	open	release	no	no supported release artifact or tag	V010.RELEASE.0	release qualified
+DOCGAP-006	generalization_debt	open	model-family integration	no	common engine has one complete family vertical	future six-pass generalization	second family supported
+DOCGAP-007	deferred_depth	open	family/tokenizer/protocol	no	console must report unavailable unless typed explicit reasoning exists	V010.OPERATOR.REPL.CONSOLE.0	explicit reasoning channel supported

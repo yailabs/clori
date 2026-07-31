@@ -20,7 +20,10 @@ require_file "$roadmap"
 require_file CONTRIBUTING.md
 require_file docs/decisions/README.md
 require_file docs/decisions/0001-public-project-control.md
+require_file docs/decisions/0003-documentation-architecture.md
+require_file docs/development/documentation-policy.md
 require_file docs/milestones/command-architecture.md
+require_file docs/milestones/documentation-architecture.md
 require_file docs/milestones/runtime-console-repl.md
 require_file .github/ISSUE_TEMPLATE/bug_report.yml
 require_file .github/ISSUE_TEMPLATE/engineering_change.yml
@@ -34,6 +37,7 @@ require_text "$roadmap" 'Status: living public project control'
 require_text "$roadmap" 'This file is the sole live authority'
 require_text "$roadmap" '| `V010.PROJECT.CONTROL.PUBLIC.0` | `complete` |'
 require_text "$roadmap" '| `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `complete` |'
+require_text "$roadmap" '| `V010.DOCS.INFORMATION.ARCHITECTURE.0` | `complete` |'
 require_text "$roadmap" '| `V010.OPERATOR.REPL.CONSOLE.0` | `active` |'
 require_text "$roadmap" '| `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `blocked` |'
 require_text "$roadmap" '| `V010.EVAL.DEEPSEEK.0` | `blocked` |'
@@ -69,7 +73,7 @@ in_sequence && /^\| [0-9]+ \| `V010\./ {
 ' "$roadmap" > "$rows"
 
 row_count=$(wc -l < "$rows" | tr -d ' ')
-test "$row_count" -eq 7 || fail "expected 7 current milestones, found $row_count"
+test "$row_count" -eq 8 || fail "expected 8 current milestones, found $row_count"
 
 cut -f 1 "$rows" | LC_ALL=C sort > "$ids"
 unique_count=$(uniq "$ids" | wc -l | tr -d ' ')
@@ -103,6 +107,9 @@ require_text CONTRIBUTING.md 'ROADMAP.md'
 require_text docs/decisions/README.md 'Current macro state remains in'
 require_text docs/decisions/0001-public-project-control.md '## Decision'
 require_text docs/decisions/0001-public-project-control.md 'The former complete ledger is removed'
+require_text docs/decisions/0003-documentation-architecture.md '## Decision'
+require_text docs/development/documentation-policy.md '`ROADMAP.md` is the only live macro control surface'
+require_text docs/milestones/documentation-architecture.md 'Status source:'
 
 issue_count=$(find .github/ISSUE_TEMPLATE -maxdepth 1 -type f -name '*.yml' |
   wc -l | tr -d ' ')
@@ -111,7 +118,10 @@ require_text .github/ISSUE_TEMPLATE/config.yml 'blank_issues_enabled: false'
 require_text .github/pull_request_template.md '## Claims and progression'
 
 for document in ROADMAP.md CONTRIBUTING.md docs/decisions/README.md \
-  docs/decisions/0001-public-project-control.md
+  docs/decisions/0001-public-project-control.md \
+  docs/decisions/0003-documentation-architecture.md \
+  docs/development/documentation-policy.md \
+  docs/milestones/documentation-architecture.md
 do
   base=$(dirname "$document")
   for target in $(grep -oE '\]\([^)]+\)' "$document" |
@@ -123,11 +133,9 @@ do
   done
 done
 
-if rg -n 'PROJECT\.md' README.md AGENTS.md MODEL_ARTIFACTS.md \
-  docs/api.md docs/contract.md docs/model-families.md \
-  docs/operator-runbook.md docs/reference-architecture.md \
-  docs/runbooks docs/system-target.md docs/topology-closure-audit.md \
-  docs/v010-release-doctrine.md; then
+living_docs=$(awk -F '\t' 'NR > 1 && $5 == "living" && $1 != "ROADMAP.md" { print $1 }' \
+  config/documentation_owners.tsv)
+if printf '%s\n' "$living_docs" | xargs rg -n 'PROJECT\.md'; then
   fail 'live documentation still points at retired PROJECT.md'
 fi
 
