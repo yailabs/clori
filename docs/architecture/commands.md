@@ -45,19 +45,22 @@ tensor-map, and target-report operations enter a separately guarded finite
 offline lane in the same ELF. Retired top-level namespaces refuse with a
 migration hint and never execute hidden aliases.
 
-`model select NAME --artifact FILE --runtime-binding FILE --target TARGET
---backend BACKEND --context TOKENS` atomically records one complete private XDG
-selection for a later `runtime start`; it never opens the model and cannot
-hot-switch a running daemon. `model list` and `model show` inspect registry
-entries, `model selected` reads the inert selection, and `runtime model` reads
-the model actually open in `yvexd`.
+The local model registry owns complete startup profiles: artifact, runtime
+binding, target, backend, and context. `model list` marks which entries have a
+complete readable profile, and `model select NAME` atomically copies one into
+the private XDG selection for a later `runtime start`. Selection never opens
+the model and cannot hot-switch a running daemon. `model show` inspects a
+registry entry, `model selected` reads the inert selection, and `runtime model`
+reads the model actually open in `yvexd`.
 
 ### Hosted startup semantics
 
-There is no independent hosted `load` operation. With explicit artifact and
-binding arguments, `yvex runtime start` executes the sibling `yvexd` in the
-foreground. The daemon authenticates those identities, creates one immutable
-runtime model, establishes host/device residency, then publishes readiness.
+There is no independent hosted `load` operation. In the normal product path,
+`yvex runtime start` reads the selected profile and executes the sibling
+`yvexd` in the foreground. The daemon authenticates those identities, creates
+one immutable runtime model, establishes host/device residency, then publishes
+readiness. Direct daemon options remain an advanced administration boundary,
+not the normal model-selection workflow.
 `yvex chat` and `yvex run` are protocol clients of that resident model; they do
 not link into runtime execution or open weights locally. The complete operator
 sequence and memory interpretation live in the

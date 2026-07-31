@@ -93,7 +93,8 @@ static int test_derive_metadata(void)
     return 0;
 }
 
-static void fill_entry(yvex_model_registry_entry *entry, const char *path)
+static void fill_entry(yvex_model_registry_entry *entry, const char *path,
+                       const char *binding)
 {
     memset(entry, 0, sizeof(*entry));
     entry->alias = "deepseek4-v4-flash-selected-embed";
@@ -125,6 +126,10 @@ static void fill_entry(yvex_model_registry_entry *entry, const char *path)
     entry->selected_embedding_output_count = 4ull;
     entry->selected_embedding_slice_bytes = 8ull;
     entry->execution_ready = 0;
+    entry->runtime_binding = binding;
+    entry->runtime_target = "deepseek4-v4-flash";
+    entry->runtime_backend = "cuda";
+    entry->runtime_context = 4096ull;
 }
 
 static int test_registry_lifecycle(void)
@@ -132,6 +137,9 @@ static int test_registry_lifecycle(void)
     const char *dir = "build/tests/model-registry";
     const char *registry_path = "build/tests/model-registry/models.local.json";
     const char *model_path = "build/tests/model-registry/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf";
+    const char *binding_path = "build/tests/model-registry/runtime.binding";
+    char absolute_model[YVEX_PATH_CAP];
+    char absolute_binding[YVEX_PATH_CAP];
     yvex_model_registry_options options;
     yvex_model_registry *registry = NULL;
     yvex_model_registry_entry entry;
@@ -143,6 +151,12 @@ static int test_registry_lifecycle(void)
                      "prepare model registry dir");
     YVEX_TEST_ASSERT(write_file(model_path, "not a real gguf for registry unit test\n"),
                      "write model path");
+    YVEX_TEST_ASSERT(write_file(binding_path, "runtime binding fixture\n"),
+                     "write binding path");
+    YVEX_TEST_ASSERT(realpath(model_path, absolute_model) != NULL,
+                     "resolve absolute model path");
+    YVEX_TEST_ASSERT(realpath(binding_path, absolute_binding) != NULL,
+                     "resolve absolute binding path");
 
     memset(&options, 0, sizeof(options));
     options.registry_path = registry_path;
@@ -152,18 +166,22 @@ static int test_registry_lifecycle(void)
     YVEX_TEST_ASSERT(rc == YVEX_OK, "open missing registry with create");
     YVEX_TEST_ASSERT(yvex_model_registry_count(registry) == 0, "initial count");
 
-    fill_entry(&entry, model_path);
+    fill_entry(&entry, absolute_model, absolute_binding);
+    YVEX_TEST_ASSERT(yvex_model_registry_startup_validate(&entry, &err) == YVEX_OK,
+                     "complete startup profile validates");
     rc = yvex_model_registry_add(registry, &entry, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "add entry");
     YVEX_TEST_ASSERT(yvex_model_registry_count(registry) == 1, "count after add");
     found = yvex_model_registry_find(registry, "deepseek4-v4-flash-selected-embed");
     YVEX_TEST_ASSERT(found != NULL, "find entry");
-    YVEX_TEST_ASSERT_STREQ(found->path, model_path, "found path");
+    YVEX_TEST_ASSERT_STREQ(found->path, absolute_model, "found path");
 
     rc = yvex_model_registry_save(registry, registry_path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "save registry");
-    YVEX_TEST_ASSERT(file_contains(registry_path, "\"schema\": \"yvex.models.local.v2\""),
-                     "registry writer publishes schema v2");
+    YVEX_TEST_ASSERT(file_contains(registry_path, "\"schema\": \"yvex.models.local.v3\""),
+                     "registry writer publishes schema v3");
+    YVEX_TEST_ASSERT(file_contains(registry_path, "\"runtime_backend\": \"cuda\""),
+                     "registry writer persists runtime profile");
     YVEX_TEST_ASSERT(!file_contains(registry_path, "\"selected\":"),
                      "registry writer has no selected startup state");
     yvex_model_registry_close(registry);
@@ -181,6 +199,16 @@ static int test_registry_lifecycle(void)
     YVEX_TEST_ASSERT_STREQ(found->primary_tensor_dtype, "F16", "primary dtype after reload");
     YVEX_TEST_ASSERT_STREQ(found->primary_tensor_dims, "[4,8]", "primary dims after reload");
     YVEX_TEST_ASSERT(found->selected_embedding_ready == 1, "selected embedding readiness after reload");
+    YVEX_TEST_ASSERT_STREQ(found->runtime_binding, absolute_binding,
+                           "runtime binding after reload");
+    YVEX_TEST_ASSERT_STREQ(found->runtime_target, "deepseek4-v4-flash",
+                           "runtime target after reload");
+    YVEX_TEST_ASSERT_STREQ(found->runtime_backend, "cuda",
+                           "runtime backend after reload");
+    YVEX_TEST_ASSERT(found->runtime_context == 4096ull,
+                     "runtime context after reload");
+    YVEX_TEST_ASSERT(yvex_model_registry_startup_validate(found, &err) == YVEX_OK,
+                     "reloaded startup profile validates");
 
     rc = yvex_model_registry_remove(registry, "deepseek4-v4-flash-selected-embed", &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "remove entry");
@@ -208,6 +236,8 @@ static int test_invalid_args(void)
     memset(&entry, 0, sizeof(entry));
     YVEX_TEST_ASSERT(yvex_model_registry_entry_derive_from_path(&entry, "some-model.gguf", &err) != YVEX_OK,
                      "unknown filename derive fails");
+    YVEX_TEST_ASSERT(yvex_model_registry_startup_validate(&entry, &err) != YVEX_OK,
+                     "incomplete startup profile fails");
     return 0;
 }
 

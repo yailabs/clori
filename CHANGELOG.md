@@ -30,6 +30,9 @@ change. Git history preserves implementation chronology.
 - Advanced the private local protocol to version 4, separating selected model
   configuration from the live runtime model and removing false artifact/model
   facade operations.
+- Made hosted startup registry-first: `model list` reports complete startup
+  profiles, `model select NAME` resolves one profile without path flags, and
+  `runtime start` opens the selected model without environment variables.
 - Reorganized documentation by authority and lifecycle, with canonical
   terminology, family records, contracts, operator procedures, frozen audits,
   and validated migration paths.

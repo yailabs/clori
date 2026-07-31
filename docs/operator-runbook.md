@@ -1,9 +1,10 @@
 # YVEX Operator Runbook — Local Runtime
 
 This runbook owns first startup and routine operation of the installed local
-runtime host and clients. It begins with explicit artifact and binding inputs;
-configured model defaults are an optional convenience after that path works.
-Its commands follow the canonical operation registry. The current REPL
+runtime host and clients. Normal operation is registry-first: users list a
+complete local model profile, select it by name, start the runtime, and enter
+chat without exporting paths or repeating daemon flags. Its commands follow
+the canonical operation registry. The current REPL
 renderer is transitional; the intended console is owned by the active
 [runtime-console milestone](milestones/runtime-console-repl.md).
 It is not a capability ledger: consult [`ROADMAP.md`](../ROADMAP.md) for current
@@ -17,17 +18,18 @@ Builds provide two executable products:
   and the bounded loopback OpenAI-compatible listener;
 - `yvex` owns native runtime clients and finite offline engineering operations.
 
-The first startup requires one admitted complete GGUF and its exact runtime
-binding. Keep both outside the repository and assign their absolute paths:
+Starting a host requires one registry entry containing an admitted complete
+GGUF, its exact runtime binding, target, backend, and context capacity. Inspect
+the available entries first:
 
 ```sh
-export YVEX_MODEL_ARTIFACT=/absolute/model.gguf
-export YVEX_RUNTIME_BINDING=/absolute/model.yvex-runtime-binding
-test -r "$YVEX_MODEL_ARTIFACT" && test -r "$YVEX_RUNTIME_BINDING"
+./yvex model list
 ```
 
-Use `--backend cpu` when the admitted build or device does not support CUDA.
-Backend selection never falls back silently.
+Only a row with `STARTUP` equal to `yes` can be selected for hosted execution.
+If the table is empty or every row says `no`, complete the one-time
+[registration procedure](#registering-an-existing-model). Backend selection is
+part of that profile and never falls back silently.
 
 ## First verified startup
 
@@ -38,20 +40,21 @@ First check whether this user already owns a ready host:
 ```
 
 If it reports `ready`, do not start another daemon; proceed to chat or runtime
-inspection. If it refuses because no host is present, start the host through
-the public `yvex` command in the first terminal:
+inspection. If it refuses because no host is present, inspect and select one
+startup-ready registry entry. The alias below is illustrative; use one printed
+by `model list`:
 
 ```sh
-./yvex runtime start \
-  --model "$YVEX_MODEL_ARTIFACT" \
-  --runtime-binding "$YVEX_RUNTIME_BINDING" \
-  --target deepseek4-v4-flash \
-  --backend cuda \
-  --context 4096 \
-  --console raw \
-  --trace-level stages \
-  --openai on \
-  --openai-port 8001
+./yvex model list
+./yvex model show deepseek4-v4-flash-runtime-iq2xxs
+./yvex model select deepseek4-v4-flash-runtime-iq2xxs
+./yvex model selected
+```
+
+Then start the host in the first terminal:
+
+```sh
+./yvex runtime start
 ```
 
 `runtime start` replaces its finite client process with the sibling `yvexd`
@@ -59,19 +62,23 @@ binary. Foreground operation is intentional: keep this terminal open. Exactly
 one daemon owns the model, sessions, KV, worker, local socket, OpenAI listener,
 and telemetry.
 
-Wait for the `runtime.ready` JSONL event before connecting a client. Startup
-authenticates the artifact and binding, creates the immutable runtime model,
-builds residency once, and only then publishes the local socket. A refusal or
-startup failure leaves no partially ready listener.
+Startup authenticates the selected artifact and binding, creates the immutable
+runtime model, builds residency once, and only then publishes the local socket.
+Large models can spend several minutes in this phase. From a second terminal,
+`yvex runtime status` refuses while the socket is absent and reports `ready`
+only after admission completes. A refusal or startup failure leaves no
+partially ready listener.
 
 ## What “load the model” means
 
 There is no separate hosted model-load command. The relevant commands have
 different responsibilities:
 
-- `yvex model select ...` records an inert startup configuration for a future
-  launch; it does not read the artifact or change a running daemon;
-- `yvex runtime start ...` opens and authenticates the artifact and binding,
+- `yvex model list` reads the local model registry and marks complete readable
+  startup profiles;
+- `yvex model select NAME` copies one profile into the inert configuration for
+  a future launch; it does not open the artifact or change a running daemon;
+- `yvex runtime start` opens and authenticates the selected artifact and binding,
   materializes runtime-owned resources, copies the encoded payload into the
   daemon's host arena, and keeps the resulting runtime model open;
 - `yvex runtime model` reports the identities actually open in the daemon;
@@ -94,19 +101,10 @@ the complete RAM transfer finish before the socket becomes ready.
 All three terminals attach to the same daemon and model. They do not create
 three model copies.
 
-Terminal 1 owns the host and raw typed events:
+Terminal 1 owns the foreground host lifecycle:
 
 ```sh
-./yvex runtime start \
-  --model "$YVEX_MODEL_ARTIFACT" \
-  --runtime-binding "$YVEX_RUNTIME_BINDING" \
-  --target deepseek4-v4-flash \
-  --backend cuda \
-  --context 4096 \
-  --console raw \
-  --trace-level stages \
-  --openai on \
-  --openai-port 8001
+./yvex runtime start
 ```
 
 Terminal 2 renders the operational engine view:
@@ -234,32 +232,45 @@ The host refuses new work, drains or cancels queued and active requests under
 their typed state, closes sessions, closes the model exactly once, emits the
 terminal shutdown event, and removes its socket and singleton lock.
 
-## Optional configured defaults
+## Registering an existing model
 
-After the explicit startup path succeeds, a private XDG configuration can store
-an inert model selection for shorter future starts:
+The ordinary selector consumes a complete local registry profile. When an
+artifact and binding already exist but no profile was recorded, import them
+once with the advanced registry operation and absolute paths:
 
 ```sh
-./yvex model select deepseek \
-  --artifact "$YVEX_MODEL_ARTIFACT" \
-  --runtime-binding "$YVEX_RUNTIME_BINDING" \
+./yvex model registry add \
+  --alias deepseek4-v4-flash-runtime-iq2xxs \
+  --family deepseek4 \
+  --model v4-flash \
+  --scope runtime \
+  --class iq2xxs \
+  --path /srv/yvex/models/deepseek-v4-flash.gguf \
+  --runtime-binding /srv/yvex/models/deepseek-v4-flash.yvex-runtime-binding \
   --target deepseek4-v4-flash \
   --backend cuda \
-  --context 4096
-./yvex model selected
+  --context 4096 \
+  --support-level runtime-profile-configured
+```
+
+This operation reads the GGUF, records its identity and metadata, checks that
+the startup profile is structurally complete, and stores it in the user-local
+registry. It does not establish runtime admission; `yvexd` authenticates
+the artifact and binding again when it opens the model. Normal subsequent use
+contains no paths or environment variables:
+
+```sh
 ./yvex model list
+./yvex model select deepseek4-v4-flash-runtime-iq2xxs
+./yvex model selected
 ./yvex runtime start
 ```
 
-`model select` requires a complete startup configuration. It does not admit an
-artifact, open a model, or change a running host. `model selected` reads only
-that inert private selection; `model list` reads real registry entries; and
-`runtime model` reads the identities actually open in `yvexd`. These states may
-differ without being conflated. The daemon still authenticates the selected
-artifact and binding on every process start. The short `runtime start` form
-uses daemon defaults and remains in the foreground; verify readiness from
-another terminal with `yvex runtime status`. Applying another selection
-requires a daemon restart.
+`model selected` reads only the inert private selection; `model list` reads
+real registry entries; and `runtime model` reads the identities actually open
+in `yvexd`. These states may differ without being conflated. Applying another
+selection requires a daemon restart; hot model switching and multi-model
+hosting are not current capabilities.
 
 ## Local paths
 
@@ -267,6 +278,10 @@ requires a daemon restart.
   endpoint; its directory and singleton lock are private to the owning UID.
 - `$XDG_CONFIG_HOME/yvex/model.conf` stores the optional selected model alias
   and inert startup options at mode 0600.
+- `~/.local/share/yvex/models.local.json` stores local model registry entries,
+  including complete startup profiles. `YVEX_DATA_DIR` may override the parent
+  for controlled deployments. The file is local configuration, not tracked
+  repository data.
 - `$XDG_STATE_HOME/yvex/` is reserved for explicit opt-in history, log, and
   trace sinks. The current client does not persist prompts, answers, tokens, or
   KV.
@@ -277,8 +292,8 @@ fallback.
 
 ## Recovery
 
-- Missing socket: repeat the explicit `yvex runtime start` procedure and wait for
-  `runtime.ready`.
+- Missing socket: confirm `model selected`, run `yvex runtime start`, and wait
+  for `runtime status` to report `ready`.
 - Stale or unsafe socket: verify UID, mode, runtime-directory ownership, and
   singleton-lock ownership; never delete another user's socket.
 - Binding or artifact mismatch: select the binding for that exact artifact

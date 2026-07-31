@@ -62,6 +62,10 @@ typedef struct {
     unsigned long long selected_embedding_output_count;
     unsigned long long selected_embedding_slice_bytes;
     int execution_ready;
+    char *runtime_binding;
+    char *runtime_target;
+    char *runtime_backend;
+    unsigned long long runtime_context;
 } yvex_model_registry_owned_entry;
 struct yvex_model_registry {
     yvex_model_registry_owned_entry *entries;

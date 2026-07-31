@@ -369,8 +369,8 @@ static int client_error(const yvex_error *err)
 {
     fprintf(stderr, "yvex: %s\n", yvex_error_message(err));
     if (yvex_error_code(err) == YVEX_ERR_IO)
-        fprintf(stderr, "hint: start it with `yvex runtime start --model ARTIFACT "
-                        "--runtime-binding BINDING`\n");
+        fprintf(stderr, "hint: run `yvex model list`, select one model, then use "
+                        "`yvex runtime start`\n");
     return 1;
 }
 
@@ -1342,8 +1342,13 @@ static int model_config_directory(const char *directory)
         return 0;
     if (mkdir(directory, 0700) != 0 && errno != EEXIST) return 0;
     if (lstat(directory, &status) != 0 || !S_ISDIR(status.st_mode) ||
-        S_ISLNK(status.st_mode) || status.st_uid != geteuid() ||
-        (status.st_mode & 0077u) != 0u)
+        S_ISLNK(status.st_mode) || status.st_uid != geteuid())
+        return 0;
+    /* Selection contains absolute model paths. Harden a user-owned YVEX directory left behind by
+     * an ordinary permissive umask before publishing the mode-0600 snapshot. */
+    if ((status.st_mode & 0077u) != 0u &&
+        (chmod(directory, 0700) != 0 || lstat(directory, &status) != 0 ||
+         (status.st_mode & 0077u) != 0u))
         return 0;
     return 1;
 }
@@ -1446,56 +1451,59 @@ static int model_config_read(client_model_config *config)
 
 static int model_select_command(int argc, char **argv)
 {
+    yvex_model_registry_options options;
+    yvex_model_registry *registry = NULL;
+    const yvex_model_registry_entry *entry;
     client_model_config config;
-    unsigned int seen = 0u;
-    int index;
+    yvex_error err;
+    int rc;
+
     memset(&config, 0, sizeof(config));
-    if (argc < 14 || !argv[3][0] || strlen(argv[3]) >= sizeof(config.name) ||
-        snprintf(config.name, sizeof(config.name), "%s", argv[3]) <= 0)
+    memset(&options, 0, sizeof(options));
+    yvex_error_clear(&err);
+    if (argc != 4 || !argv[3][0] || strlen(argv[3]) >= sizeof(config.name))
         return 2;
-    for (index = 4; index < argc; ++index) {
-        if (!strcmp(argv[index], "--artifact") && !(seen & 1u) && index + 1 < argc &&
-            strlen(argv[index + 1]) < sizeof(config.artifact)) {
-            if (snprintf(config.artifact, sizeof(config.artifact), "%s",
-                         argv[++index]) <= 0)
-                return 2;
-            seen |= 1u;
-        }
-        else if (!strcmp(argv[index], "--runtime-binding") && !(seen & 2u) &&
-                 index + 1 < argc &&
-                 strlen(argv[index + 1]) < sizeof(config.binding)) {
-            if (snprintf(config.binding, sizeof(config.binding), "%s",
-                         argv[++index]) <= 0)
-                return 2;
-            seen |= 2u;
-        }
-        else if (!strcmp(argv[index], "--target") && !(seen & 4u) &&
-                 index + 1 < argc &&
-                 strlen(argv[index + 1]) < sizeof(config.target)) {
-            if (snprintf(config.target, sizeof(config.target), "%s",
-                         argv[++index]) <= 0)
-                return 2;
-            seen |= 4u;
-        }
-        else if (!strcmp(argv[index], "--backend") && !(seen & 8u) &&
-                 index + 1 < argc &&
-                 strlen(argv[index + 1]) < sizeof(config.backend)) {
-            if (snprintf(config.backend, sizeof(config.backend), "%s",
-                         argv[++index]) <= 0)
-                return 2;
-            seen |= 8u;
-        }
-        else if (!strcmp(argv[index], "--context") && !(seen & 16u) &&
-                 index + 1 < argc) {
-            if (!parse_u64(argv[++index], &config.context, 0)) return 2;
-            seen |= 16u;
-        } else return 2;
+    rc = yvex_model_registry_open(&registry, &options, &err);
+    if (rc != YVEX_OK) {
+        fprintf(stderr, "yvex: model registry is unavailable: %s\n"
+                        "hint: use `yvex model registry add --help` to register a startup profile\n",
+                yvex_error_message(&err));
+        return 1;
     }
-    if (seen != 31u || !config.name[0] || config.artifact[0] != '/' ||
-        config.binding[0] != '/' ||
-        (strcmp(config.backend, "cpu") && strcmp(config.backend, "cuda")) ||
-        !config.target[0])
-        return 2;
+    entry = yvex_model_registry_find(registry, argv[3]);
+    if (!entry) {
+        fprintf(stderr, "yvex: model is not registered: %s\n"
+                        "hint: inspect available profiles with `yvex model list`\n",
+                argv[3]);
+        yvex_model_registry_close(registry);
+        return 1;
+    }
+    if (strlen(entry->path) >= sizeof(config.artifact) ||
+        strlen(entry->runtime_binding) >= sizeof(config.binding) ||
+        strlen(entry->runtime_target) >= sizeof(config.target) ||
+        strlen(entry->runtime_backend) >= sizeof(config.backend)) {
+        fprintf(stderr, "yvex: registered startup profile exceeds client configuration limits\n");
+        yvex_model_registry_close(registry);
+        return 1;
+    }
+    rc = yvex_model_registry_startup_validate(entry, &err);
+    if (rc != YVEX_OK) {
+        fprintf(stderr, "yvex: model cannot be selected: %s\n"
+                        "hint: `yvex model show %s` reports its startup profile\n",
+                yvex_error_message(&err), argv[3]);
+        yvex_model_registry_close(registry);
+        return 1;
+    }
+    if (snprintf(config.name, sizeof(config.name), "%s", entry->alias) <= 0 ||
+        snprintf(config.artifact, sizeof(config.artifact), "%s", entry->path) <= 0 ||
+        snprintf(config.binding, sizeof(config.binding), "%s", entry->runtime_binding) <= 0 ||
+        snprintf(config.target, sizeof(config.target), "%s", entry->runtime_target) <= 0 ||
+        snprintf(config.backend, sizeof(config.backend), "%s", entry->runtime_backend) <= 0) {
+        yvex_model_registry_close(registry);
+        return 1;
+    }
+    config.context = entry->runtime_context;
+    yvex_model_registry_close(registry);
     if (!model_config_write(&config)) {
         fprintf(stderr, "yvex: selected model configuration could not be written safely\n");
         return 1;
@@ -1510,9 +1518,7 @@ static int model_config_show(void)
     if (!model_config_read(&config)) {
         fprintf(stderr,
                 "yvex: no selected model\n"
-                "hint: use `yvex model select NAME --artifact FILE "
-                "--runtime-binding FILE --target TARGET --backend cpu|cuda "
-                "--context TOKENS`\n");
+                "hint: run `yvex model list`, then `yvex model select NAME`\n");
         return 1;
     }
     printf("%-20s backend=%s context=%llu\n  artifact=%s\n  binding=%s\n",
@@ -1564,9 +1570,7 @@ static int runtime_start(int argc, char **argv)
     if (!model_config_read(&config)) {
         fprintf(stderr,
                 "yvex: no selected model\n"
-                "hint: use `yvex model select NAME --artifact FILE "
-                "--runtime-binding FILE --target TARGET --backend cpu|cuda "
-                "--context TOKENS`\n");
+                "hint: run `yvex model list`, then `yvex model select NAME`\n");
         return 1;
     }
     (void)snprintf(context, sizeof(context), "%llu", config.context);

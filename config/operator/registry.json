@@ -23,6 +23,31 @@
         "rationale": "separate acquisition from selected startup state"
       },
       {
+        "command_id": "cli.yvex.model.use",
+        "flag": "--artifact",
+        "rationale": "resolve startup facts from the selected registry profile"
+      },
+      {
+        "command_id": "cli.yvex.model.use",
+        "flag": "--backend",
+        "rationale": "resolve startup facts from the selected registry profile"
+      },
+      {
+        "command_id": "cli.yvex.model.use",
+        "flag": "--context",
+        "rationale": "resolve startup facts from the selected registry profile"
+      },
+      {
+        "command_id": "cli.yvex.model.use",
+        "flag": "--runtime-binding",
+        "rationale": "resolve startup facts from the selected registry profile"
+      },
+      {
+        "command_id": "cli.yvex.model.use",
+        "flag": "--target",
+        "rationale": "resolve startup facts from the selected registry profile"
+      },
+      {
         "command_id": "cli.yvex.runtime.trace",
         "flag": "--follow",
         "rationale": "trace is already a continuous subscription"
@@ -678,16 +703,20 @@
       "repeatable_values": [],
       "values": [
         "--alias",
+        "--backend",
         "--calibration",
         "--class",
+        "--context",
         "--family",
         "--model",
         "--path",
         "--qprofile",
         "--registry",
+        "--runtime-binding",
         "--scope",
         "--sha256",
-        "--support-level"
+        "--support-level",
+        "--target"
       ]
     },
     "cli_offline_model_registry_read": {
@@ -999,43 +1028,6 @@
       },
       {
         "name": "--session",
-        "takes_value": true,
-        "value_type": "name"
-      }
-    ],
-    "cli_yvex_model_use": [
-      {
-        "name": "--artifact",
-        "required": true,
-        "takes_value": true,
-        "value_type": "path"
-      },
-      {
-        "enum_values": [
-          "cpu",
-          "cuda"
-        ],
-        "name": "--backend",
-        "required": true,
-        "takes_value": true,
-        "value_type": "enum"
-      },
-      {
-        "name": "--context",
-        "range": "1..18446744073709551615",
-        "required": true,
-        "takes_value": true,
-        "value_type": "u64"
-      },
-      {
-        "name": "--runtime-binding",
-        "required": true,
-        "takes_value": true,
-        "value_type": "path"
-      },
-      {
-        "name": "--target",
-        "required": true,
         "takes_value": true,
         "value_type": "name"
       }
@@ -4890,7 +4882,7 @@
       "architectural_plane": "Run",
       "arguments": [
         {
-          "completion_provider": "none",
+          "completion_provider": "model-registry",
           "multiplicity": "one",
           "name": "name",
           "required": true,
@@ -4908,19 +4900,17 @@
       "default_providers": [],
       "deprecation_state": "current",
       "documentation_owner": "docs/operator-runbook.md",
-      "flag_sets": [
-        "cli_yvex_model_use"
-      ],
+      "flag_sets": [],
       "input_schema": "argv.v1",
       "lane": "runtime-client",
-      "model_requirement": "selected-config",
+      "model_requirement": "registry-model",
       "operation_id": "model.select",
       "protocol_operation": "none",
       "renderer_id": "human",
       "result_schema": "human.v1",
       "side_effects": "writes selected startup configuration",
       "slash_projection": "none",
-      "summary": "Select a complete startup configuration.",
+      "summary": "Select one registered startup profile.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-default"
     },
@@ -6257,7 +6247,7 @@
       ]
     },
     {
-      "hint": "use `yvex model select` with complete startup facts",
+      "hint": "use `yvex model select NAME`",
       "path": [
         "model",
         "use"

@@ -4,7 +4,7 @@ This deterministic migration matrix reconciles the frozen operator audit with
 `yvex.operator.registry.v1`. It is documentation, not runtime command authority.
 
 - Frozen audit baseline: `ec7dccede90c1a1efa87b4c2519c25b30d5e1733`
-- Registry identity: `2a91b6cd579a19a2b4a78a5ee07b299e07d8409053bdc4b7ae5d63faeaf64adc`
+- Registry identity: `0283c71f662f135b6ebfb3172c1cdce5a22a0bfbf9be6b80fc009abd807d4540`
 - Compatibility policy: pre-v0.1 breaking grammar cutover; removed paths never execute aliases.
 
 | Old path | Old operation | Final operation | Final projection | Visibility | Compatibility | Rationale |
@@ -85,6 +85,11 @@ This deterministic migration matrix reconciles the frozen operator audit with
 - `cli.offline.artifact.verify --model` — remove the hidden integrity-check grammar rewrite.
 - `cli.offline.evidence.models --force-sidecars` — remove a parsed but unconsumed option.
 - `cli.offline.evidence.models --no-use` — separate acquisition from selected startup state.
+- `cli.yvex.model.use --artifact` — resolve startup facts from the selected registry profile.
+- `cli.yvex.model.use --backend` — resolve startup facts from the selected registry profile.
+- `cli.yvex.model.use --context` — resolve startup facts from the selected registry profile.
+- `cli.yvex.model.use --runtime-binding` — resolve startup facts from the selected registry profile.
+- `cli.yvex.model.use --target` — resolve startup facts from the selected registry profile.
 - `cli.yvex.runtime.trace --follow` — trace is already a continuous subscription.
 
 The retired top-level namespaces `evidence`, `graph`, `quant`, `source`,

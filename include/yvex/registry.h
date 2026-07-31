@@ -42,6 +42,10 @@ typedef struct {
     unsigned long long selected_embedding_output_count;
     unsigned long long selected_embedding_slice_bytes;
     int execution_ready;
+    const char *runtime_binding;
+    const char *runtime_target;
+    const char *runtime_backend;
+    unsigned long long runtime_context;
 } yvex_model_registry_entry;
 
 #define YVEX_MODEL_METADATA_STATUS_CAP 24u
@@ -117,6 +121,11 @@ int yvex_model_registry_compare_metadata(
 int yvex_model_registry_default_path(char *out,
                                      unsigned long long out_size,
                                      yvex_error *err);
+
+/* A startup profile is selectable only when its artifact, binding, target, backend, and context
+ * form one complete local configuration. Runtime admission still occurs inside yvexd. */
+int yvex_model_registry_startup_validate(const yvex_model_registry_entry *entry,
+                                         yvex_error *err);
 
 /* Model references. */
 typedef enum {

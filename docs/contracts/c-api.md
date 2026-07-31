@@ -99,6 +99,26 @@ required metadata, tokenizer evidence, tensor inventory and exact file
 identity. The admitted file remains external operator data. A complete
 artifact is still not a supported artifact.
 
+## Model Registry And Startup Profiles
+
+`<yvex/registry.h>` owns the local model catalog and typed reference
+resolution. Registry schema `yvex.models.local.v3` may bind a catalog entry to
+one complete startup profile: absolute artifact path, exact runtime-binding
+path, runtime target, admitted backend choice, and positive context capacity.
+Older v1/v2 catalogs remain readable but contain no complete startup profile.
+
+`yvex_model_registry_startup_validate` checks that all startup facts are
+present and that the two local files are readable. It does not authenticate
+either identity, materialize weights, initialize a backend, or establish
+runtime support. Selection remains an inert local configuration write; `yvexd`
+performs full artifact and binding admission when the model is opened.
+
+The default catalog is user-local data at
+`~/.local/share/yvex/models.local.json`; an explicit `YVEX_DATA_DIR` changes
+that owner for controlled deployments. The selected startup configuration
+remains separately owned under private XDG configuration. Catalog entry,
+selected model, and live runtime model are three distinct facts.
+
 ## Model, Materialization, And Backend
 
 `<yvex/model.h>` exposes canonical dtype, tensor-role and model-descriptor

@@ -47,40 +47,41 @@ preserves exact earlier progress.
 make -j4 all
 ```
 
-### 2. Identify the artifact and binding
+### 2. Select a registered model
 
-Starting a runtime requires one admitted complete GGUF artifact and its exact
-runtime binding. Keep both outside the repository and use absolute paths:
+The model registry owns the artifact path, runtime binding, target, backend,
+and context. Normal startup does not require environment variables or model
+paths. List the local entries, inspect one whose `STARTUP` column is `yes`, and
+select its alias:
 
 ```sh
-export YVEX_MODEL_ARTIFACT=/absolute/model.gguf
-export YVEX_RUNTIME_BINDING=/absolute/model.yvex-runtime-binding
-test -r "$YVEX_MODEL_ARTIFACT" && test -r "$YVEX_RUNTIME_BINDING"
+./yvex model list
+./yvex model show deepseek4-v4-flash-runtime-iq2xxs
+./yvex model select deepseek4-v4-flash-runtime-iq2xxs
+./yvex model selected
 ```
 
-### 3. Start the runtime and load the model
+The alias above is an example; use an alias printed by `model list`. If no
+startup-ready model is listed, follow the runbook's one-time
+[model registration](docs/operator-runbook.md#registering-an-existing-model)
+procedure. Selection only configures the next host start; it never changes a
+model that is already running.
+
+### 3. Start the runtime and load the selected model
 
 If `./yvex runtime status` already reports `ready`, do not start a second host;
-continue with step 5. Otherwise, run this in the first terminal:
+continue with step 4. Otherwise, run this in the first terminal:
 
 ```sh
-./yvex runtime start \
-  --model "$YVEX_MODEL_ARTIFACT" \
-  --runtime-binding "$YVEX_RUNTIME_BINDING" \
-  --target deepseek4-v4-flash \
-  --backend cuda \
-  --context 4096 \
-  --console raw \
-  --trace-level stages \
-  --openai on \
-  --openai-port 8001
+./yvex runtime start
 ```
 
-There is no separate model-load command. `runtime start` starts `yvexd`,
-authenticates the artifact and binding, copies the encoded weights into the
-daemon's process-lifetime host arena, builds runtime residency, and keeps that
-runtime model open. Leave this foreground terminal running and wait for the
-`runtime.ready` event.
+There is no separate model-load command. `runtime start` starts `yvexd`, reads
+the selected registry profile, authenticates its artifact and binding, copies
+the encoded weights into the daemon's process-lifetime host arena, builds
+runtime residency, and keeps that runtime model open. Leave this foreground
+terminal running. A large model can take several minutes before the local
+runtime becomes ready.
 
 ### 4. Verify the resident runtime
 

@@ -7,8 +7,9 @@ YVEX_CLIENT_LANE_OBJ=${YVEX_CLIENT_LANE_OBJ:-build/obj/src/cli/io/client.o}
 . tests/support/cleanup.sh
 
 root=$(mktemp -d "${TMPDIR:-/tmp}/yvex-command-architecture.XXXXXX")
-config_root=$root/config-root
-mkdir -m 700 "$config_root"
+home_root=$root/home
+mkdir -m 700 "$home_root" "$home_root/.config"
+mkdir -m 775 "$home_root/.config/yvex"
 cleanup()
 {
     status=$?
@@ -190,9 +191,9 @@ done
 "$YVEX_BIN" model select -h >"$root/out" 2>"$root/err"
 grep -F 'operation: model.select' "$root/out" >/dev/null
 for arguments in \
-    'model select current --artifact /models/current.gguf --runtime-binding /bindings/current.binding --target deepseek4-v4-flash --backend bogus --context 4096' \
-    'model select current --artifact /models/current.gguf --runtime-binding /bindings/current.binding --target deepseek4-v4-flash --backend cuda --context 0' \
-    'model select current --artifact /models/current.gguf --runtime-binding /bindings/current.binding --target deepseek4-v4-flash --backend cuda --context 4096 --context 4096' \
+    'model select' \
+    'model select current extra' \
+    'model select current --artifact /models/current.gguf' \
     'compile artifact prepare --out artifact.gguf --out-dir artifacts'
 do
     set +e
@@ -210,23 +211,71 @@ set -e
 test "$status" -eq 2
 grep -F 'did you mean `yvex runtime status`' "$root/err" >/dev/null
 
-# Selected startup configuration is explicit and remains distinct from live daemon state.
-set +e
-XDG_CONFIG_HOME="$config_root" "$YVEX_BIN" model select current \
-    --artifact /models/current.gguf >"$root/out" 2>"$root/err"
-status=$?
-set -e
-test "$status" -eq 2
-grep -F 'required flag missing' "$root/err" >/dev/null
-XDG_CONFIG_HOME="$config_root" "$YVEX_BIN" model select current \
-    --artifact /models/current.gguf --runtime-binding /bindings/current.binding \
-    --target deepseek4-v4-flash --backend cuda --context 4096 >"$root/out"
-grep -F 'selected model: current' "$root/out" >/dev/null
-test "$(stat -c '%a' "$config_root/yvex/model.conf")" = 600
-XDG_CONFIG_HOME="$config_root" "$YVEX_BIN" model selected >"$root/out"
+# Selected startup configuration resolves one complete registry profile and remains distinct from
+# live daemon state.
+artifact="$root/current.gguf"
+binding="$root/current.binding"
+registry="$home_root/.local/share/yvex/models.local.json"
+mkdir -p "$home_root/.local/share/yvex"
+printf 'artifact fixture\n' >"$artifact"
+printf 'binding fixture\n' >"$binding"
+artifact=$(realpath "$artifact")
+binding=$(realpath "$binding")
+cat >"$registry" <<EOF
+{
+  "schema": "yvex.models.local.v3",
+  "models": [{
+    "alias": "current-model-runtime-profile",
+    "path": "$artifact",
+    "runtime_binding": "$binding",
+    "runtime_target": "deepseek4-v4-flash",
+    "runtime_backend": "cuda",
+    "runtime_context": 4096
+  }]
+}
+EOF
+HOME="$home_root" "$YVEX_BIN" model list >"$root/out"
+grep -F 'current-model-runtime-profile' "$root/out" >/dev/null
+grep -F 'cuda' "$root/out" >/dev/null
+grep -F '4096' "$root/out" >/dev/null
+grep -F 'yes' "$root/out" >/dev/null
+HOME="$home_root" \
+    "$YVEX_BIN" model select current-model-runtime-profile >"$root/out"
+grep -F 'selected model: current-model-runtime-profile' "$root/out" >/dev/null
+test "$(stat -c '%a' "$home_root/.config/yvex/model.conf")" = 600
+test "$(stat -c '%a' "$home_root/.config/yvex")" = 700
+HOME="$home_root" "$YVEX_BIN" model selected >"$root/out"
 grep -F 'backend=cuda context=4096' "$root/out" >/dev/null
+grep -F "artifact=$artifact" "$root/out" >/dev/null
+grep -F "binding=$binding" "$root/out" >/dev/null
+
+# A flag-free start projects the selected profile into yvexd's startup vector. Keep this proof
+# isolated from the resident daemon by placing the client beside a recording test double.
+mkdir "$root/product-bin"
+cp "$YVEX_BIN" "$root/product-bin/yvex"
+cat >"$root/product-bin/yvexd" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$@" >"$YVEX_TEST_DAEMON_ARGS"
+EOF
+chmod 700 "$root/product-bin/yvexd"
+HOME="$home_root" YVEX_TEST_DAEMON_ARGS="$root/daemon-arguments" \
+    "$root/product-bin/yvex" runtime start
+cat >"$root/expected-daemon-arguments" <<EOF
+--model
+$artifact
+--runtime-binding
+$binding
+--target
+deepseek4-v4-flash
+--backend
+cuda
+--context
+4096
+EOF
+cmp "$root/expected-daemon-arguments" "$root/daemon-arguments"
+
 set +e
-XDG_CONFIG_HOME="$config_root" XDG_RUNTIME_DIR="$root/absent-runtime" \
+HOME="$home_root" XDG_RUNTIME_DIR="$root/absent-runtime" \
     "$YVEX_BIN" runtime model >"$root/out2" 2>"$root/err"
 status=$?
 set -e

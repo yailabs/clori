@@ -8,6 +8,8 @@
 
 #include <yvex/artifact.h>
 
+#include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -22,6 +24,10 @@ typedef struct {
     const char *calibration;
     const char *sha256;
     const char *support_level;
+    const char *runtime_binding;
+    const char *runtime_target;
+    const char *runtime_backend;
+    const char *runtime_context;
 } models_add_options;
 
 typedef struct {
@@ -79,6 +85,10 @@ static const yvex_cli_field_spec registry_add_fields[] = {
                    selected_embedding_output_count, NULL),
     REGISTRY_FIELD("registered_selected_embedding_slice_bytes", YVEX_CLI_FIELD_U64,
                    selected_embedding_slice_bytes, NULL),
+    REGISTRY_FIELD("runtime_binding", YVEX_CLI_FIELD_TEXT, runtime_binding, ""),
+    REGISTRY_FIELD("runtime_target", YVEX_CLI_FIELD_TEXT, runtime_target, ""),
+    REGISTRY_FIELD("runtime_backend", YVEX_CLI_FIELD_TEXT, runtime_backend, ""),
+    REGISTRY_FIELD("runtime_context", YVEX_CLI_FIELD_U64, runtime_context, NULL),
 };
 
 static const yvex_cli_field_spec registry_inspect_fields[] = {
@@ -113,6 +123,10 @@ static const yvex_cli_field_spec registry_inspect_fields[] = {
     REGISTRY_FIELD("selected_embedding_slice_bytes", YVEX_CLI_FIELD_U64,
                    selected_embedding_slice_bytes, NULL),
     REGISTRY_FIELD("execution_ready", YVEX_CLI_FIELD_BOOL, execution_ready, NULL),
+    REGISTRY_FIELD("runtime_binding", YVEX_CLI_FIELD_TEXT, runtime_binding, ""),
+    REGISTRY_FIELD("runtime_target", YVEX_CLI_FIELD_TEXT, runtime_target, ""),
+    REGISTRY_FIELD("runtime_backend", YVEX_CLI_FIELD_TEXT, runtime_backend, ""),
+    REGISTRY_FIELD("runtime_context", YVEX_CLI_FIELD_U64, runtime_context, NULL),
 };
 
 static const yvex_model_registry_entry empty_registry_entry = {
@@ -120,7 +134,8 @@ static const yvex_model_registry_entry empty_registry_entry = {
     .qprofile = "", .calibration = "", .producer = "yvex", .schema_version = "v1",
     .path = "", .sha256 = "", .format = "", .architecture = "",
     .primary_tensor_name = "", .primary_tensor_role = "", .primary_tensor_dtype = "",
-    .primary_tensor_dims = "", .support_level = ""
+    .primary_tensor_dims = "", .support_level = "", .runtime_binding = "",
+    .runtime_target = "", .runtime_backend = ""
 };
 
 static const models_verify_pair verify_audit_pairs[] = {
@@ -185,15 +200,13 @@ static const models_verify_field verify_audit_head[] = {
 static const char *const literal_pair_1[] = { "gguf:",
     "  status: unavailable"};
 
-static const char *const literal_pair_2[] = { "boundary: selected-slice only, full-runtime generation unsupported",
-    "status: models-inspect"};
-
 static const char *const literal_pair_4[] = { "identity_status: recorded",
     "status: models-added"};
 
 static const char *const models_help_lines[] = {
     "usage: yvex model registry scan --root DIR [--registry FILE]",
-    "       yvex model registry add --path FILE [--alias ALIAS] [--support-level LEVEL] [--registry FILE]",
+    "       yvex model registry add --path FILE [--alias ALIAS] [--support-level LEVEL] "
+        "[--runtime-binding FILE --target ID --backend cpu|cuda --context N] [--registry FILE]",
     "       yvex model acquire TARGET [--models-root DIR] [--auth auto|required|never] [--dry-run] "
         "[--progress auto|live|plain|log|off] [--tick-seconds N] [--no-progress] [--audit | --output "
         "normal|table|audit]",
@@ -320,6 +333,10 @@ static int parse_models_add_options(int arg_count, char **args,
         else if (strcmp(args[i], "--calibration") == 0) options->calibration = args[++i];
         else if (strcmp(args[i], "--sha256") == 0) options->sha256 = args[++i];
         else if (strcmp(args[i], "--support-level") == 0) options->support_level = args[++i];
+        else if (strcmp(args[i], "--runtime-binding") == 0) options->runtime_binding = args[++i];
+        else if (strcmp(args[i], "--target") == 0) options->runtime_target = args[++i];
+        else if (strcmp(args[i], "--backend") == 0) options->runtime_backend = args[++i];
+        else if (strcmp(args[i], "--context") == 0) options->runtime_context = args[++i];
         else {
             yvex_cli_out_writef(stderr, "yvex: unknown models add option: %s\n", args[i]);
             return 2;
@@ -392,6 +409,8 @@ static int command_models_add(int arg_count, char **args)
     char primary_tensor_role[64] = {0};
     char primary_tensor_dtype[32] = {0};
     char primary_tensor_dims[128] = {0};
+    unsigned int runtime_fields = 0u;
+    char *context_end = NULL;
     int have_derived = 0;
     int rc;
 
@@ -423,6 +442,26 @@ static int command_models_add(int arg_count, char **args)
     entry.calibration = cli_options.calibration ? cli_options.calibration : entry.calibration;
     entry.path = cli_options.path;
     entry.support_level = cli_options.support_level ? cli_options.support_level : "";
+    runtime_fields += cli_options.runtime_binding != NULL;
+    runtime_fields += cli_options.runtime_target != NULL;
+    runtime_fields += cli_options.runtime_backend != NULL;
+    runtime_fields += cli_options.runtime_context != NULL;
+    if (runtime_fields != 0u && runtime_fields != 4u) {
+        yvex_cli_out_writef(stderr,
+            "yvex: a startup profile requires --runtime-binding, --target, --backend, and --context together\n");
+        return 2;
+    }
+    if (runtime_fields == 4u) {
+        errno = 0;
+        entry.runtime_context = strtoull(cli_options.runtime_context, &context_end, 10);
+        if (errno || !context_end || *context_end || entry.runtime_context == 0ull) {
+            yvex_cli_out_writef(stderr, "yvex: model registry add --context requires a positive integer\n");
+            return 2;
+        }
+        entry.runtime_binding = cli_options.runtime_binding;
+        entry.runtime_target = cli_options.runtime_target;
+        entry.runtime_backend = cli_options.runtime_backend;
+    }
 
     rc = populate_registry_identity(&entry,
                                     registered_sha256,
@@ -442,6 +481,10 @@ static int command_models_add(int arg_count, char **args)
                         "sha256 mismatch: expected %s got %s",
                         cli_options.sha256, registered_sha256);
         return print_yvex_error(&err, exit_for_status(YVEX_ERR_STATE));
+    }
+    if (runtime_fields == 4u) {
+        rc = yvex_model_registry_startup_validate(&entry, &err);
+        if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
     }
 
     rc = models_registry_open(&registry, cli_options.registry_path, 1, &err);
@@ -477,13 +520,12 @@ static int command_models_list(int arg_count, char **args)
     count = yvex_model_registry_count(registry);
     if (output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
         yvex_cli_out_writef(stdout, "MODELS  count=%llu\n\n", count);
-        yvex_cli_out_writef(stdout, "%-44s  %-10s  %-16s  %7s  %12s  %s\n",
+        yvex_cli_out_writef(stdout, "%-44s  %-10s  %-8s  %7s  %s\n",
                "ALIAS",
                "FAMILY",
-               "CLASS",
-               "TENSORS",
-               "SIZE",
-               "READY");
+               "BACKEND",
+               "CONTEXT",
+               "STARTUP");
         for (i = 0; i < count; ++i) {
             const yvex_model_registry_entry *entry = yvex_model_registry_at(registry, i);
             print_model_registry_entry_cli(entry);
@@ -751,17 +793,14 @@ static int command_models_inspect(int arg_count, char **args)
         return 2;
     }
     if (output_mode != YVEX_MODELS_OUTPUT_AUDIT) {
-        int selected_slice =
-            strcmp(entry->alias, "deepseek4-v4-flash-selected-embed") == 0 ||
-            strcmp(entry->alias, "deepseek4-v4-flash-selected-embed-rmsnorm") == 0;
-        const char *display_family = selected_slice ? "deepseek" : (entry->family ? entry->family : "");
-        const char *display_class = selected_slice
-            ? "selected-slice"
-            : (entry->artifact_class ? entry->artifact_class : "");
+        yvex_error startup_error;
+        int startup_ready;
+        yvex_error_clear(&startup_error);
+        startup_ready = yvex_model_registry_startup_validate(entry, &startup_error) == YVEX_OK;
         yvex_cli_out_writef(stdout, "model: %s\n", entry->alias);
         yvex_cli_out_writef(stdout, "family: %s class=%s tensors=%llu size=%llu\n",
-               display_family,
-               display_class,
+               entry->family ? entry->family : "",
+               entry->artifact_class ? entry->artifact_class : "",
                entry->tensor_count,
                entry->file_size);
         yvex_cli_out_writef(stdout, "primary: %s %s %s\n",
@@ -771,7 +810,13 @@ static int command_models_inspect(int arg_count, char **args)
         yvex_cli_out_writef(stdout, "state: %s execution_ready=%s\n",
                entry->support_level ? entry->support_level : "",
                entry->execution_ready ? "true" : "false");
-        yvex_cli_out_lines(stdout, literal_pair_2, sizeof(literal_pair_2) / sizeof(literal_pair_2[0]));
+        if (startup_ready)
+            yvex_cli_out_writef(stdout, "startup: ready backend=%s context=%llu\n",
+                                entry->runtime_backend, entry->runtime_context);
+        else
+            yvex_cli_out_writef(stdout, "startup: unavailable (%s)\n",
+                                yvex_error_message(&startup_error));
+        yvex_cli_out_writef(stdout, "status: models-inspect\n");
         yvex_model_registry_close(registry);
         return 0;
     }

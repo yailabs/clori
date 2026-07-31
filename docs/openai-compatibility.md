@@ -35,13 +35,18 @@ or artifact, owns no KV, and executes no application tool. `yvexd` remains the
 only model host and process. The adapter refuses non-loopback bind addresses; authentication, TLS, CORS, and
 remote exposure are outside this profile.
 
-Enable it on the daemon; the listener is prepared before model admission and
-begins accepting requests only after `runtime.ready`:
+The normal registry-backed runtime start enables the default loopback listener.
+Select a startup-ready model and start the host; the listener is prepared
+before model admission and begins accepting requests only after
+`runtime.ready`:
 
 ```sh
-./yvexd --model "$YVEX_MODEL_ARTIFACT" --runtime-binding "$YVEX_RUNTIME_BINDING" --backend cuda --context 4096 --openai on --openai-port 8001
+./yvex model list
+./yvex model select deepseek4-v4-flash-runtime-iq2xxs
+./yvex runtime start
 ```
 
+The alias is illustrative and must be replaced by a startup-ready local entry.
 Adapter-to-runtime frame I/O has a bounded 600000 ms default timeout; local
 operators may override it with `--openai-timeout-ms` for their admitted workload.
 

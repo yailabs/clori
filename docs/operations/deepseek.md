@@ -7,11 +7,23 @@ gates live in [`ROADMAP.md`](../../ROADMAP.md).
 
 ## Product path
 
-Export the admitted DeepSeek artifact and binding, then follow the explicit
-first-start procedure in the [operator runbook](../operator-runbook.md). That
-procedure uses `yvex runtime start` to enter the sole persistent `yvexd`
-process. The command authenticates the artifact and binding and builds the
-resident runtime model; configured model defaults are optional and are not
+List the local startup profiles and select the admitted DeepSeek entry, then
+start the sole persistent `yvexd` process:
+
+```sh
+./yvex model list
+./yvex model show deepseek4-v4-flash-runtime-iq2xxs
+./yvex model select deepseek4-v4-flash-runtime-iq2xxs
+./yvex model selected
+./yvex runtime start
+```
+
+The alias is an example; use a DeepSeek row whose `STARTUP` column is `yes`.
+No model path or environment variable is required during normal operation.
+The command authenticates the selected artifact and binding and builds the
+resident runtime model. Importing an existing artifact into the registry is a
+one-time advanced operation documented in the
+[operator runbook](../operator-runbook.md#registering-an-existing-model), not
 artifact admission.
 
 After `runtime.ready`, verify and use the same resident model from another

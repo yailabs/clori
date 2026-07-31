@@ -159,7 +159,7 @@ static void print_prepare_common(const yvex_cli_models_prepare_options *options,
     yvex_cli_out_writef(stdout, "source_manifest_path: %s\n", manifest_path);
     yvex_cli_out_writef(stdout, "conversion_plan_path: %s\n", plan_path);
     yvex_cli_out_writef(stdout, "registry_path: %s\n",
-        registry_path && registry_path[0] ? registry_path : ".yvex/models.local.json");
+        registry_path && registry_path[0] ? registry_path : "unavailable");
     yvex_cli_out_writef(stdout, "alias: deepseek4-v4-flash-selected-embed\n");
     yvex_cli_out_writef(stdout, "overwrite: %s\n", options->overwrite ? "true" : "false");
     yvex_cli_out_writef(stdout, "dry_run: %s\n", options->dry_run ? "true" : "false");

@@ -368,11 +368,17 @@ mkdir -p "$XDG_CONFIG_HOME"
   --arch llama \
   --overwrite >/dev/null
 
+BINDING="$PWD/$ROOT/runtime.binding"
+ARTIFACT="$PWD/$GGUF"
+printf 'binding fixture\n' > "$BINDING"
+
 "$YVEX_BIN" model registry scan --root "$ROOT" --registry "$REG" > "$ROOT/scan.out"
 grep 'candidate: deepseek4-v4-flash-selected-embed' "$ROOT/scan.out"
 grep 'status: models-scan' "$ROOT/scan.out"
 
-"$YVEX_BIN" model registry add --path "$GGUF" --registry "$REG" > "$ROOT/add.out"
+"$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
+  --runtime-binding "$BINDING" --target deepseek4-v4-flash \
+  --backend cpu --context 4096 > "$ROOT/add.out"
 grep 'alias: deepseek4-v4-flash-selected-embed' "$ROOT/add.out"
 grep 'status: models-added' "$ROOT/add.out"
 test -f "$REG"
@@ -380,27 +386,24 @@ test -f "$REG"
 "$YVEX_BIN" model list --registry "$REG" > "$ROOT/list.out"
 grep 'deepseek4-v4-flash-selected-embed' "$ROOT/list.out"
 grep 'MODELS  count=1' "$ROOT/list.out"
-matches "$ROOT/list.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}CLASS[[:space:]]{2,}TENSORS[[:space:]]{2,}SIZE[[:space:]]{2,}READY$'
-matches "$ROOT/list.out" '^deepseek4-v4-flash-selected-embed[[:space:]]{2,}deepseek4[[:space:]]{2,}embed[[:space:]]{2,}[0-9]+[[:space:]]{2,}[0-9]+[[:space:]]{2,}no$'
+matches "$ROOT/list.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}BACKEND[[:space:]]{2,}CONTEXT[[:space:]]{2,}STARTUP$'
+matches "$ROOT/list.out" '^deepseek4-v4-flash-selected-embed[[:space:]]+deepseek4[[:space:]]+cpu[[:space:]]+4096[[:space:]]+yes$'
 grep 'status: models-list' "$ROOT/list.out"
 
 "$YVEX_BIN" model list --registry "$REG" --output table > "$ROOT/list-table.out"
 grep 'MODELS  count=1' "$ROOT/list-table.out"
-matches "$ROOT/list-table.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}CLASS[[:space:]]{2,}TENSORS[[:space:]]{2,}SIZE[[:space:]]{2,}READY$'
+matches "$ROOT/list-table.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}BACKEND[[:space:]]{2,}CONTEXT[[:space:]]{2,}STARTUP$'
 grep 'deepseek4-v4-flash-selected-embed' "$ROOT/list-table.out"
 grep 'status: models-list' "$ROOT/list-table.out"
 
 "$YVEX_BIN" model list --registry "$REG" --audit > "$ROOT/list-audit.out"
 grep 'registered_sha256:' "$ROOT/list-audit.out"
 grep 'registered_selected_embedding_ready:' "$ROOT/list-audit.out"
+grep 'startup_profile_ready: true' "$ROOT/list-audit.out"
 grep 'status: models-list' "$ROOT/list-audit.out"
 
-BINDING="$PWD/$ROOT/runtime.binding"
-ARTIFACT="$PWD/$GGUF"
-printf 'binding fixture\n' > "$BINDING"
-"$YVEX_BIN" model select deepseek4-v4-flash-selected-embed \
-  --artifact "$ARTIFACT" --runtime-binding "$BINDING" \
-  --target deepseek4-v4-flash --backend cpu --context 4096 > "$ROOT/use.out"
+YVEX_MODELS_REGISTRY="$REG" \
+  "$YVEX_BIN" model select deepseek4-v4-flash-selected-embed > "$ROOT/use.out"
 grep 'selected model: deepseek4-v4-flash-selected-embed' "$ROOT/use.out"
 
 "$YVEX_BIN" model selected > "$ROOT/current.out"
@@ -414,8 +417,8 @@ grep 'unsupported output mode: nope' "$ROOT/list-bad-output.err"
 
 "$YVEX_BIN" model show deepseek4-v4-flash-selected-embed --registry "$REG" > "$ROOT/inspect.out"
 grep 'model: deepseek4-v4-flash-selected-embed' "$ROOT/inspect.out"
-grep 'family: deepseek class=selected-slice' "$ROOT/inspect.out"
-grep 'boundary: selected-slice only, full-runtime generation unsupported' "$ROOT/inspect.out"
+grep 'family: deepseek4 class=embed' "$ROOT/inspect.out"
+grep 'startup: ready backend=cpu context=4096' "$ROOT/inspect.out"
 grep 'status: models-inspect' "$ROOT/inspect.out"
 test "$(wc -l < "$ROOT/inspect.out")" -le 8
 
@@ -428,6 +431,17 @@ grep 'status: models-inspect' "$ROOT/inspect-audit.out"
 "$YVEX_BIN" model show deepseek4-v4-flash-selected-embed --registry "$REG" --output nope > "$ROOT/inspect-bad-output.out" 2> "$ROOT/inspect-bad-output.err" && exit 1 || true
 grep 'unsupported output mode: nope' "$ROOT/inspect-bad-output.err"
 
+"$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
+  --alias deepseek4-v4-flash-runtime-incomplete > "$ROOT/add-incomplete.out"
+YVEX_MODELS_REGISTRY="$REG" \
+  "$YVEX_BIN" model select deepseek4-v4-flash-runtime-incomplete \
+  > "$ROOT/use-incomplete.out" 2> "$ROOT/use-incomplete.err" && exit 1 || true
+grep 'model has no complete startup profile' "$ROOT/use-incomplete.err"
+"$YVEX_BIN" model selected > "$ROOT/current-after-incomplete.out"
+grep 'deepseek4-v4-flash-selected-embed' "$ROOT/current-after-incomplete.out"
+"$YVEX_BIN" model registry remove deepseek4-v4-flash-runtime-incomplete \
+  --registry "$REG" > "$ROOT/remove-incomplete.out"
+
 "$YVEX_BIN" model registry remove deepseek4-v4-flash-selected-embed --registry "$REG" > "$ROOT/remove.out"
 grep 'removed: deepseek4-v4-flash-selected-embed' "$ROOT/remove.out"
 grep 'status: models-removed' "$ROOT/remove.out"
@@ -435,8 +449,9 @@ grep 'status: models-removed' "$ROOT/remove.out"
 "$YVEX_BIN" model selected > "$ROOT/current-after-remove.out"
 grep 'deepseek4-v4-flash-selected-embed' "$ROOT/current-after-remove.out"
 
-"$YVEX_BIN" model select missing > "$ROOT/use-missing.out" 2> "$ROOT/use-missing.err" && exit 1 || true
-grep 'required flag missing: --artifact' "$ROOT/use-missing.err"
+YVEX_MODELS_REGISTRY="$REG" \
+  "$YVEX_BIN" model select missing > "$ROOT/use-missing.out" 2> "$ROOT/use-missing.err" && exit 1 || true
+grep 'model is not registered: missing' "$ROOT/use-missing.err"
 "$YVEX_BIN" model selected > "$ROOT/current-after-refusal.out"
 grep 'deepseek4-v4-flash-selected-embed' "$ROOT/current-after-refusal.out"
 
@@ -1336,7 +1351,7 @@ grep 'requires auto|required|never' "$ROOT/download-bad-auth.err"
 "$YVEX_BIN" model acquire --provider github --repo test-org/test-model > "$ROOT/download-github-no-asset.out" 2> "$ROOT/download-github-no-asset.err" && exit 1 || true
 grep 'requires --asset GLOB' "$ROOT/download-github-no-asset.err"
 "$YVEX_BIN" model acquire gemma-4-12b-it --surprise > "$ROOT/download-unknown-flag.out" 2> "$ROOT/download-unknown-flag.err" && exit 1 || true
-grep 'unknown models download option' "$ROOT/download-unknown-flag.err"
+grep 'unknown flag: --surprise' "$ROOT/download-unknown-flag.err"
 "$YVEX_BIN" model acquire gemma-4-12b-it extra > "$ROOT/download-extra-positional.out" 2> "$ROOT/download-extra-positional.err" && exit 1 || true
 grep 'extra positional argument' "$ROOT/download-extra-positional.err"
 

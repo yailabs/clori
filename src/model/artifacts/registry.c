@@ -68,7 +68,13 @@ static const registry_string_field registry_string_fields[] = {
     {offsetof(yvex_model_registry_owned_entry, primary_tensor_dims),
      offsetof(yvex_model_registry_entry, primary_tensor_dims), "primary_tensor_dims"},
     {offsetof(yvex_model_registry_owned_entry, support_level),
-     offsetof(yvex_model_registry_entry, support_level), "support_level"}
+     offsetof(yvex_model_registry_entry, support_level), "support_level"},
+    {offsetof(yvex_model_registry_owned_entry, runtime_binding),
+     offsetof(yvex_model_registry_entry, runtime_binding), "runtime_binding"},
+    {offsetof(yvex_model_registry_owned_entry, runtime_target),
+     offsetof(yvex_model_registry_entry, runtime_target), "runtime_target"},
+    {offsetof(yvex_model_registry_owned_entry, runtime_backend),
+     offsetof(yvex_model_registry_entry, runtime_backend), "runtime_backend"}
 };
 
 static size_t registry_string_field_count(void)
@@ -136,6 +142,7 @@ static void registry_entry_view(const yvex_model_registry_owned_entry *owned,
     view->selected_embedding_output_count = owned->selected_embedding_output_count;
     view->selected_embedding_slice_bytes = owned->selected_embedding_slice_bytes;
     view->execution_ready = owned->execution_ready;
+    view->runtime_context = owned->runtime_context;
 }
 
 static int registry_copy_entry(yvex_model_registry_owned_entry *dst,
@@ -165,6 +172,7 @@ static int registry_copy_entry(yvex_model_registry_owned_entry *dst,
     dst->selected_embedding_output_count = src->selected_embedding_output_count;
     dst->selected_embedding_slice_bytes = src->selected_embedding_slice_bytes;
     dst->execution_ready = src->execution_ready;
+    dst->runtime_context = src->runtime_context;
     for (field = 0u; field < registry_string_field_count(); ++field)
         if (!*owned_string_field(dst, registry_string_fields[field].owned_offset)) {
             registry_owned_entry_clear(dst);
@@ -441,6 +449,7 @@ int yvex_model_registry_default_path(char *out,
                                      yvex_error *err)
 {
     const char *env = getenv("YVEX_MODELS_REGISTRY");
+    yvex_paths paths;
     int n;
 
     if (!out || out_size == 0) {
@@ -450,13 +459,54 @@ int yvex_model_registry_default_path(char *out,
     if (env && env[0]) {
         n = snprintf(out, (size_t)out_size, "%s", env);
     } else {
-        n = snprintf(out, (size_t)out_size, ".yvex/models.local.json");
+        int rc = yvex_paths_default(&paths, err);
+        if (rc != YVEX_OK) return rc;
+        n = snprintf(out, (size_t)out_size, "%s/models.local.json", paths.data_dir);
     }
     if (n < 0 || (unsigned long long)n >= out_size) {
         out[0] = '\0';
         yvex_error_set(err, YVEX_ERR_BOUNDS, "model_registry_path", "registry path buffer too small");
         return YVEX_ERR_BOUNDS;
     }
+    return YVEX_OK;
+}
+
+/*
+ * Validate the persisted facts needed to construct one future yvexd invocation.
+ *
+ * This deliberately stops before artifact or binding admission: selection is inert, while the
+ * daemon remains the only owner allowed to authenticate and open the runtime model.
+ */
+int yvex_model_registry_startup_validate(const yvex_model_registry_entry *entry,
+                                         yvex_error *err)
+{
+    if (!entry) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model_registry_startup",
+                       "registry entry is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (!entry->path || entry->path[0] != '/' || !entry->runtime_binding ||
+        entry->runtime_binding[0] != '/' || !entry->runtime_target ||
+        !entry->runtime_target[0] || !entry->runtime_backend ||
+        (strcmp(entry->runtime_backend, "cpu") != 0 &&
+         strcmp(entry->runtime_backend, "cuda") != 0) ||
+        entry->runtime_context == 0ull) {
+        yvex_error_set(err, YVEX_ERR_STATE, "model_registry_startup",
+                       "model has no complete startup profile");
+        return YVEX_ERR_STATE;
+    }
+    if (access(entry->path, R_OK) != 0) {
+        yvex_error_setf(err, YVEX_ERR_IO, "model_registry_startup",
+                        "registered artifact is not readable: %s", entry->path);
+        return YVEX_ERR_IO;
+    }
+    if (access(entry->runtime_binding, R_OK) != 0) {
+        yvex_error_setf(err, YVEX_ERR_IO, "model_registry_startup",
+                        "registered runtime binding is not readable: %s",
+                        entry->runtime_binding);
+        return YVEX_ERR_IO;
+    }
+    yvex_error_clear(err);
     return YVEX_OK;
 }
 
@@ -568,6 +618,13 @@ int yvex_model_registry_add(yvex_model_registry *registry,
     if (access(entry->path, F_OK) != 0) {
         yvex_error_setf(err, YVEX_ERR_IO, "model_registry_add", "model path does not exist: %s", entry->path);
         return YVEX_ERR_IO;
+    }
+    if ((entry->runtime_binding && entry->runtime_binding[0]) ||
+        (entry->runtime_target && entry->runtime_target[0]) ||
+        (entry->runtime_backend && entry->runtime_backend[0]) ||
+        entry->runtime_context != 0ull) {
+        rc = yvex_model_registry_startup_validate(entry, err);
+        if (rc != YVEX_OK) return rc;
     }
     rc = registry_reserve(registry, registry->count + 1u, err);
     if (rc != YVEX_OK) return rc;
@@ -768,6 +825,10 @@ int yvex_model_registry_entry_derive_from_path(yvex_model_registry_entry *entry,
     entry->selected_embedding_output_count = 0ull;
     entry->selected_embedding_slice_bytes = 0ull;
     entry->execution_ready = 0;
+    entry->runtime_binding = "";
+    entry->runtime_target = "";
+    entry->runtime_backend = "";
+    entry->runtime_context = 0ull;
     return YVEX_OK;
 }
 
@@ -975,7 +1036,8 @@ static int registry_parse_json(const char *path,
     if (rc != YVEX_OK) return rc;
     if (!strstr(json, "\"schema\"") ||
         (!strstr(json, "yvex.models.local.v1") &&
-         !strstr(json, "yvex.models.local.v2"))) {
+         !strstr(json, "yvex.models.local.v2") &&
+         !strstr(json, "yvex.models.local.v3"))) {
         free(json);
         yvex_error_set(err, YVEX_ERR_FORMAT, "model_registry_json", "registry schema missing or unsupported");
         return YVEX_ERR_FORMAT;
@@ -1031,6 +1093,7 @@ static int registry_parse_json(const char *path,
         view.selected_embedding_output_count = extract_ull_in(obj_start, obj_end, "selected_embedding_output_count");
         view.selected_embedding_slice_bytes = extract_ull_in(obj_start, obj_end, "selected_embedding_slice_bytes");
         view.execution_ready = extract_bool_in(obj_start, obj_end, "execution_ready");
+        view.runtime_context = extract_ull_in(obj_start, obj_end, "runtime_context");
         rc = yvex_model_alias_validate(view.alias, err);
         if (rc != YVEX_OK) {
             free_entry_view_strings(&view);
