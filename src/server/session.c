@@ -586,16 +586,13 @@ static int session_turn_commit(server_session *session,
         session->state = session->attached_clients
                              ? YVEX_SERVER_SESSION_READY
                              : YVEX_SERVER_SESSION_DETACHED;
-    } else if (result->partial || result->sampled_token_count ||
+    } else if (status == YVEX_ERR_CANCELLED || result->partial ||
+               result->sampled_token_count ||
                result->final_position > result->initial_position) {
+        /* A cancelled generation context deliberately refuses continuation,
+         * even when its persistent-state candidate never became visible. Keep
+         * the server state aligned so the next turn cannot bypass reset. */
         session->state = YVEX_SERVER_SESSION_PARTIAL;
-    } else if (status == YVEX_ERR_CANCELLED) {
-        /* Cancellation before the first committed state change is a refused
-         * candidate, not a poisoned session. Preserve the prior conversation
-         * and let the attached client submit another turn. */
-        session->state = session->attached_clients
-                             ? YVEX_SERVER_SESSION_READY
-                             : YVEX_SERVER_SESSION_DETACHED;
     } else {
         session->state = YVEX_SERVER_SESSION_FAILED;
     }

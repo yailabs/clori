@@ -175,6 +175,9 @@ set -e
 cancel_pid=
 test "$cancel_status" -eq 130
 
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show cancel-live >"$root/cancel.session"
+grep -F 'partial' "$root/cancel.session" >/dev/null
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session reset cancel-live >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session cancel-live \
     --max-new-tokens 1 --strategy greedy 'Continue after cancellation.' \
     >"$root/cancel.retry"
