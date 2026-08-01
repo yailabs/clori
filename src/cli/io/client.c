@@ -862,14 +862,15 @@ static int generation_turn(const char *session_name,
     {
         int interrupted = turn_signals_close(&signals);
         if (interrupted) {
-            if (conversation) puts(interrupted == 2 ? "[cancelled; leaving chat]"
-                                                    : "[cancelled]");
+            if (conversation)
+                puts(interrupted == 2 ? "[cancelled; leaving chat]"
+                     : message.session_state == YVEX_SERVER_SESSION_PARTIAL
+                         ? "[cancelled; session partial — use /reset]" : "[cancelled]");
             return interrupted == 2 ? 131 : 130;
         }
     }
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-
 static int session_ensure(const char *name)
 {
     yvex_client_request request;

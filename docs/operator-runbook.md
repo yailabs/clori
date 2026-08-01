@@ -157,7 +157,9 @@ turn requests server-owned cancellation and returns to the prompt; a second
 Ctrl-C requests exit. With no active turn, the first Ctrl-C clears the line and
 a second consecutive Ctrl-C exits. EOF, cancellation, resize, and failure all
 restore bracketed-paste and terminal modes before returning control to the
-shell.
+shell. Cancellation before any committed state change leaves the session ready
+for another turn. If a token or persistent state was already committed, the
+console marks the session partial and requires `/reset` before new generation.
 
 ## One-shot requests
 

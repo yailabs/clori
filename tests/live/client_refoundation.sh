@@ -175,6 +175,11 @@ set -e
 cancel_pid=
 test "$cancel_status" -eq 130
 
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session cancel-live \
+    --max-new-tokens 1 --strategy greedy 'Continue after cancellation.' \
+    >"$root/cancel.retry"
+grep -F '1 generated' "$root/cancel.retry" >/dev/null
+
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime status --json >"$root/status.final.json"
 grep -F '"model_open_count":1' "$root/status.final.json" >/dev/null
 grep -E '"cancelled_requests":[1-9][0-9]*' "$root/status.final.json" >/dev/null
