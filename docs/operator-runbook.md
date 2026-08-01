@@ -158,8 +158,8 @@ Ctrl-C requests exit. With no active turn, the first Ctrl-C clears the line and
 a second consecutive Ctrl-C exits. EOF, cancellation, resize, and failure all
 restore bracketed-paste and terminal modes before returning control to the
 shell. Cancellation leaves the generation context partial and requires
-`/reset` before new generation; the reset keeps the resident model open while
-discarding the incomplete session state.
+`/reset` before new generation; the reset creates a fresh execution session
+while keeping the process-resident model open.
 
 ## One-shot requests
 

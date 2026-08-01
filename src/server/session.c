@@ -294,6 +294,20 @@ static int session_generation_open(server_session_registry *registry,
     }
     return rc;
 }
+
+static int session_execution_open(server_session_registry *registry,
+                                  server_session *session, yvex_error *err)
+{
+    yvex_runtime_session_open_request request;
+    yvex_runtime_model_failure failure;
+    memset(&request, 0, sizeof(request));
+    memset(&failure, 0, sizeof(failure));
+    request.backend = registry->options.backend;
+    request.maximum_host_bytes = registry->options.maximum_host_bytes;
+    request.maximum_device_bytes = registry->options.maximum_device_bytes;
+    return yvex_runtime_session_open(&session->execution, registry->model,
+                                     &request, &failure, err);
+}
 /*
  * Initialize one registry slot and its unique runtime execution session.
  *
@@ -303,8 +317,6 @@ static int session_create_locked(server_session_registry *registry,
                                  const char *requested,
                                  server_session **created, yvex_error *err)
 {
-    yvex_runtime_session_open_request request;
-    yvex_runtime_model_failure failure;
     server_session *session = NULL;
     char generated[YVEX_SERVER_SESSION_NAME_CAP];
     const char *name = requested;
@@ -353,13 +365,7 @@ static int session_create_locked(server_session_registry *registry,
         rc = YVEX_ERR_NOMEM;
         goto failure;
     }
-    memset(&request, 0, sizeof(request));
-    memset(&failure, 0, sizeof(failure));
-    request.backend = registry->options.backend;
-    request.maximum_host_bytes = registry->options.maximum_host_bytes;
-    request.maximum_device_bytes = registry->options.maximum_device_bytes;
-    rc = yvex_runtime_session_open(&session->execution, registry->model,
-                                   &request, &failure, err);
+    rc = session_execution_open(registry, session, err);
     if (rc != YVEX_OK) goto failure;
     atomic_init(&session->cancel_requested, 0);
     atomic_init(&session->active_turn, 0);
@@ -1069,20 +1075,20 @@ static int session_turn(server_session_registry *registry,
 }
 /*
  * Clear exact mutable session state while keeping model residency process-owned.
- *
- * Model identity and residency remain open.
+ * Reopening the execution session also drops a workspace recipe sealed by an
+ * interrupted turn; reusing that recipe for a differently sized first chunk
+ * would otherwise violate runtime workspace identity admission.
  */
 static int session_reset(server_session_registry *registry,
                          server_session *session, yvex_error *err)
 {
-    yvex_runtime_model_failure failure;
     int rc;
     session->state = YVEX_SERVER_SESSION_RESETTING;
     rc = yvex_runtime_generation_context_close(&session->generation, err);
-    memset(&failure, 0, sizeof(failure));
     if (rc == YVEX_OK)
-        rc = yvex_runtime_session_reset_persistent_state(
-            session->execution, &failure, err);
+        rc = yvex_runtime_session_close(&session->execution, err);
+    if (rc == YVEX_OK)
+        rc = session_execution_open(registry, session, err);
     if (rc != YVEX_OK) {
         session->state = YVEX_SERVER_SESSION_FAILED;
         return rc;
