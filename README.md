@@ -141,9 +141,9 @@ The daemon-backed console uses one `yvex>` prompt, one compact vertical
 attachment view, an immediately visible registry-derived slash catalog,
 in-place server-authored prefill progress, one compact turn summary, semantic
 TTY color, a categorized operational watch, and a detailed human trace.
+Ctrl-L clears and redraws the active prompt without changing session state;
 Ctrl-D exits cleanly even when discarding an unfinished line. Unsupported
-explicit-reasoning controls remain absent rather than inferring hidden
-reasoning.
+explicit-reasoning controls remain absent rather than inferring hidden reasoning.
 Live milestone and release-gate state remains only in
 [`ROADMAP.md`](ROADMAP.md).
 

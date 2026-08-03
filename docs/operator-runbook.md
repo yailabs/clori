@@ -188,6 +188,7 @@ commands
 
   Ctrl-C       cancel an active turn or clear input; press again to exit
   Ctrl-D       exit and discard an unfinished line
+  Ctrl-L       clear and redraw input
 
 yvex>
 ```
@@ -222,6 +223,10 @@ restore bracketed-paste and terminal modes before returning control to the
 shell. Cancellation leaves the generation context partial and requires
 `/reset` before new generation; the reset creates a fresh execution session
 while keeping the process-resident model open.
+
+Ctrl-L clears the visible terminal while the REPL prompt is active, then redraws
+the prompt and any input already typed. It does not detach, reset, cancel, or
+otherwise mutate the daemon-owned session.
 
 ## One-shot requests
 

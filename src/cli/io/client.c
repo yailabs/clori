@@ -1047,8 +1047,10 @@ static int repl_read_line(const char *prompt, const client_repl_history *history
             fflush(stdout);
             continue;
         }
-        if (byte == 8u || byte == 127u) {
-            repl_backspace(line, &count);
+        if (byte == '\f' && !paste)
+            fputs("\033[2J\033[H", stdout);
+        if ((byte == '\f' && !paste) || byte == 8u || byte == 127u) {
+            if (byte != '\f') repl_backspace(line, &count);
             repl_redraw(prompt, line ? line : "", count);
             continue;
         }

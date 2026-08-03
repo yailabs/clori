@@ -63,6 +63,7 @@ while test "$attempt" -lt 100; do
     sleep 0.01
 done
 test "$attempt" -lt 100
+printf 'draft\014\177\177\177\177\177' >&3
 printf '\033[200~hello\nworld 🌍\033[201~\n' >&3
 attempt=0
 while test "$attempt" -lt 100; do
@@ -86,6 +87,8 @@ wait "$repl_pid"
 repl_pid=
 
 esc=$(printf '\033')
+clear=$(printf '\033[2J\033[H')
+redrawn=$(printf '\033[2J\033[H\r\033[2K\033[38;5;81myvex>\033[0m draft')
 sed "s/${esc}\\[[0-9;]*m//g" "$root/typescript" | tr -d '\r' \
     >"$root/typescript.plain"
 grep -F 'YVEX 0.1.0 · protocol 5' "$root/typescript.plain" >/dev/null
@@ -104,8 +107,11 @@ grep -F '  /help        Discover canonical commands and operations.' \
     "$root/typescript.plain" >/dev/null
 grep -F '  /status      Return one composed runtime and attached-session snapshot.' \
     "$root/typescript.plain" >/dev/null
+grep -F '  Ctrl-L       clear and redraw input' "$root/typescript.plain" >/dev/null
 test "$(grep -Ec '^  /' "$root/typescript.plain")" -eq 15
 ! grep -F 'commands ·' "$root/typescript.plain" >/dev/null
+grep -F "$clear" "$root/typescript" >/dev/null
+grep -F "$redrawn" "$root/typescript" >/dev/null
 grep -F 'yvex>' "$root/typescript" >/dev/null
 grep -F 'processing 4 input tokens · 2/4 · 50.0%' "$root/typescript" >/dev/null
 grep -F 'processing 4 input tokens · 4/4 · 100%' "$root/typescript" >/dev/null

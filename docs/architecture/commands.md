@@ -130,10 +130,12 @@ rendered. Conversation output never includes raw events, logits, tensor facts,
 or capability walls.
 
 The line editor owns bounded in-memory history, registry-derived slash
-completion, UTF-8 deletion, bracketed multiline paste, resize redraw, and
-terminal restoration. Ctrl-D at an idle prompt exits, discarding any unfinished
-line. Ctrl-C cancels an active turn; at an idle prompt it clears the line, and a
-second consecutive Ctrl-C exits.
+completion, UTF-8 deletion, bracketed multiline paste, resize redraw, active
+screen clearing, and terminal restoration. Ctrl-L clears the visible terminal
+and redraws the current prompt and input without changing session state. Ctrl-D
+at an idle prompt exits, discarding any unfinished line. Ctrl-C cancels an
+active turn; at an idle prompt it clears the line, and a second consecutive
+Ctrl-C exits.
 
 ### Compact status
 

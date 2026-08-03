@@ -506,13 +506,9 @@ void yvex_cli_out_repl_catalog(void)
     for (pass = 0u; pass < 3u; ++pass) {
         for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
             const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
-            int is_help = descriptor->runtime_adapter == YVEX_OPERATOR_RUNTIME_HELP;
-            int is_quit = descriptor->repl_adapter == YVEX_OPERATOR_REPL_QUIT;
-            if (!strcmp(descriptor->slash_projection, "none") ||
-                (pass == 0u && !is_help) ||
-                (pass == 1u && (is_help || is_quit)) ||
-                (pass == 2u && !is_quit))
-                continue;
+            int priority = descriptor->runtime_adapter == YVEX_OPERATOR_RUNTIME_HELP ? 0
+                         : descriptor->repl_adapter == YVEX_OPERATOR_REPL_QUIT ? 2 : 1;
+            if (!strcmp(descriptor->slash_projection, "none") || priority != (int)pass) continue;
             printf("\n  %s%-12s%s %s%s%s", style.accent,
                    descriptor->slash_projection, style.reset, style.dim,
                    descriptor->summary, style.reset);
@@ -522,6 +518,8 @@ void yvex_cli_out_repl_catalog(void)
            style.warning, "Ctrl-C", style.reset, style.dim, style.reset);
     printf("\n  %s%-12s%s %sexit and discard an unfinished line%s", style.accent,
            "Ctrl-D", style.reset, style.dim, style.reset);
+    printf("\n  %s%-12s%s %sclear and redraw input%s", style.accent, "Ctrl-L",
+           style.reset, style.dim, style.reset);
     puts("\n");
 }
 
