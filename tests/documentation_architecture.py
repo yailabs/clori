@@ -290,7 +290,7 @@ def check_project_control() -> None:
     if len(roadmap.splitlines()) > 350:
         fail("ROADMAP.md exceeds 350 lines")
     active_next = re.findall(r"^Active Next: (\S+)$", roadmap, flags=re.MULTILINE)
-    if active_next != ["V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0"]:
+    if active_next != ["V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0"]:
         fail(f"unexpected Active Next: {active_next}")
     active_rows = re.findall(
         r"^\| \d+ \| `([^`]+)` \| `active` \|", roadmap, flags=re.MULTILINE
@@ -302,8 +302,8 @@ def check_project_control() -> None:
         "V010.REPO.CODE.COMMENTARY.0": "complete",
         "V010.OPERATOR.REPL.CONSOLE.0": "complete",
         "V010.REBASE.DEEPSEEK.DSPARK.0": "complete",
-        "V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0": "active",
-        "V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0": "blocked",
+        "V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0": "complete",
+        "V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0": "active",
         "V010.EVAL.DEEPSEEK.0": "blocked",
         "V010.BENCH.DEEPSEEK.0": "not-measured",
         "V010.RELEASE.0": "blocked",

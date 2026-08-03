@@ -111,6 +111,8 @@ static const runtime_refusal_spec runtime_refusals[] = {
      "runtime binding materialization could not be reopened"},
     {YVEX_RUNTIME_MODEL_FAILURE_BINDING, YVEX_ERR_FORMAT, "runtime-import",
      "runtime binding import did not reconstruct sealed runtime facts"},
+    {YVEX_RUNTIME_MODEL_FAILURE_DESCRIPTOR, YVEX_ERR_FORMAT, "physical-execution-ir",
+     "runtime physical execution decisions could not be compiled"},
     {YVEX_RUNTIME_MODEL_FAILURE_IDENTITY, YVEX_ERR_FORMAT, "imported-identity", "import identity is invalid"},
     {YVEX_RUNTIME_MODEL_FAILURE_DESCRIPTOR, YVEX_ERR_FORMAT, "tokenizer-plan",
      "artifact tokenizer could not be admitted and bound to the runtime model"},
@@ -156,9 +158,10 @@ int yvex_runtime_private_success(yvex_error *err) {
 }
 
 static int runtime_attention_state_provider_valid(const yvex_attention_state_provider *provider) {
-    return provider && provider->schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V3 &&
+    return provider && provider->schema_version == YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V4 &&
            provider->context && provider->prepare && provider->summary && provider->view &&
            provider->identity && provider->begin && provider->stage &&
+           provider->select_prefix &&
            provider->prepare_commit && provider->publish_commit && provider->cancel_commit &&
            provider->commit && provider->abort &&
            provider->reset && provider->invalidate && provider->release;
@@ -379,6 +382,7 @@ static int runtime_model_release(yvex_runtime_model *model, yvex_error *err) {
     }
     rc = yvex_runtime_residency_close(&model->residency, err);
     if (rc != YVEX_OK) return rc;
+    yvex_physical_execution_ir_close(&model->physical_execution);
     yvex_tokenizer_close(model->tokenizer);
     model->tokenizer = NULL;
     yvex_materialization_session_close(model->materialization);
@@ -587,6 +591,62 @@ static void runtime_model_summary_bind(
     model->summary.attention_binding_count = attention->required_binding_count;
     model->summary.draft_attention_binding_count =
         draft_attention ? draft_attention->required_binding_count : 0ull;
+    {
+        const yvex_physical_execution_summary *physical =
+            yvex_physical_execution_ir_summary(model->physical_execution);
+        if (physical) {
+            model->summary.physical_execution_decision_count = physical->decision_count;
+            yvex_runtime_identity_copy(model->summary.physical_execution_identity,
+                                       physical->identity);
+        }
+    }
+}
+
+static int runtime_model_residency_open(
+    yvex_runtime_model *model, const yvex_runtime_model_open_request *request,
+    const yvex_runtime_descriptor_summary *descriptor_summary,
+    const yvex_attention_summary *attention_summary,
+    yvex_runtime_private_refusal_id *refusal, yvex_error *err)
+{
+    yvex_runtime_residency_options options;
+    yvex_runtime_residency_failure residency_failure;
+    yvex_runtime_residency_summary summary;
+    unsigned long long started;
+    int rc;
+    *refusal = YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY;
+    if (!attention_summary->required_binding_count) return YVEX_OK;
+    started = yvex_core_monotonic_ns();
+    rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_RESIDENCY,
+                                0ull, attention_summary->required_binding_count, err);
+    memset(&options, 0, sizeof(options));
+    options.maximum_host_bytes = request->maximum_host_bytes;
+    memset(&residency_failure, 0, sizeof(residency_failure));
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_residency_prepare(&model->residency, model, &options,
+                                            &residency_failure, err);
+    runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_RESIDENCY, started);
+    if (rc != YVEX_OK) return rc;
+    model->view.residency = model->residency;
+    memset(&summary, 0, sizeof(summary));
+    rc = yvex_runtime_residency_snapshot(model->residency, &summary, NULL, NULL, err);
+    if (rc != YVEX_OK || !summary.model_complete || !summary.host_locked ||
+        summary.binding_count != descriptor_summary->tensor_count ||
+        summary.encoded_bytes != descriptor_summary->payload_bytes ||
+        !summary.core_complete || !summary.envelope_complete ||
+        !yvex_runtime_logits_residency_admit(&model->summary.capabilities, &summary))
+        {
+            *refusal = YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY_COMPLETE;
+            if (rc == YVEX_OK) {
+                yvex_error_set(err, YVEX_ERR_FORMAT, "runtime.model.residency",
+                               "runtime residency is incomplete for the admitted descriptor");
+                rc = YVEX_ERR_FORMAT;
+            }
+            return rc;
+        }
+    model->summary.capabilities.attention_weight_residency_ready = 1;
+    model->summary.capabilities.attention_envelope_ready =
+        model->summary.capabilities.attention_envelope_ready && summary.envelope_complete;
+    return YVEX_OK;
 }
 
 int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_open_request *request,
@@ -598,9 +658,7 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     const yvex_attention_summary *draft_attention_summary;
     yvex_runtime_binding_failure binding_failure;
     yvex_materialization_options materialization_options;
-    yvex_runtime_residency_options residency_options;
-    yvex_runtime_residency_failure residency_failure;
-    yvex_runtime_residency_summary residency_summary;
+    yvex_runtime_private_refusal_id residency_refusal;
     unsigned long long total_started, phase_started;
     int rc;
     if (out) *out = NULL;
@@ -690,6 +748,13 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
         return runtime_model_open_fail(
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_IMPORT, 1ull, 0ull, err, (yvex_status)rc);
     descriptor_summary = yvex_runtime_descriptor_summary_get(model->descriptor);
+    rc = yvex_physical_execution_ir_build(
+        &model->physical_execution, model->materialization, model->descriptor,
+        model->binding_summary.profile_identity, err);
+    if (rc != YVEX_OK)
+        return runtime_model_open_fail(
+            out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_PHYSICAL_EXECUTION,
+            1ull, 0ull, err, (yvex_status)rc);
     attention_summary = model->adapter->graph()->plan_summary(model->attention);
     draft_attention_summary = model->adapter->graph()->plan_summary(
         model->draft_attention);
@@ -741,41 +806,15 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     model->view.attention = model->attention;
     model->view.draft_attention = model->draft_attention;
     model->view.descriptor = model->descriptor;
+    model->view.physical_execution = model->physical_execution;
     model->view.tokenizer = model->tokenizer;
     model->view.materialization = model->materialization;
-    if (attention_summary->required_binding_count) {
-        phase_started = yvex_core_monotonic_ns();
-        rc = runtime_model_progress(request, YVEX_RUNTIME_LIFECYCLE_RESIDENCY,
-                                    0ull, attention_summary->required_binding_count, err);
-        memset(&residency_options, 0, sizeof(residency_options));
-        residency_options.maximum_host_bytes = request->maximum_host_bytes;
-        memset(&residency_failure, 0, sizeof(residency_failure));
-        if (rc == YVEX_OK)
-            rc = yvex_runtime_residency_prepare(&model->residency, model, &residency_options,
-                                                &residency_failure, err);
-        runtime_model_timing(model, YVEX_RUNTIME_LIFECYCLE_RESIDENCY, phase_started);
-        if (rc != YVEX_OK)
-            return runtime_model_open_fail(
-                out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY, 1ull, 0ull, err,
-                (yvex_status)rc);
-        model->view.residency = model->residency;
-        memset(&residency_summary, 0, sizeof(residency_summary));
-        rc = yvex_runtime_residency_snapshot(
-            model->residency, &residency_summary, NULL, NULL, err);
-        if (rc != YVEX_OK || !residency_summary.model_complete ||
-            !residency_summary.host_locked ||
-            residency_summary.binding_count != descriptor_summary->tensor_count ||
-            residency_summary.encoded_bytes != descriptor_summary->payload_bytes ||
-            !residency_summary.core_complete || !residency_summary.envelope_complete ||
-            !yvex_runtime_logits_residency_admit(&model->summary.capabilities, &residency_summary))
-            return runtime_model_open_fail(
-                out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY_COMPLETE, 1ull, 0ull, err,
-                rc == YVEX_OK ? YVEX_ERR_FORMAT : (yvex_status)rc);
-        model->summary.capabilities.attention_weight_residency_ready = 1;
-        model->summary.capabilities.attention_envelope_ready =
-            model->summary.capabilities.attention_envelope_ready &&
-            residency_summary.envelope_complete;
-    }
+    rc = runtime_model_residency_open(model, request, descriptor_summary,
+                                      attention_summary, &residency_refusal, err);
+    if (rc != YVEX_OK)
+        return runtime_model_open_fail(
+            out, model, failure, residency_refusal, 1ull, 0ull, err,
+            (yvex_status)rc);
     rc = yvex_artifact_snapshot_validate(model->artifact, NULL, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(

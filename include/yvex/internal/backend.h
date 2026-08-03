@@ -117,7 +117,7 @@ typedef struct {
     yvex_backend_attention_rolling main_rolling, indexer_rolling;
     const yvex_backend_cancellation *cancellation;
     unsigned int evidence_level;
-    int candidate_block_visible;
+    int candidate_block_visible, retain_prefix_checkpoints;
     unsigned long long max_host_bytes, max_device_bytes;
 } yvex_backend_attention_job;
 typedef struct {
@@ -321,6 +321,9 @@ static inline int backend_tensor_owner_is(const yvex_backend *backend,
 {
     return backend && tensor && tensor->owner == backend && tensor->owner_id != 0ull;
 }
+int yvex_backend_tensor_f32_subview(
+    const yvex_device_tensor *source, unsigned long long offset,
+    unsigned long long count, yvex_device_tensor *view);
 /* Rewind a serialized device workspace while preserving its stable address and peak. */
 static inline void backend_workspace_reset(yvex_backend *backend)
 {
@@ -362,6 +365,11 @@ int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char 
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
     unsigned long long row_width, unsigned long long row_bytes, const yvex_device_tensor *input,
     yvex_device_tensor *output, unsigned long long *kernel_launches, yvex_error *err);
+int yvex_backend_cuda_argmax_f32(
+    yvex_backend *backend, const yvex_device_tensor *values,
+    unsigned long long count, unsigned int *selected_token, float *selected_value,
+    unsigned long long *tie_count, unsigned long long *kernel_launches,
+    yvex_error *err);
 int yvex_backend_state_residency_attach(
     yvex_backend *backend, const void *context,
     yvex_backend_state_resolve_fn resolve, unsigned long long generation,

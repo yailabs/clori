@@ -64,12 +64,10 @@ static __device__ float f16_bits_to_float(unsigned int h)
     }
     return __uint_as_float(raw);
 }
-
 static __device__ unsigned int qtype_load_u16(const unsigned char *bytes)
 {
     return (unsigned int)bytes[0] | ((unsigned int)bytes[1] << 8);
 }
-
 static __device__ unsigned int qtype_load_u32(const unsigned char *bytes)
 {
     return (unsigned int)bytes[0] |
@@ -77,12 +75,10 @@ static __device__ unsigned int qtype_load_u32(const unsigned char *bytes)
            ((unsigned int)bytes[2] << 16) |
            ((unsigned int)bytes[3] << 24);
 }
-
 static __device__ float bf16_bits_to_float(unsigned int bits)
 {
     return __uint_as_float(bits << 16);
 }
-
 static __device__ float float_to_bf16_rne(float value)
 {
     unsigned int bits = __float_as_uint(value);
@@ -114,7 +110,55 @@ extern "C" __global__ void yvex_attention_bf16_round(
     }
     values[index] = float_to_bf16_rne(value);
 }
-
+extern "C" __global__ void yvex_argmax_f32(
+    const float *values, unsigned long long count, unsigned int *selected_token,
+    float *selected_value, unsigned long long *tie_count, int *status)
+{
+    __shared__ float maxima[128];
+    __shared__ unsigned long long indices[128], ties[128];
+    unsigned int lane = threadIdx.x;
+    float best = -3.402823466e+38F;
+    unsigned long long best_index = ~0ull, tied = 0ull;
+    if (!status || blockIdx.x || blockDim.x != 128u || !values || !count ||
+        !selected_token || !selected_value || !tie_count) {
+        if (status && !blockIdx.x && !lane) atomicCAS(status, 0, 2);
+        return;
+    }
+    for (unsigned long long index = lane; index < count; index += blockDim.x) {
+        float value = values[index];
+        if (!isfinite(value)) atomicCAS(status, 0, 1);
+        else if (value > best) best = value, best_index = index, tied = 1ull;
+        else if (value == best) {
+            if (index < best_index) best_index = index;
+            tied++;
+        }
+    }
+    maxima[lane] = best;
+    indices[lane] = best_index;
+    ties[lane] = tied;
+    __syncthreads();
+    if (*status) return;
+    for (unsigned int stride = 64u; stride; stride >>= 1u) {
+        if (lane < stride) {
+            float other = maxima[lane + stride];
+            if (other > maxima[lane]) {
+                maxima[lane] = other;
+                indices[lane] = indices[lane + stride];
+                ties[lane] = ties[lane + stride];
+            } else if (other == maxima[lane]) {
+                if (indices[lane + stride] < indices[lane])
+                    indices[lane] = indices[lane + stride];
+                ties[lane] += ties[lane + stride];
+            }
+        }
+        __syncthreads();
+    }
+    if (!lane) {
+        *selected_token = (unsigned int)indices[0];
+        *selected_value = maxima[0];
+        *tie_count = ties[0];
+    }
+}
 static __device__ float e8m0_bits_to_float(unsigned int bits)
 {
     if (bits == 0xffu) return __uint_as_float(0x7fc00000u);
@@ -163,7 +207,6 @@ static __device__ __constant__ unsigned short iq2_xxs_grid[256] = {
     37888, 37922, 37956, 38225, 39041, 39200, 40962, 41040, 41093, 41225, 41472,
     42008, 43088, 43268
 };
-
 static __device__ unsigned int iq2_xxs_signs(unsigned int low)
 {
     unsigned int parity = 0u;
@@ -171,7 +214,6 @@ static __device__ unsigned int iq2_xxs_signs(unsigned int low)
     while (value) { parity ^= value & 1u; value >>= 1u; }
     return low | (parity << 7u);
 }
-
 static __device__ float qtype_value(const unsigned char *encoded,
                                          unsigned long long index,
                                          unsigned int qtype)
@@ -593,7 +635,6 @@ static __device__ float qtype_warp_dot(const unsigned char *row, const float *ve
 }
 #define YVEX_CUDA_Q8_K_BLOCK 256ull
 #define YVEX_CUDA_Q8_K_BYTES 292ull
-
 extern "C" __global__ void yvex_q8_quantize(
     unsigned char *encoded, const float *values, unsigned long long width,
     unsigned long long rows, int *status)
@@ -643,13 +684,11 @@ extern "C" __global__ void yvex_q8_quantize(
         *(short *)(block + 260u + thread * 2u) = (short)sum;
     }
 }
-
 static __device__ int q8_k_sum(const unsigned char *block, unsigned int index)
 {
     unsigned int raw = qtype_load_u16(block + 260u + index * 2u);
     return raw <= 32767u ? (int)raw : (int)raw - 65536;
 }
-
 static __device__ int q2_k_dot16(const unsigned char *weight,
                                  const unsigned char *activation, unsigned int shift)
 {
@@ -661,7 +700,6 @@ static __device__ int q2_k_dot16(const unsigned char *weight,
     }
     return sum;
 }
-
 static __device__ int iq2_xxs_i8x4(unsigned short grid, unsigned int start,
                                    unsigned int signs)
 {
@@ -675,7 +713,6 @@ static __device__ int iq2_xxs_i8x4(unsigned short grid, unsigned int start,
     }
     return (int)packed;
 }
-
 static __device__ float iq2_xxs_q8_k_dot(const unsigned char *weight,
                                          const unsigned char *activation)
 {
@@ -703,7 +740,6 @@ static __device__ float iq2_xxs_q8_k_dot(const unsigned char *weight,
     }
     return 0.125f * weight_scale * activation_scale * (float)total;
 }
-
 static __device__ float q2_k_q8_k_dot(const unsigned char *weight,
                                       const unsigned char *activation)
 {
@@ -732,7 +768,6 @@ static __device__ float q2_k_q8_k_dot(const unsigned char *weight,
            activation_scale * f16_bits_to_float(qtype_load_u16(weight + 82u)) *
                (float)minimum_sum;
 }
-
 static __device__ float q8_0_q8_k_dot(const unsigned char *weight,
                                       const unsigned char *activation)
 {
@@ -751,7 +786,6 @@ static __device__ float q8_0_q8_k_dot(const unsigned char *weight,
     }
     return total;
 }
-
 static __device__ float qtype_q8_k_dot(const unsigned char *weight,
                                        const unsigned char *activation,
                                        unsigned int qtype)
@@ -761,7 +795,6 @@ static __device__ float qtype_q8_k_dot(const unsigned char *weight,
     if (qtype == YVEX_GGUF_QTYPE_Q8_0) return q8_0_q8_k_dot(weight, activation);
     return __uint_as_float(0x7fc00000u);
 }
-
 static __device__ float q8_warp_dot(const unsigned char *weight,
                                     const unsigned char *activation,
                                     unsigned long long blocks,
@@ -777,7 +810,6 @@ static __device__ float q8_warp_dot(const unsigned char *weight,
         sum += __shfl_down_sync(0xffffffffu, sum, offset);
     return sum;
 }
-
 extern "C" __global__ void yvex_qtype_matvec(
     const unsigned char *encoded,
     unsigned long long row_bytes,
@@ -787,6 +819,7 @@ extern "C" __global__ void yvex_qtype_matvec(
     unsigned int qtype,
     const void *vector,
     int q8_input,
+    int forensic_numeric,
     float *out,
     int output_bf16,
     int *status)
@@ -803,6 +836,21 @@ extern "C" __global__ void yvex_qtype_matvec(
         return;
     }
     row_data = encoded + (start_row + row) * row_bytes;
+    if (forensic_numeric) {
+        if (lane == 0u) {
+            double reference = 0.0;
+            const float *input = (const float *)vector;
+            for (unsigned long long i = 0ull; i < row_width; ++i) {
+                double weight = (double)qtype_value(row_data, i, qtype);
+                double value = (double)float_to_bf16_rne(input[i]);
+                reference = __dadd_rn(reference, __dmul_rn(weight, value));
+            }
+            float value = (float)reference;
+            if (!isfinite(value)) atomicCAS(status, 0, 1);
+            else out[row] = output_bf16 ? float_to_bf16_rne(value) : value;
+        }
+        return;
+    }
     if (q8_input) {
         unsigned long long blocks = row_width / YVEX_CUDA_Q8_K_BLOCK;
         if (!blocks || row_bytes % blocks) {

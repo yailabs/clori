@@ -17,6 +17,7 @@
 
 #define PROVIDER_RESULT_SCHEMA_V1 1u
 #define DSML_TOKEN "\xef\xbd\x9c" "DSML" "\xef\xbd\x9c"
+#define REASONING_EMIT_CAP 4096u
 
 static const char ds_bos[] =
     "<\xef\xbd\x9c" "begin\xe2\x96\x81of\xe2\x96\x81sentence\xef\xbd\x9c>";
@@ -25,6 +26,7 @@ static const char ds_eos[] =
 static const char ds_user[] = "<\xef\xbd\x9cUser\xef\xbd\x9c>";
 static const char ds_assistant[] = "<\xef\xbd\x9c" "Assistant\xef\xbd\x9c>";
 static const char ds_dsml[] = DSML_TOKEN;
+static const unsigned char reasoning_end[] = "</think>";
 
 static const char tools_intro[] =
     "## Tools\n\n"
@@ -55,6 +57,135 @@ typedef struct {
     unsigned char *data;
     unsigned long long count, capacity;
 } provider_builder;
+
+struct yvex_tokenizer_reasoning_stream {
+    const yvex_tokenizer *tokenizer;
+    yvex_reasoning_policy policy;
+    yvex_tokenizer_reasoning_sink sink;
+    void *sink_context;
+    unsigned char pending[sizeof(reasoning_end) - 1u];
+    unsigned int pending_count;
+    int reasoning, finished;
+};
+
+static int reasoning_emit(yvex_tokenizer_reasoning_stream *stream,
+                          yvex_reasoning_segment segment,
+                          const unsigned char *bytes,
+                          unsigned long long count, yvex_error *err)
+{
+    return count ? stream->sink(stream->sink_context, segment, bytes, count, err)
+                 : YVEX_OK;
+}
+
+int yvex_tokenizer_reasoning_stream_open(
+    yvex_tokenizer_reasoning_stream **out, const yvex_tokenizer *tokenizer,
+    yvex_reasoning_policy policy, yvex_tokenizer_reasoning_sink sink,
+    void *sink_context, yvex_error *err)
+{
+    yvex_tokenizer_reasoning_stream *stream;
+    if (out) *out = NULL;
+    if (!out || !tokenizer || !tokenizer->plan.sealed || !sink ||
+        policy > YVEX_REASONING_MAXIMUM ||
+        (policy != YVEX_REASONING_DISABLED &&
+         !tokenizer->plan.explicit_reasoning_supported) ||
+        (policy == YVEX_REASONING_MAXIMUM &&
+         !tokenizer->plan.maximum_reasoning_supported)) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "tokenizer.reasoning",
+                       "reasoning policy is not supported by the tokenizer plan");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    stream = calloc(1u, sizeof(*stream));
+    if (!stream) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "tokenizer.reasoning",
+                       "reasoning stream allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    stream->tokenizer = tokenizer;
+    stream->policy = policy;
+    stream->sink = sink;
+    stream->sink_context = sink_context;
+    stream->reasoning = policy != YVEX_REASONING_DISABLED;
+    *out = stream;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_tokenizer_reasoning_stream_push(
+    yvex_tokenizer_reasoning_stream *stream, const unsigned char *bytes,
+    unsigned long long byte_count, yvex_error *err)
+{
+    unsigned char emitted[REASONING_EMIT_CAP];
+    unsigned long long offset = 0u;
+    unsigned int emitted_count = 0u;
+    int rc = YVEX_OK;
+    if (!stream || stream->finished || (!bytes && byte_count)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "tokenizer.reasoning",
+                       "open reasoning stream and bounded bytes are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (!stream->reasoning)
+        return reasoning_emit(stream, YVEX_REASONING_SEGMENT_FINAL_TEXT,
+                              bytes, byte_count, err);
+    while (rc == YVEX_OK && offset < byte_count && stream->reasoning) {
+        stream->pending[stream->pending_count++] = bytes[offset++];
+        while (stream->pending_count &&
+               memcmp(reasoning_end, stream->pending,
+                      stream->pending_count) != 0) {
+            emitted[emitted_count++] = stream->pending[0];
+            memmove(stream->pending, stream->pending + 1u,
+                    --stream->pending_count);
+            if (emitted_count == sizeof(emitted)) {
+                rc = reasoning_emit(stream, YVEX_REASONING_SEGMENT_EXPLICIT,
+                                    emitted, emitted_count, err);
+                emitted_count = 0u;
+            }
+        }
+        if (stream->pending_count == sizeof(reasoning_end) - 1u) {
+            if (emitted_count)
+                rc = reasoning_emit(stream, YVEX_REASONING_SEGMENT_EXPLICIT,
+                                    emitted, emitted_count, err);
+            emitted_count = 0u;
+            stream->pending_count = 0u;
+            stream->reasoning = 0;
+        }
+    }
+    if (rc == YVEX_OK && emitted_count)
+        rc = reasoning_emit(stream, YVEX_REASONING_SEGMENT_EXPLICIT,
+                            emitted, emitted_count, err);
+    if (rc == YVEX_OK && offset < byte_count)
+        rc = reasoning_emit(stream, YVEX_REASONING_SEGMENT_FINAL_TEXT,
+                            bytes + offset, byte_count - offset, err);
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
+}
+
+int yvex_tokenizer_reasoning_stream_finish(
+    yvex_tokenizer_reasoning_stream *stream, yvex_error *err)
+{
+    int rc;
+    if (!stream || stream->finished) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.reasoning",
+                       "open reasoning stream is required");
+        return YVEX_ERR_STATE;
+    }
+    rc = reasoning_emit(stream, stream->reasoning
+                                    ? YVEX_REASONING_SEGMENT_EXPLICIT
+                                    : YVEX_REASONING_SEGMENT_FINAL_TEXT,
+                        stream->pending, stream->pending_count, err);
+    stream->pending_count = 0u;
+    stream->finished = 1;
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    return rc;
+}
+
+void yvex_tokenizer_reasoning_stream_close(
+    yvex_tokenizer_reasoning_stream **stream)
+{
+    if (!stream || !*stream) return;
+    memset(*stream, 0, sizeof(**stream));
+    free(*stream);
+    *stream = NULL;
+}
 
 /*
  * Reserve one checked transactional provider prompt extent.

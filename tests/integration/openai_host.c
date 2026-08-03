@@ -1,5 +1,5 @@
 /*
- * Provide deterministic status, session, text, JSON, and tool-call protocol-v5 facts. Never
+ * Provide deterministic status, session, text, JSON, and tool-call protocol-v6 facts. Never
  * enters production objects.
  */
 
@@ -54,7 +54,7 @@ static int send_ack(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_ACK, request);
-    strcpy(message.reason, "protocol-v5");
+    strcpy(message.reason, "protocol-v6");
     return yvex_server_protocol_send(fd, &message, err);
 }
 
@@ -67,6 +67,7 @@ static int send_status(int fd, const yvex_client_request *request,
     message.runtime.status = YVEX_SERVER_STATUS_READY;
     message.runtime.runtime_ready = 1;
     message.runtime.generation_ready = 1;
+    message.runtime.explicit_reasoning_channel_supported = 1;
     strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
     memset(message.runtime.runtime_model_identity, 'a', 64u);
     message.runtime.runtime_model_identity[64] = '\0';
@@ -92,6 +93,7 @@ static int send_console_status(int fd, const yvex_client_request *request,
     message.runtime.status = YVEX_SERVER_STATUS_READY;
     message.runtime.runtime_ready = 1;
     message.runtime.generation_ready = 1;
+    message.runtime.explicit_reasoning_channel_supported = 1;
     message.runtime.backend = YVEX_BACKEND_KIND_CUDA;
     message.runtime.context_capacity = 4096u;
     strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
@@ -107,6 +109,7 @@ static int send_console_status(int fd, const yvex_client_request *request,
     message.console.runtime_ready = 1;
     message.console.session_available = 1;
     message.console.attached = 1;
+    message.console.explicit_reasoning_channel_supported = 1;
     strcpy(message.console.session_name, request->session_name);
     memset(message.console.live_model_identity, 'a', 64u);
     message.console.live_model_identity[64] = '\0';
@@ -186,19 +189,117 @@ static int send_event_stream(int fd, const yvex_client_request *request,
     return rc;
 }
 
-static int send_fragment(int fd, const yvex_client_request *request,
-                         yvex_provider_output_kind kind,
-                         const char *bytes, const char *call_id,
-                         const char *tool_name, yvex_error *err)
+static int send_fragment_bytes(int fd, const yvex_client_request *request,
+                               yvex_provider_output_kind kind,
+                               yvex_client_stream_channel channel,
+                               const unsigned char *bytes, size_t count,
+                               const char *call_id, const char *tool_name,
+                               yvex_error *err)
 {
     yvex_client_message message;
-    size_t count = strlen(bytes);
     message_base(&message, YVEX_CLIENT_MESSAGE_FRAGMENT, request);
     message.provider_output_kind = kind;
+    message.stream_channel = channel;
     message.byte_count = count;
     memcpy(message.bytes, bytes, count);
     if (call_id) strcpy(message.tool_call_id, call_id);
     if (tool_name) strcpy(message.tool_name, tool_name);
+    return yvex_server_protocol_send(fd, &message, err);
+}
+
+static int send_fragment(int fd, const yvex_client_request *request,
+                         yvex_provider_output_kind kind, const char *bytes,
+                         const char *call_id, const char *tool_name,
+                         yvex_error *err)
+{
+    yvex_client_stream_channel channel =
+        kind == YVEX_PROVIDER_OUTPUT_FUNCTION_CALL
+            ? YVEX_CLIENT_STREAM_TOOL_CALL
+            : YVEX_CLIENT_STREAM_FINAL_TEXT;
+    return send_fragment_bytes(fd, request, kind, channel,
+                               (const unsigned char *)bytes, strlen(bytes),
+                               call_id, tool_name, err);
+}
+
+static int send_native_markdown(int fd, const yvex_client_request *request,
+                                yvex_error *err)
+{
+    static const unsigned char part_a[] = "# CUDA\n\n``";
+    static const unsigned char part_b[] = "`cuda\n__global__ void add() {\n  // ";
+    static const unsigned char part_c[] = {0xf0u, 0x9fu};
+    static const unsigned char part_d[] = {0x8cu, 0x8du, '\n', '}', '\n', '`', '`'};
+    static const unsigned char part_e[] = "`\nUse `int` safely.\nESC: \033[31mnot-control\n";
+    const struct {
+        const unsigned char *bytes;
+        size_t count;
+    } parts[] = {{part_a, sizeof(part_a) - 1u},
+                 {part_b, sizeof(part_b) - 1u},
+                 {part_c, sizeof(part_c)},
+                 {part_d, sizeof(part_d)},
+                 {part_e, sizeof(part_e) - 1u}};
+    size_t index;
+    int rc = YVEX_OK;
+    for (index = 0u; rc == YVEX_OK && index < sizeof(parts) / sizeof(parts[0]); ++index)
+        rc = send_fragment_bytes(fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
+                                 YVEX_CLIENT_STREAM_FINAL_TEXT, parts[index].bytes,
+                                 parts[index].count, NULL, NULL, err);
+    return rc;
+}
+
+static int send_native_reasoning(int fd, const yvex_client_request *request,
+                                 yvex_error *err)
+{
+    int rc = send_fragment_bytes(
+        fd, request, YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING,
+        YVEX_CLIENT_STREAM_EXPLICIT_REASONING,
+        (const unsigned char *)"I need to compare the constraints...\n",
+        strlen("I need to compare the constraints...\n"), NULL, NULL, err);
+    if (rc == YVEX_OK)
+        rc = send_fragment_bytes(
+            fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
+            YVEX_CLIENT_STREAM_FINAL_TEXT,
+            (const unsigned char *)"The valid result is 42.",
+            strlen("The valid result is 42."), NULL, NULL, err);
+    return rc;
+}
+
+static int send_native_partial_fence(int fd,
+                                     const yvex_client_request *request,
+                                     yvex_error *err)
+{
+    yvex_client_message message;
+    int rc = send_fragment(fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
+                           "```cuda\nint value = ", NULL, NULL, err);
+    if (rc != YVEX_OK) return rc;
+    message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
+    message.status = YVEX_ERR_BACKEND;
+    message.failure_class = YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE;
+    message.session_state = YVEX_SERVER_SESSION_PARTIAL;
+    strcpy(message.reason, "injected CUDA failure after committed output");
+    message.partial_turn.schema_version = YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1;
+    message.partial_turn.available = 1;
+    message.partial_turn.committed_progress = 1;
+    message.partial_turn.reset_required = 1;
+    message.partial_turn.failure_status = YVEX_ERR_BACKEND;
+    message.partial_turn.failure_class = YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE;
+    message.partial_turn.stop_reason = YVEX_CLIENT_STOP_MODEL_FAILURE;
+    message.partial_turn.initial_position = 4u;
+    message.partial_turn.final_committed_position = 6u;
+    message.partial_turn.committed_token_count = 2u;
+    message.partial_turn.published_text_bytes = 20u;
+    message.partial_turn.target_state_generation = 2u;
+    message.partial_turn.rng_generation = 0u;
+    message.partial_turn.token_ledger_generation = 2u;
+    message.partial_turn.message_history_generation = 1u;
+    message.partial_turn.transcript_generation = 1u;
+    memset(message.partial_turn.target_state_identity, 'a', 64u);
+    message.partial_turn.target_state_identity[64] = '\0';
+    memset(message.partial_turn.rng_state_identity, 'b', 64u);
+    message.partial_turn.rng_state_identity[64] = '\0';
+    memset(message.partial_turn.token_ledger_identity, 'c', 64u);
+    message.partial_turn.token_ledger_identity[64] = '\0';
+    memset(message.partial_turn.published_text_identity, 'd', 64u);
+    message.partial_turn.published_text_identity[64] = '\0';
     return yvex_server_protocol_send(fd, &message, err);
 }
 
@@ -317,7 +418,24 @@ static int send_generation(int fd, const yvex_client_request *request,
     for (index = 0u; provider && index < provider->message_count; ++index)
         if (provider->messages[index].role == YVEX_PROVIDER_ROLE_TOOL)
             has_tool_result = 1;
-    if (rc == YVEX_OK && provider && provider->tool_count && !has_tool_result) {
+    if (rc == YVEX_OK && !provider &&
+        native_prompt_contains(request, "PARTIAL_FENCE"))
+        return send_native_partial_fence(fd, request, err);
+    if (rc == YVEX_OK && !provider &&
+        native_prompt_contains(request, "MARKDOWN_STREAM")) {
+        rc = send_native_markdown(fd, request, err);
+        message.provider_finish = YVEX_PROVIDER_FINISH_STOP;
+    } else if (rc == YVEX_OK && !provider &&
+               native_prompt_contains(request, "REASONING_STREAM")) {
+        if (request->reasoning_policy == YVEX_REASONING_DISABLED) {
+            message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
+            message.status = YVEX_ERR_STATE;
+            strcpy(message.reason, "reasoning fixture requires an explicit policy");
+            return yvex_server_protocol_send(fd, &message, err);
+        }
+        rc = send_native_reasoning(fd, request, err);
+        message.provider_finish = YVEX_PROVIDER_FINISH_STOP;
+    } else if (rc == YVEX_OK && provider && provider->tool_count && !has_tool_result) {
         rc = send_fragment(fd, request, YVEX_PROVIDER_OUTPUT_FUNCTION_CALL,
                            "{\"match_id\":\"m1\"}", "call_fixture_1",
                            provider->tools[0].name, err);

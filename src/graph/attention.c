@@ -1201,6 +1201,26 @@ static int attention_probe_comparison_identity(char output[YVEX_SHA256_HEX_CAP])
         output);
 }
 
+static int attention_publication_identity(
+    const attention_probe_context *context,
+    const yvex_attention_layer_plan *layer,
+    yvex_attention_publication *publication)
+{
+    const attention_probe_identity_field fields[] = {
+        {context->summary->attention_plan_identity, 0ull},
+        {context->request->logical_model_identity, 0ull},
+        {context->request->input_identity, 0ull},
+        {NULL, layer->layer_index},
+        {NULL, context->request->operation_scope},
+        {NULL, publication->token_position},
+        {NULL, publication->token_count},
+        {NULL, context->request->candidate_block_visible},
+        {NULL, context->request->retain_prefix_checkpoints}};
+    return attention_probe_identity(
+        "yvex.graph.attention.publication.v1", fields,
+        sizeof(fields) / sizeof(fields[0]), publication->execution_identity);
+}
+
 static int attention_probe_compare(attention_probe_context *context,
                                    const yvex_attention_publication *cpu,
                                    const yvex_attention_publication *cuda) {
@@ -1310,6 +1330,64 @@ static int attention_probe_device_open(
     return *input && *output ? YVEX_OK : attention_probe_fail(
         context->error, YVEX_ERR_FORMAT, "device activation views are incomplete");
 }
+
+static int attention_probe_backend_execute(
+    attention_probe_context *context, yvex_attention_cpu_options *options,
+    const yvex_attention_layer_plan *layer, attention_probe_backend *run,
+    unsigned int index)
+{
+    const int cuda = index == ATTENTION_PROBE_CUDA;
+    int rc;
+    options->publication = &run->publication;
+    rc = cuda ? context->family->cuda_token_execute(
+                    context->plan, context->family_ir, context->session,
+                    context->descriptor, context->cuda_backend, options,
+                    &run->evidence, context->failure, context->error)
+              : context->family->cpu_chunk_execute(
+                    context->plan, context->family_ir, context->session,
+                    context->descriptor, options, &run->evidence,
+                    context->failure, context->error);
+    options->publication = NULL;
+    if (rc != YVEX_OK) return rc;
+    if (!(cuda ? run->evidence.cuda_executed : run->evidence.executed) ||
+        !attention_publication_identity(context, layer, &run->publication) ||
+        !yvex_attention_publication_hash_update(
+            &context->metrics.output_hash[index],
+            &context->metrics.state_hash[index], &run->publication))
+        return attention_probe_fail(
+            context->error, YVEX_ERR_STATE,
+            cuda ? "CUDA attention publication was incomplete"
+                 : "CPU attention publication was incomplete");
+    if (context->request->evidence) {
+        rc = context->request->evidence(
+            context->request->evidence_context,
+            cuda ? YVEX_BACKEND_KIND_CUDA : YVEX_BACKEND_KIND_CPU,
+            &run->publication, context->error);
+        if (rc != YVEX_OK) return rc;
+    }
+    if (!yvex_core_u64_add(context->candidate.payload_bytes_read,
+                           run->evidence.payload_bytes_read,
+                           &context->candidate.payload_bytes_read) ||
+        !yvex_core_u64_add(context->candidate.kernel_launches,
+                           run->evidence.cuda_kernel_launches,
+                           &context->candidate.kernel_launches) ||
+        !yvex_core_u64_add(context->candidate.h2d_bytes,
+                           run->evidence.cuda_h2d_bytes,
+                           &context->candidate.h2d_bytes) ||
+        !yvex_core_u64_add(context->candidate.d2h_bytes,
+                           run->evidence.cuda_d2h_bytes,
+                           &context->candidate.d2h_bytes) ||
+        !yvex_core_u64_add(context->candidate.cuda_device_execution_elapsed_ns,
+                           run->evidence.cuda_device_execution_elapsed_ns,
+                           &context->candidate.cuda_device_execution_elapsed_ns))
+        return attention_probe_fail(context->error, YVEX_ERR_BOUNDS,
+                                    "attention execution counter overflowed");
+    if (run->evidence.cuda_peak_device_bytes > context->candidate.peak_device_bytes)
+        context->candidate.peak_device_bytes = run->evidence.cuda_peak_device_bytes;
+    if (run->evidence.topk_selected > context->candidate.topk_selected)
+        context->candidate.topk_selected = run->evidence.topk_selected;
+    return YVEX_OK;
+}
 /*
  * Execute one real-geometry layer through each requested production backend.
  *
@@ -1387,62 +1465,15 @@ static int attention_probe_layer_execute(
     options.workspace = context->request->workspace;
     options.cancellation = context->request->cancel_requested ? &cancellation : NULL;
     options.candidate_block_visible = context->request->candidate_block_visible;
+    options.retain_prefix_checkpoints = context->request->retain_prefix_checkpoints;
     for (index = 0u; index < ATTENTION_PROBE_BACKEND_COUNT; ++index) {
         attention_probe_backend *run = &backend[index];
         int cuda = index == ATTENTION_PROBE_CUDA;
         if (!context->request->compare_backends &&
             context->request->backend != (cuda ? YVEX_BACKEND_KIND_CUDA : YVEX_BACKEND_KIND_CPU))
             continue;
-        options.publication = &run->publication;
-        rc = cuda ? context->family->cuda_token_execute(
-                        context->plan, context->family_ir, context->session, context->descriptor,
-                        context->cuda_backend, &options, &run->evidence, context->failure,
-                        context->error)
-                  : context->family->cpu_chunk_execute(
-                        context->plan, context->family_ir, context->session, context->descriptor,
-                        &options, &run->evidence, context->failure, context->error);
-        options.publication = NULL;
+        rc = attention_probe_backend_execute(context, &options, layer, run, index);
         if (rc != YVEX_OK) goto cleanup;
-        if (!(cuda ? run->evidence.cuda_executed : run->evidence.executed) ||
-            !yvex_attention_publication_hash_update(
-                &context->metrics.output_hash[index], &context->metrics.state_hash[index],
-                &run->publication)) {
-            rc = attention_probe_fail(context->error, YVEX_ERR_STATE,
-                                      cuda ? "CUDA attention publication was incomplete"
-                                           : "CPU attention publication was incomplete");
-            goto cleanup;
-        }
-        if (context->request->evidence) {
-            rc = context->request->evidence(
-                context->request->evidence_context,
-                cuda ? YVEX_BACKEND_KIND_CUDA : YVEX_BACKEND_KIND_CPU,
-                &run->publication, context->error);
-            if (rc != YVEX_OK) goto cleanup;
-        }
-        if (!yvex_core_u64_add(context->candidate.payload_bytes_read,
-                               run->evidence.payload_bytes_read,
-                               &context->candidate.payload_bytes_read) ||
-            !yvex_core_u64_add(context->candidate.kernel_launches,
-                               run->evidence.cuda_kernel_launches,
-                               &context->candidate.kernel_launches) ||
-            !yvex_core_u64_add(context->candidate.h2d_bytes,
-                               run->evidence.cuda_h2d_bytes,
-                               &context->candidate.h2d_bytes) ||
-            !yvex_core_u64_add(context->candidate.d2h_bytes,
-                               run->evidence.cuda_d2h_bytes,
-                               &context->candidate.d2h_bytes) ||
-            !yvex_core_u64_add(
-                context->candidate.cuda_device_execution_elapsed_ns,
-                run->evidence.cuda_device_execution_elapsed_ns,
-                &context->candidate.cuda_device_execution_elapsed_ns)) {
-            rc = attention_probe_fail(context->error, YVEX_ERR_BOUNDS,
-                                      "attention execution counter overflowed");
-            goto cleanup;
-        }
-        if (run->evidence.cuda_peak_device_bytes > context->candidate.peak_device_bytes)
-            context->candidate.peak_device_bytes = run->evidence.cuda_peak_device_bytes;
-        if (run->evidence.topk_selected > context->candidate.topk_selected)
-            context->candidate.topk_selected = run->evidence.topk_selected;
     }
     if (context->request->compare_backends) {
         rc = attention_probe_compare(context, &backend[ATTENTION_PROBE_CPU].publication,

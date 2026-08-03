@@ -9,7 +9,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 5u
+#define YVEX_LOCAL_PROTOCOL_VERSION 6u
+#define YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 1u
 #define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 3u
 #define YVEX_RUNTIME_METRICS_SCHEMA_VERSION 3u
 #define YVEX_SERVER_SESSION_NAME_CAP 64u
@@ -227,6 +228,17 @@ typedef enum {
     YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT
 } yvex_client_failure_class;
 typedef enum {
+    YVEX_CLIENT_STOP_NONE = 0,
+    YVEX_CLIENT_STOP_EOS,
+    YVEX_CLIENT_STOP_TOKENIZER_TOKEN,
+    YVEX_CLIENT_STOP_MAXIMUM_TOKENS,
+    YVEX_CLIENT_STOP_CONTEXT_CAPACITY,
+    YVEX_CLIENT_STOP_CANCELLED,
+    YVEX_CLIENT_STOP_MODEL_FAILURE,
+    YVEX_CLIENT_STOP_TOKENIZER_FAILURE,
+    YVEX_CLIENT_STOP_OUTPUT_FAILURE
+} yvex_client_stop_reason;
+typedef enum {
     YVEX_CLIENT_PHASE_UNAVAILABLE = 0,
     YVEX_CLIENT_PHASE_IDLE,
     YVEX_CLIENT_PHASE_QUEUED,
@@ -253,6 +265,31 @@ typedef enum {
     YVEX_CLIENT_STREAM_TOOL_RESULT,
     YVEX_CLIENT_STREAM_CONTROL_EVENT
 } yvex_client_stream_channel;
+
+/*
+ * A terminal failure may follow an atomic model-state commit. This snapshot keeps the exact
+ * committed boundary distinct from the failure class and makes reset admission explicit. Facts
+ * whose runtime owner cannot yet report a generation remain unavailable rather than synthesized.
+ */
+typedef struct {
+    unsigned int schema_version;
+    int available, committed_progress, reset_required;
+    int draft_state_generation_available, detokenizer_generation_available;
+    int failure_status;
+    yvex_client_failure_class failure_class;
+    unsigned int stop_reason;
+    unsigned long long initial_position, final_committed_position;
+    unsigned long long committed_token_count, published_text_bytes;
+    unsigned long long target_state_generation, draft_state_generation;
+    unsigned long long rng_generation, token_ledger_generation;
+    unsigned long long detokenizer_generation;
+    unsigned long long message_history_generation, transcript_generation;
+    char target_state_identity[YVEX_SHA256_HEX_CAP];
+    char rng_state_identity[YVEX_SHA256_HEX_CAP];
+    char token_ledger_identity[YVEX_SHA256_HEX_CAP];
+    char published_text_identity[YVEX_SHA256_HEX_CAP];
+} yvex_client_partial_turn;
+
 typedef struct {
     unsigned int schema_version;
     yvex_backend_kind backend;
@@ -268,6 +305,7 @@ typedef struct {
     int runtime_ready, session_available, attached, cancel_requested;
     int kv_used_available, progress_available, selected_model_available;
     int explicit_reasoning_channel_supported;
+    yvex_reasoning_policy reasoning_policy;
 } yvex_console_status;
 typedef struct {
     unsigned int schema_version;
@@ -282,6 +320,7 @@ typedef struct {
     unsigned long long top_k, event_after_sequence;
     yvex_server_trace_level trace_level;
     int trace_content;
+    yvex_reasoning_policy reasoning_policy;
     const yvex_provider_request *provider_request;
 } yvex_client_request;
 typedef struct {
@@ -331,6 +370,7 @@ typedef struct {
     char external_correlation_id[YVEX_PROVIDER_ID_CAP];
     char tool_call_id[YVEX_PROVIDER_ID_CAP];
     char tool_name[YVEX_PROVIDER_TOOL_NAME_CAP];
+    yvex_client_partial_turn partial_turn;
     yvex_server_summary runtime;
     yvex_console_status console;
     yvex_server_event event;

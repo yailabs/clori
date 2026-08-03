@@ -12,7 +12,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <build_commit.h>
+#include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/execution.h>
 
 static int generation_context_refuse(yvex_error *err, yvex_status status,
                                      const char *reason)
@@ -57,6 +60,65 @@ static int generation_stops_open(yvex_runtime_generation_context *context,
     return YVEX_OK;
 }
 
+static int generation_execution_profile_build(
+    yvex_runtime_generation_context *context, yvex_error *err)
+{
+    const yvex_physical_execution_summary *physical =
+        yvex_physical_execution_ir_summary(context->model_view->physical_execution);
+    const yvex_runtime_binding_summary *binding = context->model_view->binding;
+    const yvex_runtime_session_view *session_view = yvex_runtime_session_view_get(context->session);
+    yvex_runtime_session_summary session;
+    yvex_compiled_execution_profile_request request = {0};
+    yvex_backend_cuda_attention_graph_summary cuda = {0};
+    const char *kernel_bundle = YVEX_BUILD_IDENTITY;
+    char hardware[YVEX_EXECUTION_TEXT_CAP];
+    int rc;
+
+    if (!physical || !binding || !session_view || !session_view->backend ||
+        yvex_runtime_session_summary_copy(context->session, &session, err) != YVEX_OK)
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE, "execution profile owners are unavailable");
+    if (context->options.backend == YVEX_BACKEND_KIND_CUDA) {
+        rc = yvex_backend_cuda_attention_graph_summary_get(
+            session_view->backend, &cuda, err);
+        if (rc != YVEX_OK || !yvex_sha256_hex_valid(cuda.cuda_build_identity))
+            return generation_context_refuse(
+                err, YVEX_ERR_STATE, "CUDA kernel bundle identity is unavailable");
+        kernel_bundle = cuda.cuda_build_identity;
+        (void)snprintf(hardware, sizeof(hardware), "portable-cuda-sm%d%d",
+                       session.compute_capability_major,
+                       session.compute_capability_minor);
+    } else {
+        yvex_core_text_copy(hardware, sizeof(hardware), "portable-cpu");
+    }
+    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V1;
+    request.logical_model_identity = binding->logical_model_identity;
+    request.physical_variant_identity = binding->profile_identity;
+    request.physical_execution_identity = physical->identity;
+    request.artifact_identity = binding->artifact_identity;
+    request.materialization_identity = binding->materialization_identity;
+    request.runtime_binding_identity = binding->identity;
+    request.kernel_bundle_identity = kernel_bundle;
+    request.hardware_profile = hardware;
+    request.backend = context->options.backend;
+    request.device_index = session.device_index;
+    request.compute_major = session.compute_capability_major;
+    request.compute_minor = session.compute_capability_minor;
+    request.context_capacity = context->options.context_capacity;
+    request.generation_mode = context->options.mode == YVEX_GENERATION_MODE_DSPARK
+                                  ? YVEX_EXECUTION_GENERATION_SPECULATIVE
+                                  : YVEX_EXECUTION_GENERATION_TARGET_ONLY;
+    request.workload = YVEX_EXECUTION_WORKLOAD_INTERACTIVE;
+    request.evidence = context->options.evidence_profile;
+    request.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
+    request.host_stochastic_reference =
+        context->options.sampling_policy.strategy != YVEX_SAMPLING_STRATEGY_GREEDY;
+    request.token_local_moe_reference = 1;
+    request.eager_attention_reference = 1;
+    return yvex_compiled_execution_profile_seal(
+        &request, &context->execution_profile, err);
+}
+
 static int generation_plan_build(yvex_runtime_generation_context *context,
                                  yvex_error *err)
 {
@@ -81,7 +143,7 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
             err, YVEX_ERR_STATE,
             "generation lower-owner plans are incompatible");
     memset(&plan, 0, sizeof(plan));
-    plan.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
+    plan.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4;
     plan.backend = context->options.backend;
     plan.mode = context->options.mode;
     plan.context_capacity = context->options.context_capacity;
@@ -89,6 +151,8 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
     plan.maximum_new_tokens = context->options.maximum_new_tokens;
     plan.maximum_output_bytes = context->options.maximum_output_bytes;
     plan.trace_policy = (unsigned int)context->options.trace_policy;
+    plan.evidence_profile = context->execution_profile.evidence;
+    plan.execution_class = context->execution_profile.execution_class;
     yvex_runtime_identity_copy(plan.runtime_model_identity,
                                model.runtime_model_identity);
     yvex_runtime_identity_copy(plan.runtime_binding_identity,
@@ -105,6 +169,12 @@ static int generation_plan_build(yvex_runtime_generation_context *context,
                                logits->output_head_plan_identity);
     yvex_runtime_identity_copy(plan.sampling_policy_identity,
                                context->options.sampling_policy.policy_identity);
+    yvex_runtime_identity_copy(plan.kernel_bundle_identity,
+                               context->execution_profile.kernel_bundle_identity);
+    yvex_runtime_identity_copy(plan.execution_profile_identity,
+                               context->execution_profile.identity);
+    yvex_core_text_copy(plan.hardware_profile, sizeof(plan.hardware_profile),
+                        context->execution_profile.hardware_profile);
     if (context->speculation) {
         const yvex_speculation_family_policy *policy =
             yvex_runtime_speculation_policy_get(context->speculation);
@@ -149,9 +219,14 @@ static int generation_execution_owners_open(
     transformer.cancel_requested = options->cancel_requested;
     transformer.cancel_context = options->cancel_context;
     transformer.evidence_level =
-        options->trace_policy == YVEX_RUNTIME_TRACE_FULL
-            ? YVEX_ATTENTION_EVIDENCE_FULL
-            : YVEX_ATTENTION_EVIDENCE_NONE;
+        runtime_attention_evidence(options->evidence_profile);
+    transformer.device_hidden_output =
+        options->backend == YVEX_BACKEND_KIND_CUDA &&
+        options->mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
+        options->sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
+        options->evidence_profile == YVEX_EXECUTION_EVIDENCE_PRODUCTION;
+    transformer.execution_profile = &context->execution_profile;
+    transformer.shape_registry = context->execution_shapes;
     rc = yvex_runtime_transformer_context_open(
         &context->transformer, context->model, context->session, &transformer, err);
     logits.maximum_rows = options->mode == YVEX_GENERATION_MODE_DSPARK
@@ -159,6 +234,9 @@ static int generation_execution_owners_open(
                               : 1ull;
     logits.maximum_host_bytes = options->maximum_host_bytes;
     logits.maximum_device_bytes = options->maximum_device_bytes;
+    logits.evidence_profile = options->evidence_profile;
+    logits.device_greedy_selection = transformer.device_hidden_output;
+    logits.execution_profile = &context->execution_profile;
     logits.cancel_requested = options->cancel_requested;
     logits.cancel_context = options->cancel_context;
     if (rc == YVEX_OK)
@@ -189,6 +267,8 @@ static int generation_execution_owners_open(
     speculation.maximum_device_bytes = options->maximum_device_bytes;
     speculation.cancel_requested = options->cancel_requested;
     speculation.cancel_context = options->cancel_context;
+    speculation.execution_profile = &context->execution_profile;
+    speculation.shape_registry = context->execution_shapes;
     return yvex_runtime_speculation_context_open(
         &context->speculation, context->model, context->session,
         context->transformer, context->logits, context->sampling,
@@ -208,13 +288,14 @@ int yvex_runtime_generation_context_open(
     int rc = YVEX_OK;
     if (out) *out = NULL;
     if (!out || !model || !session || !options ||
-        options->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V3 ||
+        options->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V4 ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
         options->mode > YVEX_GENERATION_MODE_DSPARK ||
         !options->context_capacity || !options->prefill_chunk_tokens ||
         !options->maximum_new_tokens || !options->maximum_output_bytes ||
-        options->trace_policy > YVEX_RUNTIME_TRACE_FULL)
+        options->trace_policy > YVEX_RUNTIME_TRACE_FULL ||
+        options->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC)
         return generation_context_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "complete bounded generation options are required");
@@ -245,6 +326,11 @@ int yvex_runtime_generation_context_open(
     rc = yvex_runtime_sampling_policy_seal(
         &context->options.sampling_policy,
         yvex_tokenizer_vocab_size(context->tokenizer), err);
+    if (rc != YVEX_OK) goto failure;
+    rc = generation_execution_profile_build(context, err);
+    if (rc != YVEX_OK) goto failure;
+    rc = yvex_execution_shape_registry_open(
+        &context->execution_shapes, 128ull, err);
     if (rc != YVEX_OK) goto failure;
     rc = generation_execution_owners_open(
         context, options, &logits_plan, err);
@@ -334,6 +420,7 @@ failure:
         (void)yvex_runtime_logits_context_close(&context->logits, &cleanup);
         (void)yvex_runtime_transformer_context_close(
             &context->transformer, &cleanup);
+        yvex_execution_shape_registry_close(&context->execution_shapes);
         if (context->drain_condition_ready)
             (void)pthread_cond_destroy(&context->drain_condition);
         if (context->drain_mutex_ready)
@@ -400,6 +487,7 @@ int yvex_runtime_generation_context_close(
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_context_close(&owner->transformer, err);
     if (rc != YVEX_OK) return rc;
+    yvex_execution_shape_registry_close(&owner->execution_shapes);
     yvex_tokenizer_decoder_close(&owner->decoder);
     yvex_token_sequence_close(&owner->sequence);
     if (owner->drain_condition_ready &&

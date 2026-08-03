@@ -10,6 +10,7 @@
 #include <string.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/execution.h>
 #include <yvex/internal/graph_state.h>
 
 typedef struct {
@@ -42,6 +43,55 @@ static int runtime_session_state_resolve(
         result = yvex_runtime_private_state_residency_resolve(
             session->draft_state_residency, host, bytes, device_address);
     return result;
+}
+
+int yvex_runtime_device_view_bind(
+    yvex_execution_device_view *out, yvex_execution_device_value_kind kind,
+    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    const yvex_attention_state_provider *provider,
+    const yvex_compiled_execution_profile *profile, const yvex_device_tensor *tensor,
+    unsigned long long offset, unsigned long long rows, unsigned long long columns,
+    yvex_error *err)
+{
+    const yvex_runtime_model_view *model_view = yvex_runtime_model_view_get(model);
+    const yvex_runtime_session_view *session_view =
+        yvex_runtime_session_view_get(session);
+    yvex_runtime_model_summary model_summary;
+    yvex_runtime_session_summary session_summary;
+    yvex_runtime_residency_summary residency;
+    yvex_graph_attention_state_summary state;
+    if (!out || !model_view || !session_view || !provider || !provider->summary ||
+        !profile || !tensor ||
+        yvex_runtime_model_summary_copy(model, &model_summary, err) != YVEX_OK ||
+        yvex_runtime_session_summary_copy(session, &session_summary, err) != YVEX_OK ||
+        yvex_runtime_residency_snapshot(model_view->residency, &residency,
+                                        NULL, NULL, err) != YVEX_OK ||
+        provider->summary(provider->context, &state, err) != YVEX_OK) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.execution.device-view",
+                       "device value generations are unavailable");
+        return YVEX_ERR_STATE;
+    }
+    memset(out, 0, sizeof(*out));
+    out->schema_version = YVEX_EXECUTION_DEVICE_VIEW_SCHEMA_V1;
+    out->kind = kind;
+    out->backend = session_view->backend;
+    out->tensor = tensor;
+    out->element_offset = offset;
+    out->model_generation = residency.generation;
+    out->session_generation = session_summary.workspace_generation;
+    out->state_generation = state.generation;
+    out->rows = rows;
+    out->columns = columns;
+    out->element_bytes = sizeof(float);
+    out->dtype = YVEX_DTYPE_F32;
+    out->synchronization_required = 1;
+    out->materialization = YVEX_EXECUTION_MATERIALIZE_NONE;
+    yvex_core_text_copy(out->runtime_model_identity,
+                        sizeof(out->runtime_model_identity),
+                        model_summary.runtime_model_identity);
+    yvex_core_text_copy(out->execution_profile_identity,
+                        sizeof(out->execution_profile_identity), profile->identity);
+    return yvex_execution_device_view_validate(out, err);
 }
 
 static int runtime_workspace_state_envelope(
@@ -529,6 +579,60 @@ int yvex_runtime_session_begin(yvex_runtime_execution_session *session,
         return rc;
     }
     return yvex_runtime_private_success(err);
+}
+
+int yvex_runtime_session_select_attention_prefix(
+    yvex_runtime_execution_session *session, yvex_tensor_scope scope,
+    unsigned long long prefix_count, unsigned long long extension_count,
+    yvex_error *err)
+{
+    yvex_attention_state_provider *provider;
+    yvex_runtime_state_residency *residency;
+    yvex_graph_attention_state_summary summary;
+    yvex_attention_failure failure = {0};
+    unsigned long long layer;
+    int ready, rc;
+    if (!session ||
+        (scope != YVEX_TENSOR_SCOPE_GLOBAL &&
+         scope != YVEX_TENSOR_SCOPE_DRAFT) ||
+        !session->lifecycle_mutex_ready ||
+        pthread_mutex_lock(&session->lifecycle_mutex) != 0) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.session.prefix",
+                       "a synchronized runtime session and valid scope are required");
+        return YVEX_ERR_STATE;
+    }
+    provider = scope == YVEX_TENSOR_SCOPE_DRAFT
+                   ? &session->draft_attention_state_provider
+                   : &session->attention_state_provider;
+    residency = scope == YVEX_TENSOR_SCOPE_DRAFT
+                    ? session->draft_state_residency
+                    : session->state_residency;
+    ready = scope == YVEX_TENSOR_SCOPE_DRAFT
+                ? session->draft_attention_state_provider_ready
+                : session->attention_state_provider_ready;
+    if (!session->summary.open || !session->summary.busy ||
+        !runtime_session_owned_by_current_thread(session) || session->closing ||
+        !ready || !provider->select_prefix || !provider->summary ||
+        !provider->view) {
+        (void)pthread_mutex_unlock(&session->lifecycle_mutex);
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.session.prefix",
+                       "the active session has no prefix-addressable state owner");
+        return YVEX_ERR_STATE;
+    }
+    rc = provider->select_prefix(provider->context, prefix_count,
+                                 extension_count, &failure, err);
+    if (rc == YVEX_OK)
+        rc = provider->summary(provider->context, &summary, err);
+    for (layer = 0ull; rc == YVEX_OK && residency &&
+                         layer < summary.layer_count; ++layer) {
+        const yvex_attention_history_view *view = provider->view(
+            provider->context, layer, YVEX_ATTENTION_STATE_VIEW_CANDIDATE);
+        if (view)
+            rc = yvex_runtime_state_residency_stage(
+                residency, provider, layer, err);
+    }
+    (void)pthread_mutex_unlock(&session->lifecycle_mutex);
+    return rc;
 }
 
 int yvex_runtime_session_finish_scope(

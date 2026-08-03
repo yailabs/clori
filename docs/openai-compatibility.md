@@ -9,7 +9,7 @@ adapter follows the hosted runtime lifecycle and owns no model, session, KV,
 worker, or telemetry authority.
 
 `yvex.openai.compat.v1` is a bounded, local application-provider profile. It
-adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v5 and
+adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v6 and
 the existing `yvexd` model host. It is not a claim of full OpenAI API or OpenAI
 service equivalence.
 
@@ -26,7 +26,7 @@ Those moving interfaces do not expand this explicitly versioned YVEX subset.
 application or SDK
   -> loopback HTTP/1.1
   -> yvexd OpenAI adapter
-  -> provider-neutral request over YVEX protocol v5
+  -> provider-neutral request over YVEX protocol v6
   -> yvexd session and generation owners
 ```
 
@@ -39,6 +39,12 @@ When the selected runtime profile uses DSpark, the adapter receives only
 target-verified committed fragments from the same server turn. Draft
 candidates are never emitted over JSON/SSE and never enter compatibility
 usage. This internal execution mode does not change compatibility profile v1.
+
+Protocol v6 can carry a local typed explicit-reasoning channel. Compatibility
+profile v1 does not expose a reasoning request field or reasoning-content
+response field, so OpenAI requests select the disabled policy and final answer
+text remains free of reasoning delimiters. The adapter never folds explicit
+reasoning into assistant content or infers it from prose.
 
 The normal registry-backed runtime start enables the default loopback listener.
 Select a startup-ready model and start the host; the listener is prepared

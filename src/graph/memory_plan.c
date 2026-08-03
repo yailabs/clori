@@ -409,10 +409,10 @@ static const size_t attention_trace_float_offsets[] = {
     offsetof(yvex_attention_publication, attention_values),
     offsetof(yvex_attention_publication, output),
     offsetof(yvex_attention_publication, envelope_output),
-    offsetof(yvex_attention_publication, next_main_rolling_state.kv_state),
-    offsetof(yvex_attention_publication, next_main_rolling_state.score_state),
-    offsetof(yvex_attention_publication, next_indexer_rolling_state.kv_state),
-    offsetof(yvex_attention_publication, next_indexer_rolling_state.score_state),
+    offsetof(yvex_attention_publication, main_rolling_kv_checkpoints),
+    offsetof(yvex_attention_publication, main_rolling_score_checkpoints),
+    offsetof(yvex_attention_publication, indexer_rolling_kv_checkpoints),
+    offsetof(yvex_attention_publication, indexer_rolling_score_checkpoints),
 };
 static const size_t attention_trace_u64_offsets[] = {
     offsetof(yvex_attention_publication, compressed_positions),
@@ -566,6 +566,7 @@ typedef struct {
     unsigned long long input_width, compressed_capacity, indexer_capacity;
     unsigned long long main_kv_extent, main_score_extent;
     unsigned long long index_kv_extent, index_score_extent, topk_capacity;
+    unsigned long long rolling_rows;
 } attention_trace_shape;
 
 static int attention_trace_counts(
@@ -586,8 +587,13 @@ static int attention_trace_counts(
         shape->index_kv_extent, shape->index_score_extent};
     unsigned int i;
     memset(integers, 0, sizeof(*integers) * ATTENTION_TRACE_U64_COUNT);
-    for (i = 0u; i < ATTENTION_TRACE_FLOAT_COUNT; ++i)
-        if (!yvex_core_u64_mul(rows[i], widths[i], &floats[i])) return 0;
+    for (i = 0u; i < ATTENTION_TRACE_FLOAT_COUNT; ++i) {
+        unsigned long long row_count = rows[i];
+        if (i >= ATTENTION_TRACE_MAIN_KV &&
+            !yvex_core_u64_mul(row_count, shape->rolling_rows, &row_count))
+            return 0;
+        if (!yvex_core_u64_mul(row_count, widths[i], &floats[i])) return 0;
+    }
     integers[ATTENTION_TRACE_COMPRESSED_POSITIONS] = shape->compressed_capacity;
     integers[ATTENTION_TRACE_INDEXER_POSITIONS] = shape->indexer_capacity;
     integers[ATTENTION_TRACE_TOPK_COUNTS] = shape->topk_capacity ? trace->token_count : 0ull;
@@ -639,6 +645,27 @@ static int attention_trace_layer_describe(
     return yvex_core_u64_mul(layer->query_heads, layer->head_dimension, &trace->query_width) &&
         (!index_enabled || yvex_core_u64_mul(layer->indexer_heads, layer->indexer_head_dimension,
                                              &trace->index_query_stride));
+}
+
+static void attention_trace_rolling_bind(yvex_attention_publication *trace,
+                                         unsigned long long rows)
+{
+    if (trace->next_main_rolling_state.present) {
+        trace->next_main_rolling_state.kv_state =
+            trace->main_rolling_kv_checkpoints +
+            (rows - 1ull) * trace->next_main_rolling_state.kv_state_extent;
+        trace->next_main_rolling_state.score_state =
+            trace->main_rolling_score_checkpoints +
+            (rows - 1ull) * trace->next_main_rolling_state.score_state_extent;
+    }
+    if (trace->next_indexer_rolling_state.present) {
+        trace->next_indexer_rolling_state.kv_state =
+            trace->indexer_rolling_kv_checkpoints +
+            (rows - 1ull) * trace->next_indexer_rolling_state.kv_state_extent;
+        trace->next_indexer_rolling_state.score_state =
+            trace->indexer_rolling_score_checkpoints +
+            (rows - 1ull) * trace->next_indexer_rolling_state.score_state_extent;
+    }
 }
 
 void yvex_attention_cuda_weights_release(attention_cuda_weights *weights) {
@@ -994,6 +1021,7 @@ int yvex_attention_cuda_trace_open(yvex_attention_publication *trace,
                                    unsigned long long token_position,
                                    unsigned long long token_count,
                                    yvex_attention_evidence_level evidence_level,
+                                   int retain_prefix_checkpoints,
                                    yvex_attention_workspace *workspace,
                                    unsigned long long limit_bytes,
                                    unsigned long long *owned_bytes,
@@ -1029,9 +1057,14 @@ int yvex_attention_cuda_trace_open(yvex_attention_publication *trace,
             topk))
         goto fail;
     trace->evidence_level = (unsigned int)evidence_level;
+    trace->prefix_addressable = retain_prefix_checkpoints;
+    trace->rolling_checkpoint_count = retain_prefix_checkpoints && main_extent
+                                          ? token_count : 0ull;
     trace->workspace = workspace;
     shape = (attention_trace_shape){input_width, compressed, indexer, main_extent, main_extent,
-                                    index_extent, index_extent, trace->topk_stride};
+                                    index_extent, index_extent, trace->topk_stride,
+                                    trace->rolling_checkpoint_count
+                                        ? trace->rolling_checkpoint_count : 1ull};
     if (!attention_trace_counts(trace, &shape, floats, integers) ||
         !attention_trace_counts_filter(evidence_level, floats, integers))
         goto fail;
@@ -1050,6 +1083,15 @@ int yvex_attention_cuda_trace_open(yvex_attention_publication *trace,
     }
     trace->owned = 1;
     trace->core_output = trace->output;
+    if (history->main_rolling_state.present)
+        attention_rolling_transfer(&trace->next_main_rolling_state,
+                                   &history->main_rolling_state, 0);
+    if (history->indexer_rolling_state.present)
+        attention_rolling_transfer(&trace->next_indexer_rolling_state,
+                                   &history->indexer_rolling_state, 0);
+    attention_trace_rolling_bind(
+        trace, trace->rolling_checkpoint_count
+                   ? trace->rolling_checkpoint_count : 1ull);
     return YVEX_OK;
 invalid:
     return attention_memory_reject(
@@ -1253,14 +1295,20 @@ int yvex_attention_trace_capture(
     unsigned long long topk_stride, const yvex_attention_rolling_state_output *main_state,
     const float *main_state_kv, const float *main_state_score,
     const yvex_attention_rolling_state_output *index_state, const float *index_state_kv,
-    const float *index_state_score, yvex_attention_evidence_level evidence_level,
+    const float *index_state_score, unsigned long long rolling_checkpoint_count,
+    const float *main_checkpoint_kv, const float *main_checkpoint_score,
+    const float *index_checkpoint_kv, const float *index_checkpoint_score,
+    yvex_attention_evidence_level evidence_level,
     yvex_attention_workspace *workspace) {
     unsigned long long floats[ATTENTION_TRACE_FLOAT_COUNT] = {0ull};
     unsigned long long integers[ATTENTION_TRACE_U64_COUNT] = {0ull};
     const float *float_sources[ATTENTION_TRACE_FLOAT_COUNT] = {
         input, q_low, query, raw_kv, compressed_kv, indexer_kv, index_query,
-        index_weights, attention_values, output, NULL, main_state_kv,
-        main_state_score, index_state_kv, index_state_score};
+        index_weights, attention_values, output, NULL,
+        rolling_checkpoint_count ? main_checkpoint_kv : main_state_kv,
+        rolling_checkpoint_count ? main_checkpoint_score : main_state_score,
+        rolling_checkpoint_count ? index_checkpoint_kv : index_state_kv,
+        rolling_checkpoint_count ? index_checkpoint_score : index_state_score};
     const unsigned long long *u64_sources[ATTENTION_TRACE_U64_COUNT] = {
         compressed_positions, indexer_positions, topk_counts, topk_positions};
     attention_trace_shape shape;
@@ -1288,6 +1336,8 @@ int yvex_attention_trace_capture(
     trace->index_query_stride = index_query_stride;
     trace->index_weight_stride = index_weight_stride;
     trace->topk_stride = topk_stride;
+    trace->prefix_addressable = rolling_checkpoint_count != 0ull;
+    trace->rolling_checkpoint_count = rolling_checkpoint_count;
     if (main_state && main_state->present) {
         trace->next_main_rolling_state = *main_state;
         trace->next_main_rolling_state.kv_state = NULL;
@@ -1304,7 +1354,7 @@ int yvex_attention_trace_capture(
         main_state && main_state->present ? main_state->score_state_extent : 0ull,
         index_state && index_state->present ? index_state->kv_state_extent : 0ull,
         index_state && index_state->present ? index_state->score_state_extent : 0ull,
-        topk_stride};
+        topk_stride, rolling_checkpoint_count ? rolling_checkpoint_count : 1ull};
     if (!attention_trace_counts(trace, &shape, floats, integers) ||
         !attention_trace_counts_filter(evidence_level, floats, integers))
         goto fail;
@@ -1313,6 +1363,8 @@ int yvex_attention_trace_capture(
     if (attention_trace_storage_open(trace, floats, float_sources, integers, u64_sources,
                                      workspace, ULLONG_MAX, &owned_bytes) != YVEX_OK)
         goto fail;
+    attention_trace_rolling_bind(
+        trace, rolling_checkpoint_count ? rolling_checkpoint_count : 1ull);
     trace->complete = 1;
     return 1;
 fail:

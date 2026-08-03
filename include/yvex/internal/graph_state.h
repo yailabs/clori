@@ -16,6 +16,7 @@ extern "C" {
 #define YVEX_GRAPH_ATTENTION_CAPACITY_SCHEMA_V1 1u
 #define YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V1 1u
 #define YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V2 2u
+#define YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V3 3u
 #define YVEX_ATTENTION_STATE_RECIPE_SCHEMA_V1 1u
 #define YVEX_ATTENTION_STATE_COMPONENT_CAP 8u
 #define YVEX_ATTENTION_WORKSPACE_RECIPE_SCHEMA_V1 1u
@@ -160,11 +161,11 @@ typedef struct {
     unsigned int schema_version;
     int sealed, persistent, cancelled, invalidated, transaction_active;
     int candidate_active, abort_required, position_consistent;
-    int staged_batch_complete;
+    int staged_batch_complete, prefix_selected, extension_ready;
     unsigned long long layer_count, prepared_layer_count, staged_layer_count, allocated_bytes;
     unsigned long long commit_count, abort_count, cancellation_count, reset_count, generation;
     unsigned long long capacity, committed_sequence_length, next_position;
-    unsigned long long staged_generation, staged_next_position;
+    unsigned long long staged_generation, staged_next_position, selected_prefix_count;
     yvex_graph_attention_state_component_summary components[YVEX_ATTENTION_STATE_BINDING_COUNT];
     char state_layout_identity[YVEX_SHA256_HEX_CAP], state_content_identity[YVEX_SHA256_HEX_CAP];
     char staged_state_content_identity[YVEX_SHA256_HEX_CAP];
@@ -174,7 +175,7 @@ typedef enum {
     YVEX_ATTENTION_STATE_VIEW_CANDIDATE
 } yvex_attention_state_view_kind;
 
-#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V3 3u
+#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V4 4u
 typedef struct yvex_attention_state_provider {
     unsigned int schema_version;
     void *context;
@@ -200,6 +201,9 @@ typedef struct yvex_attention_state_provider {
                  const yvex_attention_cancellation *cancellation,
                  char state_delta_identity[YVEX_SHA256_HEX_CAP],
                  yvex_attention_failure *failure, yvex_error *err);
+    int (*select_prefix)(void *context, unsigned long long prefix_count,
+                         unsigned long long extension_count,
+                         yvex_attention_failure *failure, yvex_error *err);
     /* A coordinated commit preflights every owner before any bank is visible. A
      * successful prepare retains exclusive publication ownership until one of
      * the non-failing resolve callbacks is invoked. */
@@ -271,6 +275,10 @@ int yvex_runtime_attention_probe_execute(
 int yvex_runtime_session_begin(
     struct yvex_runtime_execution_session *session,
     struct yvex_runtime_model_failure *failure, yvex_error *err);
+int yvex_runtime_session_select_attention_prefix(
+    struct yvex_runtime_execution_session *session, yvex_tensor_scope scope,
+    unsigned long long prefix_count, unsigned long long extension_count,
+    yvex_error *err);
 int yvex_runtime_session_finish(
     struct yvex_runtime_execution_session *session, int status,
     yvex_error *err);

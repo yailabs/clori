@@ -63,6 +63,35 @@ typedef struct {
 } yvex_cli_terminal_style;
 
 typedef enum {
+    YVEX_CLI_STREAM_STYLE_NORMAL = 0,
+    YVEX_CLI_STREAM_STYLE_DIM,
+    YVEX_CLI_STREAM_STYLE_ACCENT,
+    YVEX_CLI_STREAM_STYLE_STRONG
+} yvex_cli_stream_style;
+
+typedef struct {
+    FILE *output;
+    yvex_cli_terminal_style style;
+    yvex_client_stream_channel channel;
+    yvex_cli_stream_style active_style, line_style;
+    unsigned char utf8[4];
+    unsigned int utf8_count, utf8_expected, backtick_count;
+    char fence_language[32];
+    unsigned int fence_language_count;
+    int enhanced, line_start, in_fence, in_inline_code;
+    int collecting_language, closing_fence, pending_cr;
+    int wrote_bytes, last_newline;
+} yvex_cli_stream_renderer;
+
+typedef struct {
+    yvex_cli_terminal_style style;
+    char session_id[YVEX_SERVER_ID_CAP];
+    char request_id[YVEX_SERVER_ID_CAP];
+    unsigned long long cycles, proposed, accepted, rejected, discarded;
+    int request_open;
+} yvex_cli_watch_renderer;
+
+typedef enum {
     YVEX_MODELS_OPTION_TEXT = 0,
     YVEX_MODELS_OPTION_FLAG,
     YVEX_MODELS_OPTION_OUTPUT
@@ -471,8 +500,20 @@ int yvex_cli_out_flush(FILE *fp);
 FILE *yvex_cli_out_stdout(void);
 FILE *yvex_cli_out_stderr(void);
 void yvex_cli_terminal_style_get(FILE *fp, yvex_cli_terminal_style *style);
+void yvex_cli_stream_renderer_open(yvex_cli_stream_renderer *renderer,
+                                   FILE *output, int enhanced);
+int yvex_cli_stream_renderer_write(yvex_cli_stream_renderer *renderer,
+                                   yvex_client_stream_channel channel,
+                                   const unsigned char *bytes,
+                                   unsigned long long count);
+int yvex_cli_stream_renderer_finish(yvex_cli_stream_renderer *renderer,
+                                    int separate_terminal_status);
 const char *yvex_cli_out_stop_reason(unsigned long long reason);
 int yvex_cli_out_server_event(const yvex_server_event *event, int detailed);
+void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer);
+int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
+                                  const yvex_server_event *event);
+void yvex_cli_watch_renderer_finish(yvex_cli_watch_renderer *renderer);
 void yvex_cli_out_repl_catalog(void);
 void yvex_cli_out_line(FILE *fp, const char *text);
 void yvex_cli_out_lines(FILE *fp, const char *const *lines, size_t line_count);

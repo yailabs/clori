@@ -50,6 +50,9 @@ static int test_configured_summary_and_event(void)
                      "configured status");
     YVEX_TEST_ASSERT(summary.metrics.model_open_count == 0u,
                      "model not opened during create");
+    YVEX_TEST_ASSERT(summary.metrics.queue_depth == 0u &&
+                         summary.metrics.queue_capacity == 2u,
+                     "configured queue capacity is immediately observable");
     YVEX_TEST_ASSERT(!summary.runtime_ready && !summary.generation_ready,
                      "no false readiness before start");
     rc = yvex_server_event_next(server, 0u, 0, &event, &err);

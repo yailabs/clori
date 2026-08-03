@@ -292,6 +292,19 @@ static int injected_state_begin(
     return YVEX_OK;
 }
 
+static int injected_state_select_prefix(
+    void *context, unsigned long long prefix_count,
+    unsigned long long extension_count, yvex_attention_failure *failure,
+    yvex_error *err)
+{
+    (void)context;
+    (void)prefix_count;
+    (void)extension_count;
+    (void)failure;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int injected_state_stage(
     void *context, const yvex_attention_publication *publication,
     const yvex_attention_cancellation *cancellation,
@@ -439,7 +452,7 @@ static int injected_state_factory_open(
     control->active = state;
     control->opens++;
     *out = (yvex_attention_state_provider){
-        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V3,
+        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V4,
         .context = state,
         .prepare = injected_state_prepare,
         .summary = injected_state_summary,
@@ -447,6 +460,7 @@ static int injected_state_factory_open(
         .identity = injected_state_identity,
         .begin = injected_state_begin,
         .stage = injected_state_stage,
+        .select_prefix = injected_state_select_prefix,
         .prepare_commit = injected_state_prepare_commit,
         .publish_commit = injected_state_publish_commit,
         .cancel_commit = injected_state_cancel_commit,
@@ -1001,22 +1015,27 @@ static int fixture_attention_build(binding_fixture *fixture)
 static int fixture_build(binding_fixture *fixture, const char *artifact_path)
 {
     yvex_materialization_options options;
+    yvex_materialization_projection projection;
     yvex_materialization_failure material_failure;
     yvex_runtime_descriptor_failure descriptor_failure;
     yvex_error err;
     int rc;
 
     memset(fixture, 0, sizeof(*fixture));
-    if (!fixture_artifact_open(fixture, artifact_path) || !fixture_admission_build(fixture))
+    if (!fixture_artifact_open(fixture, artifact_path))
         return 0;
-    fixture_compatibility_build(fixture);
     if (yvex_test_deepseek_map_fixture_build(&fixture->map) != YVEX_OK || !fixture->map)
         return 0;
+    rc = yvex_deepseek_materialization_projection(fixture->map, &projection, &err);
+    if (rc != YVEX_OK || !fixture_admission_build(fixture)) return 0;
+    fixture->admission.mapping_identity = projection.mapping_identity;
+    fixture_compatibility_build(fixture);
     yvex_materialization_options_default(&options);
     options.max_chunk_bytes = 16u;
-    rc = yvex_materialization_plan_build(
-        &fixture->materialization_plan, &fixture->admission, fixture->artifact,
-        fixture->gguf, fixture->tensors, fixture->map, &options, &material_failure, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_plan_build(
+            &fixture->materialization_plan, &fixture->admission, fixture->artifact,
+            fixture->gguf, fixture->tensors, &projection, &options, &material_failure, &err);
     if (rc != YVEX_OK)
         fprintf(stderr, "runtime binding materialization plan failed: %s\n",
                 yvex_error_message(&err));

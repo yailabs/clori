@@ -6,11 +6,13 @@ include/yvex/core.h	abi	abi.core	generic	public	public-abi	repository	interface	
 include/yvex/gguf.h	abi	abi.gguf	generic	public	public-abi	repository	interface	none
 include/yvex/graph.h	abi	abi.graph	generic	public	public-abi	repository	interface	none
 include/yvex/internal/artifact.h	artifact	artifact.internal	generic	private	internal-abi	gguf,model,runtime	interface	none
+include/yvex/internal/candidate.h	graph	graph.candidate	generic	private	internal-abi	graph,runtime,tests	interface	none
 include/yvex/internal/backend.h	backend	backend.internal	generic	private	internal-abi	graph,runtime,cli	interface	none
 include/yvex/internal/benchmark.h	runtime	runtime.benchmark	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/compilation.h	model.compilation	model.compilation.internal	generic	private	internal-abi	model.family,quant	interface	none
 include/yvex/internal/core.h	core	core.internal	generic	private	internal-abi	repository	interface	none
 include/yvex/internal/decode.h	runtime	runtime.decode	generic	private	internal-abi	runtime,cli,tests	interface	none
+include/yvex/internal/execution.h	graph	graph.execution	generic	private	internal-abi	compilation,artifact,runtime,backend,tests	interface	none
 include/yvex/internal/generation.h	runtime	runtime.generation	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/logits.h	runtime	runtime.logits	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/sampling.h	runtime	runtime.sampling	generic	private	internal-abi	runtime,cli,tests	interface	none
@@ -125,6 +127,7 @@ src/gguf/tokenizer_metadata.c	gguf	gguf.tokenizer_metadata	generic	private	reusa
 src/gguf/tools.c	gguf	gguf.tools	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
 src/gguf/writer.c	gguf	gguf.writer	generic	private	transactional-io	artifact,model,quant	implementation	none
 src/graph/attention.c	graph	graph.attention	generic	private	reusable-algorithm	runtime,cli	implementation	none
+src/graph/candidate.c	graph	graph.candidate	generic	private	resource-lifecycle	graph,runtime,tests	implementation	none
 src/graph/moe.c	graph	graph.moe	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none
 src/graph/transformer.c	graph	graph.transformer	generic	private	reusable-algorithm	runtime,backend,cli,tests	implementation	none
 src/backend/cuda/moe.c	backend.cuda	backend.cuda.moe	backend	private	backend-implementation	runtime,graph,tests	implementation	none
@@ -134,6 +137,7 @@ src/graph/memory_plan.c	graph	graph.memory_plan	generic	private	immutable-planni
 src/graph/numeric.c	graph	graph.numeric	generic	private	reusable-algorithm	runtime,cli	implementation	none
 src/graph/plan.c	graph	graph.plan	generic	private	immutable-planning	runtime,cli	implementation	none
 src/graph/private.h	graph	graph.private	generic	private	private-interface	runtime,cli	interface	none
+src/graph/state_recipe.c	graph	graph.state_recipe	generic	private	immutable-planning	model,graph,runtime,tests	implementation	none
 src/io/writer.c	io	io.writer	generic	private	transactional-io	repository	implementation	none
 src/model/artifacts/gate.c	model.artifacts	model.artifacts.gate	generic	private	reusable-algorithm	cli,artifact	implementation	none
 src/model/artifacts/ref.c	model.artifacts	model.artifacts.ref	generic	private	reusable-algorithm	cli,artifact	implementation	none
@@ -152,6 +156,7 @@ src/runtime/decode.c	runtime	runtime.decode	generic	private	transactional-execut
 src/runtime/generation.c	runtime	runtime.generation	generic	private	transactional-execution	runtime,cli,tests	implementation	none
 src/runtime/generation_context.c	runtime	runtime.generation_context	generic	private	resource-lifecycle	runtime,generation,tests	implementation	none
 src/runtime/generation_result.c	runtime	runtime.generation_result	generic	private	typed-report	runtime,cli,tests	implementation	none
+src/graph/execution.c	graph	graph.execution	generic	private	reusable-algorithm	compilation,artifact,runtime,backend,tests	implementation	none
 src/runtime/speculation.c	runtime	runtime.speculation	generic	private	proposal-verification-acceptance	runtime,generation,tests	implementation	none
 src/runtime/logits.c	runtime	runtime.logits	generic	private	transactional-execution	runtime,backend,cli,tests	implementation	none
 src/runtime/sampling.c	runtime	runtime.sampling	generic	private	transactional-execution	runtime,cli,tests	implementation	none

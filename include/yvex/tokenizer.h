@@ -61,6 +61,7 @@ typedef struct {
 } yvex_tokens;
 
 #define YVEX_TOKENIZER_PLAN_SCHEMA_V1 1u
+#define YVEX_TOKENIZER_PLAN_SCHEMA_V2 2u
 #define YVEX_TOKENIZER_EXECUTION_SCHEMA_V1 1u
 #define YVEX_TOKENIZER_DECODER_SCHEMA_V1 1u
 #define YVEX_TOKENIZER_APPEND_SCHEMA_V1 1u
@@ -83,6 +84,7 @@ typedef struct {
     unsigned int bos_token_id, eos_token_id, pad_token_id, unk_token_id;
     int bos_present, eos_present, pad_present, unk_present;
     int add_bos_token, add_eos_token, byte_fallback, sealed, runtime_bound;
+    int explicit_reasoning_supported, maximum_reasoning_supported;
     yvex_tokenizer_model_policy model_policy;
     yvex_tokenizer_prompt_policy prompt_policy;
     char artifact_identity[YVEX_SHA256_HEX_CAP];
@@ -359,6 +361,7 @@ typedef struct {
     int add_generation_prompt;
     int drop_thinking;
     yvex_prompt_mode mode;
+    yvex_reasoning_policy reasoning_policy;
 } yvex_prompt_options;
 
 typedef struct {
@@ -369,6 +372,30 @@ typedef struct {
     char rendered_bytes_identity[YVEX_SHA256_HEX_CAP];
     char prompt_identity[YVEX_SHA256_HEX_CAP];
 } yvex_rendered_prompt;
+
+typedef enum {
+    YVEX_REASONING_SEGMENT_FINAL_TEXT = 0,
+    YVEX_REASONING_SEGMENT_EXPLICIT
+} yvex_reasoning_segment;
+
+typedef struct yvex_tokenizer_reasoning_stream yvex_tokenizer_reasoning_stream;
+typedef int (*yvex_tokenizer_reasoning_sink)(
+    void *context, yvex_reasoning_segment segment, const unsigned char *bytes,
+    unsigned long long byte_count, yvex_error *err);
+
+/* Classification is enabled only by an admitted source-authored prompt policy. The tokenizer
+ * consumes its own delimiter and never reclassifies arbitrary final prose by style. */
+int yvex_tokenizer_reasoning_stream_open(
+    yvex_tokenizer_reasoning_stream **out, const yvex_tokenizer *tokenizer,
+    yvex_reasoning_policy policy, yvex_tokenizer_reasoning_sink sink,
+    void *sink_context, yvex_error *err);
+int yvex_tokenizer_reasoning_stream_push(
+    yvex_tokenizer_reasoning_stream *stream, const unsigned char *bytes,
+    unsigned long long byte_count, yvex_error *err);
+int yvex_tokenizer_reasoning_stream_finish(
+    yvex_tokenizer_reasoning_stream *stream, yvex_error *err);
+void yvex_tokenizer_reasoning_stream_close(
+    yvex_tokenizer_reasoning_stream **stream);
 
 const char *yvex_prompt_role_name(yvex_prompt_role role);
 

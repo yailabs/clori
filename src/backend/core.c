@@ -1754,3 +1754,20 @@ int yvex_backend_tensor_same_shape(const yvex_device_tensor *a,
     }
     return 1;
 }
+
+int yvex_backend_tensor_f32_subview(
+    const yvex_device_tensor *source, unsigned long long offset,
+    unsigned long long count, yvex_device_tensor *view)
+{
+    unsigned long long end;
+    if (!source || !view || source->dtype != YVEX_DTYPE_F32 ||
+        offset > ULLONG_MAX - count ||
+        (end = offset + count) > source->bytes / sizeof(float))
+        return 0;
+    *view = *source;
+    view->rank = 1u;
+    view->dims[0] = count;
+    view->bytes = count * sizeof(float);
+    view->data = source->data + offset * sizeof(float);
+    return 1;
+}

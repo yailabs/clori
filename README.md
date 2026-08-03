@@ -131,7 +131,7 @@ three-terminal observation, sessions, shutdown, configuration, and recovery.
 | `yvexd` | One long-lived model, worker, queue, session/KV registry, private protocol, loopback OpenAI adapter, and telemetry authority |
 | `libyvex` | Reusable compilation, artifact, runtime, graph, backend, tokenizer, and generation implementation |
 
-Runtime-facing `yvex` operations always cross private local protocol v5. The
+Runtime-facing `yvex` operations always cross private local protocol v6. The
 finite offline lane may link engine owners but never hosts a persistent model.
 One compiled operation registry drives command paths, syntax, help, JSON
 discovery, completion, and slash schemas without becoming a domain-policy
@@ -142,8 +142,10 @@ attachment view, an immediately visible registry-derived slash catalog,
 in-place server-authored prefill progress, one compact turn summary, semantic
 TTY color, a categorized operational watch, and a detailed human trace.
 Ctrl-L clears and redraws the active prompt without changing session state;
-Ctrl-D exits cleanly even when discarding an unfinished line. Unsupported
-explicit-reasoning controls remain absent rather than inferring hidden reasoning.
+Ctrl-D exits cleanly even when discarding an unfinished line. For the admitted
+DSpark prompt contract, `/think`, `/think-max`, and `/nothink` select only the
+model's explicitly emitted reasoning channel; YVEX never infers or exposes
+hidden reasoning.
 Live milestone and release-gate state remains only in
 [`ROADMAP.md`](ROADMAP.md).
 

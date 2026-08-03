@@ -577,6 +577,20 @@ int yvex_attention_publication_hash_update(
         !yvex_core_u64_mul(publication->indexer_count, publication->indexer_stride,
                            &indexer_count))
         return 0;
+    if (publication->evidence_level == YVEX_ATTENTION_EVIDENCE_NONE)
+        return yvex_sha256_hex_valid(publication->execution_identity) &&
+               yvex_sha256_update_text(output_hash,
+                                       "yvex.attention.output.semantic.v1") &&
+               yvex_sha256_update_text(output_hash,
+                                       publication->execution_identity) &&
+               yvex_sha256_update_u64(output_hash, output_count) &&
+               yvex_sha256_update_text(state_hash,
+                                       "yvex.attention.state.semantic.v1") &&
+               yvex_sha256_update_text(state_hash,
+                                       publication->execution_identity) &&
+               yvex_sha256_update_u64(state_hash, raw_count) &&
+               yvex_sha256_update_u64(state_hash, compressed_count) &&
+               yvex_sha256_update_u64(state_hash, indexer_count);
     return attention_hash_fields(output_hash, publication,
                                  attention_publication_fields + 1u, 4u) &&
            yvex_sha256_update_u64(output_hash, output_width) &&

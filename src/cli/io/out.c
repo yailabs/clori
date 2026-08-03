@@ -9,7 +9,9 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <operator/registry.h>
+#include <yvex/internal/core.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -263,6 +265,289 @@ void yvex_cli_terminal_style_get(FILE *fp, yvex_cli_terminal_style *style)
     style->error = "\033[38;5;203m";
 }
 
+static const char *stream_style_code(const yvex_cli_stream_renderer *renderer,
+                                     yvex_cli_stream_style style)
+{
+    switch (style) {
+    case YVEX_CLI_STREAM_STYLE_DIM: return renderer->style.dim;
+    case YVEX_CLI_STREAM_STYLE_ACCENT: return renderer->style.accent;
+    case YVEX_CLI_STREAM_STYLE_STRONG: return renderer->style.strong;
+    default: return "";
+    }
+}
+
+static int stream_style_set(yvex_cli_stream_renderer *renderer,
+                            yvex_cli_stream_style style)
+{
+    if (renderer->active_style == style) return 1;
+    if (renderer->style.reset[0] && fputs(renderer->style.reset, renderer->output) == EOF)
+        return 0;
+    if (stream_style_code(renderer, style)[0] &&
+        fputs(stream_style_code(renderer, style), renderer->output) == EOF)
+        return 0;
+    renderer->active_style = style;
+    return 1;
+}
+
+static yvex_cli_stream_style stream_context_style(
+    const yvex_cli_stream_renderer *renderer)
+{
+    if (renderer->in_fence || renderer->in_inline_code)
+        return YVEX_CLI_STREAM_STYLE_ACCENT;
+    if (renderer->line_style != YVEX_CLI_STREAM_STYLE_NORMAL)
+        return renderer->line_style;
+    if (renderer->channel == YVEX_CLIENT_STREAM_EXPLICIT_REASONING)
+        return YVEX_CLI_STREAM_STYLE_DIM;
+    if (renderer->channel == YVEX_CLIENT_STREAM_TOOL_CALL ||
+        renderer->channel == YVEX_CLIENT_STREAM_TOOL_RESULT)
+        return YVEX_CLI_STREAM_STYLE_ACCENT;
+    return YVEX_CLI_STREAM_STYLE_NORMAL;
+}
+
+static int stream_bytes(yvex_cli_stream_renderer *renderer,
+                        const unsigned char *bytes, size_t count)
+{
+    if (!stream_style_set(renderer, stream_context_style(renderer)) ||
+        (count && fwrite(bytes, 1u, count, renderer->output) != count))
+        return 0;
+    if (count) {
+        renderer->wrote_bytes = 1;
+        renderer->last_newline = bytes[count - 1u] == '\n';
+    }
+    return 1;
+}
+
+static int stream_escape_byte(yvex_cli_stream_renderer *renderer,
+                              unsigned char byte)
+{
+    char escaped[5];
+    int count = snprintf(escaped, sizeof(escaped), "\\x%02x", byte);
+    return count == 4 && stream_bytes(renderer, (const unsigned char *)escaped, 4u);
+}
+
+static int stream_language_finish(yvex_cli_stream_renderer *renderer)
+{
+    int ok = 1;
+    if (renderer->fence_language_count) {
+        ok = stream_style_set(renderer, YVEX_CLI_STREAM_STYLE_DIM) &&
+             fputc('[', renderer->output) != EOF &&
+             fwrite(renderer->fence_language, 1u,
+                    renderer->fence_language_count, renderer->output) ==
+                 renderer->fence_language_count &&
+             fputc(']', renderer->output) != EOF;
+        renderer->wrote_bytes = 1;
+    }
+    renderer->collecting_language = 0;
+    renderer->fence_language_count = 0u;
+    return ok;
+}
+
+static int stream_newline(yvex_cli_stream_renderer *renderer)
+{
+    if (renderer->collecting_language && !stream_language_finish(renderer)) return 0;
+    renderer->closing_fence = 0;
+    if (!stream_style_set(renderer, stream_context_style(renderer)) ||
+        fputc('\n', renderer->output) == EOF)
+        return 0;
+    renderer->line_start = 1;
+    renderer->line_style = YVEX_CLI_STREAM_STYLE_NORMAL;
+    renderer->wrote_bytes = 1;
+    renderer->last_newline = 1;
+    return 1;
+}
+
+static int stream_backticks_flush(yvex_cli_stream_renderer *renderer)
+{
+    unsigned int count = renderer->backtick_count;
+    static const unsigned char ticks[] = "````````";
+    renderer->backtick_count = 0u;
+    if (!count) return 1;
+    if (renderer->line_start && count >= 3u) {
+        if (renderer->in_fence) {
+            renderer->in_fence = 0;
+            renderer->closing_fence = 1;
+        } else {
+            renderer->in_fence = 1;
+            renderer->collecting_language = 1;
+            renderer->fence_language_count = 0u;
+        }
+        count -= 3u;
+    } else if (!renderer->in_fence && count == 1u) {
+        renderer->in_inline_code = !renderer->in_inline_code;
+        count = 0u;
+    }
+    while (count) {
+        size_t extent = count > sizeof(ticks) - 1u ? sizeof(ticks) - 1u : count;
+        if (!stream_bytes(renderer, ticks, extent)) return 0;
+        count -= (unsigned int)extent;
+    }
+    return stream_style_set(renderer, stream_context_style(renderer));
+}
+
+static int stream_terminal_ascii(yvex_cli_stream_renderer *renderer,
+                                 unsigned char byte)
+{
+    if (renderer->pending_cr) {
+        renderer->pending_cr = 0;
+        if (!stream_backticks_flush(renderer) || !stream_newline(renderer)) return 0;
+        if (byte == '\n') return 1;
+    }
+    if (byte == '\r') {
+        renderer->pending_cr = 1;
+        return 1;
+    }
+    if (byte == '\n')
+        return stream_backticks_flush(renderer) && stream_newline(renderer);
+    if (byte == '`') {
+        if (renderer->backtick_count < UINT_MAX) renderer->backtick_count++;
+        return 1;
+    }
+    if (!stream_backticks_flush(renderer)) return 0;
+    if (renderer->collecting_language) {
+        if (byte >= 0x20u && byte < 0x7fu &&
+            renderer->fence_language_count + 1u < sizeof(renderer->fence_language))
+            renderer->fence_language[renderer->fence_language_count++] = (char)byte;
+        return 1;
+    }
+    if (renderer->closing_fence && (byte == ' ' || byte == '\t')) return 1;
+    renderer->closing_fence = 0;
+    if (byte < 0x20u || byte == 0x7fu) {
+        if (byte == '\t') return stream_bytes(renderer, &byte, 1u);
+        return stream_escape_byte(renderer, byte);
+    }
+    if (renderer->line_start && !renderer->in_fence) {
+        if (byte == '#') {
+            renderer->line_style = YVEX_CLI_STREAM_STYLE_STRONG;
+        } else if (byte == '>') {
+            renderer->line_style = YVEX_CLI_STREAM_STYLE_DIM;
+        } else if (byte == '-' || byte == '*') {
+            renderer->line_style = YVEX_CLI_STREAM_STYLE_ACCENT;
+        }
+    }
+    if (byte != ' ' && byte != '\t') renderer->line_start = 0;
+    return stream_bytes(renderer, &byte, 1u);
+}
+
+static unsigned int stream_utf8_extent(unsigned char byte)
+{
+    if (byte >= 0xc2u && byte <= 0xdfu) return 2u;
+    if (byte >= 0xe0u && byte <= 0xefu) return 3u;
+    if (byte >= 0xf0u && byte <= 0xf4u) return 4u;
+    return 0u;
+}
+
+static int stream_utf8_valid(const unsigned char *bytes, unsigned int count)
+{
+    if (count == 3u && bytes[0] == 0xe0u && bytes[1] < 0xa0u) return 0;
+    if (count == 3u && bytes[0] == 0xedu && bytes[1] >= 0xa0u) return 0;
+    if (count == 4u && bytes[0] == 0xf0u && bytes[1] < 0x90u) return 0;
+    if (count == 4u && bytes[0] == 0xf4u && bytes[1] >= 0x90u) return 0;
+    return 1;
+}
+
+static int stream_replacement(yvex_cli_stream_renderer *renderer)
+{
+    static const unsigned char replacement[] = {0xefu, 0xbfu, 0xbdu};
+    return stream_bytes(renderer, replacement, sizeof(replacement));
+}
+
+static int stream_terminal_byte(yvex_cli_stream_renderer *renderer,
+                                unsigned char byte)
+{
+    if (renderer->utf8_expected) {
+        if ((byte & 0xc0u) != 0x80u) {
+            renderer->utf8_count = renderer->utf8_expected = 0u;
+            return stream_replacement(renderer) &&
+                   stream_terminal_byte(renderer, byte);
+        }
+        renderer->utf8[renderer->utf8_count++] = byte;
+        if (renderer->utf8_count < renderer->utf8_expected) return 1;
+        if (!stream_utf8_valid(renderer->utf8, renderer->utf8_count)) {
+            renderer->utf8_count = renderer->utf8_expected = 0u;
+            return stream_replacement(renderer);
+        }
+        if (!stream_bytes(renderer, renderer->utf8, renderer->utf8_count)) return 0;
+        renderer->line_start = 0;
+        renderer->utf8_count = renderer->utf8_expected = 0u;
+        return 1;
+    }
+    if (byte < 0x80u) return stream_terminal_ascii(renderer, byte);
+    renderer->utf8_expected = stream_utf8_extent(byte);
+    if (!renderer->utf8_expected) return stream_replacement(renderer);
+    renderer->utf8[0] = byte;
+    renderer->utf8_count = 1u;
+    return 1;
+}
+
+void yvex_cli_stream_renderer_open(yvex_cli_stream_renderer *renderer,
+                                   FILE *output, int enhanced)
+{
+    if (!renderer) return;
+    memset(renderer, 0, sizeof(*renderer));
+    renderer->output = output ? output : stdout;
+    renderer->enhanced = enhanced != 0;
+    renderer->line_start = 1;
+    renderer->last_newline = 1;
+    renderer->channel = YVEX_CLIENT_STREAM_FINAL_TEXT;
+    yvex_cli_terminal_style_get(renderer->output, &renderer->style);
+}
+
+int yvex_cli_stream_renderer_write(yvex_cli_stream_renderer *renderer,
+                                   yvex_client_stream_channel channel,
+                                   const unsigned char *bytes,
+                                   unsigned long long count)
+{
+    unsigned long long index;
+    if (!renderer || !renderer->output || (!bytes && count) || count > SIZE_MAX)
+        return YVEX_ERR_INVALID_ARG;
+    if (!renderer->enhanced) {
+        if (count && fwrite(bytes, 1u, (size_t)count, renderer->output) != count)
+            return YVEX_ERR_IO;
+        if (count) {
+            renderer->wrote_bytes = 1;
+            renderer->last_newline = bytes[count - 1u] == '\n';
+        }
+        return YVEX_OK;
+    }
+    if (channel != renderer->channel) {
+        if (!stream_backticks_flush(renderer)) return YVEX_ERR_IO;
+        renderer->channel = channel;
+        if (!stream_style_set(renderer, stream_context_style(renderer)))
+            return YVEX_ERR_IO;
+    }
+    for (index = 0u; index < count; ++index)
+        if (!stream_terminal_byte(renderer, bytes[index])) return YVEX_ERR_IO;
+    return ferror(renderer->output) ? YVEX_ERR_IO : YVEX_OK;
+}
+
+int yvex_cli_stream_renderer_finish(yvex_cli_stream_renderer *renderer,
+                                    int separate_terminal_status)
+{
+    int ok;
+    if (!renderer || !renderer->output) return YVEX_ERR_INVALID_ARG;
+    if (!renderer->enhanced) {
+        if (separate_terminal_status && renderer->wrote_bytes && !renderer->last_newline)
+            renderer->last_newline = fputc('\n', renderer->output) != EOF;
+        return !ferror(renderer->output) ? YVEX_OK : YVEX_ERR_IO;
+    }
+    ok = stream_backticks_flush(renderer);
+    if (ok && renderer->utf8_expected) ok = stream_replacement(renderer);
+    renderer->utf8_count = renderer->utf8_expected = 0u;
+    if (ok && renderer->pending_cr) ok = stream_newline(renderer);
+    renderer->pending_cr = 0;
+    renderer->collecting_language = 0;
+    renderer->closing_fence = 0;
+    renderer->in_fence = 0;
+    renderer->in_inline_code = 0;
+    if (ok) ok = stream_style_set(renderer, YVEX_CLI_STREAM_STYLE_NORMAL);
+    if (ok && separate_terminal_status && renderer->wrote_bytes &&
+        !renderer->last_newline) {
+        ok = fputc('\n', renderer->output) != EOF;
+        renderer->last_newline = ok;
+    }
+    return ok && !ferror(renderer->output) ? YVEX_OK : YVEX_ERR_IO;
+}
+
 static int server_event_watch_visible(const yvex_server_event *event)
 {
     return event && event->kind != YVEX_SERVER_EVENT_CLIENT_DISCONNECTED &&
@@ -435,6 +720,24 @@ static void server_event_values(const yvex_server_event *event, int detailed)
         else if (!strcmp(event->phase, "launches"))
             printf(" · kernel launches %llu · stream syncs %llu · device syncs %llu",
                    event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "target"))
+            printf(" · target forwards %llu · rows %llu · replayed %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "speculation"))
+            printf(" · draft forwards %llu · verified rows %llu · promoted rows %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "candidate"))
+            printf(" · accepted %llu · discarded %llu · extensions %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "shape"))
+            printf(" · shape hits %llu · misses %llu · host scan %llu bytes",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "moe"))
+            printf(" · row/expert pairs %llu · subviews %llu · bytes %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "output"))
+            printf(" · rows %llu · D2H %llu bytes · committed %llu",
+                   event->value_a, event->value_b, event->value_c);
         else if (!strcmp(event->phase, "prefill"))
             printf(" · prompt %llu · reused %llu · new %llu", event->value_a,
                    event->value_b, event->value_c);
@@ -495,6 +798,212 @@ int yvex_cli_out_server_event(const yvex_server_event *event, int detailed)
     putchar('\n');
     fflush(stdout);
     return 1;
+}
+
+static void watch_stamp(const yvex_server_event *event, char stamp[16])
+{
+    time_t seconds = (time_t)(event->wall_time_ns / 1000000000u);
+    struct tm clock;
+    memcpy(stamp, "--:--:--", 9u);
+    if (event->wall_time_ns && localtime_r(&seconds, &clock))
+        (void)strftime(stamp, 16u, "%H:%M:%S", &clock);
+}
+
+static void watch_line_begin(const yvex_cli_watch_renderer *renderer,
+                             const yvex_server_event *event,
+                             const char *color, const char *label)
+{
+    char stamp[16];
+    watch_stamp(event, stamp);
+    printf("%s%s%s  %s%-9s%s ", renderer->style.dim, stamp,
+           renderer->style.reset, color, label, renderer->style.reset);
+}
+
+static void watch_request_id(const yvex_server_event *event)
+{
+    if (event->session_id[0] && event->request_id[0])
+        printf("%s/%s", event->session_id, event->request_id);
+    else if (event->session_id[0])
+        fputs(event->session_id, stdout);
+    else if (event->request_id[0])
+        fputs(event->request_id, stdout);
+    else
+        fputs("runtime", stdout);
+}
+
+static void watch_request_begin(yvex_cli_watch_renderer *renderer,
+                                const yvex_server_event *event)
+{
+    if (renderer->request_open &&
+        (!event->session_id[0] || !event->request_id[0] ||
+         strcmp(renderer->session_id, event->session_id) ||
+         strcmp(renderer->request_id, event->request_id))) {
+        printf("%s          previous request has no terminal event%s\n\n",
+               renderer->style.warning, renderer->style.reset);
+        renderer->request_open = 0;
+    }
+    if (renderer->request_open) return;
+    renderer->request_open = 1;
+    renderer->cycles = renderer->proposed = renderer->accepted = 0ull;
+    renderer->rejected = renderer->discarded = 0ull;
+    yvex_core_text_copy(renderer->session_id, sizeof(renderer->session_id),
+                        event->session_id);
+    yvex_core_text_copy(renderer->request_id, sizeof(renderer->request_id),
+                        event->request_id);
+    putchar('\n');
+    watch_line_begin(renderer, event, renderer->style.accent, "REQUEST");
+    watch_request_id(event);
+    if (event->kind == YVEX_SERVER_EVENT_REQUEST_STARTED)
+        printf("  %sinput %llu · prefix %llu · limit %llu%s",
+               renderer->style.dim, event->value_a, event->value_b,
+               event->value_c, renderer->style.reset);
+    putchar('\n');
+}
+
+static void watch_session(const yvex_cli_watch_renderer *renderer,
+                          const yvex_server_event *event)
+{
+    const char *verb = yvex_server_event_kind_name(event->kind);
+    const char *dot = strrchr(verb, '.');
+    watch_line_begin(renderer, event, server_event_color(event, &renderer->style),
+                     "SESSION");
+    printf("%-20s %s", event->session_id, dot ? dot + 1 : verb);
+    if (event->kind == YVEX_SERVER_EVENT_SESSION_ATTACHED ||
+        event->kind == YVEX_SERVER_EVENT_SESSION_DETACHED)
+        printf(" · %llu client%s", event->value_a, event->value_a == 1ull ? "" : "s");
+    else if (event->kind == YVEX_SERVER_EVENT_SESSION_CREATED ||
+             event->kind == YVEX_SERVER_EVENT_SESSION_CLOSED)
+        printf(" · %llu active", event->value_b);
+    putchar('\n');
+}
+
+static void watch_cycle(yvex_cli_watch_renderer *renderer,
+                        const yvex_server_event *event)
+{
+    renderer->cycles++;
+    renderer->proposed += event->proposed_tokens;
+    renderer->accepted += event->accepted_tokens;
+    renderer->rejected += event->rejected_tokens;
+    renderer->discarded += event->discarded_tokens;
+    watch_line_begin(renderer, event, renderer->style.success, "DSPARK");
+    printf("cycle %-3llu %llu/%llu accepted", event->speculative_cycle,
+           event->accepted_tokens, event->proposed_tokens);
+    if (event->selected_verification_tokens)
+        printf(" · verify %llu", event->selected_verification_tokens);
+    if (event->rejected_tokens) printf(" · %llu rejected", event->rejected_tokens);
+    if (event->discarded_tokens) printf(" · %llu stop-discarded", event->discarded_tokens);
+    if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
+    putchar('\n');
+}
+
+static void watch_request_end(yvex_cli_watch_renderer *renderer,
+                              const yvex_server_event *event)
+{
+    const char *label = event->kind == YVEX_SERVER_EVENT_GENERATION_COMPLETED
+                            ? "COMPLETE"
+                        : event->kind == YVEX_SERVER_EVENT_GENERATION_CANCELLED
+                            ? "CANCELLED"
+                            : "FAILED";
+    const char *color = server_event_color(event, &renderer->style);
+    watch_line_begin(renderer, event, color, label);
+    printf("%llu token%s · position %llu · %s", event->value_a,
+           event->value_a == 1ull ? "" : "s", event->value_b,
+           yvex_cli_out_stop_reason(event->value_c));
+    if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
+    if (event->rate > 0.0) printf(" · %.2f tok/s", event->rate);
+    if (renderer->cycles)
+        printf("\n          %sDSPARK %llu cycle%s · %llu/%llu accepted · "
+               "%llu rejected · %llu discarded%s",
+               renderer->style.dim, renderer->cycles,
+               renderer->cycles == 1ull ? "" : "s", renderer->accepted,
+               renderer->proposed, renderer->rejected, renderer->discarded,
+               renderer->style.reset);
+    puts("\n");
+    renderer->request_open = 0;
+}
+
+void yvex_cli_watch_renderer_open(yvex_cli_watch_renderer *renderer)
+{
+    if (!renderer) return;
+    memset(renderer, 0, sizeof(*renderer));
+    yvex_cli_terminal_style_get(stdout, &renderer->style);
+}
+
+int yvex_cli_watch_renderer_event(yvex_cli_watch_renderer *renderer,
+                                  const yvex_server_event *event)
+{
+    if (!renderer || !event) return 0;
+    if (event->kind <= YVEX_SERVER_EVENT_LISTENER_READY ||
+        event->kind == YVEX_SERVER_EVENT_CLIENT_DISCONNECTED ||
+        event->kind == YVEX_SERVER_EVENT_REQUEST_RECEIVED ||
+        event->kind == YVEX_SERVER_EVENT_GENERATION_FRAGMENT ||
+        event->kind == YVEX_SERVER_EVENT_GENERATION_PROGRESS ||
+        event->kind == YVEX_SERVER_EVENT_GENERATION_PROFILE ||
+        (event->kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
+         event->kind <= YVEX_SERVER_EVENT_CANDIDATE_REJECTED))
+        return 0;
+    if (event->kind >= YVEX_SERVER_EVENT_SESSION_CREATED &&
+        event->kind <= YVEX_SERVER_EVENT_SESSION_CLOSED) {
+        watch_session(renderer, event);
+        return 1;
+    }
+    if (event->kind == YVEX_SERVER_EVENT_REQUEST_QUEUED) {
+        if (event->value_a <= 1ull) return 0;
+        watch_line_begin(renderer, event, renderer->style.warning, "QUEUE");
+        watch_request_id(event);
+        printf(" · depth %llu/%llu\n", event->value_a, event->value_b);
+        return 1;
+    }
+    if (event->kind == YVEX_SERVER_EVENT_REQUEST_STARTED) {
+        watch_request_begin(renderer, event);
+        return 1;
+    }
+    if (event->kind >= YVEX_SERVER_EVENT_TOKENIZER_COMPLETED &&
+        event->kind <= YVEX_SERVER_EVENT_GENERATION_FAILED)
+        watch_request_begin(renderer, event);
+    if (event->kind == YVEX_SERVER_EVENT_TOKENIZER_COMPLETED) {
+        watch_line_begin(renderer, event, renderer->style.strong, "INPUT");
+        printf("%llu prompt tokens · %llu reused\n", event->value_a, event->value_b);
+    } else if (event->kind == YVEX_SERVER_EVENT_PREFILL_COMPLETED) {
+        watch_line_begin(renderer, event, renderer->style.success, "PREFILL");
+        printf("%llu token%s · %llu chunk%s", event->value_a,
+               event->value_a == 1ull ? "" : "s", event->value_b,
+               event->value_b == 1ull ? "" : "s");
+        if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
+        if (event->rate > 0.0) printf(" · %.2f tok/s", event->rate);
+        putchar('\n');
+    } else if (event->kind == YVEX_SERVER_EVENT_GENERATION_FIRST_TOKEN) {
+        watch_line_begin(renderer, event, renderer->style.accent, "FIRST");
+        printf("first committed token");
+        if (event->seconds > 0.0) printf(" · TTFT %.3f s", event->seconds);
+        putchar('\n');
+    } else if (event->kind == YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED) {
+        watch_cycle(renderer, event);
+    } else if (event->kind >= YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
+               event->kind <= YVEX_SERVER_EVENT_GENERATION_FAILED) {
+        watch_request_end(renderer, event);
+    } else if (event->kind == YVEX_SERVER_EVENT_TELEMETRY_DROPPED) {
+        watch_line_begin(renderer, event, renderer->style.warning, "WARNING");
+        printf("telemetry dropped %llu event%s · capacity %llu\n", event->value_a,
+               event->value_a == 1ull ? "" : "s", event->value_b);
+    } else if (event->kind >= YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_START) {
+        watch_line_begin(renderer, event, server_event_color(event, &renderer->style),
+                         "RUNTIME");
+        server_event_name(event);
+        putchar('\n');
+    } else {
+        return 0;
+    }
+    fflush(stdout);
+    return 1;
+}
+
+void yvex_cli_watch_renderer_finish(yvex_cli_watch_renderer *renderer)
+{
+    if (!renderer || !renderer->request_open) return;
+    printf("%s          request stream ended without a terminal event%s\n",
+           renderer->style.warning, renderer->style.reset);
+    renderer->request_open = 0;
 }
 
 void yvex_cli_out_repl_catalog(void)

@@ -14,6 +14,7 @@ docs/architecture/system.md	architecture	canonical	all	living	implemented_system
 docs/audits/code-commentary-7c90ce1/README.md	audit	frozen	contributors	frozen	code_commentary_baseline_audit
 docs/audits/documentation-architecture-51a5c/README.md	audit	frozen	contributors	frozen	documentation_architecture_baseline_audit
 docs/audits/documentation-architecture-51a5c/findings.md	audit	frozen	contributors	frozen	documentation_architecture_baseline_findings
+docs/audits/execution-substrate-dd91fb/README.md	audit	frozen	contributors	frozen	execution_substrate_baseline_and_disposition_audit
 docs/audits/operator-surface-ec7dcc/README.md	audit	frozen	contributors	frozen	operator_surface_audit
 docs/audits/operator-surface-ec7dcc/findings.md	audit	frozen	contributors	frozen	operator_surface_findings
 docs/audits/operator-surface-ec7dcc/project-control-input.md	audit	frozen	contributors	frozen	operator_audit_project_control_input
@@ -24,14 +25,16 @@ docs/audits/topology-closure.md	audit	frozen	contributors	frozen	topology_closur
 docs/contracts/artifacts.md	contract	canonical	contributors-operators	living	artifact_admission_contract
 docs/contracts/c-api.md	contract	canonical	integrators-contributors	living	c_api_and_internal_abi_reference
 docs/contracts/events-telemetry.md	contract	canonical	operators-contributors	living	events_telemetry_contract
-docs/contracts/local-protocol.md	contract	canonical	contributors	living	local_protocol_v5_contract
+docs/contracts/local-protocol.md	contract	canonical	contributors	living	local_protocol_v6_contract
 docs/contracts/runtime.md	contract	canonical	operators-contributors	living	hosted_runtime_contract
 docs/decisions/0001-public-project-control.md	decision	canonical	contributors	accepted	public_project_control_decision
 docs/decisions/0002-command-operation-registry.md	decision	canonical	contributors	accepted	command_registry_decision
 docs/decisions/0003-documentation-architecture.md	decision	canonical	contributors	accepted	documentation_architecture_decision
 docs/decisions/0004-target-verified-speculation.md	decision	canonical	contributors	accepted	target_verified_speculation_decision
+docs/decisions/0005-execution-substrate.md	decision	canonical	contributors	accepted	execution_substrate_decision
 docs/decisions/README.md	decision	projection	contributors	living	decision_index
 docs/development/documentation-policy.md	development	canonical	contributors	living	documentation_governance
+docs/development/gb10-targets.md	development	canonical	contributors	living	gb10_execution_target_table
 docs/development/reference-baseline.md	development	canonical	contributors	living	external_reference_engineering_baseline
 docs/development/source-ownership.md	development	canonical	contributors	living	source_module_ownership_reference
 docs/doctrine/evidence.md	doctrine	canonical	all	living	evidence_claim_discipline
@@ -44,6 +47,7 @@ docs/milestones/code-commentary.md	milestone	canonical	contributors	accepted	cod
 docs/milestones/command-architecture.md	milestone	canonical	contributors	accepted	command_architecture_boundary
 docs/milestones/deepseek-dspark-rebase.md	milestone	canonical	contributors	accepted	deepseek_dspark_rebase_boundary
 docs/milestones/documentation-architecture.md	milestone	canonical	contributors	accepted	documentation_architecture_boundary
+docs/milestones/product-architecture.md	milestone	canonical	contributors	accepted	execution_substrate_refoundation_boundary
 docs/milestones/runtime-console-repl.md	milestone	canonical	contributors	accepted	runtime_console_boundary
 docs/model-families/deepseek-v4-flash.md	family	canonical	operators-contributors	living	deepseek_v4_flash_facts
 docs/model-families/gemma.md	family	canonical	contributors	living	gemma_facts

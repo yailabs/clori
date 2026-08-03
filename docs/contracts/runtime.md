@@ -13,8 +13,9 @@ server owners.
 Consumers: runtime-client operations and the interactive console in `yvex`,
 the in-process OpenAI adapter, and focused runtime tests.
 
-The contract begins with one admitted complete artifact and exact runtime
-binding and ends with typed state/results, committed text, events, or refusal.
+The contract begins with one admitted complete artifact, exact runtime binding,
+Physical Execution IR and compiled execution profile and ends with typed
+state/results, committed text, events, or refusal.
 It does not define compilation, command grammar, HTTP syntax, evaluation,
 benchmark policy, or release state.
 
@@ -27,9 +28,10 @@ closed -> opening -> authenticated -> materialized -> ready -> stopping -> close
 ```
 
 Opening validates artifact snapshot and identity, runtime binding identity and
-schema, model descriptor, physical variant, qtype/backend prerequisites, and
-resource budgets before readiness. The runtime imports compiler facts; it does
-not reconstruct transformation or writer plans.
+schema, model descriptor, physical variant, Physical Execution IR,
+qtype/backend prerequisites, compiled profile, and resource budgets before
+readiness. The runtime imports compiler facts; it does not reconstruct
+transformation or writer plans.
 
 The model owns model-lifetime artifact/binding handles, encoded weights,
 backend resources, tokenizer plan, output-head residency, immutable execution
@@ -83,9 +85,13 @@ decode exactly once before it is appended and detokenized. EOS or tokenizer
 stop tokens terminate according to the tokenizer contract without fabricated
 state advancement.
 
-CPU and CUDA consume the same typed logical contract. Unsupported CUDA qtypes,
-operations, modes, workspace, or resources refuse; no explicit CUDA request
-falls back to CPU.
+CPU and CUDA consume the same typed logical contract. Numerical device values
+carry explicit typed views; scalar, row, audit-digest, and forensic-full host
+materialization are distinct requests. Production CUDA greedy selection
+returns a bounded token/status result without full-vocabulary host transfer.
+The exact host stochastic path remains an explicit portable-reference class.
+Unsupported CUDA qtypes, operations, modes, workspace, or resources refuse;
+no explicit CUDA request falls back to CPU.
 
 ## Generation modes and verification
 
@@ -127,13 +133,41 @@ committed, and the result identifies the exact completed prefix and first
 incomplete unit. State position and generation come from the committed owner,
 not from a renderer or decode-local counter.
 
-Speculation uses one bounded multi-position candidate transaction. The
-transaction covers target attention/KV state, DSpark candidate state, position,
-token ledger, decoder, generated text, target and draft RNG state, stop class,
-and turn identities. It commits exactly the accepted target-authored prefix
-plus any correction or bonus token defined by the algorithm. Rejected suffixes
-are discarded before later state or text becomes visible. Rollback never means
-decrementing counters after publication.
+Speculation uses one bounded prefix-addressable candidate transaction. Ordered
+candidate deltas retain the target checkpoint after every verified position;
+SWA uses a ring projection while compressed, indexer and rolling state retain
+exact per-position boundaries. The transaction covers target attention/KV
+state, DSpark candidate state, position, token ledger, decoder, generated text,
+target and draft RNG state, stop class, and turn identities. It promotes the
+checkpoint for exactly the accepted target-authored prefix plus any separately
+executed correction or bonus token defined by the algorithm. Accepted target
+rows are not replayed, rejected suffixes are discarded, and rollback never
+means decrementing counters after publication.
+
+## Execution and evidence admission
+
+Every request consumes one immutable compiled execution profile binding the
+logical model, physical variant, Physical Execution IR, artifact,
+materialization, runtime binding, kernel bundle, hardware, context, mode,
+workload, evidence profile, and execution class. `production` admits bounded
+status and accounting only; `audit` may add selected probes and device digests;
+`forensic` may explicitly materialize full intermediates. Trace verbosity does
+not select evidence depth, and production identity does not require complete
+hidden, logits, probability, state, or event hashing.
+
+Forensic CUDA attention comparison may select the canonical-order numerical
+adapter rather than the production Q8-activation/F32 implementation. The
+adapter exists only to compare every intermediate against the independent
+reference contract; it cannot be selected by a production execution profile.
+
+Target prefill/decode, draft width five, verification widths two through six,
+correction, and reset select an execution shape before mutation. The key binds
+scope, phase, operation, width, context band, visibility, capacity, workspace,
+attention/state/kernel identities, and evidence profile. The runtime may admit
+a compatible eager/reference shape before execution; otherwise refusal names
+the exact capacity component, configured and required values, position, width,
+scope and shape/workspace/state identities. It never changes the active shape
+after output begins.
 
 ## Generation and text publication
 
@@ -149,7 +183,12 @@ Fragments are published only after:
 3. the internal text ledger has committed the same fragment.
 
 Sink failure or disconnect stops further publication and preserves exact
-model-committed partial state. A partial turn is never labeled complete.
+model-committed partial state. The typed partial result records committed
+position/tokens/text, participating state generations and identities, failure
+class, and recovery requirement. A partial session is visibly distinct,
+refuses ordinary continuation, and requires explicit reset unless a future
+versioned recovery operation is admitted. A partial turn is never labeled
+complete.
 
 Draft candidates are not fragments. They never enter native streaming, HTTP
 or SSE output, transcript, completion usage, or ordinary generated-token
@@ -225,7 +264,7 @@ refusals or failures. None may become a successful target-only turn.
 
 ## Compatibility
 
-The runtime behavior is consumed through private local protocol v5 and the
+The runtime behavior is consumed through private local protocol v6 and the
 bounded OpenAI compatibility profile v1. Public C ABI and internal ABI follow
 their header/version contracts. Pre-v0.1 private protocol versions may be
 refused rather than decoded compatibly.
@@ -234,6 +273,6 @@ refused rather than decoded compatibly.
 
 This contract does not establish public/remote serving, authentication, TLS,
 continuous batching, multi-model hosting, distributed execution,
-restart-persistent sessions, complete accelerator residency, device-side
-sampling/tokenization, load-aware confidence scheduling, DSpark acceleration,
+restart-persistent sessions, complete accelerator residency, complete
+device-side stochastic sampling/tokenization, load-aware confidence scheduling, DSpark acceleration,
 model evaluation, release benchmark performance, or release qualification.

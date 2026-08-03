@@ -82,6 +82,14 @@ The source declares a one-million-token context contract. Hosted context
 capacity is selected and admitted independently by the runtime; source
 capacity is not an automatic runtime configuration or performance claim.
 
+The official prompt/output contract begins explicit thinking with the
+source-authored `<think>` token and terminates it with the corresponding
+`</think>` token. YVEX's tokenizer owner consumes these delimiters only when a
+request selects an admitted `enabled` or `maximum` reasoning policy and emits a
+typed explicit-reasoning channel. Delimiter text never appears in final output,
+and ordinary prose is never reclassified as reasoning. This is model-emitted
+text, not access to hidden internal chain of thought.
+
 ## Coverage, transformation, and artifact
 
 Exact source coverage reconciles 72,317 source tensors, 3,130 more than the
@@ -118,11 +126,13 @@ verification candidate state. No second process, model opening, tokenizer,
 session registry, CUDA context, or output head is created for drafting.
 
 In DSpark mode, proposals do not advance position, KV, transcript, usage, or
-text. The complete target verifies the ordered candidate block. Greedy mode
+text. The complete target verifies the ordered candidate block and retains an
+exact checkpoint after each target-authored row. Greedy mode
 requires exact target-token equality; admitted stochastic mode uses
 target-distribution-preserving accept/reject and residual sampling. The runtime
-commits only the accepted target-authored prefix, discards the rejected suffix,
-and publishes text after model, token, decoder, and RNG state agree.
+promotes only the accepted target-authored checkpoint without replaying
+accepted rows, discards the rejected suffix, and publishes text after model,
+token, decoder, and RNG state agree.
 
 Target-only remains the explicit semantic reference and debug mode. An
 explicit DSpark request fails closed when any draft tensor, plan, qtype,
@@ -135,7 +145,9 @@ DeepSeek-V4-Flash-DSpark is the sole complete YVEX source-to-streamed-text verti
 The hosted native, interactive, and bounded OpenAI-compatible paths
 consume one target-verified runtime authority. Target-only and DSpark modes,
 multi-turn reuse, cancellation, reset, and committed-only streaming are
-implemented under private local protocol v5.
+implemented under private local protocol v6. The admitted tokenizer/prompt
+profile also supports explicit reasoning enabled, maximum, and disabled policy
+through a separate typed output channel.
 
 ## Explicit non-claims
 
@@ -144,7 +156,8 @@ This record does not claim:
 - an optimized GB10 physical variant or a DSpark speedup;
 - native MXFP4/NVFP4 Tensor Core execution;
 - production load-aware confidence scheduling or continuous batching;
-- complete accelerator residency or device-side sampling/tokenization;
+- complete accelerator residency or complete device-side stochastic
+  sampling/tokenization;
 - multi-device or distributed serving;
 - model behavior or quality evaluation or quality parity;
 - a public full-model benchmark;

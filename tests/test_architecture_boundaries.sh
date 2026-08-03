@@ -130,6 +130,31 @@ fi
 # Family names may occur in recipes, evidence, and rendered facts, but never as
 # string-comparison control flow in the family-neutral execution plane.
 
+[ ! -d src/runtime/families ] ||
+    fail "runtime must remain family-neutral; concrete family runtime directories are forbidden"
+if find src/runtime -type f \( -name '*deepseek*' -o -name '*qwen*' -o -name '*gemma*' \) |
+    rg .; then
+    fail "runtime contains a concrete family source"
+fi
+
+# A family may project facts at three irreducible boundaries: model intake,
+# graph composition, and a fused backend lowering. These same-basename files
+# are distinct owners; any fourth DeepSeek implementation would instead create
+# the parallel family runtime that this DAG forbids.
+deepseek_family_sources=$(find src -path '*/families/deepseek_v4.c' -type f | sort)
+expected_deepseek_family_sources='src/backend/cuda/families/deepseek_v4.c
+src/graph/families/deepseek_v4.c
+src/model/families/deepseek_v4.c'
+[ "$deepseek_family_sources" = "$expected_deepseek_family_sources" ] ||
+    fail "DeepSeek must have exactly model, graph, and fused-CUDA family projections"
+while IFS= read -r source; do
+    awk -F '\t' -v source="$source" '$1 == source && $4 == "family" { found = 1 } END { exit !found }' \
+        config/source_owners.tsv ||
+        fail "family projection lacks a distinct machine-readable family owner: $source"
+done <<EOF
+$expected_deepseek_family_sources
+EOF
+
 family_neutral_sources=$(
     {
         find src/runtime -maxdepth 1 -type f \( -name '*.c' -o -name '*.h' \)

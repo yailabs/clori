@@ -12,7 +12,6 @@
 #include <yvex/gguf.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/core.h>
-#include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/quant_numeric.h>
 
 #define MATERIALIZE_DEFAULT_CHUNK (8ull * 1024ull * 1024ull)
@@ -154,8 +153,8 @@ static void materialize_compute_plan_identity(yvex_materialization_plan *plan) {
 static yvex_materialization_placement
 materialize_select_placement(const yvex_tensor_info *tensor,
                              const yvex_materialization_options *options,
-                             const yvex_deepseek_gguf_descriptor *descriptor) {
-    if (descriptor && descriptor->expert_count > 1ull)
+                             const yvex_materialization_terminal *terminal) {
+    if (terminal && terminal->expert_count > 1ull)
         return YVEX_MATERIALIZATION_PLACEMENT_STAGED_CACHE;
     if (options && options->backend_resident_budget_bytes && tensor &&
         tensor->storage_bytes <= options->backend_resident_budget_bytes)
@@ -272,12 +271,13 @@ const char *yvex_materialization_failure_name(yvex_materialization_failure_code 
 static int materialize_plan_add_tensor(yvex_materialization_plan *plan,
                                        const yvex_artifact *artifact, const yvex_gguf *gguf,
                                        const yvex_tensor_table *tensors,
-                                       const yvex_deepseek_gguf_map *deepseek_map,
+                                       const yvex_materialization_projection *projection,
                                        const yvex_materialization_options *options,
                                        unsigned long long index,
                                        yvex_materialization_failure *failure, yvex_error *err) {
     const yvex_tensor_info *tensor = yvex_tensor_table_at(tensors, index);
-    const yvex_deepseek_gguf_descriptor *descriptor = NULL;
+    yvex_materialization_terminal terminal = {0};
+    int terminal_found = 0;
     const yvex_gguf_qtype_geometry *geometry;
     const yvex_quant_numeric_capability *capability;
     yvex_gguf_qtype_storage_result storage;
@@ -289,11 +289,10 @@ static int materialize_plan_add_tensor(yvex_materialization_plan *plan,
                                   tensor && tensor->name ? tensor->name : NULL, index, 1ull, 0ull,
                                   tensor ? tensor->absolute_offset : 0ull, err, YVEX_ERR_FORMAT,
                                   "materialization tensor record is missing canonical facts");
-    descriptor =
-        deepseek_map
-            ? yvex_model_register_deepseek_v4()->lowering.find_emitted(deepseek_map, tensor->name)
-            : NULL;
-    if (options->require_deepseek_map && !descriptor)
+    terminal_found = projection && projection->find
+                         ? projection->find(projection->context, tensor->name, &terminal)
+                         : 0;
+    if (options->require_terminal_projection && !terminal_found)
         return materialize_reject(failure, YVEX_MATERIALIZATION_FAILURE_TENSOR_RECORD, tensor->name,
                                   index, 1ull, 0ull, tensor->absolute_offset, err, YVEX_ERR_FORMAT,
                                   "materialization tensor record is missing canonical facts");
@@ -315,18 +314,17 @@ static int materialize_plan_add_tensor(yvex_materialization_plan *plan,
     capability = yvex_quant_numeric_capability_at(tensor->ggml_type);
     binding->tensor_id = index;
     binding->descriptor_index =
-        descriptor
-            ? (unsigned long long)(descriptor - yvex_model_register_deepseek_v4()->lowering.at(
-                                                    deepseek_map, 0ull))
-            : YVEX_MATERIALIZATION_NO_INDEX;
+        terminal_found ? terminal.descriptor_index : YVEX_MATERIALIZATION_NO_INDEX;
     yvex_core_text_copy(binding->name, sizeof(binding->name), tensor->name);
-    binding->role = descriptor ? descriptor->role : tensor->role;
-    binding->collection = descriptor ? descriptor->collection : YVEX_TENSOR_COLLECTION_COUNT;
-    binding->scope = descriptor ? descriptor->scope : YVEX_TENSOR_SCOPE_GLOBAL;
-    binding->layer_index = descriptor ? descriptor->layer_index : YVEX_MATERIALIZATION_NO_INDEX;
+    binding->role = terminal_found ? terminal.role : tensor->role;
+    binding->collection =
+        terminal_found ? terminal.collection : YVEX_TENSOR_COLLECTION_COUNT;
+    binding->scope = terminal_found ? terminal.scope : YVEX_TENSOR_SCOPE_GLOBAL;
+    binding->layer_index =
+        terminal_found ? terminal.layer_index : YVEX_MATERIALIZATION_NO_INDEX;
     binding->predictor_index =
-        descriptor ? descriptor->predictor_index : YVEX_MATERIALIZATION_NO_INDEX;
-    binding->expert_count = descriptor ? descriptor->expert_count : 0ull;
+        terminal_found ? terminal.predictor_index : YVEX_MATERIALIZATION_NO_INDEX;
+    binding->expert_count = terminal_found ? terminal.expert_count : 0ull;
     binding->rank = tensor->rank;
     for (dimension = 0u; dimension < YVEX_TENSOR_MAX_DIMS; ++dimension)
         binding->dims[dimension] = dimension < tensor->rank ? tensor->dims[dimension] : 0ull;
@@ -344,7 +342,8 @@ static int materialize_plan_add_tensor(yvex_materialization_plan *plan,
                                   ULLONG_MAX, tensor->storage_bytes, tensor->absolute_offset, err,
                                   YVEX_ERR_BOUNDS, "tensor range end overflowed");
     binding->alignment = yvex_gguf_alignment(gguf);
-    binding->placement = materialize_select_placement(tensor, options, descriptor);
+    binding->placement = materialize_select_placement(
+        tensor, options, terminal_found ? &terminal : NULL);
     binding->access_mode = materialize_access_for_placement(binding->placement);
     binding->backend_compatible =
         capability && capability->storage_admitted &&
@@ -362,7 +361,7 @@ int yvex_materialization_plan_build(yvex_materialization_plan **out,
                                     const yvex_complete_artifact_admission *admission,
                                     const yvex_artifact *artifact, const yvex_gguf *gguf,
                                     const yvex_tensor_table *tensors,
-                                    const yvex_deepseek_gguf_map *deepseek_map,
+                                    const yvex_materialization_projection *projection,
                                     const yvex_materialization_options *options,
                                     yvex_materialization_failure *failure, yvex_error *err) {
     yvex_materialization_options local;
@@ -413,15 +412,21 @@ int yvex_materialization_plan_build(yvex_materialization_plan **out,
                                   YVEX_MATERIALIZATION_NO_INDEX, admission->tensor_count, count,
                                   0ull, err, YVEX_ERR_FORMAT,
                                   "tensor table count differs from complete-artifact admission");
-    if (local.require_deepseek_map) {
-        const yvex_deepseek_gguf_map_summary *summary =
-            yvex_model_register_deepseek_v4()->lowering.summary(deepseek_map);
-        if (!summary || !summary->complete || summary->descriptor_count != count)
+    if (projection &&
+        (projection->schema_version != YVEX_MATERIALIZATION_PROJECTION_SCHEMA_VERSION ||
+         !projection->mapping_identity || !projection->context || !projection->find))
+        return materialize_reject(
+            failure, YVEX_MATERIALIZATION_FAILURE_TENSOR_COUNT, NULL,
+            YVEX_MATERIALIZATION_NO_INDEX, count,
+            projection ? projection->descriptor_count : 0ull, 0ull, err, YVEX_ERR_FORMAT,
+            "materialization terminal projection does not match artifact admission");
+    if (local.require_terminal_projection) {
+        if (!projection || !projection->complete || projection->descriptor_count != count ||
+            projection->mapping_identity != admission->mapping_identity)
             return materialize_reject(failure, YVEX_MATERIALIZATION_FAILURE_TENSOR_COUNT, NULL,
-                                      YVEX_MATERIALIZATION_NO_INDEX, count,
-                                      summary ? summary->descriptor_count : 0ull, 0ull, err,
+                                      YVEX_MATERIALIZATION_NO_INDEX, count, 0ull, 0ull, err,
                                       YVEX_ERR_FORMAT,
-                                      "DeepSeek materialization requires the canonical GGUF map");
+                                      "materialization requires a complete terminal projection");
     }
     rc = materialize_plan_allocate(
         &plan, admission, &snapshot, count, local.future_graph_scratch_reserve_bytes,
@@ -429,7 +434,7 @@ int yvex_materialization_plan_build(yvex_materialization_plan **out,
     if (rc != YVEX_OK) return rc;
 
     for (i = 0ull; i < count; ++i) {
-        rc = materialize_plan_add_tensor(plan, artifact, gguf, tensors, deepseek_map, &local, i,
+        rc = materialize_plan_add_tensor(plan, artifact, gguf, tensors, projection, &local, i,
                                          failure, err);
         if (rc != YVEX_OK) {
             yvex_materialization_plan_close(plan);

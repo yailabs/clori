@@ -3,6 +3,8 @@
  * distributions. The result describes only the prefix that a caller may commit; it never mutates
  * model, RNG, tokenizer, transcript, or session state.
  */
+#include "src/runtime/private.h"
+
 #include <yvex/internal/decode.h>
 
 #include <float.h>
@@ -47,12 +49,14 @@ struct yvex_runtime_speculation_context {
     unsigned int *draft_input_ids;
     unsigned long long vocabulary_size, hidden_width, workspace_bytes;
     unsigned long long pending_position, pending_committed_count;
+    unsigned long long pending_verified_prefix_count;
     unsigned int pending_tokens[YVEX_SPECULATION_MAX_BLOCK + 2u];
+    yvex_runtime_transformer_result pending_verification_target;
     char pending_source_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char pending_sampling_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char pending_cycle_identity[YVEX_SPECULATION_IDENTITY_CAP];
     const yvex_runtime_commit_participant *publication;
-    int publication_prepared, cycle_pending;
+    int publication_prepared, cycle_pending, verification_staged;
 };
 
 static void speculation_pending_clear(yvex_runtime_speculation_context *context);
@@ -540,7 +544,7 @@ static int speculation_context_buffers(yvex_runtime_speculation_context *context
     SPEC_ADD(hidden_rows);
     SPEC_ADD(hidden_rows);
     SPEC_ADD(target_hidden_rows);
-    SPEC_ADD(draft_rows);
+    SPEC_ADD(target_rows);
     SPEC_ADD(context->vocabulary_size);
     SPEC_ADD(context->vocabulary_size);
     SPEC_ADD(probabilities);
@@ -559,7 +563,9 @@ static int speculation_context_buffers(yvex_runtime_speculation_context *context
     context->draft_pre_normalized = yvex_core_calloc((size_t)hidden_rows, sizeof(float));
     context->target_hidden = yvex_core_calloc(
         (size_t)target_hidden_rows, sizeof(float));
-    context->base_logits = yvex_core_calloc((size_t)draft_rows, sizeof(float));
+    /* Draft and verification are disjoint phases, so one (block + 1)-row output-head arena serves
+     * both without defining width-N as repeated one-row projections. */
+    context->base_logits = yvex_core_calloc((size_t)target_rows, sizeof(float));
     context->adjusted_logits = yvex_core_calloc(
         (size_t)context->vocabulary_size, sizeof(float));
     context->markov_bias = yvex_core_calloc(
@@ -610,6 +616,7 @@ int yvex_runtime_speculation_context_open(
     if (out) *out = NULL;
     if (!out || !model || !session || !target_transformer || !target_logits ||
         !target_sampling || !sampling_policy || !options ||
+        !options->execution_profile || !options->shape_registry ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
         !options->context_capacity)
@@ -678,7 +685,10 @@ int yvex_runtime_speculation_context_open(
     transformer_options.tensor_scope = YVEX_TENSOR_SCOPE_DRAFT;
     transformer_options.cancel_requested = options->cancel_requested;
     transformer_options.cancel_context = options->cancel_context;
-    transformer_options.evidence_level = YVEX_ATTENTION_EVIDENCE_NONE;
+    transformer_options.evidence_level = runtime_attention_evidence(
+        options->execution_profile->evidence);
+    transformer_options.execution_profile = options->execution_profile;
+    transformer_options.shape_registry = options->shape_registry;
     rc = yvex_runtime_transformer_context_open(
         &context->draft_transformer, model, session, &transformer_options, err);
     if (rc == YVEX_OK)
@@ -791,6 +801,7 @@ static int speculation_transformer_execute(
     yvex_runtime_transformer_context *transformer,
     const unsigned int *token_ids, unsigned long long token_count,
     unsigned long long position, int candidate_block_visible,
+    int retain_prefix_checkpoints,
     yvex_attention_transaction_disposition disposition,
     const unsigned long long *feature_layers,
     unsigned long long feature_layer_count, float *normalized,
@@ -834,6 +845,7 @@ static int speculation_transformer_execute(
     request.phase = YVEX_TRANSFORMER_PHASE_PREFILL;
     request.transaction_disposition = disposition;
     request.candidate_block_visible = candidate_block_visible;
+    request.retain_prefix_checkpoints = retain_prefix_checkpoints;
     request.feature_layer_ordinals = feature_layers;
     request.feature_layer_count = feature_layer_count;
     output.normalized_hidden = normalized;
@@ -864,20 +876,28 @@ static int speculation_project_draft_base(
 {
     const yvex_transformer_plan *plan =
         yvex_runtime_transformer_context_plan(context->draft_transformer);
+    yvex_runtime_logits_source sources[YVEX_SPECULATION_MAX_BLOCK] = {{0}};
+    yvex_runtime_logits_result execution = {0};
+    yvex_output_head_batch_request request = {0};
     unsigned long long row;
     for (row = 0ull; row < count; ++row) {
-        yvex_runtime_logits_source source;
         int rc = yvex_runtime_logits_source_from_draft(
-            context->target_logits, &source, plan, draft,
+            context->target_logits, &sources[row], plan, draft,
             context->draft_hidden, count * context->hidden_width, row, err);
-        if (rc == YVEX_OK)
-            rc = yvex_runtime_logits_project(
-                context->target_logits, &source, context->options.backend,
-                context->base_logits + row * context->vocabulary_size,
-                context->vocabulary_size, &rows[row], err);
         if (rc != YVEX_OK) return rc;
     }
-    return YVEX_OK;
+    request.schema_version = YVEX_OUTPUT_HEAD_BATCH_SCHEMA_V1;
+    request.row_count = count;
+    request.output_vocabulary = context->vocabulary_size;
+    request.backend = context->options.backend;
+    request.result_class = YVEX_OUTPUT_HEAD_RESULT_HOST_LOGITS;
+    request.selection_policy = YVEX_OUTPUT_HEAD_SELECTION_RAW;
+    request.evidence_profile = context->options.execution_profile->evidence;
+    request.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
+    request.execution_profile_identity = context->options.execution_profile->identity;
+    return yvex_runtime_logits_execute_rows(
+        context->target_logits, &request, sources, context->base_logits,
+        count * context->vocabulary_size, rows, count, &execution, err);
 }
 
 static unsigned int speculation_argmax(const float *values,
@@ -981,7 +1001,7 @@ static int speculation_execute_draft(
      * limits only the prefix handed to the target verifier. */
     rc = speculation_transformer_execute(
         context, context->draft_transformer, context->draft_input_ids,
-        draft_count, request->position, 1,
+        draft_count, request->position, 1, 0,
         YVEX_ATTENTION_TRANSACTION_ABORT, NULL, 0ull,
         context->draft_hidden, context->draft_pre_normalized, NULL, &draft, err);
     if (rc == YVEX_OK)
@@ -1050,11 +1070,16 @@ static int speculation_verify_target(
     yvex_runtime_speculation_cycle_result *result, yvex_error *err)
 {
     yvex_runtime_transformer_result target = {0};
+    yvex_runtime_logits_source sources[YVEX_SPECULATION_MAX_BLOCK + 1u] = {{0}};
+    yvex_runtime_logits_row_result logits[YVEX_SPECULATION_MAX_BLOCK + 1u] = {{0}};
+    yvex_runtime_logits_result logits_execution = {0};
+    yvex_output_head_batch_request output_head = {0};
     unsigned int verification_tokens[YVEX_SPECULATION_MAX_BLOCK + 1u] = {0};
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long started, row;
-    int rc;
+    yvex_runtime_model_failure failure = {0};
+    int acquired = 0, rc;
     verification_tokens[0] = request->conditioning_token_id;
     memcpy(verification_tokens + 1u, result->candidate_token_ids,
            (size_t)request->candidate_count * sizeof(*verification_tokens));
@@ -1062,11 +1087,16 @@ static int speculation_verify_target(
     /* Row zero is the target distribution for the first draft candidate after
      * consuming the target-authored conditioning token. The final row supplies
      * the correction or bonus distribution when the complete draft survives. */
-    rc = speculation_transformer_execute(
-        context, context->target_transformer, verification_tokens,
-        request->candidate_count + 1ull, request->position, 0,
-        YVEX_ATTENTION_TRANSACTION_ABORT, NULL, 0ull,
-        context->target_hidden, NULL, NULL, &target, err);
+    rc = yvex_runtime_session_begin(context->session, &failure, err);
+    acquired = rc == YVEX_OK;
+    if (rc == YVEX_OK)
+        rc = speculation_transformer_execute(
+            context, context->target_transformer, verification_tokens,
+            request->candidate_count + 1ull, request->position, 0, 1,
+            YVEX_ATTENTION_TRANSACTION_STAGE,
+            context->policy.target_feature_layers,
+            context->policy.target_feature_layer_count,
+            context->target_hidden, NULL, context->target_features, &target, err);
     yvex_sha256_init(&hash);
     if (rc == YVEX_OK &&
         (!yvex_sha256_update_text(&hash, "yvex.runtime.speculation.verify.v1") ||
@@ -1074,23 +1104,32 @@ static int speculation_verify_target(
          !yvex_sha256_update_text(&hash, target.execution_identity)))
         rc = speculation_refuse(err, YVEX_ERR_STATE,
                                 "target verification identity initialization failed");
+    for (row = 0ull; rc == YVEX_OK && row <= request->candidate_count; ++row)
+        rc = yvex_runtime_logits_source_from_transformer(
+            context->target_logits, &sources[row], &target, context->target_hidden,
+            (request->candidate_count + 1ull) * context->hidden_width, row, err);
+    output_head.schema_version = YVEX_OUTPUT_HEAD_BATCH_SCHEMA_V1;
+    output_head.row_count = request->candidate_count + 1ull;
+    output_head.output_vocabulary = context->vocabulary_size;
+    output_head.backend = context->options.backend;
+    output_head.result_class = YVEX_OUTPUT_HEAD_RESULT_HOST_LOGITS;
+    output_head.selection_policy = YVEX_OUTPUT_HEAD_SELECTION_RAW;
+    output_head.evidence_profile = context->options.execution_profile->evidence;
+    output_head.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
+    output_head.execution_profile_identity = context->options.execution_profile->identity;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_logits_execute_rows(
+            context->target_logits, &output_head, sources, context->base_logits,
+            (request->candidate_count + 1ull) * context->vocabulary_size,
+            logits, request->candidate_count + 1ull, &logits_execution, err);
     for (row = 0ull; rc == YVEX_OK && row <= request->candidate_count; ++row) {
-        yvex_runtime_logits_source logits_source = {0};
-        yvex_runtime_logits_row_result logits = {0};
         yvex_runtime_sampling_source sampling_source = {0};
         yvex_runtime_sampling_distribution_result distribution = {0};
-        rc = yvex_runtime_logits_source_from_transformer(
-            context->target_logits, &logits_source, &target,
-            context->target_hidden,
-            (request->candidate_count + 1ull) * context->hidden_width, row, err);
-        if (rc == YVEX_OK)
-            rc = yvex_runtime_logits_project(
-                context->target_logits, &logits_source, context->options.backend,
-                context->adjusted_logits, context->vocabulary_size, &logits, err);
         if (rc == YVEX_OK)
             rc = yvex_runtime_sampling_source_from_logits(
                 context->target_sampling, &sampling_source,
-                context->adjusted_logits, context->vocabulary_size, &logits, err);
+                context->base_logits + row * context->vocabulary_size,
+                context->vocabulary_size, &logits[row], err);
         if (rc == YVEX_OK)
             rc = yvex_runtime_sampling_distribution(
                 context->target_sampling, &sampling_source,
@@ -1108,7 +1147,13 @@ static int speculation_verify_target(
     if (rc == YVEX_OK) {
         yvex_sha256_hex(digest, result->verification_execution_identity);
         result->target_verification_count = 1ull;
+        context->pending_verification_target = target;
+        context->verification_staged = 1;
     }
+    if (acquired && rc != YVEX_OK)
+        rc = yvex_runtime_session_finish_scope(
+            context->session, YVEX_TENSOR_SCOPE_GLOBAL,
+            YVEX_ATTENTION_TRANSACTION_ABORT, rc, err);
     return rc;
 }
 
@@ -1274,6 +1319,8 @@ int yvex_runtime_speculation_cycle(
     if (rc == YVEX_OK) {
         result->completed = 1;
         context->pending_committed_count = result->committed_count + 1ull;
+        context->pending_verified_prefix_count =
+            result->acceptance.accepted_draft_count + 1ull;
         memcpy(context->pending_tokens + 1u, result->committed_token_ids,
                (size_t)result->committed_count *
                    sizeof(*context->pending_tokens));
@@ -1282,6 +1329,15 @@ int yvex_runtime_speculation_cycle(
         context->cycle_pending = 1;
         yvex_error_clear(err);
         return YVEX_OK;
+    }
+    if (context->verification_staged) {
+        yvex_error primary = err ? *err : (yvex_error){0};
+        int finish_rc = yvex_runtime_session_finish_scope(
+            context->session, YVEX_TENSOR_SCOPE_GLOBAL,
+            YVEX_ATTENTION_TRANSACTION_ABORT, rc, err);
+        context->verification_staged = 0;
+        if (finish_rc != YVEX_OK) rc = finish_rc;
+        else if (err) *err = primary;
     }
     (void)yvex_runtime_sampling_transaction_abort(&context->target_rng, NULL);
     (void)yvex_runtime_sampling_transaction_abort(&context->draft_rng, NULL);
@@ -1370,10 +1426,14 @@ static void speculation_pending_clear(yvex_runtime_speculation_context *context)
     context->cycle_pending = 0;
     context->pending_position = 0ull;
     context->pending_committed_count = 0ull;
+    context->pending_verified_prefix_count = 0ull;
     memset(context->pending_tokens, 0, sizeof(context->pending_tokens));
+    memset(&context->pending_verification_target, 0,
+           sizeof(context->pending_verification_target));
     context->pending_source_identity[0] = '\0';
     context->pending_sampling_identity[0] = '\0';
     context->pending_cycle_identity[0] = '\0';
+    context->verification_staged = 0;
 }
 
 static int speculation_rng_prepare(void *opaque, yvex_error *err) {
@@ -1426,7 +1486,7 @@ static int speculation_stage_tokens(
 {
     int rc = speculation_transformer_execute(
         context, context->target_transformer, token_ids,
-        token_count, token_start, 0,
+        token_count, token_start, 0, 0,
         YVEX_ATTENTION_TRANSACTION_STAGE,
         context->policy.target_feature_layers,
         context->policy.target_feature_layer_count, context->target_hidden,
@@ -1538,6 +1598,150 @@ static int speculation_commit_identity(
            speculation_hash_finish(&hash, output);
 }
 
+/*
+ * A short output or context tail may leave no room for a draft block.  The
+ * target-authored anchor still has to advance target and draft state together;
+ * it is not a verified candidate prefix and must not enter prefix promotion.
+ */
+static int speculation_commit_target_step(
+    yvex_runtime_speculation_context *context, float *final_hidden,
+    const yvex_runtime_commit_participant *publication,
+    yvex_runtime_speculation_commit_result *result, yvex_error *err)
+{
+    yvex_runtime_transformer_result target = {0};
+    yvex_runtime_transformer_core_commit_result draft = {0};
+    yvex_runtime_commit_participant participant = {
+        .context = context, .prepare = speculation_rng_prepare,
+        .publish = speculation_rng_publish, .cancel = speculation_rng_cancel};
+    yvex_runtime_model_failure failure = {0};
+    unsigned long long started = yvex_core_monotonic_ns();
+    int acquired = 0, rc;
+
+    rc = yvex_runtime_session_begin(context->session, &failure, err);
+    acquired = rc == YVEX_OK;
+    if (rc == YVEX_OK)
+        rc = speculation_stage_tokens(
+            context, context->pending_tokens, context->pending_position, 1ull,
+            &target, &draft, err);
+    if (rc == YVEX_OK) {
+        result->token_start = context->pending_position;
+        result->token_count = 1ull;
+        result->position_after = context->pending_position + 1ull;
+        result->target_extension_count = 1ull;
+        result->target_result = target;
+        yvex_runtime_identity_copy(result->cycle_identity,
+                                   context->pending_cycle_identity);
+        yvex_runtime_identity_copy(result->target_execution_identity,
+                                   target.execution_identity);
+        yvex_runtime_identity_copy(result->draft_execution_identity,
+                                   draft.execution_identity);
+        yvex_runtime_identity_copy(result->target_state_identity,
+                                   target.persistent_state_digest);
+        yvex_runtime_identity_copy(result->draft_state_identity,
+                                   draft.persistent_state_digest);
+        if (target.position_after != result->position_after ||
+            draft.position_after != result->position_after ||
+            !yvex_sha256_hex_valid(result->target_state_identity) ||
+            !yvex_sha256_hex_valid(result->draft_state_identity) ||
+            !speculation_commit_identity(context, result,
+                                         result->commit_identity))
+            rc = speculation_refuse(
+                err, YVEX_ERR_STATE,
+                "target-authored DSpark tail has incomplete staged identity");
+    }
+    if (acquired) {
+        context->publication = publication;
+        context->publication_prepared = 0;
+        rc = yvex_runtime_session_finish_coordinated(
+            context->session, rc, &participant, err);
+    }
+    if (rc != YVEX_OK) return rc;
+    memcpy(final_hidden, context->target_hidden,
+           (size_t)context->hidden_width * sizeof(*final_hidden));
+    result->commit_ns = yvex_core_monotonic_ns() - started;
+    result->replayed_target_token_count = 0ull;
+    result->completed = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int speculation_promoted_target_result(
+    yvex_runtime_speculation_context *context,
+    unsigned long long committed_count,
+    const yvex_runtime_transformer_result *extension,
+    yvex_runtime_transformer_result *target, yvex_error *err)
+{
+    const yvex_runtime_session_view *view =
+        yvex_runtime_session_view_get(context->session);
+    yvex_graph_attention_state_summary state = {0};
+    yvex_sha256 hash;
+    unsigned long long hidden_values, feature_values;
+    char normalized[YVEX_SPECULATION_IDENTITY_CAP];
+    char features[YVEX_SPECULATION_IDENTITY_CAP];
+    char execution[YVEX_SPECULATION_IDENTITY_CAP];
+    if (!view || !view->attention_state_provider ||
+        !view->attention_state_provider->summary ||
+        view->attention_state_provider->summary(
+            view->attention_state_provider->context, &state, err) != YVEX_OK ||
+        !state.staged_batch_complete ||
+        state.staged_next_position != context->pending_position + committed_count ||
+        !yvex_core_u64_mul(committed_count, context->hidden_width,
+                           &hidden_values) ||
+        !yvex_core_u64_mul(committed_count,
+                           context->policy.concatenated_feature_width,
+                           &feature_values))
+        return speculation_refuse(
+            err, YVEX_ERR_STATE,
+            "promoted target prefix is not a complete staged transaction");
+    memset(target, 0, sizeof(*target));
+    target->phase = YVEX_TRANSFORMER_PHASE_PREFILL;
+    target->token_start = target->position_before = context->pending_position;
+    target->token_count = committed_count;
+    target->committed_prefix = target->position_after = state.staged_next_position;
+    target->generation_before =
+        context->pending_verification_target.generation_before;
+    target->generation_after = state.staged_generation;
+    target->chunk_count = 1ull + (extension ? extension->chunk_count : 0ull);
+    target->feature_layer_count = context->policy.target_feature_layer_count;
+    target->feature_row_count = committed_count;
+    yvex_runtime_identity_copy(
+        target->input_identity,
+        context->pending_verification_target.input_identity);
+    yvex_runtime_identity_copy(target->persistent_state_digest,
+                               state.staged_state_content_identity);
+    if (!speculation_values_digest(
+            "yvex.transformer.normalized-hidden.v1", context->target_hidden,
+            hidden_values, normalized) ||
+        !speculation_values_digest(
+            "yvex.transformer.target-features.v1", context->target_features,
+            feature_values, features))
+        return speculation_refuse(
+            err, YVEX_ERR_STATE,
+            "promoted target prefix values could not be identity-bound");
+    yvex_runtime_identity_copy(target->normalized_hidden_digest, normalized);
+    yvex_runtime_identity_copy(target->feature_digest, features);
+    target->normalized_hidden_host_available = 1;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(
+            &hash, "yvex.runtime.speculation.promoted-target.v1") ||
+        !yvex_sha256_update_text(
+            &hash, context->pending_verification_target.execution_identity) ||
+        (extension && !yvex_sha256_update_text(
+                           &hash, extension->execution_identity)) ||
+        !yvex_sha256_update_text(&hash, target->normalized_hidden_digest) ||
+        !yvex_sha256_update_text(&hash, target->feature_digest) ||
+        !yvex_sha256_update_text(&hash, target->persistent_state_digest) ||
+        !yvex_sha256_update_u64(&hash, context->pending_position) ||
+        !yvex_sha256_update_u64(&hash, committed_count) ||
+        !speculation_hash_finish(&hash, execution))
+        return speculation_refuse(
+            err, YVEX_ERR_STATE,
+            "promoted target execution identity could not be sealed");
+    yvex_runtime_identity_copy(target->execution_identity, execution);
+    target->completed = 1;
+    return YVEX_OK;
+}
+
 int yvex_runtime_speculation_commit_prefix(
     yvex_runtime_speculation_context *context,
     unsigned long long committed_count, float *final_hidden,
@@ -1546,13 +1750,14 @@ int yvex_runtime_speculation_commit_prefix(
     yvex_runtime_speculation_commit_result *result, yvex_error *err)
 {
     yvex_runtime_transformer_result target = {0};
+    yvex_runtime_transformer_result extension = {0};
     yvex_runtime_transformer_core_commit_result draft = {0};
-    yvex_runtime_model_failure failure = {0};
     yvex_runtime_commit_participant participant = {
         .context = context, .prepare = speculation_rng_prepare,
         .publish = speculation_rng_publish, .cancel = speculation_rng_cancel};
-    unsigned long long final_values, started;
-    int acquired = 0, rc;
+    unsigned long long final_values, base_count;
+    unsigned long long started, promotion_started, extension_started = 0ull;
+    int extension_required, rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !result || !context->cycle_pending || !committed_count ||
         !final_hidden ||
@@ -1565,10 +1770,20 @@ int yvex_runtime_speculation_commit_prefix(
         committed_count > context->pending_committed_count ||
         committed_count > context->policy.block_size + 2ull ||
         committed_count > context->options.context_capacity ||
-        context->pending_position > context->options.context_capacity - committed_count)
+        context->pending_position > context->options.context_capacity - committed_count ||
+        ((!context->verification_staged ||
+          !context->pending_verified_prefix_count ||
+          committed_count > context->pending_verified_prefix_count + 1ull) &&
+         !(committed_count == 1ull &&
+           context->pending_committed_count == 1ull &&
+           !context->verification_staged &&
+           !context->pending_verified_prefix_count)))
         return speculation_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "committed prefix is not an admitted pending DSpark result");
+    if (!context->verification_staged)
+        return speculation_commit_target_step(
+            context, final_hidden, publication, result, err);
     result->token_start = context->pending_position;
     result->token_count = committed_count;
     yvex_runtime_identity_copy(result->cycle_identity,
@@ -1576,12 +1791,47 @@ int yvex_runtime_speculation_commit_prefix(
     context->publication = publication;
     context->publication_prepared = 0;
     started = yvex_core_monotonic_ns();
-    rc = yvex_runtime_session_begin(context->session, &failure, err);
-    acquired = rc == YVEX_OK;
+    base_count = committed_count < context->pending_verified_prefix_count
+                     ? committed_count
+                     : context->pending_verified_prefix_count;
+    extension_required = committed_count > base_count;
+    result->verified_prefix_count = base_count;
+    result->target_extension_count = (unsigned long long)extension_required;
+    promotion_started = yvex_core_monotonic_ns();
+    rc = yvex_runtime_session_select_attention_prefix(
+        context->session, YVEX_TENSOR_SCOPE_GLOBAL, base_count,
+        (unsigned long long)extension_required, err);
+    result->promotion_ns = yvex_core_monotonic_ns() - promotion_started;
     if (rc == YVEX_OK)
-        rc = speculation_stage_tokens(
-            context, context->pending_tokens, context->pending_position,
-            committed_count, &target, &draft, err);
+        result->promoted_target_token_count = base_count;
+    if (rc == YVEX_OK && extension_required) {
+        unsigned long long hidden_offset = base_count * context->hidden_width;
+        unsigned long long feature_offset =
+            base_count * context->policy.concatenated_feature_width;
+        extension_started = yvex_core_monotonic_ns();
+        rc = speculation_transformer_execute(
+            context, context->target_transformer,
+            context->pending_tokens + base_count, 1ull,
+            context->pending_position + base_count, 0, 0,
+            YVEX_ATTENTION_TRANSACTION_STAGE,
+            context->policy.target_feature_layers,
+            context->policy.target_feature_layer_count,
+            context->target_hidden + hidden_offset, NULL,
+            context->target_features + feature_offset, &extension, err);
+        result->target_extension_ns =
+            yvex_core_monotonic_ns() - extension_started;
+    }
+    if (rc == YVEX_OK)
+        rc = speculation_project_target_features(
+            context, context->target_features, committed_count, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_transformer_stage_core_features(
+            context->draft_transformer, context->pending_position,
+            context->feature_projected, committed_count, &draft, err);
+    if (rc == YVEX_OK)
+        rc = speculation_promoted_target_result(
+            context, committed_count,
+            extension_required ? &extension : NULL, &target, err);
     if (rc == YVEX_OK) {
         result->position_after = context->pending_position + committed_count;
         result->target_result = target;
@@ -1603,11 +1853,8 @@ int yvex_runtime_speculation_commit_prefix(
                 err, YVEX_ERR_STATE,
                 "speculative staged prefix identity is incomplete");
     }
-    if (acquired)
-        rc = yvex_runtime_session_finish_coordinated(
-            context->session, rc, &participant, err);
-    else
-        speculation_rng_cancel(context);
+    rc = yvex_runtime_session_finish_coordinated(
+        context->session, rc, &participant, err);
     if (rc != YVEX_OK) return rc;
     result->commit_ns = yvex_core_monotonic_ns() - started;
     /* The transformer result authenticates the complete committed prefix. Keep
@@ -1616,6 +1863,7 @@ int yvex_runtime_speculation_commit_prefix(
      * the second speculative cycle. */
     memcpy(final_hidden, context->target_hidden,
            (size_t)final_values * sizeof(*final_hidden));
+    result->replayed_target_token_count = 0ull;
     result->completed = 1;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -1632,7 +1880,16 @@ int yvex_runtime_speculation_cycle_abort(
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    rc = yvex_runtime_sampling_transaction_abort(&context->target_rng, err);
+    if (context->verification_staged) {
+        rc = yvex_runtime_session_finish_scope(
+            context->session, YVEX_TENSOR_SCOPE_GLOBAL,
+            YVEX_ATTENTION_TRANSACTION_ABORT, YVEX_OK, err);
+        context->verification_staged = 0;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_sampling_transaction_abort(&context->target_rng, err);
+    else
+        (void)yvex_runtime_sampling_transaction_abort(&context->target_rng, NULL);
     if (context->draft_rng) {
         int abort_rc = yvex_runtime_sampling_transaction_abort(
             &context->draft_rng, rc == YVEX_OK ? err : NULL);
@@ -1650,6 +1907,7 @@ int yvex_runtime_speculation_finish_terminal(
     int rc = YVEX_OK;
     if (!context || !context->cycle_pending ||
         !context->pending_committed_count || !publication ||
+        context->verification_staged ||
         !publication->prepare || !publication->publish ||
         !publication->cancel)
         return speculation_refuse(

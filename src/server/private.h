@@ -121,6 +121,7 @@ int yvex_server_sessions_count(server_session_registry *registry,
 int yvex_server_sessions_console_status(server_session_registry *registry,
                                         const char *session_name,
                                         yvex_console_status *status,
+                                        yvex_client_partial_turn *partial_turn,
                                         yvex_error *err);
 int yvex_server_sessions_cancel(server_session_registry *registry,
                                    const char *session_name,

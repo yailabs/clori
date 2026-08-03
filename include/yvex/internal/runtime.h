@@ -12,6 +12,7 @@
 #include <yvex/graph.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/benchmark.h>
+#include <yvex/internal/execution.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/model.h>
@@ -242,6 +243,7 @@ typedef struct {
     char runtime_numeric_identity[YVEX_SHA256_HEX_CAP];
     char semantic_graph_identity[YVEX_SHA256_HEX_CAP];
     char executable_graph_identity[YVEX_SHA256_HEX_CAP];
+    char physical_execution_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long artifact_hash_passes, artifact_bytes_hashed;
     unsigned long long gguf_directory_parses, runtime_binding_parses;
     unsigned long long runtime_model_builds, runtime_descriptor_builds;
@@ -249,6 +251,7 @@ typedef struct {
     unsigned long long drift_checks, invalidation_count;
     unsigned long long tensor_count, attention_layer_count, draft_attention_layer_count;
     unsigned long long attention_binding_count, draft_attention_binding_count;
+    unsigned long long physical_execution_decision_count;
     double lifecycle_seconds[YVEX_RUNTIME_LIFECYCLE_COUNT], total_seconds;
     yvex_runtime_capabilities capabilities;
 } yvex_runtime_model_summary;
@@ -313,6 +316,7 @@ typedef struct {
     const yvex_attention_plan *attention;
     const yvex_attention_plan *draft_attention;
     const yvex_runtime_descriptor *descriptor;
+    const yvex_physical_execution_ir *physical_execution;
     const yvex_tokenizer *tokenizer;
     yvex_materialization_session *materialization;
 } yvex_runtime_model_view;
@@ -400,6 +404,12 @@ int yvex_runtime_session_summary_copy(const yvex_runtime_execution_session *sess
                                       yvex_runtime_session_summary *out, yvex_error *err);
 int yvex_runtime_session_close(yvex_runtime_execution_session **session, yvex_error *err);
 const yvex_runtime_session_view *yvex_runtime_session_view_get(const yvex_runtime_execution_session *session);
+int yvex_runtime_device_view_bind(yvex_execution_device_view *out, yvex_execution_device_value_kind kind,
+    yvex_runtime_model *model, yvex_runtime_execution_session *session,
+    const yvex_attention_state_provider *provider,
+    const yvex_compiled_execution_profile *profile, const yvex_device_tensor *tensor,
+    unsigned long long offset, unsigned long long rows, unsigned long long columns,
+    yvex_error *err);
 int yvex_runtime_cleanup_lease_acquire(
     yvex_runtime_cleanup_lease **out, const yvex_runtime_model_open_request *model_request,
     const yvex_runtime_session_open_request *session_request,

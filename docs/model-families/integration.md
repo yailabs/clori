@@ -31,7 +31,7 @@ source snapshot
   -> canonical role map
   -> transformation and physical policy
   -> complete artifact contract
-  -> materialization and runtime binding
+  -> Physical Execution IR, materialization and runtime binding
   -> runtime descriptor and family adapter
   -> backend and graph admission
   -> prefill and persistent state
@@ -87,7 +87,22 @@ does not recover these facts from strings.
 ## Family adapter
 
 One typed family adapter projects irreducible family facts into common
-compilation and runtime contracts. It may own:
+compilation and execution contracts. A family may have up to three admitted
+source projections when each owns a genuinely different dependency boundary:
+
+- `src/model/families/<family>.c` interprets source, coverage, canonical roles,
+  logical lowering and family metadata;
+- `src/graph/families/<family>.c` composes only the irreducible semantic and
+  executable graph recipe;
+- `src/backend/<backend>/families/<family>.*` implements only a genuinely fused
+  family lowering that generic backend operations cannot express.
+
+The repeated family basename is intentional namespace continuity, not
+duplicate ownership. The directory and `config/source_owners.tsv` identify the
+level. A family-specific runtime source or directory is forbidden: the common
+runtime consumes typed adapters and execution plans.
+
+Across those projections the family may own:
 
 - architecture class and layer schedule;
 - native-to-canonical role lowering;
@@ -123,8 +138,10 @@ complete runtime, generation, evaluation, benchmark, and release gates.
 ## Runtime prerequisites
 
 The runtime descriptor and binding must project the exact admitted artifact
-into family-neutral tensor locations, execution descriptors, state geometry,
-workspace requirements, and capability prerequisites. The family adapter may
+and Physical Execution IR into family-neutral tensor locations, execution
+descriptors, state geometry, workspace requirements, and capability
+prerequisites. The compiled execution profile binds those facts to hardware,
+context, workload, evidence depth and execution class. The family adapter may
 select an irreducible schedule but may not create another immutable model,
 session hierarchy, KV owner, worker, or telemetry authority.
 
@@ -155,9 +172,11 @@ committed target state
 ```
 
 Proposal tokens are neither generated output nor persistent target state.
-Confidence is scheduling input, not correctness authority. A rejected suffix
-is discarded before publication, and usage counts only target-verified
-committed tokens.
+Target verification returns a prefix-addressable candidate transaction;
+promotion transfers the exact accepted checkpoint without replaying accepted
+target rows. Confidence is scheduling input, not correctness authority. A
+rejected suffix is discarded before publication, and usage counts only
+target-verified committed tokens.
 
 ## Backend prerequisites
 

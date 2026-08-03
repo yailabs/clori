@@ -35,6 +35,9 @@ int yvex_test_runtime_profile(void)
     YVEX_TEST_ASSERT(
         runtime_profile_counter_add(
             &record, YVEX_RUNTIME_PROFILE_H2D_BYTES, 4096ull, &err) == YVEX_OK &&
+        runtime_profile_counter_add(
+            &record, YVEX_RUNTIME_PROFILE_REPLAYED_ACCEPTED_TARGET_ROWS,
+            0ull, &err) == YVEX_OK &&
         runtime_profile_phase_add(
             &record, YVEX_RUNTIME_PROFILE_ATTENTION, 9000ull, &err) == YVEX_OK,
         "profile accepts checked counters and measured phases");
@@ -82,7 +85,13 @@ int yvex_test_runtime_profile(void)
                                  "kernel_launches") &&
                          !strcmp(runtime_profile_counter_name(
                                      YVEX_RUNTIME_PROFILE_DOWNLOADS),
-                                 "downloads"),
+                                 "downloads") &&
+                         !strcmp(runtime_profile_counter_name(
+                                     YVEX_RUNTIME_PROFILE_PROMOTED_TARGET_ROWS),
+                                 "promoted_target_rows") &&
+                         !strcmp(runtime_profile_counter_name(
+                                     YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES),
+                                 "full_array_host_scan_bytes"),
                      "profile vocabulary is stable");
     return 0;
 }

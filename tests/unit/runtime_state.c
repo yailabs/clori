@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include <yvex/internal/graph_state.h>
+#include <yvex/internal/candidate.h>
 #include <yvex/internal/runtime.h>
 
 #include "src/graph/private.h"
@@ -603,6 +604,9 @@ static int state_token_open(state_token *token,
     token->raw[1] = -token->raw[0] - 0.03125f;
     token->publication.owned = 1;
     token->publication.complete = 1;
+    (void)snprintf(token->publication.execution_identity,
+                   sizeof(token->publication.execution_identity), "%064llx",
+                   1ull + layer->layer_index * 4096ull + position);
     token->publication.layer_index = layer->layer_index;
     token->publication.attention_class = layer->attention_class;
     token->publication.token_position = position;
@@ -750,6 +754,230 @@ static int state_apply_token(test_state *state,
     if (!outer_transaction)
         return state->commit(state->context, &failure, &err) == YVEX_OK;
     return 1;
+}
+
+static int state_stage_prefix(test_state *state,
+                              const yvex_attention_layer_plan *layer,
+                              unsigned long long token_count,
+                              float raw[12])
+{
+    yvex_attention_publication publication;
+    yvex_attention_failure failure;
+    yvex_error err;
+    char delta_identity[YVEX_SHA256_HEX_CAP];
+    unsigned long long row;
+
+    memset(&publication, 0, sizeof(publication));
+    for (row = 0ull; row < token_count; ++row) {
+        raw[row * 2ull] = (float)(row + 1ull);
+        raw[row * 2ull + 1ull] = -(float)(row + 1ull);
+    }
+    publication.owned = 1;
+    publication.complete = 1;
+    publication.prefix_addressable = 1;
+    (void)snprintf(publication.execution_identity,
+                   sizeof(publication.execution_identity), "%064llx",
+                   1ull + layer->layer_index * 4096ull + token_count);
+    publication.layer_index = layer->layer_index;
+    publication.attention_class = layer->attention_class;
+    publication.token_count = token_count;
+    publication.kv_width = layer->head_dimension;
+    publication.raw_kv = raw;
+    yvex_error_clear(&err);
+    return state_begin(state, layer, 0ull, token_count, NULL, &failure, &err) ==
+               YVEX_OK &&
+           state->stage(state->context, &publication, NULL, delta_identity,
+                        &failure, &err) == YVEX_OK &&
+           yvex_sha256_hex_valid(delta_identity);
+}
+
+static int test_state_prefix_promotion(const state_plan_fixture *fixture)
+{
+    const yvex_graph_family_api *family = state_family();
+    const yvex_attention_layer_plan *layer = &fixture->layers[0];
+    unsigned long long accepted;
+
+    for (accepted = 1ull; accepted <= 5ull; ++accepted) {
+        test_state state = {0};
+        yvex_graph_attention_state_summary summary;
+        yvex_attention_failure failure;
+        yvex_error err;
+        const yvex_attention_history_view *view;
+        float raw[12] = {0};
+        unsigned long long row, tail, first;
+
+        yvex_error_clear(&err);
+        YVEX_TEST_ASSERT(
+            state_open(&state, family, &fixture->plan, 1024ull * 1024ull,
+                       &failure, &err) == YVEX_OK &&
+                state_prepare(&state, layer,
+                              fixture->plan.summary.attention_plan_identity),
+            "prefix promotion state opens and prepares");
+        YVEX_TEST_ASSERT(state_stage_prefix(&state, layer, 5ull, raw),
+                         "one verification publication retains five checkpoints");
+        YVEX_TEST_ASSERT(
+            state.select_prefix(state.context, accepted, 0ull, &failure,
+                                &err) == YVEX_OK,
+            "arbitrary verified prefix selects without replay");
+        YVEX_TEST_ASSERT(
+            state_summary(&state, &summary, &err) == YVEX_OK &&
+                summary.prefix_selected && summary.staged_batch_complete &&
+                summary.selected_prefix_count == accepted &&
+                summary.staged_next_position == accepted,
+            "selected prefix becomes one complete private transaction");
+        YVEX_TEST_ASSERT(state.commit(state.context, &failure, &err) == YVEX_OK,
+                         "selected prefix publishes atomically");
+        view = state_view(&state, 0ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED);
+        tail = accepted < layer->sliding_window - 1ull
+                   ? accepted : layer->sliding_window - 1ull;
+        first = accepted - tail;
+        YVEX_TEST_ASSERT(view && view->token_count == accepted &&
+                             view->local_tail_count == tail,
+                         "prefix promotion publishes only accepted rows");
+        for (row = 0ull; row < tail; ++row)
+            YVEX_TEST_ASSERT(
+                view->local_positions[row] == first + row &&
+                    view->local_kv[row * view->local_kv_stride] ==
+                        raw[(first + row) * 2ull] &&
+                    view->local_kv[row * view->local_kv_stride + 1ull] ==
+                        raw[(first + row) * 2ull + 1ull],
+                "promoted prefix preserves verified state bytes and positions");
+        YVEX_TEST_ASSERT(state_close(&state),
+                         "prefix promotion state closes cleanly");
+    }
+    return 0;
+}
+
+static int test_state_prefix_extension(const state_plan_fixture *fixture)
+{
+    const yvex_graph_family_api *family = state_family();
+    const yvex_attention_layer_plan *layer = &fixture->layers[0];
+    test_state state = {0};
+    yvex_graph_attention_state_summary summary;
+    yvex_attention_failure failure;
+    yvex_error err;
+    const yvex_attention_history_view *view;
+    char delta_identity[YVEX_SHA256_HEX_CAP];
+    float raw[12] = {0};
+
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        state_open(&state, family, &fixture->plan, 1024ull * 1024ull,
+                   &failure, &err) == YVEX_OK &&
+            state_prepare(&state, layer,
+                          fixture->plan.summary.attention_plan_identity) &&
+            state_stage_prefix(&state, layer, 5ull, raw) &&
+            state.select_prefix(state.context, 3ull, 1ull, &failure, &err) ==
+                YVEX_OK &&
+            state_summary(&state, &summary, &err) == YVEX_OK &&
+            summary.prefix_selected && summary.extension_ready &&
+            !summary.staged_batch_complete && summary.staged_next_position == 3ull,
+        "verified prefix remains private while one target extension is required");
+    YVEX_TEST_ASSERT(
+        state_begin(&state, layer, 3ull, 1ull, NULL, &failure, &err) == YVEX_OK &&
+            state_apply_token(&state, layer, 3ull, 1, delta_identity) &&
+            state.commit(state.context, &failure, &err) == YVEX_OK,
+        "one target-authored extension joins the selected prefix transaction");
+    view = state_view(&state, 0ull, YVEX_ATTENTION_STATE_VIEW_COMMITTED);
+    YVEX_TEST_ASSERT(
+        view && view->token_count == 4ull && view->local_tail_count == 3ull &&
+            view->local_positions[0] == 1ull &&
+            view->local_positions[1] == 2ull &&
+            view->local_positions[2] == 3ull &&
+            view->local_kv[0] == raw[2] && view->local_kv[2] == raw[4] &&
+            view->local_kv[4] == 3.0f / 29.0f,
+        "extension publishes the selected verification checkpoint plus one new row");
+    YVEX_TEST_ASSERT(state_close(&state),
+                     "prefix extension state closes cleanly");
+    return 0;
+}
+
+/* A compressed entry is named by its group start even though a later row emits it. */
+static int test_candidate_prefix_compression_boundary(void)
+{
+    yvex_attention_candidate_delta *delta = NULL;
+    yvex_attention_history_view committed;
+    yvex_attention_publication source, projected;
+    yvex_error err;
+    float raw[6] = {1.0f, -1.0f, 2.0f, -2.0f, 3.0f, -3.0f};
+    float compressed[2] = {4.0f, -4.0f};
+    float main_kv[3] = {10.0f, 11.0f, 12.0f};
+    float main_score[3] = {20.0f, 21.0f, 22.0f};
+    float index_kv[3] = {30.0f, 31.0f, 32.0f};
+    float index_score[3] = {40.0f, 41.0f, 42.0f};
+    float committed_main_kv = 9.0f, committed_main_score = 19.0f;
+    float committed_index_kv = 29.0f, committed_index_score = 39.0f;
+    unsigned long long compressed_position = 36ull;
+
+    memset(&committed, 0, sizeof(committed));
+    committed.token_count = 37ull;
+    committed.main_rolling_state.present = 1;
+    committed.main_rolling_state.ratio = 4ull;
+    committed.main_rolling_state.next_token_position = 37ull;
+    committed.main_rolling_state.kv_state_extent = 1ull;
+    committed.main_rolling_state.score_state_extent = 1ull;
+    committed.main_rolling_state.kv_state = &committed_main_kv;
+    committed.main_rolling_state.score_state = &committed_main_score;
+    committed.indexer_rolling_state = committed.main_rolling_state;
+    committed.indexer_rolling_state.kv_state = &committed_index_kv;
+    committed.indexer_rolling_state.score_state = &committed_index_score;
+
+    memset(&source, 0, sizeof(source));
+    source.owned = 1;
+    source.complete = 1;
+    source.prefix_addressable = 1;
+    source.layer_index = 1ull;
+    source.attention_class = YVEX_ATTENTION_CLASS_CSA;
+    source.token_position = 37ull;
+    source.token_count = 3ull;
+    source.kv_width = 2ull;
+    source.raw_kv = raw;
+    source.compressed_count = 1ull;
+    source.compressed_stride = 2ull;
+    source.compressed_kv = compressed;
+    source.compressed_positions = &compressed_position;
+    source.indexer_count = 1ull;
+    source.indexer_stride = 2ull;
+    source.indexer_kv = compressed;
+    source.indexer_positions = &compressed_position;
+    source.rolling_checkpoint_count = 3ull;
+    source.next_main_rolling_state.present = 1;
+    source.next_main_rolling_state.kv_state_extent = 1ull;
+    source.next_main_rolling_state.score_state_extent = 1ull;
+    source.next_indexer_rolling_state.present = 1;
+    source.next_indexer_rolling_state.kv_state_extent = 1ull;
+    source.next_indexer_rolling_state.score_state_extent = 1ull;
+    source.main_rolling_kv_checkpoints = main_kv;
+    source.main_rolling_score_checkpoints = main_score;
+    source.indexer_rolling_kv_checkpoints = index_kv;
+    source.indexer_rolling_score_checkpoints = index_score;
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_open(&delta, &source, &err) == YVEX_OK,
+        "cross-boundary candidate checkpoints are retained");
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_project(
+            delta, &committed, 1ull, &projected, &err) == YVEX_OK &&
+            projected.compressed_count == 0ull &&
+            projected.indexer_count == 0ull &&
+            projected.next_main_rolling_state.next_token_position == 38ull,
+        "prefix before the completing row excludes the future compressed entry");
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_project(
+            delta, &committed, 2ull, &projected, &err) == YVEX_OK &&
+            projected.compressed_count == 0ull &&
+            projected.indexer_count == 0ull &&
+            projected.next_main_rolling_state.next_token_position == 39ull,
+        "prefix ending immediately before the boundary still excludes the entry");
+    YVEX_TEST_ASSERT(
+        yvex_attention_candidate_delta_project(
+            delta, &committed, 3ull, &projected, &err) == YVEX_OK &&
+            projected.compressed_count == 1ull &&
+            projected.indexer_count == 1ull &&
+            projected.next_main_rolling_state.next_token_position == 40ull,
+        "prefix containing the completing row exposes exactly one compressed entry");
+    yvex_attention_candidate_delta_close(&delta);
+    return 0;
 }
 
 static void state_plan_copy(state_plan_fixture *output,
@@ -1579,6 +1807,9 @@ int yvex_test_runtime_state(void)
     if (test_operator_missing_binding_refusal() != 0) return 1;
     if (test_state_identity_geometry(&fixture) != 0) return 1;
     if (test_state_lifecycle(&fixture) != 0) return 1;
+    if (test_state_prefix_promotion(&fixture) != 0) return 1;
+    if (test_state_prefix_extension(&fixture) != 0) return 1;
+    if (test_candidate_prefix_compression_boundary() != 0) return 1;
     if (test_state_reset(&fixture) != 0) return 1;
     if (test_summary_capacity_accounting(&fixture) != 0) return 1;
     if (test_prepare_failure_is_atomic(&fixture) != 0) return 1;

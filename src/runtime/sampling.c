@@ -5,6 +5,7 @@
  * transition. Family-neutral host sampling over one complete admitted logits row.
  */
 #include <yvex/internal/sampling.h>
+#include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 
 #include <float.h>
@@ -292,12 +293,26 @@ static int sampling_source_identity(yvex_runtime_sampling_source *source)
     yvex_sha256 hash;
     yvex_sha256_init(&hash);
     return source &&
-           yvex_sha256_update_text(&hash, "yvex.runtime.sampling.source.v1") &&
+           yvex_sha256_update_text(&hash, "yvex.runtime.sampling.source.v2") &&
            yvex_sha256_update_u64(&hash, source->schema_version) &&
+           yvex_sha256_update_u64(&hash, source->host_values_available) &&
+           yvex_sha256_update_u64(&hash, source->device_values_available) &&
            yvex_sha256_update_u64(&hash, source->source_phase) &&
            yvex_sha256_update_u64(&hash, source->source_position) &&
            yvex_sha256_update_u64(&hash, source->vocabulary_size) &&
-           yvex_sha256_update_text(&hash, source->raw_logits_digest) &&
+           (!source->host_values_available ||
+            yvex_sha256_update_text(&hash, source->raw_logits_digest)) &&
+           (!source->device_values_available ||
+            (yvex_sha256_update_text(
+                 &hash, source->device_logits.execution_profile_identity) &&
+             yvex_sha256_update_u64(
+                 &hash, source->device_logits.model_generation) &&
+             yvex_sha256_update_u64(
+                 &hash, source->device_logits.session_generation) &&
+             yvex_sha256_update_u64(
+                 &hash, source->device_logits.state_generation) &&
+             yvex_sha256_update_u64(
+                 &hash, source->device_logits.element_offset))) &&
            yvex_sha256_update_text(&hash, source->logits_row_identity) &&
            yvex_sha256_update_text(&hash, source->output_head_plan_identity) &&
            yvex_sha256_update_text(&hash, source->source_hidden_digest) &&
@@ -321,7 +336,7 @@ int yvex_runtime_sampling_source_from_logits(
         (yvex_runtime_sampling_context *)context;
     int rc;
     if (source) memset(source, 0, sizeof(*source));
-    if (!mutable || !source || !logits || !row)
+    if (!mutable || !source || !row)
         return sampling_refuse(err, YVEX_ERR_FORMAT,
                                "sampling requires one admitted complete logits row");
     rc = sampling_enter(mutable, err);
@@ -336,8 +351,11 @@ int yvex_runtime_sampling_source_from_logits(
     source->source_phase = row->source_phase;
     source->source_position = row->source_position;
     source->vocabulary_size = row->vocabulary_size;
-    source->logits_capacity = logits_capacity;
-    source->logits = logits;
+    source->host_values_available = row->host_values_available;
+    source->device_values_available = row->device_values_available;
+    source->logits_capacity = row->host_values_available ? logits_capacity : 0ull;
+    source->logits = row->host_values_available ? logits : NULL;
+    if (row->device_values_available) source->device_logits = row->device_logits;
     yvex_runtime_identity_copy(source->raw_logits_digest, row->raw_logits_digest);
     yvex_runtime_identity_copy(source->logits_row_identity, row->logits_row_identity);
     yvex_runtime_identity_copy(source->output_head_plan_identity,
@@ -375,7 +393,7 @@ static int sampling_source_validate(
         source->schema_version != YVEX_RUNTIME_SAMPLING_SCHEMA_V1 ||
         source->source_phase > YVEX_LOGITS_SOURCE_DRAFT ||
         source->vocabulary_size != context->logits_plan.vocabulary_size ||
-        source->logits_capacity < source->vocabulary_size || !source->logits ||
+        source->host_values_available == source->device_values_available ||
         strcmp(source->output_head_plan_identity,
                context->logits_plan.output_head_plan_identity) != 0 ||
         !yvex_sha256_hex_valid(source->logits_row_identity) ||
@@ -383,27 +401,40 @@ static int sampling_source_validate(
         !yvex_sha256_hex_valid(source->backend_execution_identity))
         return sampling_refuse(err, YVEX_ERR_FORMAT,
                                "sampling source geometry or identity is stale");
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.raw-logits.v1"))
-        return sampling_refuse(err, YVEX_ERR_STATE,
-                               "sampling raw-logits validation initialization failed");
-    for (index = 0ull; index < source->vocabulary_size; ++index) {
-        uint32_t bits;
-        if (!isfinite(source->logits[index]))
+    if (source->host_values_available) {
+        if (source->logits_capacity < source->vocabulary_size || !source->logits)
             return sampling_refuse(err, YVEX_ERR_FORMAT,
-                                   "sampling source contains non-finite logits");
-        memcpy(&bits, &source->logits[index], sizeof(bits));
-        if (!yvex_sha256_update_u64(&hash, bits))
+                                   "sampling host logits are unavailable");
+        yvex_sha256_init(&hash);
+        if (!yvex_sha256_update_text(&hash, "yvex.runtime.raw-logits.v1"))
             return sampling_refuse(err, YVEX_ERR_STATE,
-                                   "sampling raw-logits validation failed");
+                                   "sampling raw-logits validation initialization failed");
+        for (index = 0ull; index < source->vocabulary_size; ++index) {
+            uint32_t bits;
+            if (!isfinite(source->logits[index]))
+                return sampling_refuse(err, YVEX_ERR_FORMAT,
+                                       "sampling source contains non-finite logits");
+            memcpy(&bits, &source->logits[index], sizeof(bits));
+            if (!yvex_sha256_update_u64(&hash, bits))
+                return sampling_refuse(err, YVEX_ERR_STATE,
+                                       "sampling raw-logits validation failed");
+        }
+        if (!yvex_sha256_final(&hash, digest))
+            return sampling_refuse(err, YVEX_ERR_STATE,
+                                   "sampling raw-logits digest finalization failed");
+        yvex_sha256_hex(digest, raw_digest);
+        if (strcmp(raw_digest, source->raw_logits_digest) != 0)
+            return sampling_refuse(err, YVEX_ERR_FORMAT,
+                                   "sampling source logits were mutated after sealing");
+    } else if (context->policy.strategy != YVEX_SAMPLING_STRATEGY_GREEDY ||
+               source->device_logits.kind != YVEX_EXECUTION_DEVICE_LOGITS ||
+               source->device_logits.rows != 1ull ||
+               source->device_logits.columns != source->vocabulary_size ||
+               yvex_execution_device_view_validate(&source->device_logits, err) !=
+                   YVEX_OK) {
+        return sampling_refuse(err, YVEX_ERR_UNSUPPORTED,
+                               "device logits require admitted greedy sampling");
     }
-    if (!yvex_sha256_final(&hash, digest))
-        return sampling_refuse(err, YVEX_ERR_STATE,
-                               "sampling raw-logits digest finalization failed");
-    yvex_sha256_hex(digest, raw_digest);
-    if (strcmp(raw_digest, source->raw_logits_digest) != 0)
-        return sampling_refuse(err, YVEX_ERR_FORMAT,
-                               "sampling source logits were mutated after sealing");
     canonical = *source;
     canonical.source_identity[0] = '\0';
     if (!sampling_source_identity(&canonical) ||
@@ -702,6 +733,24 @@ static int sampling_candidate_identity(
     return sampling_hash_finish(&hash, output);
 }
 
+static int sampling_device_candidate_identity(
+    const yvex_runtime_sampling_context *context,
+    const yvex_runtime_sampling_source *source,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    yvex_sha256_init(&hash);
+    return context && source &&
+           yvex_sha256_update_text(
+               &hash, "yvex.runtime.sampling.device-candidates.v1") &&
+           yvex_sha256_update_text(&hash, source->source_identity) &&
+           yvex_sha256_update_text(&hash, context->policy.policy_identity) &&
+           yvex_sha256_update_u64(&hash, source->vocabulary_size) &&
+           yvex_sha256_update_u64(
+               &hash, YVEX_SAMPLING_GREEDY_LOWEST_TOKEN_ID) &&
+           sampling_hash_finish(&hash, output);
+}
+
 static int sampling_selected_identity(
     const yvex_runtime_sampling_result *result,
     char output[YVEX_SHA256_HEX_CAP])
@@ -733,11 +782,12 @@ static int sampling_execution_identity(
     yvex_sha256 hash;
     yvex_sha256_init(&hash);
     return result &&
-           yvex_sha256_update_text(&hash, "yvex.runtime.sampling.execution.v2") &&
+           yvex_sha256_update_text(&hash, "yvex.runtime.sampling.execution.v3") &&
            yvex_sha256_update_u64(&hash, result->schema_version) &&
            yvex_sha256_update_u64(&hash, (unsigned int)result->completed) &&
            yvex_sha256_update_u64(&hash,
                                   (unsigned int)result->numeric_fallback_used) &&
+           yvex_sha256_update_u64(&hash, result->device_selection) &&
            yvex_sha256_update_u64(&hash, result->strategy) &&
            yvex_sha256_update_u64(&hash, result->source_phase) &&
            yvex_sha256_update_u64(&hash, result->source_position) &&
@@ -760,6 +810,9 @@ static int sampling_execution_identity(
            yvex_sha256_update_u64(&hash, result->tied_maximum_count) &&
            yvex_sha256_update_u64(&hash, result->effective_top_k) &&
            yvex_sha256_update_u64(&hash, result->rng_draw_count) &&
+           yvex_sha256_update_u64(&hash, result->d2h_bytes) &&
+           yvex_sha256_update_u64(&hash, result->kernel_launches) &&
+           yvex_sha256_update_u64(&hash, result->full_array_host_scan_bytes) &&
            sampling_hash_f64(&hash, result->effective_top_p) &&
            sampling_hash_f64(&hash, result->effective_min_p) &&
            sampling_hash_f64(&hash, result->effective_typical_p) &&
@@ -931,6 +984,50 @@ static int sampling_select_greedy(
     return YVEX_OK;
 }
 
+static int sampling_select_device_greedy(
+    yvex_runtime_sampling_context *context,
+    const yvex_runtime_sampling_source *source,
+    yvex_runtime_sampling_result *result, yvex_error *err)
+{
+    yvex_device_tensor view;
+    unsigned int selected;
+    unsigned long long ties, launches;
+    float maximum;
+    int rc;
+    if (!yvex_backend_tensor_f32_subview(
+            source->device_logits.tensor,
+            source->device_logits.element_offset,
+            source->vocabulary_size, &view))
+        return sampling_refuse(err, YVEX_ERR_FORMAT,
+                               "device logits subview is incompatible");
+    rc = yvex_backend_cuda_argmax_f32(
+        source->device_logits.backend, &view, source->vocabulary_size,
+        &selected, &maximum, &ties, &launches, err);
+    if (rc != YVEX_OK) return rc;
+    result->device_selection = 1;
+    result->maximum_logit = result->selected_logit = maximum;
+    result->tied_maximum_count = ties;
+    result->selected_token_id = selected;
+    result->selected_probability = 1.0;
+    result->selected_log_probability = 0.0;
+    result->d2h_bytes = sizeof(unsigned int) + sizeof(float) +
+                        sizeof(unsigned long long) + sizeof(int);
+    result->kernel_launches = launches;
+    result->candidates_after_top_k = result->candidates_after_min_p =
+        result->candidates_after_typical_p = result->candidates_after_top_p =
+            result->final_candidate_count = source->vocabulary_size;
+    if (!sampling_device_candidate_identity(
+            context, source, result->candidate_set_identity) ||
+        !sampling_rng_identity(context, context->rng_state,
+                               context->successful_draws,
+                               result->rng_state_before_identity))
+        return sampling_refuse(err, YVEX_ERR_STATE,
+                               "device greedy identity derivation failed");
+    yvex_runtime_identity_copy(result->rng_state_after_identity,
+                               result->rng_state_before_identity);
+    return YVEX_OK;
+}
+
 static int sampling_remove_zero_mass(
     yvex_runtime_sampling_context *context, unsigned long long *count,
     yvex_runtime_sampling_result *result, yvex_error *err)
@@ -1033,6 +1130,7 @@ static int sampling_select_owned(
     yvex_runtime_sampling_result *result, yvex_error *err)
 {
     yvex_runtime_sampling_result staged;
+    unsigned long long scan_bytes;
     uint64_t committed_state = 0ull;
     int rc = YVEX_OK;
     if (result) memset(result, 0, sizeof(*result));
@@ -1056,9 +1154,21 @@ static int sampling_select_owned(
         staged.effective_top_p = context->policy.top_p;
         staged.effective_min_p = context->policy.min_p;
         staged.effective_typical_p = context->policy.typical_p;
-        if (context->policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY)
+        if (source->host_values_available &&
+            (!yvex_core_u64_mul(source->vocabulary_size, sizeof(float),
+                                &scan_bytes) ||
+             !yvex_core_u64_mul(scan_bytes, 2ull,
+                                &staged.full_array_host_scan_bytes)))
+            rc = sampling_refuse(err, YVEX_ERR_BOUNDS,
+                                 "sampling host scan accounting overflowed");
+        if (rc == YVEX_OK &&
+            context->policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
+            source->device_values_available)
+            rc = sampling_select_device_greedy(context, source, &staged, err);
+        else if (rc == YVEX_OK &&
+                 context->policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY)
             rc = sampling_select_greedy(context, source, &staged, err);
-        else
+        else if (rc == YVEX_OK)
             rc = sampling_select_stochastic(context, source, &staged,
                                             &committed_state, err);
     }
@@ -1456,7 +1566,11 @@ static int sampling_result_structure_valid(
         !isfinite(result->top_p_retained_mass) ||
         result->top_p_retained_mass < 0.0 ||
         (result->numeric_fallback_used != 0 &&
-         result->numeric_fallback_used != 1))
+         result->numeric_fallback_used != 1) ||
+        (result->device_selection &&
+         (result->strategy != YVEX_SAMPLING_STRATEGY_GREEDY ||
+          result->full_array_host_scan_bytes || !result->kernel_launches)) ||
+        (!result->device_selection && result->d2h_bytes))
         return 0;
     tolerance = sampling_normalization_tolerance(result->vocabulary_size);
     if (result->normalization_error > tolerance ||

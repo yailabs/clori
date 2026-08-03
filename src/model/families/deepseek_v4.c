@@ -7,6 +7,7 @@
  */
 #include <yvex/internal/families/deepseek_v4.h>
 
+#include <yvex/internal/artifact.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/source.h>
 
@@ -1583,6 +1584,52 @@ static unsigned long long recipe_dimension(const yvex_deepseek_tensor_recipe *re
 
     memcpy(&value, base + ref->offset, sizeof(value));
     return value;
+}
+
+static int materialization_terminal_find(const void *context, const char *emitted_name,
+                                         yvex_materialization_terminal *out)
+{
+    const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
+    const yvex_deepseek_gguf_map *map = (const yvex_deepseek_gguf_map *)context;
+    const yvex_deepseek_gguf_descriptor *descriptor;
+    const yvex_deepseek_gguf_descriptor *first;
+
+    if (!map || !emitted_name || !out || !lowering) return 0;
+    descriptor = lowering->find_emitted(map, emitted_name);
+    first = lowering->at(map, 0ull);
+    if (!descriptor || !first) return 0;
+    memset(out, 0, sizeof(*out));
+    out->descriptor_index = (unsigned long long)(descriptor - first);
+    out->role = descriptor->role;
+    out->collection = descriptor->collection;
+    out->scope = descriptor->scope;
+    out->layer_index = descriptor->layer_index;
+    out->predictor_index = descriptor->predictor_index;
+    out->expert_count = descriptor->expert_count;
+    return 1;
+}
+
+int yvex_deepseek_materialization_projection(const yvex_deepseek_gguf_map *map,
+                                             yvex_materialization_projection *out,
+                                             yvex_error *err)
+{
+    const yvex_model_family_lowering_api *lowering = yvex_model_deepseek_lowering_api();
+    const yvex_deepseek_gguf_map_summary *summary = map && lowering ? lowering->summary(map) : NULL;
+
+    if (!out || !summary || !summary->complete || !summary->mapping_identity) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model.deepseek.materialization",
+                       "complete family lowering is required for terminal projection");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    memset(out, 0, sizeof(*out));
+    out->schema_version = YVEX_MATERIALIZATION_PROJECTION_SCHEMA_VERSION;
+    out->mapping_identity = summary->mapping_identity;
+    out->descriptor_count = summary->descriptor_count;
+    out->context = map;
+    out->find = materialization_terminal_find;
+    out->complete = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 
 /*

@@ -14,6 +14,7 @@
 #include <string.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/execution.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
 typedef struct {
@@ -57,15 +58,16 @@ static const yvex_attention_plan *transformer_runtime_attention(
 static int transformer_hash_values(yvex_sha256 *hash, const float *values,
                                    unsigned long long count);
 
-static int transformer_device_block_digest(
+static int transformer_device_value_digest(
+    const char *domain,
     const yvex_transformer_plan_summary *plan, unsigned long long layer,
     const char *routing, char output[YVEX_SHA256_HEX_CAP])
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    if (!plan || !routing || !output) return 0;
+    if (!domain || !plan || !routing || !output) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.transformer.device-block.v1") ||
+    if (!yvex_sha256_update_text(&hash, domain) ||
         !yvex_sha256_update_text(&hash, plan->transformer_plan_identity) ||
         !yvex_sha256_update_u64(&hash, layer) ||
         !yvex_sha256_update_text(&hash, routing) || !yvex_sha256_final(&hash, digest))
@@ -118,6 +120,13 @@ static int transformer_feature_request_validate(
         return transformer_runtime_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "candidate-block attention requires a multi-token draft request");
+    if (request->retain_prefix_checkpoints &&
+        (plan->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT ||
+         request->transaction_disposition != YVEX_ATTENTION_TRANSACTION_STAGE ||
+         input->token_count < 2ull))
+        return transformer_runtime_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "prefix checkpoints require a staged multi-token target request");
     if (!yvex_core_u64_mul(input->token_count, plan->hidden_width,
                            &hidden_elements) ||
         (output->pre_normalized_hidden &&
@@ -517,10 +526,19 @@ static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_
     }
     chunk->result->embedding_rows += chunk->token_count;
     chunk->result->embedding_bytes += chunk->token_count * context->embedding_row_bytes;
-    if (!transformer_hash_values(&chunk->embedding_hash, context->embedding,
-                                 chunk->token_count * s->hidden_width))
-        return transformer_runtime_refuse(err, YVEX_ERR_STATE,
-                                          "transformer embedding digest update failed");
+    if (context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_NONE) {
+        for (token = 0ull; token < chunk->token_count; ++token)
+            if (!yvex_sha256_update_u64(
+                    &chunk->embedding_hash,
+                    chunk->tokens[chunk->token_offset + token]))
+                return transformer_runtime_refuse(
+                    err, YVEX_ERR_STATE,
+                    "transformer embedding identity update failed");
+    } else if (!transformer_hash_values(
+                   &chunk->embedding_hash, context->embedding,
+                   chunk->token_count * s->hidden_width))
+        return transformer_runtime_refuse(
+            err, YVEX_ERR_STATE, "transformer embedding digest update failed");
     if (chunk->backend == YVEX_BACKEND_KIND_CUDA) {
         unsigned long long bytes = chunk->token_count * context->embedding_row_bytes;
         yvex_device_tensor encoded_view;
@@ -557,23 +575,6 @@ static int transformer_hash_values(yvex_sha256 *hash, const float *values,
         memcpy(&bits, &values[index], sizeof(bits));
         if (!yvex_sha256_update_u64(hash, bits)) return 0;
     }
-    return 1;
-}
-
-static int transformer_device_subview(const yvex_device_tensor *source,
-                                      unsigned long long offset,
-                                      unsigned long long count,
-                                      yvex_device_tensor *view)
-{
-    unsigned long long end;
-    if (!source || !view || source->dtype != YVEX_DTYPE_F32 ||
-        !yvex_core_u64_add(offset, count, &end) ||
-        end > source->bytes / sizeof(float)) return 0;
-    *view = *source;
-    view->rank = 1u;
-    view->dims[0] = count;
-    view->bytes = count * sizeof(float);
-    view->data = source->data + offset * sizeof(float);
     return 1;
 }
 
@@ -691,9 +692,12 @@ int yvex_runtime_transformer_execute_block(
         ? yvex_runtime_moe_context_plan(context->moe) : NULL;
     const yvex_moe_layer_plan *layer = moe_plan
         ? yvex_moe_plan_layer_at(moe_plan, layer_ordinal) : NULL;
-    yvex_sha256 routing_hash, output_hash, identity_hash;
+    yvex_sha256 output_hash, identity_hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long token, output_elements;
+    yvex_moe_row_batch batch = {0};
+    yvex_moe_row_batch_output batch_output = {0};
+    yvex_moe_row_batch_result moe_result;
+    unsigned long long output_elements, hidden_elements, post_elements, combination_elements;
     unsigned long long started_ns;
     int normal_cuda;
     int rc = YVEX_OK;
@@ -704,6 +708,9 @@ int yvex_runtime_transformer_execute_block(
         attention->envelope_output_width != s->expanded_width ||
         !attention->envelope_output || !expanded_output || !result ||
         !yvex_core_u64_mul(token_count, s->expanded_width, &output_elements) ||
+        !yvex_core_u64_mul(token_count, s->hidden_width, &hidden_elements) ||
+        !yvex_core_u64_mul(token_count, s->residual_streams, &post_elements) ||
+        !yvex_core_u64_mul(post_elements, s->residual_streams, &combination_elements) ||
         backend != yvex_backend_kind_of(context->session_view->backend) ||
         (backend == YVEX_BACKEND_KIND_CUDA && (!device_attention || !device_output)))
         return transformer_runtime_refuse(err, YVEX_ERR_FORMAT,
@@ -711,72 +718,49 @@ int yvex_runtime_transformer_execute_block(
     started_ns = yvex_core_monotonic_ns();
     normal_cuda = backend == YVEX_BACKEND_KIND_CUDA &&
                   context->options.evidence_level != YVEX_ATTENTION_EVIDENCE_FULL;
-    yvex_sha256_init(&routing_hash);
-    (void)yvex_sha256_update_text(&routing_hash, "yvex.transformer.block.routing.v1");
-    for (token = 0ull; token < token_count; ++token) {
-        yvex_moe_layer_result moe_result;
-        yvex_device_tensor device_input, device_next_view;
-        if (context->options.cancel_requested &&
-            context->options.cancel_requested(context->options.cancel_context))
-            return transformer_runtime_refuse(err, YVEX_ERR_CANCELLED,
-                                              "transformer block execution cancelled");
-        memset(&moe_result, 0, sizeof(moe_result));
-        moe_result.combined_output = context->moe_combined + token * s->hidden_width;
-        moe_result.combined_capacity = s->hidden_width;
-        moe_result.routed_output = context->moe_routed + token * s->hidden_width;
-        moe_result.routed_capacity = s->hidden_width;
-        moe_result.shared_output = context->moe_shared + token * s->hidden_width;
-        moe_result.shared_capacity = s->hidden_width;
-        moe_result.post = context->moe_post + token * s->residual_streams;
-        moe_result.post_capacity = s->residual_streams;
-        moe_result.combination = context->moe_combination +
-            token * s->residual_streams * s->residual_streams;
-        moe_result.combination_capacity = s->residual_streams * s->residual_streams;
-        if (backend == YVEX_BACKEND_KIND_CUDA &&
-            (!transformer_device_subview(device_attention,
-                                         token * s->expanded_width, s->expanded_width,
-                                         &device_input) ||
-             !transformer_device_subview(device_output,
-                                         token * s->expanded_width, s->expanded_width,
-                                         &device_next_view)))
-            return transformer_runtime_refuse(err, YVEX_ERR_BOUNDS,
-                                              "transformer CUDA MoE subview is invalid");
-        rc = backend == YVEX_BACKEND_KIND_CUDA
-                 ? yvex_runtime_moe_execute_layer_device_borrowed(
-                       context->moe, layer_ordinal,
-                       attention->envelope_output + token * s->expanded_width,
-                       &device_input, &device_next_view,
-                       token_ids[token], 1, &moe_result, err)
-                 : yvex_runtime_moe_execute_layer_borrowed(
-                       context->moe, layer_ordinal,
-                       attention->envelope_output + token * s->expanded_width,
-                       token_ids[token], 1, &moe_result, err);
-        if (rc != YVEX_OK) return rc;
-        result->hash_routers += layer->router_class == YVEX_MOE_ROUTER_HASH_TOKEN_ID;
-        result->learned_routers +=
-            layer->router_class == YVEX_MOE_ROUTER_LEARNED_HIDDEN_STATE;
-        result->routed_experts += moe_result.router.selected_count;
-        result->shared_experts += layer->shared_experts;
-        result->h2d_bytes += moe_result.host_to_device_bytes;
-        result->d2h_bytes += moe_result.device_to_host_bytes;
-        result->kernel_launches += moe_result.kernel_launches;
-        result->d2d_bytes += moe_result.device_to_device_bytes;
-        result->upload_count += moe_result.upload_count;
-        result->download_count += moe_result.download_count;
-        result->cache_hits += moe_result.cache_hits;
-        result->cache_misses += moe_result.cache_misses;
-        result->stream_synchronizations += moe_result.stream_synchronizations;
-        result->device_synchronizations += moe_result.device_synchronizations;
-        result->moe_ns += moe_result.total_ns;
-        result->synchronization_ns += moe_result.synchronization_ns;
-        if (!yvex_sha256_update_text(&routing_hash, moe_result.routing_digest))
-            return transformer_runtime_refuse(err, YVEX_ERR_STATE,
-                                              "transformer block routing digest failed");
-    }
-    if (!yvex_sha256_final(&routing_hash, digest))
-        return transformer_runtime_refuse(err, YVEX_ERR_STATE,
-                                          "transformer block routing digest failed");
-    yvex_sha256_hex(digest, result->routing_digest);
+    batch.schema_version = YVEX_MOE_ROW_BATCH_SCHEMA_V1;
+    batch.row_count = token_count;
+    batch.row_width = batch.row_stride = s->expanded_width;
+    batch.expanded_rows = attention->envelope_output;
+    batch.device_rows = backend == YVEX_BACKEND_KIND_CUDA ? device_attention : NULL;
+    batch.device_outputs = backend == YVEX_BACKEND_KIND_CUDA ? device_output : NULL;
+    batch.token_ids = token_ids;
+    batch.token_ids_present = 1;
+    batch.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
+    batch.execution_profile_identity = context->options.execution_profile
+                                           ? context->options.execution_profile->identity : NULL;
+    batch_output.combined_rows = context->moe_combined;
+    batch_output.combined_capacity = hidden_elements;
+    batch_output.routed_rows = context->moe_routed;
+    batch_output.routed_capacity = hidden_elements;
+    batch_output.shared_rows = context->moe_shared;
+    batch_output.shared_capacity = hidden_elements;
+    batch_output.post_rows = context->moe_post;
+    batch_output.post_capacity = post_elements;
+    batch_output.combination_rows = context->moe_combination;
+    batch_output.combination_capacity = combination_elements;
+    rc = yvex_runtime_moe_execute_layer_rows(
+        context->moe, layer_ordinal, &batch, &batch_output, &moe_result, err);
+    if (rc != YVEX_OK) return rc;
+    result->hash_routers = token_count *
+        (layer->router_class == YVEX_MOE_ROUTER_HASH_TOKEN_ID);
+    result->learned_routers = token_count *
+        (layer->router_class == YVEX_MOE_ROUTER_LEARNED_HIDDEN_STATE);
+    result->routed_experts = moe_result.row_expert_pairs;
+    result->shared_experts = moe_result.shared_expert_operations;
+    result->h2d_bytes = moe_result.h2d_bytes;
+    result->d2h_bytes = moe_result.d2h_bytes;
+    result->d2d_bytes = moe_result.d2d_bytes;
+    result->kernel_launches = moe_result.kernel_launches;
+    result->upload_count = moe_result.upload_count;
+    result->download_count = moe_result.download_count;
+    result->cache_hits = moe_result.cache_hits;
+    result->cache_misses = moe_result.cache_misses;
+    result->stream_synchronizations = moe_result.stream_synchronizations;
+    result->device_synchronizations = moe_result.device_synchronizations;
+    result->moe_ns = moe_result.total_ns;
+    result->synchronization_ns = moe_result.synchronization_ns;
+    yvex_runtime_identity_copy(result->routing_digest, moe_result.routing_digest);
     if (!normal_cuda) {
         rc = yvex_transformer_deferred_post(
             context->plan, attention->envelope_output, context->moe_combined,
@@ -789,8 +773,9 @@ int yvex_runtime_transformer_execute_block(
             return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                               "transformer block output digest failed");
         yvex_sha256_hex(digest, result->expanded_digest);
-    } else if (!transformer_device_block_digest(
-                   s, layer_ordinal, result->routing_digest, result->expanded_digest))
+    } else if (!transformer_device_value_digest(
+                   "yvex.transformer.device-block.v1", s, layer_ordinal,
+                   result->routing_digest, result->expanded_digest))
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                           "transformer device block identity failed");
     yvex_sha256_init(&identity_hash);
@@ -911,13 +896,17 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                 rc = yvex_backend_tensor_read(
                     context->session_view->backend, &chunk->device_current,
                     chunk->current, expanded_bytes, err);
-            if (rc == YVEX_OK)
+            if (rc == YVEX_OK &&
+                (chunk->output->normalized_hidden ||
+                 context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL))
                 rc = yvex_backend_tensor_read(
                     context->session_view->backend, &chunk->device_hidden,
                     context->candidate_hidden, hidden_bytes, err);
         }
         if (rc == YVEX_OK) {
-            if (!chunk->output->pre_normalized_hidden)
+            if (!chunk->output->pre_normalized_hidden &&
+                (chunk->output->normalized_hidden ||
+                 context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL))
                 chunk->result->d2h_bytes += hidden_bytes;
             if (chunk->output->pre_normalized_hidden ||
                 context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL)
@@ -979,6 +968,130 @@ static int transformer_capacity_build(yvex_graph_attention_capacity_plan **out,
                                                      &request, err);
 }
 
+static yvex_execution_context_band transformer_context_band(
+    unsigned long long position, unsigned long long capacity)
+{
+    if (position < capacity / 8ull) return YVEX_EXECUTION_CONTEXT_SHORT;
+    if (position < capacity / 2ull) return YVEX_EXECUTION_CONTEXT_MEDIUM;
+    if (position < capacity - capacity / 8ull)
+        return YVEX_EXECUTION_CONTEXT_LONG;
+    return YVEX_EXECUTION_CONTEXT_NEAR_CAPACITY;
+}
+
+static unsigned long long transformer_required_capacity(
+    const yvex_graph_attention_state_component_summary *component,
+    unsigned long long width)
+{
+    unsigned long long required;
+    if (!component->capacity || component->entry_count >= component->capacity)
+        return component->capacity;
+    required = component->entry_count + width;
+    return required < component->capacity ? required : component->capacity;
+}
+
+static int transformer_shape_admit(
+    yvex_runtime_transformer_context *context,
+    const yvex_transformer_input_summary *input,
+    const yvex_runtime_transformer_request *request,
+    const yvex_graph_attention_state_summary *state,
+    const yvex_runtime_session_summary *session, yvex_error *err)
+{
+    static const char *const capacity_names[] = {
+        "unregistered", "local", "compressed", "indexer",
+        "rolling", "candidate", "context", "workspace"};
+    const yvex_transformer_plan_summary *plan =
+        yvex_transformer_plan_summary_get(context->plan);
+    const yvex_execution_shape *selected = NULL;
+    yvex_execution_shape admitted = {0}, required;
+    yvex_execution_shape_failure failure = {0};
+    unsigned long long width = input->token_count < request->chunk_tokens
+                                   ? input->token_count : request->chunk_tokens;
+    int rc;
+
+    if (!context->options.execution_profile && !context->options.shape_registry)
+        return YVEX_OK;
+    if (!context->options.execution_profile || !context->options.shape_registry ||
+        !plan || !yvex_sha256_hex_valid(session->workspace_identity) ||
+        !yvex_sha256_hex_valid(state->state_layout_identity))
+        return transformer_runtime_refuse(
+            err, YVEX_ERR_STATE,
+            "compiled execution profile and shape registry must remain paired");
+    admitted.schema_version = YVEX_EXECUTION_SHAPE_SCHEMA_V1;
+    admitted.target_scope = context->options.tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                                ? YVEX_EXECUTION_SCOPE_DRAFT
+                                : YVEX_EXECUTION_SCOPE_TARGET;
+    admitted.phase = admitted.target_scope == YVEX_EXECUTION_SCOPE_DRAFT
+                         ? YVEX_EXECUTION_PHASE_DRAFT
+                         : request->retain_prefix_checkpoints
+                               ? YVEX_EXECUTION_PHASE_VERIFY
+                               : request->phase == YVEX_TRANSFORMER_PHASE_DECODE
+                                     ? YVEX_EXECUTION_PHASE_DECODE
+                                     : YVEX_EXECUTION_PHASE_PREFILL;
+    admitted.operation_scope = YVEX_EXECUTION_OPERATION_ENVELOPE;
+    admitted.token_width = width;
+    admitted.candidate_visible = request->candidate_block_visible;
+    admitted.context_band = transformer_context_band(
+        input->token_start, context->options.context_capacity);
+    admitted.context_capacity = context->options.context_capacity;
+    admitted.local_capacity =
+        state->components[YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY].capacity;
+    admitted.compressed_capacity =
+        state->components[YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY].capacity;
+    admitted.indexer_capacity =
+        state->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY].capacity;
+    admitted.rolling_capacity =
+        state->components[YVEX_ATTENTION_STATE_BINDING_MAIN_ROLLING].capacity;
+    if (state->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING].capacity >
+        admitted.rolling_capacity)
+        admitted.rolling_capacity =
+            state->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING].capacity;
+    admitted.candidate_capacity = context->options.workspace_token_capacity;
+    admitted.workspace_generation = session->workspace_generation;
+    admitted.evidence = context->options.execution_profile->evidence;
+    yvex_runtime_identity_copy(admitted.execution_profile_identity,
+                               context->options.execution_profile->identity);
+    yvex_runtime_identity_copy(admitted.attention_plan_identity,
+                               plan->attention_plan_identity);
+    yvex_runtime_identity_copy(admitted.state_layout_identity,
+                               state->state_layout_identity);
+    yvex_runtime_identity_copy(admitted.kernel_bundle_identity,
+                               context->options.execution_profile->kernel_bundle_identity);
+    yvex_runtime_identity_copy(admitted.workspace_identity,
+                               session->workspace_identity);
+    rc = yvex_execution_shape_seal(&admitted, err);
+    if (rc == YVEX_OK)
+        rc = yvex_execution_shape_registry_register(
+            context->options.shape_registry, &admitted, err);
+    required = admitted;
+    required.position = input->token_start;
+    required.local_capacity = transformer_required_capacity(
+        &state->components[YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY], width);
+    required.compressed_capacity = transformer_required_capacity(
+        &state->components[YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY], width);
+    required.indexer_capacity = transformer_required_capacity(
+        &state->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY], width);
+    required.candidate_capacity = width;
+    if (rc == YVEX_OK) rc = yvex_execution_shape_seal(&required, err);
+    if (rc == YVEX_OK)
+        rc = yvex_execution_shape_registry_select(
+            context->options.shape_registry, &required, &selected, &failure, err);
+    if (rc != YVEX_OK) {
+        const char *component = failure.component <
+                                        sizeof(capacity_names) / sizeof(capacity_names[0])
+                                    ? capacity_names[failure.component]
+                                    : "unknown";
+        yvex_error_setf(
+            err, (yvex_status)rc, "runtime.transformer.shape",
+            "%s capacity configured=%llu required=%llu scope=%u phase=%u width=%llu "
+            "position=%llu shape=%.16s workspace=%.16s state=%.16s",
+            component, failure.configured, failure.required,
+            (unsigned int)required.target_scope, (unsigned int)required.phase,
+            required.token_width, required.position, failure.shape_identity,
+            required.workspace_identity, required.state_layout_identity);
+    }
+    return rc;
+}
+
 static int transformer_prepare(yvex_runtime_transformer_context *context,
                                const yvex_transformer_input_summary *input,
                                const yvex_runtime_transformer_request *request,
@@ -1021,12 +1134,36 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
             return rc != YVEX_OK ? rc : yvex_error_code(err);
     }
     if (state->prepared_layer_count != state->layer_count || !state->position_consistent ||
-        state->next_position != input->token_start || state->capacity < final)
+        (state->extension_ready ? state->staged_next_position : state->next_position) !=
+            input->token_start ||
+        state->capacity < final)
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                           "transformer state position/capacity is incompatible");
     if (request->backend == YVEX_BACKEND_KIND_CPU) return YVEX_OK;
     rc = yvex_runtime_session_summary_copy(context->session, &session, err);
     if (rc != YVEX_OK) return rc;
+    /* Prefix selection deliberately keeps the verification transaction open
+     * while one target-authored correction extends it. Replanning the CUDA
+     * workspace at that point would require idle state and would discard the
+     * very candidate prefix being extended. The verification workspace is
+     * already the wider admitted shape, so the one-row extension may reuse it
+     * only under the exact prefix-extension contract. */
+    if (state->extension_ready) {
+        if (!state->transaction_active || !state->prefix_selected ||
+            context->options.tensor_scope != YVEX_TENSOR_SCOPE_GLOBAL ||
+            input->token_count != 1ull || request->chunk_tokens != 1ull ||
+            request->retain_prefix_checkpoints || !session.busy ||
+            !session.host_workspace_owned || !session.host_workspace_pinned ||
+            session.device_workspace_bytes < YVEX_MOE_CUDA_WORKSPACE_BYTES ||
+            !yvex_sha256_hex_valid(session.workspace_identity))
+            return transformer_runtime_refuse(
+                err, YVEX_ERR_STATE,
+                "target prefix extension cannot reuse the admitted CUDA workspace");
+        yvex_runtime_identity_copy(context->workspace_identity,
+                                   session.workspace_identity);
+        return transformer_shape_admit(context, input, request, state, &session,
+                                       err);
+    }
     workspace_tokens = request->chunk_tokens < input->token_count
                            ? request->chunk_tokens : input->token_count;
     workspace_start = context->options.context_capacity - workspace_tokens;
@@ -1050,6 +1187,8 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
     if (rc == YVEX_OK)
         yvex_runtime_identity_copy(context->workspace_identity,
                                    session.workspace_identity);
+    if (rc == YVEX_OK)
+        rc = transformer_shape_admit(context, input, request, state, &session, err);
     return rc;
 }
 
@@ -1253,6 +1392,7 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
     moe_options.cancel_context = options->cancel_context;
     moe_options.defer_cuda_workspace = 1;
     moe_options.evidence_level = options->evidence_level;
+    moe_options.execution_profile = options->execution_profile;
     rc = yvex_runtime_moe_context_open(&context->moe, model, session, &moe_options, err);
     moe_plan = yvex_runtime_moe_context_plan(context->moe);
     if (rc == YVEX_OK)
@@ -1313,6 +1453,7 @@ static int transformer_execution_identity(
         !yvex_sha256_update_u64(&hash, request->chunk_tokens) ||
         !yvex_sha256_update_u64(&hash, request->transaction_disposition) ||
         !yvex_sha256_update_u64(&hash, request->candidate_block_visible) ||
+        !yvex_sha256_update_u64(&hash, request->retain_prefix_checkpoints) ||
         !yvex_sha256_update_u64(&hash, request->feature_layer_count))
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                           "transformer execution identity failed");
@@ -1426,13 +1567,35 @@ static int transformer_execution_finish(
         rc = transformer_runtime_refuse(
             err, YVEX_ERR_STATE,
             "transformer pre-normalized output digest derivation failed");
-    if (rc == YVEX_OK &&
-        !transformer_values_digest("yvex.transformer.normalized-hidden.v1",
-                                   output->normalized_hidden, output_count,
-                                   result->normalized_hidden_digest))
+    if (rc == YVEX_OK && output->normalized_hidden) {
+        if (!transformer_values_digest(
+                "yvex.transformer.normalized-hidden.v1",
+                output->normalized_hidden, output_count,
+                result->normalized_hidden_digest))
+            rc = transformer_runtime_refuse(
+                err, YVEX_ERR_STATE,
+                "transformer output digest derivation failed");
+        else
+            result->normalized_hidden_host_available = 1;
+    } else if (rc == YVEX_OK &&
+               (!context->options.device_hidden_output ||
+                !transformer_device_value_digest(
+                    "yvex.transformer.device-hidden.v1", plan,
+                    result->position_after, result->persistent_state_digest,
+                    result->normalized_hidden_digest) ||
+                yvex_runtime_device_view_bind(
+                    &result->device_hidden, YVEX_EXECUTION_DEVICE_HIDDEN,
+                    context->model, context->session,
+                    context->options.tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                        ? context->session_view->draft_attention_state_provider
+                        : context->session_view->attention_state_provider,
+                    context->options.execution_profile, context->device_hidden,
+                    0ull, chunk->token_count, plan->hidden_width, err) != YVEX_OK))
         rc = transformer_runtime_refuse(
             err, YVEX_ERR_STATE,
-            "transformer output digest derivation failed");
+            "transformer device-hidden publication failed");
+    else if (rc == YVEX_OK)
+        result->normalized_hidden_device_available = 1;
     if (rc == YVEX_OK && feature_elements &&
         !transformer_values_digest("yvex.transformer.target-features.v1",
                                    output->features, feature_elements,
@@ -1477,10 +1640,13 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
     int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !input || !input_summary || !plan || !tokens || !request || !output ||
-        !output->normalized_hidden || !result || !request->chunk_tokens ||
+        !result || !request->chunk_tokens ||
         request->backend != yvex_backend_kind_of(context->session_view->backend) ||
         !yvex_core_u64_mul(input_summary->token_count, plan->hidden_width, &output_count) ||
-        output->capacity < output_count)
+        (output->normalized_hidden && output->capacity < output_count) ||
+        (!output->normalized_hidden &&
+         (!context->options.device_hidden_output || output->capacity ||
+          request->backend != YVEX_BACKEND_KIND_CUDA)))
         return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG,
                                           "transformer execution owners/capacity are invalid");
     rc = transformer_feature_request_validate(
@@ -1546,16 +1712,16 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
         if (rc == YVEX_OK)
             result->embedding_ns += yvex_core_monotonic_ns() - started_ns;
         if (rc == YVEX_OK && request->backend == YVEX_BACKEND_KIND_CUDA &&
-            (!transformer_device_subview(context->device_residual[0], 0ull,
+            (!yvex_backend_tensor_f32_subview(context->device_residual[0], 0ull,
                                          count * plan->expanded_width,
                                          &chunk.device_current) ||
-             !transformer_device_subview(context->device_residual[1], 0ull,
+             !yvex_backend_tensor_f32_subview(context->device_residual[1], 0ull,
                                          count * plan->expanded_width,
                                          &chunk.device_next) ||
-             !transformer_device_subview(context->device_attention, 0ull,
+             !yvex_backend_tensor_f32_subview(context->device_attention, 0ull,
                                          count * plan->expanded_width,
                                          &chunk.device_attention) ||
-             !transformer_device_subview(context->device_hidden, 0ull,
+             !yvex_backend_tensor_f32_subview(context->device_hidden, 0ull,
                                          count * plan->hidden_width,
                                          &chunk.device_hidden)))
             rc = transformer_runtime_refuse(err, YVEX_ERR_BOUNDS,
@@ -1581,6 +1747,7 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
         execution.evidence_context = &chunk;
         execution.transaction_disposition = request->transaction_disposition;
         execution.candidate_block_visible = request->candidate_block_visible;
+        execution.retain_prefix_checkpoints = request->retain_prefix_checkpoints;
         started_ns = yvex_core_monotonic_ns();
         rc = yvex_runtime_attention_probe_execute(context->session, context->model,
                                                   &execution, &attention_result,
@@ -1594,6 +1761,7 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
             rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                             "transformer chunk skipped one or more layers");
         if (rc == YVEX_OK) {
+            if (output->normalized_hidden)
             memcpy(output->normalized_hidden + offset * plan->hidden_width,
                    context->candidate_hidden,
                    (size_t)(count * plan->hidden_width) * sizeof(float));

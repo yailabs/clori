@@ -14,6 +14,12 @@ the interactive console.
 
 No consumer scrapes another renderer's text.
 
+Operational events, execution metrics, audit evidence, and profiler output are
+separate classes. An operational event contains only lifecycle facts known at
+publication; it does not fill future counters with candidate capacity.
+Execution accounting may aggregate work without becoming audit evidence, and
+full probes never enter normal watch merely because trace verbosity increased.
+
 ## Event identity
 
 Each event carries a schema, global sequence, wall and monotonic timestamps,
@@ -70,11 +76,13 @@ rate. Neither renderer exposes generic positional counter names. Native prefill
 progress sent to the REPL is another projection of the sealed event, not a
 synthetic client event.
 
-Speculative events carry named generation mode, cycle, proposed,
-selected-verification, accepted, rejected, discarded, verification, confidence,
-timing, and policy-identity facts. Legacy generic event counters remain part of
-the versioned base event record but do not encode DSpark meaning. Human watch
-and trace use the named speculative fields and never publish draft token text.
+Speculative events carry availability-bearing named generation mode, cycle,
+candidate extent, selected-verification, accepted, rejected, stop-discarded,
+correction/bonus, promoted, replay, verification, confidence, timing, and
+policy-identity facts. Legacy generic event counters remain part of the
+versioned base event record but do not encode DSpark meaning. Human watch
+groups each request and its cycle summary; detailed trace preserves the
+individual events. Neither surface publishes draft token text.
 
 ## Privacy and content
 
@@ -95,8 +103,13 @@ completion-usage counters; accepted-prefix and correction/bonus accounting is
 explicit.
 
 Unavailable timing or placement fields are marked unavailable. Counters name
-actual observed movement, allocation, launch, synchronization, and publication
-facts rather than inferring them from tensor sizes.
+actual target/draft forwards and rows, verifications, accepted/promoted/replayed
+rows, state copies and candidate bytes, output-head rows, logits movement,
+full-array scans/digests, row/expert pairs and unique experts, launches, graph
+launches, waits, synchronizations, allocations, shape hits/misses/rebuilds,
+and publication facts rather than inferring them from tensor sizes. A measured
+zero synchronization duration is never interpreted as zero synchronization
+cost.
 
 ## Side effects and failure
 

@@ -14,7 +14,10 @@
 extern "C" {
 #endif
 
-#define YVEX_RUNTIME_LOGITS_SCHEMA_V1 1u
+#define YVEX_RUNTIME_LOGITS_SCHEMA_V3 3u
+#define YVEX_RUNTIME_LOGITS_SCHEMA_V2 YVEX_RUNTIME_LOGITS_SCHEMA_V3
+#define YVEX_RUNTIME_LOGITS_SCHEMA_V1 YVEX_RUNTIME_LOGITS_SCHEMA_V3
+#define YVEX_OUTPUT_HEAD_BATCH_SCHEMA_V1 1u
 
 typedef enum {
     YVEX_LOGITS_SOURCE_PREFILL = 0,
@@ -48,9 +51,11 @@ typedef struct yvex_runtime_logits_plan yvex_runtime_logits_plan;
 
 typedef struct {
     unsigned int schema_version;
+    int host_values_available, device_values_available;
     yvex_logits_source_phase source_phase;
     unsigned long long source_position, row_count, hidden_width;
     const float *normalized_hidden;
+    yvex_execution_device_view device_hidden;
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
     char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
     char transformer_plan_identity[YVEX_SHA256_HEX_CAP];
@@ -61,12 +66,16 @@ typedef struct {
 
 typedef struct {
     unsigned int schema_version;
-    int completed;
+    int completed, host_values_available, device_values_available;
+    int finite_count_available, range_available, raw_digest_available;
+    yvex_execution_evidence_profile evidence_profile;
     yvex_logits_source_phase source_phase;
     unsigned long long source_position, vocabulary_size, hidden_width;
     unsigned long long logits_count, finite_count;
     float minimum_logit, maximum_logit;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
+    unsigned long long full_array_host_scan_bytes;
+    yvex_execution_device_view device_logits;
     char source_hidden_digest[YVEX_SHA256_HEX_CAP];
     char output_head_plan_identity[YVEX_SHA256_HEX_CAP];
     char output_head_residency_identity[YVEX_SHA256_HEX_CAP];
@@ -75,17 +84,47 @@ typedef struct {
     char logits_row_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_logits_row_result;
 
+typedef enum {
+    YVEX_OUTPUT_HEAD_RESULT_HOST_LOGITS = 0,
+    YVEX_OUTPUT_HEAD_RESULT_DEVICE_SELECTION
+} yvex_output_head_result_class;
+
+typedef enum {
+    YVEX_OUTPUT_HEAD_SELECTION_RAW = 0,
+    YVEX_OUTPUT_HEAD_SELECTION_GREEDY,
+    YVEX_OUTPUT_HEAD_SELECTION_STOCHASTIC_REFERENCE
+} yvex_output_head_selection_policy;
+
+/*
+ * Output width is an admitted graph shape. Rows remain ordered through one operation even while
+ * the portable backend projects them independently.
+ */
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long row_count, output_vocabulary;
+    yvex_backend_kind backend;
+    yvex_output_head_result_class result_class;
+    yvex_output_head_selection_policy selection_policy;
+    yvex_execution_evidence_profile evidence_profile;
+    yvex_execution_class execution_class;
+    const char *execution_profile_identity;
+} yvex_output_head_batch_request;
+
 typedef struct {
     unsigned int schema_version;
     int completed, partial;
     unsigned long long requested_rows, completed_rows, first_incomplete_row;
     unsigned long long final_source_position;
     char aggregate_logits_digest[YVEX_SHA256_HEX_CAP];
+    char output_head_contract_identity[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_logits_result;
 
 typedef struct {
     unsigned long long maximum_rows, maximum_host_bytes, maximum_device_bytes;
+    yvex_execution_evidence_profile evidence_profile;
+    int device_greedy_selection;
+    const yvex_compiled_execution_profile *execution_profile;
     int (*cancel_requested)(void *context);
     void *cancel_context;
 } yvex_runtime_logits_options;
@@ -141,6 +180,13 @@ int yvex_runtime_logits_execute(
     yvex_runtime_logits_context *context,
     const yvex_runtime_logits_source *sources, unsigned long long row_count,
     yvex_backend_kind backend, float *logits, unsigned long long logits_capacity,
+    yvex_runtime_logits_row_result *rows, unsigned long long row_capacity,
+    yvex_runtime_logits_result *result, yvex_error *err);
+int yvex_runtime_logits_execute_rows(
+    yvex_runtime_logits_context *context,
+    const yvex_output_head_batch_request *request,
+    const yvex_runtime_logits_source *sources,
+    float *logits, unsigned long long logits_capacity,
     yvex_runtime_logits_row_result *rows, unsigned long long row_capacity,
     yvex_runtime_logits_result *result, yvex_error *err);
 int yvex_runtime_logits_row_validate(

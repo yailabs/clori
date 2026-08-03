@@ -949,6 +949,7 @@ typedef struct {
     yvex_deepseek_payload_failure payload_failure;
     yvex_artifact_admission_failure admission_failure;
     yvex_materialization_options materialization_options;
+    yvex_materialization_projection materialization_projection;
     yvex_materialization_failure materialization_failure;
     yvex_runtime_descriptor_failure descriptor_failure;
     yvex_deepseek_v4_ir_failure architecture_failure;
@@ -1026,17 +1027,21 @@ static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
     int rc;
 
     yvex_materialization_options_default(&compiler->materialization_options);
-    compiler->materialization_options.require_deepseek_map = 1;
+    compiler->materialization_options.require_terminal_projection = 1;
     compiler->materialization_options.max_chunk_bytes = 16ull * 1024ull * 1024ull;
     compiler->materialization_options.cache_budget_bytes = 256ull * 1024ull * 1024ull;
     compiler->materialization_options.future_graph_scratch_reserve_bytes =
         2ull * 1024ull * 1024ull * 1024ull;
     compiler->materialization_options.future_kv_reserve_bytes =
         2ull * 1024ull * 1024ull * 1024ull;
-    rc = yvex_materialization_plan_build(
-        &compiler->materialization_plan, &compiler->admission, compiler->artifact,
-        compiler->gguf, compiler->tensors, compiler->model->payload.map(compiler->handoff),
-        &compiler->materialization_options, &compiler->materialization_failure, err);
+    rc = yvex_deepseek_materialization_projection(
+        compiler->model->payload.map(compiler->handoff),
+        &compiler->materialization_projection, err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_plan_build(
+            &compiler->materialization_plan, &compiler->admission, compiler->artifact,
+            compiler->gguf, compiler->tensors, &compiler->materialization_projection,
+            &compiler->materialization_options, &compiler->materialization_failure, err);
     if (rc == YVEX_OK)
         rc = yvex_materialization_session_open(
             &compiler->materialization, compiler->materialization_plan, compiler->artifact,

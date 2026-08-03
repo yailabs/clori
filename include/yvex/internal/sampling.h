@@ -14,7 +14,8 @@
 extern "C" {
 #endif
 
-#define YVEX_RUNTIME_SAMPLING_SCHEMA_V1 1u
+#define YVEX_RUNTIME_SAMPLING_SCHEMA_V2 2u
+#define YVEX_RUNTIME_SAMPLING_SCHEMA_V1 YVEX_RUNTIME_SAMPLING_SCHEMA_V2
 #define YVEX_SAMPLING_FILTER_ORDER_V1 1u
 #define YVEX_SAMPLING_FILTER_ORDER_V2 2u
 #define YVEX_SAMPLING_RNG_PCG_XSH_RR_64_32 1u
@@ -40,9 +41,11 @@ typedef struct yvex_runtime_sampling_policy {
 
 typedef struct {
     unsigned int schema_version;
+    int host_values_available, device_values_available;
     yvex_logits_source_phase source_phase;
     unsigned long long source_position, vocabulary_size, logits_capacity;
     const float *logits;
+    yvex_execution_device_view device_logits;
     char raw_logits_digest[YVEX_SHA256_HEX_CAP];
     char logits_row_identity[YVEX_SHA256_HEX_CAP];
     char output_head_plan_identity[YVEX_SHA256_HEX_CAP];
@@ -53,7 +56,7 @@ typedef struct {
 
 typedef struct {
     unsigned int schema_version;
-    int completed, numeric_fallback_used;
+    int completed, numeric_fallback_used, device_selection;
     yvex_sampling_strategy strategy;
     yvex_logits_source_phase source_phase;
     unsigned long long source_position, vocabulary_size, values_considered;
@@ -65,6 +68,7 @@ typedef struct {
     float selected_logit, maximum_logit;
     double temperature, selected_probability, selected_log_probability;
     unsigned long long tied_maximum_count, effective_top_k, rng_draw_count;
+    unsigned long long d2h_bytes, kernel_launches, full_array_host_scan_bytes;
     double effective_top_p, effective_min_p, effective_typical_p;
     double min_p_threshold, entropy, typical_retained_mass, top_p_retained_mass;
     double normalization_error;

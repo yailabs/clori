@@ -111,6 +111,9 @@ int yvex_runtime_generation_profile_transformer(
     COUNTER(YVEX_RUNTIME_PROFILE_CACHE_HITS, value->cache_hits);
     COUNTER(YVEX_RUNTIME_PROFILE_CACHE_MISSES, value->cache_misses);
     COUNTER(YVEX_RUNTIME_PROFILE_EXPERT_SUBVIEWS, value->routed_experts * 3ull);
+    COUNTER(YVEX_RUNTIME_PROFILE_ROW_EXPERT_PAIRS, value->routed_experts);
+    COUNTER(YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
+            value->full_array_host_scan_bytes);
     COUNTER(YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES, value->kernel_launches);
     COUNTER(YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS,
             value->stream_synchronizations);
@@ -265,7 +268,7 @@ int yvex_runtime_generation_plan_identity(
     yvex_sha256 hash;
     if (!plan || !output) return 0;
     yvex_sha256_init(&hash);
-    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.plan.v3") &&
+    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.plan.v4") &&
            yvex_sha256_update_u64(&hash, plan->schema_version) &&
            yvex_sha256_update_u64(&hash, plan->backend) &&
            yvex_sha256_update_u64(&hash, plan->mode) &&
@@ -274,6 +277,8 @@ int yvex_runtime_generation_plan_identity(
            yvex_sha256_update_u64(&hash, plan->maximum_new_tokens) &&
            yvex_sha256_update_u64(&hash, plan->maximum_output_bytes) &&
            yvex_sha256_update_u64(&hash, plan->trace_policy) &&
+           yvex_sha256_update_u64(&hash, plan->evidence_profile) &&
+           yvex_sha256_update_u64(&hash, plan->execution_class) &&
            yvex_sha256_update_text(&hash, plan->runtime_model_identity) &&
            yvex_sha256_update_text(&hash, plan->runtime_binding_identity) &&
            yvex_sha256_update_text(&hash, plan->runtime_descriptor_identity) &&
@@ -284,6 +289,9 @@ int yvex_runtime_generation_plan_identity(
            yvex_sha256_update_text(&hash, plan->sampling_policy_identity) &&
            yvex_sha256_update_text(&hash, plan->speculation_policy_identity) &&
            yvex_sha256_update_text(&hash, plan->stop_policy_identity) &&
+           yvex_sha256_update_text(&hash, plan->kernel_bundle_identity) &&
+           yvex_sha256_update_text(&hash, plan->execution_profile_identity) &&
+           yvex_sha256_update_text(&hash, plan->hardware_profile) &&
            generation_hash_finish(&hash, output);
 }
 
@@ -360,7 +368,7 @@ int yvex_runtime_generation_execution_identity(
     unsigned long long index;
     if (!result || (!tokens && result->sampled_token_count) || !output) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.generation.execution.v3") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.generation.execution.v4") ||
         !yvex_sha256_update_u64(&hash, result->schema_version) ||
         !yvex_sha256_update_u64(&hash, result->execution_mode) ||
         !yvex_sha256_update_u64(&hash, result->status) ||
@@ -400,22 +408,99 @@ int yvex_runtime_generation_execution_identity(
         !yvex_sha256_update_u64(&hash, result->new_prefill_token_count) ||
         !yvex_sha256_update_u64(&hash, result->final_position) ||
         !yvex_sha256_update_u64(&hash, result->final_persistent_generation) ||
+        !yvex_sha256_update_u64(&hash, result->final_rng_generation) ||
+        !yvex_sha256_update_u64(
+            &hash, result->final_token_ledger_generation) ||
         !yvex_sha256_update_u64(&hash, result->generated_text_bytes) ||
         !yvex_sha256_update_text(&hash, result->prompt_identity) ||
         !yvex_sha256_update_text(&hash, result->prompt_token_identity) ||
         !yvex_sha256_update_text(&hash, result->reusable_prefix_identity) ||
         !yvex_sha256_update_text(&hash, result->initial_rng_identity) ||
         !yvex_sha256_update_text(&hash, result->final_rng_identity) ||
+        !yvex_sha256_update_text(&hash,
+                                 result->final_token_ledger_identity) ||
         !yvex_sha256_update_text(&hash, result->generated_token_identity) ||
         !yvex_sha256_update_text(&hash, result->generated_text_digest) ||
         !yvex_sha256_update_text(&hash, result->final_persistent_state_digest) ||
         !yvex_sha256_update_text(&hash, result->generation_plan_identity) ||
         !yvex_sha256_update_text(&hash,
-                                 result->speculation_policy_identity)) return 0;
+                                 result->speculation_policy_identity) ||
+        !yvex_sha256_update_u64(&hash, result->partial_turn.schema_version) ||
+        !yvex_sha256_update_u64(&hash, result->partial_turn.available) ||
+        !yvex_sha256_update_u64(&hash, result->partial_turn.committed_progress) ||
+        !yvex_sha256_update_u64(&hash, result->partial_turn.reset_required) ||
+        !yvex_sha256_update_u64(
+            &hash, result->partial_turn.draft_state_generation_available) ||
+        !yvex_sha256_update_u64(
+            &hash, result->partial_turn.detokenizer_generation_available) ||
+        !yvex_sha256_update_u64(&hash,
+                                (uint32_t)result->partial_turn.failure_status) ||
+        !yvex_sha256_update_u64(&hash, result->partial_turn.stop_reason) ||
+        !yvex_sha256_update_u64(&hash, result->partial_turn.initial_position) ||
+        !yvex_sha256_update_u64(
+            &hash, result->partial_turn.final_committed_position) ||
+        !yvex_sha256_update_u64(&hash,
+                                result->partial_turn.committed_token_count) ||
+        !yvex_sha256_update_u64(&hash,
+                                result->partial_turn.published_text_bytes) ||
+        !yvex_sha256_update_u64(&hash,
+                                result->partial_turn.target_state_generation) ||
+        !yvex_sha256_update_u64(&hash,
+                                result->partial_turn.draft_state_generation) ||
+        !yvex_sha256_update_u64(&hash, result->partial_turn.rng_generation) ||
+        !yvex_sha256_update_u64(&hash,
+                                result->partial_turn.token_ledger_generation) ||
+        !yvex_sha256_update_u64(
+            &hash, result->partial_turn.detokenizer_generation) ||
+        !yvex_sha256_update_text(&hash,
+                                 result->partial_turn.target_state_identity) ||
+        !yvex_sha256_update_text(&hash,
+                                 result->partial_turn.rng_state_identity) ||
+        !yvex_sha256_update_text(&hash,
+                                 result->partial_turn.token_ledger_identity) ||
+        !yvex_sha256_update_text(&hash,
+                                 result->partial_turn.published_text_identity)) return 0;
     for (index = 0ull; index < result->sampled_token_count; ++index)
         if (!yvex_sha256_update_text(&hash, tokens[index].token_step_identity))
             return 0;
     return generation_hash_finish(&hash, output);
+}
+
+static int generation_partial_turn_validate(
+    const yvex_runtime_generation_result *result)
+{
+    const yvex_runtime_partial_turn *partial = &result->partial_turn;
+    int progress = result->final_position > result->initial_position ||
+                   result->model_committed_token_count ||
+                   result->generated_text_bytes;
+    if (result->completed)
+        return !partial->available && !partial->schema_version &&
+               !partial->committed_progress && !partial->reset_required;
+    return partial->schema_version == YVEX_RUNTIME_PARTIAL_TURN_SCHEMA_V1 &&
+           partial->available && partial->reset_required &&
+           partial->failure_status != YVEX_OK &&
+           partial->stop_reason == result->stop_reason &&
+           partial->committed_progress == progress &&
+           partial->initial_position == result->initial_position &&
+           partial->final_committed_position == result->final_position &&
+           partial->committed_token_count == result->model_committed_token_count &&
+           partial->published_text_bytes == result->generated_text_bytes &&
+           partial->target_state_generation == result->final_persistent_generation &&
+           partial->rng_generation == result->final_rng_generation &&
+           partial->token_ledger_generation ==
+               result->final_token_ledger_generation &&
+           !partial->draft_state_generation_available &&
+           !partial->draft_state_generation &&
+           !partial->detokenizer_generation_available &&
+           !partial->detokenizer_generation &&
+           strcmp(partial->target_state_identity,
+                  result->final_persistent_state_digest) == 0 &&
+           strcmp(partial->rng_state_identity, result->final_rng_identity) == 0 &&
+           strcmp(partial->token_ledger_identity,
+                  result->final_token_ledger_identity) == 0 &&
+           strcmp(partial->published_text_identity,
+                  result->generated_text_digest) == 0 &&
+           yvex_sha256_hex_valid(partial->token_ledger_identity);
 }
 
 int yvex_runtime_generation_result_validate(
@@ -443,8 +528,13 @@ int yvex_runtime_generation_result_validate(
                           &expected_final_position);
     if (!plan || !result || (!tokens && result->sampled_token_count) ||
         (!text && result->generated_text_bytes) ||
-        plan->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V3 ||
-        result->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V3 ||
+        plan->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V4 ||
+        result->schema_version != YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4 ||
+        plan->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
+        plan->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE ||
+        !yvex_sha256_hex_valid(plan->kernel_bundle_identity) ||
+        !yvex_sha256_hex_valid(plan->execution_profile_identity) ||
+        !plan->hardware_profile[0] ||
         result->execution_mode != plan->mode ||
         result->sampled_token_count > token_capacity ||
         result->generated_text_bytes > text_capacity ||
@@ -457,9 +547,10 @@ int yvex_runtime_generation_result_validate(
         result->reusable_prefix_token_count > result->prompt_token_count ||
         result->new_prefill_token_count !=
             result->prompt_token_count - result->reusable_prefix_token_count ||
-        result->profile.schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V1 ||
+        result->profile.schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 ||
         runtime_profile_validate(&result->profile, NULL) != YVEX_OK ||
         !yvex_sha256_hex_valid(result->reusable_prefix_identity) ||
+        !generation_partial_turn_validate(result) ||
         strcmp(result->speculation_policy_identity,
                plan->speculation_policy_identity) != 0 ||
         strcmp(result->generation_plan_identity,
@@ -711,7 +802,7 @@ int yvex_runtime_generation_operator_execute(
     rc = yvex_runtime_cleanup_lease_acquire(
         &cleanup, &model_request, &session_request, &model, &session,
         &failure, err);
-    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
+    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4;
     options.backend = request->backend;
     options.mode = request->mode;
     options.context_capacity = request->context_capacity;
@@ -721,6 +812,7 @@ int yvex_runtime_generation_operator_execute(
     options.maximum_host_bytes = request->maximum_host_bytes;
     options.maximum_device_bytes = request->maximum_device_bytes;
     options.trace_policy = YVEX_RUNTIME_TRACE_SUMMARY;
+    options.evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     options.sampling_policy = request->sampling_policy;
     options.cancel_requested = request->cancel_requested;
     options.cancel_context = request->cancel_context;
@@ -762,7 +854,7 @@ int yvex_runtime_generation_operator_execute(
             &result->execution, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_context_summary_copy(context, &result->context, err);
-    if (result->execution.schema_version == YVEX_RUNTIME_GENERATION_SCHEMA_V3) {
+    if (result->execution.schema_version == YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4) {
         result->token_count = result->execution.sampled_token_count;
         result->text_bytes = result->execution.generated_text_bytes;
     }

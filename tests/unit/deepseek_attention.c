@@ -97,7 +97,7 @@ static int test_cpu_resource_guards(void)
     memset(&history, 0, sizeof(history));
     rc = yvex_attention_cuda_trace_open(
         &trace, &layer, YVEX_ATTENTION_OPERATION_CORE, &history, 0ull, 1ull,
-        YVEX_ATTENTION_EVIDENCE_FULL, NULL, ULLONG_MAX, &trace_bytes, &failure, &err);
+        YVEX_ATTENTION_EVIDENCE_FULL, 0, NULL, ULLONG_MAX, &trace_bytes, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && trace_bytes != 0ull,
                      "CUDA trace reports its complete owned bytes");
     yvex_graph_lower_deepseek_v4()->publication_release(&trace);
@@ -106,7 +106,7 @@ static int test_cpu_resource_guards(void)
                      "attention publication release is idempotent");
     rc = yvex_attention_cuda_trace_open(
         &trace, &layer, YVEX_ATTENTION_OPERATION_CORE, &history, 0ull, 1ull,
-        YVEX_ATTENTION_EVIDENCE_FULL, NULL, trace_bytes - 1ull,
+        YVEX_ATTENTION_EVIDENCE_FULL, 0, NULL, trace_bytes - 1ull,
         &row_bytes, &failure, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_ERR_BOUNDS && row_bytes == 0ull && !trace.owned &&
@@ -114,7 +114,7 @@ static int test_cpu_resource_guards(void)
         "CUDA trace refuses budget minus one before allocation");
     rc = yvex_attention_cuda_trace_open(
         &trace, &layer, YVEX_ATTENTION_OPERATION_CORE, &history, 0ull, 1ull,
-        YVEX_ATTENTION_EVIDENCE_FULL, NULL, trace_bytes, &row_bytes, &failure, &err);
+        YVEX_ATTENTION_EVIDENCE_FULL, 0, NULL, trace_bytes, &row_bytes, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && row_bytes == trace_bytes && trace.owned,
                      "CUDA trace admits its exact host budget");
     yvex_graph_lower_deepseek_v4()->publication_release(&trace);
@@ -125,7 +125,7 @@ static int test_cpu_resource_guards(void)
         "FAST CUDA publication borrows one prepared graph workspace");
     rc = yvex_attention_cuda_trace_open(
         &trace, &layer, YVEX_ATTENTION_OPERATION_CORE, &history, 0ull, 1ull,
-        YVEX_ATTENTION_EVIDENCE_NONE, workspace, trace_bytes, &row_bytes, &failure, &err);
+        YVEX_ATTENTION_EVIDENCE_NONE, 0, workspace, trace_bytes, &row_bytes, &failure, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && trace.workspace == workspace && !trace.input &&
             !trace.q_low && !trace.query && !trace.index_query &&

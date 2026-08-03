@@ -24,6 +24,8 @@ change. Git history preserves implementation chronology.
 - A daemon-backed `yvex>` console with composed attachment state, live prefill
   progress, direct streamed output, typed turn metrics, registry-derived slash
   completion, semantic watch/human trace, and clean Ctrl-C/Ctrl-D handling.
+- Source-authored explicit-reasoning controls and a typed reasoning stream that
+  remains separate from final text and never infers hidden chain of thought.
 
 ### Changed
 
@@ -38,6 +40,8 @@ change. Git history preserves implementation chronology.
   facade operations.
 - Advanced the private local protocol to version 5 for typed speculative-cycle,
   accepted-prefix, and committed-only usage facts; version 4 is refused.
+- Advanced the private local protocol to version 6 for exact partial-turn and
+  explicit-reasoning facts; version 5 is refused.
 - Made hosted startup registry-first: `model list` reports complete startup
   profiles, `model select NAME` resolves one profile without path flags, and
   `runtime start` opens the selected model without environment variables.
@@ -50,6 +54,9 @@ change. Git history preserves implementation chronology.
 - Reorganized documentation by authority and lifecycle, with canonical
   terminology, family records, contracts, operator procedures, frozen audits,
   and validated migration paths.
+- Separated physical execution decisions and evidence depth from artifact
+  identity, promoted verified speculative state without accepted-token replay,
+  and made CUDA capacity admission execution-shape specific.
 
 ### Removed
 

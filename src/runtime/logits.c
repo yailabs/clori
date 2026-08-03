@@ -15,6 +15,7 @@
 
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/execution.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
 
@@ -260,7 +261,12 @@ int yvex_runtime_logits_context_open(
     int rc;
     if (out) *out = NULL;
     if (!out || !model || !session || !transformer_plan || !options ||
-        !options->maximum_rows)
+        !options->maximum_rows ||
+        options->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
+        (options->device_greedy_selection &&
+         (!options->execution_profile ||
+          options->execution_profile->backend != YVEX_BACKEND_KIND_CUDA ||
+          !yvex_sha256_hex_valid(options->execution_profile->identity))))
         return logits_refuse(err, YVEX_ERR_INVALID_ARG,
                              "logits requires model, session, transformer plan, and row budget");
     context = (yvex_runtime_logits_context *)calloc(1u, sizeof(*context));
@@ -385,17 +391,26 @@ static int logits_source_identity(yvex_runtime_logits_source *source)
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     if (!source) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.source.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.source.v2") ||
         !yvex_sha256_update_u64(&hash, source->schema_version) ||
         !yvex_sha256_update_u64(&hash, source->source_phase) ||
         !yvex_sha256_update_u64(&hash, source->source_position) ||
         !yvex_sha256_update_u64(&hash, source->row_count) ||
         !yvex_sha256_update_u64(&hash, source->hidden_width) ||
+        !yvex_sha256_update_u64(&hash, source->host_values_available) ||
+        !yvex_sha256_update_u64(&hash, source->device_values_available) ||
         !yvex_sha256_update_text(&hash, source->runtime_model_identity) ||
         !yvex_sha256_update_text(&hash, source->runtime_binding_identity) ||
         !yvex_sha256_update_text(&hash, source->transformer_plan_identity) ||
         !yvex_sha256_update_text(&hash, source->transformer_execution_identity) ||
         !yvex_sha256_update_text(&hash, source->normalized_hidden_digest) ||
+        (source->device_values_available &&
+         (!yvex_sha256_update_text(
+              &hash, source->device_hidden.execution_profile_identity) ||
+          !yvex_sha256_update_u64(&hash, source->device_hidden.model_generation) ||
+          !yvex_sha256_update_u64(&hash, source->device_hidden.session_generation) ||
+          !yvex_sha256_update_u64(&hash, source->device_hidden.state_generation) ||
+          !yvex_sha256_update_u64(&hash, source->device_hidden.element_offset))) ||
         !yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, source->source_identity);
     return 1;
@@ -412,13 +427,19 @@ static int logits_source_begin(const yvex_runtime_logits_context *context,
                                yvex_logits_source_phase phase,
                                unsigned long long position,
                                const float *hidden,
+                               const yvex_execution_device_view *device_hidden,
+                               const char *producer_hidden_digest,
                                const char *plan_identity,
                                const char *producer_identity,
                                yvex_error *err)
 {
     yvex_runtime_model_summary model;
-    if (!context || !source || !hidden || !producer_identity ||
+    if (!context || !source || (!hidden == !device_hidden) ||
+        !producer_hidden_digest || !producer_identity ||
+        !yvex_sha256_hex_valid(producer_hidden_digest) ||
         !yvex_sha256_hex_valid(producer_identity) ||
+        (device_hidden &&
+         yvex_execution_device_view_validate(device_hidden, err) != YVEX_OK) ||
         yvex_runtime_model_summary_copy(context->model, &model, err) != YVEX_OK)
         return logits_refuse(err, YVEX_ERR_INVALID_ARG,
                              "logits producer source facts are invalid");
@@ -429,6 +450,9 @@ static int logits_source_begin(const yvex_runtime_logits_context *context,
     source->row_count = 1ull;
     source->hidden_width = context->plan.summary.hidden_width;
     source->normalized_hidden = hidden;
+    source->host_values_available = hidden != NULL;
+    source->device_values_available = device_hidden != NULL;
+    if (device_hidden) source->device_hidden = *device_hidden;
     yvex_runtime_identity_copy(source->runtime_model_identity,
                                model.runtime_model_identity);
     yvex_runtime_identity_copy(source->runtime_binding_identity,
@@ -436,10 +460,17 @@ static int logits_source_begin(const yvex_runtime_logits_context *context,
     yvex_runtime_identity_copy(source->transformer_plan_identity, plan_identity);
     yvex_runtime_identity_copy(source->transformer_execution_identity,
                                producer_identity);
-    if (!logits_values_digest("yvex.transformer.normalized-hidden.v1", hidden,
+    if (hidden &&
+        !logits_values_digest("yvex.transformer.normalized-hidden.v1", hidden,
                               source->hidden_width,
-                              source->normalized_hidden_digest) ||
-        !logits_source_identity(source))
+                              source->normalized_hidden_digest))
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "normalized-hidden host row could not be sealed");
+    if (device_hidden)
+        yvex_runtime_identity_copy(source->normalized_hidden_digest,
+                                   producer_hidden_digest);
+    if (!logits_source_identity(source) ||
+        !yvex_sha256_hex_valid(source->source_identity))
         return logits_refuse(err, YVEX_ERR_FORMAT,
                              "normalized-hidden source identity could not be sealed");
     return YVEX_OK;
@@ -452,24 +483,56 @@ int yvex_runtime_logits_source_from_transformer(
     const float *normalized_hidden, unsigned long long hidden_capacity,
     unsigned long long row_ordinal, yvex_error *err)
 {
+    yvex_execution_device_view device_row;
     char complete_digest[YVEX_SHA256_HEX_CAP];
-    unsigned long long complete_values, row_offset;
+    unsigned long long complete_values, row_offset, first_device_row;
     if (!context || !source || !producer || !producer->completed ||
         producer->phase != YVEX_TRANSFORMER_PHASE_PREFILL ||
         !producer->token_count || row_ordinal >= producer->token_count ||
         !yvex_core_u64_mul(producer->token_count,
                            context->plan.summary.hidden_width, &complete_values) ||
-        hidden_capacity < complete_values || !normalized_hidden ||
-        !logits_values_digest("yvex.transformer.normalized-hidden.v1",
-                              normalized_hidden, complete_values, complete_digest) ||
-        strcmp(complete_digest, producer->normalized_hidden_digest) != 0 ||
         !yvex_core_u64_mul(row_ordinal, context->plan.summary.hidden_width,
                            &row_offset))
         return logits_refuse(err, YVEX_ERR_FORMAT,
                              "Transformer normalized-hidden publication is incompatible");
+    if (producer->normalized_hidden_host_available) {
+        if (!normalized_hidden || hidden_capacity < complete_values ||
+            !logits_values_digest(
+                "yvex.transformer.normalized-hidden.v1", normalized_hidden,
+                complete_values, complete_digest) ||
+            strcmp(complete_digest, producer->normalized_hidden_digest) != 0)
+            return logits_refuse(
+                err, YVEX_ERR_FORMAT,
+                "Transformer host hidden publication is incompatible");
+        return logits_source_begin(
+            context, source, YVEX_LOGITS_SOURCE_PREFILL,
+            producer->token_start + row_ordinal, normalized_hidden + row_offset,
+            NULL, producer->normalized_hidden_digest,
+            context->plan.summary.transformer_plan_identity,
+            producer->execution_identity, err);
+    }
+    if (!producer->normalized_hidden_device_available || normalized_hidden ||
+        hidden_capacity || producer->device_hidden.rows > producer->token_count)
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "Transformer device hidden publication is incompatible");
+    first_device_row = producer->token_count - producer->device_hidden.rows;
+    if (row_ordinal < first_device_row) return logits_refuse(
+        err, YVEX_ERR_BOUNDS,
+        "requested hidden row is no longer resident in the device publication");
+    device_row = producer->device_hidden;
+    if (!yvex_core_u64_mul(row_ordinal - first_device_row,
+                           context->plan.summary.hidden_width, &row_offset) ||
+        !yvex_core_u64_add(device_row.element_offset, row_offset,
+                           &device_row.element_offset))
+        return logits_refuse(err, YVEX_ERR_BOUNDS,
+                             "device hidden row offset overflowed");
+    device_row.rows = 1ull;
+    if (yvex_execution_device_view_validate(&device_row, err) != YVEX_OK)
+        return yvex_error_code(err);
     return logits_source_begin(
         context, source, YVEX_LOGITS_SOURCE_PREFILL,
-        producer->token_start + row_ordinal, normalized_hidden + row_offset,
+        producer->token_start + row_ordinal, NULL, &device_row,
+        producer->normalized_hidden_digest,
         context->plan.summary.transformer_plan_identity,
         producer->execution_identity, err);
 }
@@ -483,17 +546,35 @@ int yvex_runtime_logits_source_from_decode(
 {
     char digest[YVEX_SHA256_HEX_CAP];
     if (!context || !source || !producer || !producer->completed ||
-        producer->position_after != producer->position_before + 1ull ||
-        hidden_capacity < context->plan.summary.hidden_width || !normalized_hidden ||
-        !logits_values_digest("yvex.transformer.normalized-hidden.v1",
-                              normalized_hidden, context->plan.summary.hidden_width,
-                              digest) ||
-        strcmp(digest, producer->normalized_hidden_digest) != 0)
+        producer->position_after != producer->position_before + 1ull)
         return logits_refuse(err, YVEX_ERR_FORMAT,
                              "decode normalized-hidden publication is incompatible");
+    if (producer->normalized_hidden_host_available) {
+        if (!normalized_hidden ||
+            hidden_capacity < context->plan.summary.hidden_width ||
+            !logits_values_digest(
+                "yvex.transformer.normalized-hidden.v1", normalized_hidden,
+                context->plan.summary.hidden_width, digest) ||
+            strcmp(digest, producer->normalized_hidden_digest) != 0)
+            return logits_refuse(
+                err, YVEX_ERR_FORMAT,
+                "decode host hidden publication is incompatible");
+        return logits_source_begin(
+            context, source, YVEX_LOGITS_SOURCE_DECODE,
+            producer->position_before, normalized_hidden, NULL,
+            producer->normalized_hidden_digest,
+            context->plan.summary.transformer_plan_identity,
+            producer->transformer_execution_identity, err);
+    }
+    if (!producer->normalized_hidden_device_available || normalized_hidden ||
+        hidden_capacity || producer->device_hidden.rows != 1ull ||
+        yvex_execution_device_view_validate(&producer->device_hidden, err) != YVEX_OK)
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "decode device hidden publication is incompatible");
     return logits_source_begin(
         context, source, YVEX_LOGITS_SOURCE_DECODE,
-        producer->position_before, normalized_hidden,
+        producer->position_before, NULL, &producer->device_hidden,
+        producer->normalized_hidden_digest,
         context->plan.summary.transformer_plan_identity,
         producer->transformer_execution_identity, err);
 }
@@ -529,6 +610,7 @@ int yvex_runtime_logits_source_from_draft(
     return logits_source_begin(
         context, source, YVEX_LOGITS_SOURCE_DRAFT,
         producer->token_start + row_ordinal, normalized_hidden + row_offset,
+        NULL, producer->normalized_hidden_digest,
         draft->transformer_plan_identity, producer->execution_identity, err);
 }
 
@@ -547,7 +629,8 @@ static int logits_source_validate(const yvex_runtime_logits_context *context,
     if (!context || !source || source->schema_version != YVEX_RUNTIME_LOGITS_SCHEMA_V1 ||
         source->source_phase > YVEX_LOGITS_SOURCE_DRAFT || source->row_count != 1ull ||
         source->hidden_width != context->plan.summary.hidden_width ||
-        !source->normalized_hidden ||
+        source->host_values_available + source->device_values_available != 1 ||
+        source->host_values_available != (source->normalized_hidden != NULL) ||
         yvex_runtime_model_summary_copy(context->model, &model, err) != YVEX_OK ||
         strcmp(source->runtime_model_identity, model.runtime_model_identity) != 0 ||
         strcmp(source->runtime_binding_identity,
@@ -558,12 +641,29 @@ static int logits_source_validate(const yvex_runtime_logits_context *context,
           source->source_phase != YVEX_LOGITS_SOURCE_DRAFT ||
           strcmp(source->transformer_plan_identity,
                  context->shared_draft_plan_identity) != 0)) ||
-        !yvex_sha256_hex_valid(source->transformer_execution_identity) ||
-        !logits_values_digest("yvex.transformer.normalized-hidden.v1",
-                              source->normalized_hidden, source->hidden_width, digest) ||
-        strcmp(digest, source->normalized_hidden_digest) != 0)
+        !yvex_sha256_hex_valid(source->transformer_execution_identity))
         return logits_refuse(err, YVEX_ERR_FORMAT,
                              "normalized-hidden source identity or geometry is stale");
+    if (source->host_values_available &&
+        (!logits_values_digest("yvex.transformer.normalized-hidden.v1",
+                               source->normalized_hidden, source->hidden_width,
+                               digest) ||
+         strcmp(digest, source->normalized_hidden_digest) != 0))
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "normalized-hidden host row digest is stale");
+    if (source->device_values_available &&
+        (source->device_hidden.kind != YVEX_EXECUTION_DEVICE_HIDDEN ||
+         source->device_hidden.backend != context->session_view->backend ||
+         source->device_hidden.rows != 1ull ||
+         source->device_hidden.columns != source->hidden_width ||
+         strcmp(source->device_hidden.runtime_model_identity,
+                source->runtime_model_identity) != 0 ||
+         !context->options.execution_profile ||
+         strcmp(source->device_hidden.execution_profile_identity,
+                context->options.execution_profile->identity) != 0 ||
+         yvex_execution_device_view_validate(&source->device_hidden, err) != YVEX_OK))
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "normalized-hidden device row is stale");
     canonical = *source;
     canonical.source_identity[0] = '\0';
     if (!logits_source_identity(&canonical) ||
@@ -605,11 +705,13 @@ static int logits_project_cpu(yvex_runtime_logits_context *context,
  * matvec, synchronization, and candidate D2H.
  */
 static int logits_project_cuda(yvex_runtime_logits_context *context,
-                               const float *hidden,
+                               const yvex_runtime_logits_source *source,
                                yvex_runtime_logits_row_result *result,
                                yvex_error *err)
 {
     unsigned long long hidden_bytes, logits_bytes, launches = 0ull;
+    yvex_device_tensor borrowed_hidden;
+    const yvex_device_tensor *device_hidden = context->device_hidden;
     int rc;
     if (!context->device_hidden || !context->device_logits ||
         !yvex_core_u64_mul(context->plan.summary.hidden_width, sizeof(float),
@@ -618,22 +720,35 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
                            &logits_bytes))
         return logits_refuse(err, YVEX_ERR_STATE,
                              "stable logits CUDA buffers are unavailable");
-    rc = yvex_backend_tensor_write(context->session_view->backend,
-                                   context->device_hidden, hidden, hidden_bytes, err);
+    if (source->device_values_available) {
+        if (!yvex_backend_tensor_f32_subview(
+                source->device_hidden.tensor,
+                source->device_hidden.element_offset,
+                context->plan.summary.hidden_width, &borrowed_hidden))
+            return logits_refuse(err, YVEX_ERR_FORMAT,
+                                 "device hidden row cannot be borrowed");
+        device_hidden = &borrowed_hidden;
+        rc = YVEX_OK;
+    } else {
+        rc = yvex_backend_tensor_write(
+            context->session_view->backend, context->device_hidden,
+            source->normalized_hidden, hidden_bytes, err);
+    }
     if (rc == YVEX_OK)
         rc = yvex_backend_cuda_encoded_matvec(
             context->session_view->backend, context->resident_head,
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
-            context->plan.summary.row_bytes, context->device_hidden,
+            context->plan.summary.row_bytes, device_hidden,
             context->device_logits, &launches, err);
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK && !context->options.device_greedy_selection)
         rc = yvex_backend_tensor_read(context->session_view->backend,
                                       context->device_logits,
                                       context->candidate, logits_bytes, err);
     if (rc == YVEX_OK) {
-        result->h2d_bytes = hidden_bytes;
-        result->d2h_bytes = logits_bytes;
+        result->h2d_bytes = source->device_values_available ? 0ull : hidden_bytes;
+        result->d2h_bytes = context->options.device_greedy_selection
+                                ? 0ull : logits_bytes;
         result->kernel_launches = launches;
     }
     return rc;
@@ -644,6 +759,58 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
  *
  * Any non-finite or identity failure leaves the row incomplete.
  */
+static int logits_device_view_build(
+    yvex_runtime_logits_context *context,
+    const yvex_runtime_residency_summary *residency,
+    yvex_execution_device_view *view, yvex_error *err)
+{
+    const yvex_attention_state_provider *provider =
+        context ? context->session_view->attention_state_provider : NULL;
+    if (!context || !residency || !residency->generation)
+        return logits_refuse(err, YVEX_ERR_STATE,
+                             "device logits generations are unavailable");
+    return yvex_runtime_device_view_bind(
+        view, YVEX_EXECUTION_DEVICE_LOGITS, context->model, context->session,
+        provider, context->options.execution_profile, context->device_logits,
+        0ull, 1ull, context->plan.summary.vocabulary_size, err);
+}
+
+static int logits_row_identity_build(yvex_runtime_logits_row_result *result)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    if (!result) return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.row.v2") ||
+        !yvex_sha256_update_u64(&hash, result->source_phase) ||
+        !yvex_sha256_update_u64(&hash, result->source_position) ||
+        !yvex_sha256_update_u64(&hash, result->vocabulary_size) ||
+        !yvex_sha256_update_u64(&hash, result->host_values_available) ||
+        !yvex_sha256_update_u64(&hash, result->device_values_available) ||
+        !yvex_sha256_update_u64(&hash, result->evidence_profile) ||
+        !yvex_sha256_update_text(&hash, result->source_hidden_digest) ||
+        !yvex_sha256_update_text(&hash, result->output_head_plan_identity) ||
+        !yvex_sha256_update_text(&hash, result->output_head_residency_identity) ||
+        !yvex_sha256_update_text(&hash, result->backend_execution_identity))
+        return 0;
+    if (result->host_values_available &&
+        !yvex_sha256_update_text(&hash, result->raw_logits_digest))
+        return 0;
+    if (result->device_values_available &&
+        (!yvex_sha256_update_text(
+             &hash, result->device_logits.execution_profile_identity) ||
+         !yvex_sha256_update_u64(&hash, result->device_logits.model_generation) ||
+         !yvex_sha256_update_u64(&hash, result->device_logits.session_generation) ||
+         !yvex_sha256_update_u64(&hash, result->device_logits.state_generation) ||
+         !yvex_sha256_update_u64(&hash, result->device_logits.element_offset) ||
+         !yvex_sha256_update_u64(&hash, result->device_logits.rows) ||
+         !yvex_sha256_update_u64(&hash, result->device_logits.columns)))
+        return 0;
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, result->logits_row_identity);
+    return 1;
+}
+
 static int logits_row_finish(yvex_runtime_logits_context *context,
                              const yvex_runtime_logits_source *source,
                              yvex_backend_kind backend,
@@ -653,61 +820,74 @@ static int logits_row_finish(yvex_runtime_logits_context *context,
     yvex_runtime_residency_summary residency;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long index;
+    unsigned long long index, scan_bytes;
     float minimum = FLT_MAX, maximum = -FLT_MAX;
     if (yvex_runtime_residency_snapshot(context->model_view->residency,
                                         &residency, NULL, NULL, err) != YVEX_OK)
         return yvex_error_code(err);
-    for (index = 0ull; index < context->plan.summary.vocabulary_size; ++index) {
-        float value = context->candidate[index];
-        if (!isfinite(value))
-            return logits_refuse(err, YVEX_ERR_FORMAT,
-                                 "output-head projection produced non-finite logits");
-        if (value < minimum) minimum = value;
-        if (value > maximum) maximum = value;
-    }
     result->schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1;
+    result->evidence_profile = context->options.evidence_profile;
     result->source_phase = source->source_phase;
     result->source_position = source->source_position;
     result->vocabulary_size = context->plan.summary.vocabulary_size;
     result->hidden_width = context->plan.summary.hidden_width;
-    result->logits_count = result->finite_count = context->plan.summary.vocabulary_size;
-    result->minimum_logit = minimum;
-    result->maximum_logit = maximum;
+    result->logits_count = context->plan.summary.vocabulary_size;
     yvex_runtime_identity_copy(result->source_hidden_digest,
                                source->normalized_hidden_digest);
     yvex_runtime_identity_copy(result->output_head_plan_identity,
                                context->plan.summary.output_head_plan_identity);
     yvex_runtime_identity_copy(result->output_head_residency_identity,
                                residency.output_head_residency_identity);
-    if (!logits_values_digest("yvex.runtime.raw-logits.v1", context->candidate,
-                              result->logits_count, result->raw_logits_digest))
-        return logits_refuse(err, YVEX_ERR_STATE,
-                             "raw logits digest derivation failed");
+    if (context->options.device_greedy_selection) {
+        result->device_values_available = 1;
+        if (logits_device_view_build(context, &residency,
+                                     &result->device_logits, err) != YVEX_OK)
+            return yvex_error_code(err);
+    } else {
+        for (index = 0ull; index < result->vocabulary_size; ++index) {
+            float value = context->candidate[index];
+            if (!isfinite(value))
+                return logits_refuse(
+                    err, YVEX_ERR_FORMAT,
+                    "output-head projection produced non-finite logits");
+            if (value < minimum) minimum = value;
+            if (value > maximum) maximum = value;
+        }
+        if (!yvex_core_u64_mul(result->vocabulary_size, sizeof(float),
+                               &scan_bytes) ||
+            !logits_values_digest("yvex.runtime.raw-logits.v1",
+                                  context->candidate, result->logits_count,
+                                  result->raw_logits_digest))
+            return logits_refuse(err, YVEX_ERR_STATE,
+                                 "raw logits evidence derivation failed");
+        result->host_values_available = result->finite_count_available =
+            result->range_available = result->raw_digest_available = 1;
+        result->finite_count = result->logits_count;
+        result->minimum_logit = minimum;
+        result->maximum_logit = maximum;
+        result->full_array_host_scan_bytes = scan_bytes;
+    }
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.backend-evidence.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.backend-evidence.v2") ||
         !yvex_sha256_update_u64(&hash, backend) ||
         !yvex_sha256_update_u64(&hash, result->h2d_bytes) ||
         !yvex_sha256_update_u64(&hash, result->d2h_bytes) ||
         !yvex_sha256_update_u64(&hash, result->kernel_launches) ||
-        !yvex_sha256_update_text(&hash, result->raw_logits_digest) ||
+        !yvex_sha256_update_u64(&hash, result->host_values_available) ||
+        !yvex_sha256_update_u64(&hash, result->device_values_available) ||
+        !yvex_sha256_update_u64(&hash, result->evidence_profile) ||
+        (result->host_values_available &&
+         !yvex_sha256_update_text(&hash, result->raw_logits_digest)) ||
+        (result->device_values_available &&
+         !yvex_sha256_update_text(
+             &hash, result->device_logits.execution_profile_identity)) ||
         !yvex_sha256_final(&hash, digest))
         return logits_refuse(err, YVEX_ERR_STATE,
                              "logits backend evidence identity derivation failed");
     yvex_sha256_hex(digest, result->backend_execution_identity);
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.row.v1") ||
-        !yvex_sha256_update_u64(&hash, result->source_phase) ||
-        !yvex_sha256_update_u64(&hash, result->source_position) ||
-        !yvex_sha256_update_u64(&hash, result->vocabulary_size) ||
-        !yvex_sha256_update_text(&hash, result->source_hidden_digest) ||
-        !yvex_sha256_update_text(&hash, result->output_head_plan_identity) ||
-        !yvex_sha256_update_text(&hash, result->output_head_residency_identity) ||
-        !yvex_sha256_update_text(&hash, result->raw_logits_digest) ||
-        !yvex_sha256_final(&hash, digest))
+    if (!logits_row_identity_build(result))
         return logits_refuse(err, YVEX_ERR_STATE,
                              "logits row identity derivation failed");
-    yvex_sha256_hex(digest, result->logits_row_identity);
     result->completed = 1;
     return YVEX_OK;
 }
@@ -722,40 +902,43 @@ int yvex_runtime_logits_row_validate(
     unsigned long long logits_capacity,
     const yvex_runtime_logits_row_result *result, yvex_error *err)
 {
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    char raw_digest[YVEX_SHA256_HEX_CAP], row_identity[YVEX_SHA256_HEX_CAP];
-    if (!plan || !logits || !result || !result->completed ||
+    yvex_runtime_logits_row_result canonical;
+    char raw_digest[YVEX_SHA256_HEX_CAP];
+    if (!plan || !result || !result->completed ||
         result->schema_version != YVEX_RUNTIME_LOGITS_SCHEMA_V1 ||
         result->source_phase > YVEX_LOGITS_SOURCE_DRAFT ||
+        result->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
         !plan->vocabulary_size || result->vocabulary_size != plan->vocabulary_size ||
         result->logits_count != plan->vocabulary_size ||
-        result->finite_count != result->logits_count ||
-        logits_capacity < result->logits_count ||
+        result->host_values_available == result->device_values_available ||
         strcmp(result->output_head_plan_identity,
                plan->output_head_plan_identity) != 0 ||
         !yvex_sha256_hex_valid(result->source_hidden_digest) ||
         !yvex_sha256_hex_valid(result->output_head_residency_identity) ||
-        !yvex_sha256_hex_valid(result->backend_execution_identity) ||
-        !logits_values_digest("yvex.runtime.raw-logits.v1", logits,
-                              result->logits_count, raw_digest) ||
-        strcmp(raw_digest, result->raw_logits_digest) != 0)
+        !yvex_sha256_hex_valid(result->backend_execution_identity))
         return logits_refuse(err, YVEX_ERR_FORMAT,
                              "complete logits row geometry or payload is stale");
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.row.v1") ||
-        !yvex_sha256_update_u64(&hash, result->source_phase) ||
-        !yvex_sha256_update_u64(&hash, result->source_position) ||
-        !yvex_sha256_update_u64(&hash, result->vocabulary_size) ||
-        !yvex_sha256_update_text(&hash, result->source_hidden_digest) ||
-        !yvex_sha256_update_text(&hash, result->output_head_plan_identity) ||
-        !yvex_sha256_update_text(&hash, result->output_head_residency_identity) ||
-        !yvex_sha256_update_text(&hash, result->raw_logits_digest) ||
-        !yvex_sha256_final(&hash, digest))
-        return logits_refuse(err, YVEX_ERR_STATE,
-                             "logits row identity validation failed");
-    yvex_sha256_hex(digest, row_identity);
-    if (strcmp(row_identity, result->logits_row_identity) != 0)
+    if (result->host_values_available &&
+        (!logits || logits_capacity < result->logits_count ||
+         !result->finite_count_available || !result->range_available ||
+         !result->raw_digest_available ||
+         result->finite_count != result->logits_count ||
+         !logits_values_digest("yvex.runtime.raw-logits.v1", logits,
+                               result->logits_count, raw_digest) ||
+         strcmp(raw_digest, result->raw_logits_digest) != 0))
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "host logits evidence is stale");
+    if (result->device_values_available &&
+        (result->finite_count_available || result->range_available ||
+         result->raw_digest_available || result->finite_count ||
+         yvex_execution_device_view_validate(&result->device_logits, err) !=
+             YVEX_OK))
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "device logits view is stale");
+    canonical = *result;
+    canonical.logits_row_identity[0] = '\0';
+    if (!logits_row_identity_build(&canonical) ||
+        strcmp(canonical.logits_row_identity, result->logits_row_identity) != 0)
         return logits_refuse(err, YVEX_ERR_FORMAT,
                              "logits row identity is not canonical");
     yvex_error_clear(err);
@@ -800,6 +983,11 @@ int yvex_runtime_logits_additive_adjust(
     result->minimum_logit = minimum;
     result->maximum_logit = maximum;
     result->h2d_bytes = result->d2h_bytes = result->kernel_launches = 0ull;
+    if (!yvex_core_u64_mul(plan->vocabulary_size, sizeof(float), &index) ||
+        !yvex_core_u64_add(result->full_array_host_scan_bytes, index,
+                           &result->full_array_host_scan_bytes))
+        return logits_refuse(err, YVEX_ERR_BOUNDS,
+                             "draft adjusted logits evidence extent overflowed");
     if (!logits_values_digest("yvex.runtime.draft-logits-bias.v1", additive_logits,
                               plan->vocabulary_size, additive_digest) ||
         !logits_values_digest("yvex.runtime.raw-logits.v1", adjusted_logits,
@@ -815,19 +1003,10 @@ int yvex_runtime_logits_additive_adjust(
         return logits_refuse(err, YVEX_ERR_STATE,
                              "draft adjusted backend identity derivation failed");
     yvex_sha256_hex(digest, result->backend_execution_identity);
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.row.v1") ||
-        !yvex_sha256_update_u64(&hash, result->source_phase) ||
-        !yvex_sha256_update_u64(&hash, result->source_position) ||
-        !yvex_sha256_update_u64(&hash, result->vocabulary_size) ||
-        !yvex_sha256_update_text(&hash, result->source_hidden_digest) ||
-        !yvex_sha256_update_text(&hash, result->output_head_plan_identity) ||
-        !yvex_sha256_update_text(&hash, result->output_head_residency_identity) ||
-        !yvex_sha256_update_text(&hash, result->raw_logits_digest) ||
-        !yvex_sha256_final(&hash, digest))
+    result->logits_row_identity[0] = '\0';
+    if (!logits_row_identity_build(result))
         return logits_refuse(err, YVEX_ERR_STATE,
                              "draft adjusted row identity derivation failed");
-    yvex_sha256_hex(digest, result->logits_row_identity);
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -903,7 +1082,9 @@ int yvex_runtime_logits_project(
     int rc = logits_enter(context, err);
     if (result) memset(result, 0, sizeof(*result));
     if (rc != YVEX_OK) return rc;
-    if (!result || !logits || logits_capacity < context->plan.summary.vocabulary_size ||
+    if (!result ||
+        (!context->options.device_greedy_selection &&
+         (!logits || logits_capacity < context->plan.summary.vocabulary_size)) ||
         backend != yvex_backend_kind_of(context->session_view->backend))
         rc = logits_refuse(err, YVEX_ERR_INVALID_ARG,
                            "logits output capacity or backend is incompatible");
@@ -912,33 +1093,79 @@ int yvex_runtime_logits_project(
         context->options.cancel_requested(context->options.cancel_context))
         rc = logits_refuse(err, YVEX_ERR_CANCELLED,
                            "logits projection was cancelled before execution");
+    if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CPU &&
+        !source->host_values_available)
+        rc = logits_refuse(err, YVEX_ERR_UNSUPPORTED,
+                           "CPU logits require an explicit host hidden row");
     if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CPU)
         rc = logits_project_cpu(context, source->normalized_hidden, err);
     else if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA)
-        rc = logits_project_cuda(context, source->normalized_hidden, result, err);
+        rc = logits_project_cuda(context, source, result, err);
     if (rc == YVEX_OK)
         rc = logits_row_finish(context, source, backend, result, err);
-    if (rc == YVEX_OK &&
+    if (rc == YVEX_OK && !context->options.device_greedy_selection &&
         yvex_core_u64_mul(context->plan.summary.vocabulary_size, sizeof(float),
                           &output_bytes))
         memcpy(logits, context->candidate, (size_t)output_bytes);
-    else if (rc == YVEX_OK)
+    else if (rc == YVEX_OK && !context->options.device_greedy_selection)
         rc = logits_refuse(err, YVEX_ERR_BOUNDS,
                            "logits publication extent overflowed");
     logits_leave(context, rc == YVEX_OK);
     return rc;
 }
 
+static int logits_batch_contract(
+    const yvex_runtime_logits_context *context,
+    const yvex_output_head_batch_request *request,
+    char identity[YVEX_SHA256_HEX_CAP], yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    const yvex_runtime_logits_plan_summary *plan = context ? &context->plan.summary : NULL;
+    if (!plan || !request || request->schema_version != YVEX_OUTPUT_HEAD_BATCH_SCHEMA_V1 ||
+        !request->row_count || request->row_count > context->options.maximum_rows ||
+        request->output_vocabulary != plan->vocabulary_size ||
+        request->backend != yvex_backend_kind_of(context->session_view->backend) ||
+        request->result_class != YVEX_OUTPUT_HEAD_RESULT_HOST_LOGITS ||
+        request->selection_policy != YVEX_OUTPUT_HEAD_SELECTION_RAW ||
+        request->execution_class != YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE ||
+        request->evidence_profile != context->options.evidence_profile ||
+        (context->options.execution_profile &&
+         (!request->execution_profile_identity ||
+          strcmp(request->execution_profile_identity,
+                 context->options.execution_profile->identity) != 0)) ||
+        (!context->options.execution_profile && request->execution_profile_identity))
+        return logits_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "output-head batch contract is incompatible");
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.output-head-batch.v1") ||
+        !yvex_sha256_update_text(&hash, plan->output_head_plan_identity) ||
+        !yvex_sha256_update_u64(&hash, request->row_count) ||
+        !yvex_sha256_update_u64(&hash, request->output_vocabulary) ||
+        !yvex_sha256_update_u64(&hash, request->backend) ||
+        !yvex_sha256_update_u64(&hash, request->result_class) ||
+        !yvex_sha256_update_u64(&hash, request->selection_policy) ||
+        !yvex_sha256_update_u64(&hash, request->evidence_profile) ||
+        !yvex_sha256_update_u64(&hash, request->execution_class) ||
+        !yvex_sha256_update_text(
+            &hash, request->execution_profile_identity
+                       ? request->execution_profile_identity : "uncompiled-reference") ||
+        !yvex_sha256_final(&hash, digest))
+        return logits_refuse(err, YVEX_ERR_STATE,
+                             "output-head batch contract identity failed");
+    yvex_sha256_hex(digest, identity);
+    return YVEX_OK;
+}
+
 /*
- * Execute ordered rows with complete-row partial-progress semantics.
- *
- * Retains earlier complete rows and seals one aggregate identity. Row atomicity is independent;
- * request-wide rollback is forbidden.
+ * Execute an ordered output-head graph with complete-row partial-progress semantics. The portable
+ * backend is row-local internally, but row count and result policy belong to this batch contract.
  */
-int yvex_runtime_logits_execute(
+int yvex_runtime_logits_execute_rows(
     yvex_runtime_logits_context *context,
-    const yvex_runtime_logits_source *sources, unsigned long long row_count,
-    yvex_backend_kind backend, float *logits, unsigned long long logits_capacity,
+    const yvex_output_head_batch_request *request,
+    const yvex_runtime_logits_source *sources,
+    float *logits, unsigned long long logits_capacity,
     yvex_runtime_logits_row_result *rows, unsigned long long row_capacity,
     yvex_runtime_logits_result *result, yvex_error *err)
 {
@@ -947,22 +1174,25 @@ int yvex_runtime_logits_execute(
     unsigned long long index, required;
     int rc = YVEX_OK;
     if (result) memset(result, 0, sizeof(*result));
-    if (!context || !sources || !row_count || row_count > context->options.maximum_rows ||
-        !rows || row_capacity < row_count || !result ||
-        !yvex_core_u64_mul(row_count, context->plan.summary.vocabulary_size,
+    if (!context || !request || !sources || context->options.device_greedy_selection ||
+        !rows || row_capacity < request->row_count || !result ||
+        !yvex_core_u64_mul(request->row_count, context->plan.summary.vocabulary_size,
                            &required) || !logits || logits_capacity < required)
         return logits_refuse(err, YVEX_ERR_INVALID_ARG,
                              "ordered logits request or caller storage is invalid");
+    rc = logits_batch_contract(context, request,
+                               result->output_head_contract_identity, err);
+    if (rc != YVEX_OK) return rc;
     result->schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1;
-    result->requested_rows = row_count;
-    result->first_incomplete_row = row_count;
+    result->requested_rows = request->row_count;
+    result->first_incomplete_row = request->row_count;
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.aggregate.v1"))
         return logits_refuse(err, YVEX_ERR_STATE,
                              "aggregate logits hash initialization failed");
-    for (index = 0ull; index < row_count; ++index) {
+    for (index = 0ull; index < request->row_count; ++index) {
         rc = yvex_runtime_logits_project(
-            context, &sources[index], backend,
+            context, &sources[index], request->backend,
             logits + index * context->plan.summary.vocabulary_size,
             context->plan.summary.vocabulary_size, &rows[index], err);
         if (rc != YVEX_OK) {
@@ -984,7 +1214,8 @@ int yvex_runtime_logits_execute(
                              "aggregate logits digest finalization failed");
     yvex_sha256_hex(digest, result->aggregate_logits_digest);
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.execution.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.execution.v2") ||
+        !yvex_sha256_update_text(&hash, result->output_head_contract_identity) ||
         !yvex_sha256_update_u64(&hash, result->requested_rows) ||
         !yvex_sha256_update_u64(&hash, result->completed_rows) ||
         !yvex_sha256_update_u64(&hash, result->first_incomplete_row) ||
@@ -996,6 +1227,29 @@ int yvex_runtime_logits_execute(
     yvex_sha256_hex(digest, result->execution_identity);
     result->completed = result->completed_rows == result->requested_rows;
     return rc;
+}
+
+int yvex_runtime_logits_execute(
+    yvex_runtime_logits_context *context,
+    const yvex_runtime_logits_source *sources, unsigned long long row_count,
+    yvex_backend_kind backend, float *logits, unsigned long long logits_capacity,
+    yvex_runtime_logits_row_result *rows, unsigned long long row_capacity,
+    yvex_runtime_logits_result *result, yvex_error *err)
+{
+    yvex_output_head_batch_request request = {0};
+    request.schema_version = YVEX_OUTPUT_HEAD_BATCH_SCHEMA_V1;
+    request.row_count = row_count;
+    request.output_vocabulary = context ? context->plan.summary.vocabulary_size : 0ull;
+    request.backend = backend;
+    request.result_class = YVEX_OUTPUT_HEAD_RESULT_HOST_LOGITS;
+    request.selection_policy = YVEX_OUTPUT_HEAD_SELECTION_RAW;
+    request.evidence_profile = context ? context->options.evidence_profile
+                                       : YVEX_EXECUTION_EVIDENCE_PRODUCTION;
+    request.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
+    request.execution_profile_identity = context && context->options.execution_profile
+                                             ? context->options.execution_profile->identity : NULL;
+    return yvex_runtime_logits_execute_rows(
+        context, &request, sources, logits, logits_capacity, rows, row_capacity, result, err);
 }
 
 /*

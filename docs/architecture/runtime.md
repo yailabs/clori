@@ -11,9 +11,10 @@ and [Events Contract](../contracts/events-telemetry.md).
 
 One `yvexd` process owns one immutable runtime model from startup until
 shutdown. Startup authenticates the complete artifact and runtime binding,
-imports descriptors, builds model-lifetime host and accelerator resources,
-prepares tokenizer/output-head facts, starts the bounded worker, and publishes
-readiness before admitting clients.
+imports descriptors and Physical Execution IR, seals the compiled execution
+profile, builds model-lifetime host and accelerator resources, prepares
+tokenizer/output-head facts, starts the bounded worker, and publishes readiness
+before admitting clients.
 
 ![One runtime host owns immutable model resources and isolated conversation/execution sessions.](../diagrams/runtime_host_sessions.svg)
 
@@ -29,6 +30,7 @@ and releases listeners. A client disconnect is not a model or session close.
 The immutable runtime model retains:
 
 - the authenticated artifact and binding;
+- the Physical Execution IR and compiled execution profile;
 - imported family-neutral descriptors and the typed family adapter;
 - read-only encoded weights and model-lifetime backend resources;
 - the tokenizer plan and output-head residency;
@@ -86,7 +88,11 @@ committed target state
 ```
 
 A proposal does not advance target position, persistent state, transcript,
-usage, or output. Rejected candidate state is discarded. Greedy DSpark output
+usage, or output. Target verification retains a prefix-addressable candidate
+transaction with ordered state checkpoints. Acceptance promotes the exact
+verified checkpoint, rejected suffix state is discarded, and accepted target
+rows are not replayed. The only additional target execution is one correction
+or bonus token required by the speculative algorithm. Greedy DSpark output
 matches target-only output from the same initial state; admitted stochastic
 execution preserves the target distribution through exact accept/reject and
 residual sampling rather than token-ID equality.
@@ -104,9 +110,15 @@ retain allocation, state transactions, numerical primitives, dispatch,
 publication, and cleanup.
 
 The current mixed GB10 execution keeps inter-layer activations on CUDA for the
-model backbone and output head. Sampling and tokenizer work remain on the host.
-Unsupported CUDA operations fail closed; no requested CUDA execution silently
-falls back to CPU.
+model backbone and output head. Typed device views carry hidden, expanded
+residual, feature, logits, probability, candidate, accepted-prefix and
+workspace values with explicit owner, identity, generation, extent, lifetime,
+synchronization and materialization policy. Production greedy selection uses a
+device argmax and transfers only the selected token and bounded status.
+Stochastic sampling, token-local MoE, row-local output projection, eager
+attention and host feature projection remain explicitly named portable
+reference adapters. Unsupported CUDA operations fail closed; no requested
+CUDA execution silently falls back to CPU.
 
 ## Persistent state
 
@@ -127,11 +139,39 @@ ledger as an exact prefix. The runtime prefills only the suffix; an
 incompatible prefix refuses or requires explicit reset.
 
 A speculative cycle extends the same discipline to several positions. Target
-state, token ledger, incremental decoder, target and draft sampling state, and
-RNG publication participate in one accepted-prefix transaction. Cancellation
-before commit discards the whole candidate. Cancellation after commit reports
-that exact committed prefix; it never rewinds published state by decrementing
-counters.
+attention state uses ordered candidate deltas and checkpoints; SWA uses a
+ring-backed contiguous projection instead of moving the complete window.
+Compressed, indexer, rolling and mHC state, token ledger, incremental decoder,
+target and draft sampling state, and RNG publication participate in one
+accepted-prefix transaction. Cancellation before commit discards the whole
+candidate. Cancellation after commit reports that exact committed prefix; it
+never rewinds published state by decrementing counters.
+
+## Execution profiles and shape admission
+
+One compiled execution profile binds logical model, physical variant, Physical
+Execution IR, artifact, materialization, runtime binding, kernel bundle,
+hardware, context, generation mode, workload, evidence profile and execution
+class. `production`, `audit`, and `forensic` evidence are independent from
+trace verbosity: production cannot require complete hidden, state, logits, or
+probability host scans merely to derive evidence.
+
+The portable CUDA production profile keeps its admitted Q8 activation codec
+and parallel F32 reductions. Full forensic attention comparison instead selects
+a canonical-order F64 accumulator and disables activation compression for that
+operation, so the independent stage oracle measures semantic execution rather
+than the production approximation. This slower numerical adapter is unreachable
+from production and is not a performance path.
+
+Before target prefill/decode, draft, verification, correction, or reset, the
+runtime selects an identity-bound execution shape. The shape distinguishes
+target/draft scope, phase, operation, width, context band, candidate
+visibility, local/compressed/indexer/rolling/candidate capacities, workspace
+generation, attention/state/kernel identities, and evidence profile. A missing
+compatible shape is admitted as a new eager/reference shape before numerical
+mutation or refuses with the exact component, configured and required
+capacity, position, width, scope and identities. Target and draft work never
+overwrite one shared mutable capacity record.
 
 ## Memory and residency
 
@@ -159,15 +199,23 @@ distributed serving are not implemented.
 ## Publication and observability
 
 Token fragments are published only after model state, decoder state, and
-internal text state agree. A cancelled or disconnected request reports exact
-partial progress and does not fabricate completion.
+internal text state agree. A failure after committed output produces a typed
+partial-turn snapshot containing exact position, committed-token and published
+byte counts, state generations and identities, failure class, and reset
+requirement. A partial session visibly refuses another ordinary turn until
+reset. Cancellation, disconnect, failure, and maximum-token stop remain
+distinct states.
 
 One typed event authority carries lifecycle, queue, tokenizer, prefill, first
 token, decode, draft, verification, accepted-prefix commit, stop,
 cancellation, failure, memory, and listener facts.
-Human status, watch, trace, raw JSONL, and metrics are projections of that
-authority. The active console milestone owns improved human rendering, not a
-new state source.
+Human status, semantic watch, detailed trace, raw JSONL, and metrics are
+projections of that authority. Watch groups startup and each request into
+coherent units while trace retains detailed events. The REPL incrementally
+renders UTF-8 and Markdown across arbitrary protocol fragments without
+changing canonical bytes; raw and redirected output remains byte-exact and
+free of terminal controls. Explicit reasoning is classified only through the
+tokenizer's source-authored channel contract and never by prose inspection.
 
 ## Current limits
 

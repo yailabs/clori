@@ -307,9 +307,26 @@ typedef struct yvex_materialization_options {
     unsigned long long backend_resident_budget_bytes;
     unsigned long long future_graph_scratch_reserve_bytes;
     unsigned long long future_kv_reserve_bytes;
-    int require_complete_admission, require_deepseek_map;
+    int require_complete_admission, require_terminal_projection;
     int release_artifact_cache_after_read, cancel_after_first_chunk;
 } yvex_materialization_options;
+typedef struct {
+    unsigned long long descriptor_index;
+    yvex_tensor_role role;
+    yvex_tensor_collection collection;
+    yvex_tensor_scope scope;
+    unsigned long long layer_index, predictor_index, expert_count;
+} yvex_materialization_terminal;
+typedef int (*yvex_materialization_terminal_find_fn)(
+    const void *context, const char *emitted_name, yvex_materialization_terminal *out);
+typedef struct yvex_materialization_projection {
+    unsigned int schema_version;
+    unsigned long long mapping_identity, descriptor_count;
+    const void *context;
+    yvex_materialization_terminal_find_fn find;
+    int complete;
+} yvex_materialization_projection;
+#define YVEX_MATERIALIZATION_PROJECTION_SCHEMA_VERSION 1u
 typedef struct {
     unsigned long long tensor_id;
     unsigned long long descriptor_index;
@@ -505,6 +522,12 @@ const char *yvex_materialization_failure_name(yvex_materialization_failure_code 
 void yvex_materialization_plan_close(yvex_materialization_plan *plan);
 const yvex_materialization_summary *
 yvex_materialization_plan_summary(const yvex_materialization_plan *plan);
+int yvex_materialization_plan_build(
+    yvex_materialization_plan **out, const yvex_complete_artifact_admission *admission,
+    const yvex_artifact *artifact, const yvex_gguf *gguf, const yvex_tensor_table *tensors,
+    const yvex_materialization_projection *projection,
+    const yvex_materialization_options *options, yvex_materialization_failure *failure,
+    yvex_error *err);
 int yvex_materialization_plan_import(
     yvex_materialization_plan **out, const yvex_complete_artifact_admission *admission,
     const yvex_materialization_summary *summary,

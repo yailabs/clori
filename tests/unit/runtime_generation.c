@@ -65,7 +65,7 @@ static int generation_test_execution_identity_excludes_measurement(void)
     yvex_runtime_generation_result result;
     char before[YVEX_SHA256_HEX_CAP], after[YVEX_SHA256_HEX_CAP];
     memset(&result, 0, sizeof(result));
-    result.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
+    result.schema_version = YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4;
     result.execution_mode = YVEX_GENERATION_MODE_DSPARK;
     result.draft_cycle_count = 2ull;
     result.proposed_token_count = 8ull;

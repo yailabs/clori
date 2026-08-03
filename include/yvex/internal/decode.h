@@ -13,7 +13,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_RUNTIME_DECODE_SCHEMA_V1 1u
+#define YVEX_RUNTIME_DECODE_SCHEMA_V2 2u
+#define YVEX_RUNTIME_DECODE_SCHEMA_V1 YVEX_RUNTIME_DECODE_SCHEMA_V2
 #define YVEX_SPECULATION_SCHEMA_V1 1u
 #define YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 1u
 #define YVEX_SPECULATION_MAX_BLOCK 8u
@@ -77,6 +78,8 @@ typedef struct {
     unsigned long long context_capacity, maximum_host_bytes, maximum_device_bytes;
     int (*cancel_requested)(void *context);
     void *cancel_context;
+    const yvex_compiled_execution_profile *execution_profile;
+    yvex_execution_shape_registry *shape_registry;
 } yvex_runtime_speculation_options;
 
 typedef struct {
@@ -137,6 +140,9 @@ typedef struct {
 typedef struct {
     int completed;
     unsigned long long token_start, token_count, position_after, commit_ns;
+    unsigned long long verified_prefix_count, promoted_target_token_count;
+    unsigned long long target_extension_count, replayed_target_token_count;
+    unsigned long long promotion_ns, target_extension_ns;
     yvex_runtime_transformer_result target_result;
     char cycle_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char target_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
@@ -204,7 +210,8 @@ typedef enum {
 } yvex_runtime_decode_status;
 typedef struct {
     unsigned int schema_version;
-    int completed;
+    int completed, normalized_hidden_host_available;
+    int normalized_hidden_device_available;
     unsigned long long step_ordinal;
     unsigned int token_id;
     unsigned long long position_before, position_after;
@@ -216,6 +223,8 @@ typedef struct {
     unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
     unsigned long long synchronization_ns;
+    unsigned long long full_array_host_scan_bytes;
+    yvex_execution_device_view device_hidden;
     char embedding_digest[YVEX_SHA256_HEX_CAP];
     char routing_digest[YVEX_SHA256_HEX_CAP];
     char layer_digest[YVEX_SHA256_HEX_CAP];

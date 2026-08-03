@@ -27,7 +27,6 @@ static int graph_recipe_identity(const void *context, char output[65])
     return yvex_model_register_deepseek_v4()->transform.architecture_identity(
         (const yvex_deepseek_v4_ir *)context, output);
 }
-/* Reject identity drift before either backend sees mutable state. */
 static int graph_execution_admit(
     const yvex_attention_plan *plan, const void *family_ir,
     yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
@@ -60,7 +59,6 @@ static int graph_execution_admit(
         DEEPSEEK_ATTENTION_CSA_RATIO, DEEPSEEK_ATTENTION_HCA_RATIO, layer,
         failure, err);
 }
-/* History is borrowed and immutable; session state remains the lifecycle owner. */
 static int graph_history_admit(
     const yvex_attention_layer_plan *layer, const yvex_attention_cpu_options *options,
     int initial_state_supported, yvex_attention_history_view *out,
@@ -234,7 +232,7 @@ typedef struct {
     yvex_attention_component_span state[2], emission;
     yvex_attention_rolling_state_view before, current;
     yvex_attention_rolling_state_output after;
-    float *initial_state[2], *projected[2], *ape, *norm;
+    float *initial_state[2], *projected[2], *checkpoints[2], *ape, *norm;
     unsigned long long *positions, emitted;
 } cpu_rolling_stage;
 typedef struct {
@@ -343,7 +341,6 @@ static yvex_attention_rolling_state_view *cpu_chunk_history_state(cpu_chunk_cont
         ? &context->history.main_rolling_state
         : &context->history.indexer_rolling_state;
 }
-/* Allocate rolling storage before opening a candidate transaction. */
 static int cpu_chunk_rolling_initialize(cpu_chunk_context *context, unsigned int index)
 {
     const cpu_rolling_recipe *recipe = &cpu_rolling_recipes[index];
@@ -751,7 +748,6 @@ context->rc = yvex_attention_decode_flat(
 if (context->rc != YVEX_OK) return context->rc;
     return YVEX_OK;
 }
-/* Emission positions share the rolling transaction and never publish independently. */
 static int cpu_chunk_emission_prepare(cpu_chunk_context *context, unsigned int index)
 {
     const cpu_rolling_recipe *recipe = &cpu_rolling_recipes[index];
@@ -778,7 +774,6 @@ static int cpu_chunk_emission_prepare(cpu_chunk_context *context, unsigned int i
             ? "DeepSeek attention compressed-position allocation failed"
             : "DeepSeek attention indexer-position allocation failed");
 }
-/* Allocate compressor scratch before mutating candidate recurrence state. */
 static int cpu_chunk_rolling_prepare(cpu_chunk_context *context, unsigned int index)
 {
     const cpu_rolling_recipe *recipe = &cpu_rolling_recipes[index];
@@ -801,6 +796,15 @@ static int cpu_chunk_rolling_prepare(cpu_chunk_context *context, unsigned int in
             &stage->state[item], context->failure, context->err);
         if (context->rc != YVEX_OK) return context->rc;
     }
+    if (context->opts->retain_prefix_checkpoints &&
+        !yvex_attention_candidate_checkpoints_open(
+            &context->scratch, context->token_count, &stage->before,
+            &stage->checkpoints[0], &stage->checkpoints[1]))
+        return cpu_chunk_reject(
+            context, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH, NULL,
+            YVEX_TENSOR_ROLE_UNKNOWN, context->opts->scratch_limit_bytes,
+            context->scratch.live_bytes, YVEX_ERR_BOUNDS,
+            "attention rolling checkpoints exceed their budget");
     if (index == CPU_ROLLING_INDEXER) {
         context->rc = cpu_chunk_emission_prepare(context, index);
         if (context->rc != YVEX_OK) return context->rc;
@@ -855,7 +859,6 @@ static int cpu_chunk_rolling_prepare(cpu_chunk_context *context, unsigned int in
         return context->rc;
     return cpu_chunk_emission_prepare(context, index);
 }
-/* Seal the recurrence only after every numeric and bounds check succeeds. */
 static int cpu_chunk_rolling_step(cpu_chunk_context *context, unsigned int index)
 {
     const cpu_rolling_recipe *recipe = &cpu_rolling_recipes[index];
@@ -900,6 +903,10 @@ static int cpu_chunk_rolling_step(cpu_chunk_context *context, unsigned int index
             stage->ape, &stage->after, output, width, &emitted,
             context->failure, context->err);
         if (context->rc != YVEX_OK) return context->rc;
+        if (context->opts->retain_prefix_checkpoints)
+            yvex_attention_candidate_checkpoint_capture(
+                stage->checkpoints[0], stage->checkpoints[1], context->token,
+                &stage->after);
         if (emitted) {
             position = context->opts->token_position + context->token + 1ull -
                        context->layer_plan->compression_ratio;
@@ -1128,7 +1135,6 @@ static int cpu_chunk_index_query(cpu_chunk_context *context)
         }
     return YVEX_OK;
 }
-/* Trace storage is admitted before reduction so evidence failure cannot follow commit. */
 static int cpu_chunk_trace_prepare(cpu_chunk_context *context)
 {
 if ((context->opts->publication || context->opts->trace) &&
@@ -1183,7 +1189,6 @@ if ((context->opts->publication || context->opts->trace) &&
 }
     return YVEX_OK;
 }
-/* Capture follows commit, so trace never describes an aborted candidate. */
 static int cpu_chunk_reduce_commit(cpu_chunk_context *context)
 {
 context->rc = yvex_attention_reduce_chunk(
@@ -1248,11 +1253,6 @@ context->rc = yvex_attention_state_transaction_commit(
 if (context->rc != YVEX_OK) return context->rc;
     return YVEX_OK;
 }
-/*
- * Capture committed components and optional execution trace after transaction success.
- *
- * Missing commit or trace allocation refuses.
- */
 static int cpu_chunk_capture(cpu_chunk_context *context)
 {
 const yvex_attention_component_span *const *committed = context->committed;
@@ -1331,6 +1331,13 @@ if ((context->opts->publication || context->opts->trace) &&
         committed[YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_SCORE_STATE]
             ? (const float *)committed[
                   YVEX_DEEPSEEK_ATTENTION_COMPONENT_INDEXER_SCORE_STATE]->data : NULL,
+        context->opts->retain_prefix_checkpoints &&
+                context->layer_plan->attention_class != YVEX_ATTENTION_CLASS_SWA
+            ? context->token_count : 0ull,
+        context->rolling[CPU_ROLLING_MAIN].checkpoints[0],
+        context->rolling[CPU_ROLLING_MAIN].checkpoints[1],
+        context->rolling[CPU_ROLLING_INDEXER].checkpoints[0],
+        context->rolling[CPU_ROLLING_INDEXER].checkpoints[1],
         context->opts->evidence_level, context->opts->workspace)) {
     context->rc = cpu_chunk_reject(
         context, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, NULL,
@@ -1348,10 +1355,10 @@ if (context->opts->publication || context->opts->trace) {
             context, YVEX_DEEPSEEK_ATTENTION_FAILURE_ALLOCATION, NULL,
             YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, YVEX_ERR_NOMEM,
             "attention envelope output trace attachment failed");
+    trace->prefix_addressable = context->opts->retain_prefix_checkpoints;
 }
     return YVEX_OK;
 }
-/* Publish CPU result counters and identities after complete commit and capture. */
 static void cpu_chunk_publish(cpu_chunk_context *context)
 {
 const yvex_attention_component_span *const *committed = context->committed;
@@ -1394,11 +1401,6 @@ yvex_attention_result_outputs_publish(
 yvex_error_clear(context->err);
 if (context->failure) memset(context->failure, 0, sizeof(*context->failure));
 }
-/*
- * Orchestrate one complete transactional DeepSeek CPU attention chunk.
- *
- * Aborts transaction and releases all scratch.
- */
 static int graph_cpu_chunk_execute(const yvex_attention_plan *plan, const void *family_ir,
     yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
     const yvex_attention_cpu_options *options, yvex_attention_cpu_result *result,
@@ -1550,7 +1552,8 @@ context->history = &context->empty_history;
 context->rc = yvex_attention_cuda_trace_open(
     &context->trace, context->layer, context->opts->operation_scope,
     context->history, context->opts->token_position, context->token_count,
-    context->opts->evidence_level, context->opts->workspace,
+    context->opts->evidence_level, context->opts->retain_prefix_checkpoints,
+    context->opts->workspace,
     context->opts->scratch_limit_bytes, &context->trace_bytes,
     context->failure, context->err);
 if (context->rc != YVEX_OK) return context->rc;
@@ -1585,6 +1588,7 @@ context->job.phase = context->token_count == 1ull
           ? YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT
           : YVEX_BACKEND_ATTENTION_PHASE_PREFILL;
 context->job.candidate_block_visible = context->opts->candidate_block_visible;
+context->job.retain_prefix_checkpoints = context->opts->retain_prefix_checkpoints;
 context->job.operation_scope = context->opts->operation_scope ==
         YVEX_ATTENTION_OPERATION_ENVELOPE
     ? YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
@@ -1744,14 +1748,18 @@ US(compressed_positions, context->trace.compressed_positions, context->compresse
 US(indexer_positions, context->trace.indexer_positions, context->indexer_capacity);
 US(topk_counts, context->trace.topk_counts, context->token_count);
 US(topk_positions, context->trace.topk_positions, topk);
-FS(main_kv_state, context->trace.next_main_rolling_state.kv_state,
-   context->history->main_rolling_state.kv_state_extent);
-FS(main_score_state, context->trace.next_main_rolling_state.score_state,
-   context->history->main_rolling_state.score_state_extent);
-FS(indexer_kv_state, context->trace.next_indexer_rolling_state.kv_state,
-   context->history->indexer_rolling_state.kv_state_extent);
-FS(indexer_score_state, context->trace.next_indexer_rolling_state.score_state,
-   context->history->indexer_rolling_state.score_state_extent);
+FS(main_kv_state, context->trace.main_rolling_kv_checkpoints,
+   context->history->main_rolling_state.kv_state_extent *
+       (context->trace.rolling_checkpoint_count ? context->trace.rolling_checkpoint_count : 1ull));
+FS(main_score_state, context->trace.main_rolling_score_checkpoints,
+   context->history->main_rolling_state.score_state_extent *
+       (context->trace.rolling_checkpoint_count ? context->trace.rolling_checkpoint_count : 1ull));
+FS(indexer_kv_state, context->trace.indexer_rolling_kv_checkpoints,
+   context->history->indexer_rolling_state.kv_state_extent *
+       (context->trace.rolling_checkpoint_count ? context->trace.rolling_checkpoint_count : 1ull));
+FS(indexer_score_state, context->trace.indexer_rolling_score_checkpoints,
+   context->history->indexer_rolling_state.score_state_extent *
+       (context->trace.rolling_checkpoint_count ? context->trace.rolling_checkpoint_count : 1ull));
 #undef US
 #undef FS
 context->rc = yvex_backend_attention_execute(
@@ -1797,11 +1805,6 @@ static int graph_cuda_request_execute(const yvex_attention_plan *plan, const voi
         memset(context.result, 0, sizeof(*context.result));
     return rc;
 }
-/*
- * Dispatch one complete device-produced CUDA attention phase.
- *
- * Family composition only; persistent KV and host numerical fallback are excluded.
- */
 static const yvex_graph_family_api deepseek_graph_api = {
     .plan_build = graph_plan_build,
     .draft_plan_build = graph_draft_plan_build,

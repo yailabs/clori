@@ -145,6 +145,7 @@ int main(int argc, char **argv)
     yvex_complete_artifact_admission admission;
     yvex_artifact_admission_failure admission_failure;
     yvex_materialization_options options;
+    yvex_materialization_projection projection;
     yvex_materialization_plan *plan = NULL;
     yvex_materialization_session *session = NULL;
     yvex_materialization_session *second = NULL;
@@ -248,16 +249,18 @@ int main(int argc, char **argv)
         goto cleanup_fail;
     }
     yvex_materialization_options_default(&options);
-    options.require_deepseek_map = 1;
+    options.require_terminal_projection = 1;
     options.max_chunk_bytes = 16ull * 1024ull * 1024ull;
     options.cache_budget_bytes = 256ull * 1024ull * 1024ull;
     options.backend_resident_budget_bytes = 0ull;
     options.future_graph_scratch_reserve_bytes = 2ull * 1024ull * 1024ull * 1024ull;
     options.future_kv_reserve_bytes = 2ull * 1024ull * 1024ull * 1024ull;
-    rc = yvex_materialization_plan_build(
-        &plan, &admission, artifact, gguf, tensors,
-        yvex_model_register_deepseek_v4()->payload.map(handoff), &options,
-        &materialization_failure, &err);
+    rc = yvex_deepseek_materialization_projection(
+        yvex_model_register_deepseek_v4()->payload.map(handoff), &projection, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_materialization_plan_build(
+            &plan, &admission, artifact, gguf, tensors, &projection, &options,
+            &materialization_failure, &err);
     if (rc != YVEX_OK) {
         print_materialization_failure("plan", &materialization_failure, &err);
         goto cleanup_fail;

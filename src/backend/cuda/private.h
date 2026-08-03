@@ -181,6 +181,7 @@ typedef struct {
     CUfunction qtype_row_dot_function;
     CUfunction attention_bf16_round_function;
     CUfunction qtype_matvec_function;
+    CUfunction argmax_f32_function;
     CUfunction q8_quantize_function;
     CUfunction deepseek_decode_function;
     CUfunction deepseek_weighted_norm_function;
@@ -264,7 +265,7 @@ typedef struct {
     CUdeviceptr pointers[YVEX_CUDA_WORK_MAX_RANGES], q8_input;
     unsigned long long sizes[YVEX_CUDA_WORK_MAX_RANGES];
     unsigned char workspace_owned[YVEX_CUDA_WORK_MAX_RANGES];
-    int prepare_only, raw_only;
+    int prepare_only, raw_only, forensic_numeric;
     unsigned int count;
     unsigned long long current_bytes, peak_bytes, budget, launches, q8_capacity;
 } yvex_cuda_work;

@@ -862,6 +862,7 @@ static int artifact_variant_bind(
     yvex_gguf_writer_plan *writer = NULL;
     yvex_artifact_options artifact_options = {0};
     yvex_materialization_options materialization_options;
+    yvex_materialization_projection materialization_projection;
     yvex_materialization_failure materialization_failure = {0};
     yvex_runtime_descriptor_failure descriptor_failure = {0};
     yvex_deepseek_v4_ir_failure architecture_failure = {0};
@@ -893,7 +894,7 @@ static int artifact_variant_bind(
     if (rc == YVEX_OK) rc = yvex_gguf_open(&gguf, artifact, &error);
     if (rc == YVEX_OK) rc = yvex_tensor_table_from_gguf(&tensors, gguf, &error);
     yvex_materialization_options_default(&materialization_options);
-    materialization_options.require_deepseek_map = 1;
+    materialization_options.require_terminal_projection = 1;
     materialization_options.max_chunk_bytes = 16ull * 1024ull * 1024ull;
     materialization_options.cache_budget_bytes = 256ull * 1024ull * 1024ull;
     materialization_options.future_graph_scratch_reserve_bytes =
@@ -901,9 +902,12 @@ static int artifact_variant_bind(
     materialization_options.future_kv_reserve_bytes =
         2ull * 1024ull * 1024ull * 1024ull;
     if (rc == YVEX_OK)
+        rc = yvex_deepseek_materialization_projection(
+            model->payload.map(handoff), &materialization_projection, &error);
+    if (rc == YVEX_OK)
         rc = yvex_materialization_plan_build(
             &materialization_plan, &emitted->admission, artifact, gguf, tensors,
-            model->payload.map(handoff), &materialization_options,
+            &materialization_projection, &materialization_options,
             &materialization_failure, &error);
     if (rc == YVEX_OK)
         rc = yvex_materialization_session_open(

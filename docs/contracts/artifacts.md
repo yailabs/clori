@@ -34,6 +34,12 @@ contributions under explicit format, precision, hardware, memory, quality, and
 workload constraints. An artifact serializes one such variant; GGUF is the
 v0.1.0 release lowering, not the identity of the logical model.
 
+A versioned Physical Execution IR is a downstream projection, not an artifact
+mutation. It binds terminal tensor and physical-variant identities to consumer,
+kernel layout, placement, activation, shape, backend and fallback decisions.
+If a backend needs a derived packed asset, that asset binds both the canonical
+artifact and Physical Execution IR identities and is never trusted by path.
+
 Current DeepSeek physical variants and their admitted evidence are recorded in
 the [family technical record](../model-families/deepseek-v4-flash.md).
 Version-specific release requirements belong to the
@@ -105,6 +111,7 @@ A complete artifact must record or prove:
 - deterministic writer output and writer-reader equivalence;
 - artifact identity and corruption refusal;
 - materialization and runtime descriptor compatibility.
+- complete Physical Execution IR coverage for every terminal consumer.
 
 For `deepseek4-v4-flash-dspark`, one complete artifact contains the 43-layer
 target and all DSpark draft requirements. Metadata records the five-position

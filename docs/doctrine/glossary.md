@@ -17,6 +17,7 @@ must not redefine these terms. Qualify *model*, *support*, *complete*,
 | Logical model | Backend-neutral topology, tensor roles, operations, state semantics, and numerical policy. |
 | Transformation plan | Immutable artifact-neutral operations mapping exact source contributions to logical output tensors. |
 | Physical variant | One realization of a logical model with selected storage, layout, alignment, decomposition, and placement constraints. |
+| Physical Execution IR | Identity-bound decisions that project canonical encoded tensors into consumer, execution layout, placement, activation, backend, shape, evidence, and fallback requirements without changing artifact bytes. |
 | Artifact | A concrete serialization of one physical variant. Use a narrower term when scope matters. |
 | Tensor proof artifact | An artifact containing one tensor or bounded subset and proving only its named lower boundary. |
 | Complete artifact | An artifact containing every tensor and metadata item required to execute the exact logical model. |
@@ -26,12 +27,15 @@ must not redefine these terms. Qualify *model*, *support*, *complete*,
 | Runtime binding | Immutable content-addressed bridge from one admitted artifact and compiled facts to runtime descriptors and tensor locations. |
 | Runtime model | Immutable process object for one admitted binding and model-lifetime resources. |
 | Runtime session | Mutable execution object with isolated sequence state, position, workspace, cancellation, and backend resources. |
+| Compiled execution profile | Immutable request-execution identity binding logical and physical model facts to hardware, context, generation mode, workload, evidence depth, kernel bundle, and portable or device-native execution class. |
+| Evidence profile | One admitted depth of runtime observation: production for bounded operational truth, audit for selected probes and digests, or forensic for explicitly requested full materialization. |
 | Persistent state | Semantically observable state surviving an execution unit, including KV, recurrent state, position, or routing history. |
 | Workspace | Temporary memory without semantic meaning after its owning execution unit finishes. |
 | Draft plan | Immutable auxiliary execution plan that proposes tokens from admitted model features and weights. It is not a second runtime model or correctness authority. |
 | Candidate block | Ordered bounded proposal awaiting complete-target verification; its tokens are not committed output or persistent target state. |
 | Target verification | Complete target-model evaluation that determines the target-authored result for an ordered candidate block. Drafter confidence is not verification. |
 | Accepted prefix | Exact leading portion of one verified candidate result admitted for atomic target/session publication. Rejected suffix state is discarded. |
+| Candidate transaction | Prefix-addressable uncommitted model and session state produced by multi-position execution. Promotion transfers only the admitted checkpoint; abort discards it without changing committed truth. |
 | Speculative generation | Generation that uses an auxiliary proposal followed by complete-target verification while preserving target semantics and publishing only committed target-authored output. |
 | Semantic graph | Backend-neutral operations, typed values, state effects, and dependencies derived from model meaning. |
 | Executable graph | Lowered operations, physical bindings, memory plan, backend assignments, and execution variants. |

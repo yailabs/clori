@@ -237,6 +237,9 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
                                    SERVER_TELEMETRY_CAPACITY,
                                    options->generation_mode,
                                    NULL, NULL, NULL, err);
+    if (rc == YVEX_OK)
+        yvex_server_telemetry_queue(server->telemetry, 0u,
+                                    server->queue_capacity);
     if (rc == YVEX_OK && options->openai_enabled) {
         server_openai_options openai = {
             .yvex_socket = server->socket_path,
@@ -588,6 +591,10 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
         rc = server_refuse(err, YVEX_ERR_STATE,
                            "runtime model did not publish immutable residency");
     if (rc == YVEX_OK) {
+        const yvex_tokenizer_plan_summary *tokenizer =
+            yvex_tokenizer_plan_summary_get(view->tokenizer);
+        server->summary.explicit_reasoning_channel_supported =
+            tokenizer && tokenizer->explicit_reasoning_supported;
         cuda_started = server_monotonic_ns();
         rc = server_cuda_prepare(server, &residency, err);
         if (rc == YVEX_OK)
@@ -791,7 +798,8 @@ static int console_status_message(yvex_server *server,
                         summary.physical_variant_identity);
     return yvex_server_sessions_console_status(server->sessions,
                                                request->session_name,
-                                               &message->console, err);
+                                               &message->console,
+                                               &message->partial_turn, err);
 }
 
 static int event_subscription(yvex_server *server, int fd,
@@ -933,7 +941,7 @@ static void *client_main(void *opaque)
             message.status = YVEX_OK;
             message.request_number = request.request_number;
             yvex_core_text_copy(message.reason, sizeof(message.reason),
-                                "protocol-v5");
+                                "protocol-v6");
             rc = yvex_server_protocol_send(fd, &message, &err);
         } else {
             server_work_item item;

@@ -39,6 +39,7 @@ enum {
     TAG_EVENT_AFTER,
     TAG_TRACE_LEVEL,
     TAG_PROVIDER_REQUEST,
+    TAG_REASONING_POLICY,
     TAG_MESSAGE_KIND = 32,
     TAG_STATUS,
     TAG_REASON,
@@ -169,7 +170,27 @@ enum {
     TAG_EVENT_CONFIDENCE_LOGIT_COUNT,
     TAG_EVENT_CONFIDENCE_LOGIT_MINIMUM,
     TAG_EVENT_CONFIDENCE_LOGIT_MAXIMUM,
-    TAG_EVENT_CONFIDENCE_LOGIT_MEAN
+    TAG_EVENT_CONFIDENCE_LOGIT_MEAN,
+    TAG_PARTIAL_FLAGS,
+    TAG_PARTIAL_FAILURE_STATUS,
+    TAG_PARTIAL_FAILURE_CLASS,
+    TAG_PARTIAL_STOP_REASON,
+    TAG_PARTIAL_INITIAL_POSITION,
+    TAG_PARTIAL_FINAL_POSITION,
+    TAG_PARTIAL_COMMITTED_TOKENS,
+    TAG_PARTIAL_PUBLISHED_BYTES,
+    TAG_PARTIAL_TARGET_GENERATION,
+    TAG_PARTIAL_DRAFT_GENERATION,
+    TAG_PARTIAL_RNG_GENERATION,
+    TAG_PARTIAL_LEDGER_GENERATION,
+    TAG_PARTIAL_DETOKENIZER_GENERATION,
+    TAG_PARTIAL_MESSAGE_GENERATION,
+    TAG_PARTIAL_TRANSCRIPT_GENERATION,
+    TAG_PARTIAL_TARGET_IDENTITY,
+    TAG_PARTIAL_RNG_IDENTITY,
+    TAG_PARTIAL_LEDGER_IDENTITY,
+    TAG_PARTIAL_TEXT_IDENTITY,
+    TAG_CONSOLE_REASONING_POLICY
 };
 typedef struct {
     unsigned char *data;
@@ -178,13 +199,13 @@ typedef struct {
 typedef struct {
     const unsigned char *data;
     unsigned long long count, offset;
-    uint64_t seen[3];
+    uint64_t seen[4];
 } wire_reader;
 struct yvex_client {
     int fd;
 };
 _Static_assert(sizeof(double) == 8u, "local protocol requires binary64 double");
-_Static_assert(TAG_EVENT_CONFIDENCE_LOGIT_MEAN < 192u,
+_Static_assert(TAG_CONSOLE_REASONING_POLICY < 256u,
                "known protocol tags must fit the duplicate-field set");
 
 static int protocol_refuse(yvex_error *err, yvex_status status,
@@ -360,6 +381,7 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         request->operation > YVEX_CLIENT_OP_CONSOLE_STATUS ||
         (int)request->trace_level < (int)YVEX_SERVER_TRACE_SUMMARY ||
         request->trace_level > YVEX_SERVER_TRACE_FULL ||
+        request->reasoning_policy > YVEX_REASONING_MAXIMUM ||
         (request->stochastic != 0 && request->stochastic != 1) ||
         (request->seed_present != 0 && request->seed_present != 1) ||
         (request->trace_content != 0 && request->trace_content != 1) ||
@@ -402,6 +424,8 @@ int yvex_protocol_request_encode(const yvex_client_request *request,
         !writer_double(&writer, TAG_TYPICAL_P, request->typical_p) ||
         !writer_u64(&writer, TAG_EVENT_AFTER, request->event_after_sequence) ||
         !writer_u64(&writer, TAG_TRACE_LEVEL, request->trace_level) ||
+        !writer_u64(&writer, TAG_REASONING_POLICY,
+                    request->reasoning_policy) ||
         !writer_field(&writer, TAG_PROVIDER_REQUEST, provider_bytes,
                       provider_count)) {
         free(provider_bytes);
@@ -487,6 +511,12 @@ int yvex_protocol_request_decode(const unsigned char *input,
                         bytes, count, &provider, err) == YVEX_OK);
             candidate.provider_request = provider;
             break;
+        case TAG_REASONING_POLICY:
+            valid = reader_u64(bytes, count, &value) &&
+                    value <= YVEX_REASONING_MAXIMUM;
+            if (valid)
+                candidate.reasoning_policy = (yvex_reasoning_policy)value;
+            break;
         default: valid = 0; break;
         }
     }
@@ -559,6 +589,55 @@ static int reader_metrics(const unsigned char *bytes, unsigned long long count,
     return 1;
 }
 
+static int optional_identity_valid(const char value[YVEX_SHA256_HEX_CAP])
+{
+    return !value[0] || yvex_sha256_hex_valid(value);
+}
+
+static int partial_turn_fields_valid(const yvex_client_partial_turn *partial)
+{
+#define PARTIAL_BOOL(value) ((value) == 0 || (value) == 1)
+    if (!partial || !PARTIAL_BOOL(partial->available) ||
+        !PARTIAL_BOOL(partial->committed_progress) ||
+        !PARTIAL_BOOL(partial->reset_required) ||
+        !PARTIAL_BOOL(partial->draft_state_generation_available) ||
+        !PARTIAL_BOOL(partial->detokenizer_generation_available) ||
+        partial->failure_class > YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT ||
+        partial->stop_reason > YVEX_GENERATION_STOP_OUTPUT_FAILURE)
+        return 0;
+    if (!partial->available)
+        return !partial->schema_version && !partial->committed_progress &&
+               !partial->reset_required && !partial->failure_status &&
+               partial->failure_class == YVEX_CLIENT_FAILURE_NONE &&
+               !partial->stop_reason && !partial->initial_position &&
+               !partial->final_committed_position &&
+               !partial->committed_token_count &&
+               !partial->published_text_bytes &&
+               !partial->target_state_generation &&
+               !partial->draft_state_generation && !partial->rng_generation &&
+               !partial->token_ledger_generation &&
+               !partial->detokenizer_generation &&
+               !partial->message_history_generation &&
+               !partial->transcript_generation &&
+               !partial->target_state_identity[0] &&
+               !partial->rng_state_identity[0] &&
+               !partial->token_ledger_identity[0] &&
+               !partial->published_text_identity[0];
+    return partial->schema_version == YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 &&
+           partial->reset_required && partial->failure_status != YVEX_OK &&
+           partial->failure_class != YVEX_CLIENT_FAILURE_NONE &&
+           partial->final_committed_position >= partial->initial_position &&
+           (partial->draft_state_generation_available ||
+            !partial->draft_state_generation) &&
+           (partial->detokenizer_generation_available ||
+            !partial->detokenizer_generation) &&
+           optional_identity_valid(partial->target_state_identity) &&
+           optional_identity_valid(partial->rng_state_identity) &&
+           optional_identity_valid(partial->token_ledger_identity) &&
+           optional_identity_valid(partial->published_text_identity);
+#undef PARTIAL_BOOL
+}
+
 static int message_fields_valid(const yvex_client_message *message)
 {
 #define ENUM_VALID(value, first, last) \
@@ -580,7 +659,7 @@ static int message_fields_valid(const yvex_client_message *message)
                       YVEX_SERVER_SESSION_FAILED) &&
            ENUM_VALID(message->provider_output_kind,
                       YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
-                      YVEX_PROVIDER_OUTPUT_ERROR) &&
+                      YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING) &&
            ENUM_VALID(message->provider_finish, YVEX_PROVIDER_FINISH_STOP,
                       YVEX_PROVIDER_FINISH_FAILED) &&
            message->stop_reason <= YVEX_GENERATION_STOP_OUTPUT_FAILURE &&
@@ -619,6 +698,10 @@ static int message_fields_valid(const yvex_client_message *message)
            BOOL_VALID(message->console.progress_available) &&
            BOOL_VALID(message->console.selected_model_available) &&
            BOOL_VALID(message->console.explicit_reasoning_channel_supported) &&
+           ENUM_VALID(message->console.reasoning_policy,
+                      YVEX_REASONING_DISABLED,
+                      YVEX_REASONING_MAXIMUM) &&
+           partial_turn_fields_valid(&message->partial_turn) &&
            isfinite(message->queue_seconds) &&
            isfinite(message->prefill_seconds) &&
            isfinite(message->first_token_seconds) &&
@@ -733,11 +816,232 @@ static int protocol_event_write(wire_writer *writer,
 #undef EVENT_U64
     return valid;
 }
-/*
- * Encode one server message with explicit field ownership.
- *
- * Publishes zero count for invalid schema, fields, event identity, or capacity.
- */
+
+static int protocol_message_core_write(wire_writer *writer,
+                                       const yvex_client_message *message,
+                                       unsigned long long message_flags)
+{
+#define MESSAGE_U64(tag, field) \
+    writer_u64(writer, tag, (unsigned long long)(field))
+    int valid =
+        MESSAGE_U64(TAG_MESSAGE_KIND, message->kind) &&
+        MESSAGE_U64(TAG_STATUS, (uint32_t)(int32_t)message->status) &&
+        MESSAGE_U64(TAG_FAILURE_CLASS, message->failure_class) &&
+        MESSAGE_U64(TAG_REQUEST_NUMBER, message->request_number) &&
+        writer_text(writer, TAG_SESSION_NAME, message->session_name) &&
+        writer_text(writer, TAG_REASON, message->reason) &&
+        writer_field(writer, TAG_BYTES, message->bytes, message->byte_count) &&
+        MESSAGE_U64(TAG_PROMPT_TOKENS, message->prompt_tokens) &&
+        MESSAGE_U64(TAG_REUSED_TOKENS, message->reused_tokens) &&
+        MESSAGE_U64(TAG_PREFILL_TOKENS, message->prefill_tokens) &&
+        MESSAGE_U64(TAG_GENERATED_TOKENS, message->generated_tokens) &&
+        MESSAGE_U64(TAG_FINAL_POSITION, message->final_position) &&
+        MESSAGE_U64(TAG_TURN_COUNT, message->turn_count) &&
+        MESSAGE_U64(TAG_CONTEXT_USED, message->context_used) &&
+        MESSAGE_U64(TAG_KV_USED_BYTES, message->kv_used_bytes) &&
+        MESSAGE_U64(TAG_GENERATION_MODE, message->generation_mode) &&
+        MESSAGE_U64(TAG_DRAFT_CYCLE_COUNT, message->draft_cycle_count) &&
+        MESSAGE_U64(TAG_DRAFT_FORWARD_COUNT, message->draft_forward_count) &&
+        MESSAGE_U64(TAG_PROPOSED_TOKENS, message->proposed_tokens) &&
+        MESSAGE_U64(TAG_SELECTED_VERIFICATION_TOKENS,
+                    message->selected_verification_tokens) &&
+        MESSAGE_U64(TAG_TARGET_VERIFICATION_COUNT,
+                    message->target_verification_count) &&
+        MESSAGE_U64(TAG_ACCEPTED_DRAFT_TOKENS,
+                    message->accepted_draft_tokens) &&
+        MESSAGE_U64(TAG_REJECTED_DRAFT_TOKENS,
+                    message->rejected_draft_tokens) &&
+        MESSAGE_U64(TAG_DISCARDED_DRAFT_TOKENS,
+                    message->discarded_draft_tokens) &&
+        MESSAGE_U64(TAG_TARGET_CORRECTION_OR_BONUS_TOKENS,
+                    message->target_correction_or_bonus_tokens) &&
+        MESSAGE_U64(TAG_MAXIMUM_ACCEPTED_PREFIX,
+                    message->maximum_accepted_prefix) &&
+        MESSAGE_U64(TAG_CONFIDENCE_LOGIT_COUNT,
+                    message->confidence_logit_count) &&
+        writer_double(writer, TAG_QUEUE_SECONDS, message->queue_seconds) &&
+        writer_double(writer, TAG_PREFILL_SECONDS, message->prefill_seconds) &&
+        writer_double(writer, TAG_FIRST_TOKEN_SECONDS,
+                      message->first_token_seconds) &&
+        writer_double(writer, TAG_DECODE_SECONDS, message->decode_seconds) &&
+        writer_double(writer, TAG_PREFILL_RATE, message->prefill_rate) &&
+        writer_double(writer, TAG_DECODE_RATE, message->decode_rate) &&
+        writer_double(writer, TAG_PUBLICATION_SECONDS,
+                      message->publication_seconds) &&
+        writer_double(writer, TAG_DRAFT_SECONDS, message->draft_seconds) &&
+        writer_double(writer, TAG_VERIFICATION_SECONDS,
+                      message->verification_seconds) &&
+        writer_double(writer, TAG_SPECULATIVE_COMMIT_SECONDS,
+                      message->speculative_commit_seconds) &&
+        writer_double(writer, TAG_MEAN_ACCEPTED_PREFIX,
+                      message->mean_accepted_prefix) &&
+        writer_double(writer, TAG_EFFECTIVE_COMMITTED_RATE,
+                      message->effective_committed_rate) &&
+        writer_double(writer, TAG_CONFIDENCE_LOGIT_MINIMUM,
+                      message->confidence_logit_minimum) &&
+        writer_double(writer, TAG_CONFIDENCE_LOGIT_MAXIMUM,
+                      message->confidence_logit_maximum) &&
+        writer_double(writer, TAG_CONFIDENCE_LOGIT_MEAN,
+                      message->confidence_logit_mean) &&
+        MESSAGE_U64(TAG_STOP_REASON, message->stop_reason) &&
+        MESSAGE_U64(TAG_GENERATION_PHASE, message->generation_phase) &&
+        MESSAGE_U64(TAG_CANCELLATION_CLASS, message->cancellation_class) &&
+        MESSAGE_U64(TAG_STREAM_CHANNEL, message->stream_channel) &&
+        MESSAGE_U64(TAG_MESSAGE_AVAILABILITY_FLAGS, message_flags) &&
+        MESSAGE_U64(TAG_SESSION_STATE, message->session_state) &&
+        writer_text(writer, TAG_SESSION_IDENTITY,
+                    message->session_identity) &&
+        writer_text(writer, TAG_TURN_IDENTITY, message->turn_identity) &&
+        writer_text(writer, TAG_STATE_DIGEST, message->state_digest) &&
+        writer_text(writer, TAG_GENERATED_TOKEN_IDENTITY,
+                    message->generated_token_identity) &&
+        writer_text(writer, TAG_GENERATED_TEXT_DIGEST,
+                    message->generated_text_digest) &&
+        writer_text(writer, TAG_SPECULATION_POLICY_ID,
+                    message->speculation_policy_identity) &&
+        MESSAGE_U64(TAG_PROVIDER_OUTPUT_KIND, message->provider_output_kind) &&
+        MESSAGE_U64(TAG_PROVIDER_FINISH, message->provider_finish) &&
+        MESSAGE_U64(TAG_COMPLETION_TOKENS, message->completion_tokens) &&
+        MESSAGE_U64(TAG_TOTAL_TOKENS, message->total_tokens) &&
+        writer_text(writer, TAG_PROVIDER_REQUEST_ID,
+                    message->provider_request_identity) &&
+        writer_text(writer, TAG_EXTERNAL_CORRELATION_ID,
+                    message->external_correlation_id) &&
+        writer_text(writer, TAG_TOOL_CALL_ID, message->tool_call_id) &&
+        writer_text(writer, TAG_TOOL_NAME, message->tool_name);
+#undef MESSAGE_U64
+    return valid;
+}
+
+static int protocol_partial_write(wire_writer *writer,
+                                  const yvex_client_partial_turn *partial)
+{
+    unsigned long long flags = (partial->available ? 1u : 0u) |
+                               (partial->committed_progress ? 2u : 0u) |
+                               (partial->reset_required ? 4u : 0u) |
+                               (partial->draft_state_generation_available ? 8u : 0u) |
+                               (partial->detokenizer_generation_available ? 16u : 0u);
+#define PARTIAL_U64(tag, field) \
+    writer_u64(writer, tag, (unsigned long long)(field))
+    int valid =
+        PARTIAL_U64(TAG_PARTIAL_FLAGS, flags) &&
+        PARTIAL_U64(TAG_PARTIAL_FAILURE_STATUS,
+                    (uint32_t)(int32_t)partial->failure_status) &&
+        PARTIAL_U64(TAG_PARTIAL_FAILURE_CLASS, partial->failure_class) &&
+        PARTIAL_U64(TAG_PARTIAL_STOP_REASON, partial->stop_reason) &&
+        PARTIAL_U64(TAG_PARTIAL_INITIAL_POSITION, partial->initial_position) &&
+        PARTIAL_U64(TAG_PARTIAL_FINAL_POSITION,
+                    partial->final_committed_position) &&
+        PARTIAL_U64(TAG_PARTIAL_COMMITTED_TOKENS,
+                    partial->committed_token_count) &&
+        PARTIAL_U64(TAG_PARTIAL_PUBLISHED_BYTES,
+                    partial->published_text_bytes) &&
+        PARTIAL_U64(TAG_PARTIAL_TARGET_GENERATION,
+                    partial->target_state_generation) &&
+        PARTIAL_U64(TAG_PARTIAL_DRAFT_GENERATION,
+                    partial->draft_state_generation) &&
+        PARTIAL_U64(TAG_PARTIAL_RNG_GENERATION, partial->rng_generation) &&
+        PARTIAL_U64(TAG_PARTIAL_LEDGER_GENERATION,
+                    partial->token_ledger_generation) &&
+        PARTIAL_U64(TAG_PARTIAL_DETOKENIZER_GENERATION,
+                    partial->detokenizer_generation) &&
+        PARTIAL_U64(TAG_PARTIAL_MESSAGE_GENERATION,
+                    partial->message_history_generation) &&
+        PARTIAL_U64(TAG_PARTIAL_TRANSCRIPT_GENERATION,
+                    partial->transcript_generation) &&
+        writer_text(writer, TAG_PARTIAL_TARGET_IDENTITY,
+                    partial->target_state_identity) &&
+        writer_text(writer, TAG_PARTIAL_RNG_IDENTITY,
+                    partial->rng_state_identity) &&
+        writer_text(writer, TAG_PARTIAL_LEDGER_IDENTITY,
+                    partial->token_ledger_identity) &&
+        writer_text(writer, TAG_PARTIAL_TEXT_IDENTITY,
+                    partial->published_text_identity);
+#undef PARTIAL_U64
+    return valid;
+}
+
+static int protocol_runtime_write(wire_writer *writer,
+                                  const yvex_server_summary *runtime)
+{
+    unsigned long long flags = (runtime->runtime_ready ? 1u : 0u) |
+                               (runtime->generation_ready ? 2u : 0u) |
+                               (runtime->public_server_ready ? 4u : 0u) |
+                               (runtime->openai_listener_enabled ? 8u : 0u) |
+                               (runtime->openai_listener_ready ? 16u : 0u) |
+                               (runtime->explicit_reasoning_channel_supported ? 32u : 0u);
+#define RUNTIME_U64(tag, field) \
+    writer_u64(writer, tag, (unsigned long long)(field))
+    int valid =
+        RUNTIME_U64(TAG_RUNTIME_STATUS, runtime->status) &&
+        RUNTIME_U64(TAG_RUNTIME_BACKEND, runtime->backend) &&
+        RUNTIME_U64(TAG_RUNTIME_GENERATION_MODE, runtime->generation_mode) &&
+        writer_text(writer, TAG_SOCKET_PATH, runtime->socket_path) &&
+        writer_text(writer, TAG_TARGET_ID, runtime->target_id) &&
+        writer_text(writer, TAG_RUNTIME_MODEL_ID,
+                    runtime->runtime_model_identity) &&
+        writer_text(writer, TAG_RUNTIME_BINDING_ID,
+                    runtime->runtime_binding_identity) &&
+        writer_text(writer, TAG_ARTIFACT_ID, runtime->artifact_identity) &&
+        writer_text(writer, TAG_PHYSICAL_VARIANT_ID,
+                    runtime->physical_variant_identity) &&
+        RUNTIME_U64(TAG_CONTEXT_CAPACITY, runtime->context_capacity) &&
+        RUNTIME_U64(TAG_SESSION_COUNT, runtime->session_count) &&
+        RUNTIME_U64(TAG_RUNTIME_REQUEST_COUNT, runtime->request_count) &&
+        RUNTIME_U64(TAG_RUNTIME_FLAGS, flags) &&
+        RUNTIME_U64(TAG_PREFILL_CHUNK_TOKENS, runtime->prefill_chunk_tokens) &&
+        RUNTIME_U64(TAG_RUNTIME_MAXIMUM_NEW_TOKENS,
+                    runtime->maximum_new_tokens) &&
+        RUNTIME_U64(TAG_RUNTIME_MAXIMUM_OUTPUT_BYTES,
+                    runtime->maximum_output_bytes) &&
+        RUNTIME_U64(TAG_RUNTIME_MAXIMUM_SESSIONS,
+                    runtime->maximum_sessions) &&
+        RUNTIME_U64(TAG_OPENAI_PORT, runtime->openai_port) &&
+        RUNTIME_U64(TAG_RUNTIME_QUEUE_CAPACITY,
+                    runtime->request_queue_capacity) &&
+        RUNTIME_U64(TAG_RUNTIME_OPENAI_TIMEOUT, runtime->openai_timeout_ms) &&
+        RUNTIME_U64(TAG_RUNTIME_TRACE_LEVEL, runtime->trace_level) &&
+        writer_metrics(writer, &runtime->metrics);
+#undef RUNTIME_U64
+    return valid;
+}
+
+static int protocol_console_write(wire_writer *writer,
+                                  const yvex_console_status *console)
+{
+    unsigned long long flags = (console->runtime_ready ? 1u : 0u) |
+                               (console->session_available ? 2u : 0u) |
+                               (console->attached ? 4u : 0u) |
+                               (console->cancel_requested ? 8u : 0u) |
+                               (console->kv_used_available ? 16u : 0u) |
+                               (console->progress_available ? 32u : 0u) |
+                               (console->selected_model_available ? 64u : 0u) |
+                               (console->explicit_reasoning_channel_supported ? 128u : 0u);
+#define CONSOLE_U64(tag, field) \
+    writer_u64(writer, tag, (unsigned long long)(field))
+    int valid =
+        CONSOLE_U64(TAG_CONSOLE_FLAGS, flags) &&
+        CONSOLE_U64(TAG_CONSOLE_BACKEND, console->backend) &&
+        CONSOLE_U64(TAG_CONSOLE_SESSION_STATE, console->session_state) &&
+        CONSOLE_U64(TAG_CONSOLE_POSITION, console->position) &&
+        CONSOLE_U64(TAG_CONSOLE_TURN_COUNT, console->turn_count) &&
+        CONSOLE_U64(TAG_CONSOLE_CONTEXT_CAPACITY, console->context_capacity) &&
+        CONSOLE_U64(TAG_CONSOLE_CONTEXT_USED, console->context_used) &&
+        CONSOLE_U64(TAG_CONSOLE_KV_USED_BYTES, console->kv_used_bytes) &&
+        CONSOLE_U64(TAG_CONSOLE_PHASE, console->generation_phase) &&
+        CONSOLE_U64(TAG_CONSOLE_CANCELLATION, console->cancellation_class) &&
+        CONSOLE_U64(TAG_CONSOLE_REASONING_POLICY,
+                    console->reasoning_policy) &&
+        writer_text(writer, TAG_CONSOLE_LIVE_MODEL_ID,
+                    console->live_model_identity) &&
+        writer_text(writer, TAG_CONSOLE_VARIANT_ID,
+                    console->physical_variant_identity) &&
+        writer_text(writer, TAG_CONSOLE_SESSION_NAME, console->session_name) &&
+        writer_text(writer, TAG_CONSOLE_SELECTED_MODEL_ID,
+                    console->selected_model_identity);
+#undef CONSOLE_U64
+    return valid;
+}
 int yvex_protocol_message_encode(const yvex_client_message *message,
                                  unsigned char *output,
                                  unsigned long long capacity,
@@ -745,25 +1049,9 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
                                  yvex_error *err)
 {
     wire_writer writer = {output, capacity, 0u};
-    unsigned long long runtime_flags =
-        (message && message->runtime.runtime_ready ? 1u : 0u) |
-        (message && message->runtime.generation_ready ? 2u : 0u) |
-        (message && message->runtime.public_server_ready ? 4u : 0u) |
-        (message && message->runtime.openai_listener_enabled ? 8u : 0u) |
-        (message && message->runtime.openai_listener_ready ? 16u : 0u) |
-        (message && message->runtime.explicit_reasoning_channel_supported ? 32u : 0u);
     unsigned long long message_flags =
         (message && message->kv_used_available ? 1u : 0u) |
         (message && message->publication_timing_available ? 2u : 0u);
-    unsigned long long console_flags =
-        (message && message->console.runtime_ready ? 1u : 0u) |
-        (message && message->console.session_available ? 2u : 0u) |
-        (message && message->console.attached ? 4u : 0u) |
-        (message && message->console.cancel_requested ? 8u : 0u) |
-        (message && message->console.kv_used_available ? 16u : 0u) |
-        (message && message->console.progress_available ? 32u : 0u) |
-        (message && message->console.selected_model_available ? 64u : 0u) |
-        (message && message->console.explicit_reasoning_channel_supported ? 128u : 0u);
     if (byte_count) *byte_count = 0u;
     if (!message || !output || !byte_count ||
         message->schema_version != YVEX_LOCAL_PROTOCOL_VERSION ||
@@ -776,151 +1064,13 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
     if (message->kind == YVEX_CLIENT_MESSAGE_EVENT &&
         yvex_server_event_validate(&message->event, err) != YVEX_OK)
         return yvex_error_code(err);
-#define WRITE_U64(tag, field) writer_u64(&writer, tag, (unsigned long long)(field))
-    if (!WRITE_U64(TAG_MESSAGE_KIND, message->kind) ||
-        !WRITE_U64(TAG_STATUS, (uint32_t)(int32_t)message->status) ||
-        !WRITE_U64(TAG_FAILURE_CLASS, message->failure_class) ||
-        !WRITE_U64(TAG_REQUEST_NUMBER, message->request_number) ||
-        !writer_text(&writer, TAG_SESSION_NAME, message->session_name) ||
-        !writer_text(&writer, TAG_REASON, message->reason) ||
-        !writer_field(&writer, TAG_BYTES, message->bytes, message->byte_count) ||
-        !WRITE_U64(TAG_PROMPT_TOKENS, message->prompt_tokens) ||
-        !WRITE_U64(TAG_REUSED_TOKENS, message->reused_tokens) ||
-        !WRITE_U64(TAG_PREFILL_TOKENS, message->prefill_tokens) ||
-        !WRITE_U64(TAG_GENERATED_TOKENS, message->generated_tokens) ||
-        !WRITE_U64(TAG_FINAL_POSITION, message->final_position) ||
-        !WRITE_U64(TAG_TURN_COUNT, message->turn_count) ||
-        !WRITE_U64(TAG_CONTEXT_USED, message->context_used) ||
-        !WRITE_U64(TAG_KV_USED_BYTES, message->kv_used_bytes) ||
-        !WRITE_U64(TAG_GENERATION_MODE, message->generation_mode) ||
-        !WRITE_U64(TAG_DRAFT_CYCLE_COUNT, message->draft_cycle_count) ||
-        !WRITE_U64(TAG_DRAFT_FORWARD_COUNT, message->draft_forward_count) ||
-        !WRITE_U64(TAG_PROPOSED_TOKENS, message->proposed_tokens) ||
-        !WRITE_U64(TAG_SELECTED_VERIFICATION_TOKENS,
-                   message->selected_verification_tokens) ||
-        !WRITE_U64(TAG_TARGET_VERIFICATION_COUNT,
-                   message->target_verification_count) ||
-        !WRITE_U64(TAG_ACCEPTED_DRAFT_TOKENS,
-                   message->accepted_draft_tokens) ||
-        !WRITE_U64(TAG_REJECTED_DRAFT_TOKENS,
-                   message->rejected_draft_tokens) ||
-        !WRITE_U64(TAG_DISCARDED_DRAFT_TOKENS,
-                   message->discarded_draft_tokens) ||
-        !WRITE_U64(TAG_TARGET_CORRECTION_OR_BONUS_TOKENS,
-                   message->target_correction_or_bonus_tokens) ||
-        !WRITE_U64(TAG_MAXIMUM_ACCEPTED_PREFIX,
-                   message->maximum_accepted_prefix) ||
-        !WRITE_U64(TAG_CONFIDENCE_LOGIT_COUNT,
-                   message->confidence_logit_count) ||
-        !writer_double(&writer, TAG_QUEUE_SECONDS, message->queue_seconds) ||
-        !writer_double(&writer, TAG_PREFILL_SECONDS, message->prefill_seconds) ||
-        !writer_double(&writer, TAG_FIRST_TOKEN_SECONDS, message->first_token_seconds) ||
-        !writer_double(&writer, TAG_DECODE_SECONDS, message->decode_seconds) ||
-        !writer_double(&writer, TAG_PREFILL_RATE, message->prefill_rate) ||
-        !writer_double(&writer, TAG_DECODE_RATE, message->decode_rate) ||
-        !writer_double(&writer, TAG_PUBLICATION_SECONDS,
-                       message->publication_seconds) ||
-        !writer_double(&writer, TAG_DRAFT_SECONDS, message->draft_seconds) ||
-        !writer_double(&writer, TAG_VERIFICATION_SECONDS,
-                       message->verification_seconds) ||
-        !writer_double(&writer, TAG_SPECULATIVE_COMMIT_SECONDS,
-                       message->speculative_commit_seconds) ||
-        !writer_double(&writer, TAG_MEAN_ACCEPTED_PREFIX,
-                       message->mean_accepted_prefix) ||
-        !writer_double(&writer, TAG_EFFECTIVE_COMMITTED_RATE,
-                       message->effective_committed_rate) ||
-        !writer_double(&writer, TAG_CONFIDENCE_LOGIT_MINIMUM,
-                       message->confidence_logit_minimum) ||
-        !writer_double(&writer, TAG_CONFIDENCE_LOGIT_MAXIMUM,
-                       message->confidence_logit_maximum) ||
-        !writer_double(&writer, TAG_CONFIDENCE_LOGIT_MEAN,
-                       message->confidence_logit_mean) ||
-        !WRITE_U64(TAG_STOP_REASON, message->stop_reason) ||
-        !WRITE_U64(TAG_GENERATION_PHASE, message->generation_phase) ||
-        !WRITE_U64(TAG_CANCELLATION_CLASS, message->cancellation_class) ||
-        !WRITE_U64(TAG_STREAM_CHANNEL, message->stream_channel) ||
-        !WRITE_U64(TAG_MESSAGE_AVAILABILITY_FLAGS, message_flags) ||
-        !WRITE_U64(TAG_SESSION_STATE, message->session_state) ||
-        !writer_text(&writer, TAG_SESSION_IDENTITY,
-                     message->session_identity) ||
-        !writer_text(&writer, TAG_TURN_IDENTITY, message->turn_identity) ||
-        !writer_text(&writer, TAG_STATE_DIGEST, message->state_digest) ||
-        !writer_text(&writer, TAG_GENERATED_TOKEN_IDENTITY,
-                     message->generated_token_identity) ||
-        !writer_text(&writer, TAG_GENERATED_TEXT_DIGEST,
-                     message->generated_text_digest) ||
-        !writer_text(&writer, TAG_SPECULATION_POLICY_ID,
-                     message->speculation_policy_identity) ||
-        !WRITE_U64(TAG_PROVIDER_OUTPUT_KIND, message->provider_output_kind) ||
-        !WRITE_U64(TAG_PROVIDER_FINISH, message->provider_finish) ||
-        !WRITE_U64(TAG_COMPLETION_TOKENS, message->completion_tokens) ||
-        !WRITE_U64(TAG_TOTAL_TOKENS, message->total_tokens) ||
-        !writer_text(&writer, TAG_PROVIDER_REQUEST_ID,
-                     message->provider_request_identity) ||
-        !writer_text(&writer, TAG_EXTERNAL_CORRELATION_ID,
-                     message->external_correlation_id) ||
-        !writer_text(&writer, TAG_TOOL_CALL_ID, message->tool_call_id) ||
-        !writer_text(&writer, TAG_TOOL_NAME, message->tool_name) ||
-        !WRITE_U64(TAG_RUNTIME_STATUS, message->runtime.status) ||
-        !WRITE_U64(TAG_RUNTIME_BACKEND, message->runtime.backend) ||
-        !WRITE_U64(TAG_RUNTIME_GENERATION_MODE,
-                   message->runtime.generation_mode) ||
-        !writer_text(&writer, TAG_SOCKET_PATH, message->runtime.socket_path) ||
-        !writer_text(&writer, TAG_TARGET_ID, message->runtime.target_id) ||
-        !writer_text(&writer, TAG_RUNTIME_MODEL_ID,
-                     message->runtime.runtime_model_identity) ||
-        !writer_text(&writer, TAG_RUNTIME_BINDING_ID,
-                     message->runtime.runtime_binding_identity) ||
-        !writer_text(&writer, TAG_ARTIFACT_ID,
-                     message->runtime.artifact_identity) ||
-        !writer_text(&writer, TAG_PHYSICAL_VARIANT_ID,
-                     message->runtime.physical_variant_identity) ||
-        !WRITE_U64(TAG_CONTEXT_CAPACITY, message->runtime.context_capacity) ||
-        !WRITE_U64(TAG_SESSION_COUNT, message->runtime.session_count) ||
-        !WRITE_U64(TAG_RUNTIME_REQUEST_COUNT, message->runtime.request_count) ||
-        !WRITE_U64(TAG_RUNTIME_FLAGS, runtime_flags) ||
-        !WRITE_U64(TAG_PREFILL_CHUNK_TOKENS,
-                   message->runtime.prefill_chunk_tokens) ||
-        !WRITE_U64(TAG_RUNTIME_MAXIMUM_NEW_TOKENS,
-                   message->runtime.maximum_new_tokens) ||
-        !WRITE_U64(TAG_RUNTIME_MAXIMUM_OUTPUT_BYTES,
-                   message->runtime.maximum_output_bytes) ||
-        !WRITE_U64(TAG_RUNTIME_MAXIMUM_SESSIONS,
-                   message->runtime.maximum_sessions) ||
-        !WRITE_U64(TAG_OPENAI_PORT, message->runtime.openai_port) ||
-        !WRITE_U64(TAG_RUNTIME_QUEUE_CAPACITY,
-                   message->runtime.request_queue_capacity) ||
-        !WRITE_U64(TAG_RUNTIME_OPENAI_TIMEOUT,
-                   message->runtime.openai_timeout_ms) ||
-        !WRITE_U64(TAG_RUNTIME_TRACE_LEVEL, message->runtime.trace_level) ||
-        !writer_metrics(&writer, &message->runtime.metrics) ||
-        !WRITE_U64(TAG_CONSOLE_FLAGS, console_flags) ||
-        !WRITE_U64(TAG_CONSOLE_BACKEND, message->console.backend) ||
-        !WRITE_U64(TAG_CONSOLE_SESSION_STATE,
-                   message->console.session_state) ||
-        !WRITE_U64(TAG_CONSOLE_POSITION, message->console.position) ||
-        !WRITE_U64(TAG_CONSOLE_TURN_COUNT, message->console.turn_count) ||
-        !WRITE_U64(TAG_CONSOLE_CONTEXT_CAPACITY,
-                   message->console.context_capacity) ||
-        !WRITE_U64(TAG_CONSOLE_CONTEXT_USED,
-                   message->console.context_used) ||
-        !WRITE_U64(TAG_CONSOLE_KV_USED_BYTES,
-                   message->console.kv_used_bytes) ||
-        !WRITE_U64(TAG_CONSOLE_PHASE, message->console.generation_phase) ||
-        !WRITE_U64(TAG_CONSOLE_CANCELLATION,
-                   message->console.cancellation_class) ||
-        !writer_text(&writer, TAG_CONSOLE_LIVE_MODEL_ID,
-                     message->console.live_model_identity) ||
-        !writer_text(&writer, TAG_CONSOLE_VARIANT_ID,
-                     message->console.physical_variant_identity) ||
-        !writer_text(&writer, TAG_CONSOLE_SESSION_NAME,
-                     message->console.session_name) ||
-        !writer_text(&writer, TAG_CONSOLE_SELECTED_MODEL_ID,
-                     message->console.selected_model_identity) ||
+    if (!protocol_message_core_write(&writer, message, message_flags) ||
+        !protocol_partial_write(&writer, &message->partial_turn) ||
+        !protocol_runtime_write(&writer, &message->runtime) ||
+        !protocol_console_write(&writer, &message->console) ||
         !protocol_event_write(&writer, &message->event))
         return protocol_refuse(err, YVEX_ERR_BOUNDS,
                                "server message does not fit admitted frame");
-#undef WRITE_U64
     *byte_count = writer.count;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -972,11 +1122,6 @@ static int message_speculation_u64_field(yvex_client_message *candidate,
     return 1;
 }
 
-/*
- * Decode one message-level protocol field outside runtime/event snapshots.
- *
- * No reader position, runtime summary, event, or socket ownership.
- */
 static int message_base_field(yvex_client_message *candidate, unsigned int tag,
                               const unsigned char *bytes,
                               unsigned long long count, int *have_kind)
@@ -1127,7 +1272,7 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
         break;
     case TAG_PROVIDER_OUTPUT_KIND:
         valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_PROVIDER_OUTPUT_ERROR;
+                value <= YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING;
         if (valid)
             candidate->provider_output_kind = (yvex_provider_output_kind)value;
         break;
@@ -1160,11 +1305,67 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
 #undef BASE_U64
     return valid ? 1 : -1;
 }
-/*
- * Decode one authoritative runtime-summary field from a server message.
- *
- * Does not validate event identity or message kind.
- */
+
+static int message_partial_field(yvex_client_message *candidate,
+                                 unsigned int tag,
+                                 const unsigned char *bytes,
+                                 unsigned long long count)
+{
+    yvex_client_partial_turn *partial = &candidate->partial_turn;
+    unsigned long long *number = NULL;
+    char *identity = NULL;
+    unsigned long long value = 0ull;
+    int valid = 1;
+    switch (tag) {
+    case TAG_PARTIAL_FLAGS:
+        valid = reader_u64(bytes, count, &value) && !(value & ~31u);
+        partial->available = (value & 1u) != 0u;
+        partial->committed_progress = (value & 2u) != 0u;
+        partial->reset_required = (value & 4u) != 0u;
+        partial->draft_state_generation_available = (value & 8u) != 0u;
+        partial->detokenizer_generation_available = (value & 16u) != 0u;
+        partial->schema_version = partial->available
+                                      ? YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1
+                                      : 0u;
+        break;
+    case TAG_PARTIAL_FAILURE_STATUS:
+        valid = reader_u64(bytes, count, &value) && value <= UINT32_MAX;
+        if (valid) partial->failure_status = (int)(int32_t)(uint32_t)value;
+        break;
+    case TAG_PARTIAL_FAILURE_CLASS:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_CLIENT_FAILURE_GATEWAY_TIMEOUT;
+        if (valid) partial->failure_class = (yvex_client_failure_class)value;
+        break;
+    case TAG_PARTIAL_STOP_REASON:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_GENERATION_STOP_OUTPUT_FAILURE;
+        if (valid) partial->stop_reason = (unsigned int)value;
+        break;
+    case TAG_PARTIAL_INITIAL_POSITION: number = &partial->initial_position; break;
+    case TAG_PARTIAL_FINAL_POSITION: number = &partial->final_committed_position; break;
+    case TAG_PARTIAL_COMMITTED_TOKENS: number = &partial->committed_token_count; break;
+    case TAG_PARTIAL_PUBLISHED_BYTES: number = &partial->published_text_bytes; break;
+    case TAG_PARTIAL_TARGET_GENERATION: number = &partial->target_state_generation; break;
+    case TAG_PARTIAL_DRAFT_GENERATION: number = &partial->draft_state_generation; break;
+    case TAG_PARTIAL_RNG_GENERATION: number = &partial->rng_generation; break;
+    case TAG_PARTIAL_LEDGER_GENERATION: number = &partial->token_ledger_generation; break;
+    case TAG_PARTIAL_DETOKENIZER_GENERATION:
+        number = &partial->detokenizer_generation;
+        break;
+    case TAG_PARTIAL_MESSAGE_GENERATION: number = &partial->message_history_generation; break;
+    case TAG_PARTIAL_TRANSCRIPT_GENERATION: number = &partial->transcript_generation; break;
+    case TAG_PARTIAL_TARGET_IDENTITY: identity = partial->target_state_identity; break;
+    case TAG_PARTIAL_RNG_IDENTITY: identity = partial->rng_state_identity; break;
+    case TAG_PARTIAL_LEDGER_IDENTITY: identity = partial->token_ledger_identity; break;
+    case TAG_PARTIAL_TEXT_IDENTITY: identity = partial->published_text_identity; break;
+    default: return 0;
+    }
+    if (number) valid = reader_u64(bytes, count, number);
+    if (identity)
+        valid = reader_text(bytes, count, identity, YVEX_SHA256_HEX_CAP);
+    return valid ? 1 : -1;
+}
 static int message_runtime_field(yvex_client_message *candidate,
                                  unsigned int tag,
                                  const unsigned char *bytes,
@@ -1314,6 +1515,13 @@ static int message_console_field(yvex_client_message *candidate,
             candidate->console.cancellation_class =
                 (yvex_client_cancellation_class)value;
         break;
+    case TAG_CONSOLE_REASONING_POLICY:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_REASONING_MAXIMUM;
+        if (valid)
+            candidate->console.reasoning_policy =
+                (yvex_reasoning_policy)value;
+        break;
     case TAG_CONSOLE_LIVE_MODEL_ID:
         valid = reader_text(bytes, count, candidate->console.live_model_identity,
                             sizeof(candidate->console.live_model_identity));
@@ -1337,12 +1545,6 @@ static int message_console_field(yvex_client_message *candidate,
 #undef CONSOLE_U64
     return valid ? 1 : -1;
 }
-/*
- * Decode one authoritative typed-event field from a server message.
- *
- * Writes one recognized event field for later identity validation. Event identity is validated
- * only after the complete message is decoded.
- */
 static int message_event_field(yvex_client_message *candidate,
                                unsigned int tag,
                                const unsigned char *bytes,
@@ -1510,6 +1712,8 @@ int yvex_protocol_message_decode(const unsigned char *input,
         int field = message_base_field(&candidate, tag, bytes, count,
                                        &have_kind);
         if (!field)
+            field = message_partial_field(&candidate, tag, bytes, count);
+        if (!field)
             field = message_runtime_field(&candidate, tag, bytes, count);
         if (!field)
             field = message_console_field(&candidate, tag, bytes, count);
@@ -1541,11 +1745,6 @@ static int transfer_all(int fd, void *buffer, size_t count, int writing,
     }
     return YVEX_OK;
 }
-/*
- * Apply or clear one bounded local-protocol socket I/O timeout.
- *
- * Preserves descriptor ownership and reports conversion or socket refusal.
- */
 int yvex_client_timeout_set(yvex_client *client,
                             unsigned long long milliseconds,
                             yvex_error *err)
@@ -1581,11 +1780,6 @@ static int frame_send(int fd, unsigned int kind, const unsigned char *payload,
     return count ? transfer_all(fd, (void *)payload, (size_t)count, 1, err)
                  : YVEX_OK;
 }
-/*
- * Receive one expected canonical frame into owned bounded bytes.
- *
- * Frees partial ownership and refuses invalid frames or I/O.
- */
 static int frame_receive(int fd, unsigned int expected_kind,
                          unsigned char **payload, unsigned long long *count,
                          yvex_error *err)
@@ -1605,7 +1799,7 @@ static int frame_receive(int fd, unsigned int expected_kind,
                                "local protocol frame header is invalid");
     if (get_u16(header + 4u) != YVEX_LOCAL_PROTOCOL_VERSION)
         return protocol_refuse(err, YVEX_ERR_FORMAT,
-                               "local protocol version is incompatible; version 5 is required");
+                               "local protocol version is incompatible; version 6 is required");
     if (length) {
         bytes = malloc(length);
         if (!bytes)
@@ -1642,11 +1836,6 @@ int yvex_server_socket_path(char output[YVEX_SERVER_SOCKET_PATH_CAP],
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/*
- * Connect one thin client only to an owner-validated private Unix socket.
- *
- * Closes partial ownership and refuses mode, owner, symlink, or connect mismatch.
- */
 int yvex_client_connect(yvex_client **out, const char *socket_path,
                         yvex_error *err)
 {
@@ -1707,13 +1896,13 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
     if (yvex_client_send(client, &handshake, err) != YVEX_OK ||
         yvex_client_receive(client, &response, err) != YVEX_OK ||
         response.kind != YVEX_CLIENT_MESSAGE_ACK ||
-        response.status != YVEX_OK || strcmp(response.reason, "protocol-v5") != 0) {
+        response.status != YVEX_OK || strcmp(response.reason, "protocol-v6") != 0) {
         (void)close(client->fd);
         memset(client, 0, sizeof(*client));
         free(client);
         if (yvex_error_code(err) == YVEX_OK)
             yvex_error_set(err, YVEX_ERR_FORMAT, "server.protocol.handshake",
-                           "daemon did not admit local protocol version 5");
+                           "daemon did not admit local protocol version 6");
         return yvex_error_code(err);
     }
     if (yvex_client_timeout_set(client, 0u, err) != YVEX_OK) {
@@ -1766,7 +1955,6 @@ int yvex_client_receive(yvex_client *client, yvex_client_message *message,
     free(payload);
     return rc;
 }
-/* Close one thin-client descriptor and clear unique ownership. */
 void yvex_client_close(yvex_client **client)
 {
     if (!client || !*client)
@@ -1777,11 +1965,6 @@ void yvex_client_close(yvex_client **client)
     free(*client);
     *client = NULL;
 }
-/*
- * Receive and decode one server-side request frame.
- *
- * May allocate prompt ownership.
- */
 int yvex_server_protocol_receive(int fd, yvex_client_request *request,
                                  unsigned char **owned_prompt,
                                  yvex_provider_request **owned_provider,

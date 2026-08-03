@@ -862,7 +862,7 @@ int yvex_provider_output_seal(yvex_provider_output *output, yvex_error *err)
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     if (!output || output->schema_version != YVEX_PROVIDER_SCHEMA_V1 ||
-        output->kind > YVEX_PROVIDER_OUTPUT_ERROR ||
+        output->kind > YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING ||
         output->finish > YVEX_PROVIDER_FINISH_FAILED ||
         !span_valid(output->bytes, YVEX_PROVIDER_MAX_CONTENT_BYTES, 1) ||
         output->prompt_tokens > ULLONG_MAX - output->completion_tokens ||

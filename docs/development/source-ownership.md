@@ -28,24 +28,24 @@ src/model/artifacts/     model registry, reference, gate and write ownership
 src/model/               core model tables and artifact-neutral compilation
 src/gguf/                GGUF parser plus target ABI/writer/roundtrip owners
 src/artifact/            artifact IO, identity, integrity, descriptor gates
-src/graph/               graph core, plans, attention protocol/numeric owners and family recipes
+src/graph/               semantic/physical execution plans, state, attention and family recipes
 src/backend/             backend abstraction, compute admission and platform implementations
-src/runtime/             common immutable model, binding, execution sessions, state and benchmark
+src/runtime/             family-neutral immutable model, sessions, execution and benchmark
 ```
 
 ## Ownership flow
 
 ```text
 registry JSON -> strict build validation -> immutable compiled descriptors -> yvex dispatch/help
-product argv -> protocol v5 -> yvexd worker/session -> typed events/results -> client render
+product argv -> protocol v6 -> yvexd worker/session -> typed events/results -> client render
 application -> OpenAI profile -> provider contract -> local protocol -> same yvexd worker/session
 engineering argv -> nested owner route -> report/domain -> engineering render -> cli/io
 
 file writer -> explicit local files only
 source facts -> architecture IR -> coverage -> contribution map -> transformation IR
 payload session -> bounded chunks -> transformation execution -> quantization
-GGUF ABI -> artifact descriptor -> materialization -> runtime descriptor -> runtime binding
-runtime binding -> immutable runtime model -> resident weights -> execution session
+GGUF ABI -> artifact descriptor -> Physical Execution IR -> materialization -> runtime binding
+runtime binding -> compiled execution profile -> immutable runtime model -> execution session
 execution session -> attention prefill/decode phases -> state delta
 persistent KV -> model prefill -> transformer -> logits -> sampling -> generation
 ```
@@ -118,6 +118,8 @@ domain algorithms. No writer owns command output.
   emitted names, emitted layout, descriptor, and typed format facts.
 - Artifact owns YVEX artifact descriptors, materialization boundary, roundtrip
   gates, identity, integrity, and artifact reports.
+- Graph physical execution owns terminal consumer/layout/placement decisions,
+  compiled execution profiles, device-view admission, and shape registry.
 - Model owns runtime-descriptor projection. Runtime owns descriptor import and
   consumption, binding import, immutable model lifecycle, mutable sessions,
   residency, state, and bounded benchmark execution; model families supply
@@ -175,12 +177,21 @@ domain algorithms. No writer owns command output.
 | `src/runtime/residency.c` | read-only resident attention-weight packs and generation-bound invalidation |
 | `src/runtime/graph.c` | execution descriptors, phase/mode dispatch, reusable workspace, and transactional publication |
 | `src/runtime/benchmark.c` | identity-bound runtime timing, baseline, CSV, and deterministic SVG serialization |
+| `src/graph/execution.c` | Physical Execution IR, compiled execution-profile identities, device-view admission, and execution-shape registry |
+| `src/graph/candidate.c` | prefix-addressable attention candidate deltas and exact accepted-prefix projection |
+| `src/graph/state_recipe.c` | immutable family-neutral persistent-state recipe projection |
 | `src/server/core.c` | one-model host, private listener, bounded queue, worker and shutdown |
 | `src/server/session.c` | exact conversation sessions, KV continuation, turns and partial state |
 | `src/server/protocol.c` | bounded versioned local framing and thin protocol client |
 | `src/server/telemetry.c` | one typed event sequence, subscribers and metrics accumulation |
 
 ## Model architecture ownership map
+
+The three DeepSeek family files deliberately share one basename because they
+project the same family at three different DAG levels. Their directories and
+machine-readable owner rows disambiguate the responsibility. A common runtime
+family directory would duplicate model/session/state authority and is
+forbidden.
 
 | Owner | Boundary |
 | --- | --- |
@@ -202,6 +213,7 @@ domain algorithms. No writer owns command output.
 | `src/graph/numeric.c` | reusable attention numerical operations without family policy |
 | `src/graph/state.c` | immutable prior-state views, candidate deltas, and transactional attention-state lifecycle |
 | `src/graph/families/deepseek_v4.c` | DeepSeek schedule, recurrence and CPU/CUDA operation composition |
+| `src/backend/cuda/families/deepseek_v4.c` | irreducible fused CUDA lowering for the DeepSeek graph recipe; no runtime or model authority |
 | `src/backend/core.c` | backend lifecycle, tensor binding and canonical qtype compute projection |
 | `src/backend/report.c` | typed device, context, bundle, exact-variant, and memory reports |
 | `src/backend/cuda/capability.c` | atomic generated-bundle admission, exact CUDA capability, launch/sync demotion, and cleanup failure |
@@ -254,7 +266,8 @@ to [`ROADMAP.md`](../../ROADMAP.md).
 This target does not claim:
 
 - public or remote serving, authentication, TLS, or compatibility APIs
-- CUDA sampling, tokenizer execution, or fused logits/sampling execution
+- complete CUDA stochastic sampling, tokenizer execution, or fused stochastic
+  logits/sampling execution
 - evaluation or release-path full-model benchmark results
 - a selected release artifact or release readiness
 

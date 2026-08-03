@@ -1,8 +1,8 @@
-# Local Protocol v5
+# Local Protocol v6
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_CLIENT_PROTOCOL_VERSION = 5`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 6`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -16,17 +16,17 @@ private UID-owned Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 5 and exchanges bounded typed frames.
+Every connection negotiates version 6 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the model worker.
 
-Version 4 is refused explicitly. There is no private pre-v0.1 compatibility
+Version 5 is refused explicitly. There is no private pre-v0.1 compatibility
 decoder. Unknown operations and response kinds fail closed.
 
 ## Operations
 
-Protocol v5 carries runtime start-state/status/stop, live model and memory
+Protocol v6 carries runtime start-state/status/stop, live model and memory
 facts, selected target-only or DSpark generation mode, session lifecycle,
 generation turns and cancellation, speculative lifecycle events, event
 subscriptions, and composed console status. Offline compile, artifact,
@@ -64,9 +64,12 @@ line without timing the asynchronous request locally. Provider/OpenAI requests
 retain their provider stream contract and do not receive these native console
 messages.
 
-Ordinary current DeepSeek text uses the final-text channel. An unavailable
-explicit-reasoning channel remains unavailable; clients may not infer hidden
-reasoning or classify prose by style.
+The admitted DeepSeek DSpark tokenizer contract can classify source-authored
+explicit reasoning separately from final text when the request selects
+`enabled` or `maximum`. Delimiter bytes are consumed by that owner and never
+enter either projection. Disabled reasoning remains final-text only. Clients
+may not infer hidden reasoning, inspect arbitrary prose, or search output for
+delimiter-looking strings.
 
 DSpark proposal tokens are not stream fragments. Drafting, verification, and
 accepted-prefix events carry typed counters, but final text is emitted only
@@ -106,6 +109,14 @@ only target-verified committed tokens count. Proposal counts remain separate.
 The runtime's decode-step count likewise denotes committed sequence positions;
 draft-forward and target-verification counts report execution calls separately.
 
+A terminal failure after committed output carries
+`yvex.client.partial-turn.v1`: availability, committed-progress and
+reset-required flags; initial/final position; committed-token and published-byte
+counts; target, draft, RNG, ledger, decoder, history and transcript generations
+where authoritative; state identities; failure class; and stop reason. This
+snapshot is distinct from cancellation and from a failure with no committed
+progress. A partial session refuses an ordinary turn until reset.
+
 ## Side effects
 
 The protocol may create/reset/close sessions, enqueue/cancel generation,
@@ -137,6 +148,6 @@ format.
 
 ## Non-claims
 
-Protocol v5 is not a public remote API, authentication protocol, TLS transport,
+Protocol v6 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
 quality contract.

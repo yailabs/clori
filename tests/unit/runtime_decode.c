@@ -19,6 +19,7 @@ static void decode_test_step(yvex_runtime_decode_step_result *step)
     memset(step, 0, sizeof(*step));
     step->schema_version = YVEX_RUNTIME_DECODE_SCHEMA_V1;
     step->completed = 1;
+    step->normalized_hidden_host_available = 1;
     step->step_ordinal = 0ull;
     step->token_id = 7u;
     step->position_before = 2ull;

@@ -10,7 +10,20 @@
 #include <stdatomic.h>
 #include <yvex/internal/decode.h>
 #include <yvex/internal/generation.h>
+#include <yvex/internal/graph.h>
 #include <yvex/internal/runtime.h>
+
+static inline yvex_attention_evidence_level runtime_attention_evidence(
+    yvex_execution_evidence_profile profile)
+{
+    static const yvex_attention_evidence_level levels[] = {
+        YVEX_ATTENTION_EVIDENCE_NONE,
+        YVEX_ATTENTION_EVIDENCE_STAGES,
+        YVEX_ATTENTION_EVIDENCE_FULL};
+    return (unsigned int)profile < sizeof(levels) / sizeof(levels[0])
+               ? levels[profile]
+               : YVEX_ATTENTION_EVIDENCE_NONE;
+}
 
 #define YVEX_GENERATION_LIFECYCLE_ACTIVE 1u
 #define YVEX_GENERATION_LIFECYCLE_CLOSING 2u
@@ -27,6 +40,7 @@ struct yvex_runtime_model {
     yvex_materialization_plan *materialization_plan;
     yvex_materialization_session *materialization;
     yvex_runtime_descriptor *descriptor;
+    yvex_physical_execution_ir *physical_execution;
     yvex_attention_plan *attention;
     yvex_attention_plan *draft_attention;
     yvex_tokenizer *tokenizer;
@@ -85,6 +99,8 @@ struct yvex_runtime_generation_context {
     yvex_token_sequence *sequence;
     yvex_runtime_generation_options options;
     yvex_runtime_generation_plan_summary plan;
+    yvex_compiled_execution_profile execution_profile;
+    yvex_execution_shape_registry *execution_shapes;
     unsigned int *additional_stops;
     float *hidden, *logits_row, *anchor_probabilities;
     unsigned long long hidden_count, logits_count, workspace_bytes;
@@ -145,6 +161,7 @@ typedef enum {
     YVEX_RUNTIME_REFUSE_OPEN_ARTIFACT,
     YVEX_RUNTIME_REFUSE_OPEN_MATERIALIZATION,
     YVEX_RUNTIME_REFUSE_OPEN_IMPORT,
+    YVEX_RUNTIME_REFUSE_OPEN_PHYSICAL_EXECUTION,
     YVEX_RUNTIME_REFUSE_OPEN_IMPORTED_IDENTITY,
     YVEX_RUNTIME_REFUSE_OPEN_TOKENIZER,
     YVEX_RUNTIME_REFUSE_OPEN_SEAL,

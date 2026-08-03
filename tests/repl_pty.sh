@@ -81,6 +81,62 @@ while test "$attempt" -lt 100; do
     sleep 0.01
 done
 test "$attempt" -lt 100
+printf 'MARKDOWN_STREAM\n' >&3
+attempt=0
+while test "$attempt" -lt 100; do
+    prompts=$(grep -c 'yvex>' "$root/typescript" 2>/dev/null || true)
+    grep -F 'not-control' "$root/typescript" >/dev/null 2>&1 && \
+        test "$prompts" -ge 4 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+printf '/think\n' >&3
+attempt=0
+while test "$attempt" -lt 100; do
+    prompts=$(grep -c 'yvex>' "$root/typescript" 2>/dev/null || true)
+    grep -F 'enabled for the next turn' "$root/typescript" \
+        >/dev/null 2>&1 && test "$prompts" -ge 5 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+printf '/nothink\n' >&3
+attempt=0
+while test "$attempt" -lt 100; do
+    prompts=$(grep -c 'yvex>' "$root/typescript" 2>/dev/null || true)
+    grep -F 'disabled for the next turn' "$root/typescript" \
+        >/dev/null 2>&1 && test "$prompts" -ge 6 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+printf '/think-max\n' >&3
+attempt=0
+while test "$attempt" -lt 100; do
+    prompts=$(grep -c 'yvex>' "$root/typescript" 2>/dev/null || true)
+    grep -F 'maximum for the next turn' "$root/typescript" \
+        >/dev/null 2>&1 && test "$prompts" -ge 7 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+printf 'REASONING_STREAM\n' >&3
+attempt=0
+while test "$attempt" -lt 100; do
+    grep -F 'The valid result is 42.' "$root/typescript" >/dev/null 2>&1 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+printf 'PARTIAL_FENCE\n' >&3
+attempt=0
+while test "$attempt" -lt 100; do
+    grep -F 'reset required (/reset)' "$root/typescript" >/dev/null 2>&1 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
 printf '\004' >&3
 exec 3>&-
 wait "$repl_pid"
@@ -91,7 +147,7 @@ clear=$(printf '\033[2J\033[H')
 redrawn=$(printf '\033[2J\033[H\r\033[2K\033[38;5;81myvex>\033[0m draft')
 sed "s/${esc}\\[[0-9;]*m//g" "$root/typescript" | tr -d '\r' \
     >"$root/typescript.plain"
-grep -F 'YVEX 0.1.0 · protocol 5' "$root/typescript.plain" >/dev/null
+grep -F 'YVEX 0.1.0 · protocol 6' "$root/typescript.plain" >/dev/null
 grep -F '  model      deepseek4-v4-flash-dspark' \
     "$root/typescript.plain" >/dev/null
 grep -F '  variant    dddddddddddd' "$root/typescript.plain" >/dev/null
@@ -107,8 +163,17 @@ grep -F '  /help        Discover canonical commands and operations.' \
     "$root/typescript.plain" >/dev/null
 grep -F '  /status      Return one composed runtime and attached-session snapshot.' \
     "$root/typescript.plain" >/dev/null
+grep -F '  /think       Enable explicit model-emitted reasoning for the next turn.' \
+    "$root/typescript.plain" >/dev/null
+grep -F '  /think-max   Enable the source-authored maximum reasoning policy.' \
+    "$root/typescript.plain" >/dev/null
+grep -F '  /nothink     Disable explicit model-emitted reasoning for the next turn.' \
+    "$root/typescript.plain" >/dev/null
 grep -F '  Ctrl-L       clear and redraw input' "$root/typescript.plain" >/dev/null
-test "$(grep -Ec '^  /' "$root/typescript.plain")" -eq 15
+test "$(awk '/^commands$/ { catalog = 1; next }
+             catalog && /^$/ { exit }
+             catalog && /^  \// { count++ }
+             END { print count + 0 }' "$root/typescript.plain")" -eq 18
 ! grep -F 'commands ·' "$root/typescript.plain" >/dev/null
 grep -F "$clear" "$root/typescript" >/dev/null
 grep -F "$redrawn" "$root/typescript" >/dev/null
@@ -116,6 +181,23 @@ grep -F 'yvex>' "$root/typescript" >/dev/null
 grep -F 'processing 4 input tokens · 2/4 · 50.0%' "$root/typescript" >/dev/null
 grep -F 'processing 4 input tokens · 4/4 · 100%' "$root/typescript" >/dev/null
 grep -F 'hello from yvex' "$root/typescript" >/dev/null
+grep -F '[cuda]' "$root/typescript.plain" >/dev/null
+grep -F '__global__ void add() {' "$root/typescript.plain" >/dev/null
+grep -F '🌍' "$root/typescript.plain" >/dev/null
+grep -F 'Use int safely.' "$root/typescript.plain" >/dev/null
+grep -F '\x1b[31mnot-control' "$root/typescript.plain" >/dev/null
+grep -F 'I need to compare the constraints...' "$root/typescript.plain" >/dev/null
+grep -F 'The valid result is 42.' "$root/typescript.plain" >/dev/null
+grep -F 'reasoning · enabled for the next turn' "$root/typescript.plain" >/dev/null
+grep -F 'reasoning · disabled for the next turn' "$root/typescript.plain" >/dev/null
+grep -F 'reasoning · maximum for the next turn' "$root/typescript.plain" >/dev/null
+grep -F 'int value = ' "$root/typescript.plain" >/dev/null
+grep -F 'partial · 2 committed tokens · position 6 · reset required (/reset)' \
+    "$root/typescript.plain" >/dev/null
+! grep -F '```' "$root/typescript.plain" >/dev/null
+! grep -F "${esc}[31mnot-control" "$root/typescript" >/dev/null
+grep -F "${esc}[38;5;245mI need to compare the constraints..." \
+    "$root/typescript" >/dev/null
 grep -E '4 new/5 prompt/1 reused.*3 tokens.*TTFT 2\.50 s.*context 8/4096.*stop maximum tokens' \
     "$root/typescript" >/dev/null
 ! grep -F 'prefill      ' "$root/typescript" >/dev/null
@@ -285,9 +367,8 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime status >"$root/status"
 grep -F 'YVEX runtime ·' "$root/watch" >/dev/null
 grep -F 'watch · operational history and live events · Ctrl-C to stop' \
     "$root/watch" >/dev/null
-grep -F 'REQUEST  request started · fixture/fixture-request' "$root/watch" >/dev/null
-grep -F 'RUNTIME  runtime shutdown complete' "$root/watch" >/dev/null
-grep -F 'request started · fixture/fixture-request' "$root/watch" >/dev/null
+grep -E 'REQUEST[[:space:]]+fixture/fixture-request' "$root/watch" >/dev/null
+grep -E 'RUNTIME[[:space:]]+runtime shutdown complete' "$root/watch" >/dev/null
 ! grep -F 'kernel launches 4511 · stream syncs 63' "$root/watch" >/dev/null
 ! grep -F 'client disconnected' "$root/watch" >/dev/null
 ! grep -E '^#[0-9]+' "$root/watch" >/dev/null

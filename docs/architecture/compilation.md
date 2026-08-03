@@ -15,7 +15,8 @@ verified source snapshot
   -> policy-selected physical variant
   -> deterministic transformation execution
   -> complete GGUF artifact
-  -> artifact admission and materialization
+  -> artifact admission
+  -> Physical Execution IR and materialization
   -> content-addressed runtime binding
 ```
 
@@ -66,6 +67,15 @@ physical-policy decision.
 Writer and runtime owners consume the resolved variant. They do not pick a
 different representation for convenience.
 
+The physical variant owns canonical encoded representation. The versioned
+Physical Execution IR separately projects each terminal tensor into its
+consumer class, execution layout, placement, activation representation,
+supported widths, backend and hardware requirement, kernel family, evidence
+depth, and explicit fallback class. This separation lets a backend derive a
+kernel-consumable layout without changing the canonical artifact identity.
+Physical decisions bind terminal and variant identities; they never include
+process pointers, local paths, timestamps, or transient residency.
+
 ## Artifact emission and admission
 
 The GGUF writer plans exact metadata, tensor directory order, alignment,
@@ -77,16 +87,22 @@ facts, every required tensor role, qtype support, source/derivation/variant
 identities, and exact file identity. Structural GGUF validity is necessary but
 not sufficient.
 
-Materialization produces checked backend-addressable tensor views and resource
-ownership. It does not execute a graph or establish support for a model.
+Materialization consumes terminal roles and Physical Execution IR decisions to
+produce checked file-backed, host-canonical, CUDA-addressable-host, device, or
+staged resources. It does not import a concrete model family, infer consumers
+from tensor names, execute a graph, or establish support for a model. A future
+derived execution asset must be rebuilt deterministically and authenticated by
+both artifact and Physical Execution IR identities.
 
 ## Runtime binding
 
 The runtime binding is a separate content-addressed object. It bridges the
-admitted artifact to runtime descriptors, physical tensor locations,
-executable requirements, numerical identities, and compatibility constraints.
-The warm runtime reopens and authenticates it rather than rebuilding compiler
-plans.
+admitted artifact and physical-execution decisions to runtime descriptors,
+physical tensor locations, executable requirements, numerical identities, and
+compatibility constraints. A compiled execution profile then binds that chain
+to the kernel bundle, hardware, context capacity, mode, workload, evidence
+profile, and portable or device-native adapter class. The warm runtime reopens
+and authenticates admitted facts rather than rebuilding compiler plans.
 
 Artifact drift, binding drift, unsupported qtypes, missing roles, resource
 overflow, or incompatible runtime requirements refuse before model execution.

@@ -70,12 +70,20 @@ binding, prepare immutable model resources, and isolate mutable execution
 sessions. Graph and backend owners execute already-admitted operations; they do
 not reconstruct model topology.
 
+The product levels are verified source, logical model, family projection,
+Transformation IR, quantization decisions, physical variant, Physical
+Execution IR, complete artifact, admission, materialization, optional derived
+execution asset, runtime binding, immutable runtime model, compiled execution
+profile, mutable session, request transaction, workload evidence, benchmark,
+and release qualification. These levels are identities and lifecycle
+boundaries, not aliases for directories.
+
 ## Authority boundaries
 
 | Boundary | Current owner |
 | --- | --- |
 | Source provenance, inventory, payload trust | `src/source/` |
-| Family facts and irreducible lowering | `src/model/families/` |
+| Family source facts, coverage and logical lowering | `src/model/families/` |
 | Artifact-neutral transformation and physical policy | `src/model/compilation/`, model compilation owners |
 | GGUF container, qtypes, writer, layout | `src/gguf/` |
 | Artifact snapshot, integrity, admission, materialization | `src/artifact/` |
@@ -87,14 +95,25 @@ not reconstruct model topology.
 | OpenAI-compatible projection | `src/server/openai/` and `src/provider/` |
 | Command metadata and projections | `config/operator/registry.json`, generated descriptors, `src/cli/` |
 
+DeepSeek has exactly three irreducible implementation projections:
+`src/model/families/deepseek_v4.c` interprets source and logical facts,
+`src/graph/families/deepseek_v4.c` composes the family execution recipe, and
+`src/backend/cuda/families/deepseek_v4.c` owns genuinely fused CUDA lowering.
+Their shared basename identifies the same family while their directories and
+machine-readable owners identify distinct dependency levels. Runtime remains
+family-neutral; a concrete family hierarchy beneath the runtime namespace or a
+fourth family projection is forbidden.
+
 The exact source-file ownership manifest is
 [`config/source_owners.tsv`](../../config/source_owners.tsv). Contributor-facing
 layout rules are in [Source and Module Ownership](../development/source-ownership.md).
 
 ## Application surfaces
 
-The private local protocol is version 5. It carries typed requests, streamed
-fragments, status, session results, progress, terminal results, and refusals.
+The private local protocol is version 6. It carries typed requests, streamed
+channels, status, session and partial-turn results, progress, terminal results,
+and refusals. Version 5 is refused rather than interpreted under the changed
+fixed-layout contract.
 The in-process OpenAI adapter translates the bounded compatibility profile to
 the same protocol/session semantics. Neither transport enters graph, tokenizer,
 sampling, or model APIs directly.

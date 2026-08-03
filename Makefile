@@ -219,6 +219,7 @@ CORE_SRCS := \
 	src/runtime/generation.c \
 	src/runtime/generation_context.c \
 	src/runtime/generation_result.c \
+	src/graph/execution.c \
 	src/runtime/speculation.c \
 	src/runtime/logits.c \
 	src/runtime/sampling.c \
@@ -229,7 +230,9 @@ CORE_SRCS := \
 	src/runtime/transformer.c \
 	src/runtime/transformer_input.c \
 	src/runtime/residency.c \
+	src/graph/state_recipe.c \
 	src/graph/state.c \
+	src/graph/candidate.c \
 	src/gguf/core.c \
 	src/gguf/conversion.c \
 	src/gguf/imatrix.c \
@@ -371,6 +374,8 @@ $(OBJ_DIR)/src/cli/commands/graph.o: CPPFLAGS += -D_XOPEN_SOURCE=700 -I$(BUILD_D
 $(OBJ_DIR)/src/cli/commands/graph.o: $(BUILD_COMMIT_HEADER)
 $(OBJ_DIR)/src/runtime/benchmark.o: CPPFLAGS += -I$(BUILD_DIR)/generated
 $(OBJ_DIR)/src/runtime/benchmark.o: $(BUILD_COMMIT_HEADER)
+$(OBJ_DIR)/src/runtime/generation_context.o: CPPFLAGS += -I$(BUILD_DIR)/generated
+$(OBJ_DIR)/src/runtime/generation_context.o: $(BUILD_COMMIT_HEADER)
 OPERATOR_REGISTRY_CONSUMER_OBJS := $(OBJ_DIR)/src/cli/main.o \
 	$(OBJ_DIR)/src/cli/io/client.o $(OBJ_DIR)/src/cli/io/out.o \
 	$(OBJ_DIR)/src/cli/input/operator.o
@@ -517,14 +522,14 @@ package: client daemon config/package_manifest.tsv NOTICE.md
 	daemon_sha=$$(sha256sum '$(YVEXD_BIN)' | awk '{print $$1}'); \
 	library_sha=$$(sha256sum '$(LIBYVEX)' | awk '{print $$1}'); \
 	registry_identity=$$(cat '$(OPERATOR_REGISTRY_IDENTITY)'); \
-	package_identity=$$(printf '%s\n' "$$commit" '5' 'cpu+cuda-dynamic' \
+	package_identity=$$(printf '%s\n' "$$commit" '6' 'cpu+cuda-dynamic' \
 		"$$registry_identity" "$$client_sha" "$$daemon_sha" "$$library_sha" | \
 		sha256sum | awk '{print $$1}'); \
 	{ printf 'field\tvalue\n'; \
 	  printf 'profile\tproduct\nsource_commit\t%s\n' "$$commit"; \
 	  printf 'package_identity\t%s\n' "$$package_identity"; \
 	  printf 'protocol_version\t%s\noperator_registry_identity\t%s\nbackend\t%s\n' \
-		'5' "$$registry_identity" 'cpu+cuda-dynamic'; \
+		'6' "$$registry_identity" 'cpu+cuda-dynamic'; \
 	  printf 'yvex_sha256\t%s\nyvexd_sha256\t%s\nlibyvex_sha256\t%s\n' \
 		"$$client_sha" "$$daemon_sha" "$$library_sha"; \
 	} > "$$package_dir/share/yvex/build.tsv"
@@ -812,7 +817,7 @@ test-packaging: package
 	@test ! -e '$(BUILD_DIR)/package/product/bin/yvex-dev'
 	@test -f '$(BUILD_DIR)/package/product/share/yvex/package_manifest.tsv'
 	@test -f '$(BUILD_DIR)/package/product/share/yvex/build.tsv'
-	@grep -F 'protocol_version	5' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
+	@grep -F 'protocol_version	6' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
 	@grep -F 'source_commit	' '$(BUILD_DIR)/package/product/share/yvex/build.tsv' >/dev/null
 	@test ! -e '$(BUILD_DIR)/package/developer'
 

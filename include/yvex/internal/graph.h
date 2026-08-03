@@ -199,9 +199,10 @@ int yvex_attention_state_recipe_seal(yvex_attention_state_recipe *recipe,
                                      yvex_error *err);
 
 typedef struct yvex_attention_publication {
-    int owned, complete;
+    int owned, complete, prefix_addressable;
     struct yvex_attention_workspace *workspace;
     unsigned int evidence_level;
+    char execution_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long layer_index;
     yvex_attention_class attention_class;
     unsigned long long token_position, token_count, hidden_width, q_rank;
@@ -214,6 +215,9 @@ typedef struct yvex_attention_publication {
     float *core_output, *envelope_output;
     unsigned long long *compressed_positions, *indexer_positions;
     unsigned long long *topk_counts, *topk_positions;
+    unsigned long long rolling_checkpoint_count;
+    float *main_rolling_kv_checkpoints, *main_rolling_score_checkpoints;
+    float *indexer_rolling_kv_checkpoints, *indexer_rolling_score_checkpoints;
     yvex_attention_rolling_state_output next_main_rolling_state;
     yvex_attention_rolling_state_output next_indexer_rolling_state;
 } yvex_attention_publication;
@@ -314,7 +318,7 @@ typedef struct {
     yvex_attention_publication *publication;
     yvex_attention_execution_trace *trace;
     const yvex_attention_cancellation *cancellation;
-    int candidate_block_visible;
+    int candidate_block_visible, retain_prefix_checkpoints;
 } yvex_attention_cpu_options;
 
 typedef struct {
@@ -485,7 +489,7 @@ typedef struct {
     yvex_attention_probe_evidence_fn evidence;
     void *evidence_context;
     yvex_attention_transaction_disposition transaction_disposition;
-    int candidate_block_visible;
+    int candidate_block_visible, retain_prefix_checkpoints;
 } yvex_attention_probe_request;
 typedef yvex_attention_probe_request yvex_attention_execution_request;
 typedef struct {

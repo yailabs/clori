@@ -31,6 +31,14 @@ static const unsigned char deepseek_think_start[] = "<think>";
 static const unsigned char deepseek_think_end[] = "</think>";
 static const unsigned char deepseek_tool_start[] = "<tool_result>";
 static const unsigned char deepseek_tool_end[] = "</tool_result>";
+static const unsigned char deepseek_reasoning_max[] =
+    "Reasoning Effort: Absolute maximum with no shortcuts permitted.\n"
+    "You MUST be very thorough in your thinking and comprehensively decompose the problem to "
+    "resolve the root cause, rigorously stress-testing your logic against all potential paths, "
+    "edge cases, and adversarial scenarios.\n"
+    "Explicitly write out your entire deliberation process, documenting every intermediate step, "
+    "considered alternative, and rejected hypothesis to ensure absolutely no assumption is left "
+    "unchecked.\n\n";
 
 typedef struct {
     unsigned char *data;
@@ -523,13 +531,14 @@ static int prompt_identity_build(yvex_tokenizer *tokenizer)
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    const unsigned char *facts[] = {deepseek_bos, deepseek_eos, deepseek_user,
-                                    deepseek_assistant, deepseek_think_start,
-                                    deepseek_think_end, deepseek_tool_start, deepseek_tool_end};
+    const unsigned char *facts[] = {
+        deepseek_bos, deepseek_eos, deepseek_user, deepseek_assistant,
+        deepseek_think_start, deepseek_think_end, deepseek_tool_start,
+        deepseek_tool_end, deepseek_reasoning_max};
     size_t index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.tokenizer.deepseek-v4-prompt.v1"))
+    if (!yvex_sha256_update_text(&hash, "yvex.tokenizer.deepseek-v4-prompt.v2"))
         return 0;
     for (index = 0u; index < sizeof(facts) / sizeof(facts[0]); ++index)
         if (!yvex_sha256_update_u64_be(&hash, strlen((const char *)facts[index])) ||
@@ -568,7 +577,7 @@ static int plan_identity_build(yvex_tokenizer *tokenizer)
     size_t index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.tokenizer.plan.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.tokenizer.plan.v2") ||
         !yvex_sha256_update_u64_be(&hash, plan->schema_version) ||
         !yvex_sha256_update_u64_be(&hash, plan->family_adapter_id) ||
         !yvex_sha256_update_u64_be(&hash, plan->family_adapter_version) ||
@@ -581,7 +590,9 @@ static int plan_identity_build(yvex_tokenizer *tokenizer)
         !yvex_sha256_update_u64_be(&hash, plan->prompt_policy) ||
         !yvex_sha256_update_u64_be(&hash, plan->add_bos_token) ||
         !yvex_sha256_update_u64_be(&hash, plan->add_eos_token) ||
-        !yvex_sha256_update_u64_be(&hash, plan->byte_fallback))
+        !yvex_sha256_update_u64_be(&hash, plan->byte_fallback) ||
+        !yvex_sha256_update_u64_be(&hash, plan->explicit_reasoning_supported) ||
+        !yvex_sha256_update_u64_be(&hash, plan->maximum_reasoning_supported))
         return 0;
     for (index = 0u; index < sizeof(identities) / sizeof(identities[0]); ++index)
         if (!yvex_sha256_update_text(&hash, identities[index]))
@@ -640,7 +651,7 @@ int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gg
     rc = exact_policy_admit(tokenizer, gguf, err);
     if (rc != YVEX_OK)
         return rc;
-    tokenizer->plan.schema_version = YVEX_TOKENIZER_PLAN_SCHEMA_V1;
+    tokenizer->plan.schema_version = YVEX_TOKENIZER_PLAN_SCHEMA_V2;
     tokenizer->plan.family_adapter_id = DEEPSEEK_FAMILY_ADAPTER_ID;
     tokenizer->plan.family_adapter_version = DEEPSEEK_FAMILY_ADAPTER_VERSION;
     tokenizer->plan.vocabulary_size = tokenizer->vocab_size;
@@ -655,6 +666,20 @@ int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gg
         rc = merges_build(tokenizer, gguf, err);
     if (rc == YVEX_OK)
         rc = added_tokens_build(tokenizer, err);
+    if (rc == YVEX_OK) {
+        unsigned int start_id, end_id;
+        if (!vocab_lookup(tokenizer, deepseek_think_start,
+                          sizeof(deepseek_think_start) - 1u, &start_id) ||
+            !vocab_lookup(tokenizer, deepseek_think_end,
+                          sizeof(deepseek_think_end) - 1u, &end_id)) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.plan.reasoning",
+                           "source-authored reasoning delimiters are absent");
+            rc = YVEX_ERR_FORMAT;
+        } else {
+            tokenizer->plan.explicit_reasoning_supported = 1;
+            tokenizer->plan.maximum_reasoning_supported = 1;
+        }
+    }
     if (rc == YVEX_OK && (!special_identity_build(tokenizer) ||
                           !prompt_identity_build(tokenizer))) {
         yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.plan.identity", "policy identity derivation failed");
@@ -1295,7 +1320,8 @@ static int prompt_assistant_transition(byte_builder *builder,
                             sizeof(deepseek_assistant) - 1u, err);
     if (rc != YVEX_OK)
         return rc;
-    if (options->mode == YVEX_PROMPT_MODE_THINKING && final_user)
+    if (options->mode == YVEX_PROMPT_MODE_THINKING &&
+        (final_user || !options->drop_thinking))
         return builder_append(builder, deepseek_think_start,
                               sizeof(deepseek_think_start) - 1u, err);
     return builder_append(builder, deepseek_think_end,
@@ -1308,7 +1334,10 @@ static int fixture_prompt_render(yvex_rendered_prompt *out,
                                  const yvex_prompt_options *options,
                                  yvex_error *err)
 {
-    yvex_prompt_options defaults = {0, 0, 1, 0, YVEX_PROMPT_MODE_CHAT};
+    yvex_prompt_options defaults = {
+        .add_generation_prompt = 1,
+        .mode = YVEX_PROMPT_MODE_CHAT,
+        .reasoning_policy = YVEX_REASONING_DISABLED};
     byte_builder builder = {0};
     unsigned long long index;
     int rc = YVEX_OK;
@@ -1391,6 +1420,7 @@ static int prompt_identities(const yvex_tokenizer *tokenizer,
         !yvex_sha256_update_u64_be(&hash, options->add_generation_prompt) ||
         !yvex_sha256_update_u64_be(&hash, options->drop_thinking) ||
         !yvex_sha256_update_u64_be(&hash, options->mode) ||
+        !yvex_sha256_update_u64_be(&hash, options->reasoning_policy) ||
         !yvex_sha256_final(&hash, digest))
         return 0;
     yvex_sha256_hex(digest, prompt->prompt_identity);
@@ -1409,7 +1439,12 @@ int yvex_prompt_render(yvex_rendered_prompt *out,
                        const yvex_prompt_options *options,
                        yvex_error *err)
 {
-    yvex_prompt_options defaults = {1, 0, 1, 1, YVEX_PROMPT_MODE_CHAT};
+    yvex_prompt_options defaults = {
+        .add_bos = 1,
+        .add_generation_prompt = 1,
+        .drop_thinking = 1,
+        .mode = YVEX_PROMPT_MODE_CHAT,
+        .reasoning_policy = YVEX_REASONING_DISABLED};
     byte_builder builder = {0};
     yvex_rendered_prompt candidate;
     unsigned long long index;
@@ -1421,14 +1456,24 @@ int yvex_prompt_render(yvex_rendered_prompt *out,
     if (!options)
         options = &defaults;
     if (!out || !tokenizer || !tokenizer->plan.sealed || !messages || !message_count ||
-        options->mode > YVEX_PROMPT_MODE_THINKING || !options->drop_thinking ||
+        options->mode > YVEX_PROMPT_MODE_THINKING ||
+        options->reasoning_policy > YVEX_REASONING_MAXIMUM ||
+        ((options->reasoning_policy == YVEX_REASONING_DISABLED) !=
+         (options->mode == YVEX_PROMPT_MODE_CHAT)) ||
+        (options->reasoning_policy != YVEX_REASONING_DISABLED &&
+         !tokenizer->plan.explicit_reasoning_supported) ||
+        (options->reasoning_policy == YVEX_REASONING_MAXIMUM &&
+         !tokenizer->plan.maximum_reasoning_supported) ||
         !prompt_roles_valid(messages, message_count, options)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "tokenizer.prompt",
-                       "sealed tokenizer, drop-thinking policy, and valid ordered messages are required");
+                       "sealed tokenizer, admitted reasoning policy, and valid ordered messages are required");
         return YVEX_ERR_INVALID_ARG;
     }
     if (options->add_bos)
         rc = builder_append(&builder, deepseek_bos, sizeof(deepseek_bos) - 1u, err);
+    if (rc == YVEX_OK && options->reasoning_policy == YVEX_REASONING_MAXIMUM)
+        rc = builder_append(&builder, deepseek_reasoning_max,
+                            sizeof(deepseek_reasoning_max) - 1u, err);
     for (index = 0u; index < message_count && rc == YVEX_OK; ++index) {
         yvex_prompt_role prior = index ? messages[index - 1u].role : YVEX_PROMPT_ROLE_SYSTEM;
         rc = prompt_message_append(&builder, &messages[index], prior, err);

@@ -388,8 +388,18 @@ int yvex_attention_trace_capture(yvex_attention_execution_trace *trace, unsigned
     const unsigned long long *topk_counts, const unsigned long long *topk_positions, unsigned long long topk_stride,
     const yvex_attention_rolling_state_output *main_state, const float *main_kv, const float *main_score,
     const yvex_attention_rolling_state_output *index_state, const float *index_kv,
-    const float *index_score, yvex_attention_evidence_level evidence_level,
+    const float *index_score, unsigned long long rolling_checkpoint_count,
+    const float *main_checkpoint_kv, const float *main_checkpoint_score,
+    const float *index_checkpoint_kv, const float *index_checkpoint_score,
+    yvex_attention_evidence_level evidence_level,
     yvex_attention_workspace *workspace);
+int yvex_attention_candidate_checkpoints_open(
+    yvex_attention_scratch_budget *scratch, unsigned long long rows,
+    const yvex_attention_rolling_state_view *rolling, float **kv,
+    float **score);
+void yvex_attention_candidate_checkpoint_capture(
+    float *kv, float *score, unsigned long long row,
+    const yvex_attention_rolling_state_output *rolling);
 int yvex_attention_rolling_storage_acquire(const yvex_attention_layer_plan *layer,
     yvex_attention_rolling_kind kind, unsigned long long token_position,
     yvex_attention_workspace *workspace, float **kv_state, float **score_state,
@@ -414,7 +424,8 @@ int yvex_attention_cuda_trace_open(yvex_attention_publication *trace,
     const yvex_attention_layer_plan *layer, yvex_attention_operation_scope scope,
     const yvex_attention_history_view *history, unsigned long long token_position,
     unsigned long long token_count, yvex_attention_evidence_level evidence_level,
-    yvex_attention_workspace *workspace, unsigned long long limit_bytes,
+    int retain_prefix_checkpoints, yvex_attention_workspace *workspace,
+    unsigned long long limit_bytes,
     unsigned long long *owned_bytes, yvex_attention_failure *failure, yvex_error *err);
 int yvex_attention_cuda_publish(attention_cuda_context *context);
 int yvex_attention_hadamard_cpu(const float *input, unsigned long long length, float scale, int reject_nonfinite,

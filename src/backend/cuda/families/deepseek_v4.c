@@ -112,7 +112,8 @@ typedef enum {
     EXT_INDEXER_POSITIONS, EXT_MAIN_STATE, EXT_INDEX_STATE,
     EXT_INDEX_QUERY, EXT_INDEX_WEIGHTS, EXT_SELECTED, EXT_CANDIDATES, EXT_QUERY_HEADS, EXT_PHASE_COMPRESSED,
     EXT_PHASE_COMPRESSED_POSITIONS, EXT_PHASE_INDEXER, EXT_PHASE_INDEXER_POSITIONS,
-    EXT_MAIN_ROLLING, EXT_INDEX_ROLLING, EXT_LOCAL_USED, EXT_COMPRESSED_USED, EXT_INDEXER_USED,
+    EXT_MAIN_ROLLING, EXT_INDEX_ROLLING, EXT_MAIN_PUBLICATION, EXT_INDEX_PUBLICATION,
+    EXT_LOCAL_USED, EXT_COMPRESSED_USED, EXT_INDEXER_USED,
     EXT_MAIN_WIDTH, EXT_MAIN_HEAD, EXT_INDEX_WIDTH, EXT_INDEX_HEAD, EXT_MAIN_POSITION, EXT_INDEX_POSITION
 } attn_extent_kind;
 typedef enum {
@@ -180,7 +181,8 @@ static const attn_transfer_spec attn_transfers[] = {
     T(phase_raw_kv, raw_kv, SIZE_MAX, EXT_RAW_KV, SPAN_FLOAT, 7u, 0u, 0, "raw_kv"),
     T(phase_attention, attention_values, SIZE_MAX, EXT_QUERY, SPAN_FLOAT, 7u, 2u, 0, "attention"),
     T(phase_output, output, SIZE_MAX, EXT_CORE, SPAN_FLOAT, 7u, 0u, 0, "output"),
-    T(phase_envelope_output, envelope_output, SIZE_MAX, EXT_ENVELOPE, SPAN_FLOAT, 7u, 0u, 1, "envelope_output"),
+    T(phase_envelope_output, envelope_output, SIZE_MAX, EXT_ENVELOPE,
+      SPAN_FLOAT, 7u, 0u, 1, "envelope_output"),
     T(phase_new_compressed, compressed_kv, SIZE_MAX, EXT_PHASE_COMPRESSED, SPAN_FLOAT, 6u, 0u, 0, "compressed"),
     T(phase_new_compressed_positions, compressed_positions,
       offsetof(attn_run, phase_compressed_count), EXT_PHASE_COMPRESSED_POSITIONS,
@@ -192,13 +194,14 @@ static const attn_transfer_spec attn_transfers[] = {
     T(phase_index_query, index_query, SIZE_MAX, EXT_INDEX_QUERY, SPAN_FLOAT, 2u, 2u, 0, "index_query"),
     T(phase_index_weights, index_weights, SIZE_MAX, EXT_INDEX_WEIGHTS, SPAN_FLOAT, 2u, 2u, 0, "index_weights"),
     T(phase_selected_positions, topk_positions, SIZE_MAX, EXT_SELECTED, SPAN_U64, 2u, 3u, 0, "topk_positions"),
-    T(rolling[ROLL_MAIN].after_kv, main_kv_state, SIZE_MAX, EXT_MAIN_ROLLING, SPAN_FLOAT, 6u, 0u, 0, "main_kv_state"),
+    T(rolling[ROLL_MAIN].after_kv, main_kv_state, SIZE_MAX,
+      EXT_MAIN_PUBLICATION, SPAN_FLOAT, 6u, 0u, 0, "main_kv_state"),
     T(rolling[ROLL_MAIN].after_score, main_score_state, SIZE_MAX,
-      EXT_MAIN_ROLLING, SPAN_FLOAT, 6u, 0u, 0, "main_score_state"),
+      EXT_MAIN_PUBLICATION, SPAN_FLOAT, 6u, 0u, 0, "main_score_state"),
     T(rolling[ROLL_INDEX].after_kv, indexer_kv_state, SIZE_MAX,
-      EXT_INDEX_ROLLING, SPAN_FLOAT, 2u, 0u, 0, "index_kv_state"),
+      EXT_INDEX_PUBLICATION, SPAN_FLOAT, 2u, 0u, 0, "index_kv_state"),
     T(rolling[ROLL_INDEX].after_score, indexer_score_state, SIZE_MAX,
-      EXT_INDEX_ROLLING, SPAN_FLOAT, 2u, 0u, 0, "index_score_state")
+      EXT_INDEX_PUBLICATION, SPAN_FLOAT, 2u, 0u, 0, "index_score_state")
 };
 #undef T
 
@@ -746,6 +749,14 @@ static int attn_extent(const attn_run *run,
     case EXT_PHASE_INDEXER_POSITIONS: left = run->phase_indexer_count; break;
     case EXT_MAIN_ROLLING: left = run->rolling[ROLL_MAIN].extent; break;
     case EXT_INDEX_ROLLING: left = run->rolling[ROLL_INDEX].extent; break;
+    case EXT_MAIN_PUBLICATION:
+        left = run->rolling[ROLL_MAIN].extent;
+        right = run->job->retain_prefix_checkpoints ? run->job->token_count : 1ull;
+        break;
+    case EXT_INDEX_PUBLICATION:
+        left = run->rolling[ROLL_INDEX].extent;
+        right = run->job->retain_prefix_checkpoints ? run->job->token_count : 1ull;
+        break;
     case EXT_LOCAL_USED: left = run->local_extent; break;
     case EXT_COMPRESSED_USED: left = run->compressed_extent; break;
     case EXT_INDEXER_USED: left = run->history_index_extent; break;
@@ -830,12 +841,12 @@ static int attn_prepare(attn_run *run) {
     run->initial_local_count = run->job->local_count;
     run->initial_compressed_count = run->job->compressed_count;
     run->initial_indexer_count = run->job->indexer_count;
-    run->local_capacity = run->state->attention_graph_configured
+    run->local_capacity = attn_graph_mode(run)
                               ? run->state->attention_local_capacity
                               : run->job->sliding_window -
                                     (run->job->candidate_block_visible ? 0ull : 1ull);
     run->compressed_capacity = run->job->attention_class == YVEX_BACKEND_ATTENTION_SWA
-        ? 0ull : (run->state->attention_graph_configured
+        ? 0ull : (attn_graph_mode(run)
                       ? run->state->attention_compressed_capacity
                       : (run->job->token_position + run->job->token_count) /
                             run->job->compression_ratio);
@@ -843,7 +854,7 @@ static int attn_prepare(attn_run *run) {
         !run->compressed_capacity)
         run->compressed_capacity = 1ull;
     run->indexer_capacity = run->job->attention_class == YVEX_BACKEND_ATTENTION_CSA
-        ? (run->state->attention_graph_configured
+        ? (attn_graph_mode(run)
                ? run->state->attention_indexer_capacity : run->compressed_capacity)
         : 0ull;
     if (!yvex_core_u64_add(run->job->token_position, run->job->token_count, &phase_end) ||
@@ -877,13 +888,24 @@ static int attn_prepare(attn_run *run) {
         run->job->attention_class != YVEX_BACKEND_ATTENTION_CSA ? 0ull :
         attn_graph_mode(run) && run->indexer_capacity ? run->indexer_capacity :
         indexer_end ? indexer_end : 1ull;
-    if (run->initial_local_count > run->local_capacity ||
-        compressed_end > run->compressed_capacity ||
-        indexer_end > run->indexer_capacity)
+    if (run->initial_local_count > run->local_capacity)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET,
-            "cuda.deepseek_attention.capture_capacity", 0ull, 1ull,
-            YVEX_ERR_BOUNDS, "CUDA attention history exceeds capture capacity");
+            "cuda.deepseek_attention.capacity.local", run->local_capacity,
+            run->initial_local_count, YVEX_ERR_BOUNDS,
+            "CUDA attention local history exceeds the selected execution shape");
+    if (compressed_end > run->compressed_capacity)
+        return attn_run_fail(
+            run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET,
+            "cuda.deepseek_attention.capacity.compressed", run->compressed_capacity,
+            compressed_end, YVEX_ERR_BOUNDS,
+            "CUDA attention compressed history exceeds the selected execution shape");
+    if (indexer_end > run->indexer_capacity)
+        return attn_run_fail(
+            run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET,
+            "cuda.deepseek_attention.capacity.indexer", run->indexer_capacity,
+            indexer_end, YVEX_ERR_BOUNDS,
+            "CUDA attention indexer history exceeds the selected execution shape");
     {
         struct {
             unsigned long long left, right, *result;
@@ -963,6 +985,9 @@ static int attn_prepare(attn_run *run) {
     run->resources.state = run->state;
     run->resources.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
     run->resources.budget = run->job->max_device_bytes;
+    /* Full evidence trades the production activation codec for canonical-order
+     * arithmetic so the independent oracle can compare exact stage values. */
+    run->resources.forensic_numeric = run->job->evidence_level == 3u;
     return YVEX_OK;
 }
 
@@ -1686,6 +1711,16 @@ static int attn_synchronize(attn_run *run) {
     if (rc == YVEX_OK && !attn_graph_mode(run))
         rc = yvex_cuda_synchronize(run->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
             "cuda.deepseek_attention.synchronize", run->err);
+    if (rc == YVEX_OK && run->job->retain_prefix_checkpoints) {
+        run->rolling[ROLL_MAIN].after_kv = run->phase_main_kv +
+            run->rolling[ROLL_MAIN].extent * sizeof(float);
+        run->rolling[ROLL_MAIN].after_score = run->phase_main_score +
+            run->rolling[ROLL_MAIN].extent * sizeof(float);
+        run->rolling[ROLL_INDEX].after_kv = run->phase_index_kv +
+            run->rolling[ROLL_INDEX].extent * sizeof(float);
+        run->rolling[ROLL_INDEX].after_score = run->phase_index_score +
+            run->rolling[ROLL_INDEX].extent * sizeof(float);
+    }
     if (rc == YVEX_OK) rc = attn_downloads_enqueue(run);
     if (rc != YVEX_OK)
         return attn_run_fail(

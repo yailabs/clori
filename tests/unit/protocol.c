@@ -42,6 +42,7 @@ static int test_request_roundtrip(void)
     source.top_p = 0.95;
     source.min_p = 0.05;
     source.typical_p = 1.0;
+    source.reasoning_policy = YVEX_REASONING_MAXIMUM;
     rc = yvex_protocol_request_encode(&source, frame, sizeof(frame), &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && count > 0u, "request encode");
     memset(&decoded, 0, sizeof(decoded));
@@ -55,6 +56,8 @@ static int test_request_roundtrip(void)
     YVEX_TEST_ASSERT(memcmp(decoded.prompt, prompt, sizeof(prompt)) == 0,
                      "prompt bytes including NUL");
     YVEX_TEST_ASSERT(decoded.seed_present && decoded.seed == 0u, "seed zero");
+    YVEX_TEST_ASSERT(decoded.reasoning_policy == YVEX_REASONING_MAXIMUM,
+                     "request-bound reasoning policy");
     free(owned_prompt);
     yvex_provider_request_close(&owned_provider);
 
@@ -90,12 +93,12 @@ static int test_all_operation_roundtrips(void)
         YVEX_TEST_ASSERT(
             yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
                                          &err) == YVEX_OK,
-            "all protocol-v5 operations encode");
+            "all protocol-v6 operations encode");
         YVEX_TEST_ASSERT(
             yvex_protocol_request_decode(frame, count, &decoded, &prompt,
                                          &provider, &err) == YVEX_OK &&
                 decoded.operation == (yvex_client_operation)value,
-            "all protocol-v5 operations decode");
+            "all protocol-v6 operations decode");
         free(prompt);
         prompt = NULL;
         yvex_provider_request_close(&provider);
@@ -133,7 +136,7 @@ static int test_schema_refusals(void)
         "nonzero TLV reserved field refuses");
     memcpy(malformed, frame, (size_t)count);
     malformed[count] = 0u;
-    malformed[count + 1u] = 191u;
+    malformed[count + 1u] = 255u;
     memset(malformed + count + 2u, 0, 6u);
     YVEX_TEST_ASSERT(
         yvex_protocol_request_decode(malformed, count + 8u, &decoded_request,
@@ -145,6 +148,12 @@ static int test_schema_refusals(void)
                                      &err) == YVEX_ERR_INVALID_ARG,
         "negative request operation refuses on encode");
     request.operation = YVEX_CLIENT_OP_RUNTIME_STATUS;
+    request.reasoning_policy = (yvex_reasoning_policy)99;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_request_encode(&request, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "unknown reasoning policy refuses");
+    request.reasoning_policy = YVEX_REASONING_DISABLED;
     request.temperature = NAN;
     YVEX_TEST_ASSERT(
         yvex_protocol_request_encode(&request, frame, sizeof(frame), &count,
@@ -166,7 +175,7 @@ static int test_schema_refusals(void)
         "unknown message kind refuses on decode");
     memcpy(malformed, frame, (size_t)count);
     malformed[count] = 0u;
-    malformed[count + 1u] = 191u;
+    malformed[count + 1u] = 255u;
     memset(malformed + count + 2u, 0, 6u);
     YVEX_TEST_ASSERT(
         yvex_protocol_message_decode(malformed, count + 8u, &decoded_message,
@@ -213,6 +222,13 @@ static int test_schema_refusals(void)
         yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
                                      &err) == YVEX_ERR_INVALID_ARG,
         "unavailable selected model refuses a projected identity");
+    memset(message.console.selected_model_identity, 0,
+           sizeof(message.console.selected_model_identity));
+    message.partial_turn.available = 1;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "incomplete partial-turn contract refuses");
 
     memset(&message, 0, sizeof(message));
     message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
@@ -427,6 +443,7 @@ static int test_message_roundtrip(void)
     source.console.progress_available = 1;
     source.console.selected_model_available = 1;
     source.console.explicit_reasoning_channel_supported = 1;
+    source.console.reasoning_policy = YVEX_REASONING_MAXIMUM;
     source.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     source.runtime.status = YVEX_SERVER_STATUS_READY;
     source.runtime.backend = YVEX_BACKEND_KIND_CUDA;
@@ -438,6 +455,30 @@ static int test_message_roundtrip(void)
            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     strcpy(source.console.selected_model_identity,
            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+    source.partial_turn.schema_version = YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1;
+    source.partial_turn.available = 1;
+    source.partial_turn.committed_progress = 1;
+    source.partial_turn.reset_required = 1;
+    source.partial_turn.failure_status = YVEX_ERR_BACKEND;
+    source.partial_turn.failure_class = YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE;
+    source.partial_turn.stop_reason = YVEX_CLIENT_STOP_MODEL_FAILURE;
+    source.partial_turn.initial_position = 30u;
+    source.partial_turn.final_committed_position = 37u;
+    source.partial_turn.committed_token_count = 2u;
+    source.partial_turn.published_text_bytes = 17u;
+    source.partial_turn.target_state_generation = 8u;
+    source.partial_turn.rng_generation = 3u;
+    source.partial_turn.token_ledger_generation = 9u;
+    source.partial_turn.message_history_generation = 4u;
+    source.partial_turn.transcript_generation = 4u;
+    strcpy(source.partial_turn.target_state_identity,
+           "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    strcpy(source.partial_turn.rng_state_identity,
+           "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    strcpy(source.partial_turn.token_ledger_identity,
+           "abababababababababababababababababababababababababababababababab");
+    strcpy(source.partial_turn.published_text_identity,
+           "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd");
     rc = yvex_protocol_message_encode(&source, frame, sizeof(frame), &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "console status encode");
     rc = yvex_protocol_message_decode(frame, count, &decoded, &err);
@@ -470,7 +511,17 @@ static int test_message_roundtrip(void)
                          decoded.confidence_logit_mean == 0.75 &&
                          decoded.effective_committed_rate == 4.5 &&
                          !strcmp(decoded.speculation_policy_identity,
-                                 source.speculation_policy_identity),
+                                 source.speculation_policy_identity) &&
+                         decoded.partial_turn.available &&
+                         decoded.partial_turn.reset_required &&
+                         decoded.partial_turn.failure_status == YVEX_ERR_BACKEND &&
+                         decoded.partial_turn.failure_class ==
+                             YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE &&
+                         decoded.partial_turn.final_committed_position == 37u &&
+                         decoded.partial_turn.committed_token_count == 2u &&
+                         decoded.partial_turn.message_history_generation == 4u &&
+                         !strcmp(decoded.partial_turn.token_ledger_identity,
+                                 source.partial_turn.token_ledger_identity),
                      "complete turn facts roundtrip");
     YVEX_TEST_ASSERT(decoded.console.runtime_ready &&
                          decoded.console.session_available &&
@@ -480,6 +531,8 @@ static int test_message_roundtrip(void)
                          decoded.console.progress_available &&
                          decoded.console.selected_model_available &&
                          decoded.console.explicit_reasoning_channel_supported &&
+                         decoded.console.reasoning_policy ==
+                             YVEX_REASONING_MAXIMUM &&
                          decoded.console.position == 37u &&
                          decoded.console.turn_count == 4u &&
                          decoded.console.context_capacity == 4096u &&
@@ -497,13 +550,13 @@ static int test_message_roundtrip(void)
 
 typedef struct {
     int listener;
-} v4_peer;
+} v5_peer;
 
-static void *v4_peer_main(void *opaque)
+static void *v5_peer_main(void *opaque)
 {
     static const unsigned char response[12] = {
-        'Y', 'V', 'X', 'P', 0u, 4u, 0u, 2u, 0u, 0u, 0u, 0u};
-    v4_peer *peer = opaque;
+        'Y', 'V', 'X', 'P', 0u, 5u, 0u, 2u, 0u, 0u, 0u, 0u};
+    v5_peer *peer = opaque;
     unsigned char header[12], discard[4096];
     unsigned int length;
     int client = accept(peer->listener, NULL, NULL);
@@ -526,34 +579,34 @@ static void *v4_peer_main(void *opaque)
     return NULL;
 }
 
-static int test_v4_frame_refusal(void)
+static int test_v5_frame_refusal(void)
 {
     struct sockaddr_un address;
     char path[sizeof(address.sun_path)];
     yvex_client *client = NULL;
     yvex_error err;
     pthread_t thread;
-    v4_peer peer;
+    v5_peer peer;
     int rc;
-    (void)snprintf(path, sizeof(path), "build/tests/protocol-v5-%lu.sock",
+    (void)snprintf(path, sizeof(path), "build/tests/protocol-v6-%lu.sock",
                    (unsigned long)getpid());
     (void)unlink(path);
     peer.listener = socket(AF_UNIX, SOCK_STREAM, 0);
-    YVEX_TEST_ASSERT(peer.listener >= 0, "v4 peer socket");
+    YVEX_TEST_ASSERT(peer.listener >= 0, "v5 peer socket");
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     memcpy(address.sun_path, path, strlen(path) + 1u);
     YVEX_TEST_ASSERT(bind(peer.listener, (struct sockaddr *)&address,
                           sizeof(address)) == 0 &&
                          chmod(path, 0600) == 0 && listen(peer.listener, 1) == 0,
-                     "v4 peer bind/listen");
-    YVEX_TEST_ASSERT(pthread_create(&thread, NULL, v4_peer_main, &peer) == 0,
-                     "v4 peer thread");
+                     "v5 peer bind/listen");
+    YVEX_TEST_ASSERT(pthread_create(&thread, NULL, v5_peer_main, &peer) == 0,
+                     "v5 peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 5") != NULL,
-                     "v4 frame explicitly refuses");
-    YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v4 peer join");
+                         strstr(yvex_error_message(&err), "version 6") != NULL,
+                     "v5 frame explicitly refuses");
+    YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v5 peer join");
     (void)close(peer.listener);
     (void)unlink(path);
     return 0;
@@ -597,7 +650,7 @@ int yvex_test_protocol(void)
     if (test_all_operation_roundtrips() != 0) return 1;
     if (test_schema_refusals() != 0) return 1;
     if (test_message_roundtrip() != 0) return 1;
-    if (test_v4_frame_refusal() != 0) return 1;
+    if (test_v5_frame_refusal() != 0) return 1;
     if (test_bounded_parser_mutation() != 0) return 1;
     return 0;
 }

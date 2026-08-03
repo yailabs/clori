@@ -403,7 +403,7 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v5
+## Application Provider And Local Protocol v6
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. A sealed request binds the model, ordered typed messages, explicit
@@ -413,20 +413,21 @@ adapter correlation, and request identity. Clone and wire-decode publish only a
 complete owned request graph. The provider owner neither parses HTTP nor
 renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v5 carries the sealed provider request through the
+`<yvex/server.h>` protocol v6 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 function calls, usage, terminal completion, and failure. Typed events bind the
 provider adapter, provider-request identity, and external correlation ID while
 excluding prompt and output content.
 
-Protocol v5 carries selected generation mode, speculative lifecycle events,
+Protocol v6 carries selected generation mode, speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
-timing and cancellation classes, and an explicit output channel for published
-fragments. It retains the typed `console.status` and the removal of former
+timing and cancellation classes, an exact partial-turn schema, source-authored
+reasoning policy, and an explicit output channel for published fragments. It
+retains the typed `console.status` and the removal of former
 model/artifact facades introduced by the preceding protocol. Facts that are
 not authoritative, including selected client configuration, active
 micro-phase, or KV byte use when unavailable, have explicit availability bits
-and are never fabricated. Version 4 frames refuse during the handshake; there
+and are never fabricated. Version 5 frames refuse during the handshake; there
 is no private pre-v0.1 compatibility decoder.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
@@ -440,6 +441,22 @@ contract, protocol client, and bounded HTTP/JSON/SSE owners. It opens no second
 artifact or model, owns no KV, and cannot call Transformer, generation, or CUDA
 owners directly. The exact HTTP profile is documented in
 [`openai-compatibility.md`](../openai-compatibility.md).
+
+## Physical Execution And Candidate-State ABI
+
+`<yvex/internal/execution.h>` owns Physical Execution IR schema v1, compiled
+execution profiles, device-value views, explicit host-materialization policy,
+and the execution-shape registry. These are non-installed cross-subsystem
+contracts. They bind semantic identities and extents but never durable pointers
+or process state. Materialization consumes terminal decisions; runtime consumes
+one sealed profile; backend consumers receive typed values rather than an
+implicit host `float *` contract.
+
+`<yvex/internal/candidate.h>` owns prefix projection from an attention
+candidate delta. It can reconstruct any admitted verified prefix without
+rerunning accepted target rows. The logical state provider and backend
+residency still publish the same generation atomically; candidate projection is
+not a second persistent-state authority.
 
 ## Internal Generation And Hosted Turn Boundary
 

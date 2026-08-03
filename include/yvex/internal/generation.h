@@ -17,7 +17,10 @@ extern "C" {
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V1 1u
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V2 2u
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V3 3u
+#define YVEX_RUNTIME_GENERATION_SCHEMA_V4 4u
+#define YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4 4u
 #define YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 1u
+#define YVEX_RUNTIME_PARTIAL_TURN_SCHEMA_V1 1u
 typedef enum {
     YVEX_GENERATION_MODE_TARGET_ONLY = 0,
     YVEX_GENERATION_MODE_DSPARK
@@ -52,6 +55,7 @@ typedef struct {
     unsigned long long context_capacity, prefill_chunk_tokens, maximum_new_tokens;
     unsigned long long maximum_output_bytes, maximum_host_bytes, maximum_device_bytes;
     yvex_runtime_trace_policy trace_policy;
+    yvex_execution_evidence_profile evidence_profile;
     yvex_runtime_sampling_policy sampling_policy;
     const unsigned int *additional_stop_token_ids;
     unsigned long long additional_stop_token_count;
@@ -76,6 +80,8 @@ typedef struct {
     unsigned long long context_capacity, prefill_chunk_tokens, maximum_new_tokens;
     unsigned long long maximum_output_bytes;
     unsigned int trace_policy;
+    yvex_execution_evidence_profile evidence_profile;
+    yvex_execution_class execution_class;
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
     char runtime_binding_identity[YVEX_SHA256_HEX_CAP];
     char runtime_descriptor_identity[YVEX_SHA256_HEX_CAP];
@@ -86,6 +92,9 @@ typedef struct {
     char sampling_policy_identity[YVEX_SHA256_HEX_CAP];
     char speculation_policy_identity[YVEX_SHA256_HEX_CAP];
     char stop_policy_identity[YVEX_SHA256_HEX_CAP];
+    char kernel_bundle_identity[YVEX_SHA256_HEX_CAP];
+    char execution_profile_identity[YVEX_SHA256_HEX_CAP];
+    char hardware_profile[YVEX_EXECUTION_TEXT_CAP];
     char generation_plan_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_plan_summary;
 typedef struct {
@@ -107,6 +116,28 @@ typedef struct {
     char decoder_fragment_identity[YVEX_SHA256_HEX_CAP];
     char token_step_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_token_result;
+
+/*
+ * A failed turn reports the exact committed boundary independently of its failure class. Facts
+ * without a current owner remain explicitly unavailable instead of being inferred from counters.
+ */
+typedef struct {
+    unsigned int schema_version;
+    int available, committed_progress, reset_required;
+    int draft_state_generation_available, detokenizer_generation_available;
+    int failure_status;
+    yvex_runtime_generation_stop_reason stop_reason;
+    unsigned long long initial_position, final_committed_position;
+    unsigned long long committed_token_count, published_text_bytes;
+    unsigned long long target_state_generation, draft_state_generation;
+    unsigned long long rng_generation, token_ledger_generation;
+    unsigned long long detokenizer_generation;
+    char target_state_identity[YVEX_SHA256_HEX_CAP];
+    char rng_state_identity[YVEX_SHA256_HEX_CAP];
+    char token_ledger_identity[YVEX_SHA256_HEX_CAP];
+    char published_text_identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_partial_turn;
+
 typedef struct {
     unsigned int schema_version;
     yvex_runtime_generation_mode execution_mode;
@@ -134,6 +165,7 @@ typedef struct {
     double confidence_logit_minimum, confidence_logit_maximum;
     double confidence_logit_mean;
     unsigned long long final_position, final_persistent_generation;
+    unsigned long long final_rng_generation, final_token_ledger_generation;
     unsigned long long generated_text_bytes;
     unsigned long long initial_position, reusable_prefix_token_count;
     unsigned long long new_prefill_token_count;
@@ -142,12 +174,14 @@ typedef struct {
     char reusable_prefix_identity[YVEX_SHA256_HEX_CAP];
     char initial_rng_identity[YVEX_SHA256_HEX_CAP];
     char final_rng_identity[YVEX_SHA256_HEX_CAP];
+    char final_token_ledger_identity[YVEX_SHA256_HEX_CAP];
     char generated_token_identity[YVEX_SHA256_HEX_CAP];
     char generated_text_digest[YVEX_SHA256_HEX_CAP];
     char final_persistent_state_digest[YVEX_SHA256_HEX_CAP];
     char generation_plan_identity[YVEX_SHA256_HEX_CAP];
     char speculation_policy_identity[YVEX_SHA256_HEX_CAP];
     char generation_execution_identity[YVEX_SHA256_HEX_CAP];
+    yvex_runtime_partial_turn partial_turn;
     yvex_runtime_profile_record profile;
 } yvex_runtime_generation_result;
 typedef int (*yvex_runtime_generation_fragment_sink)(

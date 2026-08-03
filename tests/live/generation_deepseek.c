@@ -218,7 +218,7 @@ static int live_production_prompt(
 {
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4,
         .context_capacity = 64ull, .prefill_chunk_tokens = 8ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
         .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
@@ -282,7 +282,7 @@ static int live_boundary_execute(
     static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4,
         .context_capacity = context_capacity, .prefill_chunk_tokens = 1ull,
         .maximum_new_tokens = 1ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
@@ -377,7 +377,7 @@ static int live_partial_execute(
     static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4,
         .context_capacity = 8ull, .prefill_chunk_tokens = 1ull,
         .maximum_new_tokens = 2ull,
         .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
@@ -505,7 +505,7 @@ static int live_lifecycle_proof(yvex_runtime_model *model,
     static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4,
         .context_capacity = 8ull, .prefill_chunk_tokens = 8ull,
         .maximum_new_tokens = 1ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
@@ -619,7 +619,7 @@ static int live_dspark_cancellation_proof(
     static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4,
         .backend = YVEX_BACKEND_KIND_CPU,
         .mode = YVEX_GENERATION_MODE_DSPARK,
         .context_capacity = 32ull,

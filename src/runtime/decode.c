@@ -70,6 +70,10 @@ int yvex_runtime_decode_step_identity(
     if (!result || !output || result->schema_version != YVEX_RUNTIME_DECODE_SCHEMA_V1 ||
         !result->completed || result->position_after != result->position_before + 1ull ||
         result->generation_after != result->generation_before + 1ull ||
+        result->normalized_hidden_host_available +
+                result->normalized_hidden_device_available != 1 ||
+        (result->normalized_hidden_device_available &&
+         yvex_execution_device_view_validate(&result->device_hidden, NULL) != YVEX_OK) ||
         !yvex_sha256_hex_valid(result->embedding_digest) ||
         !yvex_sha256_hex_valid(result->routing_digest) ||
         !yvex_sha256_hex_valid(result->layer_digest) ||
@@ -77,7 +81,7 @@ int yvex_runtime_decode_step_identity(
         !yvex_sha256_hex_valid(result->persistent_state_digest) ||
         !yvex_sha256_hex_valid(result->transformer_execution_identity)) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.decode.step.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.decode.step.v2") ||
         !yvex_sha256_update_u64(&hash, result->schema_version) ||
         !yvex_sha256_update_u64(&hash, result->step_ordinal) ||
         !yvex_sha256_update_u64(&hash, result->token_id) ||
@@ -96,6 +100,10 @@ int yvex_runtime_decode_step_identity(
         !yvex_sha256_update_u64(&hash, result->h2d_bytes) ||
         !yvex_sha256_update_u64(&hash, result->d2h_bytes) ||
         !yvex_sha256_update_u64(&hash, result->kernel_launches) ||
+        !yvex_sha256_update_u64(
+            &hash, (unsigned int)result->normalized_hidden_host_available) ||
+        !yvex_sha256_update_u64(
+            &hash, (unsigned int)result->normalized_hidden_device_available) ||
         !yvex_sha256_update_text(&hash, result->embedding_digest) ||
         !yvex_sha256_update_text(&hash, result->routing_digest) ||
         !yvex_sha256_update_text(&hash, result->layer_digest) ||
@@ -268,8 +276,9 @@ static int decode_step_locked(
         features->row_count = 0ull;
         features->digest[0] = '\0';
     }
-    if (!plan || !expected_position || !normalized_hidden ||
-        normalized_hidden_capacity < plan->hidden_width)
+    if (!plan || !expected_position ||
+        (normalized_hidden && normalized_hidden_capacity < plan->hidden_width) ||
+        (!normalized_hidden && normalized_hidden_capacity))
         return decode_refuse(err, YVEX_ERR_INVALID_ARG,
                              "decode step output or nonzero position is invalid");
     rc = decode_state_summary(context->session, &before, err);
@@ -348,6 +357,13 @@ static int decode_step_locked(
         result->moe_ns = transformer.moe_ns;
         result->final_ns = transformer.final_ns;
         result->synchronization_ns = transformer.synchronization_ns;
+        result->full_array_host_scan_bytes =
+            transformer.full_array_host_scan_bytes;
+        result->normalized_hidden_host_available =
+            transformer.normalized_hidden_host_available;
+        result->normalized_hidden_device_available =
+            transformer.normalized_hidden_device_available;
+        result->device_hidden = transformer.device_hidden;
         yvex_runtime_identity_copy(result->embedding_digest,
                                    transformer.embedding_digest);
         yvex_runtime_identity_copy(result->routing_digest,

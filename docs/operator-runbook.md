@@ -169,7 +169,7 @@ start` in the first and run `runtime status`, then `chat`, in the second.
 Chat opens one concise attachment view and the stable prompt:
 
 ```text
-YVEX 0.1.0 · protocol 5
+YVEX 0.1.0 · protocol 6
 
   model      deepseek4-v4-flash-dspark
   variant    abcdef012345
@@ -213,15 +213,19 @@ current catalog is visible at startup. `/help` adds one-line descriptions;
 `/session`, `/sessions`, `/new`, `/attach`, `/detach`, `/reset`, and `/close`
 manage the session; `/cancel` cancels active generation; and `/quit` exits
 locally. Tab completes an unambiguous slash command. Commands for an unsupported
-explicit reasoning channel are absent rather than simulated.
+explicit reasoning channel refuse rather than simulate support. The current
+DSpark profile admits `/think`, `/think-max`, and `/nothink`; they select its
+source-authored model-emitted channel and never expose hidden reasoning. A
+policy change after committed context requires `/reset` or a new session.
 
 Ctrl-D exits from the prompt and discards an unfinished line. Ctrl-C during a
 turn requests server-owned cancellation and returns to the prompt; a second
 Ctrl-C requests exit. With no active turn, the first Ctrl-C clears the line and
 a second consecutive Ctrl-C exits. EOF, cancellation, resize, and failure all
 restore bracketed-paste and terminal modes before returning control to the
-shell. Cancellation leaves the generation context partial and requires
-`/reset` before new generation; the reset creates a fresh execution session
+shell. Cancellation or failure requires `/reset` only when the server reports
+committed partial progress. The console names that state and refuses a new turn
+instead of silently appending to it. Reset creates a fresh execution session
 while keeping the process-resident model open.
 
 Ctrl-L clears the visible terminal while the REPL prompt is active, then redraws
@@ -286,8 +290,9 @@ state, and persistent KV while sharing immutable model resources:
 
 Client disconnect and detach do not close the model. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Reset clears the session KV, tokens, transcript, decoder, and RNG policy without
-closing the host.
+Protocol v6 reports the exact committed position, token/text counts, state
+generations, failure class, and reset requirement. Reset clears the session KV,
+tokens, transcript, decoder, and RNG policy without closing the host.
 
 ## Status, metrics, and trace
 
@@ -313,15 +318,14 @@ daemon console:
 ./yvex runtime trace --json
 ```
 
-`watch` starts with the current runtime snapshot, then projects retained
-operational history and live events in fixed `STARTUP`, `READY`, `SESSION`,
-`REQUEST`, `PREFILL`, `DSPARK`, and `GENERATE` categories. It shows queue
-pressure only when more than one request is waiting, uses human byte units and
-named stop reasons, and retains operator-significant lifecycle, first-token,
-committed speculative-cycle, completion, cancellation, and failure facts. It
-suppresses ordinary connection/request churn, token fragments, intermediate
-draft/verification steps, and generation-profile rows. Human `trace` retains
-those details and adds sequence, severity, turn, phase, timing, and rate.
+`watch` starts with one stable startup/runtime block, then projects each request
+as one coherent unit with stable time, request, session, phase, duration and
+result fields. It groups prefill and DSpark cycles, shows queue pressure only
+when contended, uses human byte units and named stop reasons, and replaces any
+active progress line with one stable completion or failure summary. It
+suppresses ordinary connection churn, token fragments and profiler detail.
+Human `trace` retains those details and adds sequence, severity, turn, phase,
+timing, rate, execution profile and shape facts.
 `trace --json` emits the canonical complete JSONL event record. Prompts and
 answers remain absent from all three by default.
 

@@ -50,6 +50,11 @@ static int sampling_test_row(const yvex_runtime_logits_plan_summary *plan,
     memset(row, 0, sizeof(*row));
     row->schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1;
     row->completed = 1;
+    row->host_values_available = 1;
+    row->finite_count_available = 1;
+    row->range_available = 1;
+    row->raw_digest_available = 1;
+    row->evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
     row->source_phase = position ? YVEX_LOGITS_SOURCE_DECODE : YVEX_LOGITS_SOURCE_PREFILL;
     row->source_position = position;
     row->vocabulary_size = row->logits_count = row->finite_count = count;
@@ -66,13 +71,18 @@ static int sampling_test_row(const yvex_runtime_logits_plan_summary *plan,
                                plan->output_head_plan_identity);
     if (!sampling_test_raw_digest(values, count, row->raw_logits_digest)) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.row.v1") ||
+    row->full_array_host_scan_bytes = count * sizeof(float);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.row.v2") ||
         !yvex_sha256_update_u64(&hash, row->source_phase) ||
         !yvex_sha256_update_u64(&hash, row->source_position) ||
         !yvex_sha256_update_u64(&hash, row->vocabulary_size) ||
+        !yvex_sha256_update_u64(&hash, row->host_values_available) ||
+        !yvex_sha256_update_u64(&hash, row->device_values_available) ||
+        !yvex_sha256_update_u64(&hash, row->evidence_profile) ||
         !yvex_sha256_update_text(&hash, row->source_hidden_digest) ||
         !yvex_sha256_update_text(&hash, row->output_head_plan_identity) ||
         !yvex_sha256_update_text(&hash, row->output_head_residency_identity) ||
+        !yvex_sha256_update_text(&hash, row->backend_execution_identity) ||
         !yvex_sha256_update_text(&hash, row->raw_logits_digest) ||
         !yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, row->logits_row_identity);

@@ -29,6 +29,30 @@ typedef struct {
     yvex_tokenizer_decoder **decoder;
 } decoder_test_close;
 
+typedef struct {
+    unsigned char reasoning[128], final[128];
+    unsigned long long reasoning_count, final_count;
+} reasoning_capture;
+
+static int reasoning_capture_sink(void *opaque,
+                                  yvex_reasoning_segment segment,
+                                  const unsigned char *bytes,
+                                  unsigned long long byte_count,
+                                  yvex_error *err)
+{
+    reasoning_capture *capture = (reasoning_capture *)opaque;
+    unsigned char *target = segment == YVEX_REASONING_SEGMENT_EXPLICIT
+                                ? capture->reasoning : capture->final;
+    unsigned long long *count = segment == YVEX_REASONING_SEGMENT_EXPLICIT
+                                    ? &capture->reasoning_count
+                                    : &capture->final_count;
+    if (*count > 128u - byte_count) return YVEX_ERR_BOUNDS;
+    memcpy(target + *count, bytes, (size_t)byte_count);
+    *count += byte_count;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int decoder_test_cancel(void *opaque)
 {
     decoder_test_gate *gate = (decoder_test_gate *)opaque;
@@ -93,7 +117,51 @@ static void fixture_open(yvex_tokenizer *tokenizer, yvex_token_info tokens[4])
     tokenizer->plan.sealed = 1;
     tokenizer->plan.vocabulary_size = 4u;
     tokenizer->plan.prompt_policy = YVEX_TOKENIZER_PROMPT_DEEPSEEK_V4;
+    tokenizer->plan.explicit_reasoning_supported = 1;
+    tokenizer->plan.maximum_reasoning_supported = 1;
     memcpy(tokenizer->plan.tokenizer_plan_identity, identity, sizeof(identity));
+}
+
+static int test_reasoning_channel(void)
+{
+    static const unsigned char output[] = "analysis</think>answer";
+    yvex_tokenizer tokenizer;
+    yvex_token_info tokens[4];
+    yvex_tokenizer_reasoning_stream *stream = NULL;
+    reasoning_capture capture = {0};
+    yvex_error err;
+    size_t index;
+    fixture_open(&tokenizer, tokens);
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_reasoning_stream_open(
+            &stream, &tokenizer, YVEX_REASONING_ENABLED,
+            reasoning_capture_sink, &capture, &err) == YVEX_OK,
+        "open source-authored reasoning classifier");
+    for (index = 0u; index < sizeof(output) - 1u; ++index)
+        YVEX_TEST_ASSERT(yvex_tokenizer_reasoning_stream_push(
+                             stream, output + index, 1u, &err) == YVEX_OK,
+                         "classify delimiter split at every byte");
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_reasoning_stream_finish(stream, &err) == YVEX_OK &&
+            capture.reasoning_count == 8u && capture.final_count == 6u &&
+            memcmp(capture.reasoning, "analysis", 8u) == 0 &&
+            memcmp(capture.final, "answer", 6u) == 0,
+        "delimiter is consumed and channels remain byte-exact");
+    yvex_tokenizer_reasoning_stream_close(&stream);
+    memset(&capture, 0, sizeof(capture));
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_reasoning_stream_open(
+            &stream, &tokenizer, YVEX_REASONING_DISABLED,
+            reasoning_capture_sink, &capture, &err) == YVEX_OK &&
+            yvex_tokenizer_reasoning_stream_push(
+                stream, output, sizeof(output) - 1u, &err) == YVEX_OK &&
+            yvex_tokenizer_reasoning_stream_finish(stream, &err) == YVEX_OK &&
+            capture.reasoning_count == 0u &&
+            capture.final_count == sizeof(output) - 1u &&
+            memcmp(capture.final, output, sizeof(output) - 1u) == 0,
+        "disabled policy preserves canonical final bytes without inference");
+    yvex_tokenizer_reasoning_stream_close(&stream);
+    return 0;
 }
 
 static int provider_fixture(yvex_provider_request *request,
@@ -443,6 +511,8 @@ static int test_candidate_transactions(void)
 
 int yvex_test_runtime_tokenizer(void)
 {
+    if (test_reasoning_channel() != 0)
+        return 1;
     if (test_provider_projection() != 0)
         return 1;
     if (test_incremental_decoder() != 0)

@@ -57,9 +57,10 @@ the new suffix. An incompatible prefix refuses; reset is explicit.
 ./yvex run --strategy stochastic --temperature 0.8 --top-k 50 --top-p 0.95 --min-p 0.05 --typical-p 1.0 --seed 42 "Explain attention in one sentence."
 ```
 
-Sampling remains common-host even when Transformer, MoE, persistent state, and
-output-head projection execute on CUDA. Streamed fragments are sent only after
-sampled-token decode commit and incremental detokenization commit.
+CUDA greedy sampling selects the token on device without copying the complete
+vocabulary row. Stochastic sampling remains an explicit common-host reference
+adapter. Streamed fragments are sent only after sampled-token decode commit
+and incremental detokenization commit.
 
 ## Target-only and DSpark modes
 
@@ -78,6 +79,24 @@ counts. Use `runtime trace` or `runtime trace --json` for cycle-level draft,
 verification, accepted-prefix, rejection, timing, and policy facts. A requested
 DSpark profile refuses startup if its artifact, binding, backend, or workspace
 requirements are incomplete; it never runs target-only silently.
+
+## Explicit reasoning
+
+The current DSpark source profile admits explicit model-emitted reasoning. In
+the interactive console use:
+
+```text
+/think      enable the source-authored reasoning policy
+/think-max  enable its maximum policy
+/nothink    disable it
+```
+
+The selected policy is session-bound and changes prompt identity. It cannot be
+changed after committed conversation state exists without resetting or opening
+a new session. Reasoning is streamed through its own typed channel and shown in
+dim text on a TTY; final answer text returns to the normal foreground. Raw and
+redirected modes preserve canonical bytes without terminal controls. YVEX does
+not infer reasoning from prose or expose hidden chain of thought.
 
 ## Application-provider path
 

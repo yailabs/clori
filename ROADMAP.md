@@ -66,13 +66,13 @@ run, or a self-authored report cannot promote a capability by itself.
 | 4 | `V010.REPO.CODE.COMMENTARY.0` | `complete` | Natural selective technical commentary replaces mandatory labeled prose across every governed first-party source while production lexical tokens remain unchanged. | `V010.DOCS.INFORMATION.ARCHITECTURE.0` |
 | 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `complete` | A mature daemon-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, watch, trace, and cancellation; explicit reasoning remains conditional on an admitted typed channel. | `V010.REPO.CODE.COMMENTARY.0` |
 | 6 | `V010.REBASE.DEEPSEEK.DSPARK.0` | `complete` | The sole DeepSeek vertical is rebound to the exact DSpark source and reaches target-verified speculative text through the hosted product path. | `V010.OPERATOR.REPL.CONSOLE.0` |
-| 7 | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` | `active` | Product levels, implementation layers, execution profiles, hardware/workload policy, and the implementation-gap map acquire one coherent architecture. | `V010.REBASE.DEEPSEEK.DSPARK.0` |
-| 8 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `blocked` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` |
+| 7 | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` | `complete` | Identity-bound execution profiles, Physical Execution IR, prefix-addressable candidate state, shape-safe CUDA admission, exact partial turns, typed device views, and operational projections form one verified execution substrate. | `V010.REBASE.DEEPSEEK.DSPARK.0` |
+| 8 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `active` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` |
 | 9 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
 | 10 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
 | 11 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
 
-Active Next: V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0
+Active Next: V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
 
 Detailed accepted and successor contracts for the current sequence are:
 
@@ -81,6 +81,7 @@ Detailed accepted and successor contracts for the current sequence are:
 - [Natural Technical Commentary](docs/milestones/code-commentary.md)
 - [Mature Runtime Console and Interactive REPL](docs/milestones/runtime-console-repl.md)
 - [DeepSeek V4 Flash DSpark Rebase](docs/milestones/deepseek-dspark-rebase.md)
+- [Verified Execution-Substrate Refoundation](docs/milestones/product-architecture.md)
 
 The pre-implementation combined plans remain traceable without staying on the
 active path:
@@ -100,7 +101,7 @@ not a replacement historical ledger.
 | Source and compilation | The pinned 48-shard DSpark source, tokenizer, 72,317-tensor coverage, 1,409-terminal Transformation IR, bootstrap physical policy, qtypes, and deterministic GGUF emission have typed owners and identity-bound outputs. |
 | Artifact and admission | One complete DSpark bootstrap artifact contains the target and drafter; structural, payload, roundtrip, materialization, and one binding containing target/draft/verification plans are admitted outside Git. |
 | Runtime and generation | One authenticated model opens in `yvexd`; server-owned sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text run on CPU and the admitted mixed CUDA/host path. |
-| Application serving | Local protocol v5 and YVEX OpenAI Compatibility Profile v1 share one runtime, worker, queue, session registry, and telemetry authority. |
+| Application serving | Local protocol v6 and YVEX OpenAI Compatibility Profile v1 share one runtime, worker, queue, session registry, and telemetry authority. |
 | Product surface | `yvex` and `yvexd` are the only product executables. The former developer and OpenAI gateway executables are retired. |
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
@@ -177,7 +178,7 @@ Machine-readable readiness facts retained for claim guards:
 ```text
 canonical_operation_registry_ready=1
 generated_command_descriptors_ready=1
-protocol_v5_ready=1
+protocol_v6_ready=1
 mature_repl_console_ready=1
 deepseek_dspark_source_ready=1
 target_only_generation_ready=1

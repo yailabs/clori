@@ -451,7 +451,7 @@ static int attention_matvec(yvex_cuda_work *work,
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             weight ? weight->row_count : 0ull, start_row + rows, err,
             YVEX_ERR_BOUNDS, "CUDA attention matvec geometry is invalid");
-    q8_path = weight->row_width % 256ull == 0ull &&
+    q8_path = !work->forensic_numeric && weight->row_width % 256ull == 0ull &&
               (weight->qtype == YVEX_GGUF_QTYPE_IQ2_XXS ||
                weight->qtype == YVEX_GGUF_QTYPE_Q2_K ||
                weight->qtype == YVEX_GGUF_QTYPE_Q8_0);
@@ -486,7 +486,8 @@ static int attention_matvec(yvex_cuda_work *work,
             void *params[] = {
                 &device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &start_row, &rows,
-                (void *)&weight->qtype, &quantized, &q8_input, &out,
+                (void *)&weight->qtype, &quantized, &q8_input,
+                &work->forensic_numeric, &out,
                 &output_bf16, &status
             };
             unsigned int grid = (unsigned int)((rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
@@ -501,7 +502,8 @@ static int attention_matvec(yvex_cuda_work *work,
         void *params[] = {
             &device_weight, (void *)&weight->row_bytes,
             (void *)&weight->row_width, &start_row, &rows,
-            (void *)&weight->qtype, &vector, &q8_input, &out, &output_bf16, &status
+            (void *)&weight->qtype, &vector, &q8_input,
+            &work->forensic_numeric, &out, &output_bf16, &status
         };
         unsigned int grid = (unsigned int)((rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
                                            CUDA_QTYPE_MATVEC_ROWS);

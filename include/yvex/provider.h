@@ -77,6 +77,14 @@ typedef enum {
     YVEX_PROVIDER_RESPONSE_JSON_OBJECT
 } yvex_provider_response_format;
 
+/* Source-authored prompt policy. It controls only reasoning text the active model explicitly
+ * emits; it never authorizes reconstruction or exposure of hidden chain of thought. */
+typedef enum {
+    YVEX_REASONING_DISABLED = 0,
+    YVEX_REASONING_ENABLED,
+    YVEX_REASONING_MAXIMUM
+} yvex_reasoning_policy;
+
 typedef struct {
     int stochastic, seed_present;
     unsigned long long seed, top_k;
@@ -109,7 +117,8 @@ typedef enum {
     YVEX_PROVIDER_OUTPUT_FUNCTION_CALL,
     YVEX_PROVIDER_OUTPUT_USAGE,
     YVEX_PROVIDER_OUTPUT_TERMINAL,
-    YVEX_PROVIDER_OUTPUT_ERROR
+    YVEX_PROVIDER_OUTPUT_ERROR,
+    YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING
 } yvex_provider_output_kind;
 
 typedef enum {

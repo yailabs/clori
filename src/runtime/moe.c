@@ -888,49 +888,181 @@ int yvex_runtime_moe_execute_layer(yvex_runtime_moe_context *context,
     return runtime_moe_execute_layer_mode(context, layer_index, expanded_input, NULL, NULL, token_id,
                                           token_id_present, 1, result, err);
 }
-/*
- * Execute one layer inside an already acquired transformer transaction.
- *
- * Admitted context/layer/input and session ownership held by the caller. Publishes token-local
- * output without finishing the outer state transaction. Leaves rollback to the outer owner.
- */
-int yvex_runtime_moe_execute_layer_borrowed(yvex_runtime_moe_context *context,
-                                            unsigned long long layer_index,
-                                            const float *expanded_input, unsigned int token_id,
-                                            int token_id_present,
-                                            yvex_moe_layer_result *result, yvex_error *err)
+static void runtime_moe_batch_account(yvex_moe_row_batch_result *batch,
+                                      const yvex_moe_layer_result *row,
+                                      unsigned char seen[256])
 {
-    const yvex_runtime_session_view *view = context ? context->session_view : NULL;
-    yvex_runtime_session_summary summary;
-    if (!view || yvex_runtime_session_summary_copy(context->session, &summary, err) != YVEX_OK ||
-        !summary.busy)
-        return runtime_moe_refuse(err, YVEX_ERR_STATE,
-                                  "borrowed MoE execution requires an acquired runtime session");
-    return runtime_moe_execute_layer_mode(context, layer_index, expanded_input, NULL, NULL, token_id,
-                                          token_id_present, 0, result, err);
+    unsigned long long rank;
+    batch->row_expert_pairs += row->router.selected_count;
+    batch->grouped_expert_operations += row->router.selected_count;
+    batch->expert_subviews_accessed += row->expert_subviews_accessed;
+    batch->encoded_bytes_read += row->encoded_bytes_read;
+    batch->h2d_bytes += row->host_to_device_bytes;
+    batch->d2h_bytes += row->device_to_host_bytes;
+    batch->d2d_bytes += row->device_to_device_bytes;
+    batch->kernel_launches += row->kernel_launches;
+    batch->upload_count += row->upload_count;
+    batch->download_count += row->download_count;
+    batch->cache_hits += row->cache_hits;
+    batch->cache_misses += row->cache_misses;
+    batch->stream_synchronizations += row->stream_synchronizations;
+    batch->device_synchronizations += row->device_synchronizations;
+    batch->total_ns += row->total_ns;
+    batch->synchronization_ns += row->synchronization_ns;
+    for (rank = 0ull; rank < row->router.selected_count; ++rank) {
+        unsigned long long expert = row->router.selected_experts[rank];
+        if (expert < 256ull && !seen[expert]) {
+            seen[expert] = 1u;
+            batch->unique_experts++;
+        }
+    }
 }
-/*
- * Execute one borrowed layer while retaining its activation on the CUDA device.
- *
- * Publishes host evidence and the next device-resident residual atomically. Leaves outer rollback
- * and device-output publication to the transformer owner. No session finish, attention state
- * mutation, or CPU numerical fallback.
- */
-int yvex_runtime_moe_execute_layer_device_borrowed(
-    yvex_runtime_moe_context *context, unsigned long long layer_index,
-    const float *expanded_input, const yvex_device_tensor *device_input,
-    yvex_device_tensor *device_output, unsigned int token_id, int token_id_present,
-    yvex_moe_layer_result *result, yvex_error *err)
+
+static int runtime_moe_batch_identity(const yvex_moe_plan_summary *plan,
+                                      const yvex_moe_layer_plan *layer,
+                                      const yvex_moe_row_batch *batch,
+                                      yvex_moe_row_batch_result *result)
 {
-    yvex_runtime_session_summary summary;
-    if (!context || !device_input || !device_output ||
-        yvex_runtime_session_summary_copy(context->session, &summary, err) != YVEX_OK ||
-        !summary.busy)
-        return runtime_moe_refuse(err, YVEX_ERR_STATE,
-                                  "device MoE execution requires an acquired session");
-    return runtime_moe_execute_layer_mode(
-        context, layer_index, expanded_input, device_input, device_output,
-        token_id, token_id_present, 0, result, err);
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long row;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.moe-row-batch.v1") ||
+        !yvex_sha256_update_text(&hash, plan->moe_plan_identity) ||
+        !yvex_sha256_update_text(&hash, layer->layer_identity) ||
+        !yvex_sha256_update_text(
+            &hash, result->execution_profile_available
+                       ? result->execution_profile_identity : "uncompiled-reference") ||
+        !yvex_sha256_update_u64(&hash, result->execution_class) ||
+        !yvex_sha256_update_u64(&hash, result->row_count) ||
+        !yvex_sha256_update_u64(&hash, result->row_expert_pairs) ||
+        !yvex_sha256_update_u64(&hash, result->unique_experts) ||
+        !yvex_sha256_update_text(&hash, result->routing_digest))
+        return 0;
+    for (row = 0ull; row < batch->row_count; ++row)
+        if (!yvex_sha256_update_u64(&hash, batch->token_ids[row])) return 0;
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, result->execution_identity);
+    return 1;
+}
+
+/*
+ * Admit width-N as one ordered MoE operation while the portable implementation remains
+ * token-local. This boundary prevents Transformer and future backends from defining batching as
+ * repeated one-row calls; a grouped kernel can replace this adapter without changing semantics.
+ */
+int yvex_runtime_moe_execute_layer_rows(
+    yvex_runtime_moe_context *context, unsigned long long layer_index,
+    const yvex_moe_row_batch *batch, const yvex_moe_row_batch_output *output,
+    yvex_moe_row_batch_result *result, yvex_error *err)
+{
+    const yvex_moe_plan_summary *plan = context ? yvex_moe_plan_summary_get(context->plan) : NULL;
+    const yvex_moe_layer_plan *layer = context
+        ? yvex_moe_plan_layer_at(context->plan, layer_index) : NULL;
+    yvex_runtime_session_summary session;
+    yvex_sha256 routing_hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES], seen[256] = {0};
+    unsigned long long row, hidden_count, residual_count, combination_count;
+    int rc = YVEX_OK, locked = 0;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!context || !plan || !layer || !batch || !output || !result ||
+        batch->schema_version != YVEX_MOE_ROW_BATCH_SCHEMA_V1 || !batch->row_count ||
+        batch->row_width != layer->hidden_width * layer->residual_streams ||
+        batch->row_stride < batch->row_width || !batch->expanded_rows || !batch->token_ids ||
+        !batch->token_ids_present || batch->execution_class != YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE ||
+        (context->options.execution_profile &&
+         (!context->options.execution_profile->token_local_moe_reference ||
+          !batch->execution_profile_identity ||
+          strcmp(batch->execution_profile_identity,
+                 context->options.execution_profile->identity) != 0)) ||
+        (!context->options.execution_profile && batch->execution_profile_identity) ||
+        !yvex_core_u64_mul(batch->row_count, layer->hidden_width, &hidden_count) ||
+        !yvex_core_u64_mul(batch->row_count, layer->residual_streams, &residual_count) ||
+        !yvex_core_u64_mul(residual_count, layer->residual_streams, &combination_count) ||
+        !output->combined_rows || output->combined_capacity < hidden_count ||
+        !output->routed_rows || output->routed_capacity < hidden_count ||
+        !output->shared_rows || output->shared_capacity < hidden_count ||
+        !output->post_rows || output->post_capacity < residual_count ||
+        !output->combination_rows || output->combination_capacity < combination_count ||
+        ((batch->device_rows == NULL) != (batch->device_outputs == NULL)) ||
+        yvex_runtime_session_summary_copy(context->session, &session, err) != YVEX_OK ||
+        !session.busy)
+        return runtime_moe_refuse(err, YVEX_ERR_INVALID_ARG,
+                                  "ordered MoE row batch or execution profile is invalid");
+    if (pthread_mutex_lock(&context->mutex) != 0)
+        return runtime_moe_refuse(err, YVEX_ERR_STATE, "MoE context lock failed");
+    locked = 1;
+    if (context->busy || context->invalidated) {
+        rc = runtime_moe_refuse(err, YVEX_ERR_STATE, "MoE context is busy or invalidated");
+        goto done;
+    }
+    context->busy = 1;
+    yvex_sha256_init(&routing_hash);
+    (void)yvex_sha256_update_text(&routing_hash, "yvex.runtime.moe-row-routing.v1");
+    for (row = 0ull; row < batch->row_count && rc == YVEX_OK; ++row) {
+        yvex_moe_layer_result staged;
+        yvex_device_tensor device_input, device_output;
+        const yvex_device_tensor *device_input_ptr = NULL;
+        yvex_device_tensor *device_output_ptr = NULL;
+        if (batch->device_rows &&
+            (!yvex_backend_tensor_f32_subview(batch->device_rows, row * batch->row_width,
+                                              batch->row_width, &device_input) ||
+             !yvex_backend_tensor_f32_subview(batch->device_outputs, row * batch->row_width,
+                                              batch->row_width, &device_output))) {
+            rc = runtime_moe_refuse(err, YVEX_ERR_BOUNDS,
+                                    "ordered MoE device row view is invalid");
+            break;
+        }
+        if (batch->device_rows) {
+            device_input_ptr = &device_input;
+            device_output_ptr = &device_output;
+        }
+        rc = runtime_moe_layer_owned(
+            context, layer_index, batch->expanded_rows + row * batch->row_stride,
+            device_input_ptr, device_output_ptr, batch->token_ids[row], 1, &staged, err);
+        if (rc != YVEX_OK) break;
+        memcpy(output->combined_rows + row * layer->hidden_width, staged.combined_output,
+               (size_t)layer->hidden_width * sizeof(float));
+        memcpy(output->routed_rows + row * layer->hidden_width, staged.routed_output,
+               (size_t)layer->hidden_width * sizeof(float));
+        memcpy(output->shared_rows + row * layer->hidden_width, staged.shared_output,
+               (size_t)layer->hidden_width * sizeof(float));
+        memcpy(output->post_rows + row * layer->residual_streams, staged.post,
+               (size_t)layer->residual_streams * sizeof(float));
+        memcpy(output->combination_rows + row * layer->residual_streams * layer->residual_streams,
+               staged.combination,
+               (size_t)layer->residual_streams * layer->residual_streams * sizeof(float));
+        runtime_moe_batch_account(result, &staged, seen);
+        if (!yvex_sha256_update_text(&routing_hash, staged.routing_digest))
+            rc = runtime_moe_refuse(err, YVEX_ERR_STATE,
+                                    "ordered MoE routing identity update failed");
+    }
+    if (rc == YVEX_OK && (!yvex_sha256_final(&routing_hash, digest)))
+        rc = runtime_moe_refuse(err, YVEX_ERR_STATE,
+                                "ordered MoE routing identity finalization failed");
+    if (rc == YVEX_OK) yvex_sha256_hex(digest, result->routing_digest);
+    if (rc == YVEX_OK) {
+        result->schema_version = YVEX_MOE_ROW_BATCH_SCHEMA_V1;
+        result->completed = 1;
+        result->execution_class = batch->execution_class;
+        result->row_count = batch->row_count;
+        result->shared_expert_operations = batch->row_count * layer->shared_experts;
+        result->execution_profile_available = batch->execution_profile_identity != NULL;
+        if (batch->execution_profile_identity)
+            yvex_runtime_identity_copy(result->execution_profile_identity,
+                                       batch->execution_profile_identity);
+        if (!runtime_moe_batch_identity(plan, layer, batch, result))
+            rc = runtime_moe_refuse(err, YVEX_ERR_STATE,
+                                    "ordered MoE execution identity failed");
+    }
+done:
+    if (locked) {
+        context->busy = 0;
+        if (rc == YVEX_OK) context->execution_count++;
+        (void)pthread_mutex_unlock(&context->mutex);
+    }
+    if (rc != YVEX_OK) memset(result, 0, sizeof(*result));
+    return rc;
 }
 
 int yvex_runtime_moe_context_reset(yvex_runtime_moe_context *context, yvex_error *err)
