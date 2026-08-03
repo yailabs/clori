@@ -12,6 +12,7 @@
 #include <yvex/gguf.h>
 #include <yvex/model.h>
 #include <yvex/registry.h>
+#include <yvex/server.h>
 #include <yvex/source.h>
 #include <yvex/tokenizer.h>
 
@@ -470,6 +471,9 @@ int yvex_cli_out_flush(FILE *fp);
 FILE *yvex_cli_out_stdout(void);
 FILE *yvex_cli_out_stderr(void);
 void yvex_cli_terminal_style_get(FILE *fp, yvex_cli_terminal_style *style);
+const char *yvex_cli_out_stop_reason(unsigned long long reason);
+int yvex_cli_out_server_event(const yvex_server_event *event, int detailed);
+void yvex_cli_out_repl_catalog(int compact);
 void yvex_cli_out_line(FILE *fp, const char *text);
 void yvex_cli_out_lines(FILE *fp, const char *const *lines, size_t line_count);
 void yvex_cli_out_kv_str(FILE *fp, const char *key, const char *value);

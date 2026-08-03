@@ -255,12 +255,279 @@ void yvex_cli_terminal_style_get(FILE *fp, yvex_cli_terminal_style *style)
         (terminal && !strcmp(terminal, "dumb")))
         return;
     style->reset = "\033[0m";
-    style->strong = "\033[1m";
-    style->accent = "\033[36m";
-    style->dim = "\033[2m";
-    style->success = "\033[32m";
-    style->warning = "\033[38;5;208m";
-    style->error = "\033[31m";
+    style->strong = "\033[1;38;5;250m";
+    style->accent = "\033[38;5;81m";
+    style->dim = "\033[38;5;245m";
+    style->success = "\033[38;5;114m";
+    style->warning = "\033[38;5;179m";
+    style->error = "\033[38;5;203m";
+}
+
+static int server_event_watch_visible(const yvex_server_event *event)
+{
+    return event && event->kind != YVEX_SERVER_EVENT_CLIENT_DISCONNECTED &&
+           event->kind != YVEX_SERVER_EVENT_REQUEST_RECEIVED &&
+           !(event->kind == YVEX_SERVER_EVENT_REQUEST_QUEUED && event->value_a <= 1u) &&
+           !(event->kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
+             event->kind <= YVEX_SERVER_EVENT_CANDIDATE_REJECTED) &&
+           !(event->kind >= YVEX_SERVER_EVENT_GENERATION_FRAGMENT &&
+             event->kind <= YVEX_SERVER_EVENT_GENERATION_PROFILE);
+}
+
+static const char *server_event_category(yvex_server_event_kind kind)
+{
+    if (kind == YVEX_SERVER_EVENT_RUNTIME_READY) return "READY";
+    if (kind <= YVEX_SERVER_EVENT_LISTENER_READY) return "STARTUP";
+    if (kind <= YVEX_SERVER_EVENT_SESSION_CLOSED) return "SESSION";
+    if (kind <= YVEX_SERVER_EVENT_REQUEST_STARTED) return "REQUEST";
+    if (kind <= YVEX_SERVER_EVENT_PREFILL_COMPLETED) return "PREFILL";
+    if (kind <= YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED) return "DSPARK";
+    if (kind <= YVEX_SERVER_EVENT_GENERATION_FAILED) return "GENERATE";
+    if (kind == YVEX_SERVER_EVENT_TELEMETRY_DROPPED) return "WARNING";
+    return "RUNTIME";
+}
+
+static const char *server_event_color(const yvex_server_event *event,
+                                      const yvex_cli_terminal_style *style)
+{
+    if (event->severity >= YVEX_SERVER_SEVERITY_ERROR) return style->error;
+    if (event->severity == YVEX_SERVER_SEVERITY_WARNING) return style->warning;
+    switch (event->kind) {
+    case YVEX_SERVER_EVENT_RUNTIME_READY:
+    case YVEX_SERVER_EVENT_LISTENER_READY:
+    case YVEX_SERVER_EVENT_PREFILL_COMPLETED:
+    case YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED:
+    case YVEX_SERVER_EVENT_GENERATION_COMPLETED:
+    case YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE:
+        return style->success;
+    case YVEX_SERVER_EVENT_GENERATION_CANCELLED:
+    case YVEX_SERVER_EVENT_TELEMETRY_DROPPED:
+        return style->warning;
+    case YVEX_SERVER_EVENT_PREFILL_STARTED:
+    case YVEX_SERVER_EVENT_PREFILL_PROGRESS:
+    case YVEX_SERVER_EVENT_GENERATION_FIRST_TOKEN:
+        return style->accent;
+    default:
+        return style->strong;
+    }
+}
+
+const char *yvex_cli_out_stop_reason(unsigned long long reason)
+{
+    static const char *const names[] = {
+        "none", "EOS", "tokenizer stop", "maximum tokens", "context capacity",
+        "cancelled", "model failure", "tokenizer failure", "output failure"};
+    return reason < sizeof(names) / sizeof(names[0]) ? names[reason] : "unknown";
+}
+
+static const char *server_backend_name(unsigned long long backend)
+{
+    return backend == YVEX_BACKEND_KIND_CUDA ? "CUDA" : "CPU";
+}
+
+static void server_event_name(const yvex_server_event *event)
+{
+    const char *name = yvex_server_event_kind_name(event->kind);
+    while (*name) {
+        int byte = *name++;
+        putchar(byte == '.' || byte == '_' ? ' ' : byte);
+    }
+}
+
+static void server_event_bytes(const char *name, unsigned long long bytes)
+{
+    if (bytes >= 1073741824u)
+        printf(" · %s %.2f GiB", name, (double)bytes / 1073741824.0);
+    else
+        printf(" · %s %.2f MiB", name, (double)bytes / 1048576.0);
+}
+
+static void server_event_values(const yvex_server_event *event, int detailed)
+{
+    if (event->kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
+        event->kind <= YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED) {
+        printf(" · cycle %llu", event->speculative_cycle);
+        if (event->proposed_tokens)
+            printf(" · accepted %llu/%llu", event->accepted_tokens,
+                   event->proposed_tokens);
+        if (event->selected_verification_tokens)
+            printf(" · verified %llu", event->selected_verification_tokens);
+        if (event->rejected_tokens) printf(" · rejected %llu", event->rejected_tokens);
+        if (event->discarded_tokens) printf(" · discarded %llu", event->discarded_tokens);
+        if (detailed && event->confidence_logit_count)
+            printf(" · confidence %.4g..%.4g mean %.4g",
+                   event->confidence_logit_minimum, event->confidence_logit_maximum,
+                   event->confidence_logit_mean);
+        return;
+    }
+    switch (event->kind) {
+    case YVEX_SERVER_EVENT_MATERIALIZATION_COMPLETE:
+        server_event_bytes("host", event->value_a);
+        server_event_bytes("device", event->value_b);
+        printf(" · %llu tensor binding%s", event->value_c,
+               event->value_c == 1u ? "" : "s");
+        break;
+    case YVEX_SERVER_EVENT_RESIDENCY_READY:
+        server_event_bytes("host", event->value_a);
+        server_event_bytes("device", event->value_b);
+        printf(" · %llu upload%s", event->value_c, event->value_c == 1u ? "" : "s");
+        break;
+    case YVEX_SERVER_EVENT_ARTIFACT_OPEN_COMPLETE:
+        server_event_bytes("hashed", event->value_a);
+        server_event_bytes("host", event->value_b);
+        server_event_bytes("device", event->value_c);
+        break;
+    case YVEX_SERVER_EVENT_LISTENER_READY:
+        printf(" · socket %04llo · queue %llu · sessions %llu", event->value_a,
+               event->value_b, event->value_c);
+        break;
+    case YVEX_SERVER_EVENT_RUNTIME_READY:
+        printf(" · %s · context %llu", server_backend_name(event->value_c), event->value_b);
+        break;
+    case YVEX_SERVER_EVENT_SESSION_CREATED:
+    case YVEX_SERVER_EVENT_SESSION_CLOSED:
+        printf(" · %llu active", event->value_b);
+        break;
+    case YVEX_SERVER_EVENT_SESSION_ATTACHED:
+    case YVEX_SERVER_EVENT_SESSION_DETACHED:
+        printf(" · %llu client%s", event->value_a, event->value_a == 1u ? "" : "s");
+        break;
+    case YVEX_SERVER_EVENT_REQUEST_RECEIVED:
+        if (detailed) printf(" · prompt %llu bytes", event->value_a);
+        break;
+    case YVEX_SERVER_EVENT_REQUEST_QUEUED:
+        printf(" · depth %llu/%llu", event->value_a, event->value_b);
+        break;
+    case YVEX_SERVER_EVENT_REQUEST_STARTED:
+        printf(" · input %llu · prefix %llu · limit %llu", event->value_a,
+               event->value_b, event->value_c);
+        break;
+    case YVEX_SERVER_EVENT_TOKENIZER_COMPLETED:
+        printf(" · prompt %llu · reused %llu", event->value_a, event->value_b);
+        break;
+    case YVEX_SERVER_EVENT_PREFILL_STARTED:
+        printf(" · %llu new · chunk %llu", event->value_a, event->value_b);
+        break;
+    case YVEX_SERVER_EVENT_PREFILL_PROGRESS:
+        printf(" · %llu/%llu tokens", event->value_a, event->value_b);
+        break;
+    case YVEX_SERVER_EVENT_PREFILL_COMPLETED:
+        printf(" · %llu tokens · %llu chunk%s", event->value_a, event->value_b,
+               event->value_b == 1u ? "" : "s");
+        break;
+    case YVEX_SERVER_EVENT_GENERATION_FIRST_TOKEN:
+        if (detailed) printf(" · ordinal %llu · token %llu", event->value_a, event->value_b);
+        break;
+    case YVEX_SERVER_EVENT_GENERATION_COMPLETED:
+    case YVEX_SERVER_EVENT_GENERATION_CANCELLED:
+    case YVEX_SERVER_EVENT_GENERATION_FAILED:
+        printf(" · %llu token%s · position %llu · stop %s", event->value_a,
+               event->value_a == 1u ? "" : "s", event->value_b,
+               yvex_cli_out_stop_reason(event->value_c));
+        break;
+    case YVEX_SERVER_EVENT_GENERATION_PROFILE:
+        if (!strcmp(event->phase, "movement"))
+            printf(" · H2D %llu · D2H %llu · D2D %llu bytes", event->value_a,
+                   event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "transfers"))
+            printf(" · uploads %llu · downloads %llu · expert subviews %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "launches"))
+            printf(" · kernel launches %llu · stream syncs %llu · device syncs %llu",
+                   event->value_a, event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "prefill"))
+            printf(" · prompt %llu · reused %llu · new %llu", event->value_a,
+                   event->value_b, event->value_c);
+        else if (!strcmp(event->phase, "decode"))
+            printf(" · first decode %llu · later decode %llu · tokens %llu",
+                   event->value_a, event->value_b, event->value_c);
+        break;
+    case YVEX_SERVER_EVENT_TELEMETRY_DROPPED:
+        printf(" · %llu dropped · capacity %llu", event->value_a, event->value_b);
+        break;
+    default:
+        break;
+    }
+}
+
+int yvex_cli_out_server_event(const yvex_server_event *event, int detailed)
+{
+    static const char *const severity[] = {"debug", "info", "warning", "error", "fatal"};
+    yvex_cli_terminal_style style;
+    const char *color;
+    unsigned int level;
+    if (!event || (!detailed && !server_event_watch_visible(event))) return 0;
+    yvex_cli_terminal_style_get(stdout, &style);
+    color = server_event_color(event, &style);
+    level = event->severity <= YVEX_SERVER_SEVERITY_FATAL
+                ? (unsigned int)event->severity : YVEX_SERVER_SEVERITY_FATAL;
+    if (detailed) {
+        const char *severity_color = event->severity >= YVEX_SERVER_SEVERITY_ERROR
+                                         ? style.error
+                                         : event->severity == YVEX_SERVER_SEVERITY_WARNING
+                                               ? style.warning
+                                               : style.dim;
+        printf("%s#%llu%s %s%-7s%s ", style.dim, event->sequence, style.reset,
+               severity_color, severity[level], style.reset);
+    } else {
+        time_t seconds = (time_t)(event->wall_time_ns / 1000000000u);
+        struct tm clock;
+        char stamp[16] = "--:--:--";
+        if (event->wall_time_ns && localtime_r(&seconds, &clock))
+            (void)strftime(stamp, sizeof(stamp), "%H:%M:%S", &clock);
+        printf("%s%s%s  %s%-8s%s ", style.dim, stamp, style.reset, color,
+               server_event_category(event->kind), style.reset);
+    }
+    fputs(color, stdout);
+    server_event_name(event);
+    fputs(style.reset, stdout);
+    if (!detailed && event->session_id[0] && event->request_id[0])
+        printf(" · %s/%s", event->session_id, event->request_id);
+    else {
+        if (event->session_id[0]) printf(" · session %s", event->session_id);
+        if (event->request_id[0]) printf(" · request %s", event->request_id);
+    }
+    if (detailed && event->turn_id[0]) printf(" · turn %s", event->turn_id);
+    if (detailed && event->phase[0]) printf(" · phase %s", event->phase);
+    server_event_values(event, detailed);
+    if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
+    if (event->rate > 0.0) printf(" · %.2f tok/s", event->rate);
+    putchar('\n');
+    fflush(stdout);
+    return 1;
+}
+
+void yvex_cli_out_repl_catalog(int compact)
+{
+    yvex_cli_terminal_style style;
+    size_t index, pass;
+    yvex_cli_terminal_style_get(stdout, &style);
+    printf("%scommands%s", style.strong, style.reset);
+    for (pass = 0u; pass < 4u; ++pass) {
+        for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
+            const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
+            int is_help = descriptor->runtime_adapter == YVEX_OPERATOR_RUNTIME_HELP;
+            int is_status =
+                descriptor->runtime_adapter == YVEX_OPERATOR_RUNTIME_CONSOLE_STATUS;
+            int is_quit = descriptor->repl_adapter == YVEX_OPERATOR_REPL_QUIT;
+            if (!strcmp(descriptor->slash_projection, "none") ||
+                (pass == 0u && !is_help) ||
+                (pass == 1u && !is_status) ||
+                (pass == 2u && (is_help || is_status || is_quit)) ||
+                (pass == 3u && !is_quit))
+                continue;
+            if (compact)
+                printf(" · %s%s%s", style.accent, descriptor->slash_projection, style.reset);
+            else
+                printf("\n  %s%-12s%s %s%s%s", style.accent,
+                       descriptor->slash_projection, style.reset, style.dim,
+                       descriptor->summary, style.reset);
+        }
+    }
+    if (compact)
+        printf(" · %sCtrl-C%s cancel · %sCtrl-D%s exit", style.dim, style.reset,
+               style.dim, style.reset);
+    puts("\n");
 }
 
 void yvex_cli_out_line(FILE *fp, const char *text)

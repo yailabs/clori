@@ -91,6 +91,18 @@ grep -F 'deepseek4-v4-flash-dspark · CUDA · target-only · variant ddddddddddd
 grep -F '● ready' "$root/typescript" >/dev/null
 grep -F 'attached to resident runtime' "$root/typescript" >/dev/null
 grep -F 'session pty · position 0 · turns 0 · context 0/4096' "$root/typescript" >/dev/null
+grep -F 'memory 0.00 GiB host/0.00 GiB device' "$root/typescript" >/dev/null
+grep -F 'OpenAI ' "$root/typescript" >/dev/null
+grep -F 'disabled' "$root/typescript" >/dev/null
+grep -F 'commands' "$root/typescript" >/dev/null
+grep -F '/help' "$root/typescript" >/dev/null
+grep -F '/status' "$root/typescript" >/dev/null
+grep -F '/runtime' "$root/typescript" >/dev/null
+grep -F '/sessions' "$root/typescript" >/dev/null
+grep -F '/cancel' "$root/typescript" >/dev/null
+grep -F '/quit' "$root/typescript" >/dev/null
+grep -F 'Ctrl-C' "$root/typescript" >/dev/null
+grep -F 'Ctrl-D' "$root/typescript" >/dev/null
 grep -F 'yvex>' "$root/typescript" >/dev/null
 grep -F 'processing 4 input tokens · 2/4 · 50.0%' "$root/typescript" >/dev/null
 grep -F 'processing 4 input tokens · 4/4 · 100%' "$root/typescript" >/dev/null
@@ -103,8 +115,8 @@ grep -E '4 new/5 prompt/1 reused.*3 tokens.*TTFT 2\.50 s.*context 8/4096.*stop m
 ! grep -F 'you>' "$root/typescript" >/dev/null
 ! grep -F 'assistant>' "$root/typescript" >/dev/null
 esc=$(printf '\033')
-grep -F "${esc}[36m" "$root/typescript" >/dev/null
-grep -F "${esc}[32m" "$root/typescript" >/dev/null
+grep -F "${esc}[38;5;81m" "$root/typescript" >/dev/null
+grep -F "${esc}[38;5;114m" "$root/typescript" >/dev/null
 grep -F "${esc}[?2004h" "$root/typescript" >/dev/null
 grep -F "${esc}[?2004l" "$root/typescript" >/dev/null
 
@@ -262,6 +274,11 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime watch >"$root/watch"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime trace >"$root/trace"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime trace --json >"$root/trace.jsonl"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime status >"$root/status"
+grep -F 'YVEX runtime ·' "$root/watch" >/dev/null
+grep -F 'watch · operational history and live events · Ctrl-C to stop' \
+    "$root/watch" >/dev/null
+grep -F 'REQUEST  request started · fixture/fixture-request' "$root/watch" >/dev/null
+grep -F 'RUNTIME  runtime shutdown complete' "$root/watch" >/dev/null
 grep -F 'request started · fixture/fixture-request' "$root/watch" >/dev/null
 ! grep -F 'kernel launches 4511 · stream syncs 63' "$root/watch" >/dev/null
 ! grep -F 'client disconnected' "$root/watch" >/dev/null

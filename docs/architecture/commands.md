@@ -116,15 +116,17 @@ retain semantic validation and defaults.
 
 ### Conversation
 
-The REPL is a linear client attached to the already resident daemon. It renders
-one composed attachment line, uses the stable `yvex>` prompt, and streams
-committed model text without role labels. Prefill progress comes from sealed
-server events; one inline terminal result renders prompt/reuse/prefill,
-generation, TTFT, context, stop, and session facts from the typed protocol
-result. When DSpark is active, the same line projects proposed, accepted,
-rejected, and target-verification counts. Candidate token text is never
-rendered. Conversation output never includes raw events, logits, tensor facts,
-or capability walls.
+The REPL is a linear client attached to the already resident daemon. Its first
+line composes the live target, backend, generation mode, physical variant,
+readiness, attachment, session, context, memory, and OpenAI-listener facts. A
+second inline catalog projects every admitted slash command from the compiled
+registry before the stable `yvex>` prompt. It streams committed model text
+without role labels. Prefill progress comes from sealed server events; one
+inline terminal result renders prompt/reuse/prefill, generation, TTFT, context,
+stop, and session facts from the typed protocol result. When DSpark is active,
+the same line projects proposed, accepted, rejected, and target-verification
+counts. Candidate token text is never rendered. Conversation output never
+includes raw events, logits, tensor facts, or capability walls.
 
 The line editor owns bounded in-memory history, registry-derived slash
 completion, UTF-8 deletion, bracketed multiline paste, resize redraw, and
@@ -140,12 +142,16 @@ It includes at most one blocker and one actionable hint.
 
 ### Operational stream
 
-`yvex runtime watch` subscribes to the compact stage sequence and renders only
-operator-significant startup, queue, tokenization, prefill, first-token,
-speculative commit, completion, cancellation, failure, and shutdown facts. It
-omits connection churn, fragments, intermediate draft/verification steps,
-profile rows, trace sequence, severity, turn, and phase detail. Content remains
-excluded by default.
+`yvex runtime watch` first renders the current bounded runtime snapshot, then
+subscribes to retained operational history and live events. Fixed semantic
+categories make startup, readiness, sessions, requests, prefill, DSpark, and
+generation visually distinguishable. The stream retains queue events only
+when depth exceeds one and otherwise renders operator-significant tokenization,
+prefill, first-token, speculative commit, completion, cancellation, failure,
+and shutdown facts. Human units, accepted/proposed ratios, and named stop
+reasons replace opaque counters. Watch omits connection churn, fragments,
+intermediate draft/verification steps, profile rows, trace sequence, severity,
+turn, and phase detail. Content remains excluded by default.
 
 ### Raw stream
 

@@ -660,143 +660,24 @@ static int runtime_memory(void)
     }
     return rc == YVEX_OK ? 0 : client_error(&err);
 }
-typedef struct {
-    const char *value_a, *value_b, *value_c;
-} client_event_view;
-static client_event_view event_view(const yvex_server_event *event)
-{
-    client_event_view view = {NULL, NULL, NULL};
-    if (event->kind == YVEX_SERVER_EVENT_RUNTIME_READY)
-        return (client_event_view){"ready", "context", "backend"};
-    if (event->kind == YVEX_SERVER_EVENT_REQUEST_QUEUED)
-        return (client_event_view){"queue depth", "queue capacity", NULL};
-    if (event->kind == YVEX_SERVER_EVENT_REQUEST_STARTED)
-        return (client_event_view){"input items", "prefix tokens", "token limit"};
-    if (event->kind == YVEX_SERVER_EVENT_TOKENIZER_COMPLETED)
-        return (client_event_view){"prompt tokens", "reused tokens", NULL};
-    if (event->kind == YVEX_SERVER_EVENT_PREFILL_STARTED)
-        return (client_event_view){"new tokens", "chunk tokens", NULL};
-    if (event->kind == YVEX_SERVER_EVENT_PREFILL_PROGRESS)
-        return (client_event_view){"processed tokens", "total tokens", NULL};
-    if (event->kind == YVEX_SERVER_EVENT_PREFILL_COMPLETED)
-        return (client_event_view){"new tokens", "chunks", NULL};
-    if (event->kind >= YVEX_SERVER_EVENT_GENERATION_COMPLETED &&
-        event->kind <= YVEX_SERVER_EVENT_GENERATION_FAILED)
-        return (client_event_view){"generated tokens", "final position", "stop reason"};
-    if (event->kind != YVEX_SERVER_EVENT_GENERATION_PROFILE) return view;
-    if (!strcmp(event->phase, "movement"))
-        return (client_event_view){"H2D bytes", "D2H bytes", "D2D bytes"};
-    if (!strcmp(event->phase, "transfers"))
-        return (client_event_view){"uploads", "downloads", "expert subviews"};
-    if (!strcmp(event->phase, "launches"))
-        return (client_event_view){"kernel launches", "stream syncs", "device syncs"};
-    if (!strcmp(event->phase, "prefill"))
-        return (client_event_view){"prompt tokens", "reused tokens", "new tokens"};
-    if (!strcmp(event->phase, "decode"))
-        return (client_event_view){"first decode", "later decode", "tokens"};
-    return view;
-}
-static int watch_event_visible(yvex_server_event_kind kind)
-{
-    return kind != YVEX_SERVER_EVENT_CLIENT_DISCONNECTED &&
-           kind != YVEX_SERVER_EVENT_REQUEST_RECEIVED &&
-           !(kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
-             kind <= YVEX_SERVER_EVENT_CANDIDATE_REJECTED) &&
-           !(kind >= YVEX_SERVER_EVENT_GENERATION_FRAGMENT &&
-             kind <= YVEX_SERVER_EVENT_GENERATION_PROFILE);
-}
-static const char *event_color(const yvex_server_event *event,
-                               const yvex_cli_terminal_style *style)
-{
-    if (event->severity >= YVEX_SERVER_SEVERITY_ERROR) return style->error;
-    if (event->severity == YVEX_SERVER_SEVERITY_WARNING) return style->warning;
-    switch (event->kind) {
-    case YVEX_SERVER_EVENT_RUNTIME_READY:
-    case YVEX_SERVER_EVENT_LISTENER_READY:
-    case YVEX_SERVER_EVENT_PREFILL_COMPLETED:
-    case YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED:
-    case YVEX_SERVER_EVENT_GENERATION_COMPLETED:
-    case YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE: return style->success;
-    case YVEX_SERVER_EVENT_GENERATION_CANCELLED:
-    case YVEX_SERVER_EVENT_TELEMETRY_DROPPED: return style->warning;
-    case YVEX_SERVER_EVENT_PREFILL_STARTED:
-    case YVEX_SERVER_EVENT_PREFILL_PROGRESS:
-    case YVEX_SERVER_EVENT_GENERATION_FIRST_TOKEN: return style->accent;
-    default: return style->strong;
-    }
-}
-static void render_engine_event(const yvex_server_event *event, int detailed)
-{
-    static const char *const severity[] = {"debug", "info", "warning", "error", "fatal"};
-    const char *name = yvex_server_event_kind_name(event->kind);
-    client_event_view view = event_view(event);
-    yvex_cli_terminal_style style;
-    yvex_cli_terminal_style_get(stdout, &style);
-    if (detailed) {
-        const char *severity_color = event->severity >= YVEX_SERVER_SEVERITY_ERROR
-                                         ? style.error
-                                         : event->severity == YVEX_SERVER_SEVERITY_WARNING
-                                               ? style.warning
-                                               : style.dim;
-        printf("%s#%llu%s %s%-7s%s ", style.dim, event->sequence, style.reset,
-               severity_color, severity[event->severity], style.reset);
-    } else if (event->wall_time_ns) {
-        time_t seconds = (time_t)(event->wall_time_ns / 1000000000u);
-        struct tm clock;
-        char stamp[16];
-        if (localtime_r(&seconds, &clock) && strftime(stamp, sizeof(stamp), "%H:%M:%S", &clock))
-            printf("%s%s%s  ", style.dim, stamp, style.reset);
-    }
-    fputs(event_color(event, &style), stdout);
-    while (*name) {
-        int byte = *name++;
-        putchar(byte == '.' ? ' ' : byte);
-    }
-    fputs(style.reset, stdout);
-    if (!detailed && event->session_id[0] && event->request_id[0])
-        printf(" · %s/%s", event->session_id, event->request_id);
-    else {
-        if (event->session_id[0]) printf(" · session %s", event->session_id);
-        if (event->request_id[0]) printf(" · request %s", event->request_id);
-    }
-    if (detailed && event->turn_id[0]) printf(" · turn %s", event->turn_id);
-    if (detailed && event->phase[0]) printf(" · phase %s", event->phase);
-    if (event->kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
-        event->kind <= YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED) {
-        printf(" · cycle %llu", event->speculative_cycle);
-        if (event->proposed_tokens)
-            printf(" · proposed %llu", event->proposed_tokens);
-        if (event->selected_verification_tokens)
-            printf(" · verify %llu", event->selected_verification_tokens);
-        if (event->accepted_tokens)
-            printf(" · accepted %llu", event->accepted_tokens);
-        if (event->rejected_tokens)
-            printf(" · rejected %llu", event->rejected_tokens);
-        if (event->discarded_tokens)
-            printf(" · stop-discarded %llu", event->discarded_tokens);
-        if (detailed && event->confidence_logit_count)
-            printf(" · confidence logits %.4g..%.4g mean %.4g",
-                   event->confidence_logit_minimum,
-                   event->confidence_logit_maximum,
-                   event->confidence_logit_mean);
-    } else {
-        if (view.value_a) printf(" · %s %llu", view.value_a, event->value_a);
-        if (view.value_b) printf(" · %s %llu", view.value_b, event->value_b);
-        if (view.value_c) printf(" · %s %llu", view.value_c, event->value_c);
-    }
-    if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
-    if (event->rate > 0.0) printf(" · %.2f tok/s", event->rate);
-    putchar('\n');
-    fflush(stdout);
-}
 static int runtime_events(int projection)
 {
     yvex_client_request request;
     yvex_client_message message;
     yvex_client *client = NULL;
+    yvex_server_summary summary;
     yvex_error err;
+    yvex_cli_terminal_style style;
     char json[2048];
     int rc;
+    if (!projection) {
+        rc = runtime_summary_fetch(&summary, &err);
+        if (rc != YVEX_OK) return client_error(&err);
+        render_status(&summary, 0);
+        yvex_cli_terminal_style_get(stdout, &style);
+        printf("%swatch%s · operational history and live events · Ctrl-C to stop\n\n",
+               style.accent, style.reset);
+    }
     request_init(&request, projection ? YVEX_CLIENT_OP_RUNTIME_TRACE
                                       : YVEX_CLIENT_OP_RUNTIME_WATCH);
     request.trace_level = projection ? YVEX_SERVER_TRACE_FULL
@@ -806,10 +687,9 @@ static int runtime_events(int projection)
         rc = yvex_client_receive(client, &message, &err);
         if (rc != YVEX_OK) break;
         if (message.kind != YVEX_CLIENT_MESSAGE_EVENT) continue;
-        if (projection < 2) {
-            if (projection || watch_event_visible(message.event.kind))
-                render_engine_event(&message.event, projection == 1);
-        } else if (yvex_server_event_json(&message.event, json, sizeof(json), &err) == YVEX_OK) {
+        if (projection < 2)
+            (void)yvex_cli_out_server_event(&message.event, projection == 1);
+        else if (yvex_server_event_json(&message.event, json, sizeof(json), &err) == YVEX_OK) {
             fputs(json, stdout);
             fflush(stdout);
         }
@@ -929,9 +809,6 @@ static int generation_turn(const char *session_name,
             fflush(stdout);
             started = 1;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_TURN_COMPLETE) {
-            static const char *const stop_names[] = {
-                "none", "EOS", "tokenizer stop", "maximum tokens", "context capacity",
-                "cancelled", "model failure", "tokenizer failure", "output failure"};
             if (progress_active) fputs("\r\033[2K", stdout);
             if (started && !last_newline) putchar('\n');
             printf("%sprefill%s %llu new/%llu prompt/%llu reused · %.2f s · %.2f tok/s · "
@@ -953,8 +830,7 @@ static int generation_turn(const char *session_name,
             else
                 printf(" · context %llu", message.context_used);
             printf(" · stop %s · %ssession %s%s\n",
-                   message.stop_reason < sizeof(stop_names) / sizeof(stop_names[0])
-                       ? stop_names[message.stop_reason] : "unknown",
+                   yvex_cli_out_stop_reason(message.stop_reason),
                    style.dim, message.session_name, style.reset);
             break;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_ERROR) {
@@ -1254,20 +1130,6 @@ static const yvex_operator_descriptor *slash_descriptor(const char *line,
     return NULL;
 }
 
-static void repl_catalog_help(void)
-{
-    yvex_cli_terminal_style style;
-    size_t index;
-    yvex_cli_terminal_style_get(stdout, &style);
-    printf("%scommands%s\n", style.strong, style.reset);
-    for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
-        const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
-        if (strcmp(descriptor->slash_projection, "none"))
-            printf("  %s%-12s%s %s%s%s\n", style.accent, descriptor->slash_projection,
-                   style.reset, style.dim, descriptor->summary, style.reset);
-    }
-}
-
 static int repl_command(const char *line, char current[YVEX_SERVER_SESSION_NAME_CAP],
                         unsigned long long *generated_session)
 {
@@ -1307,7 +1169,7 @@ static int repl_command(const char *line, char current[YVEX_SERVER_SESSION_NAME_
             (void)yvex_client_render_help_path(invocation.argument_count,
                                                 invocation.arguments, 0, 0);
         else
-            repl_catalog_help();
+            yvex_cli_out_repl_catalog(0);
         break;
     case YVEX_OPERATOR_RUNTIME_CONSOLE_STATUS:
         (void)console_status(current);
@@ -1414,6 +1276,7 @@ static int chat(const char *session_name, unsigned long long maximum_new_tokens)
         return client_error(&err);
     }
     render_console_status(&status, 1);
+    yvex_cli_out_repl_catalog(1);
     yvex_cli_terminal_style_get(stdout, &style);
     (void)snprintf(prompt, sizeof(prompt), "%syvex>%s ", style.accent, style.reset);
     for (;;) {
@@ -1930,13 +1793,24 @@ static void render_console_status(const yvex_client_message *message, int startu
            status->context_capacity);
     if (status->kv_used_available)
         printf(" · KV %.2f MiB", (double)status->kv_used_bytes / 1048576.0);
-    if (!startup) {
+    if (startup) {
+        printf(" · %smemory %.2f GiB host/%.2f GiB device%s", style.dim,
+               (double)message->runtime.metrics.resident_host_bytes / 1073741824.0,
+               (double)message->runtime.metrics.resident_device_bytes / 1073741824.0,
+               style.reset);
+        if (message->runtime.openai_listener_enabled)
+            printf(" · OpenAI %s%s%s 127.0.0.1:%u",
+                   message->runtime.openai_listener_ready ? style.success : style.warning,
+                   message->runtime.openai_listener_ready ? "ready" : "starting",
+                   style.reset, (unsigned int)message->runtime.openai_port);
+        else
+            printf(" · OpenAI %sdisabled%s", style.dim, style.reset);
+    } else {
         printf(" · live %.12s", status->live_model_identity);
         if (status->selected_model_available)
             printf(" · selected %.12s", status->selected_model_identity);
     }
     putchar('\n');
-    if (startup) putchar('\n');
 }
 
 static int console_status(const char *session_name)

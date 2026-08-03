@@ -169,7 +169,8 @@ start` in the first and run `runtime status`, then `chat`, in the second.
 Chat opens one concise attachment view and the stable prompt:
 
 ```text
-YVEX 0.1.0 · protocol 5 · deepseek4-v4-flash-dspark · CUDA · DSpark · variant 0123456789ab · ● ready · attached to resident runtime · session main · position 0 · turns 0 · context 0/4096
+YVEX 0.1.0 · protocol 5 · deepseek4-v4-flash-dspark · CUDA · DSpark · variant 0123456789ab · ● ready · attached to resident runtime · session main · position 0 · turns 0 · context 0/4096 · memory 100.84 GiB host/0.02 GiB device · OpenAI ready 127.0.0.1:8001
+commands · /help · /status · /context · /memory · /model · /runtime · /attach · /cancel · /close · /detach · /sessions · /new · /reset · /session · /quit · Ctrl-C cancel · Ctrl-D exit
 
 yvex>
 ```
@@ -188,12 +189,13 @@ contains terminal controls. Set `NO_COLOR=1` to disable color explicitly; if
 that variable is already exported in the shell, unset it to see the semantic
 colors.
 
-Slash commands are discovered from the canonical registry. `/help` lists the
-admitted set; `/status`, `/runtime`, `/model`, `/memory`, and `/context` inspect
-state; `/session`, `/sessions`, `/new`, `/attach`, `/detach`, `/reset`, and
-`/close` manage the session; `/cancel` cancels active generation; and `/quit`
-exits locally. Tab completes an unambiguous slash command. Commands for an
-unsupported explicit reasoning channel are absent rather than simulated.
+Slash commands are discovered from the canonical registry and their complete
+current catalog is visible at startup. `/help` adds one-line descriptions;
+`/status`, `/runtime`, `/model`, `/memory`, and `/context` inspect state;
+`/session`, `/sessions`, `/new`, `/attach`, `/detach`, `/reset`, and `/close`
+manage the session; `/cancel` cancels active generation; and `/quit` exits
+locally. Tab completes an unambiguous slash command. Commands for an unsupported
+explicit reasoning channel are absent rather than simulated.
 
 Ctrl-D exits from the prompt and discards an unfinished line. Ctrl-C during a
 turn requests server-owned cancellation and returns to the prompt; a second
@@ -289,14 +291,17 @@ daemon console:
 ./yvex runtime trace --json
 ```
 
-`watch` requests the compact stage stream, while `trace` requests the detailed
-event stream. Watch shows operator-significant queue, request, prefill,
-first-token, committed speculative-cycle, completion, cancellation, failure,
-and lifecycle transitions. It suppresses connection churn, token fragments,
-intermediate draft/verification steps, and generation-profile rows. Human
-trace retains those details and adds sequence, severity, turn, phase, timing,
-and rate. `trace --json` emits the canonical complete JSONL event record.
-Prompts and answers remain absent from all three by default.
+`watch` starts with the current runtime snapshot, then projects retained
+operational history and live events in fixed `STARTUP`, `READY`, `SESSION`,
+`REQUEST`, `PREFILL`, `DSPARK`, and `GENERATE` categories. It shows queue
+pressure only when more than one request is waiting, uses human byte units and
+named stop reasons, and retains operator-significant lifecycle, first-token,
+committed speculative-cycle, completion, cancellation, and failure facts. It
+suppresses ordinary connection/request churn, token fragments, intermediate
+draft/verification steps, and generation-profile rows. Human `trace` retains
+those details and adds sequence, severity, turn, phase, timing, and rate.
+`trace --json` emits the canonical complete JSONL event record. Prompts and
+answers remain absent from all three by default.
 
 Raw daemon JSONL is selected at host startup with `--console raw`. Increase
 `--trace-level` from `summary` to `stages`, `tokens`, or `full` only when the
