@@ -849,7 +849,7 @@ static int artifact_variant_bind(
     const yvex_model_family_api *model = yvex_model_register_deepseek_v4();
     const yvex_graph_family_api *graph = yvex_graph_lower_deepseek_v4();
     const yvex_runtime_family_adapter *adapter =
-        yvex_runtime_family_adapter_find("deepseek4-v4-flash");
+        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
     yvex_artifact *artifact = NULL;
     yvex_gguf *gguf = NULL;
     yvex_tensor_table *tensors = NULL;
@@ -858,6 +858,7 @@ static int artifact_variant_bind(
     yvex_deepseek_v4_ir *architecture = NULL;
     yvex_runtime_descriptor *descriptor = NULL;
     yvex_attention_plan *attention = NULL;
+    yvex_attention_plan *draft_attention = NULL;
     yvex_gguf_writer_plan *writer = NULL;
     yvex_artifact_options artifact_options = {0};
     yvex_materialization_options materialization_options;
@@ -923,6 +924,10 @@ static int artifact_variant_bind(
         rc = graph->plan_build(
             &attention, architecture, materialization, descriptor,
             &attention_failure, &error);
+    if (rc == YVEX_OK && graph->draft_plan_build)
+        rc = graph->draft_plan_build(
+            &draft_attention, architecture, materialization, descriptor,
+            &attention_failure, &error);
     yvex_gguf_writer_plan_options_default(&writer_options);
     writer_request.input_class = YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT;
     writer_request.quant_plan = quant;
@@ -949,6 +954,7 @@ static int artifact_variant_bind(
         prepare.materialization = materialization;
         prepare.runtime_descriptor = descriptor;
         prepare.attention_plan = attention;
+        prepare.draft_attention_plan = draft_attention;
         prepare.family_adapter_id = adapter->adapter_id;
         prepare.family_adapter_version = adapter->adapter_version;
         prepare.artifact_format = "gguf";
@@ -977,6 +983,7 @@ static int artifact_variant_bind(
     }
     yvex_gguf_writer_plan_release(&writer);
     if (graph) graph->plan_close(attention);
+    if (graph) graph->plan_close(draft_attention);
     yvex_runtime_descriptor_close(descriptor);
     if (model) model->ir.close(architecture);
     yvex_materialization_session_close(materialization);
@@ -1055,20 +1062,19 @@ int main(int argc, char **argv)
     }
     if (variant_only) {
         yvex_imatrix_data_options imatrix_options;
-        const yvex_transform_ir_summary *transform = yvex_transform_ir_summary_get(
-            yvex_model_register_deepseek_v4()->payload.transform_ir(handoff));
         const char *preset = getenv("YVEX_QUANT_PRESET");
         const char *imatrix_path = getenv("YVEX_IMATRIX_PATH");
         const char *binding_directory = getenv("YVEX_VARIANT_BINDING_DIR");
         char binding_path[YVEX_PATH_CAP];
 
-        if (!preset || !preset[0]) preset = YVEX_QUANT_DS4_PROFILE_NAME;
+        if (!preset || !preset[0]) preset = YVEX_QUANT_DSPARK_PROFILE_NAME;
         memset(&variant_imatrix_summary, 0, sizeof(variant_imatrix_summary));
         memset(&imatrix_options, 0, sizeof(imatrix_options));
         imatrix_options.path = imatrix_path;
-        imatrix_options.source_model_identity = transform ? transform->transform_identity : NULL;
+        imatrix_options.source_model_identity =
+            YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY;
         imatrix_options.calibration_dataset_identity =
-            "deepseek-v4-flash-chat-v2-rendered-prompts-v1";
+            YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY;
         imatrix_options.producer = "llama.cpp-imatrix";
         imatrix_options.producer_version = 1u;
         imatrix_options.maximum_mapped_bytes = 1024u * 1024u * 1024u;
@@ -1120,7 +1126,7 @@ int main(int argc, char **argv)
             handoff, YVEX_QUANT_PROFILE_SOURCE_FAITHFUL, NULL, NULL);
         if (rc == 0 && artifact_path_build(
                 selected_path, sizeof(selected_path), argv[argument + 1],
-                "deepseek-v4-flash-q8_0-q2_k-v1.gguf"))
+                "deepseek-v4-flash-dspark-q8_0-q2_k-v1.gguf"))
             rc = artifact_plan_one(
                 handoff, YVEX_QUANT_PROFILE_RELEASE_Q8_Q2,
                 SELECTED_EXECUTION_IDENTITY, selected_path);
@@ -1131,14 +1137,14 @@ int main(int argc, char **argv)
     }
     if (!artifact_path_build(
             reference_path, sizeof(reference_path), argv[argument + 1],
-            "deepseek-v4-flash-source-faithful-v1.gguf") ||
+            "deepseek-v4-flash-dspark-source-faithful-v1.gguf") ||
         !artifact_path_build(
             selected_path, sizeof(selected_path), argv[argument + 1],
-            "deepseek-v4-flash-q8_0-q2_k-v1.gguf") ||
+            "deepseek-v4-flash-dspark-q8_0-q2_k-v1.gguf") ||
         !artifact_path_build(
             deterministic_path, sizeof(deterministic_path),
             argv[argument + 1],
-            "deepseek-v4-flash-q8_0-q2_k-v1.determinism.gguf")) {
+            "deepseek-v4-flash-dspark-q8_0-q2_k-v1.determinism.gguf")) {
         yvex_model_register_deepseek_v4()->payload.close(handoff);
         return 1;
     }
@@ -1189,7 +1195,7 @@ int main(int argc, char **argv)
         printf("deterministic_execution_identity=%s\n",
                deterministic.execution_identity);
         printf("deterministic_serialization=accepted\n");
-        printf("complete_artifacts_admitted=2\n");
+        printf("test_artifact_profiles_emitted=2\n");
         printf("materialization_input_ready=1\n");
         printf("runtime_supported=0\n");
     }

@@ -33,18 +33,21 @@ typedef struct {
     const char *config_architecture;
 } yvex_source_target_identity;
 
-#define YVEX_SOURCE_RELEASE_TARGET_ID "deepseek4-v4-flash"
+#define YVEX_SOURCE_RELEASE_TARGET_ID "deepseek4-v4-flash-dspark"
+#define YVEX_SOURCE_RETIRED_TARGET_ID "deepseek4-v4-flash"
 #define YVEX_SOURCE_RELEASE_FAMILY_KEY "deepseek"
 #define YVEX_SOURCE_RELEASE_FAMILY_DISPLAY "DeepSeek"
-#define YVEX_SOURCE_RELEASE_NAME "DeepSeek-V4-Flash"
-#define YVEX_SOURCE_RELEASE_REPOSITORY "deepseek-ai/DeepSeek-V4-Flash"
-#define YVEX_SOURCE_RELEASE_SOURCE_LEAF "DeepSeek-V4-Flash"
+#define YVEX_SOURCE_RELEASE_NAME "DeepSeek-V4-Flash-DSpark"
+#define YVEX_SOURCE_RELEASE_REPOSITORY "deepseek-ai/DeepSeek-V4-Flash-DSpark"
+#define YVEX_SOURCE_RELEASE_SOURCE_LEAF "DeepSeek-V4-Flash-DSpark"
+#define YVEX_SOURCE_RELEASE_MANIFEST_LEAF \
+    "deepseek-v4-flash-dspark-source-manifest.json"
 #define YVEX_SOURCE_RELEASE_REVISION \
-    "60d8d70770c6776ff598c94bb586a859a38244f1"
+    "62af8fffb2f7030cac4de2f0169f5b8d1101b646"
 #define YVEX_SOURCE_RELEASE_INDEX_PATH "model.safetensors.index.json"
 #define YVEX_SOURCE_RELEASE_INDEX_OID \
-    "84692cbe7af556a01e2e5353341100079c387aee"
-#define YVEX_SOURCE_RELEASE_INDEX_SIZE 5371381ull
+    "c3b10d45a829545fbf0d9d2880a1aa0b9ab3b43a"
+#define YVEX_SOURCE_RELEASE_INDEX_SIZE 5602871ull
 #define YVEX_SOURCE_RELEASE_INVENTORY_AUTHORITY "upstream-index"
 #define YVEX_SOURCE_RELEASE_CONFIG_TYPE "deepseek_v4"
 #define YVEX_SOURCE_RELEASE_CONFIG_ARCHITECTURE "DeepseekV4ForCausalLM"
@@ -100,6 +103,7 @@ int yvex_source_target_path(char *out,
 struct yvex_source_tensor_snapshot;
 #define YVEX_SOURCE_VERIFY_BLOCKER_CAP 24u
 #define YVEX_SOURCE_VERIFY_COMPRESS_RATIO_CAP 128u
+#define YVEX_SOURCE_VERIFY_DSPARK_TARGET_LAYER_CAP 8u
 typedef struct {
     const yvex_source_target_identity *identity;
     const char *source_path;
@@ -135,6 +139,7 @@ typedef struct yvex_source_verification {
     int manifest_reopened;
     int upstream_index_identity_verified;
     int config_valid;
+    int inference_config_valid;
     int tokenizer_json_valid;
     int tokenizer_config_valid;
     int generation_config_valid;
@@ -186,6 +191,13 @@ typedef struct yvex_source_verification {
     unsigned long long index_n_heads;
     unsigned long long index_topk;
     unsigned long long num_nextn_predict_layers;
+    unsigned long long dspark_block_size;
+    unsigned long long dspark_noise_token_id;
+    unsigned long long dspark_target_layer_ids[
+        YVEX_SOURCE_VERIFY_DSPARK_TARGET_LAYER_CAP];
+    unsigned long long dspark_target_layer_count;
+    unsigned long long dspark_markov_rank;
+    unsigned long long dspark_inference_layer_count;
     unsigned long long o_groups;
     char rms_norm_eps[32];
     unsigned long long rope_theta;

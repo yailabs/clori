@@ -46,6 +46,7 @@ typedef enum {
     YVEX_DEEPSEEK_V4_IR_FAILURE_SCHEDULE_PATTERN, YVEX_DEEPSEEK_V4_IR_FAILURE_UNSUPPORTED_COMPRESSION,
     YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_DIMENSION, YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_GROUP_GEOMETRY,
     YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_POSITION, YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_MHC,
+    YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_DSPARK,
     YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_ROUTING, YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_EXPERT_TOPK,
     YVEX_DEEPSEEK_V4_IR_FAILURE_TOKENIZER_OUTPUT_MISMATCH,
     YVEX_DEEPSEEK_V4_IR_FAILURE_UNSUPPORTED_SOURCE_CONSTRAINT,
@@ -58,7 +59,7 @@ typedef enum {
     YVEX_DEEPSEEK_V4_IR_COMPONENT_ATTENTION, YVEX_DEEPSEEK_V4_IR_COMPONENT_POSITION,
     YVEX_DEEPSEEK_V4_IR_COMPONENT_MHC, YVEX_DEEPSEEK_V4_IR_COMPONENT_MOE,
     YVEX_DEEPSEEK_V4_IR_COMPONENT_OUTPUT, YVEX_DEEPSEEK_V4_IR_COMPONENT_TOKENIZER,
-    YVEX_DEEPSEEK_V4_IR_COMPONENT_AUXILIARY, YVEX_DEEPSEEK_V4_IR_COMPONENT_SOURCE_CONSTRAINT,
+    YVEX_DEEPSEEK_V4_IR_COMPONENT_DSPARK, YVEX_DEEPSEEK_V4_IR_COMPONENT_SOURCE_CONSTRAINT,
     YVEX_DEEPSEEK_V4_IR_COMPONENT_RUNTIME_NUMERIC, YVEX_DEEPSEEK_V4_IR_COMPONENT_ALLOCATION
 } yvex_deepseek_v4_ir_component;
 typedef enum {
@@ -150,14 +151,29 @@ typedef struct yvex_deepseek_v4_layer_spec {
 } yvex_deepseek_v4_layer_spec;
 typedef struct {
     yvex_deepseek_v4_layer_spec layer;
-    unsigned long long predictor_index, previous_hidden_width, embedding_projection_input;
-    unsigned long long embedding_projection_output, hidden_projection_input;
-    unsigned long long hidden_projection_output;
-    int requires_token_embedding, requires_previous_hidden_state, requires_embedding_norm;
-    int requires_hidden_norm, requires_separate_mhc_head;
+    unsigned long long predictor_index;
+    int has_feature_projection, has_feature_norm, has_output_norm;
+    unsigned long long feature_projection_input, feature_projection_output;
+    unsigned long long feature_norm_width, output_norm_width;
+    int has_markov_head;
+    unsigned long long markov_rank, markov_vocabulary_size;
+    int has_confidence_head;
+    unsigned long long confidence_input_width, confidence_output_width;
+    int has_separate_mhc_head;
     yvex_deepseek_v4_mhc_head_spec mhc_head;
-    int shares_output_head, shares_final_norm;
+    int shares_embedding, shares_output_head;
 } yvex_deepseek_v4_auxiliary_spec;
+typedef struct {
+    int present;
+    unsigned int schema_version;
+    unsigned long long block_size, noise_token_id;
+    unsigned long long target_layer_ids[3], target_layer_count;
+    unsigned long long target_feature_width, concatenated_feature_width;
+    unsigned long long draft_layer_count, markov_rank, final_draft_layer;
+    int parallel_block_backbone, sequential_markov, confidence_available;
+    int shares_embedding, shares_output_head, target_verification_required;
+    unsigned long long accepted_prefix_maximum;
+} yvex_deepseek_v4_dspark_spec;
 typedef struct {
     int required;
     unsigned long long vocabulary_size, hidden_size;
@@ -188,9 +204,8 @@ typedef struct {
     char repository[256];
     char revision[128];
     char verification_stage[64];
-    char paper_revision[32];
-    char sglang_revision[64];
-    char vllm_revision[64];
+    char paper_revision[32], dspark_paper_revision[32];
+    char deepspec_revision[64], sglang_revision[64], vllm_revision[64];
     char hadamard_revision[128];
     unsigned int runtime_numeric_schema_version;
     unsigned long long runtime_compute_policy_count, runtime_activation_policy_count;
@@ -204,6 +219,7 @@ typedef struct {
     yvex_deepseek_v4_output_spec output;
     yvex_deepseek_v4_tokenizer_spec tokenizer;
     yvex_deepseek_v4_source_constraint source_constraint;
+    yvex_deepseek_v4_dspark_spec dspark;
     yvex_deepseek_v4_mhc_spec final_mhc;
     yvex_deepseek_v4_mhc_head_spec final_mhc_head;
     double final_norm_epsilon;
@@ -284,17 +300,17 @@ typedef struct {
     yvex_native_dtype dtype; unsigned int rank;
     yvex_deepseek_tensor_dimension_ref dimensions[2];
 } yvex_deepseek_tensor_recipe;
-#define YVEX_DEEPSEEK_TRANSFORM_SOURCE_COUNT 69187ull
-#define YVEX_DEEPSEEK_TRANSFORM_TERMINAL_COUNT 1360ull
+#define YVEX_DEEPSEEK_TRANSFORM_SOURCE_COUNT 72317ull
+#define YVEX_DEEPSEEK_TRANSFORM_TERMINAL_COUNT 1409ull
 #define YVEX_DEEPSEEK_TRANSFORM_MAIN_TERMINAL_COUNT 1328ull
-#define YVEX_DEEPSEEK_TRANSFORM_AUX_TERMINAL_COUNT 32ull
+#define YVEX_DEEPSEEK_TRANSFORM_AUX_TERMINAL_COUNT 81ull
 #define YVEX_DEEPSEEK_GGUF_NO_INDEX (~0ull)
 #define YVEX_DEEPSEEK_GGUF_AGGREGATED_AXIS (~0u)
-#define YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT 1360ull
+#define YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT 1409ull
 #define YVEX_DEEPSEEK_GGUF_TRUNK_DESCRIPTOR_COUNT 1328ull
-#define YVEX_DEEPSEEK_GGUF_MTP_DESCRIPTOR_COUNT 32ull
-#define YVEX_DEEPSEEK_GGUF_SOURCE_COUNT 69187ull
-#define YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY 0x1aecbbe25b04de0dull
+#define YVEX_DEEPSEEK_GGUF_DRAFT_DESCRIPTOR_COUNT 81ull
+#define YVEX_DEEPSEEK_GGUF_SOURCE_COUNT 72317ull
+#define YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY 0x779aa44d104fc718ull
 typedef enum {
     YVEX_DEEPSEEK_GGUF_TRANSFORM_DIRECT = 0, YVEX_DEEPSEEK_GGUF_TRANSFORM_FP8_E4M3_E8M0,
     YVEX_DEEPSEEK_GGUF_TRANSFORM_EXPERT_MXFP4, YVEX_DEEPSEEK_GGUF_TRANSFORM_I64_TO_I32
@@ -362,7 +378,7 @@ typedef struct {
 } yvex_deepseek_gguf_metadata;
 typedef struct {
     unsigned long long source_contribution_count, descriptor_count, trunk_descriptor_count;
-    unsigned long long mtp_descriptor_count, pinned_standard_count, semantic_standard_count;
+    unsigned long long draft_descriptor_count, pinned_standard_count, semantic_standard_count;
     unsigned long long extension_count;
     unsigned long long collection_counts[YVEX_TENSOR_COLLECTION_COUNT];
     unsigned long long metadata_count, header_scan_count, payload_bytes_read, source_identity;
@@ -400,7 +416,7 @@ typedef struct {
     unsigned long long contribution_count, contributions_resolved, direct_contributions;
     unsigned long long fp8_weight_contributions, e8m0_scale_contributions, expert_contributions;
     unsigned long long i64_router_contributions, global_contributions, norm_contributions;
-    unsigned long long shared_expert_contributions, output_head_contributions, mtp_contributions;
+    unsigned long long shared_expert_contributions, output_head_contributions, draft_contributions;
     unsigned long long routed_expert_logical_bytes, output_head_logical_bytes, range_lookup_count;
     int complete;
 } yvex_deepseek_payload_handoff_summary;

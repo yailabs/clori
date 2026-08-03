@@ -408,7 +408,7 @@ the next boundary.
 
 Do not claim complete model-family support, runtime readiness, generation,
 evaluation, benchmark results, or release readiness without implementation, focused tests,
-failure proof, and an executable downstream consumer. DeepSeek-V4-Flash is the
+failure proof, and an executable downstream consumer. DeepSeek-V4-Flash-DSpark is the
 v0.1.0 release target; it is not automatically supported by naming or artifact
 presence. Qwen, Gemma, and other families remain at their independently proven
 stages.

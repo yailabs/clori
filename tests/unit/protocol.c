@@ -90,12 +90,12 @@ static int test_all_operation_roundtrips(void)
         YVEX_TEST_ASSERT(
             yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
                                          &err) == YVEX_OK,
-            "all protocol-v4 operations encode");
+            "all protocol-v5 operations encode");
         YVEX_TEST_ASSERT(
             yvex_protocol_request_decode(frame, count, &decoded, &prompt,
                                          &provider, &err) == YVEX_OK &&
                 decoded.operation == (yvex_client_operation)value,
-            "all protocol-v4 operations decode");
+            "all protocol-v5 operations decode");
         free(prompt);
         prompt = NULL;
         yvex_provider_request_close(&provider);
@@ -213,6 +213,78 @@ static int test_schema_refusals(void)
         yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
                                      &err) == YVEX_ERR_INVALID_ARG,
         "unavailable selected model refuses a projected identity");
+
+    memset(&message, 0, sizeof(message));
+    message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.kind = YVEX_CLIENT_MESSAGE_ACK;
+    message.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    message.draft_cycle_count = 1u;
+    message.draft_forward_count = 1u;
+    message.proposed_tokens = 257u;
+    message.selected_verification_tokens = 1u;
+    message.target_verification_count = 1u;
+    message.accepted_draft_tokens = 1u;
+    message.discarded_draft_tokens = 256u;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_OK,
+        "valid speculative aggregate fixture");
+    {
+        unsigned long long offset = 0u;
+        int replaced = 0;
+        while (offset + 16u <= count) {
+            unsigned long long length =
+                ((unsigned long long)frame[offset + 4u] << 24u) |
+                ((unsigned long long)frame[offset + 5u] << 16u) |
+                ((unsigned long long)frame[offset + 6u] << 8u) |
+                frame[offset + 7u];
+            if (length == 8u && frame[offset + 8u] == 0u &&
+                frame[offset + 9u] == 0u && frame[offset + 10u] == 0u &&
+                frame[offset + 11u] == 0u && frame[offset + 12u] == 0u &&
+                frame[offset + 13u] == 0u && frame[offset + 14u] == 1u &&
+                frame[offset + 15u] == 1u) {
+                memset(frame + offset + 8u, 0, 8u);
+                replaced = 1;
+                break;
+            }
+            offset += 8u + length;
+        }
+        YVEX_TEST_ASSERT(replaced, "speculative aggregate wire field located");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_decode(frame, count, &decoded_message,
+                                     &err) == YVEX_ERR_FORMAT,
+        "inconsistent speculative aggregate refuses on decode");
+
+    memset(&message, 0, sizeof(message));
+    message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.kind = YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
+    message.status = YVEX_ERR_CANCELLED;
+    message.generation_phase = YVEX_CLIENT_PHASE_CANCELLED;
+    message.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    message.draft_cycle_count = 1u;
+    message.draft_forward_count = 1u;
+    message.proposed_tokens = 5u;
+    message.selected_verification_tokens = 5u;
+    message.discarded_draft_tokens = 5u;
+    message.confidence_logit_count = 5u;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_OK &&
+            yvex_protocol_message_decode(frame, count, &decoded_message,
+                                         &err) == YVEX_OK &&
+            decoded_message.draft_cycle_count == 1u &&
+            decoded_message.draft_forward_count == 1u &&
+            decoded_message.target_verification_count == 0u &&
+            decoded_message.discarded_draft_tokens == 5u,
+        "cancelled verification preserves completed draft accounting");
+
+    message.status = YVEX_OK;
+    message.generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&message, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "completed speculation refuses an unfinished verification cycle");
     return 0;
 }
 
@@ -232,7 +304,8 @@ static int test_message_roundtrip(void)
     source.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     source.runtime.status = YVEX_SERVER_STATUS_READY;
     source.runtime.backend = YVEX_BACKEND_KIND_CUDA;
-    strcpy(source.runtime.target_id, "deepseek4-v4-flash");
+    source.runtime.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    strcpy(source.runtime.target_id, "deepseek4-v4-flash-dspark");
     source.runtime.runtime_ready = 1;
     source.runtime.generation_ready = 1;
     source.runtime.openai_listener_enabled = 1;
@@ -263,6 +336,9 @@ static int test_message_roundtrip(void)
                      "runtime status");
     YVEX_TEST_ASSERT(decoded.runtime.backend == YVEX_BACKEND_KIND_CUDA,
                      "runtime backend");
+    YVEX_TEST_ASSERT(decoded.runtime.generation_mode ==
+                         YVEX_SERVER_GENERATION_DSPARK,
+                     "runtime generation mode");
     YVEX_TEST_ASSERT(decoded.runtime.metrics.model_open_count == 1u,
                      "model-open metric");
     YVEX_TEST_ASSERT(decoded.runtime.metrics.queue_capacity == 16u,
@@ -311,6 +387,28 @@ static int test_message_roundtrip(void)
     source.generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
     source.cancellation_class = YVEX_CLIENT_CANCELLATION_COMPLETED;
     source.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
+    source.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+    source.draft_cycle_count = 3u;
+    source.draft_forward_count = 3u;
+    source.proposed_tokens = 16u;
+    source.selected_verification_tokens = 15u;
+    source.target_verification_count = 3u;
+    source.accepted_draft_tokens = 10u;
+    source.rejected_draft_tokens = 5u;
+    source.discarded_draft_tokens = 1u;
+    source.target_correction_or_bonus_tokens = 3u;
+    source.maximum_accepted_prefix = 5u;
+    source.confidence_logit_count = 16u;
+    source.draft_seconds = 0.25;
+    source.verification_seconds = 0.75;
+    source.speculative_commit_seconds = 0.125;
+    source.mean_accepted_prefix = 10.0 / 3.0;
+    source.effective_committed_rate = 4.5;
+    source.confidence_logit_minimum = -1.25;
+    source.confidence_logit_maximum = 2.5;
+    source.confidence_logit_mean = 0.75;
+    strcpy(source.speculation_policy_identity,
+           "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
     source.console.schema_version = 1u;
     source.console.backend = YVEX_BACKEND_KIND_CUDA;
     source.console.session_state = YVEX_SERVER_SESSION_READY;
@@ -332,7 +430,7 @@ static int test_message_roundtrip(void)
     source.runtime.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     source.runtime.status = YVEX_SERVER_STATUS_READY;
     source.runtime.backend = YVEX_BACKEND_KIND_CUDA;
-    strcpy(source.runtime.target_id, "deepseek-v4-flash");
+    strcpy(source.runtime.target_id, "deepseek4-v4-flash-dspark");
     strcpy(source.console.session_name, "main");
     strcpy(source.console.live_model_identity,
            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -351,7 +449,28 @@ static int test_message_roundtrip(void)
                          decoded.publication_seconds == 0.125 &&
                          decoded.generation_phase == YVEX_CLIENT_PHASE_COMPLETE &&
                          decoded.cancellation_class == YVEX_CLIENT_CANCELLATION_COMPLETED &&
-                         decoded.stream_channel == YVEX_CLIENT_STREAM_CONTROL_EVENT,
+                         decoded.stream_channel == YVEX_CLIENT_STREAM_CONTROL_EVENT &&
+                         decoded.generation_mode == YVEX_SERVER_GENERATION_DSPARK &&
+                         decoded.draft_cycle_count == 3u &&
+                         decoded.draft_forward_count == 3u &&
+                         decoded.proposed_tokens == 16u &&
+                         decoded.selected_verification_tokens == 15u &&
+                         decoded.target_verification_count == 3u &&
+                         decoded.accepted_draft_tokens == 10u &&
+                         decoded.rejected_draft_tokens == 5u &&
+                         decoded.discarded_draft_tokens == 1u &&
+                         decoded.target_correction_or_bonus_tokens == 3u &&
+                         decoded.maximum_accepted_prefix == 5u &&
+                         decoded.confidence_logit_count == 16u &&
+                         decoded.draft_seconds == 0.25 &&
+                         decoded.verification_seconds == 0.75 &&
+                         decoded.speculative_commit_seconds == 0.125 &&
+                         decoded.confidence_logit_minimum == -1.25 &&
+                         decoded.confidence_logit_maximum == 2.5 &&
+                         decoded.confidence_logit_mean == 0.75 &&
+                         decoded.effective_committed_rate == 4.5 &&
+                         !strcmp(decoded.speculation_policy_identity,
+                                 source.speculation_policy_identity),
                      "complete turn facts roundtrip");
     YVEX_TEST_ASSERT(decoded.console.runtime_ready &&
                          decoded.console.session_available &&
@@ -369,7 +488,7 @@ static int test_message_roundtrip(void)
                          decoded.console.generation_phase == YVEX_CLIENT_PHASE_DECODE &&
                          decoded.console.cancellation_class == YVEX_CLIENT_CANCELLATION_REQUESTED &&
                          strcmp(decoded.console.session_name, "main") == 0 &&
-                         strcmp(decoded.runtime.target_id, "deepseek-v4-flash") == 0,
+                         strcmp(decoded.runtime.target_id, "deepseek4-v4-flash-dspark") == 0,
                      "console status facts roundtrip");
     rc = yvex_protocol_message_decode(frame, count - 1u, &decoded, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT, "truncated message refuses");
@@ -378,13 +497,13 @@ static int test_message_roundtrip(void)
 
 typedef struct {
     int listener;
-} v3_peer;
+} v4_peer;
 
-static void *v3_peer_main(void *opaque)
+static void *v4_peer_main(void *opaque)
 {
     static const unsigned char response[12] = {
-        'Y', 'V', 'X', 'P', 0u, 3u, 0u, 2u, 0u, 0u, 0u, 0u};
-    v3_peer *peer = opaque;
+        'Y', 'V', 'X', 'P', 0u, 4u, 0u, 2u, 0u, 0u, 0u, 0u};
+    v4_peer *peer = opaque;
     unsigned char header[12], discard[4096];
     unsigned int length;
     int client = accept(peer->listener, NULL, NULL);
@@ -407,34 +526,34 @@ static void *v3_peer_main(void *opaque)
     return NULL;
 }
 
-static int test_v3_frame_refusal(void)
+static int test_v4_frame_refusal(void)
 {
     struct sockaddr_un address;
     char path[sizeof(address.sun_path)];
     yvex_client *client = NULL;
     yvex_error err;
     pthread_t thread;
-    v3_peer peer;
+    v4_peer peer;
     int rc;
-    (void)snprintf(path, sizeof(path), "build/tests/protocol-v4-%lu.sock",
+    (void)snprintf(path, sizeof(path), "build/tests/protocol-v5-%lu.sock",
                    (unsigned long)getpid());
     (void)unlink(path);
     peer.listener = socket(AF_UNIX, SOCK_STREAM, 0);
-    YVEX_TEST_ASSERT(peer.listener >= 0, "v3 peer socket");
+    YVEX_TEST_ASSERT(peer.listener >= 0, "v4 peer socket");
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     memcpy(address.sun_path, path, strlen(path) + 1u);
     YVEX_TEST_ASSERT(bind(peer.listener, (struct sockaddr *)&address,
                           sizeof(address)) == 0 &&
                          chmod(path, 0600) == 0 && listen(peer.listener, 1) == 0,
-                     "v3 peer bind/listen");
-    YVEX_TEST_ASSERT(pthread_create(&thread, NULL, v3_peer_main, &peer) == 0,
-                     "v3 peer thread");
+                     "v4 peer bind/listen");
+    YVEX_TEST_ASSERT(pthread_create(&thread, NULL, v4_peer_main, &peer) == 0,
+                     "v4 peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 4") != NULL,
-                     "v3 frame explicitly refuses");
-    YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v3 peer join");
+                         strstr(yvex_error_message(&err), "version 5") != NULL,
+                     "v4 frame explicitly refuses");
+    YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v4 peer join");
     (void)close(peer.listener);
     (void)unlink(path);
     return 0;
@@ -478,7 +597,7 @@ int yvex_test_protocol(void)
     if (test_all_operation_roundtrips() != 0) return 1;
     if (test_schema_refusals() != 0) return 1;
     if (test_message_roundtrip() != 0) return 1;
-    if (test_v3_frame_refusal() != 0) return 1;
+    if (test_v4_frame_refusal() != 0) return 1;
     if (test_bounded_parser_mutation() != 0) return 1;
     return 0;
 }

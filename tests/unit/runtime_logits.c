@@ -64,7 +64,7 @@ static int logits_test_orientation(void)
 static int logits_test_policy(void)
 {
     const yvex_runtime_family_adapter *adapter =
-        yvex_runtime_family_adapter_find("deepseek4-v4-flash");
+        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
     yvex_logits_family_policy policy;
     yvex_runtime_capabilities capabilities;
     YVEX_TEST_ASSERT(adapter && adapter->logits_policy &&

@@ -290,7 +290,7 @@ static int payload_test_metadata(const char *root,
                      root, name);
     if (count < 0 || (size_t)count >= sizeof(path)) return 0;
     count = snprintf(text, sizeof(text),
-        "60d8d70770c6776ff598c94bb586a859a38244f1\n%s\n0\n", digest);
+        "62af8fffb2f7030cac4de2f0169f5b8d1101b646\n%s\n0\n", digest);
     return count >= 0 && (size_t)count < sizeof(text) &&
            payload_test_write_text(path, text);
 }
@@ -396,10 +396,10 @@ static int payload_fixture_create(payload_fixture *fixture,
     fixture->verification.shard_index_headers_match = 1;
     snprintf(fixture->verification.revision,
              sizeof(fixture->verification.revision), "%s",
-             "60d8d70770c6776ff598c94bb586a859a38244f1");
+             "62af8fffb2f7030cac4de2f0169f5b8d1101b646");
     snprintf(fixture->verification.repository_id,
              sizeof(fixture->verification.repository_id), "%s",
-             "deepseek-ai/DeepSeek-V4-Flash");
+             "deepseek-ai/DeepSeek-V4-Flash-DSpark");
     snprintf(fixture->verification.inventory_authority,
              sizeof(fixture->verification.inventory_authority), "%s",
              "upstream-index");

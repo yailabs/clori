@@ -938,6 +938,7 @@ typedef struct {
     yvex_deepseek_v4_ir *architecture;
     yvex_runtime_descriptor *descriptor;
     yvex_attention_plan *attention;
+    yvex_attention_plan *draft_attention;
     yvex_quant_policy *quant_policy;
     yvex_imatrix_data *imatrix;
     yvex_quant_plan *quant;
@@ -964,6 +965,7 @@ static void runtime_binding_compiler_close(runtime_binding_compiler *compiler)
     yvex_imatrix_data_close(compiler->imatrix);
     yvex_quant_policy_close(compiler->quant_policy);
     if (compiler->graph) compiler->graph->plan_close(compiler->attention);
+    if (compiler->graph) compiler->graph->plan_close(compiler->draft_attention);
     yvex_runtime_descriptor_close(compiler->descriptor);
     if (compiler->model) compiler->model->ir.close(compiler->architecture);
     yvex_materialization_session_close(compiler->materialization);
@@ -1056,6 +1058,11 @@ static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
         rc = compiler->graph->plan_build(
             &compiler->attention, compiler->architecture, compiler->materialization,
             compiler->descriptor, &compiler->attention_failure, err);
+    if (rc == YVEX_OK && compiler->graph->draft_plan_build)
+        rc = compiler->graph->draft_plan_build(
+            &compiler->draft_attention, compiler->architecture,
+            compiler->materialization, compiler->descriptor,
+            &compiler->attention_failure, err);
     if (rc == YVEX_OK && request->physical_variant_plan_path) {
         if (!transform) {
             yvex_error_set(err, YVEX_ERR_STATE, "graph_attention_prepare",
@@ -1075,10 +1082,18 @@ static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
         }
         if (rc == YVEX_OK && request->imatrix_path) {
             imatrix_options.path = request->imatrix_path;
-            imatrix_options.source_model_identity =
-                transform ? transform->transform_identity : NULL;
-            imatrix_options.calibration_dataset_identity =
-                "deepseek-v4-flash-chat-v2-rendered-prompts-v1";
+            if (request->quant_preset_name &&
+                strcmp(request->quant_preset_name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0) {
+                imatrix_options.source_model_identity =
+                    YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY;
+                imatrix_options.calibration_dataset_identity =
+                    YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY;
+            } else {
+                imatrix_options.source_model_identity =
+                    transform ? transform->transform_identity : NULL;
+                imatrix_options.calibration_dataset_identity =
+                    "deepseek-v4-flash-chat-v2-rendered-prompts-v1";
+            }
             imatrix_options.producer = "llama.cpp-imatrix";
             imatrix_options.producer_version = 1u;
             imatrix_options.maximum_mapped_bytes = 1024u * 1024u * 1024u;
@@ -1136,8 +1151,7 @@ static const yvex_runtime_family_adapter *runtime_binding_adapter_find(
     unsigned long long index;
 
     for (index = 0ull;; ++index) {
-        const yvex_runtime_family_adapter *adapter =
-            yvex_graph_runtime_family_at(index);
+        const yvex_runtime_family_adapter *adapter = yvex_runtime_family_at(index);
         if (!adapter) return NULL;
         if (adapter->adapter_id == adapter_id &&
             adapter->adapter_version == adapter_version)
@@ -1207,6 +1221,7 @@ static int prepare_deepseek_runtime_binding(
         prepare.materialization = compiler.materialization;
         prepare.runtime_descriptor = compiler.descriptor;
         prepare.attention_plan = compiler.attention;
+        prepare.draft_attention_plan = compiler.draft_attention;
         prepare.family_adapter_id = request->family_adapter_id;
         prepare.family_adapter_version = request->family_adapter_version;
         prepare.artifact_format = "gguf";
@@ -1238,7 +1253,7 @@ const yvex_graph_family_preparation *
 yvex_graph_family_preparation_at(unsigned long long index)
 {
     static const yvex_graph_family_preparation preparation = {
-        "deepseek4-v4-flash", "deepseek-source-manifest.json",
+        YVEX_SOURCE_RELEASE_TARGET_ID, YVEX_SOURCE_RELEASE_MANIFEST_LEAF,
         yvex_model_register_deepseek_v4, yvex_artifact_admit_deepseek,
         prepare_deepseek_runtime_binding};
     return index == 0ull ? &preparation : NULL;

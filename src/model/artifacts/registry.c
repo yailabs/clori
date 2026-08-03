@@ -74,7 +74,9 @@ static const registry_string_field registry_string_fields[] = {
     {offsetof(yvex_model_registry_owned_entry, runtime_target),
      offsetof(yvex_model_registry_entry, runtime_target), "runtime_target"},
     {offsetof(yvex_model_registry_owned_entry, runtime_backend),
-     offsetof(yvex_model_registry_entry, runtime_backend), "runtime_backend"}
+     offsetof(yvex_model_registry_entry, runtime_backend), "runtime_backend"},
+    {offsetof(yvex_model_registry_owned_entry, runtime_mode),
+     offsetof(yvex_model_registry_entry, runtime_mode), "runtime_mode"}
 };
 
 static size_t registry_string_field_count(void)
@@ -433,7 +435,7 @@ int yvex_model_alias_validate(const char *alias, yvex_error *err)
     if (hyphens < 3) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model_alias",
                        "alias must include family, model, scope, and artifact class; "
-                       "example: deepseek4-v4-flash-selected-embed");
+                       "example: deepseek4-v4-flash-dspark-selected-embed");
         return YVEX_ERR_INVALID_ARG;
     }
     if (is_ambiguous_token(alias)) {
@@ -490,6 +492,9 @@ int yvex_model_registry_startup_validate(const yvex_model_registry_entry *entry,
         !entry->runtime_target[0] || !entry->runtime_backend ||
         (strcmp(entry->runtime_backend, "cpu") != 0 &&
          strcmp(entry->runtime_backend, "cuda") != 0) ||
+        !entry->runtime_mode ||
+        (strcmp(entry->runtime_mode, "target-only") != 0 &&
+         strcmp(entry->runtime_mode, "dspark") != 0) ||
         entry->runtime_context == 0ull) {
         yvex_error_set(err, YVEX_ERR_STATE, "model_registry_startup",
                        "model has no complete startup profile");
@@ -622,6 +627,7 @@ int yvex_model_registry_add(yvex_model_registry *registry,
     if ((entry->runtime_binding && entry->runtime_binding[0]) ||
         (entry->runtime_target && entry->runtime_target[0]) ||
         (entry->runtime_backend && entry->runtime_backend[0]) ||
+        (entry->runtime_mode && entry->runtime_mode[0]) ||
         entry->runtime_context != 0ull) {
         rc = yvex_model_registry_startup_validate(entry, err);
         if (rc != YVEX_OK) return rc;
@@ -828,6 +834,7 @@ int yvex_model_registry_entry_derive_from_path(yvex_model_registry_entry *entry,
     entry->runtime_binding = "";
     entry->runtime_target = "";
     entry->runtime_backend = "";
+    entry->runtime_mode = "";
     entry->runtime_context = 0ull;
     return YVEX_OK;
 }
@@ -962,13 +969,19 @@ static void free_entry_view_strings(yvex_model_registry_entry *view)
 
 static int parse_entry_strings(const char *start,
                                const char *end,
-                               yvex_model_registry_entry *view)
+                               yvex_model_registry_entry *view,
+                               int legacy_runtime_mode)
 {
     size_t field;
 
     for (field = 0u; field < registry_string_field_count(); ++field) {
         const registry_string_field *spec = &registry_string_fields[field];
-        const char *value = extract_string_in(start, end, spec->json_key);
+        char *value = extract_string_in(start, end, spec->json_key);
+        if (strcmp(spec->json_key, "runtime_mode") == 0 && legacy_runtime_mode &&
+            (!value || !value[0])) {
+            free(value);
+            value = yvex_core_strdup("target-only");
+        }
         if (!value) return 0;
         *view_string_field(view, spec->view_offset) = value;
     }
@@ -1024,8 +1037,10 @@ static int registry_parse_json(const char *path,
                                         yvex_error *err)
 {
     char *json = NULL;
+    char *schema = NULL;
     const char *models;
     const char *p;
+    int legacy_runtime_mode;
     int rc;
 
     if (!path || !registry) {
@@ -1034,20 +1049,25 @@ static int registry_parse_json(const char *path,
     }
     rc = read_file(path, &json, err);
     if (rc != YVEX_OK) return rc;
-    if (!strstr(json, "\"schema\"") ||
-        (!strstr(json, "yvex.models.local.v1") &&
-         !strstr(json, "yvex.models.local.v2") &&
-         !strstr(json, "yvex.models.local.v3"))) {
-        free(json);
-        yvex_error_set(err, YVEX_ERR_FORMAT, "model_registry_json", "registry schema missing or unsupported");
-        return YVEX_ERR_FORMAT;
-    }
     models = strstr(json, "\"models\"");
     if (!models) {
         free(json);
         yvex_error_set(err, YVEX_ERR_FORMAT, "model_registry_json", "models array missing");
         return YVEX_ERR_FORMAT;
     }
+    schema = extract_string_in(json, models, "schema");
+    legacy_runtime_mode = schema &&
+                          (strcmp(schema, "yvex.models.local.v1") == 0 ||
+                           strcmp(schema, "yvex.models.local.v2") == 0 ||
+                           strcmp(schema, "yvex.models.local.v3") == 0);
+    if (!schema || (!legacy_runtime_mode &&
+                    strcmp(schema, "yvex.models.local.v4") != 0)) {
+        free(schema);
+        free(json);
+        yvex_error_set(err, YVEX_ERR_FORMAT, "model_registry_json", "registry schema missing or unsupported");
+        return YVEX_ERR_FORMAT;
+    }
+    free(schema);
     p = strchr(models, '[');
     if (!p) {
         free(json);
@@ -1075,7 +1095,8 @@ static int registry_parse_json(const char *path,
             yvex_error_set(err, YVEX_ERR_FORMAT, "model_registry_json", "model entry unterminated");
             return YVEX_ERR_FORMAT;
         }
-        if (!parse_entry_strings(obj_start, obj_end, &view)) {
+        if (!parse_entry_strings(obj_start, obj_end, &view,
+                                 legacy_runtime_mode)) {
             free_entry_view_strings(&view);
             free(json);
             yvex_error_set(err, YVEX_ERR_FORMAT, "model_registry_json",

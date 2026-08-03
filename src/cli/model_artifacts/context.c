@@ -176,12 +176,15 @@ static const char *const literal_lines_9[] = {
     "cleanup_attempted: true",
     "cleanup_status: pass"};
 
-static const char *const literal_lines_10[] = { "Examples:",
-    "  yvex inspect context report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+static const char *const literal_lines_10[] = {"Examples:",
+    "  yvex inspect context report --model "
+        "deepseek4-v4-flash-dspark-selected-embed-rmsnorm --family deepseek --backend "
         "cpu --tokens 0,1,2,3",
-    "  yvex inspect context report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+    "  yvex inspect context report --model "
+        "deepseek4-v4-flash-dspark-selected-embed-rmsnorm --family deepseek --backend "
         "cpu --tokens 0,1,2,3 --chunk-size 2",
-    "  yvex inspect context report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+    "  yvex inspect context report --model "
+        "deepseek4-v4-flash-dspark-selected-embed-rmsnorm --family deepseek --backend "
         "cpu --tokens 0,1,2,3 --context-length 2\n"
 };
 

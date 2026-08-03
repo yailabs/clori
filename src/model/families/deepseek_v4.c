@@ -1,5 +1,5 @@
 /*
- * Admit the pinned DeepSeek-V4-Flash topology as one immutable family recipe.
+ * Admit the pinned DeepSeek-V4-Flash-DSpark topology as one immutable family recipe.
  *
  * Every layer and tensor recipe derives from one admitted architecture; rejected builds publish no
  * partial object and read zero payload bytes. The family selects typed facts and composition but
@@ -19,7 +19,13 @@
 #include <string.h>
 
 #define DEEPSEEK_V4_FLASH_MAIN_LAYERS 43ull
-#define DEEPSEEK_V4_FLASH_AUX_LAYERS 1ull
+#define DEEPSEEK_V4_FLASH_LEGACY_NEXTN_LAYERS 1ull
+#define DEEPSEEK_V4_FLASH_DSPARK_LAYERS 3ull
+#define DEEPSEEK_V4_FLASH_DSPARK_BLOCK 5ull
+#define DEEPSEEK_V4_FLASH_DSPARK_NOISE_TOKEN 128799ull
+#define DEEPSEEK_V4_FLASH_DSPARK_MARKOV_RANK 256ull
+#define DEEPSEEK_V4_FLASH_DSPARK_SHARDS 48ull
+#define DEEPSEEK_V4_FLASH_DSPARK_TENSORS 72317ull
 #define DEEPSEEK_V4_MHC_SCALE_WIDTH 3ull
 #define DEEPSEEK_V4_MHC_POST_MULTIPLIER 2.0
 #define DEEPSEEK_V4_RUNTIME_NUMERIC_SCHEMA_VERSION 2u
@@ -28,6 +34,9 @@
 #define DEEPSEEK_V4_RUNTIME_TOPK_POLICY_VERSION 1u
 
 static const char deepseek_v4_paper_revision[] = "arXiv:2606.19348v1";
+static const char deepseek_v4_dspark_paper_revision[] = "arXiv:2607.05147v1";
+static const char deepseek_v4_deepspec_revision[] =
+    "005e03b81cec38b7da6399833d609ee89a2587f2";
 static const char deepseek_v4_sglang_revision[] =
     "96a04cb13f9c3ed86028e090784a9eb059cf5318";
 static const char deepseek_v4_vllm_revision[] =
@@ -65,6 +74,7 @@ typedef struct {
     unsigned long long grouped_output_width;
     unsigned long long csa_indexer_rows;
     unsigned long long indexer_query_width;
+    unsigned long long concatenated_feature_width;
 } deepseek_v4_derived_geometry;
 
 static void *deepseek_v4_default_allocate(size_t size, void *context)
@@ -166,10 +176,13 @@ static int deepseek_v4_validate_source(
         !verification->tokenizer_json_valid ||
         !verification->tokenizer_config_valid ||
         !verification->generation_config_valid ||
+        !verification->inference_config_valid ||
         !verification->shard_index_headers_match ||
         verification->header_scan_count != 1u ||
-        verification->header_shard_count == 0u ||
-        verification->header_tensor_count == 0u) {
+        verification->shard_count != DEEPSEEK_V4_FLASH_DSPARK_SHARDS ||
+        verification->header_shard_count != DEEPSEEK_V4_FLASH_DSPARK_SHARDS ||
+        verification->indexed_tensor_count != DEEPSEEK_V4_FLASH_DSPARK_TENSORS ||
+        verification->header_tensor_count != DEEPSEEK_V4_FLASH_DSPARK_TENSORS) {
         return deepseek_v4_reject(
             failure, YVEX_DEEPSEEK_V4_IR_FAILURE_SOURCE_NOT_VERIFIED,
             YVEX_DEEPSEEK_V4_IR_COMPONENT_SOURCE, "strict-verification",
@@ -209,18 +222,17 @@ static int deepseek_v4_validate_source(
     return YVEX_OK;
 }
 
-static int deepseek_v4_validate_geometry(
+static int deepseek_v4_validate_base_geometry(
     const yvex_source_verification *source,
     deepseek_v4_derived_geometry *geometry,
     yvex_deepseek_v4_ir_failure *failure,
     yvex_error *err)
 {
     unsigned long long schedule_count;
-    unsigned long long intermediate;
 
     memset(geometry, 0, sizeof(*geometry));
     if (source->num_hidden_layers != DEEPSEEK_V4_FLASH_MAIN_LAYERS ||
-        source->num_nextn_predict_layers != DEEPSEEK_V4_FLASH_AUX_LAYERS ||
+        source->num_nextn_predict_layers != DEEPSEEK_V4_FLASH_LEGACY_NEXTN_LAYERS ||
         source->hidden_size == 0u || source->vocab_size == 0u ||
         source->max_position_embeddings == 0u ||
         source->num_attention_heads == 0u ||
@@ -233,9 +245,24 @@ static int deepseek_v4_validate_geometry(
             YVEX_DEEPSEEK_V4_IR_COMPONENT_MODEL, "global-geometry",
             YVEX_DEEPSEEK_V4_IR_NO_LAYER, 1u, 0u, err);
     }
+    if (source->dspark_block_size != DEEPSEEK_V4_FLASH_DSPARK_BLOCK ||
+        source->dspark_inference_layer_count !=
+            DEEPSEEK_V4_FLASH_DSPARK_LAYERS ||
+        source->dspark_noise_token_id != DEEPSEEK_V4_FLASH_DSPARK_NOISE_TOKEN ||
+        source->dspark_noise_token_id >= source->vocab_size ||
+        source->dspark_markov_rank != DEEPSEEK_V4_FLASH_DSPARK_MARKOV_RANK ||
+        source->dspark_target_layer_count != 3u ||
+        source->dspark_target_layer_ids[0] != 40u ||
+        source->dspark_target_layer_ids[1] != 41u ||
+        source->dspark_target_layer_ids[2] != 42u) {
+        return deepseek_v4_reject(
+            failure, YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_DSPARK,
+            YVEX_DEEPSEEK_V4_IR_COMPONENT_DSPARK, "dspark-source-contract",
+            YVEX_DEEPSEEK_V4_IR_NO_LAYER, 1u, 0u, err);
+    }
     if (!yvex_core_u64_add(source->num_hidden_layers,
-                                 source->num_nextn_predict_layers,
-                                 &schedule_count)) {
+                           source->dspark_inference_layer_count,
+                           &schedule_count)) {
         return deepseek_v4_reject(
             failure, YVEX_DEEPSEEK_V4_IR_FAILURE_ARITHMETIC_OVERFLOW,
             YVEX_DEEPSEEK_V4_IR_COMPONENT_ATTENTION, "schedule-count",
@@ -247,6 +274,14 @@ static int deepseek_v4_validate_geometry(
             YVEX_DEEPSEEK_V4_IR_COMPONENT_ATTENTION, "compress-ratios",
             YVEX_DEEPSEEK_V4_IR_NO_LAYER, schedule_count,
             source->compress_ratio_count, err);
+    }
+    if (!yvex_core_u64_mul(source->hidden_size,
+                          source->dspark_target_layer_count,
+                          &geometry->concatenated_feature_width)) {
+        return deepseek_v4_reject(
+            failure, YVEX_DEEPSEEK_V4_IR_FAILURE_ARITHMETIC_OVERFLOW,
+            YVEX_DEEPSEEK_V4_IR_COMPONENT_DSPARK, "dspark-feature-width",
+            YVEX_DEEPSEEK_V4_IR_NO_LAYER, 0u, 0u, err);
     }
     if (source->o_groups == 0u ||
         source->num_attention_heads % source->o_groups != 0u) {
@@ -283,6 +318,17 @@ static int deepseek_v4_validate_geometry(
             "attention-derived-width", YVEX_DEEPSEEK_V4_IR_NO_LAYER,
             0u, 0u, err);
     }
+    return YVEX_OK;
+}
+
+static int deepseek_v4_validate_position_and_mhc(
+    const yvex_source_verification *source,
+    deepseek_v4_derived_geometry *geometry,
+    yvex_deepseek_v4_ir_failure *failure,
+    yvex_error *err)
+{
+    unsigned long long intermediate;
+
     if (source->sliding_window == 0u ||
         source->sliding_window > source->max_position_embeddings ||
         !source->use_cache ||
@@ -333,6 +379,15 @@ static int deepseek_v4_validate_geometry(
             YVEX_DEEPSEEK_V4_IR_COMPONENT_MHC, "mhc-geometry",
             YVEX_DEEPSEEK_V4_IR_NO_LAYER, 0u, source->hc_mult, err);
     }
+    return YVEX_OK;
+}
+
+static int deepseek_v4_validate_moe_and_source(
+    const yvex_source_verification *source,
+    deepseek_v4_derived_geometry *geometry,
+    yvex_deepseek_v4_ir_failure *failure,
+    yvex_error *err)
+{
     if (source->n_routed_experts == 0u ||
         source->n_shared_experts == 0u ||
         source->moe_intermediate_size == 0u ||
@@ -410,6 +465,22 @@ static int deepseek_v4_validate_geometry(
     return YVEX_OK;
 }
 
+static int deepseek_v4_validate_geometry(
+    const yvex_source_verification *source,
+    deepseek_v4_derived_geometry *geometry,
+    yvex_deepseek_v4_ir_failure *failure,
+    yvex_error *err)
+{
+    int rc = deepseek_v4_validate_base_geometry(source, geometry, failure, err);
+    if (rc == YVEX_OK)
+        rc = deepseek_v4_validate_position_and_mhc(source, geometry, failure,
+                                                   err);
+    if (rc == YVEX_OK)
+        rc = deepseek_v4_validate_moe_and_source(source, geometry, failure,
+                                                 err);
+    return rc;
+}
+
 static int deepseek_v4_validate_schedule(
     const yvex_source_verification *source,
     yvex_deepseek_v4_ir_failure *failure,
@@ -440,7 +511,7 @@ static int deepseek_v4_validate_schedule(
                 failure, YVEX_DEEPSEEK_V4_IR_FAILURE_SCHEDULE_PATTERN,
                 i < source->num_hidden_layers
                     ? YVEX_DEEPSEEK_V4_IR_COMPONENT_ATTENTION
-                    : YVEX_DEEPSEEK_V4_IR_COMPONENT_AUXILIARY,
+                    : YVEX_DEEPSEEK_V4_IR_COMPONENT_DSPARK,
                 "compression-schedule", i, expected, ratio, err);
         }
     }
@@ -875,6 +946,12 @@ static void deepseek_v4_fill_model(
                      source->verification_stage);
     yvex_core_text_copy(model->paper_revision, sizeof(model->paper_revision),
                      deepseek_v4_paper_revision);
+    yvex_core_text_copy(model->dspark_paper_revision,
+                        sizeof(model->dspark_paper_revision),
+                        deepseek_v4_dspark_paper_revision);
+    yvex_core_text_copy(model->deepspec_revision,
+                        sizeof(model->deepspec_revision),
+                        deepseek_v4_deepspec_revision);
     yvex_core_text_copy(model->sglang_revision, sizeof(model->sglang_revision),
                      deepseek_v4_sglang_revision);
     yvex_core_text_copy(model->vllm_revision, sizeof(model->vllm_revision),
@@ -891,7 +968,7 @@ static void deepseek_v4_fill_model(
     model->vocabulary_size = source->vocab_size;
     model->maximum_context = source->max_position_embeddings;
     model->main_layer_count = source->num_hidden_layers;
-    model->auxiliary_layer_count = source->num_nextn_predict_layers;
+    model->auxiliary_layer_count = source->dspark_inference_layer_count;
     model->source_header_scan_count = source->header_scan_count;
     model->source_header_tensor_count = source->header_tensor_count;
     model->source_payload_bytes_read = 0u;
@@ -930,6 +1007,25 @@ static void deepseek_v4_fill_model(
     model->source_constraint.fp4_scale_group_width = 32u;
     model->source_constraint.fp4_physical_dtype = YVEX_NATIVE_DTYPE_I8;
     model->source_constraint.scale_dtype = YVEX_NATIVE_DTYPE_F8_E8M0;
+    model->dspark.present = 1;
+    model->dspark.schema_version = 1u;
+    model->dspark.block_size = source->dspark_block_size;
+    model->dspark.noise_token_id = source->dspark_noise_token_id;
+    model->dspark.target_layer_count = source->dspark_target_layer_count;
+    memcpy(model->dspark.target_layer_ids, source->dspark_target_layer_ids,
+           sizeof(model->dspark.target_layer_ids));
+    model->dspark.target_feature_width = source->hidden_size;
+    model->dspark.concatenated_feature_width = geometry->concatenated_feature_width;
+    model->dspark.draft_layer_count = source->dspark_inference_layer_count;
+    model->dspark.markov_rank = source->dspark_markov_rank;
+    model->dspark.final_draft_layer = source->dspark_inference_layer_count - 1u;
+    model->dspark.parallel_block_backbone = 1;
+    model->dspark.sequential_markov = 1;
+    model->dspark.confidence_available = 1;
+    model->dspark.shares_embedding = 1;
+    model->dspark.shares_output_head = 1;
+    model->dspark.target_verification_required = 1;
+    model->dspark.accepted_prefix_maximum = source->dspark_block_size;
     deepseek_v4_fill_mhc(&model->final_mhc, source, geometry,
                          YVEX_DEEPSEEK_V4_MHC_FUSED_PRIOR_POST_PRE);
     model->final_norm_epsilon = geometry->rms_norm_epsilon;
@@ -986,17 +1082,17 @@ static int deepseek_v4_construct(
     }
     memset(ir->layers, 0,
            (size_t)source->num_hidden_layers * sizeof(*ir->layers));
-    if (source->num_nextn_predict_layers >
+    if (source->dspark_inference_layer_count >
         (unsigned long long)(SIZE_MAX / sizeof(*ir->auxiliary))) {
         family_ir_close(ir);
         return deepseek_v4_reject(
             failure, YVEX_DEEPSEEK_V4_IR_FAILURE_ARITHMETIC_OVERFLOW,
             YVEX_DEEPSEEK_V4_IR_COMPONENT_ALLOCATION, "auxiliary-bytes",
             YVEX_DEEPSEEK_V4_IR_NO_LAYER, 0u,
-            source->num_nextn_predict_layers, err);
+            source->dspark_inference_layer_count, err);
     }
     ir->auxiliary = (yvex_deepseek_v4_auxiliary_spec *)allocator->allocate(
-        (size_t)source->num_nextn_predict_layers * sizeof(*ir->auxiliary),
+        (size_t)source->dspark_inference_layer_count * sizeof(*ir->auxiliary),
         allocator->context);
     if (!ir->auxiliary) {
         family_ir_close(ir);
@@ -1004,10 +1100,10 @@ static int deepseek_v4_construct(
             failure, YVEX_DEEPSEEK_V4_IR_FAILURE_ALLOCATION,
             YVEX_DEEPSEEK_V4_IR_COMPONENT_ALLOCATION, "auxiliary",
             YVEX_DEEPSEEK_V4_IR_NO_LAYER,
-            source->num_nextn_predict_layers, 0u, err);
+            source->dspark_inference_layer_count, 0u, err);
     }
     memset(ir->auxiliary, 0,
-           (size_t)source->num_nextn_predict_layers * sizeof(*ir->auxiliary));
+           (size_t)source->dspark_inference_layer_count * sizeof(*ir->auxiliary));
     deepseek_v4_fill_model(ir, source, geometry);
     for (i = 0u; i < source->num_hidden_layers; ++i) {
         deepseek_v4_fill_layer(&ir->layers[i], source, geometry, i, 0);
@@ -1029,7 +1125,7 @@ static int deepseek_v4_construct(
             ir->model.learned_router_layer_count++;
         }
     }
-    for (i = 0u; i < source->num_nextn_predict_layers; ++i) {
+    for (i = 0u; i < source->dspark_inference_layer_count; ++i) {
         yvex_deepseek_v4_auxiliary_spec *aux = &ir->auxiliary[i];
         unsigned long long layer_index = source->num_hidden_layers + i;
 
@@ -1040,23 +1136,29 @@ static int deepseek_v4_construct(
             return yvex_error_code(err);
         }
         aux->predictor_index = i;
-        aux->previous_hidden_width = geometry->expanded_width;
-        aux->embedding_projection_input = source->hidden_size;
-        aux->embedding_projection_output = source->hidden_size;
-        aux->hidden_projection_input = source->hidden_size;
-        aux->hidden_projection_output = source->hidden_size;
-        aux->requires_token_embedding = 1;
-        aux->requires_previous_hidden_state = 1;
-        aux->requires_embedding_norm = 1;
-        aux->requires_hidden_norm = 1;
-        aux->requires_separate_mhc_head = 1;
-        aux->mhc_head.required = 1;
-        aux->mhc_head.function_rows = source->hc_mult;
-        aux->mhc_head.function_columns = geometry->expanded_width;
-        aux->mhc_head.base_width = source->hc_mult;
-        aux->mhc_head.scale_width = 1u;
+        aux->has_feature_projection = i == 0u;
+        aux->has_feature_norm = i == 0u;
+        aux->feature_projection_input = geometry->concatenated_feature_width;
+        aux->feature_projection_output = source->hidden_size;
+        aux->feature_norm_width = source->hidden_size;
+        aux->has_output_norm = i + 1u == source->dspark_inference_layer_count;
+        aux->output_norm_width = source->hidden_size;
+        aux->has_markov_head = aux->has_output_norm;
+        aux->markov_rank = source->dspark_markov_rank;
+        aux->markov_vocabulary_size = source->vocab_size;
+        aux->has_confidence_head = aux->has_output_norm;
+        aux->confidence_input_width = source->hidden_size + source->dspark_markov_rank;
+        aux->confidence_output_width = 1u;
+        aux->has_separate_mhc_head = aux->has_output_norm;
+        aux->mhc_head.required = aux->has_separate_mhc_head;
+        aux->mhc_head.function_rows = aux->has_separate_mhc_head ? source->hc_mult : 0u;
+        aux->mhc_head.function_columns = aux->has_separate_mhc_head
+                                            ? geometry->expanded_width
+                                            : 0u;
+        aux->mhc_head.base_width = aux->has_separate_mhc_head ? source->hc_mult : 0u;
+        aux->mhc_head.scale_width = aux->has_separate_mhc_head ? 1u : 0u;
+        aux->shares_embedding = 1;
         aux->shares_output_head = 1;
-        aux->shares_final_norm = 1;
     }
     *out = ir;
     yvex_error_clear(err);
@@ -1170,6 +1272,7 @@ static const char *family_ir_failure_name(
     case YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_GROUP_GEOMETRY: return "invalid-group-geometry";
     case YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_POSITION: return "invalid-position";
     case YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_MHC: return "invalid-mhc";
+    case YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_DSPARK: return "invalid-dspark";
     case YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_ROUTING: return "invalid-routing";
     case YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_EXPERT_TOPK: return "invalid-expert-topk";
     case YVEX_DEEPSEEK_V4_IR_FAILURE_TOKENIZER_OUTPUT_MISMATCH: return "tokenizer-output-mismatch";
@@ -1196,7 +1299,7 @@ static const char *family_ir_component_name(
     case YVEX_DEEPSEEK_V4_IR_COMPONENT_MOE: return "moe";
     case YVEX_DEEPSEEK_V4_IR_COMPONENT_OUTPUT: return "output";
     case YVEX_DEEPSEEK_V4_IR_COMPONENT_TOKENIZER: return "tokenizer";
-    case YVEX_DEEPSEEK_V4_IR_COMPONENT_AUXILIARY: return "auxiliary";
+    case YVEX_DEEPSEEK_V4_IR_COMPONENT_DSPARK: return "dspark";
     case YVEX_DEEPSEEK_V4_IR_COMPONENT_SOURCE_CONSTRAINT: return "source-constraint";
     case YVEX_DEEPSEEK_V4_IR_COMPONENT_RUNTIME_NUMERIC: return "runtime-numeric";
     case YVEX_DEEPSEEK_V4_IR_COMPONENT_ALLOCATION: return "allocation";
@@ -1493,7 +1596,7 @@ const yvex_model_family_api *yvex_model_register_deepseek_v4(void)
 {
     static yvex_model_family_api api = {
         .schema_version = 1u,
-        .family_key = "deepseek-v4-flash",
+        .family_key = "deepseek-v4-flash-dspark",
         .ir = {
             family_ir_build,
             family_ir_build_with_allocator,

@@ -155,6 +155,96 @@ static int source_cli_create_manifest(int argc, char **argv) {
     return 0;
 }
 
+static int source_cli_verify_payload(int argc, char **argv) {
+    yvex_source_verify_options verification_options;
+    yvex_source_payload_budget budget;
+    yvex_source_payload_verification_result result;
+    yvex_source_payload_failure failure;
+    yvex_error err;
+    const char *source = NULL;
+    const char *models_root = NULL;
+    const char *manifest = NULL;
+    const char *target = YVEX_SOURCE_RELEASE_TARGET_ID;
+    int i;
+    int rc;
+
+    for (i = 3; i < argc; ++i) {
+        const char *value;
+
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            yvex_cli_out_writef(stdout,
+                                "usage: yvex compile source verify --source DIR --models-root DIR "
+                                "--source-manifest FILE [--target TARGET]\n");
+            return 0;
+        }
+        if (i + 1 >= argc) {
+            yvex_cli_out_writef(stderr, "yvex: option requires a value: %s\n", argv[i]);
+            return 2;
+        }
+        value = argv[++i];
+        if (strcmp(argv[i - 1], "--source") == 0) {
+            source = value;
+        } else if (strcmp(argv[i - 1], "--models-root") == 0) {
+            models_root = value;
+        } else if (strcmp(argv[i - 1], "--source-manifest") == 0) {
+            manifest = value;
+        } else if (strcmp(argv[i - 1], "--target") == 0) {
+            target = value;
+        } else {
+            yvex_cli_out_writef(stderr, "yvex: unknown source verification option: %s\n",
+                                argv[i - 1]);
+            return 2;
+        }
+    }
+    if (!source || !models_root || !manifest) {
+        yvex_cli_out_writef(stderr,
+                            "yvex: --source, --models-root, and --source-manifest are required\n");
+        return 2;
+    }
+    if (!yvex_source_is_release_target(target)) {
+        yvex_cli_out_writef(stderr, "yvex: unsupported target: %s; use %s\n", target,
+                            YVEX_SOURCE_RELEASE_TARGET_ID);
+        return 2;
+    }
+
+    memset(&verification_options, 0, sizeof(verification_options));
+    verification_options.identity = yvex_source_release_identity();
+    verification_options.source_path = source;
+    verification_options.models_root = models_root;
+    verification_options.manifest_path = manifest;
+    verification_options.promote_manifest = 1;
+    yvex_source_payload_budget_default(&budget);
+    budget.allow_local_snapshot_seal = 0;
+    memset(&result, 0, sizeof(result));
+    memset(&failure, 0, sizeof(failure));
+    yvex_error_clear(&err);
+    rc = yvex_source_payload_verify_snapshot(
+        &verification_options, &budget, &result, &failure, &err);
+    if (rc != YVEX_OK)
+        return print_yvex_error(&err, exit_for_status(rc));
+
+    yvex_cli_out_writef(stdout, "compile source verify: complete\n");
+    yvex_cli_out_writef(stdout, "target: %s\n", target);
+    yvex_cli_out_writef(stdout, "source: %s\n", result.verification.resolved_source_path);
+    yvex_cli_out_writef(stdout, "revision: %s\n", result.verification.revision);
+    yvex_cli_out_writef(stdout, "manifest: %s\n", result.verification.manifest_path);
+    yvex_cli_out_writef(stdout, "manifest_schema: %s\n", result.verification.manifest_schema);
+    yvex_cli_out_writef(stdout, "source_snapshot_identity: %llu\n",
+                        result.payload.source_snapshot_identity);
+    yvex_cli_out_writef(stdout, "payload_identity: %s\n", result.payload.payload_identity);
+    yvex_cli_out_writef(stdout, "payload_trust: %s\n",
+                        yvex_source_payload_trust_class_name(result.payload.trust_class));
+    yvex_cli_out_writef(stdout, "shards: %llu\n", result.payload.shard_count);
+    yvex_cli_out_writef(stdout, "tensors: %llu\n", result.payload.tensor_count);
+    yvex_cli_out_writef(stdout, "logical_tensor_bytes: %llu\n",
+                        result.payload.logical_tensor_bytes);
+    yvex_cli_out_writef(stdout, "physical_bytes_read: %llu\n",
+                        result.stream.physical_bytes_read);
+    yvex_cli_out_writef(stdout, "published_identity_reused: %s\n",
+                        result.reused_published_identity ? "true" : "false");
+    return 0;
+}
+
 int yvex_source_manifest_command(int argc, char **argv) {
     if (argc >= 3 && (strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0)) {
         yvex_source_manifest_help(stdout);
@@ -174,6 +264,9 @@ int yvex_source_manifest_command(int argc, char **argv) {
 
     if (strcmp(argv[2], "report") == 0) {
         return yvex_source_manifest_report_command(argc, argv);
+    }
+    if (strcmp(argv[2], "verify") == 0) {
+        return source_cli_verify_payload(argc, argv);
     }
     if (strcmp(argv[2], "inspect") == 0) {
         yvex_cli_out_writef(
@@ -199,6 +292,9 @@ void yvex_source_manifest_help(FILE *fp) {
                             "--include-files --include-config --"
                             "include-blockers --include-next --strict --audit --json --output "
                             "normal|table|audit|json\n");
+    yvex_cli_out_writef(fp,
+                        "Payload verification: yvex compile source verify --source DIR "
+                        "--models-root DIR --source-manifest FILE [--target TARGET]\n");
 }
 
 int yvex_source_manifest_report_command(int argc, char **argv) {

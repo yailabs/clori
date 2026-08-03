@@ -35,6 +35,14 @@ The retained source snapshot is immutable and indexed. Downstream owners
 consume typed facts and exact bounded ranges; they do not rescan source headers
 or infer semantics from filenames.
 
+Payload admission has an explicit bootstrap boundary. `compile source verify`
+promotes verified metadata/header provenance to source-manifest v3 only after
+reading every shard and matching its authoritative provider SHA-256. The v3
+manifest lives outside the source snapshot, binds the ordered aggregate payload
+identity, and can be reopened without a second full payload pass. Transformation
+planning still consumes zero payload bytes; execution admits ranges only from
+that trusted identity.
+
 ## Logical projection and transformation
 
 Family owners interpret exact source facts into model topology and canonical
@@ -85,12 +93,29 @@ overflow, or incompatible runtime requirements refuse before model execution.
 
 ## Current DeepSeek compilation
 
-For the admitted DeepSeek target, exact source coverage accounts for 69,187
-requirements and lowers them to 1,360 terminal tensors. Source-faithful,
-Q8_0/Q2_K, and mixed IQ2_XXS/Q2_K complete artifacts have been produced outside
-Git and admitted through their own identities. These facts establish the
-compilation and complete-artifact boundaries; they do not select a release
-variant or establish evaluation, benchmark, or release qualification.
+The current `deepseek4-v4-flash-dspark` source inventory contains 72,317
+tensors across 48 shards. Exact coverage lowers those source contributions to
+1,409 terminal descriptors: 1,328 target-trunk descriptors and 81 DSpark
+descriptors. The 3,130-source-tensor and 49-terminal delta from the superseded
+checkpoint is explicit; no old-source descriptor remains current authority.
+
+Target and draft scopes preserve target-layer, feature-tap, draft-stage,
+expert, scale-companion, and shared-resource coordinates. The Transformation
+IR records sharing instead of duplicating payload when two execution plans
+consume one tensor. DSpark behavior is typed metadata and plan input, never a
+writer-side filename convention.
+
+The bootstrap physical profile is
+`deepseek-v4-flash-dspark-bootstrap-q2-v1`. It preserves admitted mixed
+IQ2_XXS/Q2_K decisions only at the level of target roles and assigns explicit
+conservative precision to new draft control, normalization, feature, Markov,
+confidence, and expert roles. The retained DS4 importance matrix is an
+identity-bound predecessor prior, not calibration of the DSpark payload; the
+two snapshots contain different bytes even for at least one shared tensor
+name. Fresh DSpark calibration remains owned by later physical optimization
+and evaluation. The bootstrap artifact and binding remain external
+identity-bound assets. This profile establishes executable correctness, not
+the release variant, quality parity, a benchmark, or optimized GB10 policy.
 
 ## Repository boundary
 

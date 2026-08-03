@@ -109,7 +109,7 @@ static int provider_usage(const yvex_runtime_generation_result *result,
     completed->reused_tokens = result->reusable_prefix_token_count;
     completed->prefill_tokens = result->new_prefill_token_count;
     completed->generated_tokens = result->model_committed_token_count;
-    completed->completion_tokens = result->sampled_token_count;
+    completed->completion_tokens = result->model_committed_token_count;
     if (!yvex_core_u64_add(completed->prompt_tokens,
                            completed->completion_tokens,
                            &completed->total_tokens)) {
@@ -271,8 +271,12 @@ static int session_generation_open(server_session_registry *registry,
         return YVEX_OK;
     }
     memset(&options, 0, sizeof(options));
-    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2;
+    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
     options.backend = registry->options.backend;
+    options.mode = registry->options.generation_mode ==
+                           YVEX_SERVER_GENERATION_DSPARK
+                       ? YVEX_GENERATION_MODE_DSPARK
+                       : YVEX_GENERATION_MODE_TARGET_ONLY;
     options.context_capacity = registry->options.context_capacity;
     options.prefill_chunk_tokens = registry->options.prefill_chunk_tokens;
     options.maximum_new_tokens = registry->options.maximum_new_tokens;
@@ -403,7 +407,7 @@ static int turn_fragment(void *opaque,
             sink->request_id, sink->turn_id, "decode", token->ordinal,
             token->sampled_token_id, 0u,
             elapsed_seconds(sink->started_ns, sink->first_fragment_ns), 0.0,
-            sink->request->provider_request, NULL, err);
+            NULL, sink->request->provider_request, NULL, err);
     }
     if (sink->request->provider_request) {
         if (rc == YVEX_OK && provider_text_stream_direct(
@@ -418,7 +422,7 @@ static int turn_fragment(void *opaque,
                 YVEX_SERVER_SEVERITY_DEBUG, sink->session->name,
                 sink->request_id, sink->turn_id, "decode", token->ordinal,
                 byte_count, token->sampled_token_id, 0.0, 0.0,
-                sink->request->provider_request, NULL, err);
+                NULL, sink->request->provider_request, NULL, err);
         return rc;
     }
     while (rc == YVEX_OK &&
@@ -448,7 +452,7 @@ static int turn_fragment(void *opaque,
             YVEX_SERVER_SEVERITY_DEBUG, sink->session->name,
             sink->request_id, sink->turn_id, "decode", token->ordinal,
             byte_count, token->sampled_token_id, 0.0, 0.0,
-            sink->request->provider_request, NULL, err);
+            NULL, sink->request->provider_request, NULL, err);
     return rc;
 }
 
@@ -488,7 +492,7 @@ static int turn_progress(void *opaque,
             YVEX_SERVER_SEVERITY_INFO, sink->session->name,
             sink->request_id, sink->turn_id, phase, value_a, value_b, 0u,
             elapsed, elapsed > 0.0 ? (double)value_a / elapsed : 0.0,
-            sink->request->provider_request, &event, err);
+            NULL, sink->request->provider_request, &event, err);
         if (rc != YVEX_OK || sink->request->provider_request) return rc;
         memset(&message, 0, sizeof(message));
         message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
@@ -499,6 +503,44 @@ static int turn_progress(void *opaque,
         message.event = event;
         return sink->emit(sink->emit_context, &message, err);
     }
+}
+
+static int turn_speculation_progress(
+    void *opaque, const yvex_runtime_speculation_progress *progress,
+    yvex_error *err)
+{
+    static const yvex_server_event_kind kinds[] = {
+        YVEX_SERVER_EVENT_DRAFT_STARTED,
+        YVEX_SERVER_EVENT_DRAFT_COMPLETED,
+        YVEX_SERVER_EVENT_VERIFICATION_STARTED,
+        YVEX_SERVER_EVENT_VERIFICATION_COMPLETED,
+        YVEX_SERVER_EVENT_PREFIX_ACCEPTED,
+        YVEX_SERVER_EVENT_CANDIDATE_REJECTED,
+        YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED};
+    turn_sink *sink = opaque;
+    yvex_client_message message;
+    yvex_server_event event;
+    int rc;
+    if (!progress || progress->kind >
+                         YVEX_SPECULATION_PROGRESS_CYCLE_COMMITTED) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.turn.speculation",
+                       "typed speculation progress is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = yvex_server_telemetry_emit_provider(
+        sink->registry->telemetry, kinds[progress->kind],
+        YVEX_SERVER_SEVERITY_INFO, sink->session->name, sink->request_id,
+        sink->turn_id, "speculation", 0u, 0u, 0u, progress->seconds, 0.0,
+        progress, sink->request->provider_request, &event, err);
+    if (rc != YVEX_OK || sink->request->provider_request) return rc;
+    memset(&message, 0, sizeof(message));
+    message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    message.kind = YVEX_CLIENT_MESSAGE_EVENT;
+    message.status = YVEX_OK;
+    message.request_number = sink->request->request_number;
+    message.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
+    message.event = event;
+    return sink->emit(sink->emit_context, &message, err);
 }
 
 static int session_message(server_message_emit emit, void *emit_context,
@@ -675,6 +717,43 @@ static int provider_output_emit(turn_sink *sink,
     return rc;
 }
 
+static void session_speculation_result_project(
+    yvex_client_message *message,
+    const yvex_runtime_generation_result *result)
+{
+    message->generation_mode =
+        result->execution_mode == YVEX_GENERATION_MODE_DSPARK
+            ? YVEX_SERVER_GENERATION_DSPARK
+            : YVEX_SERVER_GENERATION_TARGET_ONLY;
+    message->draft_cycle_count = result->draft_cycle_count;
+    message->draft_forward_count = result->draft_forward_count;
+    message->proposed_tokens = result->proposed_token_count;
+    message->selected_verification_tokens =
+        result->selected_verification_token_count;
+    message->target_verification_count = result->target_verification_count;
+    message->accepted_draft_tokens = result->accepted_draft_token_count;
+    message->rejected_draft_tokens = result->rejected_draft_token_count;
+    message->discarded_draft_tokens = result->discarded_draft_token_count;
+    message->target_correction_or_bonus_tokens =
+        result->target_correction_or_bonus_token_count;
+    message->maximum_accepted_prefix = result->maximum_accepted_prefix;
+    message->confidence_logit_count = result->confidence_logit_count;
+    message->draft_seconds = (double)result->draft_ns / 1000000000.0;
+    message->verification_seconds =
+        (double)result->verification_ns / 1000000000.0;
+    message->speculative_commit_seconds =
+        (double)result->speculative_commit_ns / 1000000000.0;
+    message->mean_accepted_prefix = result->mean_accepted_prefix;
+    message->effective_committed_rate =
+        result->effective_committed_tokens_per_second;
+    message->confidence_logit_minimum = result->confidence_logit_minimum;
+    message->confidence_logit_maximum = result->confidence_logit_maximum;
+    message->confidence_logit_mean = result->confidence_logit_mean;
+    message->stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
+    yvex_runtime_identity_copy(message->speculation_policy_identity,
+                               result->speculation_policy_identity);
+}
+
 static int session_turn_publish(server_session_registry *registry, server_session *session,
                                 const yvex_client_request *request, turn_sink *sink,
                                 const yvex_runtime_generation_result *result, int status,
@@ -761,7 +840,7 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
     completed.context_used = result->final_position;
     completed.turn_count = session->turn_count;
     completed.stop_reason = result->stop_reason;
-    completed.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
+    session_speculation_result_project(&completed, result);
     completed.generation_phase = status == YVEX_OK
                                      ? YVEX_CLIENT_PHASE_COMPLETE
                                      : status == YVEX_ERR_CANCELLED
@@ -870,7 +949,8 @@ static int session_turn_publish(server_session_registry *registry, server_sessio
         session->name, sink->request_id, sink->turn_id, "turn",
         result->model_committed_token_count, result->final_position,
         result->stop_reason, elapsed_seconds(sink->started_ns, now),
-        completed.decode_rate, request->provider_request, NULL, &secondary);
+        completed.decode_rate, NULL, request->provider_request, NULL,
+        &secondary);
     yvex_tokenizer_provider_result_clear(&provider_result);
     return status;
 }
@@ -889,7 +969,7 @@ static int session_profile_publish(server_session_registry *registry,
         registry->telemetry, YVEX_SERVER_EVENT_GENERATION_PROFILE,                        \
         YVEX_SERVER_SEVERITY_DEBUG, session->name, sink->request_id, sink->turn_id,       \
         (phase_), (a_), (b_), (c_), (double)(nanoseconds_) / 1000000000.0, 0.0,           \
-        request->provider_request, NULL, err)
+        NULL, request->provider_request, NULL, err)
     if (!profile || profile->mode == YVEX_RUNTIME_PROFILE_OFF) return YVEX_OK;
     rc = PROFILE_EVENT("movement",
         profile->counters[YVEX_RUNTIME_PROFILE_H2D_BYTES],
@@ -985,7 +1065,7 @@ static int session_turn(server_session_registry *registry,
     rc = session_generation_open(registry, session, request, err);
     if (rc != YVEX_OK) return rc;
     memset(&prompt, 0, sizeof(prompt));
-    prompt.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2;
+    prompt.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
     if (request->provider_request) {
         prompt.kind = YVEX_GENERATION_INPUT_PROVIDER;
         prompt.provider_request = request->provider_request;
@@ -1031,6 +1111,8 @@ static int session_turn(server_session_registry *registry,
     turn.fragment_context = &sink;
     turn.progress_sink = turn_progress;
     turn.progress_context = &sink;
+    turn.speculation_progress_sink = turn_speculation_progress;
+    turn.speculation_progress_context = &sink;
     atomic_store_explicit(&session->cancel_requested, 0, memory_order_release);
     atomic_store_explicit(&session->active_turn, 1, memory_order_release);
     session->state = YVEX_SERVER_SESSION_RUNNING;
@@ -1053,7 +1135,7 @@ static int session_turn(server_session_registry *registry,
                 ? request->provider_request->message_count
                 : request->prompt_bytes,
             session->committed_count, turn.maximum_new_tokens,
-            0.0, 0.0, request->provider_request, NULL, err);
+            0.0, 0.0, NULL, request->provider_request, NULL, err);
     memset(&result, 0, sizeof(result));
     if (rc == YVEX_OK)
         rc = yvex_runtime_generation_turn_execute(

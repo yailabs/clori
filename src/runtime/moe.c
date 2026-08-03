@@ -549,7 +549,9 @@ int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_m
     const yvex_moe_plan_summary *summary;
     int rc;
     if (out) *out = NULL;
-    if (!out || !model || !session || !options)
+    if (!out || !model || !session || !options ||
+        (options->tensor_scope != YVEX_TENSOR_SCOPE_GLOBAL &&
+         options->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT))
         return runtime_moe_refuse(err, YVEX_ERR_INVALID_ARG, "MoE context arguments are required");
     context = (yvex_runtime_moe_context *)calloc(1u, sizeof(*context));
     if (!context) return runtime_moe_refuse(err, YVEX_ERR_NOMEM, "MoE context allocation failed");
@@ -573,10 +575,16 @@ int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_m
                              context->model_view->adapter->adapter_version,
                              context->model_view->materialization,
                              context->model_view->descriptor,
-                             context->model_view->attention, err);
+                             options->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                                 ? context->model_view->draft_attention
+                                 : context->model_view->attention,
+                             err);
     summary = yvex_moe_plan_summary_get(context->plan);
     if (rc == YVEX_OK && (!summary ||
-        strcmp(summary->moe_plan_identity, context->model_view->binding->moe_plan_identity) != 0))
+        strcmp(summary->moe_plan_identity,
+               options->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT
+                   ? context->model_view->binding->draft_moe_plan_identity
+                   : context->model_view->binding->moe_plan_identity) != 0))
         rc = runtime_moe_refuse(err, YVEX_ERR_STATE, "runtime binding MoE plan is stale");
     if (rc == YVEX_OK) rc = runtime_moe_buffer_plan(context, err);
     if (rc == YVEX_OK && !options->defer_cuda_workspace &&

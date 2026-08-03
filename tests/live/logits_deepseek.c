@@ -576,7 +576,7 @@ int main(int argc, char **argv)
     (void)setvbuf(stdout, NULL, _IOLBF, 0);
     request.artifact_path = argv[1];
     request.runtime_binding_path = argv[2];
-    request.target_id = "deepseek4-v4-flash";
+    request.target_id = "deepseek4-v4-flash-dspark";
     rc = yvex_runtime_model_open(&model, &request, &failure, &err);
     if (rc == YVEX_OK) { step = "cpu-open"; rc = live_open(&cpu, model, YVEX_BACKEND_KIND_CPU, &err); }
     plan = yvex_transformer_plan_summary_get(

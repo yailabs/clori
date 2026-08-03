@@ -210,12 +210,10 @@ static int attention_envelope_bind(
     const yvex_runtime_tensor_binding **scale, const yvex_runtime_tensor_binding **norm,
     yvex_attention_failure *failure, yvex_error *err)
 {
-    *function = yvex_attention_binding_find(descriptor, layer->mhc_function_role,
-                                            layer->layer_index);
-    *base = yvex_attention_binding_find(descriptor, layer->mhc_base_role, layer->layer_index);
-    *scale = yvex_attention_binding_find(descriptor, layer->mhc_scale_role, layer->layer_index);
-    *norm = yvex_attention_binding_find(descriptor, layer->attention_input_norm_role,
-                                        layer->layer_index);
+    *function = yvex_attention_binding_find(descriptor, layer->mhc_function_role, layer);
+    *base = yvex_attention_binding_find(descriptor, layer->mhc_base_role, layer);
+    *scale = yvex_attention_binding_find(descriptor, layer->mhc_scale_role, layer);
+    *norm = yvex_attention_binding_find(descriptor, layer->attention_input_norm_role, layer);
     return attention_envelope_bindings_validate(
         layer, *function, *base, *scale, *norm, failure, err);
 }
@@ -634,7 +632,8 @@ static int attention_history_positions_validate(const yvex_attention_layer_plan 
         return attention_history_refuse(
             layer, 1ull, 0ull, failure, err, YVEX_ERR_FORMAT,
             "DeepSeek attention history requires a nonzero sliding window");
-    local_capacity = layer->sliding_window - 1ull;
+    local_capacity = layer->sliding_window -
+                     (layer->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT ? 0ull : 1ull);
     expected_local = history->token_count < local_capacity ? history->token_count : local_capacity;
     local_start = history->token_count - expected_local;
     if (history->local_tail_count != expected_local)
@@ -1066,9 +1065,14 @@ static int attention_probe_history_init(yvex_attention_probe_history *history,
         memset(history, 0, sizeof(*history));
         history->workspace = workspace;
     }
-    segments[0] = (attention_probe_segment){
-        position < layer->sliding_window - 1ull ? position : layer->sliding_window - 1ull,
+    {
+        unsigned long long local_capacity =
+            layer->sliding_window -
+            (layer->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT ? 0ull : 1ull);
+        segments[0] = (attention_probe_segment){
+        position < local_capacity ? position : local_capacity,
         layer->head_dimension, layer->layer_index + 101ull, 0ull, NULL};
+    }
     segments[1] = (attention_probe_segment){
         layer->attention_class == YVEX_ATTENTION_CLASS_SWA
             ? 0ull
@@ -1382,6 +1386,7 @@ static int attention_probe_layer_execute(
     options.evidence_level = context->request->evidence_level;
     options.workspace = context->request->workspace;
     options.cancellation = context->request->cancel_requested ? &cancellation : NULL;
+    options.candidate_block_visible = context->request->candidate_block_visible;
     for (index = 0u; index < ATTENTION_PROBE_BACKEND_COUNT; ++index) {
         attention_probe_backend *run = &backend[index];
         int cuda = index == ATTENTION_PROBE_CUDA;
@@ -1555,7 +1560,7 @@ static int attention_probe_finalize(attention_probe_context *context) {
     char *backend_digest[] = {result->cpu_output_digest, result->cuda_output_digest};
     char *backend_state_digest[] = {result->cpu_state_delta_digest,
                                     result->cuda_state_delta_digest};
-    attention_probe_identity_field fields[16];
+    attention_probe_identity_field fields[17];
     const char *selected_digest;
     unsigned int index;
     if (!attention_probe_comparison_identity(result->comparison_contract_identity))
@@ -1637,7 +1642,8 @@ static int attention_probe_finalize(attention_probe_context *context) {
     fields[13] = (attention_probe_identity_field){result->cpu_state_delta_digest, 0ull};
     fields[14] = (attention_probe_identity_field){result->cuda_state_delta_digest, 0ull};
     fields[15] = (attention_probe_identity_field){result->state_delta_digest, 0ull};
-    if (!attention_probe_identity("yvex.attention.operator.execution.v3", fields, 16u,
+    fields[16] = (attention_probe_identity_field){NULL, request->candidate_block_visible};
+    if (!attention_probe_identity("yvex.attention.operator.execution.v4", fields, 17u,
                                   result->attention_execution_identity))
         goto identity_failure;
     return YVEX_OK;

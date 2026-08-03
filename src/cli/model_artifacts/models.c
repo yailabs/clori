@@ -27,6 +27,7 @@ typedef struct {
     const char *runtime_binding;
     const char *runtime_target;
     const char *runtime_backend;
+    const char *runtime_mode;
     const char *runtime_context;
 } models_add_options;
 
@@ -88,6 +89,7 @@ static const yvex_cli_field_spec registry_add_fields[] = {
     REGISTRY_FIELD("runtime_binding", YVEX_CLI_FIELD_TEXT, runtime_binding, ""),
     REGISTRY_FIELD("runtime_target", YVEX_CLI_FIELD_TEXT, runtime_target, ""),
     REGISTRY_FIELD("runtime_backend", YVEX_CLI_FIELD_TEXT, runtime_backend, ""),
+    REGISTRY_FIELD("runtime_mode", YVEX_CLI_FIELD_TEXT, runtime_mode, ""),
     REGISTRY_FIELD("runtime_context", YVEX_CLI_FIELD_U64, runtime_context, NULL),
 };
 
@@ -126,6 +128,7 @@ static const yvex_cli_field_spec registry_inspect_fields[] = {
     REGISTRY_FIELD("runtime_binding", YVEX_CLI_FIELD_TEXT, runtime_binding, ""),
     REGISTRY_FIELD("runtime_target", YVEX_CLI_FIELD_TEXT, runtime_target, ""),
     REGISTRY_FIELD("runtime_backend", YVEX_CLI_FIELD_TEXT, runtime_backend, ""),
+    REGISTRY_FIELD("runtime_mode", YVEX_CLI_FIELD_TEXT, runtime_mode, ""),
     REGISTRY_FIELD("runtime_context", YVEX_CLI_FIELD_U64, runtime_context, NULL),
 };
 
@@ -135,7 +138,7 @@ static const yvex_model_registry_entry empty_registry_entry = {
     .path = "", .sha256 = "", .format = "", .architecture = "",
     .primary_tensor_name = "", .primary_tensor_role = "", .primary_tensor_dtype = "",
     .primary_tensor_dims = "", .support_level = "", .runtime_binding = "",
-    .runtime_target = "", .runtime_backend = ""
+    .runtime_target = "", .runtime_backend = "", .runtime_mode = ""
 };
 
 static const models_verify_pair verify_audit_pairs[] = {
@@ -237,7 +240,7 @@ static const char *const models_help_lines[] = {
     "       yvex model registry verify|inspect ALIAS [--registry FILE] [--audit | --output normal|table|audit]",
     "       yvex model registry remove ALIAS [--registry FILE]",
     "\nExamples:",
-    "  yvex inspect artifact check deepseek4-v4-flash-selected-embed",
+    "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed",
     "  yvex model acquire gemma-4-12b-it --models-root ~/lab/models --dry-run --audit",
     "  yvex model acquisition status gemma-4-12b-it --models-root ~/lab/models --audit",
     "  yvex model acquisition stop gemma-4-12b-it --models-root ~/lab/models --audit",
@@ -253,16 +256,16 @@ static const char *const models_help_lines[] = {
     "  yvex inspect artifact status qwen3-6-35b-a3b --models-root ~/lab/models --audit",
     "  yvex model acquire --provider github --repo OWNER/REPO --release TAG --asset \"*.gguf\" "
         "--models-root ~/lab/models --auth auto --audit",
-    "  yvex inspect artifact check deepseek4-v4-flash-selected-embed --backend cpu --level runtime",
-    "  yvex inspect artifact check deepseek4-v4-flash-selected-embed --backend cuda --level runtime --no-graph",
-    "  yvex inspect artifact check deepseek4-v4-flash-selected-embed --level full --report-dir build/reports",
+    "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed --backend cpu --level runtime",
+    "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed --backend cuda --level runtime --no-graph",
+    "  yvex inspect artifact check deepseek4-v4-flash-dspark-selected-embed --level full --report-dir build/reports",
     "\nModels manages the local alias registry, source tensor download sidecars, GGUF artifact discovery, "
         "selected artifact preparation, selected artifact checks, digest identity, and metadata drift facts "
         "for registered artifacts. Download uses the local accounts/provider preflight for Hugging Face and "
         "GitHub provider CLIs, writes source intake reports only, and does not register runtime artifacts. "
         "Artifacts list/status reads operator paths, GGUF filenames, and source sidecars only; it does not "
         "hash files, load tensor payloads, emit GGUF, materialize, execute runtime paths, generate, evaluate, "
-        "or benchmark. Prepare currently supports deepseek4-v4-flash-selected-embed only and does not "
+        "or benchmark. Prepare currently supports deepseek4-v4-flash-dspark-selected-embed only and does not "
         "materialize, run graph execution, decode, logits, sampling, generation, evaluation, or benchmarks.",
     "Default report output is compact. Use --audit for full diagnostic fields.",
     "Check composes implemented artifact, identity, integrity, selected materialization, "
@@ -336,6 +339,8 @@ static int parse_models_add_options(int arg_count, char **args,
         else if (strcmp(args[i], "--runtime-binding") == 0) options->runtime_binding = args[++i];
         else if (strcmp(args[i], "--target") == 0) options->runtime_target = args[++i];
         else if (strcmp(args[i], "--backend") == 0) options->runtime_backend = args[++i];
+        else if (strcmp(args[i], "--generation-mode") == 0)
+            options->runtime_mode = args[++i];
         else if (strcmp(args[i], "--context") == 0) options->runtime_context = args[++i];
         else {
             yvex_cli_out_writef(stderr, "yvex: unknown models add option: %s\n", args[i]);
@@ -445,13 +450,15 @@ static int command_models_add(int arg_count, char **args)
     runtime_fields += cli_options.runtime_binding != NULL;
     runtime_fields += cli_options.runtime_target != NULL;
     runtime_fields += cli_options.runtime_backend != NULL;
+    runtime_fields += cli_options.runtime_mode != NULL;
     runtime_fields += cli_options.runtime_context != NULL;
-    if (runtime_fields != 0u && runtime_fields != 4u) {
+    if (runtime_fields != 0u && runtime_fields != 5u) {
         yvex_cli_out_writef(stderr,
-            "yvex: a startup profile requires --runtime-binding, --target, --backend, and --context together\n");
+            "yvex: a startup profile requires --runtime-binding, --target, --backend, "
+            "--generation-mode, and --context together\n");
         return 2;
     }
-    if (runtime_fields == 4u) {
+    if (runtime_fields == 5u) {
         errno = 0;
         entry.runtime_context = strtoull(cli_options.runtime_context, &context_end, 10);
         if (errno || !context_end || *context_end || entry.runtime_context == 0ull) {
@@ -461,6 +468,7 @@ static int command_models_add(int arg_count, char **args)
         entry.runtime_binding = cli_options.runtime_binding;
         entry.runtime_target = cli_options.runtime_target;
         entry.runtime_backend = cli_options.runtime_backend;
+        entry.runtime_mode = cli_options.runtime_mode;
     }
 
     rc = populate_registry_identity(&entry,
@@ -482,7 +490,7 @@ static int command_models_add(int arg_count, char **args)
                         cli_options.sha256, registered_sha256);
         return print_yvex_error(&err, exit_for_status(YVEX_ERR_STATE));
     }
-    if (runtime_fields == 4u) {
+    if (runtime_fields == 5u) {
         rc = yvex_model_registry_startup_validate(&entry, &err);
         if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
     }
@@ -811,8 +819,10 @@ static int command_models_inspect(int arg_count, char **args)
                entry->support_level ? entry->support_level : "",
                entry->execution_ready ? "true" : "false");
         if (startup_ready)
-            yvex_cli_out_writef(stdout, "startup: ready backend=%s context=%llu\n",
-                                entry->runtime_backend, entry->runtime_context);
+            yvex_cli_out_writef(
+                stdout, "startup: ready backend=%s mode=%s context=%llu\n",
+                entry->runtime_backend, entry->runtime_mode,
+                entry->runtime_context);
         else
             yvex_cli_out_writef(stdout, "startup: unavailable (%s)\n",
                                 yvex_error_message(&startup_error));

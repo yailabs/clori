@@ -81,7 +81,7 @@ int yvex_model_registry_write_json_file(const yvex_model_registry *registry,
         return YVEX_ERR_IO;
     }
     fprintf(fp, "{\n");
-    write_field(fp, "  ", "schema", "yvex.models.local.v3", 1);
+    write_field(fp, "  ", "schema", "yvex.models.local.v4", 1);
     fprintf(fp, "  \"models\": [\n");
     for (i = 0; i < registry->count; ++i) {
         const yvex_model_registry_owned_entry *e = &registry->entries[i];
@@ -123,6 +123,7 @@ int yvex_model_registry_write_json_file(const yvex_model_registry *registry,
         write_field(fp, "      ", "runtime_binding", e->runtime_binding, 1);
         write_field(fp, "      ", "runtime_target", e->runtime_target, 1);
         write_field(fp, "      ", "runtime_backend", e->runtime_backend, 1);
+        write_field(fp, "      ", "runtime_mode", e->runtime_mode, 1);
         write_u64_field(fp, "      ", "runtime_context", e->runtime_context, 0);
         fprintf(fp, "    }%s\n", (i + 1u < registry->count) ? "," : "");
     }

@@ -1,11 +1,13 @@
 /*
  * Compose admitted lower owners into one bounded autoregressive lifecycle.
  *
- * Every ordinary published token is the exact sampled ID committed by one decode step. Internal
- * runtime/operator ABI from exact text/messages to model-backed incremental text.
+ * Published tokens are always target-authored: ordinary generation commits one decode step at a
+ * time, while speculative generation may commit a target-verified prefix atomically. This is the
+ * internal runtime/operator ABI from exact text/messages to model-backed incremental text.
  */
 #ifndef INCLUDE_YVEX_INTERNAL_GENERATION_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_GENERATION_H_INCLUDED
+#include <yvex/internal/core.h>
 #include <yvex/internal/sampling.h>
 #include <yvex/internal/profile.h>
 #include <yvex/tokenizer.h>
@@ -14,7 +16,12 @@ extern "C" {
 #endif
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V1 1u
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V2 2u
+#define YVEX_RUNTIME_GENERATION_SCHEMA_V3 3u
 #define YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 1u
+typedef enum {
+    YVEX_GENERATION_MODE_TARGET_ONLY = 0,
+    YVEX_GENERATION_MODE_DSPARK
+} yvex_runtime_generation_mode;
 typedef enum {
     YVEX_GENERATION_INPUT_TEXT = 0,
     YVEX_GENERATION_INPUT_MESSAGES = 1,
@@ -41,6 +48,7 @@ typedef enum {
 typedef struct {
     unsigned int schema_version;
     yvex_backend_kind backend;
+    yvex_runtime_generation_mode mode;
     unsigned long long context_capacity, prefill_chunk_tokens, maximum_new_tokens;
     unsigned long long maximum_output_bytes, maximum_host_bytes, maximum_device_bytes;
     yvex_runtime_trace_policy trace_policy;
@@ -64,6 +72,7 @@ typedef struct {
 typedef struct {
     unsigned int schema_version;
     yvex_backend_kind backend;
+    yvex_runtime_generation_mode mode;
     unsigned long long context_capacity, prefill_chunk_tokens, maximum_new_tokens;
     unsigned long long maximum_output_bytes;
     unsigned int trace_policy;
@@ -75,6 +84,7 @@ typedef struct {
     char transformer_plan_identity[YVEX_SHA256_HEX_CAP];
     char logits_plan_identity[YVEX_SHA256_HEX_CAP];
     char sampling_policy_identity[YVEX_SHA256_HEX_CAP];
+    char speculation_policy_identity[YVEX_SHA256_HEX_CAP];
     char stop_policy_identity[YVEX_SHA256_HEX_CAP];
     char generation_plan_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_plan_summary;
@@ -99,6 +109,7 @@ typedef struct {
 } yvex_runtime_generation_token_result;
 typedef struct {
     unsigned int schema_version;
+    yvex_runtime_generation_mode execution_mode;
     yvex_runtime_generation_status status;
     yvex_runtime_generation_stop_reason stop_reason;
     int completed, partial, cancelled, failed, has_incomplete_token;
@@ -107,7 +118,21 @@ typedef struct {
     unsigned long long model_committed_token_count, text_published_token_count;
     unsigned long long terminal_token_count, suppressed_token_count;
     unsigned long long first_incomplete_token;
+    /* A decode step is one committed sequence position. Target forward and
+     * block-verification counts remain separate because one verification may
+     * commit several positions. */
     unsigned long long logits_projection_count, sampling_draw_count, decode_step_count;
+    unsigned long long draft_cycle_count, draft_forward_count, proposed_token_count;
+    unsigned long long selected_verification_token_count, target_verification_count;
+    unsigned long long accepted_draft_token_count, rejected_draft_token_count;
+    unsigned long long discarded_draft_token_count;
+    unsigned long long target_correction_or_bonus_token_count;
+    unsigned long long maximum_accepted_prefix;
+    unsigned long long confidence_logit_count;
+    unsigned long long draft_ns, verification_ns, speculative_commit_ns;
+    double mean_accepted_prefix, effective_committed_tokens_per_second;
+    double confidence_logit_minimum, confidence_logit_maximum;
+    double confidence_logit_mean;
     unsigned long long final_position, final_persistent_generation;
     unsigned long long generated_text_bytes;
     unsigned long long initial_position, reusable_prefix_token_count;
@@ -121,6 +146,7 @@ typedef struct {
     char generated_text_digest[YVEX_SHA256_HEX_CAP];
     char final_persistent_state_digest[YVEX_SHA256_HEX_CAP];
     char generation_plan_identity[YVEX_SHA256_HEX_CAP];
+    char speculation_policy_identity[YVEX_SHA256_HEX_CAP];
     char generation_execution_identity[YVEX_SHA256_HEX_CAP];
     yvex_runtime_profile_record profile;
 } yvex_runtime_generation_result;
@@ -138,6 +164,29 @@ typedef int (*yvex_runtime_generation_progress_sink)(
     void *context, yvex_runtime_generation_progress_kind kind,
     unsigned long long value_a, unsigned long long value_b,
     yvex_error *err);
+typedef enum {
+    YVEX_SPECULATION_PROGRESS_DRAFT_STARTED = 0,
+    YVEX_SPECULATION_PROGRESS_DRAFT_COMPLETED,
+    YVEX_SPECULATION_PROGRESS_VERIFICATION_STARTED,
+    YVEX_SPECULATION_PROGRESS_VERIFICATION_COMPLETED,
+    YVEX_SPECULATION_PROGRESS_PREFIX_ACCEPTED,
+    YVEX_SPECULATION_PROGRESS_CANDIDATE_REJECTED,
+    YVEX_SPECULATION_PROGRESS_CYCLE_COMMITTED
+} yvex_runtime_speculation_progress_kind;
+typedef struct {
+    unsigned int schema_version;
+    yvex_runtime_speculation_progress_kind kind;
+    unsigned long long cycle, proposed_tokens, selected_verification_tokens;
+    unsigned long long accepted_tokens, rejected_tokens, discarded_tokens;
+    unsigned long long verification_count;
+    unsigned long long confidence_logit_count;
+    double confidence_logit_minimum, confidence_logit_maximum;
+    double confidence_logit_mean, seconds;
+    char policy_identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_speculation_progress;
+typedef int (*yvex_runtime_speculation_progress_sink)(
+    void *context, const yvex_runtime_speculation_progress *progress,
+    yvex_error *err);
 typedef struct {
     unsigned int schema_version;
     const yvex_runtime_generation_request *prompt;
@@ -150,6 +199,8 @@ typedef struct {
     void *fragment_context;
     yvex_runtime_generation_progress_sink progress_sink;
     void *progress_context;
+    yvex_runtime_speculation_progress_sink speculation_progress_sink;
+    void *speculation_progress_context;
 } yvex_runtime_generation_turn_request;
 typedef struct {
     unsigned int schema_version;
@@ -162,6 +213,32 @@ typedef struct {
     char rng_state_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_context_summary;
 typedef struct yvex_runtime_generation_context yvex_runtime_generation_context;
+int yvex_runtime_generation_bytes_digest(
+    const char *domain, const unsigned char *bytes, unsigned long long count,
+    char output[YVEX_SHA256_HEX_CAP]);
+int yvex_runtime_generation_prefix_identity(
+    const unsigned int *tokens, unsigned long long count,
+    char output[YVEX_SHA256_HEX_CAP]);
+int yvex_runtime_generation_stop_identity(
+    const yvex_tokenizer_plan_summary *tokenizer,
+    const unsigned int *additional, unsigned long long count,
+    char output[YVEX_SHA256_HEX_CAP]);
+int yvex_runtime_generation_plan_identity(
+    const yvex_runtime_generation_plan_summary *plan,
+    char output[YVEX_SHA256_HEX_CAP]);
+int yvex_runtime_generation_token_identity(
+    const yvex_runtime_generation_token_result *token,
+    char output[YVEX_SHA256_HEX_CAP]);
+int yvex_runtime_generation_tokens_identity(
+    const yvex_runtime_generation_token_result *tokens,
+    unsigned long long count, char output[YVEX_SHA256_HEX_CAP]);
+int yvex_runtime_generation_execution_identity(
+    const yvex_runtime_generation_result *result,
+    const yvex_runtime_generation_token_result *tokens,
+    char output[YVEX_SHA256_HEX_CAP]);
+int yvex_runtime_generation_context_summary_copy(
+    const yvex_runtime_generation_context *context,
+    yvex_runtime_generation_context_summary *summary, yvex_error *err);
 int yvex_runtime_generation_context_open(
     yvex_runtime_generation_context **out, yvex_runtime_model *model,
     yvex_runtime_execution_session *session,
@@ -193,6 +270,7 @@ int yvex_runtime_generation_context_close(
 typedef struct {
     const char *target, *artifact_path, *runtime_binding_path;
     yvex_backend_kind backend;
+    yvex_runtime_generation_mode mode;
     yvex_runtime_generation_input_kind input_kind;
     const unsigned char *text;
     unsigned long long text_bytes;
@@ -227,7 +305,7 @@ typedef struct {
     int generation_loop_ready, generation_ready;
     int cli_generate_ready, repl_ready, interactive_chat_ready, server_generation_ready;
     int model_behavior_evaluation_ready, full_model_benchmark_ready;
-    int release_qualification_ready, mtp_ready, speculative_execution_ready;
+    int release_qualification_ready, dspark_ready, speculative_execution_ready;
 } yvex_generation_operator_result;
 int yvex_runtime_generation_operator_execute(
     const yvex_generation_operator_request *request,

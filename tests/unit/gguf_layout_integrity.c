@@ -392,8 +392,8 @@ static int write_scale_fixture(const char *path, unsigned long long count)
 
 static int test_target_scale_linear_pass(void)
 {
-    const char *path = LAYOUT_TEST_DIR "/scale-69187.gguf";
-    const unsigned long long count = 69187ull;
+    const char *path = LAYOUT_TEST_DIR "/scale-72317.gguf";
+    const unsigned long long count = 72317ull;
     yvex_gguf_layout_result result;
     remove(path);
     YVEX_TEST_ASSERT(write_scale_fixture(path, count), "write target-scale sparse layout");

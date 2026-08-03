@@ -26,9 +26,19 @@ struct yvex_tokenizer_decoder {
     unsigned long long pending_count, processed_token_count;
     char state_identity[YVEX_SHA256_HEX_CAP];
     atomic_uint lifecycle;
+    atomic_uint transaction_active;
     pthread_mutex_t drain_mutex;
     pthread_cond_t drain_condition;
     int drain_mutex_ready, drain_condition_ready;
+};
+
+struct yvex_tokenizer_decoder_transaction {
+    yvex_tokenizer_decoder *decoder;
+    unsigned char pending[4];
+    unsigned long long pending_count, processed_token_count;
+    char base_identity[YVEX_SHA256_HEX_CAP];
+    char state_identity[YVEX_SHA256_HEX_CAP];
+    int prepared;
 };
 
 typedef struct {
@@ -397,6 +407,91 @@ static int fragment_identity(yvex_tokenizer_fragment *fragment)
     return 1;
 }
 
+static int decoder_stage_token(
+    yvex_tokenizer_decoder *decoder, const unsigned char pending[4],
+    unsigned long long pending_count, unsigned long long processed_token_count,
+    const char *state_identity, unsigned int token_id,
+    unsigned char next_pending[4], unsigned long long *next_pending_count,
+    char next_state_identity[YVEX_SHA256_HEX_CAP],
+    yvex_tokenizer_fragment *fragment, yvex_error *err)
+{
+    yvex_tokenizer_fragment candidate = {0};
+    yvex_tokenizer_token_classification classification;
+    unsigned char combined[4096], *piece = NULL;
+    unsigned long long piece_count = 0ull, combined_count = 0ull, prefix = 0ull;
+    int suppressed = 0, rc = decode_cancelled(&decoder->options, err);
+    if (rc == YVEX_OK)
+        rc = yvex_tokenizer_token_classify(
+            decoder->tokenizer, token_id, &classification, err);
+    if (rc == YVEX_OK)
+        rc = tokenizer_piece_decode(
+            decoder->tokenizer, token_id, decoder->options.skip_special_tokens,
+            &piece, &piece_count, &suppressed, err);
+    if (rc == YVEX_OK && piece_count > sizeof(combined) - pending_count) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "tokenizer.decoder.push",
+                       "one token piece exceeds decoder bound");
+        rc = YVEX_ERR_BOUNDS;
+    }
+    if (rc == YVEX_OK) {
+        combined_count = pending_count + piece_count;
+        memcpy(combined, pending, (size_t)pending_count);
+        if (piece_count) memcpy(combined + pending_count, piece, (size_t)piece_count);
+        if (!utf8_prefix(combined, combined_count, &prefix)) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.decoder.push",
+                           "token produces malformed UTF-8 stream");
+            rc = YVEX_ERR_FORMAT;
+        }
+    }
+    if (rc == YVEX_OK && prefix) {
+        candidate.bytes = malloc((size_t)prefix);
+        if (!candidate.bytes) {
+            yvex_error_set(err, YVEX_ERR_NOMEM, "tokenizer.decoder.push",
+                           "fragment allocation failed");
+            rc = YVEX_ERR_NOMEM;
+        } else {
+            memcpy(candidate.bytes, combined, (size_t)prefix);
+        }
+    }
+    if (rc == YVEX_OK) {
+        *next_pending_count = combined_count - prefix;
+        memset(next_pending, 0, 4u);
+        if (*next_pending_count)
+            memcpy(next_pending, combined + prefix, (size_t)*next_pending_count);
+        candidate.schema_version = YVEX_TOKENIZER_DECODER_SCHEMA_V1;
+        candidate.token_id = token_id;
+        candidate.byte_count = prefix;
+        candidate.pending_byte_count = *next_pending_count;
+        candidate.processed_token_count = processed_token_count + 1ull;
+        candidate.special = classification.special;
+        candidate.eos = classification.eos;
+        candidate.suppressed = suppressed;
+        yvex_core_text_copy(candidate.state_before_identity,
+                            sizeof(candidate.state_before_identity), state_identity);
+        if (!decoder_state_identity(
+                decoder, next_pending, *next_pending_count,
+                candidate.processed_token_count, next_state_identity)) {
+            yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.push",
+                           "fragment state identity failed");
+            rc = YVEX_ERR_STATE;
+        } else {
+            yvex_core_text_copy(candidate.state_after_identity,
+                                sizeof(candidate.state_after_identity),
+                                next_state_identity);
+            if (!fragment_identity(&candidate)) {
+                yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.push",
+                               "fragment identity failed");
+                rc = YVEX_ERR_STATE;
+            } else {
+                candidate.completed = 1;
+                *fragment = candidate;
+            }
+        }
+    }
+    free(piece);
+    if (rc != YVEX_OK) yvex_tokenizer_fragment_clear(&candidate);
+    return rc;
+}
+
 int yvex_tokenizer_decoder_open(yvex_tokenizer_decoder **out,
                                 const yvex_tokenizer *tokenizer,
                                 const yvex_tokenizer_decode_options *options,
@@ -419,6 +514,7 @@ int yvex_tokenizer_decoder_open(yvex_tokenizer_decoder **out,
     decoder->tokenizer = tokenizer;
     decoder->options = options ? *options : defaults;
     atomic_init(&decoder->lifecycle, DECODER_OPEN);
+    atomic_init(&decoder->transaction_active, 0u);
     if (pthread_mutex_init(&decoder->drain_mutex, NULL) != 0) {
         free(decoder);
         yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.open", "decoder drain lock failed");
@@ -454,12 +550,10 @@ int yvex_tokenizer_decoder_push(yvex_tokenizer_decoder *decoder,
                                 yvex_tokenizer_fragment *fragment,
                                 yvex_error *err)
 {
-    yvex_tokenizer_fragment candidate;
-    yvex_tokenizer_token_classification classification;
-    unsigned char combined[4096];
-    unsigned char *piece = NULL;
-    unsigned long long piece_count = 0u, combined_count, prefix;
-    int suppressed = 0, rc;
+    unsigned char next_pending[4];
+    unsigned long long next_pending_count = 0ull;
+    char next_state_identity[YVEX_SHA256_HEX_CAP];
+    int rc;
 
     if (fragment) memset(fragment, 0, sizeof(*fragment));
     if (!decoder || !fragment)
@@ -467,75 +561,155 @@ int yvex_tokenizer_decoder_push(yvex_tokenizer_decoder *decoder,
     rc = decoder_enter(decoder, err);
     if (rc != YVEX_OK)
         return rc;
-    rc = decode_cancelled(&decoder->options, err);
-    if (rc != YVEX_OK) {
-        decoder_leave(decoder);
-        return rc;
-    }
-    memset(&candidate, 0, sizeof(candidate));
-    rc = yvex_tokenizer_token_classify(decoder->tokenizer, token_id, &classification, err);
-    if (rc == YVEX_OK)
-        rc = tokenizer_piece_decode(decoder->tokenizer, token_id,
-                                    decoder->options.skip_special_tokens,
-                                    &piece, &piece_count, &suppressed, err);
-    if (rc == YVEX_OK && piece_count > sizeof(combined) - decoder->pending_count) {
-        yvex_error_set(err, YVEX_ERR_BOUNDS, "tokenizer.decoder.push", "one token piece exceeds decoder bound");
-        rc = YVEX_ERR_BOUNDS;
-    }
-    combined_count = decoder->pending_count + piece_count;
-    if (rc == YVEX_OK) {
-        memcpy(combined, decoder->pending, (size_t)decoder->pending_count);
-        if (piece_count)
-            memcpy(combined + decoder->pending_count, piece, (size_t)piece_count);
-        if (!utf8_prefix(combined, combined_count, &prefix)) {
-            yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.decoder.push", "token produces malformed UTF-8 stream");
-            rc = YVEX_ERR_FORMAT;
-        }
-    }
-    if (rc == YVEX_OK && prefix) {
-        candidate.bytes = malloc((size_t)prefix);
-        if (!candidate.bytes) {
-            yvex_error_set(err, YVEX_ERR_NOMEM, "tokenizer.decoder.push", "fragment allocation failed");
-            rc = YVEX_ERR_NOMEM;
-        } else {
-            memcpy(candidate.bytes, combined, (size_t)prefix);
-        }
+    if (atomic_load_explicit(&decoder->transaction_active, memory_order_acquire)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.push",
+                       "decoder has an active candidate transaction");
+        rc = YVEX_ERR_STATE;
+    } else {
+        rc = decoder_stage_token(
+            decoder, decoder->pending, decoder->pending_count,
+            decoder->processed_token_count, decoder->state_identity, token_id,
+            next_pending, &next_pending_count, next_state_identity, fragment, err);
     }
     if (rc == YVEX_OK) {
-        unsigned long long pending_count = combined_count - prefix;
-        candidate.schema_version = YVEX_TOKENIZER_DECODER_SCHEMA_V1;
-        candidate.token_id = token_id;
-        candidate.byte_count = prefix;
-        candidate.pending_byte_count = pending_count;
-        candidate.processed_token_count = decoder->processed_token_count + 1u;
-        candidate.special = classification.special;
-        candidate.eos = classification.eos;
-        candidate.suppressed = suppressed;
-        yvex_core_text_copy(candidate.state_before_identity,
-                            sizeof(candidate.state_before_identity), decoder->state_identity);
-        if (!decoder_state_identity(decoder, combined + prefix, pending_count,
-                                    candidate.processed_token_count,
-                                    candidate.state_after_identity) || !fragment_identity(&candidate)) {
-            yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.push", "fragment identity failed");
-            rc = YVEX_ERR_STATE;
-        } else {
-            memset(decoder->pending, 0, sizeof(decoder->pending));
-            if (pending_count)
-                memcpy(decoder->pending, combined + prefix, (size_t)pending_count);
-            decoder->pending_count = pending_count;
-            decoder->processed_token_count = candidate.processed_token_count;
-            yvex_core_text_copy(decoder->state_identity, sizeof(decoder->state_identity),
-                                candidate.state_after_identity);
-            candidate.completed = 1;
-            *fragment = candidate;
-        }
+        memcpy(decoder->pending, next_pending, sizeof(decoder->pending));
+        decoder->pending_count = next_pending_count;
+        decoder->processed_token_count = fragment->processed_token_count;
+        yvex_core_text_copy(decoder->state_identity, sizeof(decoder->state_identity),
+                            next_state_identity);
     }
-    free(piece);
-    if (rc != YVEX_OK)
-        yvex_tokenizer_fragment_clear(&candidate);
     decoder_leave(decoder);
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
+}
+
+int yvex_tokenizer_decoder_transaction_begin(
+    yvex_tokenizer_decoder *decoder,
+    yvex_tokenizer_decoder_transaction **out, yvex_error *err)
+{
+    yvex_tokenizer_decoder_transaction *transaction;
+    unsigned int expected = 0u;
+    int rc;
+    if (out) *out = NULL;
+    if (!decoder || !out || !atomic_compare_exchange_strong_explicit(
+            &decoder->transaction_active, &expected, 1u,
+            memory_order_acq_rel, memory_order_acquire)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.transaction.begin",
+                       "decoder cannot admit another candidate transaction");
+        return YVEX_ERR_STATE;
+    }
+    rc = decoder_enter(decoder, err);
+    if (rc != YVEX_OK) {
+        atomic_store_explicit(&decoder->transaction_active, 0u,
+                              memory_order_release);
+        return rc;
+    }
+    transaction = calloc(1u, sizeof(*transaction));
+    if (!transaction) {
+        atomic_store_explicit(&decoder->transaction_active, 0u,
+                              memory_order_release);
+        decoder_leave(decoder);
+        yvex_error_set(err, YVEX_ERR_NOMEM, "tokenizer.decoder.transaction.begin",
+                       "decoder transaction allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    transaction->decoder = decoder;
+    memcpy(transaction->pending, decoder->pending, sizeof(transaction->pending));
+    transaction->pending_count = decoder->pending_count;
+    transaction->processed_token_count = decoder->processed_token_count;
+    yvex_core_text_copy(transaction->base_identity,
+                        sizeof(transaction->base_identity), decoder->state_identity);
+    yvex_core_text_copy(transaction->state_identity,
+                        sizeof(transaction->state_identity), decoder->state_identity);
+    decoder_leave(decoder);
+    *out = transaction;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_tokenizer_decoder_transaction_push(
+    yvex_tokenizer_decoder_transaction *transaction, unsigned int token_id,
+    yvex_tokenizer_fragment *fragment, yvex_error *err)
+{
+    unsigned char next_pending[4];
+    unsigned long long next_pending_count = 0ull;
+    char next_state_identity[YVEX_SHA256_HEX_CAP];
+    int rc;
+    if (fragment) memset(fragment, 0, sizeof(*fragment));
+    if (!transaction || transaction->prepared || !fragment) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.transaction.push",
+                       "mutable decoder transaction and fragment are required");
+        return YVEX_ERR_STATE;
+    }
+    rc = decoder_stage_token(
+        transaction->decoder, transaction->pending, transaction->pending_count,
+        transaction->processed_token_count, transaction->state_identity, token_id,
+        next_pending, &next_pending_count, next_state_identity, fragment, err);
+    if (rc == YVEX_OK) {
+        memcpy(transaction->pending, next_pending, sizeof(transaction->pending));
+        transaction->pending_count = next_pending_count;
+        transaction->processed_token_count = fragment->processed_token_count;
+        yvex_core_text_copy(transaction->state_identity,
+                            sizeof(transaction->state_identity), next_state_identity);
+        yvex_error_clear(err);
+    }
+    return rc;
+}
+
+int yvex_tokenizer_decoder_transaction_prepare(
+    yvex_tokenizer_decoder_transaction *transaction, yvex_error *err)
+{
+    yvex_tokenizer_decoder *decoder = transaction ? transaction->decoder : NULL;
+    int rc;
+    if (!transaction || transaction->prepared || !decoder) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.transaction.prepare",
+                       "unprepared decoder transaction is required");
+        return YVEX_ERR_STATE;
+    }
+    rc = decoder_enter(decoder, err);
+    if (rc != YVEX_OK) return rc;
+    if (!atomic_load_explicit(&decoder->transaction_active, memory_order_acquire) ||
+        strcmp(decoder->state_identity, transaction->base_identity) != 0) {
+        decoder_leave(decoder);
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.transaction.prepare",
+                       "decoder state changed while the candidate was staged");
+        return YVEX_ERR_STATE;
+    }
+    transaction->prepared = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+void yvex_tokenizer_decoder_transaction_publish(
+    yvex_tokenizer_decoder_transaction **transaction)
+{
+    yvex_tokenizer_decoder_transaction *owner = transaction ? *transaction : NULL;
+    yvex_tokenizer_decoder *decoder;
+    if (!owner || !owner->prepared) return;
+    decoder = owner->decoder;
+    memcpy(decoder->pending, owner->pending, sizeof(decoder->pending));
+    decoder->pending_count = owner->pending_count;
+    decoder->processed_token_count = owner->processed_token_count;
+    yvex_core_text_copy(decoder->state_identity, sizeof(decoder->state_identity),
+                        owner->state_identity);
+    atomic_store_explicit(&decoder->transaction_active, 0u, memory_order_release);
+    decoder_leave(decoder);
+    memset(owner, 0, sizeof(*owner));
+    free(owner);
+    *transaction = NULL;
+}
+
+void yvex_tokenizer_decoder_transaction_abort(
+    yvex_tokenizer_decoder_transaction **transaction)
+{
+    yvex_tokenizer_decoder_transaction *owner = transaction ? *transaction : NULL;
+    if (!owner) return;
+    atomic_store_explicit(&owner->decoder->transaction_active, 0u,
+                          memory_order_release);
+    if (owner->prepared) decoder_leave(owner->decoder);
+    memset(owner, 0, sizeof(*owner));
+    free(owner);
+    *transaction = NULL;
 }
 
 int yvex_tokenizer_decoder_finish(yvex_tokenizer_decoder *decoder,
@@ -549,7 +723,13 @@ int yvex_tokenizer_decoder_finish(yvex_tokenizer_decoder *decoder,
     rc = decoder_enter(decoder, err);
     if (rc != YVEX_OK)
         return rc;
-    rc = decode_cancelled(&decoder->options, err);
+    if (atomic_load_explicit(&decoder->transaction_active, memory_order_acquire)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.finish",
+                       "decoder has an active candidate transaction");
+        rc = YVEX_ERR_STATE;
+    } else {
+        rc = decode_cancelled(&decoder->options, err);
+    }
     if (rc != YVEX_OK) {
         decoder_leave(decoder);
         return rc;
@@ -593,7 +773,11 @@ int yvex_tokenizer_decoder_reset(yvex_tokenizer_decoder *decoder,
     rc = decoder_enter(decoder, err);
     if (rc != YVEX_OK)
         return rc;
-    if (!decoder_state_identity(decoder, pending, 0u, 0u, identity)) {
+    if (atomic_load_explicit(&decoder->transaction_active, memory_order_acquire)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.reset",
+                       "decoder has an active candidate transaction");
+        rc = YVEX_ERR_STATE;
+    } else if (!decoder_state_identity(decoder, pending, 0u, 0u, identity)) {
         yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.decoder.reset",
                        "empty decoder identity derivation failed");
         rc = YVEX_ERR_STATE;
@@ -639,9 +823,10 @@ void yvex_tokenizer_decoder_close(yvex_tokenizer_decoder **decoder)
                 pthread_cond_wait(&owner->drain_condition, &owner->drain_mutex) != 0) {
                 (void)pthread_mutex_unlock(&owner->drain_mutex);
                 return;
-            }
+        }
         (void)pthread_mutex_unlock(&owner->drain_mutex);
     }
+    if (atomic_load_explicit(&owner->transaction_active, memory_order_acquire)) return;
     if (owner->drain_condition_ready)
         (void)pthread_cond_destroy(&owner->drain_condition);
     if (owner->drain_mutex_ready)

@@ -20,17 +20,17 @@ static int admit_fixture(const char *json, openai_endpoint endpoint,
 
     request.body = (unsigned char *)json;
     request.body_count = strlen(json);
-    return openai_json_admit(&request, endpoint, "deepseek-v4-flash",
+    return openai_json_admit(&request, endpoint, "deepseek4-v4-flash-dspark",
                              admitted, err);
 }
 
 static int test_chat_admission(void)
 {
     static const char basic[] =
-        "{\"model\":\"deepseek-v4-flash\",\"messages\":[{"
+        "{\"model\":\"deepseek4-v4-flash-dspark\",\"messages\":[{"
         "\"role\":\"user\",\"content\":\"Hello\"}],\"temperature\":0}";
     static const char json[] =
-        "{\"model\":\"deepseek-v4-flash\","
+        "{\"model\":\"deepseek4-v4-flash-dspark\","
         "\"messages\":[{\"role\":\"system\",\"content\":\"Be exact.\"},"
         "{\"role\":\"user\",\"content\":\"Score?\"}],"
         "\"stream\":true,\"stream_options\":{\"include_usage\":true},"
@@ -76,21 +76,21 @@ static int test_chat_admission(void)
 static int test_request_refusals(void)
 {
     static const char duplicate[] =
-        "{\"model\":\"deepseek-v4-flash\",\"model\":\"deepseek-v4-flash\","
+        "{\"model\":\"deepseek4-v4-flash-dspark\",\"model\":\"deepseek4-v4-flash-dspark\","
         "\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}";
     static const char multiple[] =
-        "{\"model\":\"deepseek-v4-flash\",\"n\":2,"
+        "{\"model\":\"deepseek4-v4-flash-dspark\",\"n\":2,"
         "\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}";
     static const char multimodal[] =
-        "{\"model\":\"deepseek-v4-flash\",\"messages\":[{"
+        "{\"model\":\"deepseek4-v4-flash-dspark\",\"messages\":[{"
         "\"role\":\"user\",\"content\":[{\"type\":\"input_image\","
         "\"image_url\":\"data:image/png;base64,AA==\"}]}]}";
     static const char ambiguous_maximum[] =
-        "{\"model\":\"deepseek-v4-flash\",\"max_tokens\":4,"
+        "{\"model\":\"deepseek4-v4-flash-dspark\",\"max_tokens\":4,"
         "\"max_completion_tokens\":4,"
         "\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}";
     static const char strict_tool[] =
-        "{\"model\":\"deepseek-v4-flash\","
+        "{\"model\":\"deepseek4-v4-flash-dspark\","
         "\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
         "\"tools\":[{\"type\":\"function\",\"function\":{"
         "\"name\":\"f\",\"parameters\":{\"type\":\"object\"},"
@@ -121,7 +121,7 @@ static int test_request_refusals(void)
 static int test_responses_admission(void)
 {
     static const char json[] =
-        "{\"model\":\"deepseek-v4-flash\",\"instructions\":\"Answer briefly.\","
+        "{\"model\":\"deepseek4-v4-flash-dspark\",\"instructions\":\"Answer briefly.\","
         "\"input\":\"Hello\",\"max_output_tokens\":8,\"temperature\":0,"
         "\"previous_response_id\":\"resp_prior\",\"store\":false,"
         "\"background\":false,\"parallel_tool_calls\":false,"
@@ -166,7 +166,7 @@ static int test_rendering(void)
     result.finish = YVEX_PROVIDER_FINISH_STOP;
     result.complete = 1;
     YVEX_TEST_ASSERT(openai_json_result(
-        OPENAI_ENDPOINT_CHAT, "chatcmpl_test", "deepseek-v4-flash", 7u,
+        OPENAI_ENDPOINT_CHAT, "chatcmpl_test", "deepseek4-v4-flash-dspark", 7u,
         &result, &json, &count, &err) == YVEX_OK,
         "Chat result must render");
     YVEX_TEST_ASSERT(yvex_provider_json_value_validate(json, count, 1,
@@ -175,7 +175,7 @@ static int test_rendering(void)
     free(json);
     json = NULL;
     YVEX_TEST_ASSERT(openai_json_result(
-        OPENAI_ENDPOINT_RESPONSES, "resp_test", "deepseek-v4-flash", 7u,
+        OPENAI_ENDPOINT_RESPONSES, "resp_test", "deepseek4-v4-flash-dspark", 7u,
         &result, &json, &count, &err) == YVEX_OK,
         "Responses result must render");
     YVEX_TEST_ASSERT(yvex_provider_json_value_validate(json, count, 1,
@@ -188,7 +188,7 @@ static int test_rendering(void)
     fragment.byte_count = 3u;
     fragment.provider_output_kind = YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT;
     YVEX_TEST_ASSERT(openai_json_stream_chunk(
-        OPENAI_ENDPOINT_RESPONSES, "resp_test", "deepseek-v4-flash", 7u,
+        OPENAI_ENDPOINT_RESPONSES, "resp_test", "deepseek4-v4-flash-dspark", 7u,
         &fragment, 0, &json, &count, &err) == YVEX_OK,
         "Responses delta must render");
     YVEX_TEST_ASSERT(yvex_provider_json_value_validate(json, count, 1,

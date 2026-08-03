@@ -40,10 +40,11 @@ The runtime-client lane cannot open an artifact, initialize CUDA, execute a
 Transformer, or host a model. The offline lane closes all resources before the
 process exits and never owns persistent sessions.
 
-`yvexd` owns one process-lifetime runtime model, one bounded worker and queue,
-one server-session registry, one private Unix listener, one loopback
-OpenAI-compatible listener, and one telemetry authority. HTTP and native
-clients enter the same worker, model, session, KV, and cancellation owners.
+`yvexd` owns one process-lifetime runtime model containing target and DSpark
+draft/verification plans, one bounded worker and queue, one server-session
+registry, one private Unix listener, one loopback OpenAI-compatible listener,
+and one telemetry authority. HTTP and native clients enter the same worker,
+model, session, KV, and cancellation owners.
 
 ## Subsystem direction
 
@@ -92,7 +93,7 @@ layout rules are in [Source and Module Ownership](../development/source-ownershi
 
 ## Application surfaces
 
-The private local protocol is version 4. It carries typed requests, streamed
+The private local protocol is version 5. It carries typed requests, streamed
 fragments, status, session results, progress, terminal results, and refusals.
 The in-process OpenAI adapter translates the bounded compatibility profile to
 the same protocol/session semantics. Neither transport enters graph, tokenizer,
@@ -105,9 +106,14 @@ REPL slash schemas consume that one authority.
 
 ## Current implementation scope
 
-The admitted DeepSeek-V4-Flash vertical reaches streamed text through one
-complete artifact and binding on CPU and the admitted mixed GB10 path. The
-current CUDA path keeps model execution on CUDA while tokenizer work, sampling,
-protocol handling, and orchestration remain host-owned. This is not a claim of
-complete device residency, model evaluation, release benchmark performance, or
-release qualification. Current gates remain in [`ROADMAP.md`](../../ROADMAP.md).
+The admitted DeepSeek-V4-Flash-DSpark vertical reaches target-only and
+target-verified speculative text through one complete artifact, binding,
+runtime model, worker, and session authority on CPU and the admitted mixed GB10
+path. Candidate tokens remain private until the complete target admits an
+accepted prefix; native and HTTP clients see only committed text and usage.
+
+The current CUDA path keeps target and draft model execution on CUDA while
+tokenizer work, sampling, protocol handling, and orchestration remain
+host-owned. This is not a claim of DSpark acceleration, complete device
+residency, model evaluation, release benchmark performance, or release
+qualification. Current gates remain in [`ROADMAP.md`](../../ROADMAP.md).

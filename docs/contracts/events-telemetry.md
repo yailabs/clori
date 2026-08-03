@@ -20,6 +20,9 @@ Each event carries a schema, global sequence, wall and monotonic timestamps,
 severity, kind, process/runtime identities, and applicable model, artifact,
 variant, session, request, turn, phase, counter, timing, rate, and result
 fields. Content is excluded unless an explicit trace-content policy admits it.
+The sealed semantic identity binds sequence, kind, correlations, counters,
+durations, result facts, and model identities. Process ID and observed wall or
+monotonic clock values remain diagnostic fields and do not enter that identity.
 
 Events observe state after the owning publication boundary. An event cannot
 make an uncommitted state visible or promote capability.
@@ -32,6 +35,8 @@ Typed events cover at least:
 - listener preparation/readiness/failure;
 - client/session attach and lifecycle;
 - request admission, queueing, tokenization, prefix reuse, and prefill;
+- draft start/completion, target verification start/completion, accepted prefix,
+  candidate rejection, and speculative-cycle commit;
 - first token, decode progress, fragment publication, commit, and stop;
 - cancellation, refusal, failure, and partial progress;
 - memory/resource counters and bounded profile stages;
@@ -58,6 +63,12 @@ rate to the same semantic facts. Neither renderer exposes generic positional
 counter names. Native prefill progress sent to the REPL is another projection
 of the sealed event, not a synthetic client event.
 
+Speculative events carry named generation mode, cycle, proposed,
+selected-verification, accepted, rejected, discarded, verification, confidence,
+timing, and policy-identity facts. Legacy generic event counters remain part of
+the versioned base event record but do not encode DSpark meaning. Human watch
+and trace use the named speculative fields and never publish draft token text.
+
 ## Privacy and content
 
 Default telemetry excludes prompt text, response text, logits, hidden values,
@@ -70,6 +81,11 @@ are not part of ordinary status or machine discovery.
 CPU timings use a monotonic clock. CUDA device work uses device-complete timing
 when kernel duration is claimed; asynchronous enqueue time is not kernel time.
 Normal serving does not add synchronizations merely for telemetry.
+
+Draft and verification durations are reported separately from committed
+generation rate. Proposed tokens never contribute to generated-token or
+completion-usage counters; accepted-prefix and correction/bonus accounting is
+explicit.
 
 Unavailable timing or placement fields are marked unavailable. Counters name
 actual observed movement, allocation, launch, synchronization, and publication

@@ -32,12 +32,14 @@ The immutable runtime model retains:
 - imported family-neutral descriptors and the typed family adapter;
 - read-only encoded weights and model-lifetime backend resources;
 - the tokenizer plan and output-head residency;
-- executable capability and identity facts.
+- target and DSpark draft/verification plans, their shared resources, and
+  executable capability and identity facts.
 
 Each server session owns one mutable execution session, committed token ledger,
 transcript, incremental decoder, sampling/RNG state, turn state, and persistent
-sequence state. Sessions share immutable weights but never mutable KV or
-workspace.
+target sequence state. A DSpark session also owns bounded proposal and target
+verification candidate state. Sessions share immutable weights but never
+mutable KV or workspace.
 
 ## Execution path
 
@@ -66,6 +68,34 @@ Decode is a phase, not a second model implementation. Generation composes
 tokenizer, prefill, logits, sampling, decode, stop, and detokenization owners;
 it does not replace their semantics.
 
+## Target-only and DSpark generation
+
+The same runtime model admits two explicit modes. `target-only` executes one
+ordinary target step at a time and remains the semantic reference. `dspark`
+captures the source-required target features, constructs a bounded candidate
+block with the checkpoint drafter, verifies it with the complete target, and
+commits the target-authored accepted result.
+
+```text
+committed target state
+  -> DSpark proposal and confidence facts
+  -> complete-target block verification
+  -> accepted prefix plus correction or bonus token
+  -> atomic model/token/decoder/RNG commit
+  -> committed streaming
+```
+
+A proposal does not advance target position, persistent state, transcript,
+usage, or output. Rejected candidate state is discarded. Greedy DSpark output
+matches target-only output from the same initial state; admitted stochastic
+execution preserves the target distribution through exact accept/reject and
+residual sampling rather than token-ID equality.
+
+The target plan captures ordered normalized feature taps after layers 40, 41,
+and 42 during ordinary execution. The drafter does not rerun the target trunk
+to reconstruct them. Draft Markov state is token-conditioned workspace, while
+committed sequence truth remains target-owned.
+
 ## Transformer composition
 
 The DeepSeek adapter supplies the irreducible 43-layer schedule, attention
@@ -84,7 +114,7 @@ Persistent state includes committed position and family-correct attention/KV
 representations. It is session-owned and capacity-bounded. Workspace is
 separate reusable temporary storage.
 
-Every execution unit follows:
+An ordinary execution unit follows:
 
 ```text
 admit -> begin candidate -> execute -> validate -> check cancellation
@@ -95,6 +125,13 @@ Failure aborts the candidate and retains the prior committed state. Multi-turn
 reuse occurs only when the newly rendered token sequence has the committed
 ledger as an exact prefix. The runtime prefills only the suffix; an
 incompatible prefix refuses or requires explicit reset.
+
+A speculative cycle extends the same discipline to several positions. Target
+state, token ledger, incremental decoder, target and draft sampling state, and
+RNG publication participate in one accepted-prefix transaction. Cancellation
+before commit discards the whole candidate. Cancellation after commit reports
+that exact committed prefix; it never rewinds published state by decrementing
+counters.
 
 ## Memory and residency
 
@@ -126,14 +163,17 @@ internal text state agree. A cancelled or disconnected request reports exact
 partial progress and does not fabricate completion.
 
 One typed event authority carries lifecycle, queue, tokenizer, prefill, first
-token, decode, commit, stop, cancellation, failure, memory, and listener facts.
+token, decode, draft, verification, accepted-prefix commit, stop,
+cancellation, failure, memory, and listener facts.
 Human status, watch, trace, raw JSONL, and metrics are projections of that
 authority. The active console milestone owns improved human rendering, not a
 new state source.
 
 ## Current limits
 
-Warm DeepSeek performance remains below the admission target and is explicit
-optimization debt. The architecture does not claim continuous batching,
-multi-model hosting, restart-persistent sessions, public security, model
-evaluation, a release benchmark, or release qualification.
+The DSpark bootstrap path is a correctness baseline and may be slower than
+target-only execution. Warm DeepSeek performance remains explicit optimization
+debt. The architecture does not claim load-aware confidence scheduling, native
+FP4 Tensor Core execution, continuous batching, multi-model hosting,
+restart-persistent sessions, public security, model evaluation, a release
+benchmark, or release qualification.

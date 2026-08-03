@@ -12,10 +12,10 @@ base_url = os.environ["YVEX_OPENAI_BASE_URL"] + "/v1"
 client = OpenAI(base_url=base_url, api_key="yvex-local", timeout=10.0)
 
 models = client.models.list()
-assert [model.id for model in models.data] == ["deepseek-v4-flash"]
+assert [model.id for model in models.data] == ["deepseek4-v4-flash-dspark"]
 
 chat = client.chat.completions.create(
-    model="deepseek-v4-flash",
+    model="deepseek4-v4-flash-dspark",
     messages=[{"role": "user", "content": "Hello"}],
     temperature=0,
 )
@@ -23,7 +23,7 @@ assert chat.choices[0].message.content == "hello from yvex"
 assert chat.usage and chat.usage.total_tokens == 8
 
 chat_stream = client.chat.completions.create(
-    model="deepseek-v4-flash",
+    model="deepseek4-v4-flash-dspark",
     messages=[{"role": "user", "content": "Hello"}],
     temperature=0,
     stream=True,
@@ -37,7 +37,7 @@ chat_text = "".join(
 assert chat_text == "hello from yvex"
 
 response = client.responses.create(
-    model="deepseek-v4-flash",
+    model="deepseek4-v4-flash-dspark",
     input="Hello",
     temperature=0,
     store=False,
@@ -46,7 +46,7 @@ assert response.output_text == "hello from yvex"
 
 response_events = list(
     client.responses.create(
-        model="deepseek-v4-flash",
+        model="deepseek4-v4-flash-dspark",
         input="Hello",
         temperature=0,
         store=False,
@@ -75,7 +75,7 @@ tools = [{
     },
 }]
 tool_chat = client.chat.completions.create(
-    model="deepseek-v4-flash",
+    model="deepseek4-v4-flash-dspark",
     messages=[{"role": "user", "content": "Load m1"}],
     tools=tools,
     tool_choice="auto",
@@ -86,7 +86,7 @@ tool_call = tool_chat.choices[0].message.tool_calls[0]
 assert tool_call.function.name == "get_match_context"
 assert json.loads(tool_call.function.arguments) == {"match_id": "m1"}
 tool_chat_final = client.chat.completions.create(
-    model="deepseek-v4-flash",
+    model="deepseek4-v4-flash-dspark",
     messages=[
         {"role": "user", "content": "Load m1"},
         {
@@ -115,7 +115,7 @@ tool_chat_final = client.chat.completions.create(
 assert tool_chat_final.choices[0].message.content == "Match context accepted."
 
 tool_response = client.responses.create(
-    model="deepseek-v4-flash",
+    model="deepseek4-v4-flash-dspark",
     input="Load m1",
     tools=[tool["function"] | {"type": "function"} for tool in tools],
     tool_choice={"type": "function", "name": "get_match_context"},
@@ -126,7 +126,7 @@ tool_response = client.responses.create(
 function_call = next(item for item in tool_response.output
                      if item.type == "function_call")
 continued = client.responses.create(
-    model="deepseek-v4-flash",
+    model="deepseek4-v4-flash-dspark",
     previous_response_id=tool_response.id,
     input=[{
         "type": "function_call_output",

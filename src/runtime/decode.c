@@ -252,6 +252,7 @@ static int decode_step_locked(
     unsigned long long expected_position, unsigned int token_id,
     yvex_backend_kind backend, float *normalized_hidden,
     unsigned long long normalized_hidden_capacity,
+    yvex_runtime_decode_feature_output *features,
     yvex_runtime_decode_step_result *result, yvex_error *err)
 {
     const yvex_transformer_plan_summary *plan = yvex_transformer_plan_summary_get(
@@ -263,6 +264,10 @@ static int decode_step_locked(
     yvex_transformer_input *input = NULL;
     int rc;
     memset(result, 0, sizeof(*result));
+    if (features) {
+        features->row_count = 0ull;
+        features->digest[0] = '\0';
+    }
     if (!plan || !expected_position || !normalized_hidden ||
         normalized_hidden_capacity < plan->hidden_width)
         return decode_refuse(err, YVEX_ERR_INVALID_ARG,
@@ -280,6 +285,12 @@ static int decode_step_locked(
     request.chunk_tokens = 1ull;
     request.backend = backend;
     request.phase = YVEX_TRANSFORMER_PHASE_DECODE;
+    if (features) {
+        request.feature_layer_ordinals = features->layer_ordinals;
+        request.feature_layer_count = features->layer_count;
+        output.features = features->values;
+        output.feature_capacity = features->capacity;
+    }
     output.normalized_hidden = normalized_hidden;
     output.capacity = normalized_hidden_capacity;
     if (rc == YVEX_OK)
@@ -301,6 +312,10 @@ static int decode_step_locked(
         rc = decode_refuse(err, YVEX_ERR_STATE,
                            "decode step structural or state invariants failed");
     if (rc == YVEX_OK) {
+        if (features) {
+            features->row_count = transformer.feature_row_count;
+            yvex_runtime_identity_copy(features->digest, transformer.feature_digest);
+        }
         result->schema_version = YVEX_RUNTIME_DECODE_SCHEMA_V1;
         result->completed = 1;
         result->step_ordinal = step_ordinal;
@@ -368,7 +383,7 @@ int yvex_runtime_decode_step(
     if (rc != YVEX_OK) return rc;
     rc = decode_step_locked(context, step_ordinal, expected_position, token_id,
                             backend, normalized_hidden,
-                            normalized_hidden_capacity, result, err);
+                            normalized_hidden_capacity, NULL, result, err);
     decode_leave(context, rc == YVEX_OK);
     return rc;
 }
@@ -502,7 +517,7 @@ int yvex_runtime_decode_execute(
             context, index, summary->token_start + index, tokens[index],
             request->backend,
             output->normalized_hidden + index * plan->hidden_width,
-            plan->hidden_width, &output->steps[index], err);
+            plan->hidden_width, NULL, &output->steps[index], err);
         if (rc == YVEX_OK) {
             result->completed_steps++;
             result->final_committed_prefix = output->steps[index].position_after;

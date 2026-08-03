@@ -26,7 +26,7 @@ typedef enum {
     YVEX_SAMPLING_STRATEGY_STOCHASTIC = 1
 } yvex_sampling_strategy;
 
-typedef struct {
+typedef struct yvex_runtime_sampling_policy {
     unsigned int schema_version;
     yvex_sampling_strategy strategy;
     double temperature;
@@ -104,7 +104,27 @@ typedef struct {
     char rng_state_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_sampling_context_summary;
 
+typedef struct {
+    unsigned int schema_version;
+    int completed;
+    yvex_sampling_strategy strategy;
+    unsigned long long vocabulary_size, positive_probability_count;
+    char policy_identity[YVEX_SHA256_HEX_CAP];
+    char source_identity[YVEX_SHA256_HEX_CAP];
+    char distribution_identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_sampling_distribution_result;
+
+typedef struct {
+    unsigned int schema_version;
+    int completed;
+    unsigned long long draw_count;
+    char rng_state_before_identity[YVEX_SHA256_HEX_CAP];
+    char rng_state_after_identity[YVEX_SHA256_HEX_CAP];
+    char draw_identity[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_sampling_uniform_result;
+
 typedef struct yvex_runtime_sampling_context yvex_runtime_sampling_context;
+typedef struct yvex_runtime_sampling_transaction yvex_runtime_sampling_transaction;
 
 int yvex_runtime_sampling_policy_seal(
     yvex_runtime_sampling_policy *policy, unsigned long long vocabulary_size,
@@ -123,6 +143,24 @@ int yvex_runtime_sampling_select(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
     yvex_runtime_sampling_result *result, yvex_error *err);
+int yvex_runtime_sampling_distribution(
+    yvex_runtime_sampling_context *context,
+    const yvex_runtime_sampling_source *source,
+    float *probabilities, unsigned long long probability_capacity,
+    yvex_runtime_sampling_distribution_result *result, yvex_error *err);
+int yvex_runtime_sampling_transaction_begin(
+    yvex_runtime_sampling_context *context,
+    yvex_runtime_sampling_transaction **transaction, yvex_error *err);
+int yvex_runtime_sampling_transaction_uniforms(
+    yvex_runtime_sampling_transaction *transaction, double *values,
+    unsigned long long value_count,
+    yvex_runtime_sampling_uniform_result *result, yvex_error *err);
+int yvex_runtime_sampling_transaction_prepare_commit(
+    yvex_runtime_sampling_transaction *transaction, yvex_error *err);
+void yvex_runtime_sampling_transaction_publish_commit(
+    yvex_runtime_sampling_transaction **transaction);
+int yvex_runtime_sampling_transaction_abort(
+    yvex_runtime_sampling_transaction **transaction, yvex_error *err);
 int yvex_runtime_sampling_execute(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *sources, unsigned long long source_count,

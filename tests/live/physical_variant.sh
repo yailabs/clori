@@ -21,7 +21,7 @@ expect_plan_refusal() {
     policy=$2
     set +e
     "$YVEX_BIN" compile quant plan \
-        --target deepseek4-v4-flash \
+        --target deepseek4-v4-flash-dspark \
         --source "$YVEX_DEEPSEEK_SOURCE" \
         --models-root "$YVEX_DEEPSEEK_MODELS_ROOT" \
         --source-manifest "$YVEX_DEEPSEEK_SOURCE_MANIFEST" \
@@ -40,7 +40,7 @@ expect_calibrated_plan_refusal() {
     policy=$2
     set +e
     "$YVEX_BIN" compile quant plan \
-        --target deepseek4-v4-flash \
+        --target deepseek4-v4-flash-dspark \
         --source "$YVEX_DEEPSEEK_SOURCE" \
         --models-root "$YVEX_DEEPSEEK_MODELS_ROOT" \
         --source-manifest "$YVEX_DEEPSEEK_SOURCE_MANIFEST" \
@@ -59,16 +59,16 @@ yvex_test_cleanup "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
 "$YVEX_BIN" compile quant plan \
-    --target deepseek4-v4-flash \
+    --target deepseek4-v4-flash-dspark \
     --source "$YVEX_DEEPSEEK_SOURCE" \
     --models-root "$YVEX_DEEPSEEK_MODELS_ROOT" \
     --source-manifest "$YVEX_DEEPSEEK_SOURCE_MANIFEST" \
-    --preset deepseek-v4-flash-ds4-like-q2-v1 \
+    --preset deepseek-v4-flash-dspark-bootstrap-q2-v1 \
     --imatrix-manifest "$YVEX_IMATRIX_PATH" \
     --backend cuda \
     --out-plan "$OUT_DIR/accepted.plan" \
     > "$OUT_DIR/accepted.out"
-grep '^terminal_decisions: 1360$' "$OUT_DIR/accepted.out" >/dev/null ||
+grep '^terminal_decisions: 1409$' "$OUT_DIR/accepted.out" >/dev/null ||
     fail "complete terminal count missing"
 grep '^artifact_emittable: 1$' "$OUT_DIR/accepted.out" >/dev/null ||
     fail "artifact compatibility missing"
@@ -81,7 +81,7 @@ cat > "$OUT_DIR/conflict.json" <<'JSON'
 {
   "schema": "yvex.quant_policy.v2",
   "name": "conflicting-actions",
-  "architecture": "deepseek4-v4-flash",
+  "architecture": "deepseek4-v4-flash-dspark",
   "rules": [
     {"match":{"physical_class":"quantizable"},"action":{"qtype":"Q8_0","calibration":"none","requires_cpu_compute":true,"requires_cuda_compute":false},"priority":100},
     {"match":{"physical_class":"quantizable"},"action":{"qtype":"Q2_K","calibration":"none","requires_cpu_compute":true,"requires_cuda_compute":false},"priority":100}
@@ -93,7 +93,7 @@ cat > "$OUT_DIR/missing-default.json" <<'JSON'
 {
   "schema": "yvex.quant_policy.v2",
   "name": "missing-default",
-  "architecture": "deepseek4-v4-flash",
+  "architecture": "deepseek4-v4-flash-dspark",
   "rules": [
     {"match":{"role":"moe_expert_gate"},"action":{"qtype":"Q8_0","calibration":"none","requires_cpu_compute":true,"requires_cuda_compute":false},"priority":100}
   ]
@@ -104,7 +104,7 @@ cat > "$OUT_DIR/exact-override.json" <<'JSON'
 {
   "schema": "yvex.quant_policy.v2",
   "name": "exact-override",
-  "architecture": "deepseek4-v4-flash",
+  "architecture": "deepseek4-v4-flash-dspark",
   "rules": [
     {"match":{"physical_class":"exact"},"action":{"qtype":"Q8_0","calibration":"none","requires_cpu_compute":true,"requires_cuda_compute":false},"priority":100},
     {"match":{"physical_class":"quantizable"},"action":{"qtype":"Q8_0","calibration":"none","requires_cpu_compute":true,"requires_cuda_compute":false},"priority":10}
@@ -116,7 +116,7 @@ cat > "$OUT_DIR/unsupported.json" <<'JSON'
 {
   "schema": "yvex.quant_policy.v2",
   "name": "unsupported-codec",
-  "architecture": "deepseek4-v4-flash",
+  "architecture": "deepseek4-v4-flash-dspark",
   "rules": [
     {"match":{"physical_class":"quantizable"},"action":{"qtype":"Q4_K","calibration":"none","requires_cpu_compute":true,"requires_cuda_compute":true},"priority":10}
   ]
@@ -127,7 +127,7 @@ cat > "$OUT_DIR/iq2-wrong-operation.json" <<'JSON'
 {
   "schema": "yvex.quant_policy.v2",
   "name": "iq2-wrong-operation",
-  "architecture": "deepseek4-v4-flash",
+  "architecture": "deepseek4-v4-flash-dspark",
   "rules": [
     {"match":{"role":"attention_q_a"},"action":{"qtype":"IQ2_XXS","calibration":"required","requires_cpu_compute":true,"requires_cuda_compute":true},"priority":100},
     {"match":{"physical_class":"quantizable"},"action":{"qtype":"Q8_0","calibration":"none","requires_cpu_compute":true,"requires_cuda_compute":true},"priority":10}

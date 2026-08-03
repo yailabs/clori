@@ -24,9 +24,10 @@ contains()
 "$YVEXD_BIN" --help >"$OUT_DIR/help.out" 2>"$OUT_DIR/help.err"
 contains "$OUT_DIR/help.out" 'usage: yvexd --model ARTIFACT --runtime-binding FILE'
 contains "$OUT_DIR/help.out" '[--openai on|off]'
+contains "$OUT_DIR/help.out" '[--generation-mode target-only|dspark]'
 contains "$OUT_DIR/help.out" 'loopback OpenAI listener'
 "$YVEXD_BIN" --version >"$OUT_DIR/version.out" 2>"$OUT_DIR/version.err"
-contains "$OUT_DIR/version.out" '0.1.0 protocol=4'
+contains "$OUT_DIR/version.out" '0.1.0 protocol=5'
 
 set +e
 "$YVEXD_BIN" >"$OUT_DIR/missing.out" 2>"$OUT_DIR/missing.err"
@@ -40,13 +41,23 @@ port_status=$?
 "$YVEXD_BIN" --model missing --runtime-binding missing --openai on --openai off \
     >"$OUT_DIR/duplicate.out" 2>"$OUT_DIR/duplicate.err"
 duplicate_status=$?
+"$YVEXD_BIN" --model missing --runtime-binding missing --generation-mode invalid \
+    >"$OUT_DIR/mode.out" 2>"$OUT_DIR/mode.err"
+mode_status=$?
+"$YVEXD_BIN" --model missing --runtime-binding missing \
+    --target deepseek4-v4-flash >"$OUT_DIR/retired.out" 2>"$OUT_DIR/retired.err"
+retired_status=$?
 set -e
 test "$missing_status" -eq 2
 test "$remote_status" -eq 2
 test "$port_status" -eq 2
 test "$duplicate_status" -eq 2
+test "$mode_status" -eq 2
+test "$retired_status" -eq 2
 contains "$OUT_DIR/missing.err" '--model and --runtime-binding are required'
 contains "$OUT_DIR/port.err" 'invalid or duplicate --openai-port'
 contains "$OUT_DIR/duplicate.err" 'duplicate --openai option'
+contains "$OUT_DIR/mode.err" '--generation-mode requires target-only or dspark'
+contains "$OUT_DIR/retired.err" 'target deepseek4-v4-flash was replaced; use deepseek4-v4-flash-dspark'
 
 printf 'cli server grammar: ok\n'

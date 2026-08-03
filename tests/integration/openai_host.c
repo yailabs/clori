@@ -1,5 +1,5 @@
 /*
- * Provide deterministic status, session, text, JSON, and tool-call protocol-v4 facts. Never
+ * Provide deterministic status, session, text, JSON, and tool-call protocol-v5 facts. Never
  * enters production objects.
  */
 
@@ -54,7 +54,7 @@ static int send_ack(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_ACK, request);
-    strcpy(message.reason, "protocol-v4");
+    strcpy(message.reason, "protocol-v5");
     return yvex_server_protocol_send(fd, &message, err);
 }
 
@@ -67,7 +67,7 @@ static int send_status(int fd, const yvex_client_request *request,
     message.runtime.status = YVEX_SERVER_STATUS_READY;
     message.runtime.runtime_ready = 1;
     message.runtime.generation_ready = 1;
-    strcpy(message.runtime.target_id, "deepseek-v4-flash");
+    strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
     memset(message.runtime.runtime_model_identity, 'a', 64u);
     message.runtime.runtime_model_identity[64] = '\0';
     memset(message.runtime.runtime_binding_identity, 'b', 64u);
@@ -94,7 +94,7 @@ static int send_console_status(int fd, const yvex_client_request *request,
     message.runtime.generation_ready = 1;
     message.runtime.backend = YVEX_BACKEND_KIND_CUDA;
     message.runtime.context_capacity = 4096u;
-    strcpy(message.runtime.target_id, "deepseek-v4-flash");
+    strcpy(message.runtime.target_id, "deepseek4-v4-flash-dspark");
     memset(message.runtime.runtime_model_identity, 'a', 64u);
     message.runtime.runtime_model_identity[64] = '\0';
     memset(message.runtime.physical_variant_identity, 'd', 64u);
@@ -131,7 +131,9 @@ static int send_native_progress(int fd, const yvex_client_request *request,
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     server_telemetry *telemetry = NULL;
     size_t index;
-    int rc = yvex_server_telemetry_open(&telemetry, 8u, identity, identity,
+    int rc = yvex_server_telemetry_open(&telemetry, 8u,
+                                        YVEX_SERVER_GENERATION_TARGET_ONLY,
+                                        identity, identity,
                                         identity, err);
     for (index = 0u; rc == YVEX_OK && index < event_count; ++index) {
         yvex_client_message message;
@@ -143,7 +145,7 @@ static int send_native_progress(int fd, const yvex_client_request *request,
             phases[index], values[index][0], values[index][1], 0u,
             index >= 2u ? (double)(index - 1u) : 0.0,
             index >= 2u ? 2.0 : 0.0,
-            NULL, &message.event, err);
+            NULL, NULL, &message.event, err);
         if (rc == YVEX_OK) rc = yvex_server_protocol_send(fd, &message, err);
     }
     yvex_server_telemetry_close(&telemetry);
@@ -164,7 +166,9 @@ static int send_event_stream(int fd, const yvex_client_request *request,
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     server_telemetry *telemetry = NULL;
     size_t index;
-    int rc = yvex_server_telemetry_open(&telemetry, 8u, identity, identity,
+    int rc = yvex_server_telemetry_open(&telemetry, 8u,
+                                        YVEX_SERVER_GENERATION_TARGET_ONLY,
+                                        identity, identity,
                                         identity, err);
     for (index = 0u; rc == YVEX_OK && index < sizeof(kinds) / sizeof(kinds[0]); ++index) {
         yvex_client_message message;
@@ -174,7 +178,8 @@ static int send_event_stream(int fd, const yvex_client_request *request,
             telemetry, kinds[index], YVEX_SERVER_SEVERITY_INFO,
             index < 2u ? "fixture" : NULL, index < 2u ? "fixture-request" : NULL,
             index < 2u ? "fixture-turn" : NULL, phases[index], values[index][0],
-            values[index][1], values[index][2], 0.0, 0.0, NULL, &message.event, err);
+            values[index][1], values[index][2], 0.0, 0.0, NULL, NULL,
+            &message.event, err);
         if (rc == YVEX_OK) rc = yvex_server_protocol_send(fd, &message, err);
     }
     yvex_server_telemetry_close(&telemetry);

@@ -683,9 +683,10 @@ static int source_manifest_path(const yvex_source_verify_options *options, char 
     if (options->promote_manifest && options->models_root) {
         n = snprintf(out,
                      cap,
-                     "%s/gguf/%s/deepseek-source-manifest.json",
+                     "%s/gguf/%s/%s",
                      options->models_root,
-                     options->identity->family_key);
+                     options->identity->family_key,
+                     YVEX_SOURCE_RELEASE_MANIFEST_LEAF);
         return n >= 0 && (size_t)n < cap;
     }
     if (yvex_source_path_join(
@@ -702,9 +703,10 @@ static int source_manifest_path(const yvex_source_verify_options *options, char 
     }
     n = options->models_root ? snprintf(out,
                                         cap,
-                                        "%s/gguf/%s/deepseek-source-manifest.json",
+                                        "%s/gguf/%s/%s",
                                         options->models_root,
-                                        options->identity->family_key)
+                                        options->identity->family_key,
+                                        YVEX_SOURCE_RELEASE_MANIFEST_LEAF)
                              : -1;
     return n >= 0 && (size_t)n < cap;
 }

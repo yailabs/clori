@@ -24,7 +24,8 @@ typedef enum {
     SOURCE_SIDECAR_CONFIG = 0,
     SOURCE_SIDECAR_TOKENIZER,
     SOURCE_SIDECAR_TOKENIZER_CONFIG,
-    SOURCE_SIDECAR_GENERATION_CONFIG
+    SOURCE_SIDECAR_GENERATION_CONFIG,
+    SOURCE_SIDECAR_INFERENCE_CONFIG
 } source_sidecar_kind;
 
 typedef struct {
@@ -38,6 +39,8 @@ static const source_sidecar_rule source_sidecar_rules[] = {
     {"tokenizer.json", "missing-tokenizer-json", "malformed-tokenizer-json"},
     {"tokenizer_config.json", "missing-tokenizer-config", "malformed-tokenizer-config"},
     {"generation_config.json", "missing-generation-config", "malformed-generation-config"},
+    {"inference/config.json", "missing-dspark-inference-config",
+     "malformed-dspark-inference-config"},
 };
 
 static const source_sidecar_rule source_sidecar_unknown = {
@@ -58,6 +61,9 @@ static int source_parse_tokenizer_config(const char *data,
 static int source_parse_generation_config(const char *data,
                                           size_t length,
                                           yvex_source_verification *out);
+static int source_parse_inference_config(const char *data,
+                                         size_t length,
+                                         yvex_source_verification *out);
 static int source_parse_tokenizer_json(const char *data,
                                        size_t length,
                                        yvex_source_verification *out);
@@ -68,12 +74,14 @@ static const source_sidecar_parser source_sidecar_parsers[] = {
     source_parse_tokenizer_json,
     source_parse_tokenizer_config,
     source_parse_generation_config,
+    source_parse_inference_config,
 };
 
 static const size_t source_sidecar_valid_offsets[] = {
     offsetof(yvex_source_verification, tokenizer_json_valid),
     offsetof(yvex_source_verification, tokenizer_config_valid),
     offsetof(yvex_source_verification, generation_config_valid),
+    offsetof(yvex_source_verification, inference_config_valid),
 };
 
 int yvex_source_path_join(char *out, size_t cap, const char *left, const char *right) {
@@ -169,7 +177,7 @@ int yvex_source_verification_has_blocker(const yvex_source_verification *out, co
 }
 
 static const source_sidecar_rule *source_sidecar_rule_at(source_sidecar_kind kind) {
-    return kind >= SOURCE_SIDECAR_CONFIG && kind <= SOURCE_SIDECAR_GENERATION_CONFIG
+    return kind >= SOURCE_SIDECAR_CONFIG && kind <= SOURCE_SIDECAR_INFERENCE_CONFIG
                ? &source_sidecar_rules[(size_t)kind]
                : &source_sidecar_unknown;
 }
@@ -288,7 +296,7 @@ int yvex_source_verify_with_snapshot(const yvex_source_verify_options *options,
     rc = yvex_source_provenance_manifest_read(options, out, err);
     if (rc != YVEX_OK)
         goto cleanup;
-    for (kind = SOURCE_SIDECAR_CONFIG; kind <= SOURCE_SIDECAR_GENERATION_CONFIG; ++kind) {
+    for (kind = SOURCE_SIDECAR_CONFIG; kind <= SOURCE_SIDECAR_INFERENCE_CONFIG; ++kind) {
         rc = source_verify_sidecar(options, (source_sidecar_kind)kind, out, err);
         if (rc != YVEX_OK)
             goto cleanup;
@@ -349,6 +357,7 @@ int yvex_source_verify_with_snapshot(const yvex_source_verify_options *options,
     out->verified = out->blocker_count == 0u && out->path_verified && out->repository_verified &&
                     out->revision_verified && out->config_valid && out->tokenizer_json_valid &&
                     out->tokenizer_config_valid && out->generation_config_valid &&
+                    out->inference_config_valid &&
                     out->shard_index_headers_match && out->header_scan_count == 1u &&
                     out->manifest_verified &&
                     (strcmp(out->inventory_authority, "header-derived") == 0 ||
@@ -428,7 +437,11 @@ typedef struct {
 #define CONFIG_NORM_TOPK (1ull << 43)
 #define CONFIG_SWIGLU_LIMIT (1ull << 44)
 #define CONFIG_USE_CACHE (1ull << 45)
-#define CONFIG_REQUIRED_MASK ((1ull << 46) - 1ull)
+#define CONFIG_DSPARK_BLOCK_SIZE (1ull << 46)
+#define CONFIG_DSPARK_NOISE_TOKEN (1ull << 47)
+#define CONFIG_DSPARK_TARGET_LAYERS (1ull << 48)
+#define CONFIG_DSPARK_MARKOV_RANK (1ull << 49)
+#define CONFIG_REQUIRED_MASK ((1ull << 50) - 1ull)
 
 static int source_config_mark(source_config_parse_state *state, unsigned long long field) {
     if (state->seen & field)
@@ -550,6 +563,16 @@ static const source_json_field source_config_fields[] = {
      offsetof(yvex_source_verification, index_topk), 0u, 0u, 0u},
     {"num_nextn_predict_layers", CONFIG_NEXTN_LAYERS, SOURCE_JSON_U64,
      offsetof(yvex_source_verification, num_nextn_predict_layers), 0u, 0u, 0u},
+    {"dspark_block_size", CONFIG_DSPARK_BLOCK_SIZE, SOURCE_JSON_U64,
+     offsetof(yvex_source_verification, dspark_block_size), 0u, 0u, 0u},
+    {"dspark_noise_token_id", CONFIG_DSPARK_NOISE_TOKEN, SOURCE_JSON_U64,
+     offsetof(yvex_source_verification, dspark_noise_token_id), 0u, 0u, 0u},
+    {"dspark_target_layer_ids", CONFIG_DSPARK_TARGET_LAYERS, SOURCE_JSON_U64_ARRAY,
+     offsetof(yvex_source_verification, dspark_target_layer_ids), 0u,
+     offsetof(yvex_source_verification, dspark_target_layer_count),
+     YVEX_SOURCE_VERIFY_DSPARK_TARGET_LAYER_CAP},
+    {"dspark_markov_rank", CONFIG_DSPARK_MARKOV_RANK, SOURCE_JSON_U64,
+     offsetof(yvex_source_verification, dspark_markov_rank), 0u, 0u, 0u},
     {"o_groups", CONFIG_O_GROUPS, SOURCE_JSON_U64,
      offsetof(yvex_source_verification, o_groups), 0u, 0u, 0u},
     {"rms_norm_eps", CONFIG_RMS_NORM_EPS, SOURCE_JSON_NUMBER,
@@ -622,6 +645,21 @@ static const source_json_field source_generation_fields[] = {
     {"transformers_version", 64u, SOURCE_JSON_TEXT,
      offsetof(yvex_source_verification, generation_transformers_version),
      sizeof(((yvex_source_verification *)0)->generation_transformers_version), 0u, 0u},
+};
+
+static const source_json_field source_inference_fields[] = {
+    {"n_mtp_layers", 1u, SOURCE_JSON_U64,
+     offsetof(yvex_source_verification, dspark_inference_layer_count), 0u, 0u, 0u},
+    {"dspark_block_size", 2u, SOURCE_JSON_U64,
+     offsetof(yvex_source_verification, dspark_block_size), 0u, 0u, 0u},
+    {"dspark_noise_token_id", 4u, SOURCE_JSON_U64,
+     offsetof(yvex_source_verification, dspark_noise_token_id), 0u, 0u, 0u},
+    {"dspark_target_layer_ids", 8u, SOURCE_JSON_U64_ARRAY,
+     offsetof(yvex_source_verification, dspark_target_layer_ids), 0u,
+     offsetof(yvex_source_verification, dspark_target_layer_count),
+     YVEX_SOURCE_VERIFY_DSPARK_TARGET_LAYER_CAP},
+    {"dspark_markov_rank", 16u, SOURCE_JSON_U64,
+     offsetof(yvex_source_verification, dspark_markov_rank), 0u, 0u, 0u},
 };
 
 static const source_json_field source_added_token_fields[] = {
@@ -873,6 +911,37 @@ source_parse_generation_config(const char *data, size_t length, yvex_source_veri
                                     1);
 }
 
+/* The bundled inference configuration resolves the legacy next-token field into
+ * the three-block DSpark execution topology. Duplicate DSpark facts must agree
+ * with the public model configuration before either source is admitted. */
+static int source_parse_inference_config(const char *data, size_t length,
+                                         yvex_source_verification *out)
+{
+    yvex_source_verification candidate;
+    source_config_parse_state state = {0};
+    yvex_json json;
+    unsigned long long index;
+
+    if (!data || !out) return 0;
+    candidate = *out;
+    yvex_json_init(&json, data, length);
+    if (!source_json_object_parse(
+            &json, source_inference_fields,
+            sizeof(source_inference_fields) / sizeof(source_inference_fields[0]),
+            31u, NULL, &candidate, &state, 1) ||
+        candidate.dspark_block_size != out->dspark_block_size ||
+        candidate.dspark_noise_token_id != out->dspark_noise_token_id ||
+        candidate.dspark_markov_rank != out->dspark_markov_rank ||
+        candidate.dspark_target_layer_count != out->dspark_target_layer_count)
+        return 0;
+    for (index = 0u; index < out->dspark_target_layer_count; ++index)
+        if (candidate.dspark_target_layer_ids[index] !=
+            out->dspark_target_layer_ids[index])
+            return 0;
+    out->dspark_inference_layer_count = candidate.dspark_inference_layer_count;
+    return out->dspark_inference_layer_count != 0u;
+}
+
 static int source_tokenizer_record_id(yvex_source_verification *out, unsigned long long token_id) {
     if (!out || token_id == ULLONG_MAX)
         return 0;
@@ -979,7 +1048,7 @@ static int source_parse_sidecar(source_sidecar_kind kind,
         return 0;
     if (kind == SOURCE_SIDECAR_CONFIG)
         return source_parse_config_json(data, length, identity, out);
-    if (kind < SOURCE_SIDECAR_TOKENIZER || kind > SOURCE_SIDECAR_GENERATION_CONFIG)
+    if (kind < SOURCE_SIDECAR_TOKENIZER || kind > SOURCE_SIDECAR_INFERENCE_CONFIG)
         return 0;
     parser_index = (size_t)kind - (size_t)SOURCE_SIDECAR_TOKENIZER;
     valid = source_sidecar_parsers[parser_index](data, length, out);

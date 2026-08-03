@@ -54,7 +54,8 @@ typedef struct {
 } yvex_moe_weight_view;
 typedef struct {
     unsigned int schema_version;
-    unsigned long long ordinal, layer_index;
+    unsigned long long ordinal, layer_index, predictor_index;
+    yvex_tensor_scope tensor_scope;
     yvex_moe_router_class router_class;
     yvex_moe_scoring_policy scoring;
     yvex_moe_topk_policy topk_policy;
@@ -73,6 +74,7 @@ typedef struct {
 } yvex_moe_layer_plan;
 typedef struct {
     unsigned int schema_version;
+    yvex_tensor_scope tensor_scope;
     unsigned long long family_adapter_id, family_adapter_version;
     unsigned long long layer_count, hash_router_layer_count, learned_router_layer_count;
     unsigned long long routed_experts, shared_experts, experts_per_token;
@@ -204,6 +206,7 @@ int yvex_backend_moe_close(yvex_backend_moe_execution **execution, yvex_error *e
 typedef struct yvex_runtime_moe_context yvex_runtime_moe_context;
 typedef struct {
     unsigned long long maximum_host_bytes, maximum_device_bytes;
+    yvex_tensor_scope tensor_scope;
     int (*cancel_requested)(void *context);
     void *cancel_context;
     int defer_cuda_workspace;

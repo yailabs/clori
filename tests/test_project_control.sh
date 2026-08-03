@@ -41,7 +41,9 @@ require_text "$roadmap" '| `V010.OPERATOR.COMMAND.ARCHITECTURE.0` | `complete` |
 require_text "$roadmap" '| `V010.DOCS.INFORMATION.ARCHITECTURE.0` | `complete` |'
 require_text "$roadmap" '| `V010.REPO.CODE.COMMENTARY.0` | `complete` |'
 require_text "$roadmap" '| `V010.OPERATOR.REPL.CONSOLE.0` | `complete` |'
-require_text "$roadmap" '| `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `active` |'
+require_text "$roadmap" '| `V010.REBASE.DEEPSEEK.DSPARK.0` | `complete` |'
+require_text "$roadmap" '| `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` | `active` |'
+require_text "$roadmap" '| `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `blocked` |'
 require_text "$roadmap" '| `V010.EVAL.DEEPSEEK.0` | `blocked` |'
 require_text "$roadmap" '| `V010.BENCH.DEEPSEEK.0` | `not-measured` |'
 require_text "$roadmap" '| `V010.RELEASE.0` | `blocked` |'
@@ -76,7 +78,7 @@ in_sequence && /^\| [0-9]+ \| `V010\./ {
 ' "$roadmap" > "$rows"
 
 row_count=$(wc -l < "$rows" | tr -d ' ')
-test "$row_count" -eq 9 || fail "expected 9 current milestones, found $row_count"
+test "$row_count" -eq 11 || fail "expected 11 current milestones, found $row_count"
 
 cut -f 1 "$rows" | LC_ALL=C sort > "$ids"
 unique_count=$(uniq "$ids" | wc -l | tr -d ' ')

@@ -8,17 +8,17 @@ const client = new OpenAI({
 });
 
 const models = await client.models.list();
-if (models.data[0].id !== "deepseek-v4-flash") throw new Error("model discovery");
+if (models.data[0].id !== "deepseek4-v4-flash-dspark") throw new Error("model discovery");
 
 const chat = await client.chat.completions.create({
-  model: "deepseek-v4-flash",
+  model: "deepseek4-v4-flash-dspark",
   messages: [{ role: "user", content: "Hello" }],
   temperature: 0,
 });
 if (chat.choices[0].message.content !== "hello from yvex") throw new Error("chat");
 
 const chatStream = await client.chat.completions.create({
-  model: "deepseek-v4-flash",
+  model: "deepseek4-v4-flash-dspark",
   messages: [{ role: "user", content: "Hello" }],
   temperature: 0,
   stream: true,
@@ -29,7 +29,7 @@ for await (const chunk of chatStream) chatText += chunk.choices[0]?.delta?.conte
 if (chatText !== "hello from yvex") throw new Error("chat stream");
 
 const response = await client.responses.create({
-  model: "deepseek-v4-flash",
+  model: "deepseek4-v4-flash-dspark",
   input: "Hello",
   temperature: 0,
   store: false,
@@ -37,7 +37,7 @@ const response = await client.responses.create({
 if (response.output_text !== "hello from yvex") throw new Error("response");
 
 const responseStream = await client.responses.create({
-  model: "deepseek-v4-flash",
+  model: "deepseek4-v4-flash-dspark",
   input: "Hello",
   temperature: 0,
   store: false,
@@ -63,7 +63,7 @@ const tools = [{
   strict: false,
 }];
 const chatTool = await client.chat.completions.create({
-  model: "deepseek-v4-flash",
+  model: "deepseek4-v4-flash-dspark",
   messages: [{ role: "user", content: "Load m1" }],
   tools: tools.map(({ name, description, parameters, strict }) => ({
     type: "function", function: { name, description, parameters, strict },
@@ -74,7 +74,7 @@ const chatTool = await client.chat.completions.create({
 });
 const chatCall = chatTool.choices[0].message.tool_calls[0];
 const chatFinal = await client.chat.completions.create({
-  model: "deepseek-v4-flash",
+  model: "deepseek4-v4-flash-dspark",
   messages: [
     { role: "user", content: "Load m1" },
     { role: "assistant", content: null, tool_calls: [chatCall] },
@@ -91,7 +91,7 @@ if (chatFinal.choices[0].message.content !== "Match context accepted.") {
   throw new Error("chat function continuation");
 }
 const first = await client.responses.create({
-  model: "deepseek-v4-flash",
+  model: "deepseek4-v4-flash-dspark",
   input: "Load m1",
   tools,
   tool_choice: { type: "function", name: "get_match_context" },
@@ -102,7 +102,7 @@ const first = await client.responses.create({
 const call = first.output.find((item) => item.type === "function_call");
 if (!call || JSON.parse(call.arguments).match_id !== "m1") throw new Error("function call");
 const final = await client.responses.create({
-  model: "deepseek-v4-flash",
+  model: "deepseek4-v4-flash-dspark",
   previous_response_id: first.id,
   input: [{ type: "function_call_output", call_id: call.call_id, output: '{"score":2}' }],
   temperature: 0,

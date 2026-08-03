@@ -565,6 +565,73 @@ static int test_history_contracts(void)
     return 0;
 }
 
+static int test_dspark_parallel_block_visibility(void)
+{
+    yvex_attention_layer_plan layer =
+        layer_fixture(43ull, YVEX_ATTENTION_CLASS_SWA, 0ull);
+    yvex_attention_history_view history = {0};
+    yvex_attention_scratch_budget scratch = {0};
+    yvex_attention_cpu_result causal_result = {0}, parallel_result = {0};
+    yvex_attention_failure failure = {0};
+    yvex_error err;
+    const float query[] = {1.0f, 0.0f, 1.0f, 0.0f};
+    const float history_kv[] = {1.0f, 0.0f};
+    const unsigned long long history_position[] = {0ull};
+    const float current_kv[] = {2.0f, 0.0f, 4.0f, 0.0f};
+    const float sinks[] = {-100.0f};
+    float causal[4] = {0.0f}, parallel[4] = {0.0f};
+    int rc;
+
+    layer.tensor_scope = YVEX_TENSOR_SCOPE_DRAFT;
+    layer.query_heads = 1ull;
+    layer.head_dimension = 2ull;
+    layer.rope_head_dimension = 2ull;
+    layer.compute_contract = YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1;
+    layer.position.theta = 10000ull;
+    history.immutable = 1;
+    history.token_count = 1ull;
+    history.local_tail_count = 1ull;
+    history.local_kv = history_kv;
+    history.local_kv_stride = 2ull;
+    history.local_positions = history_position;
+    yvex_error_clear(&err);
+    rc = yvex_attention_reduce_chunk(
+        &layer, query, &history, current_kv, 2ull, NULL, 0ull, 0ull,
+        NULL, NULL, 0ull, 0ull, NULL, NULL, 0ull, NULL, 0ull, sinks,
+        2ull, 1ull, causal, 0, NULL, NULL, 0ull, &scratch,
+        &causal_result, &failure, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "causal draft attention reduction executes");
+    memset(&failure, 0, sizeof(failure));
+    yvex_error_clear(&err);
+    rc = yvex_attention_reduce_chunk(
+        &layer, query, &history, current_kv, 2ull, NULL, 0ull, 0ull,
+        NULL, NULL, 0ull, 0ull, NULL, NULL, 0ull, NULL, 0ull, sinks,
+        2ull, 1ull, parallel, 1, NULL, NULL, 0ull, &scratch,
+        &parallel_result, &failure, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "DSpark parallel draft attention reduction executes");
+    YVEX_TEST_ASSERT(
+        parallel[0] > causal[0] && fabsf(parallel[2] - causal[2]) < 1e-6f &&
+            fabsf(parallel[3] - causal[3]) < 1e-6f,
+        "every DSpark query sees the complete candidate block while causal attention does not");
+    return 0;
+}
+
+static int test_dspark_attention_coordinate_lookup(void)
+{
+    yvex_attention_layer_plan layers[1] = {
+        layer_fixture(43ull, YVEX_ATTENTION_CLASS_SWA, 0ull)};
+    yvex_attention_plan plan = {.layers = layers, .layer_count = 1ull};
+
+    layers[0].ordinal = 0ull;
+    layers[0].tensor_scope = YVEX_TENSOR_SCOPE_DRAFT;
+    YVEX_TEST_ASSERT(
+        yvex_attention_plan_layer_find(&plan, 43ull) == &layers[0] &&
+            !yvex_attention_plan_layer_find(&plan, 0ull),
+        "draft attention execution resolves semantic layer coordinates, not plan ordinals");
+    return 0;
+}
+
 static int test_csa_selection_scratch_budget(void)
 {
     yvex_attention_layer_plan layer =
@@ -2431,6 +2498,8 @@ int yvex_test_deepseek_attention(void)
     if (test_execution_geometry_and_cancellation() != 0) return 1;
     if (test_plan_requires_committed_inputs() != 0) return 1;
     if (test_history_contracts() != 0) return 1;
+    if (test_dspark_parallel_block_visibility() != 0) return 1;
+    if (test_dspark_attention_coordinate_lookup() != 0) return 1;
     if (test_csa_selection_scratch_budget() != 0) return 1;
     if (test_transactional_memory_sink() != 0) return 1;
     if (test_rolling_state_chunk_invariance() != 0) return 1;

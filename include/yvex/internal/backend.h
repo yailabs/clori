@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 /* Encoded attention is a private graph/backend ABI, never installed capability surface. */
-#define YVEX_BACKEND_ATTENTION_JOB_SCHEMA 2u
+#define YVEX_BACKEND_ATTENTION_JOB_SCHEMA 3u
 typedef enum {
     YVEX_BACKEND_ATTENTION_WEIGHT_Q_A = 0,
     YVEX_BACKEND_ATTENTION_WEIGHT_Q_A_NORM,
@@ -74,6 +74,7 @@ typedef enum {
     YVEX_BACKEND_ATTENTION_PHASE_DECODE = 0,
     YVEX_BACKEND_ATTENTION_PHASE_PREFILL,
     YVEX_BACKEND_ATTENTION_PHASE_MIXED,
+    YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT,
     YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY
 } yvex_backend_attention_phase;
 typedef int (*yvex_backend_cancelled_fn)(void *context);
@@ -116,6 +117,7 @@ typedef struct {
     yvex_backend_attention_rolling main_rolling, indexer_rolling;
     const yvex_backend_cancellation *cancellation;
     unsigned int evidence_level;
+    int candidate_block_visible;
     unsigned long long max_host_bytes, max_device_bytes;
 } yvex_backend_attention_job;
 typedef struct {

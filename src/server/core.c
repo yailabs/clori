@@ -134,6 +134,7 @@ static int server_options_admit(yvex_server *server,
         !options->target_id ||
         (options->backend != YVEX_BACKEND_KIND_CPU &&
          options->backend != YVEX_BACKEND_KIND_CUDA) ||
+        options->generation_mode > YVEX_SERVER_GENERATION_DSPARK ||
         !options->context_capacity || !options->prefill_chunk_tokens ||
         !options->maximum_new_tokens || !options->maximum_output_bytes ||
         !options->maximum_sessions || !options->request_queue_capacity ||
@@ -234,6 +235,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     if (rc == YVEX_OK)
         rc = yvex_server_telemetry_open(&server->telemetry,
                                    SERVER_TELEMETRY_CAPACITY,
+                                   options->generation_mode,
                                    NULL, NULL, NULL, err);
     if (rc == YVEX_OK && options->openai_enabled) {
         server_openai_options openai = {
@@ -254,6 +256,7 @@ int yvex_server_create(yvex_server **out, const yvex_server_options *options,
     server->summary.backend = options->backend;
     server->summary.context_capacity = options->context_capacity;
     server->summary.prefill_chunk_tokens = options->prefill_chunk_tokens;
+    server->summary.generation_mode = options->generation_mode;
     server->summary.maximum_new_tokens = options->maximum_new_tokens;
     server->summary.maximum_output_bytes = options->maximum_output_bytes;
     server->summary.maximum_sessions = options->maximum_sessions;
@@ -724,7 +727,7 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
             server->telemetry, YVEX_SERVER_EVENT_REQUEST_RECEIVED,
             YVEX_SERVER_SEVERITY_INFO, item->request.session_name,
             item->request_id, NULL, "queue", item->request.prompt_bytes,
-            0u, 0u, 0.0, 0.0, item->request.provider_request, NULL,
+            0u, 0u, 0.0, 0.0, NULL, item->request.provider_request, NULL,
             err) != YVEX_OK) {
         (void)pthread_mutex_unlock(&server->queue_mutex);
         return yvex_error_code(err);
@@ -740,7 +743,7 @@ static int request_enqueue(yvex_server *server, server_work_item *item,
         YVEX_SERVER_SEVERITY_INFO, item->request.session_name,
         item->request_id, NULL, "queue", server->queue_count,
         server->queue_capacity, 0u, 0.0, 0.0,
-        item->request.provider_request, NULL, err);
+        NULL, item->request.provider_request, NULL, err);
     (void)pthread_cond_signal(&server->queue_condition);
     (void)pthread_mutex_unlock(&server->queue_mutex);
     return YVEX_OK;
@@ -930,7 +933,7 @@ static void *client_main(void *opaque)
             message.status = YVEX_OK;
             message.request_number = request.request_number;
             yvex_core_text_copy(message.reason, sizeof(message.reason),
-                                "protocol-v4");
+                                "protocol-v5");
             rc = yvex_server_protocol_send(fd, &message, &err);
         } else {
             server_work_item item;

@@ -133,6 +133,7 @@ typedef struct {
 } yvex_tokenizer_decode_result;
 
 typedef struct yvex_tokenizer_decoder yvex_tokenizer_decoder;
+typedef struct yvex_tokenizer_decoder_transaction yvex_tokenizer_decoder_transaction;
 
 typedef struct {
     unsigned int schema_version, token_id;
@@ -159,6 +160,7 @@ typedef enum {
 } yvex_token_append_state;
 
 typedef struct yvex_token_sequence yvex_token_sequence;
+typedef struct yvex_token_sequence_transaction yvex_token_sequence_transaction;
 
 typedef struct {
     unsigned int schema_version;
@@ -263,6 +265,23 @@ int yvex_tokenizer_decoder_push(yvex_tokenizer_decoder *decoder,
                                 unsigned int token_id,
                                 yvex_tokenizer_fragment *fragment,
                                 yvex_error *err);
+/*
+ * A decoder transaction makes a complete candidate prefix readable before any decoder state is
+ * published. Preparing retains exclusive decoder admission until publish or abort, allowing a
+ * caller to coordinate text state with a separate model-state transaction.
+ */
+int yvex_tokenizer_decoder_transaction_begin(
+    yvex_tokenizer_decoder *decoder,
+    yvex_tokenizer_decoder_transaction **out, yvex_error *err);
+int yvex_tokenizer_decoder_transaction_push(
+    yvex_tokenizer_decoder_transaction *transaction, unsigned int token_id,
+    yvex_tokenizer_fragment *fragment, yvex_error *err);
+int yvex_tokenizer_decoder_transaction_prepare(
+    yvex_tokenizer_decoder_transaction *transaction, yvex_error *err);
+void yvex_tokenizer_decoder_transaction_publish(
+    yvex_tokenizer_decoder_transaction **transaction);
+void yvex_tokenizer_decoder_transaction_abort(
+    yvex_tokenizer_decoder_transaction **transaction);
 int yvex_tokenizer_decoder_finish(yvex_tokenizer_decoder *decoder,
                                   yvex_tokenizer_fragment *fragment,
                                   yvex_error *err);
@@ -282,6 +301,24 @@ int yvex_token_sequence_append(yvex_token_sequence *sequence,
                                unsigned long long vocabulary_size,
                                unsigned long long *ordinal,
                                yvex_error *err);
+/* Stage a bounded append prefix so all token-ledger rows become visible together. */
+int yvex_token_sequence_transaction_begin(
+    yvex_token_sequence *sequence, unsigned long long maximum_rows,
+    yvex_token_sequence_transaction **out, yvex_error *err);
+int yvex_token_sequence_transaction_append(
+    yvex_token_sequence_transaction *transaction, unsigned int token_id,
+    unsigned long long vocabulary_size, unsigned long long *ordinal,
+    yvex_error *err);
+int yvex_token_sequence_transaction_transition(
+    yvex_token_sequence_transaction *transaction, unsigned long long ordinal,
+    yvex_token_append_state expected, yvex_token_append_state next,
+    yvex_error *err);
+int yvex_token_sequence_transaction_prepare(
+    yvex_token_sequence_transaction *transaction, yvex_error *err);
+void yvex_token_sequence_transaction_publish(
+    yvex_token_sequence_transaction **transaction);
+void yvex_token_sequence_transaction_abort(
+    yvex_token_sequence_transaction **transaction);
 int yvex_token_sequence_transition(yvex_token_sequence *sequence,
                                    unsigned long long ordinal,
                                    yvex_token_append_state expected,

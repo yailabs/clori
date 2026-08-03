@@ -59,6 +59,19 @@ static const yvex_render_field_spec u64_fields_3[] = {
         num_nextn_predict_layers), NULL},
 };
 
+static const yvex_render_field_spec dspark_config_fields[] = {
+    {"config_dspark_block_size", YVEX_RENDER_FIELD_U64,
+     offsetof(yvex_source_verification, dspark_block_size), NULL},
+    {"config_dspark_noise_token_id", YVEX_RENDER_FIELD_U64,
+     offsetof(yvex_source_verification, dspark_noise_token_id), NULL},
+    {"config_dspark_target_layer_count", YVEX_RENDER_FIELD_U64,
+     offsetof(yvex_source_verification, dspark_target_layer_count), NULL},
+    {"config_dspark_markov_rank", YVEX_RENDER_FIELD_U64,
+     offsetof(yvex_source_verification, dspark_markov_rank), NULL},
+    {"inference_dspark_layer_count", YVEX_RENDER_FIELD_U64,
+     offsetof(yvex_source_verification, dspark_inference_layer_count), NULL},
+};
+
 static const yvex_render_field_spec u64_fields_4[] = {
     {"generation_config_bos_token_id", YVEX_RENDER_FIELD_U64, offsetof(yvex_source_verification,
         generation_bos_token_id), NULL},
@@ -409,6 +422,25 @@ static const yvex_render_field_spec source_json_verification_fields[] = {
     VERIFY_JSON_FIELD("generation_config_valid", YVEX_RENDER_FIELD_BOOL, generation_config_valid),
     VERIFY_JSON_FIELD("shard_index_valid", YVEX_RENDER_FIELD_BOOL, shard_index_valid),
 };
+
+static const yvex_render_field_spec source_json_dspark_fields[] = {
+    VERIFY_JSON_FIELD("inference_config_valid", YVEX_RENDER_FIELD_BOOL,
+                      inference_config_valid),
+    VERIFY_JSON_FIELD("dspark_block_size", YVEX_RENDER_FIELD_U64, dspark_block_size),
+    VERIFY_JSON_FIELD("dspark_noise_token_id", YVEX_RENDER_FIELD_U64,
+                      dspark_noise_token_id),
+    VERIFY_JSON_FIELD("dspark_target_layer_count", YVEX_RENDER_FIELD_U64,
+                      dspark_target_layer_count),
+    VERIFY_JSON_FIELD("dspark_target_layer_0", YVEX_RENDER_FIELD_U64,
+                      dspark_target_layer_ids[0]),
+    VERIFY_JSON_FIELD("dspark_target_layer_1", YVEX_RENDER_FIELD_U64,
+                      dspark_target_layer_ids[1]),
+    VERIFY_JSON_FIELD("dspark_target_layer_2", YVEX_RENDER_FIELD_U64,
+                      dspark_target_layer_ids[2]),
+    VERIFY_JSON_FIELD("dspark_markov_rank", YVEX_RENDER_FIELD_U64, dspark_markov_rank),
+    VERIFY_JSON_FIELD("dspark_inference_layer_count", YVEX_RENDER_FIELD_U64,
+                      dspark_inference_layer_count),
+};
 #undef VERIFY_JSON_FIELD
 
 #undef PROFILE_FIELD
@@ -538,7 +570,7 @@ static const char *const literal_lines_3[] = { "\nOptions:",
     "  --release v0.1.0",
     "  --models-root DIR",
     "  --source DIR",
-    "  --target deepseek4-v4-flash|qwen3-8b|qwen-small|qwen-medium|gemma-4-12b-it"};
+    "  --target deepseek4-v4-flash-dspark|qwen3-8b|qwen-small|qwen-medium|gemma-4-12b-it"};
 
 static const char *const literal_lines_4[] = {
     "Report fields include source artifact class, target artifact class, source footprint, and source "
@@ -783,6 +815,14 @@ static void source_render_deepseek_config(FILE *fp, const yvex_source_report *re
     render_object_fields(fp, verification, config_behavior_fields,
                          sizeof(config_behavior_fields) / sizeof(config_behavior_fields[0]));
     render_object_fields(fp, verification, u64_fields_3, sizeof(u64_fields_3) / sizeof(u64_fields_3[0]));
+    yvex_cli_out_writef(fp, "inference_config_valid: %s\n",
+                       verification->inference_config_valid ? "true" : "false");
+    render_object_fields(fp, verification, dspark_config_fields,
+                         sizeof(dspark_config_fields) / sizeof(dspark_config_fields[0]));
+    yvex_cli_out_writef(fp, "config_dspark_target_layer_ids: [%llu,%llu,%llu]\n",
+                       verification->dspark_target_layer_ids[0],
+                       verification->dspark_target_layer_ids[1],
+                       verification->dspark_target_layer_ids[2]);
     render_object_fields(fp, verification, config_numeric_fields,
                          sizeof(config_numeric_fields) / sizeof(config_numeric_fields[0]));
     yvex_cli_out_writef(fp, "rope_scaling: %s factor=%llu original=%llu\n",
@@ -1023,6 +1063,10 @@ int yvex_source_render_json(FILE *fp, const yvex_source_report *report)
                              1);
     (void)yvex_cli_json_fields(fp, &report->verification,
                                source_json_verification_fields + 17u, 2u, 1);
+    (void)yvex_cli_json_fields(fp, &report->verification, source_json_dspark_fields,
+                               sizeof(source_json_dspark_fields) /
+                                   sizeof(source_json_dspark_fields[0]),
+                               1);
     yvex_cli_json_field_bool(fp, "tensor_payload_loaded", 0, 1);
     yvex_cli_json_field_str(fp, "artifact_status",
                             source_render_target_artifact_status(options->profile), 1);

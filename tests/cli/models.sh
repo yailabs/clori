@@ -6,7 +6,7 @@ set -eu
 YVEX_BIN="${YVEX_BIN:-./yvex}"
 ROOT=${YVEX_TEST_OUT_DIR:-build/tests/models-cli}
 REG="$ROOT/models.local.json"
-GGUF="$ROOT/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf"
+GGUF="$ROOT/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 
 matches() {
   file=$1
@@ -373,27 +373,27 @@ ARTIFACT="$PWD/$GGUF"
 printf 'binding fixture\n' > "$BINDING"
 
 "$YVEX_BIN" model registry scan --root "$ROOT" --registry "$REG" > "$ROOT/scan.out"
-grep 'candidate: deepseek4-v4-flash-selected-embed' "$ROOT/scan.out"
+grep 'candidate: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/scan.out"
 grep 'status: models-scan' "$ROOT/scan.out"
 
 "$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
-  --runtime-binding "$BINDING" --target deepseek4-v4-flash \
-  --backend cpu --context 4096 > "$ROOT/add.out"
-grep 'alias: deepseek4-v4-flash-selected-embed' "$ROOT/add.out"
+  --runtime-binding "$BINDING" --target deepseek4-v4-flash-dspark \
+  --backend cpu --generation-mode dspark --context 4096 > "$ROOT/add.out"
+grep 'alias: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/add.out"
 grep 'status: models-added' "$ROOT/add.out"
 test -f "$REG"
 
 "$YVEX_BIN" model list --registry "$REG" > "$ROOT/list.out"
-grep 'deepseek4-v4-flash-selected-embed' "$ROOT/list.out"
+grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/list.out"
 grep 'MODELS  count=1' "$ROOT/list.out"
 matches "$ROOT/list.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}BACKEND[[:space:]]{2,}CONTEXT[[:space:]]{2,}STARTUP$'
-matches "$ROOT/list.out" '^deepseek4-v4-flash-selected-embed[[:space:]]+deepseek4[[:space:]]+cpu[[:space:]]+4096[[:space:]]+yes$'
+matches "$ROOT/list.out" '^deepseek4-v4-flash-dspark-selected-embed[[:space:]]+deepseek4[[:space:]]+cpu[[:space:]]+4096[[:space:]]+yes$'
 grep 'status: models-list' "$ROOT/list.out"
 
 "$YVEX_BIN" model list --registry "$REG" --output table > "$ROOT/list-table.out"
 grep 'MODELS  count=1' "$ROOT/list-table.out"
 matches "$ROOT/list-table.out" '^ALIAS[[:space:]]{2,}FAMILY[[:space:]]{2,}BACKEND[[:space:]]{2,}CONTEXT[[:space:]]{2,}STARTUP$'
-grep 'deepseek4-v4-flash-selected-embed' "$ROOT/list-table.out"
+grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/list-table.out"
 grep 'status: models-list' "$ROOT/list-table.out"
 
 "$YVEX_BIN" model list --registry "$REG" --audit > "$ROOT/list-audit.out"
@@ -403,57 +403,57 @@ grep 'startup_profile_ready: true' "$ROOT/list-audit.out"
 grep 'status: models-list' "$ROOT/list-audit.out"
 
 YVEX_MODELS_REGISTRY="$REG" \
-  "$YVEX_BIN" model select deepseek4-v4-flash-selected-embed > "$ROOT/use.out"
-grep 'selected model: deepseek4-v4-flash-selected-embed' "$ROOT/use.out"
+  "$YVEX_BIN" model select deepseek4-v4-flash-dspark-selected-embed > "$ROOT/use.out"
+grep 'selected model: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/use.out"
 
 "$YVEX_BIN" model selected > "$ROOT/current.out"
-grep 'deepseek4-v4-flash-selected-embed' "$ROOT/current.out"
-grep 'backend=cpu context=4096' "$ROOT/current.out"
+grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/current.out"
+grep 'backend=cpu mode=dspark context=4096' "$ROOT/current.out"
 grep "artifact=$ARTIFACT" "$ROOT/current.out"
 grep "binding=$BINDING" "$ROOT/current.out"
 
 "$YVEX_BIN" model list --registry "$REG" --output nope > "$ROOT/list-bad-output.out" 2> "$ROOT/list-bad-output.err" && exit 1 || true
 grep 'unsupported output mode: nope' "$ROOT/list-bad-output.err"
 
-"$YVEX_BIN" model show deepseek4-v4-flash-selected-embed --registry "$REG" > "$ROOT/inspect.out"
-grep 'model: deepseek4-v4-flash-selected-embed' "$ROOT/inspect.out"
+"$YVEX_BIN" model show deepseek4-v4-flash-dspark-selected-embed --registry "$REG" > "$ROOT/inspect.out"
+grep 'model: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/inspect.out"
 grep 'family: deepseek4 class=embed' "$ROOT/inspect.out"
-grep 'startup: ready backend=cpu context=4096' "$ROOT/inspect.out"
+grep 'startup: ready backend=cpu mode=dspark context=4096' "$ROOT/inspect.out"
 grep 'status: models-inspect' "$ROOT/inspect.out"
 test "$(wc -l < "$ROOT/inspect.out")" -le 8
 
-"$YVEX_BIN" model show deepseek4-v4-flash-selected-embed --registry "$REG" --audit > "$ROOT/inspect-audit.out"
-grep 'alias: deepseek4-v4-flash-selected-embed' "$ROOT/inspect-audit.out"
+"$YVEX_BIN" model show deepseek4-v4-flash-dspark-selected-embed --registry "$REG" --audit > "$ROOT/inspect-audit.out"
+grep 'alias: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/inspect-audit.out"
 grep 'gguf:' "$ROOT/inspect-audit.out"
 grep 'tensor_count: 1' "$ROOT/inspect-audit.out"
 grep 'status: models-inspect' "$ROOT/inspect-audit.out"
 
-"$YVEX_BIN" model show deepseek4-v4-flash-selected-embed --registry "$REG" --output nope > "$ROOT/inspect-bad-output.out" 2> "$ROOT/inspect-bad-output.err" && exit 1 || true
+"$YVEX_BIN" model show deepseek4-v4-flash-dspark-selected-embed --registry "$REG" --output nope > "$ROOT/inspect-bad-output.out" 2> "$ROOT/inspect-bad-output.err" && exit 1 || true
 grep 'unsupported output mode: nope' "$ROOT/inspect-bad-output.err"
 
 "$YVEX_BIN" model registry add --path "$ARTIFACT" --registry "$REG" \
-  --alias deepseek4-v4-flash-runtime-incomplete > "$ROOT/add-incomplete.out"
+  --alias deepseek4-v4-flash-dspark-runtime-incomplete > "$ROOT/add-incomplete.out"
 YVEX_MODELS_REGISTRY="$REG" \
-  "$YVEX_BIN" model select deepseek4-v4-flash-runtime-incomplete \
+  "$YVEX_BIN" model select deepseek4-v4-flash-dspark-runtime-incomplete \
   > "$ROOT/use-incomplete.out" 2> "$ROOT/use-incomplete.err" && exit 1 || true
 grep 'model has no complete startup profile' "$ROOT/use-incomplete.err"
 "$YVEX_BIN" model selected > "$ROOT/current-after-incomplete.out"
-grep 'deepseek4-v4-flash-selected-embed' "$ROOT/current-after-incomplete.out"
-"$YVEX_BIN" model registry remove deepseek4-v4-flash-runtime-incomplete \
+grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/current-after-incomplete.out"
+"$YVEX_BIN" model registry remove deepseek4-v4-flash-dspark-runtime-incomplete \
   --registry "$REG" > "$ROOT/remove-incomplete.out"
 
-"$YVEX_BIN" model registry remove deepseek4-v4-flash-selected-embed --registry "$REG" > "$ROOT/remove.out"
-grep 'removed: deepseek4-v4-flash-selected-embed' "$ROOT/remove.out"
+"$YVEX_BIN" model registry remove deepseek4-v4-flash-dspark-selected-embed --registry "$REG" > "$ROOT/remove.out"
+grep 'removed: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/remove.out"
 grep 'status: models-removed' "$ROOT/remove.out"
 
 "$YVEX_BIN" model selected > "$ROOT/current-after-remove.out"
-grep 'deepseek4-v4-flash-selected-embed' "$ROOT/current-after-remove.out"
+grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/current-after-remove.out"
 
 YVEX_MODELS_REGISTRY="$REG" \
   "$YVEX_BIN" model select missing > "$ROOT/use-missing.out" 2> "$ROOT/use-missing.err" && exit 1 || true
 grep 'model is not registered: missing' "$ROOT/use-missing.err"
 "$YVEX_BIN" model selected > "$ROOT/current-after-refusal.out"
-grep 'deepseek4-v4-flash-selected-embed' "$ROOT/current-after-refusal.out"
+grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/current-after-refusal.out"
 
 "$YVEX_BIN" help --advanced > "$ROOT/help.out"
 grep 'yvex model acquire' "$ROOT/help.out"
@@ -705,8 +705,8 @@ grep 'status: model-download-pass' "$ROOT/download-qwen.out"
 
 DYNAMIC_ROOT="$ROOT/download-dynamic-targets"
 mkdir -p "$DYNAMIC_ROOT/gguf/deepseek" "$DYNAMIC_ROOT/gguf/qwen" "$DYNAMIC_ROOT/gguf/gemma"
-printf 'selected deepseek fixture\n' > "$DYNAMIC_ROOT/gguf/deepseek/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf"
-printf 'selected deepseek rmsnorm fixture\n' > "$DYNAMIC_ROOT/gguf/deepseek/deepseek4-v4-flash-selected-embed-rmsnorm-F16-noimatrix-yvex-v1.gguf"
+printf 'selected deepseek fixture\n' > "$DYNAMIC_ROOT/gguf/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
+printf 'selected deepseek rmsnorm fixture\n' > "$DYNAMIC_ROOT/gguf/deepseek/deepseek4-v4-flash-dspark-selected-embed-rmsnorm-F16-noimatrix-yvex-v1.gguf"
 printf 'selected qwen fixture\n' > "$DYNAMIC_ROOT/gguf/qwen/qwen3-8b-selected-embed-F16-noimatrix-yvex-v1.gguf"
 YVEX_FAKE_HF_AUTH=1 YVEX_HF_CLI="$FAKE_HF" "$YVEX_BIN" model acquire --repo Qwen/Qwen3.6-35B-A3B --family qwen --name qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" --auth auto --progress off --audit > "$ROOT/download-dynamic-qwen.out"
 grep 'target_id: qwen3-6-35b-a3b' "$ROOT/download-dynamic-qwen.out"
@@ -1098,7 +1098,7 @@ write_fake_tokenizer_sidecars "$DYNAMIC_ROOT/hf/qwen/qwen3-6-35b-a3b" qwen
 "$YVEX_BIN" inspect target tokenizer-map qwen3-6-35b-a3b --models-root "$DYNAMIC_ROOT" > "$ROOT/tokenizer-map-dynamic-qwen-restored.out"
 "$YVEX_BIN" inspect target quant-policy --gate v0.1.0 --models-root "$DYNAMIC_ROOT" --output table > "$ROOT/qtype-role-support-gate-table.out"
 grep 'FAMILY[[:space:]][[:space:]]*TARGET[[:space:]][[:space:]]*STATUS[[:space:]][[:space:]]*ROLES[[:space:]][[:space:]]*BLOCKED[[:space:]][[:space:]]*TOP_BLOCKER[[:space:]][[:space:]]*NEXT' "$ROOT/qtype-role-support-gate-table.out"
-grep 'deepseek[[:space:]][[:space:]]*deepseek4-v4-flash[[:space:]][[:space:]]*blocked[[:space:]][[:space:]]*[1-9][0-9]*[[:space:]][[:space:]]*[1-9][0-9]*[[:space:]][[:space:]]*artifact-materialization-unimplemented[[:space:]][[:space:]]*V010.ARTIFACT.MATERIALIZE.0' "$ROOT/qtype-role-support-gate-table.out"
+grep 'deepseek[[:space:]][[:space:]]*deepseek4-v4-flash-dspark[[:space:]][[:space:]]*blocked[[:space:]][[:space:]]*[1-9][0-9]*[[:space:]][[:space:]]*[1-9][0-9]*[[:space:]][[:space:]]*artifact-materialization-unimplemented[[:space:]][[:space:]]*V010.ARTIFACT.MATERIALIZE.0' "$ROOT/qtype-role-support-gate-table.out"
 grep 'qwen[[:space:]][[:space:]]*qwen3-6-35b-a3b[[:space:]][[:space:]]*blocked[[:space:]][[:space:]]*[1-9][0-9]*[[:space:]][[:space:]]*[1-9][0-9]*[[:space:]][[:space:]]*family-quantization-plan-unimplemented[[:space:]][[:space:]]*not-scheduled' "$ROOT/qtype-role-support-gate-table.out"
 grep 'gemma[[:space:]][[:space:]]*gemma-4-31b-it[[:space:]][[:space:]]*blocked[[:space:]][[:space:]]*[1-9][0-9]*[[:space:]][[:space:]]*[1-9][0-9]*[[:space:]][[:space:]]*family-quantization-plan-unimplemented[[:space:]][[:space:]]*not-scheduled' "$ROOT/qtype-role-support-gate-table.out"
 "$YVEX_BIN" inspect target quant-policy --gate v0.1.0 --models-root "$DYNAMIC_ROOT" --audit > "$ROOT/qtype-role-support-gate-audit.out"
@@ -1208,8 +1208,8 @@ grep 'boundary: prepare dry-run only; no artifact emission/runtime/generation' "
 ! grep 'reason:' "$ROOT/prepare-dynamic-gemma-normal.out"
 
 "$YVEX_BIN" inspect artifact registry --models-root "$DYNAMIC_ROOT" > "$ROOT/artifacts-list.out"
-grep 'deepseek4-v4-flash-selected-embed.*deepseek.*yvex-selected-gguf.*present.*ready' "$ROOT/artifacts-list.out"
-grep 'deepseek4-v4-flash-selected-embed-rmsnorm.*deepseek.*yvex-selected-gguf.*present.*ready' "$ROOT/artifacts-list.out"
+grep 'deepseek4-v4-flash-dspark-selected-embed.*deepseek.*yvex-selected-gguf.*present.*ready' "$ROOT/artifacts-list.out"
+grep 'deepseek4-v4-flash-dspark-selected-embed-rmsnorm.*deepseek.*yvex-selected-gguf.*present.*ready' "$ROOT/artifacts-list.out"
 grep 'qwen3-8b-selected-embed.*qwen.*yvex-selected-gguf.*present.*ready' "$ROOT/artifacts-list.out"
 grep 'qwen3-6-35b-a3b.*qwen.*planned-full-gguf.*missing.*blocked' "$ROOT/artifacts-list.out"
 grep 'gemma-4-31b-it.*gemma.*planned-full-gguf.*missing.*blocked' "$ROOT/artifacts-list.out"
@@ -1362,9 +1362,9 @@ grep 'token_value_redacted: true' "$ROOT/download-token.out"
 ! git ls-files '*.safetensors' '*.bin' '*.dat' | grep .
 
 PREP="$ROOT/prepare"
-PREP_SOURCE="$PREP/hf/deepseek/DeepSeek-V4-Flash"
+PREP_SOURCE="$PREP/hf/deepseek/DeepSeek-V4-Flash-DSpark"
 PREP_REG="$PREP/registry/models.local.json"
-PREP_GGUF="$PREP/gguf/deepseek/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf"
+PREP_GGUF="$PREP/gguf/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 mkdir -p "$PREP_SOURCE"
 
 python3 - "$PREP_SOURCE/model-00001.safetensors" <<'PY'
@@ -1384,16 +1384,16 @@ with open(path, "wb") as f:
     f.write(bytes(range(64)))
 PY
 
-"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-selected-embed --dry-run --models-root "$PREP" --registry "$PREP_REG" > "$ROOT/prepare-dry-run.out"
+"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-dspark-selected-embed --dry-run --models-root "$PREP" --registry "$PREP_REG" > "$ROOT/prepare-dry-run.out"
 grep 'status: model-prepare-dry-run' "$ROOT/prepare-dry-run.out"
 grep 'stage: convert-emit planned' "$ROOT/prepare-dry-run.out"
 grep 'generation: unsupported' "$ROOT/prepare-dry-run.out"
 
-"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-selected-embed --models-root "$ROOT/missing-prepare" --registry "$ROOT/missing-prepare/registry/models.local.json" > "$ROOT/prepare-missing.out" 2> "$ROOT/prepare-missing.err" && exit 1 || true
+"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-dspark-selected-embed --models-root "$ROOT/missing-prepare" --registry "$ROOT/missing-prepare/registry/models.local.json" > "$ROOT/prepare-missing.out" 2> "$ROOT/prepare-missing.err" && exit 1 || true
 grep 'stage: source-path fail' "$ROOT/prepare-missing.out"
 grep 'status: model-prepare-fail' "$ROOT/prepare-missing.out"
 
-"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-selected-embed-rmsnorm --dry-run > "$ROOT/prepare-segment-unsupported.out" 2> "$ROOT/prepare-segment-unsupported.err" && exit 1 || true
+"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-dspark-selected-embed-rmsnorm --dry-run > "$ROOT/prepare-segment-unsupported.out" 2> "$ROOT/prepare-segment-unsupported.err" && exit 1 || true
 grep 'status: model-prepare-unsupported' "$ROOT/prepare-segment-unsupported.out"
 grep 'segment prepare is planned' "$ROOT/prepare-segment-unsupported.out"
 
@@ -1401,7 +1401,7 @@ grep 'segment prepare is planned' "$ROOT/prepare-segment-unsupported.out"
 grep 'status: model-prepare-unsupported' "$ROOT/prepare-glm-unsupported.out"
 grep 'YVEX-produced GGUF emission for this target is planned' "$ROOT/prepare-glm-unsupported.out"
 
-"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-selected-embed --models-root "$PREP" --registry "$PREP_REG" --overwrite --no-register > "$ROOT/prepare-no-register.out"
+"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-dspark-selected-embed --models-root "$PREP" --registry "$PREP_REG" --overwrite --no-register > "$ROOT/prepare-no-register.out"
 grep 'stage: source-manifest pass' "$ROOT/prepare-no-register.out"
 grep 'stage: convert-emit pass' "$ROOT/prepare-no-register.out"
 grep 'stage: registry-add skipped' "$ROOT/prepare-no-register.out"
@@ -1409,57 +1409,57 @@ grep 'status: model-prepare' "$ROOT/prepare-no-register.out"
 test -f "$PREP_GGUF"
 test ! -f "$PREP_REG"
 
-"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-selected-embed \
+"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-dspark-selected-embed \
   --models-root "$PREP" --registry "$PREP_REG" --overwrite --no-use \
   > "$ROOT/prepare-no-use.out" 2> "$ROOT/prepare-no-use.err" && exit 1 || true
 grep 'unknown flag: --no-use' "$ROOT/prepare-no-use.err"
 
-"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-selected-embed --models-root "$PREP" --registry "$PREP_REG" --overwrite > "$ROOT/prepare-register-use.out"
+"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-dspark-selected-embed --models-root "$PREP" --registry "$PREP_REG" --overwrite > "$ROOT/prepare-register-use.out"
 grep 'stage: registry-remove-existing pass' "$ROOT/prepare-register-use.out"
 grep 'stage: registry-add pass' "$ROOT/prepare-register-use.out"
 grep 'stage: registry-verify pass' "$ROOT/prepare-register-use.out"
 grep 'status: model-prepare' "$ROOT/prepare-register-use.out"
 
-"$YVEX_BIN" model registry verify deepseek4-v4-flash-selected-embed --registry "$PREP_REG" > "$ROOT/prepare-verify.out"
+"$YVEX_BIN" model registry verify deepseek4-v4-flash-dspark-selected-embed --registry "$PREP_REG" > "$ROOT/prepare-verify.out"
 grep 'status: models-identity-pass' "$ROOT/prepare-verify.out"
-grep 'verify: pass alias=deepseek4-v4-flash-selected-embed' "$ROOT/prepare-verify.out"
+grep 'verify: pass alias=deepseek4-v4-flash-dspark-selected-embed' "$ROOT/prepare-verify.out"
 
-"$YVEX_BIN" model registry verify deepseek4-v4-flash-selected-embed --registry "$PREP_REG" --audit > "$ROOT/prepare-verify-audit.out"
+"$YVEX_BIN" model registry verify deepseek4-v4-flash-dspark-selected-embed --registry "$PREP_REG" --audit > "$ROOT/prepare-verify-audit.out"
 grep 'current_sha256:' "$ROOT/prepare-verify-audit.out"
 grep 'digest_status: pass' "$ROOT/prepare-verify-audit.out"
 grep 'status: models-identity-pass' "$ROOT/prepare-verify-audit.out"
 
-"$YVEX_BIN" model registry verify deepseek4-v4-flash-selected-embed --registry "$PREP_REG" --output nope > "$ROOT/verify-bad-output.out" 2> "$ROOT/verify-bad-output.err" && exit 1 || true
+"$YVEX_BIN" model registry verify deepseek4-v4-flash-dspark-selected-embed --registry "$PREP_REG" --output nope > "$ROOT/verify-bad-output.out" 2> "$ROOT/verify-bad-output.err" && exit 1 || true
 grep 'unsupported output mode: nope' "$ROOT/verify-bad-output.err"
 
-"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-selected-embed --models-root "$PREP" --registry "$PREP_REG" > "$ROOT/prepare-overwrite-refused.out" 2> "$ROOT/prepare-overwrite-refused.err" && exit 1 || true
+"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-dspark-selected-embed --models-root "$PREP" --registry "$PREP_REG" > "$ROOT/prepare-overwrite-refused.out" 2> "$ROOT/prepare-overwrite-refused.err" && exit 1 || true
 grep 'stage: convert-emit refused' "$ROOT/prepare-overwrite-refused.out"
 grep 'status: model-prepare-refused' "$ROOT/prepare-overwrite-refused.out"
 
-"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-selected-embed --out "$PREP_GGUF" --out-dir "$PREP/gguf/deepseek" > "$ROOT/prepare-invalid.out" 2> "$ROOT/prepare-invalid.err" && exit 1 || true
+"$YVEX_BIN" compile artifact prepare deepseek4-v4-flash-dspark-selected-embed --out "$PREP_GGUF" --out-dir "$PREP/gguf/deepseek" > "$ROOT/prepare-invalid.out" 2> "$ROOT/prepare-invalid.err" && exit 1 || true
 grep 'mutually exclusive' "$ROOT/prepare-invalid.err"
 
 CHECK="build/tests/model-check"
 CHECK_REG="$CHECK/registry/models.local.json"
-CHECK_GGUF="$CHECK/models/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf"
+CHECK_GGUF="$CHECK/models/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 CHECK_ROOT="$CHECK/root"
-CHECK_ROOT_GGUF="$CHECK_ROOT/gguf/deepseek/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf"
+CHECK_ROOT_GGUF="$CHECK_ROOT/gguf/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 yvex_test_cleanup "$CHECK"
 mkdir -p "$CHECK/models" "$CHECK/registry" "$CHECK_ROOT/gguf/deepseek"
 
 "$YVEX_BIN" compile emit artifact controlled --out "$CHECK_GGUF" --model-name model-check-test --arch llama --overwrite >/dev/null
 "$YVEX_BIN" compile emit artifact controlled --out "$CHECK_ROOT_GGUF" --model-name model-check-target-root-test --arch llama --overwrite >/dev/null
-"$YVEX_BIN" model registry add --path "$CHECK_GGUF" --alias deepseek4-v4-flash-selected-embed --support-level selected-tensor-materialized --registry "$CHECK_REG" > "$ROOT/check-add.out"
+"$YVEX_BIN" model registry add --path "$CHECK_GGUF" --alias deepseek4-v4-flash-dspark-selected-embed --support-level selected-tensor-materialized --registry "$CHECK_REG" > "$ROOT/check-add.out"
 grep 'status: models-added' "$ROOT/check-add.out"
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed --level quick --registry "$CHECK_REG" > "$ROOT/check-quick-normal.out"
-grep 'model-check: pass target=deepseek4-v4-flash-selected-embed level=quick' "$ROOT/check-quick-normal.out"
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed --level quick --registry "$CHECK_REG" > "$ROOT/check-quick-normal.out"
+grep 'model-check: pass target=deepseek4-v4-flash-dspark-selected-embed level=quick' "$ROOT/check-quick-normal.out"
 grep 'boundary: selected-slice check only, generation unsupported' "$ROOT/check-quick-normal.out"
 test "$(wc -l < "$ROOT/check-quick-normal.out")" -le 8
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed --level quick --registry "$CHECK_REG" --audit > "$ROOT/check-quick.out"
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed --level quick --registry "$CHECK_REG" --audit > "$ROOT/check-quick.out"
 grep 'status: model-check' "$ROOT/check-quick.out"
-grep 'target_id: deepseek4-v4-flash-selected-embed' "$ROOT/check-quick.out"
+grep 'target_id: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/check-quick.out"
 grep 'backend: cpu' "$ROOT/check-quick.out"
 grep 'level: quick' "$ROOT/check-quick.out"
 grep 'stage: inspect pass' "$ROOT/check-quick.out"
@@ -1473,9 +1473,9 @@ grep 'execution_ready: false' "$ROOT/check-quick.out"
 grep 'generation: unsupported' "$ROOT/check-quick.out"
 grep 'status: model-check-pass' "$ROOT/check-quick.out"
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed --level quick --models-root "$CHECK_ROOT" --audit > "$ROOT/check-models-root.out"
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed --level quick --models-root "$CHECK_ROOT" --audit > "$ROOT/check-models-root.out"
 grep 'model_input_kind: target' "$ROOT/check-models-root.out"
-grep 'build/tests/model-check/root/gguf/deepseek/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf' "$ROOT/check-models-root.out"
+grep 'build/tests/model-check/root/gguf/deepseek/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf' "$ROOT/check-models-root.out"
 grep 'stage: registry-identity unregistered' "$ROOT/check-models-root.out"
 grep 'stage: integrity-check pass' "$ROOT/check-models-root.out"
 grep 'status: model-check-pass' "$ROOT/check-models-root.out"
@@ -1488,7 +1488,7 @@ grep 'status: model-check-unsupported' "$ROOT/check-glm-unsupported.out"
 grep 'source-only target cannot be checked as a YVEX-produced runtime artifact yet' "$ROOT/check-glm-unsupported.out"
 grep 'generation: unsupported' "$ROOT/check-glm-unsupported.out"
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed-rmsnorm --level quick --audit > "$ROOT/check-segment-unsupported.out" 2> "$ROOT/check-segment-unsupported.err" && exit 1 || true
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed-rmsnorm --level quick --audit > "$ROOT/check-segment-unsupported.out" 2> "$ROOT/check-segment-unsupported.err" && exit 1 || true
 grep 'status: model-check-unsupported' "$ROOT/check-segment-unsupported.out"
 grep 'segment check is planned' "$ROOT/check-segment-unsupported.out"
 grep 'generation: unsupported' "$ROOT/check-segment-unsupported.out"
@@ -1496,28 +1496,28 @@ grep 'generation: unsupported' "$ROOT/check-segment-unsupported.out"
 "$YVEX_BIN" inspect artifact check > "$ROOT/check-invalid-missing-target.out" 2> "$ROOT/check-invalid-missing-target.err" && exit 1 || true
 grep 'requires TARGET' "$ROOT/check-invalid-missing-target.err"
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed --backend > "$ROOT/check-invalid-backend-missing.out" 2> "$ROOT/check-invalid-backend-missing.err" && exit 1 || true
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed --backend > "$ROOT/check-invalid-backend-missing.out" 2> "$ROOT/check-invalid-backend-missing.err" && exit 1 || true
 grep 'requires a value' "$ROOT/check-invalid-backend-missing.err"
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed --backend missing > "$ROOT/check-invalid-backend.out" 2> "$ROOT/check-invalid-backend.err" && exit 1 || true
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed --backend missing > "$ROOT/check-invalid-backend.out" 2> "$ROOT/check-invalid-backend.err" && exit 1 || true
 grep 'unknown backend kind' "$ROOT/check-invalid-backend.err"
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed --level > "$ROOT/check-invalid-level-missing.out" 2> "$ROOT/check-invalid-level-missing.err" && exit 1 || true
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed --level > "$ROOT/check-invalid-level-missing.out" 2> "$ROOT/check-invalid-level-missing.err" && exit 1 || true
 grep 'requires a value' "$ROOT/check-invalid-level-missing.err"
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed --level impossible > "$ROOT/check-invalid-level.out" 2> "$ROOT/check-invalid-level.err" && exit 1 || true
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed --level impossible > "$ROOT/check-invalid-level.out" 2> "$ROOT/check-invalid-level.err" && exit 1 || true
 grep 'unknown models check level' "$ROOT/check-invalid-level.err"
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed --registry "" > "$ROOT/check-invalid-registry.out" 2> "$ROOT/check-invalid-registry.err" && exit 1 || true
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed --registry "" > "$ROOT/check-invalid-registry.out" 2> "$ROOT/check-invalid-registry.err" && exit 1 || true
 grep 'empty or invalid' "$ROOT/check-invalid-registry.err"
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed --report-dir "" > "$ROOT/check-invalid-report-dir.out" 2> "$ROOT/check-invalid-report-dir.err" && exit 1 || true
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed --report-dir "" > "$ROOT/check-invalid-report-dir.out" 2> "$ROOT/check-invalid-report-dir.err" && exit 1 || true
 grep 'empty or invalid' "$ROOT/check-invalid-report-dir.err"
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed --unknown-flag > "$ROOT/check-invalid-unknown.out" 2> "$ROOT/check-invalid-unknown.err" && exit 1 || true
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed --unknown-flag > "$ROOT/check-invalid-unknown.out" 2> "$ROOT/check-invalid-unknown.err" && exit 1 || true
 grep 'unknown models check option' "$ROOT/check-invalid-unknown.err"
 
-"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-selected-embed --output nope > "$ROOT/check-invalid-output.out" 2> "$ROOT/check-invalid-output.err" && exit 1 || true
+"$YVEX_BIN" inspect artifact check deepseek4-v4-flash-dspark-selected-embed --output nope > "$ROOT/check-invalid-output.out" 2> "$ROOT/check-invalid-output.err" && exit 1 || true
 grep 'unsupported output mode: nope' "$ROOT/check-invalid-output.err"
 
 "$YVEX_BIN" inspect target --help > "$ROOT/model-target-help.out"
@@ -1529,28 +1529,28 @@ grep 'inspect target missing-roles TARGET' "$ROOT/model-target-help.out"
 grep 'This command records the v0.1.0 target decision' "$ROOT/model-target-help.out"
 
 CLASS_MISSING_ROOT="$ROOT/qwen-class-missing-root"
-expect_rc 5 "$YVEX_BIN" inspect target class-profile deepseek4-v4-flash \
+expect_rc 5 "$YVEX_BIN" inspect target class-profile deepseek4-v4-flash-dspark \
   --models-root "$CLASS_MISSING_ROOT" > "$ROOT/model-class-deepseek-blocked.out"
 grep 'model-class: deepseek' "$ROOT/model-class-deepseek-blocked.out"
 grep 'status: architecture-ir-blocked' "$ROOT/model-class-deepseek-blocked.out"
 grep 'reason: missing-source-path' "$ROOT/model-class-deepseek-blocked.out"
 grep 'runtime/generation unsupported' "$ROOT/model-class-deepseek-blocked.out"
 
-expect_rc 5 "$YVEX_BIN" inspect target class-profile deepseek4-v4-flash \
+expect_rc 5 "$YVEX_BIN" inspect target class-profile deepseek4-v4-flash-dspark \
   --models-root "$CLASS_MISSING_ROOT" --output table > "$ROOT/model-class-deepseek-blocked-table.out"
 grep 'TARGET  SOURCE  IR  REASON' "$ROOT/model-class-deepseek-blocked-table.out"
-grep 'deepseek4-v4-flash  blocked  not-built  missing-source-path' "$ROOT/model-class-deepseek-blocked-table.out"
+grep 'deepseek4-v4-flash-dspark  blocked  not-built  missing-source-path' "$ROOT/model-class-deepseek-blocked-table.out"
 
-expect_rc 5 "$YVEX_BIN" inspect target class-profile deepseek4-v4-flash \
+expect_rc 5 "$YVEX_BIN" inspect target class-profile deepseek4-v4-flash-dspark \
   --models-root "$CLASS_MISSING_ROOT" --audit > "$ROOT/model-class-deepseek-blocked-audit.out"
 grep 'architecture_ir_status: blocked' "$ROOT/model-class-deepseek-blocked-audit.out"
 grep 'source_verification_status: blocked' "$ROOT/model-class-deepseek-blocked-audit.out"
 grep 'runtime_execution: unsupported' "$ROOT/model-class-deepseek-blocked-audit.out"
 grep 'generation: unsupported' "$ROOT/model-class-deepseek-blocked-audit.out"
 
-expect_rc 5 "$YVEX_BIN" inspect target class-profile deepseek4-v4-flash \
+expect_rc 5 "$YVEX_BIN" inspect target class-profile deepseek4-v4-flash-dspark \
   --models-root "$CLASS_MISSING_ROOT" --output json > "$ROOT/model-class-deepseek-blocked.json"
-jq -e '.status == "architecture-ir-blocked" and .target_id == "deepseek4-v4-flash" and .reason == "missing-source-path" and .runtime == "unsupported" and .generation == "unsupported"' \
+jq -e '.status == "architecture-ir-blocked" and .target_id == "deepseek4-v4-flash-dspark" and .reason == "missing-source-path" and .runtime == "unsupported" and .generation == "unsupported"' \
   "$ROOT/model-class-deepseek-blocked.json" >/dev/null
 
 "$YVEX_BIN" inspect target class-profile qwen3-8b --models-root "$CLASS_MISSING_ROOT" > "$ROOT/model-class-qwen-missing.out"
@@ -2661,17 +2661,17 @@ grep 'next: V010.MAP.9' "$ROOT/qtype-policy-qwen-blocked-gate.out"
 
 expect_rc 2 "$YVEX_BIN" inspect target quant-policy nope > "$ROOT/qtype-policy-unknown-target.out" 2> "$ROOT/qtype-policy-unknown-target.err"
 grep 'qtype-policy: nope \[unsupported\]' "$ROOT/qtype-policy-unknown-target.out"
-"$YVEX_BIN" inspect target quant-policy deepseek4-v4-flash-selected-embed > "$ROOT/qtype-policy-unsupported-class.out"
-grep 'qtype-policy: deepseek4-v4-flash-selected-embed \[blocked\]' "$ROOT/qtype-policy-unsupported-class.out"
+"$YVEX_BIN" inspect target quant-policy deepseek4-v4-flash-dspark-selected-embed > "$ROOT/qtype-policy-unsupported-class.out"
+grep 'qtype-policy: deepseek4-v4-flash-dspark-selected-embed \[blocked\]' "$ROOT/qtype-policy-unsupported-class.out"
 grep 'top_blocker: unsupported-target-class' "$ROOT/qtype-policy-unsupported-class.out"
-"$YVEX_BIN" inspect target quant-policy deepseek4-v4-flash-selected-embed-rmsnorm --role-support > "$ROOT/qtype-role-support-deepseek-selected.out"
-grep 'qtype-role-support: deepseek4-v4-flash-selected-embed-rmsnorm' "$ROOT/qtype-role-support-deepseek-selected.out"
+"$YVEX_BIN" inspect target quant-policy deepseek4-v4-flash-dspark-selected-embed-rmsnorm --role-support > "$ROOT/qtype-role-support-deepseek-selected.out"
+grep 'qtype-role-support: deepseek4-v4-flash-dspark-selected-embed-rmsnorm' "$ROOT/qtype-role-support-deepseek-selected.out"
 grep 'family: deepseek' "$ROOT/qtype-role-support-deepseek-selected.out"
 grep 'status: blocked' "$ROOT/qtype-role-support-deepseek-selected.out"
 grep 'source_dtype: selected-slice' "$ROOT/qtype-role-support-deepseek-selected.out"
 grep 'top_blocker: complete-artifact-admission-required' "$ROOT/qtype-role-support-deepseek-selected.out"
 grep 'next: V010.ARTIFACT.MATERIALIZE.0' "$ROOT/qtype-role-support-deepseek-selected.out"
-"$YVEX_BIN" inspect target quant-policy deepseek4-v4-flash-selected-embed-rmsnorm --role-support --audit > "$ROOT/qtype-role-support-deepseek-selected-audit.out"
+"$YVEX_BIN" inspect target quant-policy deepseek4-v4-flash-dspark-selected-embed-rmsnorm --role-support --audit > "$ROOT/qtype-role-support-deepseek-selected-audit.out"
 grep 'selected_slice_evidence_only: true' "$ROOT/qtype-role-support-deepseek-selected-audit.out"
 grep 'full_family_artifact_status: missing' "$ROOT/qtype-role-support-deepseek-selected-audit.out"
 grep 'role\.[0-9][0-9]*\.role_status: selected-slice-evidence-only' "$ROOT/qtype-role-support-deepseek-selected-audit.out"
@@ -3214,6 +3214,8 @@ expect_rc 2 "$YVEX_BIN" inspect target class-profile > "$ROOT/model-class-missin
 grep 'requires TARGET' "$ROOT/model-class-missing-target.err"
 expect_rc 2 "$YVEX_BIN" inspect target class-profile nope > "$ROOT/model-class-bad-target.out" 2> "$ROOT/model-class-bad-target.err"
 grep 'unsupported target: nope' "$ROOT/model-class-bad-target.err"
+expect_rc 2 "$YVEX_BIN" inspect target class-profile deepseek4-v4-flash > "$ROOT/model-class-retired-deepseek.out" 2> "$ROOT/model-class-retired-deepseek.err"
+grep 'unsupported target: deepseek4-v4-flash; use deepseek4-v4-flash-dspark' "$ROOT/model-class-retired-deepseek.err"
 expect_rc 2 "$YVEX_BIN" inspect target class-profile qwen-metal-portability > "$ROOT/model-class-old-target.out" 2> "$ROOT/model-class-old-target.err"
 grep 'unsupported target: qwen-metal-portability' "$ROOT/model-class-old-target.err"
 expect_rc 2 "$YVEX_BIN" inspect target class-profile gemma-dense-portability > "$ROOT/model-class-old-gemma-target.out" 2> "$ROOT/model-class-old-gemma-target.err"
@@ -3334,18 +3336,18 @@ grep 'does not download models, emit artifacts, materialize tensors, execute gra
 "$YVEX_BIN" inspect target decision --release v0.1.0 > "$ROOT/model-target-decision-normal.out"
 grep 'report: target-decision' "$ROOT/model-target-decision-normal.out"
 grep 'status: target-selected-mapping-specified' "$ROOT/model-target-decision-normal.out"
-grep 'selected: deepseek4-v4-flash' "$ROOT/model-target-decision-normal.out"
+grep 'selected: deepseek4-v4-flash-dspark' "$ROOT/model-target-decision-normal.out"
 grep 'top_blocker: source payload trust' "$ROOT/model-target-decision-normal.out"
 grep 'next: V010.SOURCE.PAYLOAD.STREAM.0' "$ROOT/model-target-decision-normal.out"
 grep 'boundary: release target selected; artifact/runtime/generation unsupported; benchmark not measured' "$ROOT/model-target-decision-normal.out"
-! grep 'deepseek4-v4-flash-selected' "$ROOT/model-target-decision-normal.out"
+! grep 'deepseek4-v4-flash-dspark-selected' "$ROOT/model-target-decision-normal.out"
 
 "$YVEX_BIN" inspect target decision --release v0.1.0 --output table > "$ROOT/model-target-decision-table.out"
 matches "$ROOT/model-target-decision-table.out" '^REPORT[[:space:]]{2,}STATUS[[:space:]]{2,}SELECTED[[:space:]]{2,}ELIGIBLE[[:space:]]{2,}NEXT$'
-matches "$ROOT/model-target-decision-table.out" '^target-decision[[:space:]]{2,}selected-mapping-specified[[:space:]]{2,}deepseek4-v4-flash[[:space:]]{2,}0[[:space:]]{2,}V010\.SOURCE\.PAYLOAD\.STREAM\.0$'
+matches "$ROOT/model-target-decision-table.out" '^target-decision[[:space:]]{2,}selected-mapping-specified[[:space:]]{2,}deepseek4-v4-flash-dspark[[:space:]]{2,}0[[:space:]]{2,}V010\.SOURCE\.PAYLOAD\.STREAM\.0$'
 
 "$YVEX_BIN" inspect target decision --release v0.1.0 --output json > "$ROOT/model-target-decision-json.out"
-jq -e '.selected_target_id == "deepseek4-v4-flash" and .upstream_repository == "deepseek-ai/DeepSeek-V4-Flash" and .source_verification == "complete" and .architecture_ir == "complete" and .tensor_coverage == "complete" and .gguf_mapping == "complete" and .artifact_status == "not-produced" and .runtime == "unsupported" and .generation == "unsupported" and .next == "V010.SOURCE.PAYLOAD.STREAM.0"' "$ROOT/model-target-decision-json.out" >/dev/null
+jq -e '.selected_target_id == "deepseek4-v4-flash-dspark" and .upstream_repository == "deepseek-ai/DeepSeek-V4-Flash-DSpark" and .source_verification == "complete" and .architecture_ir == "complete" and .tensor_coverage == "complete" and .gguf_mapping == "complete" and .artifact_status == "not-produced" and .runtime == "unsupported" and .generation == "unsupported" and .next == "V010.SOURCE.PAYLOAD.STREAM.0"' "$ROOT/model-target-decision-json.out" >/dev/null
 
 "$YVEX_BIN" inspect target decision --release v0.1.0 --output nope > "$ROOT/model-target-decision-bad-output.out" 2> "$ROOT/model-target-decision-bad-output.err" && exit 1 || true
 grep 'model-target decision: unsupported output mode: nope' "$ROOT/model-target-decision-bad-output.err"
@@ -3354,8 +3356,8 @@ grep 'model-target decision: unsupported output mode: nope' "$ROOT/model-target-
 grep 'target_decision: v0.1.0' "$ROOT/model-target-decision.out"
 grep 'status: target-selected-mapping-specified' "$ROOT/model-target-decision.out"
 grep 'decision_state: selected' "$ROOT/model-target-decision.out"
-grep 'selected_target_id: deepseek4-v4-flash' "$ROOT/model-target-decision.out"
-grep 'upstream_repository: deepseek-ai/DeepSeek-V4-Flash' "$ROOT/model-target-decision.out"
+grep 'selected_target_id: deepseek4-v4-flash-dspark' "$ROOT/model-target-decision.out"
+grep 'upstream_repository: deepseek-ai/DeepSeek-V4-Flash-DSpark' "$ROOT/model-target-decision.out"
 grep 'source_verification_status: complete' "$ROOT/model-target-decision.out"
 grep 'architecture_ir_status: complete' "$ROOT/model-target-decision.out"
 grep 'tensor_coverage_status: complete' "$ROOT/model-target-decision.out"
@@ -3368,22 +3370,22 @@ grep 'runtime_claim: unsupported' "$ROOT/model-target-decision.out"
 grep 'generation: unsupported-full-model' "$ROOT/model-target-decision.out"
 grep 'benchmark_status: not-measured' "$ROOT/model-target-decision.out"
 grep 'release_ready: false' "$ROOT/model-target-decision.out"
-grep 'candidate.0.id: deepseek4-v4-flash' "$ROOT/model-target-decision.out"
+grep 'candidate.0.id: deepseek4-v4-flash-dspark' "$ROOT/model-target-decision.out"
 grep 'candidate.0.class: release-source-target' "$ROOT/model-target-decision.out"
 grep 'candidate.0.status: selected-mapping-specified' "$ROOT/model-target-decision.out"
 grep 'qwen_engineering_scope: preserved-non-release' "$ROOT/model-target-decision.out"
 grep 'gemma_engineering_scope: preserved-non-release' "$ROOT/model-target-decision.out"
 grep 'selected_slice_scope: bounded-evidence-only' "$ROOT/model-target-decision.out"
 grep 'next_required_rows: V010.SOURCE.PAYLOAD.STREAM.0' "$ROOT/model-target-decision.out"
-! grep 'candidate.*deepseek4-v4-flash-selected' "$ROOT/model-target-decision.out"
+! grep 'candidate.*deepseek4-v4-flash-dspark-selected' "$ROOT/model-target-decision.out"
 
-"$YVEX_BIN" inspect target decision --release v0.1.0 --audit --candidate deepseek4-v4-flash --include-blockers --include-next > "$ROOT/model-target-decision-deepseek.out"
+"$YVEX_BIN" inspect target decision --release v0.1.0 --audit --candidate deepseek4-v4-flash-dspark --include-blockers --include-next > "$ROOT/model-target-decision-deepseek.out"
 grep 'candidate_count: 1' "$ROOT/model-target-decision-deepseek.out"
-grep 'candidate.0.id: deepseek4-v4-flash' "$ROOT/model-target-decision-deepseek.out"
+grep 'candidate.0.id: deepseek4-v4-flash-dspark' "$ROOT/model-target-decision-deepseek.out"
 grep 'candidate.0.status: selected-mapping-specified' "$ROOT/model-target-decision-deepseek.out"
 grep 'generation: unsupported-full-model' "$ROOT/model-target-decision-deepseek.out"
 
-expect_rc 2 "$YVEX_BIN" inspect target decision --release v0.1.0 --audit --candidate deepseek4-v4-flash-selected-embed-rmsnorm --include-blockers --include-next > "$ROOT/model-target-decision-rmsnorm.out" 2> "$ROOT/model-target-decision-rmsnorm.err"
+expect_rc 2 "$YVEX_BIN" inspect target decision --release v0.1.0 --audit --candidate deepseek4-v4-flash-dspark-selected-embed-rmsnorm --include-blockers --include-next > "$ROOT/model-target-decision-rmsnorm.out" 2> "$ROOT/model-target-decision-rmsnorm.err"
 grep 'status: missing-candidate' "$ROOT/model-target-decision-rmsnorm.out"
 
 expect_rc 2 "$YVEX_BIN" inspect target decision --release v0.1.0 --audit --candidate glm-5.2-official-safetensors --include-blockers --include-next > "$ROOT/model-target-decision-glm.out" 2> "$ROOT/model-target-decision-glm.err"

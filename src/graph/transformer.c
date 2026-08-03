@@ -49,14 +49,20 @@ static int transformer_layer_identity(yvex_transformer_layer_plan *out,
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     if (!out || !attention || !moe || attention->layer_index != moe->layer_index ||
+        attention->predictor_index != moe->predictor_index ||
+        attention->tensor_scope != moe->tensor_scope ||
         !yvex_sha256_hex_valid(moe->layer_identity)) return 0;
     out->ordinal = moe->ordinal;
     out->layer_index = attention->layer_index;
+    out->predictor_index = attention->predictor_index;
+    out->tensor_scope = attention->tensor_scope;
     transformer_identity_copy(out->moe_layer_identity, moe->layer_identity);
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.transformer.layer.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.transformer.layer.v2") ||
         !yvex_sha256_update_u64(&hash, out->ordinal) ||
         !yvex_sha256_update_u64(&hash, out->layer_index) ||
+        !yvex_sha256_update_u64(&hash, out->predictor_index) ||
+        !yvex_sha256_update_u64(&hash, out->tensor_scope) ||
         !yvex_sha256_update_u64(&hash, attention->attention_class) ||
         !yvex_sha256_update_u64(&hash, attention->hidden_dimension) ||
         !yvex_sha256_update_u64(&hash, attention->residual_stream_count) ||
@@ -80,8 +86,9 @@ static int transformer_plan_identity(yvex_transformer_plan *plan)
     yvex_transformer_plan_summary *s = plan ? &plan->summary : NULL;
     if (!s) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.transformer.plan.v1") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.transformer.plan.v2") ||
         !yvex_sha256_update_u64(&hash, s->schema_version) ||
+        !yvex_sha256_update_u64(&hash, s->tensor_scope) ||
         !yvex_sha256_update_u64(&hash, s->family_adapter_id) ||
         !yvex_sha256_update_u64(&hash, s->family_adapter_version) ||
         !yvex_sha256_update_text(&hash, s->artifact_identity) ||
@@ -106,6 +113,9 @@ static int transformer_plan_identity(yvex_transformer_plan *plan)
         const yvex_transformer_weight_binding *weight = &s->weights[index];
         if (!yvex_sha256_update_u64(&hash, weight->tensor_id) ||
             !yvex_sha256_update_u64(&hash, weight->role) ||
+            !yvex_sha256_update_u64(&hash, weight->tensor_scope) ||
+            !yvex_sha256_update_u64(&hash, weight->layer_index) ||
+            !yvex_sha256_update_u64(&hash, weight->predictor_index) ||
             !yvex_sha256_update_u64(&hash, weight->qtype) ||
             !yvex_sha256_update_u64(&hash, weight->row_width) ||
             !yvex_sha256_update_u64(&hash, weight->row_count) ||
@@ -129,22 +139,37 @@ int yvex_transformer_plan_build(yvex_transformer_plan **out,
     const yvex_moe_plan_summary *moe_summary = yvex_moe_plan_summary_get(moe);
     unsigned long long index;
     if (out) *out = NULL;
-    if (!out || !facts || !policy || !attention_summary || !moe_summary ||
-        policy->schema_version != YVEX_TRANSFORMER_PLAN_SCHEMA_V1 ||
-        !policy->attention_then_moe || !policy->deferred_ffn_post ||
-        !policy->final_norm_after_head || !policy->hidden_width || !policy->residual_streams ||
+    if (!out || !facts || !policy || !attention_summary || !moe_summary)
+        return transformer_refuse(err, YVEX_ERR_INVALID_ARG,
+                                  "transformer plan requires complete family, attention, and MoE facts");
+    if (policy->schema_version != YVEX_TRANSFORMER_PLAN_SCHEMA_V2)
+        return transformer_refuse(err, YVEX_ERR_FORMAT,
+                                  "transformer family policy schema is stale");
+    if (facts->tensor_scope > YVEX_TENSOR_SCOPE_DRAFT ||
+        attention_summary->tensor_scope != facts->tensor_scope ||
+        moe_summary->tensor_scope != facts->tensor_scope)
+        return transformer_refuse(err, YVEX_ERR_FORMAT,
+                                  "transformer component tensor scopes disagree");
+    if (!policy->attention_then_moe || !policy->deferred_ffn_post ||
+        !policy->final_norm_after_head)
+        return transformer_refuse(err, YVEX_ERR_FORMAT,
+                                  "transformer family composition policy is incomplete");
+    if (!policy->hidden_width || !policy->residual_streams ||
         !policy->expanded_width ||
-        policy->expanded_width != policy->hidden_width * policy->residual_streams ||
-        facts->layer_count != attention_summary->layer_count ||
+        policy->expanded_width != policy->hidden_width * policy->residual_streams)
+        return transformer_refuse(err, YVEX_ERR_FORMAT,
+                                  "transformer family residual geometry is incompatible");
+    if (facts->layer_count != attention_summary->layer_count ||
         facts->layer_count != moe_summary->layer_count)
         return transformer_refuse(err, YVEX_ERR_FORMAT,
-                                  "transformer family/component plan facts are incompatible");
+                                  "transformer attention and MoE layer counts disagree");
     plan = (yvex_transformer_plan *)calloc(1u, sizeof(*plan));
     if (!plan) return transformer_refuse(err, YVEX_ERR_NOMEM, "transformer plan allocation failed");
     plan->layers = (yvex_transformer_layer_plan *)calloc(
         (size_t)facts->layer_count, sizeof(*plan->layers));
     if (!plan->layers) goto allocation;
-    plan->summary.schema_version = YVEX_TRANSFORMER_PLAN_SCHEMA_V1;
+    plan->summary.schema_version = YVEX_TRANSFORMER_PLAN_SCHEMA_V2;
+    plan->summary.tensor_scope = facts->tensor_scope;
     plan->summary.family_adapter_id = facts->family_adapter_id;
     plan->summary.family_adapter_version = facts->family_adapter_version;
     plan->summary.layer_count = facts->layer_count;
@@ -223,7 +248,8 @@ int yvex_transformer_plan_import(yvex_transformer_plan **out,
     unsigned long long index;
     if (out) *out = NULL;
     if (!out || !summary || !layers ||
-        summary->schema_version != YVEX_TRANSFORMER_PLAN_SCHEMA_V1 ||
+        summary->schema_version != YVEX_TRANSFORMER_PLAN_SCHEMA_V2 ||
+        summary->tensor_scope > YVEX_TENSOR_SCOPE_DRAFT ||
         !summary->layer_count || !summary->hidden_width || !summary->residual_streams ||
         summary->expanded_width != summary->hidden_width * summary->residual_streams ||
         !yvex_sha256_hex_valid(summary->transformer_plan_identity))
@@ -245,7 +271,7 @@ int yvex_transformer_plan_import(yvex_transformer_plan **out,
     plan->summary.transformer_plan_identity[0] = '\0';
     for (index = 0ull; index < summary->layer_count; ++index)
         if (plan->layers[index].ordinal != index ||
-            plan->layers[index].layer_index != index ||
+            plan->layers[index].tensor_scope != summary->tensor_scope ||
             !yvex_sha256_hex_valid(plan->layers[index].moe_layer_identity) ||
             !yvex_sha256_hex_valid(plan->layers[index].layer_identity))
             goto invalid;
@@ -272,13 +298,15 @@ int yvex_transformer_plan_seal(yvex_transformer_plan_summary *summary,
 {
     yvex_transformer_plan plan;
     unsigned long long index;
-    if (!summary || !layers || summary->schema_version != YVEX_TRANSFORMER_PLAN_SCHEMA_V1 ||
+    if (!summary || !layers || summary->schema_version != YVEX_TRANSFORMER_PLAN_SCHEMA_V2 ||
+        summary->tensor_scope > YVEX_TENSOR_SCOPE_DRAFT ||
         !summary->layer_count || !summary->hidden_width || !summary->residual_streams ||
         summary->expanded_width != summary->hidden_width * summary->residual_streams)
         return transformer_refuse(err, YVEX_ERR_INVALID_ARG,
                                   "transformer plan seal facts are invalid");
     for (index = 0ull; index < summary->layer_count; ++index)
-        if (layers[index].ordinal != index || layers[index].layer_index != index ||
+        if (layers[index].ordinal != index ||
+            layers[index].tensor_scope != summary->tensor_scope ||
             !yvex_sha256_hex_valid(layers[index].moe_layer_identity) ||
             !yvex_sha256_hex_valid(layers[index].layer_identity))
             return transformer_refuse(err, YVEX_ERR_FORMAT,
@@ -371,14 +399,16 @@ int yvex_transformer_deferred_post(const yvex_transformer_plan *plan,
     return YVEX_OK;
 }
 
-int yvex_transformer_final_stage(const yvex_transformer_plan *plan,
-                                 const float *expanded, unsigned long long token_count,
-                                 const float *function, const float *base, const float *scale,
-                                 const float *norm, float *normalized, yvex_error *err)
+int yvex_transformer_final_stage_capture(
+    const yvex_transformer_plan *plan, const float *expanded,
+    unsigned long long token_count, const float *function, const float *base,
+    const float *scale, const float *norm, float *pre_normalized,
+    float *normalized, yvex_error *err)
 {
     const yvex_transformer_plan_summary *s = yvex_transformer_plan_summary_get(plan);
     unsigned long long token, stream, lane, index;
     if (!s || !expanded || !function || !base || !scale || !norm || !normalized ||
+        pre_normalized == normalized ||
         !token_count || s->final_policy != YVEX_TRANSFORMER_FINAL_SIGMOID_MHC_RMS)
         return transformer_refuse(err, YVEX_ERR_INVALID_ARG,
                                   "transformer final-stage arguments are invalid");
@@ -404,8 +434,12 @@ int yvex_transformer_final_stage(const yvex_transformer_plan *plan,
                     (double)input[stream * s->hidden_width + lane]);
         }
         if (!yvex_attention_compute_round(YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
-                                          output, s->hidden_width) ||
-            !yvex_attention_rms_norm(output, s->hidden_width, norm,
+                                          output, s->hidden_width))
+            goto numeric;
+        if (pre_normalized)
+            memcpy(pre_normalized + token * s->hidden_width, output,
+                   (size_t)s->hidden_width * sizeof(float));
+        if (!yvex_attention_rms_norm(output, s->hidden_width, norm,
                                      s->output_norm_epsilon) ||
             !yvex_attention_compute_round(YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
                                           output, s->hidden_width))
@@ -416,4 +450,32 @@ int yvex_transformer_final_stage(const yvex_transformer_plan *plan,
 numeric:
     return transformer_refuse(err, YVEX_ERR_FORMAT,
                               "transformer final head or RMSNorm produced non-finite values");
+}
+
+int yvex_transformer_final_stage(const yvex_transformer_plan *plan,
+                                 const float *expanded, unsigned long long token_count,
+                                 const float *function, const float *base, const float *scale,
+                                 const float *norm, float *normalized, yvex_error *err)
+{
+    return yvex_transformer_final_stage_capture(
+        plan, expanded, token_count, function, base, scale, norm, NULL,
+        normalized, err);
+}
+
+int yvex_transformer_feature_normalize(float *values,
+                                       unsigned long long value_count,
+                                       const float *weights, double epsilon,
+                                       yvex_error *err)
+{
+    if (!values || !value_count || !weights || !isfinite(epsilon) ||
+        epsilon <= 0.0)
+        return transformer_refuse(err, YVEX_ERR_INVALID_ARG,
+                                  "draft feature normalization facts are invalid");
+    if (!yvex_attention_rms_norm(values, value_count, weights, epsilon) ||
+        !yvex_attention_compute_round(YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1,
+                                      values, value_count))
+        return transformer_refuse(err, YVEX_ERR_FORMAT,
+                                  "draft feature normalization produced non-finite values");
+    yvex_error_clear(err);
+    return YVEX_OK;
 }

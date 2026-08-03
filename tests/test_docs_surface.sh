@@ -37,10 +37,13 @@ for file in \
   docs/development/source-ownership.md \
   docs/releases/doctrine.md docs/releases/v0.1.md \
   docs/decisions/0003-documentation-architecture.md \
+  docs/decisions/0004-target-verified-speculation.md \
+  docs/migrations/deepseek-dspark-source.md \
   docs/migrations/documentation-architecture-v1.md \
   docs/audits/code-commentary-7c90ce1/README.md \
   docs/audits/documentation-architecture-51a5c/README.md \
   docs/milestones/code-commentary.md \
+  docs/milestones/deepseek-dspark-rebase.md \
   docs/milestones/documentation-architecture.md \
   config/documentation_owners.tsv config/frozen_documents.tsv
 do
@@ -65,7 +68,7 @@ require_text README.md '## Documentation'
 require_text README.md '## Current limits'
 require_text README.md '## License'
 require_text README.md './yvex model list'
-require_text README.md './yvex model select deepseek4-v4-flash-runtime-iq2xxs'
+require_text README.md './yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs'
 require_text README.md './yvex model selected'
 require_text README.md './yvex runtime start'
 require_text README.md 'There is no separate model-load command.'
@@ -110,16 +113,18 @@ require_text docs/architecture/commands.md 'There is no independent hosted `load
 
 require_text docs/model-families/integration.md '# Model-Family Integration Contract'
 require_text docs/model-families/deepseek-v4-flash.md 'sole complete YVEX source-to-streamed-text vertical'
+require_text docs/model-families/deepseek-v4-flash.md 'deepseek4-v4-flash-dspark'
+require_text docs/model-families/deepseek-v4-flash.md '72,317 source tensors'
 require_text docs/model-families/qwen.md 'unsupported runtime family'
 require_text docs/model-families/gemma.md 'unsupported runtime family'
 
 require_text docs/contracts/artifacts.md '# Artifact and Admission Contract'
 require_text docs/contracts/runtime.md 'A client connection is not a session.'
 require_text docs/contracts/runtime.md 'no explicit CUDA request'
-require_text docs/contracts/local-protocol.md 'YVEX_CLIENT_PROTOCOL_VERSION = 4'
+require_text docs/contracts/local-protocol.md 'YVEX_CLIENT_PROTOCOL_VERSION = 5'
 require_text docs/contracts/events-telemetry.md 'No consumer scrapes another renderer'
 require_text docs/contracts/c-api.md '## Compiled Operator Registry Boundary'
-require_text docs/contracts/c-api.md 'yvex.models.local.v3'
+require_text docs/contracts/c-api.md 'yvex.models.local.v4'
 require_text docs/openai-compatibility.md 'yvex.openai.compat.v1'
 require_text docs/openai-compatibility.md 'YVEX never executes application tools.'
 
@@ -128,7 +133,7 @@ require_text docs/operator-runbook.md '## What “load the model” means'
 require_text docs/operator-runbook.md '## Three-terminal operation'
 require_text docs/operator-runbook.md '## Registering an existing model'
 require_text docs/operator-runbook.md './yvex model list'
-require_text docs/operator-runbook.md './yvex model select deepseek4-v4-flash-runtime-iq2xxs'
+require_text docs/operator-runbook.md './yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs'
 require_text docs/operator-runbook.md './yvex runtime start'
 require_text docs/operator-runbook.md './yvex runtime model'
 require_text docs/operator-runbook.md './yvex runtime memory'

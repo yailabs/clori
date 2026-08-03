@@ -39,7 +39,7 @@ grep -nF '(out->alignment & (out->alignment - 1u)) != 0u' \
   src/gguf/layout_integrity.c >/dev/null
 grep -nF 'tensor_payload_bytes_read = 0ull' \
   src/gguf/layout_integrity.c >/dev/null
-grep -nF '69187ull' tests/unit/gguf_layout_integrity.c >/dev/null
+grep -nF '72317ull' tests/unit/gguf_layout_integrity.c >/dev/null
 grep -nF '24u' tests/unit/gguf_layout_integrity.c >/dev/null
 grep -nF 'YVEX_GGUF_LAYOUT_NONCANONICAL_TAIL' \
   tests/unit/gguf_layout_integrity.c >/dev/null

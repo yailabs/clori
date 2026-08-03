@@ -47,14 +47,14 @@ static const yvex_model_target_record catalog_model_targets[] = {
      "canonical-release-source", "verification-required",
      "source verification only; artifact/runtime/generation unsupported",
      "unsupported", "unsupported", "false"},
-    {"deepseek4-v4-flash-selected-embed", YVEX_SOURCE_RELEASE_FAMILY_DISPLAY,
+    {"deepseek4-v4-flash-dspark-selected-embed", YVEX_SOURCE_RELEASE_FAMILY_DISPLAY,
      YVEX_SOURCE_RELEASE_NAME,
      "selected-runtime-slice", "official-safetensors",
      "YVEX-produced-selected-GGUF", "selected-token-embedding-materialization",
      "token_embd.weight", "none", "none",
      "selected materialization and selected graph slice only", "unsupported",
      "unsupported", "false"},
-    {"deepseek4-v4-flash-selected-embed-rmsnorm",
+    {"deepseek4-v4-flash-dspark-selected-embed-rmsnorm",
      YVEX_SOURCE_RELEASE_FAMILY_DISPLAY, YVEX_SOURCE_RELEASE_NAME,
      "selected-runtime-slice", "official-safetensors",
      "YVEX-produced-selected-GGUF", "selected-embedding-plus-rmsnorm-segment",
@@ -418,10 +418,10 @@ static const char *catalog_artifact_status(const yvex_model_target_record *rec)
 
 static const char *catalog_runtime_status(const yvex_model_target_record *rec)
 {
-    if (strcmp(rec->target_id, "deepseek4-v4-flash-selected-embed") == 0) {
+    if (strcmp(rec->target_id, "deepseek4-v4-flash-dspark-selected-embed") == 0) {
         return "selected-boundary-only";
     }
-    if (strcmp(rec->target_id, "deepseek4-v4-flash-selected-embed-rmsnorm") == 0) {
+    if (strcmp(rec->target_id, "deepseek4-v4-flash-dspark-selected-embed-rmsnorm") == 0) {
         return "selected-segment-boundary-only";
     }
     return "unsupported";

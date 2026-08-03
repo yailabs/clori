@@ -401,7 +401,7 @@ static void runtime_compute_identity(yvex_runtime_descriptor *descriptor) {
     yvex_sha256_update_u64(&hash, descriptor->count);
     yvex_sha256_update_u64(&hash, descriptor->summary.payload_bytes);
     yvex_sha256_update_u64(&hash, descriptor->summary.layer_count);
-    yvex_sha256_update_u64(&hash, descriptor->summary.mtp_layer_count);
+    yvex_sha256_update_u64(&hash, descriptor->summary.draft_layer_count);
     for (i = 0ull; i < descriptor->count; ++i) {
         const yvex_runtime_tensor_binding *binding = &descriptor->bindings[i];
         yvex_sha256_update_text(&hash, binding->binding ? binding->binding->name : "");
@@ -556,7 +556,7 @@ int yvex_runtime_descriptor_build(
         descriptor->summary.runtime_activation_policy_count = family->runtime_activation_policy_count;
         descriptor->summary.runtime_sparse_topk_policy_count = family->runtime_sparse_topk_policy_count;
         descriptor->summary.layer_count = family->layer_count;
-        descriptor->summary.mtp_layer_count = family->mtp_layer_count;
+        descriptor->summary.draft_layer_count = family->draft_layer_count;
         descriptor->summary.routed_experts = family->routed_experts;
         descriptor->summary.experts_per_token = family->experts_per_token;
         descriptor->summary.vocabulary_size = family->vocabulary_size;
@@ -596,8 +596,8 @@ int yvex_runtime_descriptor_build(
             descriptor->summary.global_bindings++;
         else if (row->scope == YVEX_TENSOR_SCOPE_MAIN_LAYER)
             descriptor->summary.main_layer_bindings++;
-        else if (row->scope == YVEX_TENSOR_SCOPE_MTP)
-            descriptor->summary.mtp_bindings++;
+        else if (row->scope == YVEX_TENSOR_SCOPE_DRAFT)
+            descriptor->summary.draft_bindings++;
         if (row->collection == YVEX_TENSOR_COLLECTION_ROUTED_EXPERT)
             descriptor->summary.routed_expert_bindings++;
         if (row->binding && row->binding->expert_count > 1ull)

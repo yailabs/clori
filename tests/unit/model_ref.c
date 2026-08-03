@@ -23,12 +23,12 @@ static int write_registry(const char *path, const char *model_path)
     fprintf(fp,
             "{\n"
             "  \"schema\": \"yvex.models.local.v1\",\n"
-            "  \"selected\": \"deepseek4-v4-flash-selected-embed\",\n"
+            "  \"selected\": \"deepseek4-v4-flash-dspark-selected-embed\",\n"
             "  \"models\": [\n"
             "    {\n"
-            "      \"alias\": \"deepseek4-v4-flash-selected-embed\",\n"
+            "      \"alias\": \"deepseek4-v4-flash-dspark-selected-embed\",\n"
             "      \"family\": \"deepseek4\",\n"
-            "      \"model\": \"v4-flash\",\n"
+            "      \"model\": \"v4-flash-dspark\",\n"
             "      \"scope\": \"selected\",\n"
             "      \"artifact_class\": \"embed\",\n"
             "      \"qprofile\": \"F16\",\n"
@@ -93,7 +93,7 @@ static int test_alias_resolution(void)
     yvex_model_ref ref;
     yvex_model_ref_options options;
     yvex_error err;
-    const char *model_path = "build/tests/model-ref/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf";
+    const char *model_path = "build/tests/model-ref/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf";
     const char *registry_path = "build/tests/model-ref/models.local.json";
 
     YVEX_TEST_ASSERT(write_file(model_path, "fake\n"), "write alias model");
@@ -104,10 +104,10 @@ static int test_alias_resolution(void)
     options.allow_registry = 1;
     yvex_error_clear(&err);
     memset(&ref, 0, sizeof(ref));
-    YVEX_TEST_ASSERT(yvex_model_ref_resolve(&ref, "deepseek4-v4-flash-selected-embed", &options, &err) == YVEX_OK,
+    YVEX_TEST_ASSERT(yvex_model_ref_resolve(&ref, "deepseek4-v4-flash-dspark-selected-embed", &options, &err) == YVEX_OK,
                      "resolve alias");
     YVEX_TEST_ASSERT(ref.kind == YVEX_MODEL_REF_ALIAS, "alias kind");
-    YVEX_TEST_ASSERT_STREQ(ref.alias, "deepseek4-v4-flash-selected-embed", "alias value");
+    YVEX_TEST_ASSERT_STREQ(ref.alias, "deepseek4-v4-flash-dspark-selected-embed", "alias value");
     YVEX_TEST_ASSERT_STREQ(ref.path, model_path, "alias path");
     YVEX_TEST_ASSERT_STREQ(ref.family, "deepseek4", "alias family");
     YVEX_TEST_ASSERT_STREQ(ref.support_level, "selected-tensor-materialized", "alias support");
@@ -139,7 +139,7 @@ static int test_failures(void)
     options.registry_path = "build/tests/model-ref/missing-path.json";
     memset(&ref, 0, sizeof(ref));
     yvex_error_clear(&err);
-    YVEX_TEST_ASSERT(yvex_model_ref_resolve(&ref, "deepseek4-v4-flash-selected-embed", &options, &err) == YVEX_ERR_IO,
+    YVEX_TEST_ASSERT(yvex_model_ref_resolve(&ref, "deepseek4-v4-flash-dspark-selected-embed", &options, &err) == YVEX_ERR_IO,
                      "alias path missing fails");
     YVEX_TEST_ASSERT(ref.status == YVEX_MODEL_REF_STATUS_ALIAS_PATH_MISSING, "alias path missing status");
     yvex_model_ref_clear(&ref);
@@ -147,7 +147,7 @@ static int test_failures(void)
     options.registry_path = "build/tests/model-ref/no-registry.json";
     memset(&ref, 0, sizeof(ref));
     yvex_error_clear(&err);
-    YVEX_TEST_ASSERT(yvex_model_ref_resolve(&ref, "deepseek4-v4-flash-selected-embed", &options, &err) == YVEX_ERR_IO,
+    YVEX_TEST_ASSERT(yvex_model_ref_resolve(&ref, "deepseek4-v4-flash-dspark-selected-embed", &options, &err) == YVEX_ERR_IO,
                      "registry unavailable fails");
     YVEX_TEST_ASSERT(ref.status == YVEX_MODEL_REF_STATUS_REGISTRY_UNAVAILABLE, "registry unavailable status");
     yvex_model_ref_clear(&ref);

@@ -31,12 +31,12 @@ mkdir -p "$OUT_DIR"
 "$YVEX_BIN" compile quant preset list > "$OUT_DIR/list.out" 2> "$OUT_DIR/list.err" ||
     fail "preset list failed"
 grep '^source-faithful$' "$OUT_DIR/list.out" >/dev/null || fail "source-faithful missing"
-grep '^deepseek-v4-flash-q8_0-q2_k-v1$' "$OUT_DIR/list.out" >/dev/null ||
+grep '^deepseek-v4-flash-dspark-q8_0-q2_k-v1$' "$OUT_DIR/list.out" >/dev/null ||
     fail "release preset missing"
-grep '^deepseek-v4-flash-ds4-like-q2-v1$' "$OUT_DIR/list.out" >/dev/null ||
+grep '^deepseek-v4-flash-dspark-bootstrap-q2-v1$' "$OUT_DIR/list.out" >/dev/null ||
     fail "DS4-like preset missing"
 
-"$YVEX_BIN" compile quant preset show deepseek-v4-flash-ds4-like-q2-v1 \
+"$YVEX_BIN" compile quant preset show deepseek-v4-flash-dspark-bootstrap-q2-v1 \
     > "$OUT_DIR/show.out" 2> "$OUT_DIR/show.err" || fail "preset show failed"
 grep '^schema_version: 2$' "$OUT_DIR/show.out" >/dev/null || fail "schema v2 missing"
 grep '^imatrix_rules: 3$' "$OUT_DIR/show.out" >/dev/null || fail "imatrix rules missing"
@@ -49,7 +49,7 @@ grep 'Materialization never chooses qtypes' "$OUT_DIR/help.out" >/dev/null ||
 
 expect_rc 1 "$YVEX_BIN" compile quant preset show no-such-preset \
     > "$OUT_DIR/unknown.out" 2> "$OUT_DIR/unknown.err"
-expect_rc 2 "$YVEX_BIN" compile quant plan --target deepseek4-v4-flash \
+expect_rc 2 "$YVEX_BIN" compile quant plan --target deepseek4-v4-flash-dspark \
     > "$OUT_DIR/incomplete.out" 2> "$OUT_DIR/incomplete.err"
 expect_rc 2 "$YVEX_BIN" quant nope > "$OUT_DIR/bad-action.out" 2> "$OUT_DIR/bad-action.err"
 

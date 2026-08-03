@@ -7,6 +7,7 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/source.h>
+#include <yvex/internal/source_payload.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -17,7 +18,7 @@
 #include <unistd.h>
 
 static const char source_verify_revision[] =
-    "60d8d70770c6776ff598c94bb586a859a38244f1";
+    "62af8fffb2f7030cac4de2f0169f5b8d1101b646";
 
 static int source_verify_make_dir(const char *path)
 {
@@ -89,11 +90,14 @@ static int source_verify_write_config(const char *root,
         "\"torch_dtype\":\"bfloat16\",\"expert_dtype\":\"fp4\","
         "\"hidden_act\":\"silu\",\"attention_bias\":false,"
         "\"attention_dropout\":0.0,\"bos_token_id\":0,\"eos_token_id\":1,"
-        "\"compress_ratios\":[0,0,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,0],"
+        "\"compress_ratios\":[0,0,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,128,4,0,0,0],"
         "\"compress_rope_theta\":160000,\"hc_eps\":0.000001,"
         "\"hc_mult\":4,\"hc_sinkhorn_iters\":20,"
         "\"index_head_dim\":128,\"index_n_heads\":64,\"index_topk\":512,"
-        "\"num_nextn_predict_layers\":1,\"o_groups\":8,"
+        "\"num_nextn_predict_layers\":1,\"dspark_block_size\":5,"
+        "\"dspark_noise_token_id\":128799,"
+        "\"dspark_target_layer_ids\":[40,41,42],"
+        "\"dspark_markov_rank\":256,\"o_groups\":8,"
         "\"rms_norm_eps\":0.000001,\"rope_theta\":10000,"
         "\"routed_scaling_factor\":1.5,\"scoring_func\":\"sqrtsoftplus\","
         "\"topk_method\":\"noaux_tc\",\"norm_topk_prob\":true,"
@@ -185,6 +189,10 @@ static int source_verify_make_valid(const char *root)
     if (!source_verify_make_dir(path)) return 0;
     snprintf(path, sizeof(path), "%s/.cache/huggingface/download", root);
     if (!source_verify_make_dir(path)) return 0;
+    snprintf(path, sizeof(path), "%s/inference", root);
+    if (!source_verify_make_dir(path)) return 0;
+    snprintf(path, sizeof(path), "%s/.cache/huggingface/download/inference", root);
+    if (!source_verify_make_dir(path)) return 0;
     if (!source_verify_write_manifest(root, "huggingface",
                                       yvex_source_release_identity()->upstream_repo_id,
                                       "in-progress", source_verify_revision) ||
@@ -209,6 +217,13 @@ static int source_verify_make_valid(const char *root)
             "\"eos_token_id\":1,\"do_sample\":true,"
             "\"temperature\":1.0,\"top_p\":1.0,"
             "\"transformers_version\":\"4.46.3\"}")) return 0;
+    snprintf(path, sizeof(path), "%s/inference/config.json", root);
+    if (!source_verify_write_text(
+            path,
+            "{\"n_mtp_layers\":3,\"dspark_block_size\":5,"
+            "\"dspark_noise_token_id\":128799,"
+            "\"dspark_target_layer_ids\":[40,41,42],"
+            "\"dspark_markov_rank\":256}")) return 0;
     snprintf(path, sizeof(path), "%s/model.safetensors.index.json", root);
     if (!source_verify_write_text(
             path,
@@ -222,6 +237,7 @@ static int source_verify_make_valid(const char *root)
            source_verify_write_metadata(root, "tokenizer.json") &&
            source_verify_write_metadata(root, "tokenizer_config.json") &&
            source_verify_write_metadata(root, "generation_config.json") &&
+           source_verify_write_metadata(root, "inference/config.json") &&
            source_verify_write_metadata(root, "model.safetensors.index.json") &&
            source_verify_write_metadata(root,
                                         "model-00001-of-00001.safetensors");
@@ -288,6 +304,113 @@ static int source_verify_run(const char *root,
                              yvex_error *err)
 {
     return source_verify_run_mode(root, 0, result, err);
+}
+
+static int source_verify_payload_publication(void)
+{
+    const char *root = "build/tests/source-payload-publication";
+    const char *manifest_path =
+        "build/tests/source-payload-publication.json";
+    yvex_source_payload_verification_result first;
+    yvex_source_payload_verification_result second;
+    yvex_source_payload_failure failure;
+    yvex_source_payload_budget budget;
+    yvex_source_verify_options options;
+    yvex_source_target_identity identity;
+    yvex_error err;
+    char initial_manifest_path[512];
+    char index_path[512];
+    char index_oid[41];
+    char metadata_path[768];
+    char metadata_text[256];
+    struct stat status;
+    int rc;
+
+    YVEX_TEST_ASSERT(system("rm -rf build/tests/source-payload-publication") == 0,
+                     "remove stale payload publication fixture");
+    unlink(manifest_path);
+    YVEX_TEST_ASSERT(source_verify_make_valid(root),
+                     "create payload publication fixture");
+    snprintf(metadata_path, sizeof(metadata_path),
+             "%s/.cache/huggingface/download/"
+             "model-00001-of-00001.safetensors.metadata",
+             root);
+    snprintf(metadata_text, sizeof(metadata_text), "%s\n%s\n0\n",
+             source_verify_revision,
+             "7c3a10eeb47de03729b98276827c00e954457cbb8c664ff265c7350a3ffbd14f");
+    YVEX_TEST_ASSERT(source_verify_write_text(metadata_path, metadata_text),
+                     "bind fixture shard to its provider SHA-256");
+    identity = *yvex_source_release_identity();
+    snprintf(index_path, sizeof(index_path),
+             "%s/model.safetensors.index.json", root);
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(stat(index_path, &status) == 0 &&
+                         yvex_source_git_blob_oid_file(
+                             index_path, index_oid, &err) == YVEX_OK,
+                     "bind fixture index identity");
+    identity.upstream_index_oid = index_oid;
+    identity.upstream_index_size = (unsigned long long)status.st_size;
+    snprintf(initial_manifest_path, sizeof(initial_manifest_path),
+             "%s/source-manifest.json", root);
+    YVEX_TEST_ASSERT(rename(initial_manifest_path, manifest_path) == 0,
+                     "place mutable provenance outside the source snapshot");
+    memset(&options, 0, sizeof(options));
+    options.identity = &identity;
+    options.source_path = root;
+    options.models_root = "build/tests";
+    options.manifest_path = manifest_path;
+    options.promote_manifest = 1;
+    yvex_source_payload_budget_default(&budget);
+    budget.allow_local_snapshot_seal = 0;
+    memset(&first, 0, sizeof(first));
+    memset(&failure, 0, sizeof(failure));
+    rc = yvex_source_payload_verify_snapshot(
+        &options, &budget, &first, &failure, &err);
+    if (rc != YVEX_OK)
+        fprintf(stderr,
+                "payload publication refusal: %s; verified=%d trusted=%d "
+                "schema=%s manifest_identity=%s payload_identity=%s "
+                "manifest_source=%llu payload_source=%llu\n",
+                yvex_error_message(&err), first.verification.verified,
+                first.verification.manifest_payload_trusted,
+                first.verification.manifest_schema,
+                first.verification.manifest_payload_identity,
+                first.payload.payload_identity,
+                first.verification.manifest_payload_source_snapshot_identity,
+                first.payload.source_snapshot_identity);
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "payload publication succeeds");
+    YVEX_TEST_ASSERT(first.verification.verified &&
+                         strcmp(first.verification.manifest_schema,
+                                "yvex.source_manifest.v3") == 0,
+                     "payload publication reopens its v3 manifest");
+    YVEX_TEST_ASSERT(first.payload.state == YVEX_SOURCE_PAYLOAD_STATE_READY &&
+                         first.payload.trust_class ==
+                             YVEX_SOURCE_PAYLOAD_TRUST_UPSTREAM_VERIFIED &&
+                         strlen(first.payload.payload_identity) == 64u,
+                     "payload publication retains its trusted session facts");
+    YVEX_TEST_ASSERT(first.stream.complete &&
+                         first.stream.physical_bytes_read > 0u &&
+                         !first.reused_published_identity,
+                     "first payload publication reads the admitted shard");
+
+    memset(&second, 0, sizeof(second));
+    memset(&failure, 0, sizeof(failure));
+    yvex_error_clear(&err);
+    rc = yvex_source_payload_verify_snapshot(
+        &options, &budget, &second, &failure, &err);
+    if (rc != YVEX_OK)
+        fprintf(stderr, "payload identity reuse refusal: %s\n",
+                yvex_error_message(&err));
+    YVEX_TEST_ASSERT(rc == YVEX_OK &&
+                         second.reused_published_identity &&
+                         second.stream.complete &&
+                         second.stream.physical_bytes_read == 0u,
+                     "a current v3 identity reopens without rereading payload bytes");
+    YVEX_TEST_ASSERT(strcmp(second.payload.payload_identity,
+                            first.payload.payload_identity) == 0,
+                     "payload identity remains stable across reopen");
+    return 0;
 }
 
 static int source_verify_run_identity(
@@ -421,21 +544,39 @@ int yvex_test_source_verify(void)
 
     if (source_verify_json_iteration() != 0)
         return 1;
+    if (source_verify_payload_publication() != 0)
+        return 1;
 
     YVEX_TEST_ASSERT(
         yvex_source_is_release_target(YVEX_SOURCE_RELEASE_TARGET_ID) &&
-            !yvex_source_is_release_target("deepseek4-v4-flash-other") &&
+            !yvex_source_is_release_target("deepseek4-v4-flash-dspark-other") &&
             strcmp(yvex_source_release_identity()->upstream_revision,
                    YVEX_SOURCE_RELEASE_REVISION) == 0 &&
             strcmp(yvex_source_release_identity()->upstream_index_oid,
                    YVEX_SOURCE_RELEASE_INDEX_OID) == 0 &&
             yvex_source_target_path(path, sizeof(path), "/models",
                                     yvex_source_release_identity()) &&
-            strcmp(path, "/models/hf/deepseek/DeepSeek-V4-Flash") == 0,
+            strcmp(path, "/models/hf/deepseek/DeepSeek-V4-Flash-DSpark") == 0,
         "source owner exposes the exact release identity and canonical path");
 
     system("rm -rf build/tests/source-verify");
     YVEX_TEST_ASSERT(source_verify_make_valid(root), "create valid source fixture");
+    {
+        yvex_source_manifest_file_list files;
+        size_t file_index;
+
+        yvex_source_manifest_file_list_init(&files);
+        yvex_error_clear(&err);
+        YVEX_TEST_ASSERT(
+            yvex_source_manifest_scan_files(root, 1, &files, &err) == YVEX_OK &&
+                files.summary.file_count == 8u && files.summary.safetensors_count == 1u,
+            "source footprint excludes acquisition cache metadata");
+        for (file_index = 0u; file_index < files.count; ++file_index) {
+            YVEX_TEST_ASSERT(strncmp(files.items[file_index].path, ".cache/", 7u) != 0,
+                             "source footprint exposes no acquisition-cache row");
+        }
+        yvex_source_manifest_file_list_free(&files);
+    }
     rc = source_verify_run_mode_snapshot(root, 1, &result, &snapshot, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && result.verified,
                      "valid exact source verifies");
@@ -473,14 +614,23 @@ int yvex_test_source_verify(void)
                      result.generation_bos_token_id == 0 &&
                      result.generation_eos_token_id == 1,
                      "generation sidecar facts are verified");
-    YVEX_TEST_ASSERT(result.compress_ratio_count == 44 &&
+    YVEX_TEST_ASSERT(result.compress_ratio_count == 46 &&
                      result.index_topk == 512 &&
                      strcmp(result.scoring_func, "sqrtsoftplus") == 0 &&
                      strcmp(result.tokenizer_model_type, "BPE") == 0 &&
                      result.tokenizer_effective_vocab_size == 129280 &&
                      result.rope_beta_fast == 32 &&
                      result.rope_beta_slow == 1 &&
-                     strcmp(result.quant_scale_format, "ue8m0") == 0,
+                     strcmp(result.quant_scale_format, "ue8m0") == 0 &&
+                     result.inference_config_valid &&
+                     result.dspark_block_size == 5u &&
+                     result.dspark_noise_token_id == 128799u &&
+                     result.dspark_target_layer_count == 3u &&
+                     result.dspark_target_layer_ids[0] == 40u &&
+                     result.dspark_target_layer_ids[1] == 41u &&
+                     result.dspark_target_layer_ids[2] == 42u &&
+                     result.dspark_markov_rank == 256u &&
+                     result.dspark_inference_layer_count == 3u,
                      "execution-affecting config and tokenizer facts are preserved");
     {
         yvex_deepseek_v4_ir *ir = NULL;
@@ -490,8 +640,8 @@ int yvex_test_source_verify(void)
         YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->ir.build(
                              &ir, &result, &failure, &err) != YVEX_OK && !ir &&
                          failure.code ==
-                             YVEX_DEEPSEEK_V4_IR_FAILURE_SOURCE_FACT_MISSING,
-                         "fixture index identity cannot impersonate pinned release IR");
+                             YVEX_DEEPSEEK_V4_IR_FAILURE_SOURCE_NOT_VERIFIED,
+                         "bounded fixture cannot impersonate the full pinned release topology");
         YVEX_TEST_ASSERT(result.header_scan_count == 1,
                          "rejected architecture construction performs no rescan");
         yvex_model_register_deepseek_v4()->ir.close(ir);

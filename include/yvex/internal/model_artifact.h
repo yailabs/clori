@@ -65,6 +65,7 @@ typedef struct {
     char *runtime_binding;
     char *runtime_target;
     char *runtime_backend;
+    char *runtime_mode;
     unsigned long long runtime_context;
 } yvex_model_registry_owned_entry;
 struct yvex_model_registry {

@@ -190,6 +190,8 @@ const yvex_attention_summary *yvex_attention_plan_summary(const yvex_attention_p
 unsigned long long yvex_attention_plan_layer_count(const yvex_attention_plan *plan);
 const yvex_attention_layer_plan *yvex_attention_plan_layer_at(const yvex_attention_plan *plan,
     unsigned long long index);
+const yvex_attention_layer_plan *yvex_attention_plan_layer_find(
+    const yvex_attention_plan *plan, unsigned long long layer_index);
 int yvex_attention_reject(yvex_attention_failure *failure, yvex_attention_failure_code code,
     const yvex_runtime_tensor_binding *binding, unsigned long long layer_index, yvex_tensor_role role,
     unsigned long long expected, unsigned long long actual, yvex_error *err, yvex_status err_code,
@@ -256,7 +258,7 @@ int yvex_attention_workspace_recipe_build(
     yvex_attention_workspace_recipe *recipe, yvex_attention_failure *failure,
     yvex_error *err);
 const yvex_runtime_tensor_binding *yvex_attention_binding_find(const yvex_runtime_descriptor *descriptor,
-    yvex_tensor_role role, unsigned long long layer_index);
+    yvex_tensor_role role, const yvex_attention_layer_plan *layer);
 int yvex_attention_decode_row(yvex_materialization_session *session, const yvex_runtime_tensor_binding *binding,
     unsigned long long row, float *out, unsigned long long elements, yvex_attention_scratch_budget *scratch,
     yvex_attention_cpu_result *result, yvex_attention_failure *failure, yvex_error *err);
@@ -358,6 +360,7 @@ int yvex_attention_reduce_chunk(const yvex_attention_layer_plan *layer,
     const unsigned long long *current_indexer_positions, const float *index_query,
     unsigned long long index_query_stride, const float *index_weights, unsigned long long index_weight_stride,
     const float *sinks, unsigned long long token_count, unsigned long long token_position, float *out,
+    int candidate_block_visible,
     unsigned long long *trace_topk_counts, unsigned long long *trace_topk_positions,
     unsigned long long trace_topk_stride, yvex_attention_scratch_budget *scratch,
     yvex_attention_cpu_result *result, yvex_attention_failure *failure, yvex_error *err);
@@ -400,7 +403,7 @@ void yvex_attention_result_outputs_publish(yvex_attention_cpu_result *result,
     const yvex_attention_component_span *envelope);
 void yvex_attention_cuda_weights_release(attention_cuda_weights *weights);
 int yvex_attention_cuda_role_load(yvex_materialization_session *session, const yvex_runtime_descriptor *descriptor,
-    unsigned long long layer_index, yvex_tensor_role role, yvex_backend_attention_weight_slot slot,
+    const yvex_attention_layer_plan *layer, yvex_tensor_role role, yvex_backend_attention_weight_slot slot,
     attention_cuda_weights *owned, yvex_backend_attention_job *job, yvex_attention_failure *failure,
     yvex_error *err);
 void yvex_attention_cuda_activation_project(const yvex_attention_activation_policy *source,

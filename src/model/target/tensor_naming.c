@@ -2,9 +2,9 @@
  * Project admitted model facts into format-specific GGUF naming and layout facts while retaining
  * bounded lexical reports for other families.
  *
- * The mapping preserves canonical terminal order, exhaustive source contribution ownership, and
- * identity 1aecbbe25b04de0d. Adding names, qtypes, and metadata after the sealed IR does not
- * redefine logical model or Transformation IR identity.
+ * The mapping preserves canonical terminal order and exhaustive source contribution ownership.
+ * Adding names, qtypes, and metadata after the sealed IR does not redefine logical-model or
+ * Transformation-IR identity.
  */
 #include <yvex/internal/model_target.h>
 #include <yvex/internal/core.h>
@@ -445,7 +445,7 @@ int yvex_tensor_naming_report_build(
                        "tensor naming report requires tensor-map command kind");
         return YVEX_ERR_INVALID_ARG;
     }
-    if (strcmp(request->target_id, "deepseek4-v4-flash") == 0) {
+    if (strcmp(request->target_id, "deepseek4-v4-flash-dspark") == 0) {
         return yvex_model_mapping_report_deepseek(request, report, err);
     }
     if (!naming_validate(request, report)) {
@@ -523,7 +523,7 @@ int yvex_tensor_naming_report_build(
 }
 /* GGUF lowering projects the sealed IR without becoming semantic identity. */
 
-#define MAP_METADATA_CAP 48u
+#define MAP_METADATA_CAP 64u
 
 /* Local lowering lifecycle and diagnostic operations used before definition. */
 static void lowering_close(yvex_deepseek_gguf_map *map);
@@ -586,7 +586,7 @@ static const yvex_tensor_collection map_collections[YVEX_TRANSFORM_SUBSYSTEM_COU
 static const yvex_tensor_scope map_scopes[] = {
     YVEX_TENSOR_SCOPE_GLOBAL,
     YVEX_TENSOR_SCOPE_MAIN_LAYER,
-    YVEX_TENSOR_SCOPE_MTP
+    YVEX_TENSOR_SCOPE_DRAFT
 };
 
 enum { MAP_SCOPE_COUNT = 3, MAP_SUBSYSTEM_COUNT = YVEX_TRANSFORM_SUBSYSTEM_COUNT };
@@ -642,17 +642,17 @@ static const map_summary_expectation map_summary_expectations[] = {
      YVEX_DEEPSEEK_GGUF_DESCRIPTOR_COUNT},
     {offsetof(yvex_deepseek_gguf_map_summary, trunk_descriptor_count),
      YVEX_DEEPSEEK_GGUF_TRUNK_DESCRIPTOR_COUNT},
-    {offsetof(yvex_deepseek_gguf_map_summary, mtp_descriptor_count),
-     YVEX_DEEPSEEK_GGUF_MTP_DESCRIPTOR_COUNT},
+    {offsetof(yvex_deepseek_gguf_map_summary, draft_descriptor_count),
+     YVEX_DEEPSEEK_GGUF_DRAFT_DESCRIPTOR_COUNT},
     {offsetof(yvex_deepseek_gguf_map_summary, pinned_standard_count),
      YVEX_DEEPSEEK_GGUF_TRUNK_DESCRIPTOR_COUNT},
     {offsetof(yvex_deepseek_gguf_map_summary, extension_count),
-     YVEX_DEEPSEEK_GGUF_MTP_DESCRIPTOR_COUNT}
+     YVEX_DEEPSEEK_GGUF_DRAFT_DESCRIPTOR_COUNT}
 };
 
 typedef enum {
     M_LIT = 0, M_MODEL, M_LAYER, M_CSA,
-    M_LAYER_NUM, M_CSA_NUM, M_RATIOS, M_CLAMP
+    M_LAYER_NUM, M_CSA_NUM, M_RATIOS, M_CLAMP, M_DSPARK_LAYERS
 } map_metadata_owner;
 
 #define M_STR YVEX_DEEPSEEK_GGUF_METADATA_STRING
@@ -679,7 +679,7 @@ typedef struct {
 
 static const map_metadata_spec map_metadata_specs[] = {
     {"general.architecture", M_STR, M_LIT, 0u, {.string = "deepseek4"}},
-    {"general.name", M_STR, M_LIT, 0u, {.string = "DeepSeek-V4-Flash"}},
+    {"general.name", M_STR, M_LIT, 0u, {.string = "DeepSeek-V4-Flash-DSpark"}},
     {"general.source.huggingface.repository", M_STR, M_MODEL, offsetof(model_t, repository), {0}},
     {"yvex.source.revision", M_STR, M_MODEL, offsetof(model_t, revision), {0}},
     {"deepseek4.block_count", M_U64, M_MODEL, offsetof(model_t, main_layer_count), {0}},
@@ -720,11 +720,26 @@ static const map_metadata_spec map_metadata_specs[] = {
     {"tokenizer.ggml.bos_token_id", M_U64, M_MODEL, offsetof(model_t, tokenizer.bos_token_id), {0}},
     {"tokenizer.ggml.eos_token_id", M_U64, M_MODEL, offsetof(model_t, tokenizer.eos_token_id), {0}},
     {"yvex.tokenizer.sidecars_verified", M_BOOL, M_LIT, 0u, {.u64 = 1u}},
-    {"yvex.deepseek4.mtp.schema", M_U64, M_LIT, 0u, {.u64 = YVEX_GGUF_MTP_EXTENSION_VERSION}},
-    {"yvex.deepseek4.mtp.predictor_count", M_U64, M_MODEL, offsetof(model_t, auxiliary_layer_count), {0}},
-    {"yvex.deepseek4.mtp.descriptor_count", M_U64, M_LIT, 0u, {.u64 = YVEX_DEEPSEEK_GGUF_MTP_DESCRIPTOR_COUNT}},
-    {"yvex.deepseek4.mtp.runtime_supported", M_BOOL, M_LIT, 0u, {0}},
-    {"yvex.deepseek4.mtp.name_prefix", M_STR, M_LIT, 0u, {.string = "yvex.mtp.v1"}}
+    {"yvex.deepseek4.dspark.schema", M_U64, M_LIT, 0u,
+     {.u64 = YVEX_GGUF_DSPARK_EXTENSION_VERSION}},
+    {"yvex.deepseek4.dspark.block_size", M_U64, M_MODEL,
+     offsetof(model_t, dspark.block_size), {0}},
+    {"yvex.deepseek4.dspark.noise_token_id", M_U64, M_MODEL,
+     offsetof(model_t, dspark.noise_token_id), {0}},
+    {"yvex.deepseek4.dspark.target_layer_ids", M_U64S, M_DSPARK_LAYERS, 0u, {0}},
+    {"yvex.deepseek4.dspark.draft_layer_count", M_U64, M_MODEL,
+     offsetof(model_t, dspark.draft_layer_count), {0}},
+    {"yvex.deepseek4.dspark.markov_rank", M_U64, M_MODEL,
+     offsetof(model_t, dspark.markov_rank), {0}},
+    {"yvex.deepseek4.dspark.confidence_available", M_BOOL, M_MODEL,
+     offsetof(model_t, dspark.confidence_available), {0}},
+    {"yvex.deepseek4.dspark.target_verification_required", M_BOOL, M_MODEL,
+     offsetof(model_t, dspark.target_verification_required), {0}},
+    {"yvex.deepseek4.dspark.descriptor_count", M_U64, M_LIT, 0u,
+     {.u64 = YVEX_DEEPSEEK_GGUF_DRAFT_DESCRIPTOR_COUNT}},
+    {"yvex.deepseek4.dspark.runtime_supported", M_BOOL, M_LIT, 0u, {.u64 = 1u}},
+    {"yvex.deepseek4.dspark.name_prefix", M_STR, M_LIT, 0u,
+     {.string = "yvex.draft.v1"}}
 };
 
 static void *map_default_allocate(size_t size, void *context)
@@ -1005,7 +1020,7 @@ static int map_descriptor_begin(map_builder *builder,
             YVEX_DEEPSEEK_GGUF_AGGREGATED_AXIS;
     }
     if (!yvex_gguf_name_map_resolve(
-            descriptor->role, scope == YVEX_TENSOR_SCOPE_MTP,
+            descriptor->role, scope == YVEX_TENSOR_SCOPE_DRAFT,
             descriptor->layer_index, descriptor->predictor_index,
             descriptor->emitted_name, sizeof(descriptor->emitted_name),
             &provenance, &reason)) {
@@ -1045,8 +1060,8 @@ static int map_descriptor_begin(map_builder *builder,
             descriptor->identity, descriptor->logical_dims[dimension]);
     map->summary.descriptor_count++;
     map->summary.collection_counts[collection]++;
-    if (scope == YVEX_TENSOR_SCOPE_MTP)
-        map->summary.mtp_descriptor_count++;
+    if (scope == YVEX_TENSOR_SCOPE_DRAFT)
+        map->summary.draft_descriptor_count++;
     else
         map->summary.trunk_descriptor_count++;
     if (provenance == YVEX_GGUF_NAME_PINNED_STANDARD)
@@ -1196,7 +1211,7 @@ static int map_add_metadata_spec(map_builder *builder,
                                  const unsigned long long *ratios,
                                  const double *clamp)
 {
-    yvex_deepseek_gguf_metadata *entry;
+    yvex_deepseek_gguf_metadata *entry = NULL;
     const void *owner = spec->owner == M_MODEL
         ? (const void *)model
         : (spec->owner == M_CSA ||
@@ -1227,8 +1242,14 @@ static int map_add_metadata_spec(map_builder *builder,
                            spec->owner == M_CSA_NUM
             ? (double)*(const unsigned long long *)field : *(const double *)field;
     } else if (spec->type == M_U64S) {
-        memcpy(entry->array_values, ratios,
-               (size_t)count * sizeof(entry->array_values[0]));
+        if (spec->owner == M_DSPARK_LAYERS) {
+            count = (unsigned int)model->dspark.target_layer_count;
+            memcpy(entry->array_values, model->dspark.target_layer_ids,
+                   (size_t)count * sizeof(entry->array_values[0]));
+        } else {
+            memcpy(entry->array_values, ratios,
+                   (size_t)count * sizeof(entry->array_values[0]));
+        }
     } else {
         memcpy(entry->f64_array_values, clamp,
                (size_t)count * sizeof(entry->f64_array_values[0]));
@@ -1286,7 +1307,7 @@ static int map_finalize(map_builder *builder)
     for (index = 0u; index < map->summary.descriptor_count; ++index) {
         const yvex_deepseek_gguf_descriptor *descriptor =
             &map->descriptors[index];
-        if (descriptor->scope != YVEX_TENSOR_SCOPE_MTP)
+        if (descriptor->scope != YVEX_TENSOR_SCOPE_DRAFT)
             trunk[descriptor->collection]++;
         identity = yvex_core_hash_mix_u64(identity, descriptor->identity);
     }
@@ -1337,9 +1358,9 @@ static int lowering_build_with_allocator(
     model = lowering_family_ir()->model(architecture);
     transform_summary = yvex_transform_ir_summary_get(transform_ir);
     if (!model || model->main_layer_count != 43u ||
-        model->auxiliary_layer_count != 1u) {
+        model->auxiliary_layer_count != 3u) {
         return map_reject_global(
-            &builder, YVEX_DEEPSEEK_GGUF_MAP_FAILURE_ARCHITECTURE, NULL, 44u,
+            &builder, YVEX_DEEPSEEK_GGUF_MAP_FAILURE_ARCHITECTURE, NULL, 46u,
             model ? model->main_layer_count + model->auxiliary_layer_count : 0u);
     }
     if (!transform_summary || !transform_summary->complete ||

@@ -15,6 +15,7 @@ extern "C" {
 
 #define YVEX_GRAPH_ATTENTION_CAPACITY_SCHEMA_V1 1u
 #define YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V1 1u
+#define YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V2 2u
 #define YVEX_ATTENTION_STATE_RECIPE_SCHEMA_V1 1u
 #define YVEX_ATTENTION_STATE_COMPONENT_CAP 8u
 #define YVEX_ATTENTION_WORKSPACE_RECIPE_SCHEMA_V1 1u
@@ -159,18 +160,21 @@ typedef struct {
     unsigned int schema_version;
     int sealed, persistent, cancelled, invalidated, transaction_active;
     int candidate_active, abort_required, position_consistent;
+    int staged_batch_complete;
     unsigned long long layer_count, prepared_layer_count, staged_layer_count, allocated_bytes;
     unsigned long long commit_count, abort_count, cancellation_count, reset_count, generation;
     unsigned long long capacity, committed_sequence_length, next_position;
+    unsigned long long staged_generation, staged_next_position;
     yvex_graph_attention_state_component_summary components[YVEX_ATTENTION_STATE_BINDING_COUNT];
     char state_layout_identity[YVEX_SHA256_HEX_CAP], state_content_identity[YVEX_SHA256_HEX_CAP];
+    char staged_state_content_identity[YVEX_SHA256_HEX_CAP];
 } yvex_graph_attention_state_summary;
 typedef enum {
     YVEX_ATTENTION_STATE_VIEW_COMMITTED = 0,
     YVEX_ATTENTION_STATE_VIEW_CANDIDATE
 } yvex_attention_state_view_kind;
 
-#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V2 2u
+#define YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V3 3u
 typedef struct yvex_attention_state_provider {
     unsigned int schema_version;
     void *context;
@@ -196,6 +200,13 @@ typedef struct yvex_attention_state_provider {
                  const yvex_attention_cancellation *cancellation,
                  char state_delta_identity[YVEX_SHA256_HEX_CAP],
                  yvex_attention_failure *failure, yvex_error *err);
+    /* A coordinated commit preflights every owner before any bank is visible. A
+     * successful prepare retains exclusive publication ownership until one of
+     * the non-failing resolve callbacks is invoked. */
+    int (*prepare_commit)(void *context, yvex_attention_failure *failure,
+                          yvex_error *err);
+    void (*publish_commit)(void *context);
+    void (*cancel_commit)(void *context);
     int (*commit)(void *context, yvex_attention_failure *failure, yvex_error *err);
     int (*abort)(void *context, yvex_attention_failure *failure, yvex_error *err);
     int (*reset)(void *context, yvex_attention_failure *failure, yvex_error *err);
@@ -218,6 +229,58 @@ int yvex_attention_state_provider_open_persistent(
     const yvex_graph_family_api *family, const yvex_attention_plan *plan,
     unsigned long long maximum_host_bytes, yvex_attention_state_provider *out,
     yvex_attention_failure *failure, yvex_error *err);
+
+struct yvex_runtime_execution_session;
+struct yvex_runtime_model;
+struct yvex_runtime_model_failure;
+
+typedef struct {
+    void *context;
+    int (*prepare)(void *context, yvex_error *err);
+    void (*publish)(void *context);
+    void (*cancel)(void *context);
+} yvex_runtime_commit_participant;
+
+int yvex_runtime_session_prepare_persistent_state(
+    struct yvex_runtime_execution_session *session,
+    const yvex_graph_attention_capacity_plan *capacity,
+    struct yvex_runtime_model_failure *failure, yvex_error *err);
+int yvex_runtime_session_prepare_persistent_scope_state(
+    struct yvex_runtime_execution_session *session, yvex_tensor_scope scope,
+    const yvex_graph_attention_capacity_plan *capacity,
+    struct yvex_runtime_model_failure *failure, yvex_error *err);
+int yvex_runtime_session_reset_persistent_state(
+    struct yvex_runtime_execution_session *session,
+    struct yvex_runtime_model_failure *failure, yvex_error *err);
+int yvex_runtime_session_prepare_attention_probe_state(
+    struct yvex_runtime_execution_session *session,
+    struct yvex_runtime_model *model,
+    const yvex_graph_attention_capacity_plan *capacity,
+    yvex_attention_failure *failure, yvex_error *err);
+int yvex_runtime_session_prepare_attention_scope_state(
+    struct yvex_runtime_execution_session *session,
+    struct yvex_runtime_model *model, yvex_tensor_scope scope,
+    const yvex_graph_attention_capacity_plan *capacity,
+    yvex_attention_failure *failure, yvex_error *err);
+int yvex_runtime_attention_probe_execute(
+    struct yvex_runtime_execution_session *session,
+    struct yvex_runtime_model *model,
+    const yvex_attention_probe_request *request,
+    yvex_attention_probe_result *result,
+    struct yvex_runtime_model_failure *failure, yvex_error *err);
+int yvex_runtime_session_begin(
+    struct yvex_runtime_execution_session *session,
+    struct yvex_runtime_model_failure *failure, yvex_error *err);
+int yvex_runtime_session_finish(
+    struct yvex_runtime_execution_session *session, int status,
+    yvex_error *err);
+int yvex_runtime_session_finish_scope(
+    struct yvex_runtime_execution_session *session, yvex_tensor_scope scope,
+    yvex_attention_transaction_disposition disposition, int status,
+    yvex_error *err);
+int yvex_runtime_session_finish_coordinated(
+    struct yvex_runtime_execution_session *session, int status,
+    const yvex_runtime_commit_participant *participant, yvex_error *err);
 
 #ifdef __cplusplus
 }

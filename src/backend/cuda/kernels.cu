@@ -1807,6 +1807,7 @@ extern "C" __global__ void yvex_deepseek_reduce(
     unsigned long long ratio,
     unsigned int attention_class,
     unsigned long long token_position,
+    int candidate_block_visible,
     float *out,
     int *status)
 {
@@ -1817,6 +1818,7 @@ extern "C" __global__ void yvex_deepseek_reduce(
     if (thread != 0u) return;
     if (!query || !current_kv || !sinks || !out || !query_heads || !head_dim ||
         !sliding_window || token_position == ~0ull || attention_class > 2u ||
+        (candidate_block_visible != 0 && candidate_block_visible != 1) ||
         history_local_count == ~0ull ||
         history_compressed_count > ~0ull - current_compressed_count ||
         current_kv_stride < head_dim ||
@@ -1838,7 +1840,8 @@ extern "C" __global__ void yvex_deepseek_reduce(
     const float *q = query + head * head_dim;
     double maximum = (double)sinks[head];
     double scale = 1.0 / sqrt((double)head_dim);
-    unsigned long long local_total = history_local_count + 1ull;
+    unsigned long long local_total = history_local_count +
+                                     (candidate_block_visible ? 0ull : 1ull);
     unsigned long long selected_count = selected_count_ptr
         ? *selected_count_ptr : 0ull;
     unsigned long long compressed_total = attention_class == 2u
@@ -1857,9 +1860,11 @@ extern "C" __global__ void yvex_deepseek_reduce(
                     row = current_kv;
                     position = token_position;
                 }
-                unsigned long long first = token_position + 1ull > sliding_window
-                    ? token_position + 1ull - sliding_window : 0ull;
-                if (position < first || position > token_position) continue;
+                if (!candidate_block_visible) {
+                    unsigned long long first = token_position + 1ull > sliding_window
+                        ? token_position + 1ull - sliding_window : 0ull;
+                    if (position < first || position > token_position) continue;
+                }
             } else {
                 unsigned long long index = attention_class == 2u
                     ? candidate : selected[candidate];
@@ -1900,9 +1905,11 @@ extern "C" __global__ void yvex_deepseek_reduce(
                     row = current_kv;
                     position = token_position;
                 }
-                unsigned long long first = token_position + 1ull > sliding_window
-                    ? token_position + 1ull - sliding_window : 0ull;
-                if (position < first || position > token_position) continue;
+                if (!candidate_block_visible) {
+                    unsigned long long first = token_position + 1ull > sliding_window
+                        ? token_position + 1ull - sliding_window : 0ull;
+                    if (position < first || position > token_position) continue;
+                }
             } else {
                 unsigned long long index = attention_class == 2u
                     ? candidate : selected[candidate];

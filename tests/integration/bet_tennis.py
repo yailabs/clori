@@ -14,20 +14,20 @@ async def main() -> None:
     provider = OpenAICompatibleFoundationProvider(
         FoundationProviderConfig(
             base_url=os.environ["YVEX_OPENAI_BASE_URL"],
-            selected_model_id="deepseek-v4-flash",
+            selected_model_id="deepseek4-v4-flash-dspark",
             request_timeout_seconds=10,
             stream_idle_timeout_seconds=10,
         ),
         None,  # Authentication mode NONE never consults the secret store.
     )
     models, _ = await provider.models()
-    assert models[0]["id"] == "deepseek-v4-flash"
+    assert models[0]["id"] == "deepseek4-v4-flash-dspark"
 
     grounded = await provider.chat(
         messages=[
             {"role": "system", "content": "Use grounded facts and include DATA_UNAVAILABLE."},
             {"role": "user", "content": "The data source is unavailable."},
-        ], model="deepseek-v4-flash", temperature=0, max_tokens=32,
+        ], model="deepseek4-v4-flash-dspark", temperature=0, max_tokens=32,
     )
     assert "DATA_UNAVAILABLE" in grounded.content
 
@@ -35,7 +35,7 @@ async def main() -> None:
         messages=[
             {"role": "system", "content": "Return one JSON object only with exactly these keys: status, operation_mode, real_data."},
             {"role": "user", "content": "Return the observe state."},
-        ], model="deepseek-v4-flash", temperature=0, max_tokens=32,
+        ], model="deepseek4-v4-flash-dspark", temperature=0, max_tokens=32,
         response_format={"type": "json_object"},
     )
     assert json.loads(structured.content) == {
@@ -49,7 +49,7 @@ async def main() -> None:
     }}]
     selection = await provider.chat(
         messages=[{"role": "user", "content": "Read match m1."}],
-        model="deepseek-v4-flash", temperature=0, max_tokens=32,
+        model="deepseek4-v4-flash-dspark", temperature=0, max_tokens=32,
         tools=tools, tool_choice={"type": "function", "function": {
             "name": "query_match_context"}},
     )
@@ -62,7 +62,7 @@ async def main() -> None:
         messages=[
             {"role": "system", "content": "Reply with STREAM_OK."},
             {"role": "user", "content": "Confirm real SSE streaming."},
-        ], model="deepseek-v4-flash", max_tokens=32,
+        ], model="deepseek4-v4-flash-dspark", max_tokens=32,
     ):
         if event["type"] == "delta" and event["content"]:
             streamed.append(event["content"])
@@ -70,12 +70,12 @@ async def main() -> None:
 
     cancelled = provider.stream_chat(
         messages=[{"role": "user", "content": "Reply with STREAM_OK."}],
-        model="deepseek-v4-flash", max_tokens=32,
+        model="deepseek4-v4-flash-dspark", max_tokens=32,
     )
     assert (await anext(cancelled))["type"] == "delta"
     await cancelled.aclose()
     models_after, _ = await provider.models()
-    assert models_after[0]["id"] == "deepseek-v4-flash"
+    assert models_after[0]["id"] == "deepseek4-v4-flash-dspark"
 
     print(json.dumps({
         "provider": "tqa.foundation_provider.openai_compatible.OpenAICompatibleFoundationProvider",

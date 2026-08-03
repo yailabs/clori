@@ -1392,11 +1392,16 @@ int yvex_source_report_build(const yvex_source_report_request *request,
     }
     if (!options->target ||
         !source_report_target_is_supported(options->profile, options->target)) {
-        yvex_error_setf(err,
-                        YVEX_ERR_INVALID_ARG,
-                        "source_report_build",
-                        "unsupported target: %s",
-                        options->target ? options->target : "");
+        if (options->target &&
+            strcmp(options->target, YVEX_SOURCE_RETIRED_TARGET_ID) == 0)
+            yvex_error_setf(
+                err, YVEX_ERR_INVALID_ARG, "source_report_build",
+                "unsupported target: %s; use %s",
+                YVEX_SOURCE_RETIRED_TARGET_ID, YVEX_SOURCE_RELEASE_TARGET_ID);
+        else
+            yvex_error_setf(err, YVEX_ERR_INVALID_ARG,
+                            "source_report_build", "unsupported target: %s",
+                            options->target ? options->target : "");
         return YVEX_ERR_INVALID_ARG;
     }
     deepseek = yvex_source_is_release_target(options->target);
@@ -1502,8 +1507,7 @@ int yvex_source_report_build(const yvex_source_report_request *request,
             report->verification.verified ? "exact-source-verified" : "exact-source-blocked";
         report->top_blocker =
             report->verification.blocker_count ? report->verification.blockers[0] : "none";
-        report->next_row = report->verification.verified ? "V010.SOURCE.PAYLOAD.STREAM.0"
-                                                         : "V010.REBASE.DEEPSEEK.0";
+        report->next_row = "V010.REBASE.DEEPSEEK.DSPARK.0";
         for (i = 0; i < report->verification.blocker_count; ++i) {
             source_report_add_blocker(report, report->verification.blockers[i]);
         }

@@ -87,11 +87,11 @@ static const yvex_moe_family_api *moe_family_find(unsigned long long adapter_id,
 static const yvex_materialized_tensor_binding *moe_binding_find(
     const yvex_materialization_session *materialization,
     const yvex_runtime_descriptor *descriptor, yvex_tensor_role role,
-    unsigned long long layer_index)
+    yvex_tensor_scope scope, unsigned long long layer_index,
+    unsigned long long predictor_index)
 {
     const yvex_runtime_tensor_binding *runtime = yvex_runtime_descriptor_find_role(
-        descriptor, role, YVEX_TENSOR_SCOPE_MAIN_LAYER, layer_index,
-        YVEX_MATERIALIZATION_NO_INDEX);
+        descriptor, role, scope, layer_index, predictor_index);
     return runtime ? yvex_materialization_session_tensor_at(materialization,
                                                              runtime->tensor_id) : NULL;
 }
@@ -131,7 +131,8 @@ static int moe_layer_bind(yvex_moe_layer_plan *layer,
         layer->tensor_ids[slot] = YVEX_MOE_NO_TENSOR;
         if (absent) continue;
         bindings[slot] = moe_binding_find(materialization, descriptor,
-                                          moe_slot_roles[slot], layer->layer_index);
+                                          moe_slot_roles[slot], layer->tensor_scope,
+                                          layer->layer_index, layer->predictor_index);
         if (!bindings[slot]) {
             yvex_error_setf(err, YVEX_ERR_FORMAT, "graph.moe",
                             "MoE layer %llu is missing required role %s",
@@ -203,7 +204,8 @@ static int moe_layer_identity(yvex_moe_layer_plan *layer,
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long slot;
     const unsigned long long fields[] = {
-        layer->schema_version, layer->ordinal, layer->layer_index, layer->router_class,
+        layer->schema_version, layer->ordinal, layer->layer_index, layer->predictor_index,
+        layer->tensor_scope, layer->router_class,
         layer->scoring, layer->topk_policy, layer->activation, layer->hidden_width,
         layer->residual_streams, layer->expanded_width, layer->mhc_mixing_rows,
         layer->mhc_sinkhorn_iterations, layer->routed_experts, layer->shared_experts,
@@ -281,6 +283,7 @@ int yvex_moe_plan_build(yvex_moe_plan **out, unsigned long long adapter_id,
         return moe_refuse(err, YVEX_ERR_NOMEM, "MoE plan allocation failed");
     }
     plan->summary.schema_version = YVEX_MOE_PLAN_SCHEMA_V1;
+    plan->summary.tensor_scope = attention_summary->tensor_scope;
     plan->summary.family_adapter_id = adapter_id;
     plan->summary.family_adapter_version = adapter_version;
     plan->summary.layer_count = attention_summary->layer_count;
@@ -301,7 +304,9 @@ int yvex_moe_plan_build(yvex_moe_plan **out, unsigned long long adapter_id,
             yvex_attention_plan_layer_at(attention, index);
         if (!attention_layer ||
             family->project_layer(index, descriptor_summary, attention_layer, layer, err) != YVEX_OK ||
-            layer->ordinal != index || layer->layer_index != index ||
+            layer->ordinal != index || layer->layer_index != attention_layer->layer_index ||
+            layer->predictor_index != attention_layer->predictor_index ||
+            layer->tensor_scope != attention_layer->tensor_scope ||
             moe_layer_bind(layer, materialization, descriptor, err) != YVEX_OK ||
             !moe_layer_identity(layer, &plan->summary)) {
             yvex_moe_plan_close(&plan);

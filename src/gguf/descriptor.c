@@ -76,7 +76,7 @@ static const char *gguf_standard_role_name(yvex_tensor_role role, int *layer_sco
  * Writes one bounded name and provenance value. Emitted names remain format facts and do not
  * define logical model identity.
  */
-int yvex_gguf_name_map_resolve(yvex_tensor_role role, int mtp_extension,
+int yvex_gguf_name_map_resolve(yvex_tensor_role role, int draft_extension,
                                unsigned long long layer_index, unsigned long long predictor_index,
                                char *out, size_t out_cap, yvex_gguf_name_provenance *provenance,
                                const char **reason) {
@@ -90,8 +90,8 @@ int yvex_gguf_name_map_resolve(yvex_tensor_role role, int mtp_extension,
             *reason = "invalid typed role or output buffer";
         return 0;
     }
-    if (mtp_extension) {
-        written = snprintf(out, out_cap, "yvex.mtp.v1.%llu.%s.weight", predictor_index,
+    if (draft_extension) {
+        written = snprintf(out, out_cap, "yvex.draft.v1.%llu.%s.weight", predictor_index,
                            yvex_tensor_role_name(role));
         *provenance = YVEX_GGUF_NAME_YVEX_EXTENSION;
     } else {

@@ -93,7 +93,7 @@ static const yvex_model_target_row_spec collection_audit_rows[] = {
 };
 
 static const char *const coverage_scope_names[] = {
-    "global", "main-layer", "mtp"
+    "global", "main-layer", "draft"
 };
 
 static const char *const coverage_expert_projections[] = {
@@ -324,7 +324,7 @@ static int coverage_reject(
 
 static const char *coverage_scope_name(yvex_tensor_scope scope)
 {
-    return scope <= YVEX_TENSOR_SCOPE_MTP
+    return scope <= YVEX_TENSOR_SCOPE_DRAFT
                ? coverage_scope_names[scope]
                : "unknown";
 }
@@ -465,7 +465,7 @@ static int coverage_fp8_pair(coverage_builder *builder,
                              unsigned long long columns,
                              const yvex_deepseek_v4_source_constraint *storage)
 {
-    char name[256];
+    char name[512];
     int rc;
 
     if (!storage->quant_block_rows || !storage->quant_block_columns ||
@@ -496,7 +496,7 @@ static int coverage_fp4_pair(coverage_builder *builder,
                              unsigned long long columns,
                              const yvex_deepseek_v4_source_constraint *storage)
 {
-    char name[256];
+    char name[512];
     int rc;
 
     if (!storage->fp4_packing_factor || !storage->fp4_scale_group_width ||
@@ -656,37 +656,61 @@ static int coverage_build_requirements(coverage_builder *builder,
     }
     for (index = 0u; rc == YVEX_OK && index < model->auxiliary_layer_count; ++index) {
         const yvex_deepseek_v4_auxiliary_spec *aux = coverage_family_ir()->auxiliary_at(ir, index);
-        static const char *norms[] = {"enorm.weight", "hnorm.weight", "norm.weight"};
-        unsigned long long widths[] = {aux->embedding_projection_input,
-                                      aux->hidden_projection_input, model->hidden_size};
-        char prefix[64], name[256];
-        unsigned int item;
+        char prefix[64], name[256], base[256];
 
         (void)snprintf(prefix, sizeof(prefix), "mtp.%llu", index);
-        rc = coverage_layer(builder, prefix, &aux->layer, YVEX_TENSOR_SCOPE_MTP, model);
-        for (item = 0u; rc == YVEX_OK && item < 2u; ++item) {
-            unsigned long long rows = item ? aux->hidden_projection_output
-                                           : aux->embedding_projection_output;
-            unsigned long long columns = item ? aux->hidden_projection_input
-                                              : aux->embedding_projection_input;
-            (void)snprintf(name, sizeof(name), "%s.%s", prefix, item ? "h_proj" : "e_proj");
-            rc = coverage_fp8_pair(builder, name, YVEX_TENSOR_COLLECTION_AUXILIARY,
-                                   YVEX_TENSOR_SCOPE_MTP, aux->layer.layer_index,
-                                   YVEX_DEEPSEEK_TENSOR_NO_INDEX, rows, columns,
-                                   &model->source_constraint);
+        rc = coverage_layer(builder, prefix, &aux->layer,
+                            YVEX_TENSOR_SCOPE_DRAFT, model);
+        if (rc == YVEX_OK && aux->has_feature_projection) {
+            (void)snprintf(base, sizeof(base), "%s.main_proj", prefix);
+            rc = coverage_fp8_pair(
+                builder, base, YVEX_TENSOR_COLLECTION_AUXILIARY,
+                YVEX_TENSOR_SCOPE_DRAFT, aux->layer.layer_index,
+                YVEX_DEEPSEEK_TENSOR_NO_INDEX, aux->feature_projection_output,
+                aux->feature_projection_input, &model->source_constraint);
         }
-        for (item = 0u; rc == YVEX_OK && item < 3u; ++item) {
-            (void)snprintf(name, sizeof(name), "%s.%s", prefix, norms[item]);
+        if (rc == YVEX_OK && aux->has_feature_norm) {
+            (void)snprintf(name, sizeof(name), "%s.main_norm.weight", prefix);
             rc = coverage_vector(builder, name, YVEX_TENSOR_COLLECTION_AUXILIARY,
-                                 YVEX_TENSOR_SCOPE_MTP, aux->layer.layer_index,
+                                 YVEX_TENSOR_SCOPE_DRAFT, aux->layer.layer_index,
                                  YVEX_DEEPSEEK_TENSOR_NO_INDEX, YVEX_NATIVE_DTYPE_BF16,
-                                 widths[item]);
+                                 aux->feature_norm_width);
         }
-        (void)snprintf(name, sizeof(name), "%s.", prefix);
-        if (rc == YVEX_OK)
-            rc = coverage_mhc_head(builder, name, YVEX_TENSOR_SCOPE_MTP,
+        if (rc == YVEX_OK && aux->has_output_norm) {
+            (void)snprintf(name, sizeof(name), "%s.norm.weight", prefix);
+            rc = coverage_vector(builder, name, YVEX_TENSOR_COLLECTION_AUXILIARY,
+                                 YVEX_TENSOR_SCOPE_DRAFT, aux->layer.layer_index,
+                                 YVEX_DEEPSEEK_TENSOR_NO_INDEX, YVEX_NATIVE_DTYPE_BF16,
+                                 aux->output_norm_width);
+        }
+        if (rc == YVEX_OK && aux->has_markov_head) {
+            (void)snprintf(name, sizeof(name), "%s.markov_head.markov_w1.weight", prefix);
+            rc = coverage_matrix(builder, name, YVEX_TENSOR_COLLECTION_AUXILIARY,
+                                 YVEX_TENSOR_SCOPE_DRAFT, aux->layer.layer_index,
+                                 YVEX_DEEPSEEK_TENSOR_NO_INDEX, YVEX_NATIVE_DTYPE_BF16,
+                                 aux->markov_vocabulary_size, aux->markov_rank);
+            if (rc == YVEX_OK) {
+                (void)snprintf(name, sizeof(name),
+                               "%s.markov_head.markov_w2.weight", prefix);
+                rc = coverage_matrix(builder, name, YVEX_TENSOR_COLLECTION_AUXILIARY,
+                                     YVEX_TENSOR_SCOPE_DRAFT, aux->layer.layer_index,
+                                     YVEX_DEEPSEEK_TENSOR_NO_INDEX, YVEX_NATIVE_DTYPE_BF16,
+                                     aux->markov_vocabulary_size, aux->markov_rank);
+            }
+        }
+        if (rc == YVEX_OK && aux->has_confidence_head) {
+            (void)snprintf(name, sizeof(name), "%s.confidence_head.proj.weight", prefix);
+            rc = coverage_matrix(builder, name, YVEX_TENSOR_COLLECTION_AUXILIARY,
+                                 YVEX_TENSOR_SCOPE_DRAFT, aux->layer.layer_index,
+                                 YVEX_DEEPSEEK_TENSOR_NO_INDEX, YVEX_NATIVE_DTYPE_BF16,
+                                 aux->confidence_output_width, aux->confidence_input_width);
+        }
+        if (rc == YVEX_OK && aux->has_separate_mhc_head) {
+            (void)snprintf(name, sizeof(name), "%s.", prefix);
+            rc = coverage_mhc_head(builder, name, YVEX_TENSOR_SCOPE_DRAFT,
                                    aux->layer.layer_index, &aux->mhc_head,
                                    YVEX_TENSOR_COLLECTION_AUXILIARY);
+        }
     }
     return rc;
 }
@@ -717,8 +741,7 @@ static int coverage_reject_unexpected(coverage_builder *builder,
     const yvex_deepseek_v4_model_spec *model =
         coverage_family_ir()->model(ir);
     const yvex_deepseek_v4_layer_spec *layer_spec = NULL;
-    const yvex_deepseek_v4_auxiliary_spec *aux =
-        coverage_family_ir()->auxiliary_at(ir, 0u);
+    const yvex_deepseek_v4_auxiliary_spec *aux = NULL;
     yvex_tensor_scope scope = YVEX_TENSOR_SCOPE_GLOBAL;
     unsigned long long layer = YVEX_DEEPSEEK_TENSOR_NO_INDEX;
     unsigned long long expert = YVEX_DEEPSEEK_TENSOR_NO_INDEX;
@@ -750,20 +773,22 @@ static int coverage_reject_unexpected(coverage_builder *builder,
             layer_spec = coverage_family_ir()->layer_at(ir, layer);
     } else if (strncmp(source->name, "mtp.", 4u) == 0) {
         unsigned long long predictor = 0u;
-        scope = YVEX_TENSOR_SCOPE_MTP;
+        scope = YVEX_TENSOR_SCOPE_DRAFT;
         parsed = coverage_parse_name_index(source->name + 4u,
                                            &predictor, &tail);
         if (parsed < 0) goto arithmetic_overflow;
+        aux = parsed > 0 && *tail == '.'
+                  ? coverage_family_ir()->auxiliary_at(ir, predictor)
+                  : NULL;
         layer = aux ? aux->layer.layer_index : YVEX_DEEPSEEK_TENSOR_NO_INDEX;
-        if (parsed > 0 && *tail == '.' &&
-            (!aux || predictor != aux->predictor_index)) {
+        if (parsed > 0 && *tail == '.' && !aux) {
             return coverage_reject(
                 builder->failure,
                 YVEX_DEEPSEEK_COVERAGE_FAILURE_INVALID_INDEX,
                 YVEX_TENSOR_COLLECTION_AUXILIARY, scope,
                 source->name, layer, predictor,
                 YVEX_DEEPSEEK_TENSOR_NO_INDEX,
-                aux ? aux->predictor_index : 0u, predictor, builder->err);
+                model->auxiliary_layer_count - 1u, predictor, builder->err);
         }
         if (parsed > 0 && *tail == '.' && aux) layer_spec = &aux->layer;
     }
@@ -857,7 +882,10 @@ static int coverage_validate_inputs(
             YVEX_DEEPSEEK_TENSOR_NO_INDEX, verification->header_tensor_count,
             facts->tensor_count, err);
     }
-    if (model->main_layer_count != 43u || model->auxiliary_layer_count != 1u ||
+    if (model->main_layer_count != 43u || model->auxiliary_layer_count != 3u ||
+        !model->dspark.present || model->dspark.block_size != 5u ||
+        model->dspark.draft_layer_count != 3u ||
+        model->dspark.markov_rank != 256u ||
         model->source_constraint.quant_block_rows != 128u ||
         model->source_constraint.quant_block_columns != 128u ||
         model->source_constraint.fp4_packing_factor != 2u ||
@@ -974,7 +1002,7 @@ static int coverage_build(
     yvex_source_tensor_snapshot_retain(snapshot);
     coverage->summary.source_tensor_count = source_facts.tensor_count;
     coverage->summary.main_layer_count = 43u;
-    coverage->summary.auxiliary_layer_count = 1u;
+    coverage->summary.auxiliary_layer_count = 3u;
     coverage->summary.header_scan_count = source_facts.header_scan_count;
     coverage->summary.payload_bytes_read = source_facts.payload_bytes_read;
     coverage->summary.source_identity = source_facts.identity;

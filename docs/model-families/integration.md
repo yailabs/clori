@@ -60,6 +60,8 @@ signature containing as applicable:
 - dense FFN or MoE topology;
 - expert count, active experts, shared experts, and routing policy;
 - output-head and tokenizer relationship;
+- auxiliary proposal topology, target feature dependencies, verification, and
+  accepted-prefix rules when speculative execution is present;
 - source dtype/qtype constraints;
 - backend requirements and explicit blockers.
 
@@ -100,6 +102,13 @@ persistent-state storage, workspace, backend memory, common numerical
 primitives, telemetry, or claim promotion. YVEX has one common runtime, not a
 runtime per family.
 
+For a speculative family, the adapter additionally projects irreducible draft
+geometry, feature taps, proposal composition, and family-specific acceptance
+policy. The common runtime owns proposal, full-target verification,
+accepted-prefix transaction, cancellation, committed accounting, and
+publication. It never recovers draft semantics from family names or tensor
+strings.
+
 ## Artifact prerequisites
 
 A family artifact contract identifies every required global, per-layer, and
@@ -119,6 +128,11 @@ workspace requirements, and capability prerequisites. The family adapter may
 select an irreducible schedule but may not create another immutable model,
 session hierarchy, KV owner, worker, or telemetry authority.
 
+When one target has a draft assistant, a single immutable runtime model owns
+both plans and their shared resources. A binding that advertises speculative
+execution must admit every draft and verification requirement; a target-only
+binding cannot be promoted by a runtime flag.
+
 Runtime support requires the same path used by the product:
 
 ```text
@@ -128,6 +142,22 @@ tokenizer -> prefill -> persistent state -> decode -> logits
 
 Direct component execution, attention-local prefill/decode phases, or
 teacher-forced token execution do not by themselves establish generation.
+
+Speculative generation adds a bounded transaction:
+
+```text
+committed target state
+  -> proposal workspace
+  -> complete-target candidate verification
+  -> exact accepted prefix
+  -> atomic target/token/decoder/RNG commit
+  -> committed text publication
+```
+
+Proposal tokens are neither generated output nor persistent target state.
+Confidence is scheduling input, not correctness authority. A rejected suffix
+is discarded before publication, and usage counts only target-verified
+committed tokens.
 
 ## Backend prerequisites
 
@@ -193,8 +223,9 @@ same hosted path exposed to the operator.
 
 ## Current records
 
-- [DeepSeek-V4-Flash](deepseek-v4-flash.md) is the sole complete
-  source-to-text vertical; evaluation, benchmark, and release remain open.
+- [DeepSeek-V4-Flash-DSpark](deepseek-v4-flash.md) is the sole complete
+  source-to-text vertical and the only family with target-verified speculative
+  generation; optimization, evaluation, benchmark, and release remain open.
 - [Qwen](qwen.md) has source/header and candidate-role evidence only.
 - [Gemma](gemma.md) has source/header and candidate-role evidence only.
 

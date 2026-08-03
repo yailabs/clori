@@ -33,12 +33,12 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
 | Runtime, execution, state, and resources | [Runtime architecture](architecture/runtime.md) |
 | Command and operation projections | [Command architecture](architecture/commands.md) |
 | Family integration | [Family integration contract](model-families/integration.md) |
-| DeepSeek-V4-Flash facts | [DeepSeek record](model-families/deepseek-v4-flash.md) |
+| DeepSeek-V4-Flash-DSpark facts | [DeepSeek record](model-families/deepseek-v4-flash.md) |
 | Qwen facts | [Qwen record](model-families/qwen.md) |
 | Gemma facts | [Gemma record](model-families/gemma.md) |
 | Artifact admission | [Artifact contract](contracts/artifacts.md) |
 | Hosted runtime behavior | [Runtime contract](contracts/runtime.md) |
-| Private local protocol | [Local protocol v4](contracts/local-protocol.md) |
+| Private local protocol | [Local protocol v5](contracts/local-protocol.md) |
 | OpenAI-compatible HTTP | [Compatibility profile](openai-compatibility.md) |
 | Installed and internal C interfaces | [C API](contracts/c-api.md) |
 | Events and telemetry | [Events contract](contracts/events-telemetry.md) |
@@ -61,11 +61,15 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
   operator-surface, and topology audits remain frozen beside the documentation
   baseline.
 - [Migrations](migrations/documentation-architecture-v1.md) map superseded
-  paths and terms to current owners.
+  paths and terms to current owners; the
+  [DSpark source migration](migrations/deepseek-dspark-source.md) records the
+  sole-target replacement and refusal boundary.
 - [Milestone contracts](milestones/documentation-architecture.md) define
   bounded implementation acceptance without owning live state; the
   [commentary contract](milestones/code-commentary.md) records the selective
-  source-commentary boundary.
+  source-commentary boundary; the
+  [DSpark rebase contract](milestones/deepseek-dspark-rebase.md) owns the
+  current source-to-speculative-text implementation boundary.
 
 ## Document classes
 

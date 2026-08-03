@@ -731,15 +731,16 @@ static int attention_cuda_load_weight(yvex_materialization_session *session,
 
 int yvex_attention_cuda_role_load(yvex_materialization_session *session,
                                   const yvex_runtime_descriptor *descriptor,
-                                  unsigned long long layer_index, yvex_tensor_role role,
+                                  const yvex_attention_layer_plan *layer, yvex_tensor_role role,
                                   yvex_backend_attention_weight_slot slot,
                                   attention_cuda_weights *owned, yvex_backend_attention_job *job,
                                   yvex_attention_failure *failure, yvex_error *err) {
     const yvex_runtime_tensor_binding *binding =
-        yvex_attention_binding_find(descriptor, role, layer_index);
+        yvex_attention_binding_find(descriptor, role, layer);
     if (!binding)
         return yvex_attention_reject(failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_MISSING_BINDING, NULL,
-                                     layer_index, role, 1ull, 0ull, err, YVEX_ERR_FORMAT,
+                                     layer ? layer->layer_index : YVEX_ATTENTION_NO_LAYER,
+                                     role, 1ull, 0ull, err, YVEX_ERR_FORMAT,
                                      "CUDA attention required typed role binding is absent");
     return attention_cuda_load_weight(session, binding, slot, owned, job, failure, err);
 }

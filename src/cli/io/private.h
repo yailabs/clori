@@ -452,6 +452,7 @@ int yvex_cli_json_fields(FILE *fp, const void *object, const yvex_cli_field_spec
 /* Human output. */
 int yvex_cli_out_writef(FILE *fp, const char *fmt, ...);
 int yvex_cli_out_vwritef(FILE *fp, const char *fmt, va_list ap);
+int yvex_cli_completion_command(int argc, char **argv, size_t consumed);
 int yvex_cli_out_puts(FILE *fp, const char *text);
 int yvex_cli_out_fputs(const char *text, FILE *fp);
 int yvex_cli_out_char(FILE *fp, int ch);

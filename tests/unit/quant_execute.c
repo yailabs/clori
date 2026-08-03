@@ -329,10 +329,10 @@ static int quant_fixture_open_session(
     verification.declared_tensor_bytes = fixture->payload_bytes;
     verification.source_snapshot_identity = snapshot_facts.identity;
     (void)snprintf(verification.revision, sizeof(verification.revision), "%s",
-                   "60d8d70770c6776ff598c94bb586a859a38244f1");
+                   "62af8fffb2f7030cac4de2f0169f5b8d1101b646");
     (void)snprintf(verification.repository_id,
                    sizeof(verification.repository_id), "%s",
-                   "deepseek-ai/DeepSeek-V4-Flash");
+                   "deepseek-ai/DeepSeek-V4-Flash-DSpark");
     (void)snprintf(verification.inventory_authority,
                    sizeof(verification.inventory_authority), "%s",
                    "fixture-retained-snapshot");

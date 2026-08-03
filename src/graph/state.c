@@ -44,10 +44,12 @@ typedef struct {
     attention_layer_state *layer;
     unsigned long long layer_ordinal, token_position, token_count, applied_tokens, staged_count;
     unsigned long long batch_position, batch_token_count;
-    int active, candidate_active, failed;
+    unsigned long long prepared_commit_count, prepared_generation, prepared_next_position;
+    int active, candidate_active, failed, publication_prepared;
     yvex_attention_cancellation cancellation;
     int cancellation_bound;
     char state_layout_identity[YVEX_SHA256_HEX_CAP];
+    char prepared_content_identity[YVEX_SHA256_HEX_CAP];
     attention_state_delta delta;
 } attention_state_transaction;
 typedef struct {
@@ -207,7 +209,7 @@ typedef struct {
     int mutex_ready;
 } attention_state;
 static const yvex_graph_attention_state_summary initial_state_summary = {
-    .schema_version = YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V1,
+    .schema_version = YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V2,
     .sealed = 1, .persistent = 1, .position_consistent = 1,
     .generation = 1ull};
 static void state_close(attention_state **state_ptr);
@@ -628,7 +630,7 @@ static int state_layout_identity(const attention_state *state,
     if (!summary) return 0;
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.graph.attention.state-layout.v2") ||
-        !yvex_sha256_update_u64(&hash, YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V1) ||
+        !yvex_sha256_update_u64(&hash, YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V2) ||
         !yvex_sha256_update_text(&hash, summary->attention_plan_identity) ||
         !yvex_sha256_update_u64(&hash, state->layer_count))
         return 0;
@@ -1184,6 +1186,28 @@ static int state_summary_copy(
             }
         }
     }
+    if (state->transaction.active && !state->transaction.candidate_active &&
+        !state->transaction.failed && state->transaction.staged_count &&
+        state->transaction.staged_count == state->summary.prepared_layer_count) {
+        if (!yvex_core_u64_add(state->summary.generation, 1ull,
+                               &out->staged_generation) ||
+            !yvex_core_u64_add(state->transaction.batch_position,
+                               state->transaction.batch_token_count,
+                               &out->staged_next_position) ||
+            out->staged_next_position > state->summary.capacity ||
+            !state_content_identity(
+                state, ULLONG_MAX, NULL, 1,
+                state->summary.state_layout_identity,
+                out->staged_state_content_identity)) {
+            memset(out, 0, sizeof(*out));
+            yvex_error_set(err, YVEX_ERR_BOUNDS,
+                           "graph.attention.state.summary",
+                           "staged attention state summary overflowed");
+            return state_unlock_result(mutable_state, YVEX_ERR_BOUNDS,
+                                       NULL, err);
+        }
+        out->staged_batch_complete = 1;
+    }
     return state_unlock_result(mutable_state, YVEX_OK, NULL, err);
 }
 
@@ -1308,6 +1332,30 @@ done:
     return state_transaction_result(state, rc, failure, err);
 }
 
+/* Resolve a successful preflight without another fallible operation. */
+static void state_publish_prepared(attention_state *state) {
+    attention_state_transaction *transaction;
+    unsigned long long index;
+    if (!state) return;
+    transaction = &state->transaction;
+    if (!transaction->publication_prepared) return;
+    for (index = 0ull; index < state->layer_count; ++index) {
+        attention_layer_state *layer = &state->layers[index];
+        if (!layer->staged) continue;
+        layer->committed_bank = 1u - layer->committed_bank;
+        layer->staged = 0;
+    }
+    state->summary.commit_count = transaction->prepared_commit_count;
+    state->summary.generation = transaction->prepared_generation;
+    state->summary.committed_sequence_length = transaction->prepared_next_position;
+    state->summary.next_position = transaction->prepared_next_position;
+    yvex_core_text_copy(state->summary.state_content_identity,
+                        sizeof(state->summary.state_content_identity),
+                        transaction->prepared_content_identity);
+    memset(transaction, 0, sizeof(*transaction));
+    (void)pthread_mutex_unlock(&state->mutex);
+}
+
 static int state_apply(
     attention_state *state,
     const yvex_attention_publication *publication,
@@ -1399,12 +1447,9 @@ static int state_apply(
 done:
     return state_transaction_result(state, rc, failure, err);
 }
-/*
- * Publish every staged layer as one all-or-none attention state transition.
- *
- * This is the only atomic multi-layer persistent-state publication point.
- */
-static int state_publish(
+/* Validate publication while retaining the provider lock, so a session can
+ * preflight every participating state owner before any bank becomes visible. */
+static int state_prepare_publish(
     attention_state *state,
     yvex_attention_failure *failure, yvex_error *err) {
     attention_state_transaction *transaction;
@@ -1421,6 +1466,7 @@ static int state_publish(
         if (state->layers[index].staged) ++staged;
     injected = getenv("YVEX_TEST_RUNTIME_STATE_PUBLISH_FAILURE") != NULL;
     if (!transaction->active || transaction->candidate_active || transaction->failed ||
+        transaction->publication_prepared ||
         !transaction->staged_count || staged != transaction->staged_count ||
         staged != state->summary.prepared_layer_count ||
         transaction->batch_position != state->summary.next_position ||
@@ -1456,22 +1502,34 @@ static int state_publish(
                             YVEX_ATTENTION_NO_LAYER, "attention state cancelled before publication",
                             failure, err);
     if (rc != YVEX_OK) goto done;
-    for (index = 0ull; index < state->layer_count; ++index) {
-        attention_layer_state *layer = &state->layers[index];
-        if (!layer->staged) continue;
-        layer->committed_bank = 1u - layer->committed_bank;
-        layer->staged = 0;
-    }
-    state->summary.commit_count = commit_next;
-    state->summary.generation = generation_next;
-    state->summary.committed_sequence_length = next_position;
-    state->summary.next_position = next_position;
-    yvex_core_text_copy(state->summary.state_content_identity,
-                        sizeof(state->summary.state_content_identity),
-                        content_identity);
-    memset(transaction, 0, sizeof(*transaction));
+    transaction->prepared_commit_count = commit_next;
+    transaction->prepared_generation = generation_next;
+    transaction->prepared_next_position = next_position;
+    yvex_core_text_copy(transaction->prepared_content_identity,
+                        sizeof(transaction->prepared_content_identity), content_identity);
+    transaction->publication_prepared = 1;
+    if (failure) memset(failure, 0, sizeof(*failure));
+    yvex_error_clear(err);
+    return YVEX_OK;
 done:
     return state_transaction_result(state, rc, failure, err);
+}
+
+static void state_cancel_prepared_publish(attention_state *state) {
+    if (!state || !state->transaction.publication_prepared) return;
+    state->transaction.publication_prepared = 0;
+    state->transaction.prepared_commit_count = 0ull;
+    state->transaction.prepared_generation = 0ull;
+    state->transaction.prepared_next_position = 0ull;
+    state->transaction.prepared_content_identity[0] = '\0';
+    (void)pthread_mutex_unlock(&state->mutex);
+}
+
+static int state_publish(attention_state *state,
+                         yvex_attention_failure *failure, yvex_error *err) {
+    int rc = state_prepare_publish(state, failure, err);
+    if (rc == YVEX_OK) state_publish_prepared(state);
+    return rc;
 }
 
 static int state_abort(
@@ -1684,6 +1742,19 @@ static int provider_persistent_stage(void *context,
                        state_delta_identity, failure, err);
 }
 
+static int provider_persistent_prepare_commit(
+    void *context, yvex_attention_failure *failure, yvex_error *err) {
+    return state_prepare_publish((attention_state *)context, failure, err);
+}
+
+static void provider_persistent_publish_commit(void *context) {
+    state_publish_prepared((attention_state *)context);
+}
+
+static void provider_persistent_cancel_commit(void *context) {
+    state_cancel_prepared_publish((attention_state *)context);
+}
+
 static int provider_persistent_commit(void *context, yvex_attention_failure *failure,
                                      yvex_error *err) {
     return state_publish((attention_state *)context, failure, err);
@@ -1736,7 +1807,7 @@ int yvex_attention_state_provider_open_persistent(
     rc = state_open(&state, family, plan, maximum_host_bytes, failure, err);
     if (rc != YVEX_OK) return rc;
     *out = (yvex_attention_state_provider){
-        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V2,
+        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V3,
         .context = state,
         .prepare = provider_persistent_prepare,
         .summary = provider_persistent_summary,
@@ -1744,6 +1815,9 @@ int yvex_attention_state_provider_open_persistent(
         .identity = provider_persistent_identity,
         .begin = provider_persistent_begin,
         .stage = provider_persistent_stage,
+        .prepare_commit = provider_persistent_prepare_commit,
+        .publish_commit = provider_persistent_publish_commit,
+        .cancel_commit = provider_persistent_cancel_commit,
         .commit = provider_persistent_commit,
         .abort = provider_persistent_abort,
         .reset = provider_persistent_reset,

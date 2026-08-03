@@ -86,7 +86,7 @@ wait "$repl_pid"
 repl_pid=
 
 grep -F 'YVEX ' "$root/typescript" >/dev/null
-grep -F 'deepseek-v4-flash · CUDA · variant dddddddddddd' "$root/typescript" >/dev/null
+grep -F 'deepseek4-v4-flash-dspark · CUDA · variant dddddddddddd' "$root/typescript" >/dev/null
 grep -F 'runtime ready · attached to resident runtime' "$root/typescript" >/dev/null
 grep -F 'session pty · position 0 · turns 0 · context 0/4096' "$root/typescript" >/dev/null
 grep -F 'yvex> ' "$root/typescript" >/dev/null
@@ -266,7 +266,7 @@ grep -E '^#[0-9]+ info[[:space:]]+request started' "$root/trace" >/dev/null
 grep -F 'phase launches · kernel launches 4511 · stream syncs 63' "$root/trace" >/dev/null
 ! grep -E '(^|[[:space:]])[ab]=' "$root/watch" >/dev/null
 ! grep -E '(^|[[:space:]])[ab]=' "$root/trace" >/dev/null
-grep -F '"schema":2' "$root/trace.jsonl" >/dev/null
+grep -F '"schema":3' "$root/trace.jsonl" >/dev/null
 grep -F '"kind":"generation.profile"' "$root/trace.jsonl" >/dev/null
 
 # Losing yvexd during a turn restores the prompt and terminal before exit.

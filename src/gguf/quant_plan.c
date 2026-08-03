@@ -1,7 +1,7 @@
 /*
  * Seal deterministic physical decisions over immutable transform plans.
  *
- * 1,360 canonical terminals and descriptors biject after complete typed-field validation;
+ * 1,409 canonical terminals and descriptors biject after complete typed-field validation;
  * construction reads zero payload bytes. This chooses physical encodings but produces no encoded
  * payload.
  */
@@ -158,7 +158,7 @@ static yvex_tensor_scope quant_map_scope(yvex_transform_scope scope) {
         return YVEX_TENSOR_SCOPE_GLOBAL;
     if (scope == YVEX_TRANSFORM_SCOPE_MAIN_LAYER)
         return YVEX_TENSOR_SCOPE_MAIN_LAYER;
-    return YVEX_TENSOR_SCOPE_MTP;
+    return YVEX_TENSOR_SCOPE_DRAFT;
 }
 
 static yvex_deepseek_gguf_transform quant_map_operation(yvex_transform_operation_kind operation) {

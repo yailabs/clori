@@ -12,6 +12,9 @@ change. Git history preserves implementation chronology.
 
 ### Added
 
+- DeepSeek-V4-Flash-DSpark as the sole current DeepSeek source target, with
+  target-only reference generation and target-verified speculative generation
+  in the same resident runtime model and session authority.
 - Complete daemon-backed DeepSeek-V4-Flash source-to-streamed-text execution
   through native and bounded OpenAI-compatible local surfaces.
 - Exact server-owned multi-turn sessions with committed-prefix reuse,
@@ -33,6 +36,8 @@ change. Git history preserves implementation chronology.
 - Advanced the private local protocol to version 4, separating selected model
   configuration from the live runtime model and removing false artifact/model
   facade operations.
+- Advanced the private local protocol to version 5 for typed speculative-cycle,
+  accepted-prefix, and committed-only usage facts; version 4 is refused.
 - Made hosted startup registry-first: `model list` reports complete startup
   profiles, `model select NAME` resolves one profile without path flags, and
   `runtime start` opens the selected model without environment variables.

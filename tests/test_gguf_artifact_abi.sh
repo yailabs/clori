@@ -44,7 +44,7 @@ if grep -R -nF 'required_key_count' src/gguf include/yvex >/dev/null; then
   exit 1
 fi
 
-grep -nF '69187ull' tests/unit/gguf_artifact_abi.c >/dev/null
+grep -nF '72317ull' tests/unit/gguf_artifact_abi.c >/dev/null
 grep -nF '129280ull' tests/unit/gguf_artifact_abi.c >/dev/null
 grep -nF '160ull * 1024ull * 1024ull * 1024ull' \
   tests/unit/gguf_artifact_abi.c >/dev/null

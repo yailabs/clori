@@ -32,7 +32,7 @@ static const yvex_cli_field_spec map_summary_head[] = {
     TARGET_U64(yvex_deepseek_gguf_map_summary, "descriptor_count", descriptor_count),
     TARGET_U64(yvex_deepseek_gguf_map_summary, "trunk_descriptor_count",
                trunk_descriptor_count),
-    TARGET_U64(yvex_deepseek_gguf_map_summary, "mtp_descriptor_count", mtp_descriptor_count),
+    TARGET_U64(yvex_deepseek_gguf_map_summary, "draft_descriptor_count", draft_descriptor_count),
     TARGET_U64(yvex_deepseek_gguf_map_summary, "pinned_standard_name_count",
                pinned_standard_count),
     TARGET_U64(yvex_deepseek_gguf_map_summary, "semantic_standard_name_count",
@@ -105,6 +105,16 @@ static const yvex_cli_field_spec architecture_model_fields[] = {
     TARGET_U64(yvex_deepseek_v4_model_spec, "hca_layer_count", hca_layer_count),
     TARGET_U64(yvex_deepseek_v4_model_spec, "hash_router_layer_count", hash_router_layer_count),
     TARGET_U64(yvex_deepseek_v4_model_spec, "learned_router_layer_count", learned_router_layer_count),
+    MODEL_NESTED("dspark_block_size", yvex_deepseek_v4_dspark_spec, dspark,
+                 block_size, YVEX_CLI_FIELD_U64),
+    MODEL_NESTED("dspark_noise_token_id", yvex_deepseek_v4_dspark_spec, dspark,
+                 noise_token_id, YVEX_CLI_FIELD_U64),
+    MODEL_NESTED("dspark_draft_layer_count", yvex_deepseek_v4_dspark_spec, dspark,
+                 draft_layer_count, YVEX_CLI_FIELD_U64),
+    MODEL_NESTED("dspark_markov_rank", yvex_deepseek_v4_dspark_spec, dspark,
+                 markov_rank, YVEX_CLI_FIELD_U64),
+    MODEL_NESTED("dspark_confidence_available", yvex_deepseek_v4_dspark_spec, dspark,
+                 confidence_available, YVEX_CLI_FIELD_BOOL),
     MODEL_NESTED("mhc_residual_streams", yvex_deepseek_v4_mhc_spec, final_mhc,
                  residual_streams, YVEX_CLI_FIELD_U64),
     MODEL_NESTED("mhc_expanded_width", yvex_deepseek_v4_mhc_spec, final_mhc,
@@ -245,13 +255,13 @@ static int model_target_render_deepseek_map(
         return yvex_cli_out_writef(
             fp,
             "{\"status\":\"%s\",\"target_id\":\"%s\",\"source_contributions\":%llu,\"descriptors\":%llu,"
-                "\"trunk_descriptors\":%llu,\"mtp_descriptors\":%llu,\"pinned_standard_names\":%llu,"
+                "\"trunk_descriptors\":%llu,\"draft_descriptors\":%llu,\"pinned_standard_names\":%llu,"
                 "\"extension_names\":%llu,\"metadata\":%llu,\"header_scans\":%llu,\"payload_bytes_read\":%llu,"
                 "\"mapping_identity\":\"%016llx\",\"artifact\":\"not-produced\",\"runtime\":\"unsupported\","
                 "\"generation\":\"unsupported\",\"next\":\"%s\"}\n",
             report->status, report->target_id,
             summary->source_contribution_count, summary->descriptor_count,
-            summary->trunk_descriptor_count, summary->mtp_descriptor_count,
+            summary->trunk_descriptor_count, summary->draft_descriptor_count,
             summary->pinned_standard_count, summary->extension_count,
             summary->metadata_count, summary->header_scan_count,
             summary->payload_bytes_read, summary->mapping_identity,
@@ -259,12 +269,12 @@ static int model_target_render_deepseek_map(
     }
     if (mode == YVEX_MODEL_TARGET_OUTPUT_TABLE) {
         rc |= yvex_cli_out_writef(
-            fp, "TARGET  STATUS  SOURCES  GGUF  TRUNK  MTP  METADATA  PAYLOAD  NEXT\n");
+            fp, "TARGET  STATUS  SOURCES  GGUF  TRUNK  DRAFT  METADATA  PAYLOAD  NEXT\n");
         rc |= yvex_cli_out_writef(
             fp, "%s  %s  %llu  %llu  %llu  %llu  %llu  %llu  %s\n",
             report->target_id, report->status,
             summary->source_contribution_count, summary->descriptor_count,
-            summary->trunk_descriptor_count, summary->mtp_descriptor_count,
+            summary->trunk_descriptor_count, summary->draft_descriptor_count,
             summary->metadata_count, summary->payload_bytes_read,
             report->next_row);
         return rc < 0 ? rc : 0;
@@ -293,9 +303,9 @@ static int model_target_render_deepseek_map(
     rc |= yvex_cli_out_writef(fp, "deepseek-gguf-map: %s [%s]\n",
                               report->target_id, report->status);
     rc |= yvex_cli_out_writef(
-        fp, "plan: sources=%llu gguf=%llu trunk=%llu mtp=%llu metadata=%llu\n",
+        fp, "plan: sources=%llu gguf=%llu trunk=%llu draft=%llu metadata=%llu\n",
         summary->source_contribution_count, summary->descriptor_count,
-        summary->trunk_descriptor_count, summary->mtp_descriptor_count,
+        summary->trunk_descriptor_count, summary->draft_descriptor_count,
         summary->metadata_count);
     rc |= yvex_cli_out_writef(
         fp, "evidence: header-scans=%llu payload-bytes=%llu identity=%016llx\n",
@@ -371,7 +381,7 @@ static int model_target_render_deepseek_coverage(
                                       sizeof(coverage_report_tail[0]));
         return rc < 0 ? rc : 0;
     }
-    rc |= yvex_cli_out_writef(fp, "tensor-coverage: deepseek-v4-flash\n");
+    rc |= yvex_cli_out_writef(fp, "tensor-coverage: deepseek-v4-flash-dspark\n");
     rc |= yvex_cli_out_writef(fp, "target: %s\n", report->target_id);
     rc |= yvex_cli_out_writef(fp, "status: %s\n", report->status);
     rc |= yvex_cli_out_writef(
@@ -396,11 +406,11 @@ static int model_target_render_deepseek_normal(
         yvex_model_register_deepseek_v4()->ir.layer_at(ir, 0u);
     int rc = 0;
 
-    rc |= yvex_cli_out_writef(fp, "model-class: deepseek-v4-flash\n");
+    rc |= yvex_cli_out_writef(fp, "model-class: deepseek-v4-flash-dspark\n");
     rc |= yvex_cli_out_writef(fp, "target: %s\n", model->target_id);
     rc |= yvex_cli_out_writef(fp, "status: %s\n", report->status);
     rc |= yvex_cli_out_writef(
-        fp, "topology: layers=%llu mtp=%llu hidden=%llu vocab=%llu context=%llu\n",
+        fp, "topology: target-layers=%llu draft-layers=%llu hidden=%llu vocab=%llu context=%llu\n",
         model->main_layer_count, model->auxiliary_layer_count,
         model->hidden_size, model->vocabulary_size, model->maximum_context);
     rc |= yvex_cli_out_writef(
@@ -417,6 +427,12 @@ static int model_target_render_deepseek_normal(
         fp, "mhc: streams=%llu expanded=%llu mixing_rows=%llu sinkhorn=%llu\n",
         model->final_mhc.residual_streams, model->final_mhc.expanded_width,
         model->final_mhc.mixing_rows, model->final_mhc.sinkhorn_iterations);
+    rc |= yvex_cli_out_writef(
+        fp, "dspark: block=%llu noise=%llu taps=%llu,%llu,%llu markov-rank=%llu confidence=%s\n",
+        model->dspark.block_size, model->dspark.noise_token_id,
+        model->dspark.target_layer_ids[0], model->dspark.target_layer_ids[1],
+        model->dspark.target_layer_ids[2], model->dspark.markov_rank,
+        model->dspark.confidence_available ? "available" : "unavailable");
     rc |= yvex_cli_out_writef(fp, "next: %s\n", report->next_row);
     rc |= yvex_cli_out_writef(fp, "boundary: %s\n", report->boundary);
     return rc < 0 ? rc : 0;
@@ -430,7 +446,7 @@ static int model_target_render_deepseek_table(
     int rc = 0;
 
     rc |= yvex_cli_out_writef(
-        fp, "TARGET  STATUS  LAYERS  MTP  SWA  CSA  HCA  HASH  LEARNED  NEXT\n");
+        fp, "TARGET  STATUS  TARGET_LAYERS  DRAFT_LAYERS  SWA  CSA  HCA  HASH  LEARNED  NEXT\n");
     rc |= yvex_cli_out_writef(
         fp, "%s  %s  %llu  %llu  %llu  %llu  %llu  %llu  %llu  %s\n",
         model->target_id, report->status, model->main_layer_count,
@@ -491,12 +507,15 @@ static int model_target_render_deepseek_audit(
             yvex_model_register_deepseek_v4()->ir.auxiliary_at(ir, i);
         rc |= yvex_cli_out_writef(
             fp,
-            "mtp_%llu: layer=%llu attention=%s ratio=%llu router=%s previous_hidden_width=%llu shared_head=%s\n",
+            "draft_%llu: layer=%llu attention=%s ratio=%llu router=%s "
+            "feature_projection=%s markov=%s confidence=%s shared_head=%s\n",
             aux->predictor_index, aux->layer.layer_index,
             yvex_model_register_deepseek_v4()->ir.attention_name(aux->layer.attention_class),
             aux->layer.compression_ratio,
             yvex_model_register_deepseek_v4()->ir.router_name(aux->layer.moe.router_class),
-            aux->previous_hidden_width,
+            aux->has_feature_projection ? "true" : "false",
+            aux->has_markov_head ? "true" : "false",
+            aux->has_confidence_head ? "true" : "false",
             aux->shares_output_head ? "true" : "false");
     }
     rc |= yvex_cli_out_writef(fp, "runtime_execution: unsupported\n");
@@ -515,7 +534,7 @@ static int model_target_render_deepseek_json(
     return yvex_cli_out_writef(
         fp,
         "{\"status\":\"%s\",\"target_id\":\"%s\",\"repository\":\"%s\",\"revision\":\"%s\",\"layers\":%llu,"
-            "\"mtp_layers\":%llu,\"hidden_size\":%llu,\"vocabulary_size\":%llu,\"context\":%llu,\"attention\":"
+            "\"draft_layers\":%llu,\"hidden_size\":%llu,\"vocabulary_size\":%llu,\"context\":%llu,\"attention\":"
             "{\"swa\":%llu,\"csa\":%llu,\"hca\":%llu},\"routing\":{\"hash\":%llu,\"learned\":%llu},"
             "\"mhc_streams\":%llu,\"payload_bytes_read\":%llu,\"runtime\":\"unsupported\",\"generation\":"
             "\"unsupported\",\"next\":\"%s\"}\n",

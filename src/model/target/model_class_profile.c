@@ -101,7 +101,7 @@ static int class_profile_deepseek_models_root(
     char *out,
     size_t cap)
 {
-    static const char suffix[] = "/hf/deepseek/DeepSeek-V4-Flash";
+    static const char suffix[] = "/hf/deepseek/DeepSeek-V4-Flash-DSpark";
     const char *environment;
     size_t source_length;
     size_t suffix_length = sizeof(suffix) - 1u;

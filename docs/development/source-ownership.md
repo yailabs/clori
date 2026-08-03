@@ -37,7 +37,7 @@ src/runtime/             common immutable model, binding, execution sessions, st
 
 ```text
 registry JSON -> strict build validation -> immutable compiled descriptors -> yvex dispatch/help
-product argv -> protocol v4 -> yvexd worker/session -> typed events/results -> client render
+product argv -> protocol v5 -> yvexd worker/session -> typed events/results -> client render
 application -> OpenAI profile -> provider contract -> local protocol -> same yvexd worker/session
 engineering argv -> nested owner route -> report/domain -> engineering render -> cli/io
 

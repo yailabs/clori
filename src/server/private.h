@@ -37,6 +37,7 @@ int yvex_server_protocol_send(int fd, const yvex_client_message *message,
                               yvex_error *err);
 
 int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capacity,
+                          yvex_server_generation_mode generation_mode,
                           const char *runtime_model_identity,
                           const char *artifact_identity,
                           const char *variant_identity, yvex_error *err);
@@ -55,6 +56,7 @@ int yvex_server_telemetry_emit_provider(
     const char *request_id, const char *turn_id, const char *phase,
     unsigned long long value_a, unsigned long long value_b,
     unsigned long long value_c, double seconds, double rate,
+    const yvex_runtime_speculation_progress *speculation,
     const yvex_provider_request *provider, yvex_server_event *emitted,
     yvex_error *err);
 int yvex_server_telemetry_next(server_telemetry *telemetry,

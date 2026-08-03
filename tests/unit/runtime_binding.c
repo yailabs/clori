@@ -146,7 +146,7 @@ static void *runtime_open_thread_main(void *argument)
 
 static const yvex_runtime_family_adapter *runtime_fixture_adapter(void)
 {
-    return yvex_runtime_family_adapter_find("deepseek4-v4-flash");
+    return yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
 }
 
 static int runtime_state_prepare_fixture(
@@ -202,6 +202,7 @@ typedef struct injected_state_control injected_state_control;
 typedef struct {
     injected_state_control *control;
     yvex_graph_attention_state_summary summary;
+    int commit_prepared;
 } injected_state;
 struct injected_state_control {
     injected_state *active;
@@ -312,8 +313,9 @@ static int injected_state_stage(
     return YVEX_OK;
 }
 
-static int injected_state_commit(void *context, yvex_attention_failure *failure,
-                                 yvex_error *err)
+static int injected_state_prepare_commit(void *context,
+                                         yvex_attention_failure *failure,
+                                         yvex_error *err)
 {
     injected_state *state = (injected_state *)context;
     (void)failure;
@@ -323,10 +325,30 @@ static int injected_state_commit(void *context, yvex_attention_failure *failure,
         yvex_error_set(err, YVEX_ERR_STATE, "test.state.commit", "injected commit failure");
         return YVEX_ERR_STATE;
     }
+    state->commit_prepared = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static void injected_state_publish_commit(void *context) {
+    injected_state *state = (injected_state *)context;
+    if (!state || !state->commit_prepared) return;
     state->summary.transaction_active = 0;
     state->summary.staged_layer_count = 0ull;
     state->summary.commit_count++;
-    return YVEX_OK;
+    state->commit_prepared = 0;
+}
+
+static void injected_state_cancel_commit(void *context) {
+    injected_state *state = (injected_state *)context;
+    if (state) state->commit_prepared = 0;
+}
+
+static int injected_state_commit(void *context, yvex_attention_failure *failure,
+                                 yvex_error *err) {
+    int rc = injected_state_prepare_commit(context, failure, err);
+    if (rc == YVEX_OK) injected_state_publish_commit(context);
+    return rc;
 }
 
 static int injected_state_abort(void *context, yvex_attention_failure *failure,
@@ -410,14 +432,14 @@ static int injected_state_factory_open(
     state = (injected_state *)calloc(1u, sizeof(*state));
     if (!state) return YVEX_ERR_NOMEM;
     state->control = control;
-    state->summary.schema_version = YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V1;
+    state->summary.schema_version = YVEX_GRAPH_ATTENTION_STATE_SCHEMA_V2;
     state->summary.sealed = 1;
     memset(state->summary.state_layout_identity, 'c', YVEX_SHA256_HEX_CAP - 1u);
     state->summary.state_layout_identity[YVEX_SHA256_HEX_CAP - 1u] = '\0';
     control->active = state;
     control->opens++;
     *out = (yvex_attention_state_provider){
-        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V2,
+        .schema_version = YVEX_ATTENTION_STATE_PROVIDER_SCHEMA_V3,
         .context = state,
         .prepare = injected_state_prepare,
         .summary = injected_state_summary,
@@ -425,6 +447,9 @@ static int injected_state_factory_open(
         .identity = injected_state_identity,
         .begin = injected_state_begin,
         .stage = injected_state_stage,
+        .prepare_commit = injected_state_prepare_commit,
+        .publish_commit = injected_state_publish_commit,
+        .cancel_commit = injected_state_cancel_commit,
         .commit = injected_state_commit,
         .abort = injected_state_abort,
         .reset = injected_state_reset,
@@ -576,7 +601,7 @@ static int test_binding_offsets(const unsigned char *file, size_t count,
         return 0;
     *format_version = offset;
     offset += 8u;
-    for (index = 0u; index < 4u; ++index)
+    for (index = 0u; index < 5u; ++index)
         if (!test_binding_text_skip(file, count, &offset, NULL)) return 0;
     if (!test_binding_text_skip(file, count, &offset, NULL)) return 0;
     *capability_value = offset;
@@ -618,7 +643,7 @@ static int test_binding_material_count_offset(const unsigned char *file, size_t 
         !test_binding_text_skip(file, count, &offset, NULL) ||
         !test_binding_u64_skip(count, &offset, 1u))
         return 0;
-    for (index = 0u; index < 4u; ++index)
+    for (index = 0u; index < 5u; ++index)
         if (!test_binding_text_skip(file, count, &offset, NULL)) return 0;
     if (!test_binding_text_skip(file, count, &offset, NULL) ||
         !test_binding_u64_skip(count, &offset, TEST_BINDING_CAPABILITY_FIELDS) ||
@@ -758,8 +783,8 @@ static int test_binding_readdress(const char *path, unsigned char *file, size_t 
 
     if (!slash || count < TEST_BINDING_HEADER_BYTES) return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v6") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V6) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v7") ||
+        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V7) ||
         !yvex_sha256_update(&hash, file + TEST_BINDING_HEADER_BYTES,
                             count - TEST_BINDING_HEADER_BYTES) ||
         !yvex_sha256_final(&hash, digest))
@@ -921,6 +946,7 @@ static int fixture_attention_build(binding_fixture *fixture)
     memset(&summary, 0, sizeof(summary));
     memset(&layer, 0, sizeof(layer));
     summary.status = YVEX_DEEPSEEK_ATTENTION_STATUS_EXECUTION_READY;
+    summary.tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER;
     (void)snprintf(summary.artifact_identity, sizeof(summary.artifact_identity), "%s",
                    runtime->artifact_identity);
     (void)snprintf(summary.materialization_plan_identity,
@@ -944,7 +970,10 @@ static int fixture_attention_build(binding_fixture *fixture)
     summary.cpu_reference_ready = 1;
     summary.full_execution_ready = 1;
     summary.cuda_execution_ready = 1;
+    layer.ordinal = 0ull;
     layer.layer_index = 0ull;
+    layer.predictor_index = YVEX_MATERIALIZATION_NO_INDEX;
+    layer.tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER;
     layer.attention_class = YVEX_ATTENTION_CLASS_SWA;
     layer.compute_contract = YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1;
     layer.sliding_window = 4ull;
@@ -1176,6 +1205,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     yvex_materialization_session *session = NULL;
     yvex_runtime_descriptor *descriptor = NULL;
     yvex_attention_plan *attention = NULL;
+    yvex_attention_plan *draft_attention = NULL;
     yvex_runtime_binding_summary summary;
     yvex_core_file_result file_result;
     unsigned char *before = NULL, *after = NULL;
@@ -1210,7 +1240,7 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     YVEX_TEST_ASSERT(rc == YVEX_OK, "runtime binding reopened");
     YVEX_TEST_ASSERT(strcmp(summary.identity, prepared->summary.identity) == 0,
                      "reopened runtime binding identity");
-    YVEX_TEST_ASSERT(summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V6,
+    YVEX_TEST_ASSERT(summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V7,
                      "reopened runtime binding schema");
     YVEX_TEST_ASSERT(
         yvex_sha256_hex_is_valid(summary.semantic_graph_identity) &&
@@ -1247,8 +1277,10 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
         *binding_out, fixture->artifact, &options, &plan, &session, &failure, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "binding materialization imported");
     rc = yvex_runtime_binding_import_graph(
-        *binding_out, session, &descriptor, &attention, &failure, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK, "binding runtime graph imported");
+        *binding_out, session, &descriptor, &attention, &draft_attention,
+        &failure, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && !draft_attention,
+                     "binding runtime graph imported without an invented draft plan");
     YVEX_TEST_ASSERT(
         strcmp(yvex_runtime_descriptor_summary_get(descriptor)->runtime_descriptor_identity,
                summary.runtime_descriptor_identity) == 0,
@@ -1720,7 +1752,7 @@ static int test_runtime_model_progress(
 static int test_runtime_family_neutrality(void)
 {
     const yvex_runtime_family_adapter *deepseek =
-        yvex_runtime_family_adapter_find("deepseek4-v4-flash");
+        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
     const yvex_graph_family_preparation *preparation = yvex_graph_family_preparation_at(0ull);
     yvex_compilation_runtime_binding_result rejected = {0};
     yvex_runtime_mixer_capability capability;
@@ -1731,7 +1763,7 @@ static int test_runtime_family_neutrality(void)
     YVEX_TEST_ASSERT(strcmp(deepseek->operator_family_key, "deepseek") == 0 && preparation &&
                          strcmp(preparation->target_id, deepseek->target_id) == 0 &&
                          strcmp(preparation->source_manifest_filename,
-                                "deepseek-source-manifest.json") == 0 &&
+                                YVEX_SOURCE_RELEASE_MANIFEST_LEAF) == 0 &&
                          strcmp(deepseek->operator_artifact_filename,
                                 YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME) == 0 &&
                          preparation->model && preparation->prepare_runtime_binding &&
@@ -2799,6 +2831,9 @@ static int test_runtime_cuda_workspace_transaction(
     yvex_graph_attention_capacity_request capacity_request;
     yvex_runtime_model_failure failure;
     yvex_runtime_session_summary before, after;
+    runtime_execute_thread execution;
+    runtime_thread_gate gate;
+    pthread_t thread;
     yvex_error err;
     int ready, rc;
 
@@ -2883,6 +2918,39 @@ static int test_runtime_cuda_workspace_transaction(
             after.device_workspace_bytes == before.device_workspace_bytes &&
             strcmp(after.workspace_identity, before.workspace_identity) == 0,
         "an exact second capacity owner adopts the sealed CUDA workspace without allocation");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_session_begin(session, &failure, &err) == YVEX_OK &&
+            yvex_runtime_session_prepare_attention_probe_state(
+                session, model, capacity, NULL, &err) == YVEX_OK &&
+            yvex_runtime_session_prepare_attention_workspace(
+                session, YVEX_RUNTIME_MODE_EAGER,
+                YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
+                YVEX_ATTENTION_EVIDENCE_NONE, capacity, 0ull, &failure,
+                &err) == YVEX_OK &&
+            yvex_runtime_session_finish(session, YVEX_OK, &err) == YVEX_OK,
+        "the transaction owner may prepare persistent state and shared workspace");
+    YVEX_TEST_ASSERT(runtime_thread_gate_init(&gate),
+                     "foreign workspace-owner gate initializes");
+    memset(&execution, 0, sizeof(execution));
+    execution.session = session;
+    execution.gate = &gate;
+    YVEX_TEST_ASSERT(pthread_create(&thread, NULL, runtime_execute_thread_main,
+                                    &execution) == 0,
+                     "foreign execution owner starts");
+    runtime_thread_gate_wait_ready(&gate, 1u);
+    rc = yvex_runtime_session_prepare_attention_workspace(
+        session, YVEX_RUNTIME_MODE_EAGER,
+        YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
+        YVEX_ATTENTION_EVIDENCE_NONE, capacity, 0ull, &failure, &err);
+    YVEX_TEST_ASSERT(
+        execution.begin_status == YVEX_OK && rc == YVEX_ERR_STATE &&
+            failure.code == YVEX_RUNTIME_MODEL_FAILURE_BUSY,
+        "a foreign thread cannot mutate an owned session workspace");
+    runtime_thread_gate_release(&gate);
+    YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0 &&
+                         execution.begin_status == YVEX_OK,
+                     "foreign execution owner releases the session");
+    runtime_thread_gate_destroy(&gate);
     yvex_graph_attention_capacity_plan_close(&capacity);
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
                      "transactional workspace session closes cleanly");
@@ -2896,7 +2964,7 @@ static int test_runtime_model_adapter_refusal(
     yvex_runtime_model_open_request request;
     yvex_runtime_model *model = NULL;
     yvex_runtime_model_failure failure;
-    char target[] = "deepseek4-v4-flash";
+    char target[] = "deepseek4-v4-flash-dspark";
     yvex_error err;
 
     memset(&request, 0, sizeof(request));
@@ -2914,7 +2982,7 @@ static int test_runtime_model_adapter_refusal(
     memset(target, 'x', sizeof(target) - 1u);
     target[sizeof(target) - 1u] = '\0';
     YVEX_TEST_ASSERT(strcmp(yvex_runtime_model_view_get(model)->adapter->target_id,
-                            "deepseek4-v4-flash") == 0,
+                            "deepseek4-v4-flash-dspark") == 0,
                      "sealed runtime model retains canonical immutable registry storage");
     yvex_runtime_model_close(&model);
     return 0;

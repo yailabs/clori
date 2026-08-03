@@ -2,11 +2,25 @@
 
 #include "tests/test.h"
 
+#include <fcntl.h>
 #include <stdlib.h>
+#include <sys/file.h>
+#include <unistd.h>
 
 static const char *test_filter;
 static unsigned int test_filter_count;
 static unsigned int selected_test_count;
+
+static int test_workspace_lock(void)
+{
+    int fd = open("build/tests/.unit.lock", O_CREAT | O_RDWR, 0666);
+    if (fd < 0 || flock(fd, LOCK_EX) != 0) {
+        if (fd >= 0) close(fd);
+        fprintf(stderr, "FAIL: cannot lock the shared unit-test workspace\n");
+        return -1;
+    }
+    return fd;
+}
 
 static int filter_token_equal(const char *token, size_t length, const char *name)
 {
@@ -157,6 +171,7 @@ static int run_runtime_console(void)
     if (run_test("runtime_decode", yvex_test_runtime_decode) != 0) return 1;
     if (run_test("runtime_logits", yvex_test_runtime_logits) != 0) return 1;
     if (run_test("runtime_sampling", yvex_test_runtime_sampling) != 0) return 1;
+    if (run_test("runtime_speculation", yvex_test_runtime_speculation) != 0) return 1;
     if (run_test("runtime_generation", yvex_test_runtime_generation) != 0) return 1;
     if (run_test("runtime_tokenizer", yvex_test_runtime_tokenizer) != 0) return 1;
     if (run_test("runtime_moe", yvex_test_runtime_moe) != 0) return 1;
@@ -194,6 +209,9 @@ static int run_gguf_model_artifact_tools(void)
 
 int main(void)
 {
+    int workspace_lock = test_workspace_lock();
+    if (workspace_lock < 0) return 1;
+    (void)workspace_lock;
     test_filter = getenv("YVEX_TEST_FILTER");
     if (test_filter && !test_filter[0]) test_filter = NULL;
     if (test_filter && !filter_validate()) return 1;

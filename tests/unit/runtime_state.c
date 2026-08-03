@@ -1104,6 +1104,10 @@ static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
     yvex_graph_attention_state_summary summary;
     yvex_attention_failure failure;
     yvex_error err;
+    char committed_identity[YVEX_SHA256_HEX_CAP] = {0};
+    char staged_identity[YVEX_SHA256_HEX_CAP] = {0};
+    unsigned long long committed_generation = 0ull, committed_next_position = 0ull;
+    unsigned long long staged_generation = 0ull, staged_next_position = 0ull;
     unsigned long long layer;
 
     yvex_error_clear(&err);
@@ -1137,6 +1141,9 @@ static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
         state.abort(state.context, &failure, &err) == YVEX_OK &&
             state_summary(&state, &summary, &err) == YVEX_OK &&
             !summary.transaction_active && !summary.abort_required &&
+            !summary.staged_batch_complete && !summary.staged_generation &&
+            !summary.staged_next_position &&
+            !summary.staged_state_content_identity[0] &&
             summary.abort_count == 1ull && summary.commit_count == 0ull,
         "abort discharges the poisoned batch without changing committed state");
     for (layer = 0ull; layer < 2ull; ++layer) {
@@ -1163,8 +1170,15 @@ static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
         state.abort(state.context, &failure, &err) == YVEX_OK &&
             state_summary(&state, &summary, &err) == YVEX_OK &&
             !summary.transaction_active && !summary.abort_required &&
+            !summary.staged_batch_complete && !summary.staged_generation &&
+            !summary.staged_next_position &&
+            !summary.staged_state_content_identity[0] &&
             summary.abort_count == 2ull && summary.commit_count == 0ull,
         "second poisoned batch aborts before a clean retry");
+    committed_generation = summary.generation;
+    committed_next_position = summary.next_position;
+    memcpy(committed_identity, summary.state_content_identity,
+           sizeof(committed_identity));
     for (layer = 0ull; layer < 2ull; ++layer) {
         YVEX_TEST_ASSERT(
             state_begin(&state, &fixture->layers[layer], 0ull, 1ull, NULL,
@@ -1173,12 +1187,36 @@ static int test_batch_publication_is_atomic(const state_plan_fixture *fixture)
             "clean batch restages every layer after explicit abort");
     }
     YVEX_TEST_ASSERT(
+        state_summary(&state, &summary, &err) == YVEX_OK &&
+            summary.transaction_active && !summary.candidate_active &&
+            !summary.abort_required && summary.staged_layer_count == 2ull &&
+            summary.staged_batch_complete &&
+            summary.next_position == committed_next_position &&
+            summary.generation == committed_generation &&
+            strcmp(summary.state_content_identity, committed_identity) == 0 &&
+            summary.staged_next_position == committed_next_position + 1ull &&
+            summary.staged_generation == committed_generation + 1ull &&
+            yvex_sha256_hex_valid(summary.staged_state_content_identity) &&
+            strcmp(summary.staged_state_content_identity,
+                   summary.state_content_identity) != 0,
+        "complete private batch exposes exact candidate facts without publication");
+    staged_generation = summary.staged_generation;
+    staged_next_position = summary.staged_next_position;
+    memcpy(staged_identity, summary.staged_state_content_identity,
+           sizeof(staged_identity));
+    YVEX_TEST_ASSERT(
         state.commit(state.context, &failure, &err) == YVEX_OK &&
             state_summary(&state, &summary, &err) == YVEX_OK &&
             !summary.transaction_active && summary.staged_layer_count == 0ull &&
+            !summary.staged_batch_complete && !summary.staged_generation &&
+            !summary.staged_next_position &&
+            !summary.staged_state_content_identity[0] &&
             summary.commit_count == 2ull &&
             summary.persistent && summary.position_consistent &&
-            summary.committed_sequence_length == 1ull && summary.next_position == 1ull &&
+            summary.committed_sequence_length == 1ull &&
+            summary.next_position == staged_next_position &&
+            summary.generation == staged_generation &&
+            strcmp(summary.state_content_identity, staged_identity) == 0 &&
             yvex_sha256_hex_valid(summary.state_content_identity) &&
             state_view(&state, 0ull,
                        YVEX_ATTENTION_STATE_VIEW_COMMITTED)->token_count == 1ull &&
@@ -1498,7 +1536,7 @@ static int test_operator_missing_binding_refusal(void)
     int rc;
 
     memset(&request, 0, sizeof(request));
-    request.target = "deepseek4-v4-flash";
+    request.target = "deepseek4-v4-flash-dspark";
     request.artifact_path = "/tmp/yvex-definitely-missing.gguf";
     request.runtime_binding_path = "/tmp/yvex-definitely-missing.runtime-binding";
     request.backend = YVEX_BACKEND_KIND_CPU;

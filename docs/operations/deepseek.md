@@ -1,7 +1,7 @@
-# Operating DeepSeek-V4-Flash
+# Operating DeepSeek-V4-Flash-DSpark
 
-DeepSeek-V4-Flash is the first complete hosted YVEX vertical. Family identities
-and architecture facts live in the
+DeepSeek-V4-Flash-DSpark is the sole current complete hosted YVEX vertical.
+Family identities and architecture facts live in the
 [DeepSeek technical record](../model-families/deepseek-v4-flash.md); current
 gates live in [`ROADMAP.md`](../../ROADMAP.md).
 
@@ -12,13 +12,14 @@ start the sole persistent `yvexd` process:
 
 ```sh
 ./yvex model list
-./yvex model show deepseek4-v4-flash-runtime-iq2xxs
-./yvex model select deepseek4-v4-flash-runtime-iq2xxs
+./yvex model show deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs
 ./yvex model selected
 ./yvex runtime start
 ```
 
-The alias is an example; use a DeepSeek row whose `STARTUP` column is `yes`.
+The alias is an example; use a DeepSeek row whose `STARTUP` column is `yes` and
+whose generation mode is `dspark` for speculative execution.
 No model path or environment variable is required during normal operation.
 The command authenticates the selected artifact and binding and builds the
 resident runtime model. Importing an existing artifact into the registry is a
@@ -42,8 +43,9 @@ runtime model.
 
 The daemon opens one model and retains the complete encoded model payload in
 one immutable process-lifetime host arena together with tokenizer, attention,
-materialization, output-head, and plan resources. Each named session owns
-independent DeepSeek persistent state and exact prompt/token continuation.
+materialization, output-head, target, draft, and verification resources. Each
+named session owns independent DeepSeek persistent state, bounded speculative
+candidate workspace, and exact prompt/token continuation.
 
 On turn two, the host renders and encodes the complete expected conversation,
 proves that the committed token ledger is its exact prefix, and prefills only
@@ -58,6 +60,24 @@ the new suffix. An incompatible prefix refuses; reset is explicit.
 Sampling remains common-host even when Transformer, MoE, persistent state, and
 output-head projection execute on CUDA. Streamed fragments are sent only after
 sampled-token decode commit and incremental detokenization commit.
+
+## Target-only and DSpark modes
+
+Generation mode belongs to the selected startup profile. `runtime model` and
+`runtime status --json` report the mode actually open in `yvexd`. Selection is
+inert until the daemon restarts; there is no per-turn fallback switch.
+
+`target-only` retains ordinary one-token target generation as the semantic
+reference. `dspark` uses the checkpoint drafter to propose bounded blocks and
+the complete target to verify them. Only the accepted target-authored result is
+committed and streamed. Draft proposals do not appear in chat, native
+streaming, SSE, transcript, or completion usage.
+
+The final turn result reports the execution mode and compact speculation
+counts. Use `runtime trace` or `runtime trace --json` for cycle-level draft,
+verification, accepted-prefix, rejection, timing, and policy facts. A requested
+DSpark profile refuses startup if its artifact, binding, backend, or workspace
+requirements are incomplete; it never runs target-only silently.
 
 ## Application-provider path
 
@@ -104,6 +124,10 @@ These are finite engineering and conformance operations, not hosted-generation
 aliases. They may open the engine directly but never create a persistent model
 authority.
 
+For a bounded direct comparison over one admitted artifact and binding, the
+engineering generator accepts `--generation-mode target-only|dspark`. This is
+not the ordinary chat path and does not alter the selected daemon profile.
+
 ## Runtime evidence
 
 For a hosted two-turn proof record:
@@ -113,6 +137,8 @@ For a hosted two-turn proof record:
 - first and second prompt token counts;
 - exact reusable prefix and second-turn suffix counts;
 - sampled-token/decode-input equality;
+- generation mode, draft cycles, proposals, target verifications, accepted and
+  rejected drafts, maximum accepted prefix, and speculative policy identity;
 - final positions and persistent-state digests;
 - TTFT, prefill/decode timing and memory snapshots;
 - cancellation, detach/reconnect, reset, and shutdown results.
@@ -124,5 +150,6 @@ untracked external operator assets.
 
 Hosted generation and local compatibility evidence are not model-quality
 evaluation, full-model benchmark evidence, release qualification, full OpenAI
-service equivalence, public serving, remote security, continuous batching, MTP,
-or speculative execution.
+service equivalence, public serving, remote security, continuous batching,
+load-aware confidence scheduling, DSpark acceleration, or speculative support
+for another family.

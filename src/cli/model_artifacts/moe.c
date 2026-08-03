@@ -562,10 +562,12 @@ void yvex_model_artifacts_surface_moe_help(FILE *fp)
             "residency] [--include-blockers]\n");
     yvex_cli_out_writef(fp, "\nExamples:\n");
     yvex_cli_out_writef(fp,
-        "  yvex inspect moe report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+        "  yvex inspect moe report --model "
+            "deepseek4-v4-flash-dspark-selected-embed-rmsnorm --family deepseek --backend "
             "cpu --include-tensors --include-blockers\n");
     yvex_cli_out_writef(fp,
-        "  yvex inspect moe report --model deepseek4-v4-flash-selected-embed-rmsnorm --family deepseek --backend "
+        "  yvex inspect moe report --model "
+            "deepseek4-v4-flash-dspark-selected-embed-rmsnorm --family deepseek --backend "
             "cuda --include-residency\n");
     yvex_cli_out_writef(fp,
         "  yvex inspect moe report --model glm-5.2-official-safetensors --family glm "

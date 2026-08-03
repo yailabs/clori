@@ -33,7 +33,7 @@ static const char *const decision_help_rows[] = {
     "does not download models, emit artifacts, materialize tensors, execute "
     "graph work, run prefill, decode, logits, sampling, generation, "
     "evaluation, or benchmarks",
-    "DeepSeek-V4-Flash is the sole release target. Qwen, Gemma, selected "
+    "DeepSeek-V4-Flash-DSpark is the sole release target. Qwen, Gemma, selected "
     "slices, source pressure targets, external references, and fixtures are "
     "engineering evidence, not alternate release choices."
 };

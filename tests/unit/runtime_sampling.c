@@ -530,6 +530,86 @@ static int sampling_test_rng_vectors(void)
     return 0;
 }
 
+static int sampling_test_rng_transactions(void)
+{
+    yvex_runtime_logits_plan_summary plan;
+    yvex_runtime_sampling_policy policy = sampling_test_neutral_stochastic();
+    yvex_runtime_sampling_options options = {
+        .maximum_vocabulary_size = 8ull, .maximum_rows = 8ull};
+    yvex_runtime_sampling_context *context = NULL;
+    yvex_runtime_sampling_transaction *transaction = NULL, *stale = NULL;
+    yvex_runtime_sampling_uniform_result draw;
+    yvex_runtime_sampling_context_summary before, after;
+    double values[2] = {0.0, 0.0}, stale_value = 0.0;
+    yvex_error err;
+
+    sampling_test_plan(&plan, 8ull);
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_policy_seal(&policy, 8ull, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_open(
+                &context, &plan, &policy, &options, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_snapshot(context, &before, &err) == YVEX_OK,
+        "transactional RNG fixture opens");
+
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_transaction_begin(context, &transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_transaction_uniforms(
+                transaction, values, 2ull, &draw, &err) == YVEX_OK &&
+            draw.completed && draw.draw_count == 2ull &&
+            yvex_runtime_sampling_transaction_abort(&transaction, &err) == YVEX_OK &&
+            !transaction &&
+            yvex_runtime_sampling_context_snapshot(context, &after, &err) == YVEX_OK &&
+            after.stochastic_draws == before.stochastic_draws &&
+            strcmp(after.rng_state_identity, before.rng_state_identity) == 0,
+        "aborted RNG draws leave the sampling authority unchanged");
+
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_transaction_begin(context, &transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_transaction_uniforms(
+                transaction, values, 1ull, &draw, &err) == YVEX_OK &&
+            yvex_runtime_sampling_transaction_prepare_commit(transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_transaction_abort(&transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_snapshot(context, &after, &err) == YVEX_OK &&
+            after.stochastic_draws == before.stochastic_draws &&
+            strcmp(after.rng_state_identity, before.rng_state_identity) == 0,
+        "cancelled prepared RNG publication preserves the earlier state");
+
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_transaction_begin(context, &transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_transaction_begin(context, &stale, &err) == YVEX_OK &&
+            yvex_runtime_sampling_transaction_uniforms(
+                transaction, values, 1ull, &draw, &err) == YVEX_OK &&
+            yvex_runtime_sampling_transaction_uniforms(
+                stale, &stale_value, 1ull, &draw, &err) == YVEX_OK &&
+            values[0] == stale_value &&
+            yvex_runtime_sampling_transaction_prepare_commit(transaction, &err) == YVEX_OK,
+        "concurrent transactions retain one immutable base state");
+    yvex_runtime_sampling_transaction_publish_commit(&transaction);
+    YVEX_TEST_ASSERT(
+        !transaction &&
+            yvex_runtime_sampling_transaction_prepare_commit(stale, &err) == YVEX_ERR_STATE &&
+            yvex_runtime_sampling_transaction_abort(&stale, &err) == YVEX_OK && !stale &&
+            yvex_runtime_sampling_context_snapshot(context, &after, &err) == YVEX_OK &&
+            after.stochastic_draws == before.stochastic_draws + 1ull &&
+            strcmp(after.rng_state_identity, before.rng_state_identity) != 0,
+        "a stale RNG transaction cannot overwrite a published successor");
+
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_transaction_begin(context, &transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_transaction_uniforms(
+                transaction, values, 2ull, &draw, &err) == YVEX_OK &&
+            yvex_runtime_sampling_transaction_prepare_commit(transaction, &err) == YVEX_OK,
+        "RNG transaction prepares a bounded multi-draw publication");
+    yvex_runtime_sampling_transaction_publish_commit(&transaction);
+    YVEX_TEST_ASSERT(
+        !transaction &&
+            yvex_runtime_sampling_context_snapshot(context, &after, &err) == YVEX_OK &&
+            after.stochastic_draws == before.stochastic_draws + 3ull &&
+            yvex_runtime_sampling_context_close(&context, &err) == YVEX_OK && !context,
+        "published RNG transactions advance exactly their committed draws");
+    return 0;
+}
+
 typedef struct {
     yvex_runtime_sampling_context *context;
     const yvex_runtime_sampling_source *source;
@@ -859,6 +939,7 @@ int yvex_test_runtime_sampling(void)
     if (sampling_test_stochastic()) return 1;
     if (sampling_test_evidence_mutations()) return 1;
     if (sampling_test_rng_vectors()) return 1;
+    if (sampling_test_rng_transactions()) return 1;
     if (sampling_test_lifecycle()) return 1;
     if (sampling_test_close_entry_race()) return 1;
     if (sampling_test_partial()) return 1;

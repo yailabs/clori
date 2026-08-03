@@ -27,9 +27,37 @@ the available entries first:
 ```
 
 Only a row with `STARTUP` equal to `yes` can be selected for hosted execution.
-If the table is empty or every row says `no`, complete the one-time
+Use `model show NAME` to confirm its backend and `target-only` or `dspark`
+generation mode before selection. If the table is empty or every row says
+`no`, complete the one-time
 [registration procedure](#registering-an-existing-model). Backend selection is
 part of that profile and never falls back silently.
+
+## Verifying source payloads for compilation
+
+Source acquisition and source compilation are separate operations. After an
+exact snapshot and its v1 acquisition manifest exist outside the repository,
+publish the payload-trusted v3 manifest before constructing Transformation IR:
+
+```sh
+./yvex compile source verify \
+  --source /srv/yvex/sources/DeepSeek-V4-Flash-DSpark \
+  --models-root /srv/yvex \
+  --source-manifest /srv/yvex/manifests/deepseek-v4-flash-dspark-source.json
+```
+
+This finite offline command first rechecks revision, sidecars, index and every
+Safetensors header. It then reads every admitted shard, compares its SHA-256
+with the pinned provider metadata and transactionally publishes the aggregate
+payload identity. It refuses when authoritative shard digests are unavailable;
+the product command does not turn a local-only seal into upstream evidence. A
+current upstream-verified v3 manifest reopens without rereading 167 GB of
+payload. The manifest is mutable provenance and should remain outside the
+source snapshot whose bytes it identifies.
+
+This command neither maps tensors nor emits an artifact. The subsequent
+compilation stages consume the published payload identity and retained source
+inventory through their typed owners.
 
 ## First verified startup
 
@@ -46,8 +74,8 @@ by `model list`:
 
 ```sh
 ./yvex model list
-./yvex model show deepseek4-v4-flash-runtime-iq2xxs
-./yvex model select deepseek4-v4-flash-runtime-iq2xxs
+./yvex model show deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs
 ./yvex model selected
 ```
 
@@ -91,8 +119,8 @@ The host admits the mapped artifact, then copies every encoded model tensor
 into one process-lifetime anonymous RAM arena before publishing `runtime.ready`.
 `resident_host_bytes` is the authoritative payload-residency count; the mapped
 file size and the smaller CUDA/unified accelerator prefix remain separate
-metrics. The current mixed IQ2_XXS/Q2_K artifact therefore needs about 87.7 GiB of host
-RAM for its 94,142,453,320-byte tensor payload, plus runtime state and backend
+metrics. The current DSpark bootstrap artifact therefore needs about 100.84 GiB of host
+RAM for its 108,274,154,488-byte tensor payload, plus runtime state and backend
 workspace. A cold start can take several minutes because authentication and
 the complete RAM transfer finish before the socket becomes ready.
 
@@ -131,8 +159,8 @@ start` in the first and run `runtime status`, then `chat`, in the second.
 Chat opens one concise attachment view and the stable prompt:
 
 ```text
-YVEX 0.1.0 · protocol 4
-deepseek-v4-flash · CUDA · variant 0123456789ab
+YVEX 0.1.0 · protocol 5
+deepseek-v4-flash-dspark · CUDA · DSpark · variant 0123456789ab
 runtime ready · attached to resident runtime
 session main · position 0 · turns 0 · context 0/4096 · KV unavailable
 
@@ -143,7 +171,9 @@ The exact identities come from the running daemon; the example values are not
 admission evidence. Model output is streamed directly without repeated role
 labels. During a turn, the console updates one daemon-authored prefill line in
 place. The terminal result then reports prefill and generation separately,
-including TTFT, context, stop reason, and session.
+including TTFT, context, stop reason, and session. When DSpark is active, one
+compact speculation row reports proposals, accepted drafts, and target
+verification count. Candidate token text is never displayed.
 
 Slash commands are discovered from the canonical registry. `/help` lists the
 admitted set; `/status`, `/runtime`, `/model`, `/memory`, and `/context` inspect
@@ -193,7 +223,7 @@ checks are:
 ```sh
 curl -fsS http://127.0.0.1:8001/health
 curl -fsS http://127.0.0.1:8001/v1/models
-curl -fsS http://127.0.0.1:8001/v1/chat/completions -H 'Content-Type: application/json' -d '{"model":"deepseek4-v4-flash","messages":[{"role":"user","content":"Hello"}],"stream":false}'
+curl -fsS http://127.0.0.1:8001/v1/chat/completions -H 'Content-Type: application/json' -d '{"model":"deepseek4-v4-flash-dspark","messages":[{"role":"user","content":"Hello"}],"stream":false}'
 ```
 
 The model identifier must match `GET /v1/models`; it is not a quantization
@@ -250,7 +280,9 @@ daemon console:
 event stream. Watch names the operational event and its semantic counters.
 Human trace additionally shows sequence, severity, turn, phase, timing, and
 rate. `trace --json` emits the canonical complete JSONL event record. Prompts
-and answers remain absent from all three by default.
+and answers remain absent from all three by default. DSpark trace events expose
+draft, target verification, accepted-prefix, rejection, and commit facts using
+named fields; watch remains compact.
 
 Raw daemon JSONL is selected at host startup with `--console raw`. Increase
 `--trace-level` from `summary` to `stages`, `tokens`, or `full` only when the
@@ -277,15 +309,16 @@ once with the advanced registry operation and absolute paths:
 
 ```sh
 ./yvex model registry add \
-  --alias deepseek4-v4-flash-runtime-iq2xxs \
+  --alias deepseek4-v4-flash-dspark-runtime-iq2xxs \
   --family deepseek4 \
-  --model v4-flash \
+  --model v4-flash-dspark \
   --scope runtime \
   --class iq2xxs \
-  --path /srv/yvex/models/deepseek-v4-flash.gguf \
-  --runtime-binding /srv/yvex/models/deepseek-v4-flash.yvex-runtime-binding \
-  --target deepseek4-v4-flash \
+  --path /srv/yvex/models/deepseek-v4-flash-dspark-bootstrap-q2-v1.gguf \
+  --runtime-binding /srv/yvex/models/deepseek-v4-flash-dspark.yvex-runtime-binding \
+  --target deepseek4-v4-flash-dspark \
   --backend cuda \
+  --generation-mode dspark \
   --context 4096 \
   --support-level runtime-profile-configured
 ```
@@ -298,7 +331,7 @@ contains no paths or environment variables:
 
 ```sh
 ./yvex model list
-./yvex model select deepseek4-v4-flash-runtime-iq2xxs
+./yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs
 ./yvex model selected
 ./yvex runtime start
 ```
@@ -308,6 +341,12 @@ real registry entries; and `runtime model` reads the identities actually open
 in `yvexd`. These states may differ without being conflated. Applying another
 selection requires a daemon restart; hot model switching and multi-model
 hosting are not current capabilities.
+
+Generation mode is part of the startup profile. `dspark` requires a binding
+that contains target, draft, and target-verification plans; `target-only` is
+the explicit reference/debug mode. A DSpark startup refusal is not permission
+to fall back silently. Select a compatible profile or repair the
+artifact/binding.
 
 ## Local paths
 

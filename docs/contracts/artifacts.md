@@ -56,6 +56,13 @@ snapshot but may not claim upstream verification. The ordered aggregate
 payload identity and per-shard trust facts are published atomically in the
 canonical source manifest outside the repository.
 
+The canonical operator projection is `yvex compile source verify --source DIR
+--models-root DIR --source-manifest FILE`. It is finite, reads every shard on
+first publication, refuses missing provider SHA-256 authority, and never
+materializes or hosts a model. Reopening an unchanged upstream-verified v3
+manifest reuses its identity without rereading the payload; any source or
+provenance drift fails closed.
+
 This handoff makes exact source bytes available to a later transformation
 executor. It does not define transformation semantics, perform datatype
 conversion or expert aggregation, select qtypes, quantize, encode GGUF, emit a
@@ -92,10 +99,20 @@ A complete artifact must record or prove:
 - architecture and tokenizer metadata;
 - every required global, layer, attention, position, KV, MoE, expert, norm, and
   output-head tensor role;
+- every declared draft feature, stage, Markov, confidence, verification, and
+  shared-resource role when speculative capability is advertised;
 - exact qtype, shape, layout, offset, alignment, range, and byte accounting;
 - deterministic writer output and writer-reader equivalence;
 - artifact identity and corruption refusal;
 - materialization and runtime descriptor compatibility.
+
+For `deepseek4-v4-flash-dspark`, one complete artifact contains the 43-layer
+target and all DSpark draft requirements. Metadata records the five-position
+block, noise token, ordered target feature layers, three draft stages,
+rank-256 Markov geometry, confidence availability, sharing, and target
+verification requirement. A target-only artifact or binding must not advertise
+DSpark. Missing draft tensors, scale companions, qtype support, workspace, or
+verification plans refuse admission instead of selecting target-only mode.
 
 A supported artifact additionally requires the runtime, generation,
 evaluation, benchmark, and release gates in

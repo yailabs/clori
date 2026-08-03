@@ -563,6 +563,7 @@
         "--backend",
         "--chunk-tokens",
         "--context-capacity",
+        "--generation-mode",
         "--input",
         "--input-file",
         "--max-device-bytes",
@@ -708,6 +709,7 @@
         "--class",
         "--context",
         "--family",
+        "--generation-mode",
         "--model",
         "--path",
         "--qprofile",
@@ -938,6 +940,16 @@
         "--tensor-limit"
       ]
     },
+    "cli_offline_source_verify": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--models-root",
+        "--source",
+        "--source-manifest",
+        "--target"
+      ]
+    },
     "cli_offline_source_native": {
       "booleans": [
         "--json"
@@ -1119,6 +1131,7 @@
         "--backend",
         "--console",
         "--context",
+        "--generation-mode",
         "--max-new-tokens",
         "--model",
         "--openai",
@@ -2434,6 +2447,43 @@
       "slash_projection": "none",
       "summary": "Create or report source provenance.",
       "test_owner": "tests/client_cutover.sh",
+      "visibility": "product-default"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "source-manifest",
+        "verify"
+      ],
+      "adapter_id": "source_manifest",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [],
+      "artifact_requirement": "none",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "source",
+        "verify"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_source_verify"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "source.payload.verify",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "reads every source shard and transactionally publishes payload identity",
+      "slash_projection": "none",
+      "summary": "Verify every source shard and publish its exact payload identity.",
+      "test_owner": "tests/cli/source_manifest.sh",
       "visibility": "product-default"
     },
     {

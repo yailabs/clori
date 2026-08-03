@@ -7,6 +7,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <yvex/server.h>
+#include <yvex/internal/source.h>
 
 #include <pthread.h>
 #include <signal.h>
@@ -22,7 +23,8 @@ static void print_help(FILE *output)
 {
     fprintf(output,
             "usage: yvexd --model ARTIFACT --runtime-binding FILE "
-            "[--target ID] [--backend cpu|cuda] [--socket PATH]\n"
+            "[--target ID] [--backend cpu|cuda] "
+            "[--generation-mode target-only|dspark] [--socket PATH]\n"
             "             [--context TOKENS] [--prefill-chunk TOKENS] "
             "[--max-new-tokens N] [--console off|raw]\n"
             "             [--trace-level summary|stages|tokens|full] "
@@ -95,10 +97,12 @@ int main(int argument_count, char **arguments)
     sigset_t signals;
     yvex_error err;
     int index, rc, signal_ready = 0, console_ready = 0;
-    int openai_seen = 0, openai_port_seen = 0, openai_timeout_seen = 0;
+    int mode_seen = 0, openai_seen = 0, openai_port_seen = 0;
+    int openai_timeout_seen = 0;
     memset(&options, 0, sizeof(options));
-    options.target_id = "deepseek4-v4-flash";
+    options.target_id = "deepseek4-v4-flash-dspark";
     options.backend = YVEX_BACKEND_KIND_CPU;
+    options.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
     options.context_capacity = 4096u;
     options.prefill_chunk_tokens = 64u;
     options.maximum_new_tokens = 256u;
@@ -122,6 +126,7 @@ int main(int argument_count, char **arguments)
                     !strcmp(argument, "--runtime-binding") ||
                     !strcmp(argument, "--target") ||
                     !strcmp(argument, "--backend") ||
+                    !strcmp(argument, "--generation-mode") ||
                     !strcmp(argument, "--socket") ||
                     !strcmp(argument, "--context") ||
                     !strcmp(argument, "--prefill-chunk") ||
@@ -148,6 +153,22 @@ int main(int argument_count, char **arguments)
             else if (!strcmp(backend, "cuda")) options.backend = YVEX_BACKEND_KIND_CUDA;
             else {
                 fprintf(stderr, "yvexd: --backend requires cpu or cuda\n");
+                return 2;
+            }
+        } else if (!strcmp(argument, "--generation-mode")) {
+            const char *mode;
+            if (mode_seen++) {
+                fprintf(stderr, "yvexd: duplicate --generation-mode option\n");
+                return 2;
+            }
+            mode = arguments[++index];
+            if (!strcmp(mode, "target-only"))
+                options.generation_mode = YVEX_SERVER_GENERATION_TARGET_ONLY;
+            else if (!strcmp(mode, "dspark"))
+                options.generation_mode = YVEX_SERVER_GENERATION_DSPARK;
+            else {
+                fprintf(stderr,
+                        "yvexd: --generation-mode requires target-only or dspark\n");
                 return 2;
             }
         } else if (!strcmp(argument, "--context")) {
@@ -204,6 +225,11 @@ int main(int argument_count, char **arguments)
     }
     if (!options.artifact_path || !options.runtime_binding_path) {
         fprintf(stderr, "yvexd: --model and --runtime-binding are required\n");
+        return 2;
+    }
+    if (!strcmp(options.target_id, YVEX_SOURCE_RETIRED_TARGET_ID)) {
+        fprintf(stderr, "yvexd: target %s was replaced; use %s\n",
+                YVEX_SOURCE_RETIRED_TARGET_ID, YVEX_SOURCE_RELEASE_TARGET_ID);
         return 2;
     }
     (void)sigemptyset(&signals);

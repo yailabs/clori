@@ -57,48 +57,31 @@ int yvex_artifact_payload_identity_compute(const yvex_artifact *artifact, const 
 
 /* Roundtrip Gate. */
 #define YVEX_GGUF_OFFICIAL_READER_REVISION "af97976c7810cdabb1863172f31c432dab767de7"
-#define YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME "deepseek-v4-flash-q8_0-q2_k-v1.gguf"
+#define YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME                                           \
+    "deepseek-v4-flash-dspark-bootstrap-q2-v1.gguf"
 #define YVEX_SELECTED_DEEPSEEK_ARTIFACT_IDENTITY                                                   \
-    "01b2bed4f070d0a3fdb02e546764b3a49cb69886eebe17b4877d20294725682c"
-#define YVEX_SELECTED_DEEPSEEK_PROFILE_NAME "deepseek-v4-flash-q8_0-q2_k-v1"
+    "bf80bd7372e9ff754cd61d8f6e849ca8eff2177fad40840a2dad8e840b35690a"
+#define YVEX_SELECTED_DEEPSEEK_PROFILE_NAME "deepseek-v4-flash-dspark-bootstrap-q2-v1"
 #define YVEX_SELECTED_DEEPSEEK_PROFILE_IDENTITY                                                    \
-    "04be09e124fd997ae3b785d0d3018f9d571cb6b96df5488d0ab21de3345bce25"
+    "a48d43c8594999a1af3a5b1f572b34a5823042cb767832d558642bb804b036c5"
 #define YVEX_SELECTED_DEEPSEEK_EXECUTION_IDENTITY                                                  \
-    "b81f3c5d670737bf20c938e635a1bffdbb0d60f885f994225a02225bb7ba51db"
+    "777559149e4e8421c34299da78f63f6b0d296a91005d7670196164c3c72b62af"
 #define YVEX_SELECTED_DEEPSEEK_PAYLOAD_PLAN_IDENTITY                                               \
-    "6c6289c096b5502eba98498bf498c80d9ca9c13ab06f5dcb62075e372274e97b"
+    "8d1a89e794363c0aaf1c721b07c0661ea03f9680691d0113543b2540297b69e7"
 #define YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTE_IDENTITY                                               \
-    "249277b42eb1aa231bddcb33b33ae3d805f3aa5991eaa99ae091f2ea9b928eb0"
+    "6dce1edb82810715687d40c6d62273e992cfe9e0aa610cb9598447e06fb7099f"
 #define YVEX_SELECTED_DEEPSEEK_PAYLOAD_IDENTITY                                                    \
-    "e22b3678d131d334f154a93214bdddfafc172c9869f4c52db28fea198eaa9165"
+    "e05ddb86f9783bf665d05395636588f4e8dbd1ee6f1ba54be4140f84369ee939"
 #define YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY                                                  \
-    "1c5ceab43fa9f9bf437aacc3b4b3c246ff26446ab0d7abd22ea642ce726017f5"
+    "cb857e6be90168ddde621c1352b0d45084901c683520f1eb1241d5559e01b7b5"
 #define YVEX_SELECTED_DEEPSEEK_WRITER_PLAN_IDENTITY                                                \
-    "4b47814e06c43b3426efcaab72b836596c42358a7c59ea5619ddd70c0eefe9fd"
-#define YVEX_SELECTED_DEEPSEEK_FILE_BYTES 102408545440ull
-#define YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTES 102396843592ull
-#define YVEX_SELECTED_DEEPSEEK_TENSOR_COUNT 1360ull
-#define YVEX_SELECTED_DEEPSEEK_METADATA_COUNT 68ull
-#define YVEX_SELECTED_DEEPSEEK_SOURCE_IDENTITY 0x818f3e5c5eaf9ffcull
-#define YVEX_SELECTED_DEEPSEEK_MAPPING_IDENTITY 0x1aecbbe25b04de0dull
-#define YVEX_DEEPSEEK_DS4_PROFILE_NAME "deepseek-v4-flash-ds4-like-q2-v1"
-#define YVEX_DEEPSEEK_DS4_PROFILE_IDENTITY                                                     \
-    "f0ba4b56e57842e4ca82fa4fc60d0a79c32061b5715b541d896a52ea76289ba4"
-#define YVEX_DEEPSEEK_DS4_EXECUTION_IDENTITY                                                   \
-    "b1446e5caf1d4768488c7daaf42784c6050e56d1422e759a34971520905206c4"
-#define YVEX_DEEPSEEK_DS4_PAYLOAD_PLAN_IDENTITY                                                \
-    "7c63416b88a182c2949805ed3d7c0a8bf5853c88219d6338e679b92c8f690949"
-#define YVEX_DEEPSEEK_DS4_PAYLOAD_BYTE_IDENTITY                                                \
-    "def97e67996ce6eb5902c33e8446c03561f2e8ec6d582439311bad5b5df80037"
-#define YVEX_DEEPSEEK_DS4_TRANSFORM_IDENTITY                                                   \
-    "cc774dffb6aa3a8e9f507b1dd454fbf7f5c68187138736f9a330ee9eaec07067"
-#define YVEX_DEEPSEEK_DS4_WRITER_PLAN_IDENTITY                                                 \
-    "8aa949e9a3e3b77211176a3a6dfed99ea0e63f210c7d80a3aedfb9b57527360d"
-#define YVEX_DEEPSEEK_DS4_ARTIFACT_IDENTITY                                                    \
-    "bdc6b442cf03f86f9d9a5cfe2a2f46a6ed7e3268b3ee6f3124725c999ca75a53"
-#define YVEX_DEEPSEEK_DS4_FILE_BYTES 94154155392ull
-#define YVEX_DEEPSEEK_DS4_PAYLOAD_BYTES 94142453320ull
-#define YVEX_DEEPSEEK_DS4_METADATA_COUNT 70ull
+    "1ba1ceaa709862145b1a145e938cf03327cd58da27bca42ade2f884e2b2fc635"
+#define YVEX_SELECTED_DEEPSEEK_FILE_BYTES 108285860832ull
+#define YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTES 108274154488ull
+#define YVEX_SELECTED_DEEPSEEK_TENSOR_COUNT 1409ull
+#define YVEX_SELECTED_DEEPSEEK_METADATA_COUNT 76ull
+#define YVEX_SELECTED_DEEPSEEK_SOURCE_IDENTITY 0x8d8da435dea23049ull
+#define YVEX_SELECTED_DEEPSEEK_MAPPING_IDENTITY 0x779aa44d104fc718ull
 typedef enum {
     YVEX_ARTIFACT_CLASS_REFUSED = 0,
     YVEX_ARTIFACT_CLASS_TENSOR_PROOF,
@@ -453,10 +436,10 @@ typedef struct {
     unsigned long long qtype_tensor_counts[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
     unsigned long long qtype_bytes[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
     unsigned long long role_counts[YVEX_TENSOR_ROLE_COUNT];
-    unsigned long long global_bindings, main_layer_bindings, mtp_bindings;
+    unsigned long long global_bindings, main_layer_bindings, draft_bindings;
     unsigned long long routed_expert_bindings, expert_subview_count;
     unsigned long long missing_required_bindings, duplicate_bindings, unexpected_bindings;
-    unsigned long long layer_count, mtp_layer_count, routed_experts, experts_per_token;
+    unsigned long long layer_count, draft_layer_count, routed_experts, experts_per_token;
     unsigned long long vocabulary_size;
     int tokenizer_metadata_available, graph_execution_ready, generation_ready;
 } yvex_runtime_descriptor_summary;
@@ -469,7 +452,7 @@ typedef struct {
     unsigned long long runtime_compute_policy_count;
     unsigned long long runtime_activation_policy_count;
     unsigned long long runtime_sparse_topk_policy_count;
-    unsigned long long layer_count, mtp_layer_count;
+    unsigned long long layer_count, draft_layer_count;
     unsigned long long routed_experts, experts_per_token, vocabulary_size;
 } yvex_runtime_descriptor_family_facts;
 const char *yvex_runtime_descriptor_failure_name(yvex_runtime_descriptor_failure_code code);

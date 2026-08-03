@@ -33,8 +33,10 @@ not reconstruct transformation or writer plans.
 
 The model owns model-lifetime artifact/binding handles, encoded weights,
 backend resources, tokenizer plan, output-head residency, immutable execution
-descriptors, and shared caches. Readiness is published only after required
-resources and the worker are usable.
+descriptors, target and draft plans, and shared caches. A DSpark plan shares the
+target model, tokenizer, output head, backend context, and immutable residency;
+it is not a second runtime model. Readiness is published only after every
+requirement of the selected generation mode and the worker is usable.
 
 Failure during opening publishes no ready model and releases every acquired
 resource transactionally. Shutdown closes the model once after request/session
@@ -85,6 +87,26 @@ CPU and CUDA consume the same typed logical contract. Unsupported CUDA qtypes,
 operations, modes, workspace, or resources refuse; no explicit CUDA request
 falls back to CPU.
 
+## Generation modes and verification
+
+One model may admit `target-only` and `dspark` modes. The selected mode is a
+runtime-profile fact and appears in live status and turn results. Target-only
+is the ordinary target reference path. DSpark is admitted only when artifact,
+binding, draft plan, target-verification plan, qtypes, workspace, and backend
+capabilities all agree. An explicit DSpark request never falls back silently.
+
+A DSpark cycle produces a bounded candidate block and confidence facts without
+mutating committed target truth. The complete target evaluates the ordered
+candidate prefix. Greedy verification accepts exact target-token matches.
+Stochastic verification uses the admitted target-distribution-preserving
+accept/reject and residual-sampling rule; drafter confidence and decoded text
+are never correctness authorities.
+
+`decode_step_count` retains its sequence meaning: it counts target-verified
+positions committed to model state. It is not a target-forward counter. Draft
+forwards and target block verifications have separate counters because one
+verification may commit several positions.
+
 ## Persistent state transaction
 
 Persistent sequence state is session-owned. The state provider and backend
@@ -105,6 +127,14 @@ committed, and the result identifies the exact completed prefix and first
 incomplete unit. State position and generation come from the committed owner,
 not from a renderer or decode-local counter.
 
+Speculation uses one bounded multi-position candidate transaction. The
+transaction covers target attention/KV state, DSpark candidate state, position,
+token ledger, decoder, generated text, target and draft RNG state, stop class,
+and turn identities. It commits exactly the accepted target-authored prefix
+plus any correction or bonus token defined by the algorithm. Rejected suffixes
+are discarded before later state or text becomes visible. Rollback never means
+decrementing counters after publication.
+
 ## Generation and text publication
 
 One generation turn composes tokenizer, prompt rendering, prefix admission,
@@ -121,6 +151,10 @@ Fragments are published only after:
 Sink failure or disconnect stops further publication and preserves exact
 model-committed partial state. A partial turn is never labeled complete.
 
+Draft candidates are not fragments. They never enter native streaming, HTTP
+or SSE output, transcript, completion usage, or ordinary generated-token
+counts. Those surfaces count only target-verified committed tokens.
+
 ## Cancellation
 
 Cancellation is server-owned and correlated to the exact session/request/turn.
@@ -128,10 +162,12 @@ It remains observable during tokenization, prefill, Transformer/MoE execution,
 decode, output-head projection, sampling, and publication at the bounded safe
 points provided by those owners.
 
-A cancelled request publishes a typed cancellation class, completed token and
-position facts, and no false terminal success. It does not close the daemon,
-model, or unrelated sessions, poison immutable caches, or prevent a subsequent
-request.
+A cancellation during drafting or verification discards uncommitted candidate
+state. A cancellation after atomic accepted-prefix commit reports that exact
+committed prefix. Every cancelled request publishes a typed cancellation
+class, completed token and position facts, and no false terminal success. It
+does not close the daemon, model, or unrelated sessions, poison immutable
+caches, or prevent reset and a subsequent request.
 
 ## Resource and concurrency rules
 
@@ -157,8 +193,12 @@ and output sink. Semantic defaults come from typed generation/sampling owners.
 
 Outputs include streamed channel fragments, complete turn result, usage,
 prompt/reuse/prefill/generation facts, TTFT, stop/cancellation class, final
-position, state/turn identity, and typed errors. Unavailable data is marked
-unavailable; zero is retained for real zero values.
+position, state/turn identity, and typed errors. Speculative results also name
+the execution mode and policy and report draft cycles/forwards, proposed and
+selected tokens, target verifications, accepted and rejected drafts,
+correction/bonus tokens, accepted-prefix statistics, and separate draft,
+verification, and commit durations. Unavailable data is marked unavailable;
+zero is retained for real zero values.
 
 ## Side effects
 
@@ -178,9 +218,14 @@ No output or state is published before its producer completes. Cleanup failure
 is reported without pretending the owner was released. Malformed or hostile
 requests cannot terminate the daemon or corrupt another session.
 
+Malformed draft geometry, feature taps, noise token, Markov rank, missing
+companions, unsupported draft qtypes, candidate workspace overflow,
+verification-state mismatch, RNG mismatch, and rejected-state reuse are typed
+refusals or failures. None may become a successful target-only turn.
+
 ## Compatibility
 
-The runtime behavior is consumed through private local protocol v4 and the
+The runtime behavior is consumed through private local protocol v5 and the
 bounded OpenAI compatibility profile v1. Public C ABI and internal ABI follow
 their header/version contracts. Pre-v0.1 private protocol versions may be
 refused rather than decoded compatibly.
@@ -190,5 +235,5 @@ refused rather than decoded compatibly.
 This contract does not establish public/remote serving, authentication, TLS,
 continuous batching, multi-model hosting, distributed execution,
 restart-persistent sessions, complete accelerator residency, device-side
-sampling/tokenization, model evaluation, release benchmark performance, or
-release qualification.
+sampling/tokenization, load-aware confidence scheduling, DSpark acceleration,
+model evaluation, release benchmark performance, or release qualification.

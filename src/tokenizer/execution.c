@@ -50,6 +50,15 @@ typedef struct {
 struct yvex_token_sequence {
     token_sequence_row *rows;
     unsigned long long count, capacity, generation;
+    int transaction_active;
+};
+
+struct yvex_token_sequence_transaction {
+    yvex_token_sequence *sequence;
+    token_sequence_row *rows;
+    unsigned long long base_count, base_generation;
+    unsigned long long count, capacity, generation;
+    int prepared;
 };
 
 static uint64_t lookup_hash(const void *data, size_t count)
@@ -1555,7 +1564,8 @@ int yvex_token_sequence_append(yvex_token_sequence *sequence,
                                yvex_error *err)
 {
     unsigned long long next_count, next_generation;
-    if (!sequence || !ordinal || token_id >= vocabulary_size || sequence->count >= sequence->capacity) {
+    if (!sequence || !ordinal || sequence->transaction_active ||
+        token_id >= vocabulary_size || sequence->count >= sequence->capacity) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "tokenizer.append", "token ID or directory capacity is invalid");
         return YVEX_ERR_BOUNDS;
     }
@@ -1573,6 +1583,135 @@ int yvex_token_sequence_append(yvex_token_sequence *sequence,
     return YVEX_OK;
 }
 
+int yvex_token_sequence_transaction_begin(
+    yvex_token_sequence *sequence, unsigned long long maximum_rows,
+    yvex_token_sequence_transaction **out, yvex_error *err)
+{
+    yvex_token_sequence_transaction *transaction;
+    if (out) *out = NULL;
+    if (!sequence || !out || !maximum_rows || sequence->transaction_active ||
+        maximum_rows > sequence->capacity - sequence->count ||
+        maximum_rows > SIZE_MAX / sizeof(token_sequence_row)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.append.transaction.begin",
+                       "token sequence cannot admit the requested transaction");
+        return YVEX_ERR_STATE;
+    }
+    transaction = calloc(1u, sizeof(*transaction));
+    if (transaction)
+        transaction->rows = calloc((size_t)maximum_rows,
+                                   sizeof(*transaction->rows));
+    if (!transaction || !transaction->rows) {
+        free(transaction ? transaction->rows : NULL);
+        free(transaction);
+        yvex_error_set(err, YVEX_ERR_NOMEM, "tokenizer.append.transaction.begin",
+                       "token transaction allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    transaction->sequence = sequence;
+    transaction->base_count = sequence->count;
+    transaction->base_generation = sequence->generation;
+    transaction->generation = sequence->generation;
+    transaction->capacity = maximum_rows;
+    sequence->transaction_active = 1;
+    *out = transaction;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_token_sequence_transaction_append(
+    yvex_token_sequence_transaction *transaction, unsigned int token_id,
+    unsigned long long vocabulary_size, unsigned long long *ordinal,
+    yvex_error *err)
+{
+    unsigned long long next_generation;
+    if (!transaction || transaction->prepared || !ordinal ||
+        token_id >= vocabulary_size || transaction->count >= transaction->capacity ||
+        !yvex_core_u64_add(transaction->generation, 1ull, &next_generation)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "tokenizer.append.transaction.append",
+                       "staged token or transaction extent is invalid");
+        return YVEX_ERR_BOUNDS;
+    }
+    *ordinal = transaction->base_count + transaction->count;
+    transaction->rows[transaction->count].token_id = token_id;
+    transaction->rows[transaction->count].state = YVEX_TOKEN_APPEND_PROPOSED;
+    transaction->count++;
+    transaction->generation = next_generation;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_token_sequence_transaction_transition(
+    yvex_token_sequence_transaction *transaction, unsigned long long ordinal,
+    yvex_token_append_state expected, yvex_token_append_state next,
+    yvex_error *err)
+{
+    unsigned long long local, next_generation;
+    if (!transaction || transaction->prepared || ordinal < transaction->base_count) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.append.transaction.transition",
+                       "staged append transition is stale");
+        return YVEX_ERR_STATE;
+    }
+    local = ordinal - transaction->base_count;
+    if (local >= transaction->count || transaction->rows[local].state != expected ||
+        next != (yvex_token_append_state)(expected + 1) ||
+        !yvex_core_u64_add(transaction->generation, 1ull, &next_generation)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.append.transaction.transition",
+                       "staged append transition is non-contiguous");
+        return YVEX_ERR_STATE;
+    }
+    transaction->rows[local].state = next;
+    transaction->generation = next_generation;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_token_sequence_transaction_prepare(
+    yvex_token_sequence_transaction *transaction, yvex_error *err)
+{
+    yvex_token_sequence *sequence = transaction ? transaction->sequence : NULL;
+    if (!transaction || transaction->prepared || !transaction->count || !sequence ||
+        !sequence->transaction_active || sequence->count != transaction->base_count ||
+        sequence->generation != transaction->base_generation ||
+        transaction->count > sequence->capacity - sequence->count) {
+        yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.append.transaction.prepare",
+                       "token transaction no longer matches its base state");
+        return YVEX_ERR_STATE;
+    }
+    transaction->prepared = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+void yvex_token_sequence_transaction_publish(
+    yvex_token_sequence_transaction **transaction)
+{
+    yvex_token_sequence_transaction *owner = transaction ? *transaction : NULL;
+    yvex_token_sequence *sequence;
+    if (!owner || !owner->prepared) return;
+    sequence = owner->sequence;
+    memcpy(sequence->rows + owner->base_count, owner->rows,
+           (size_t)owner->count * sizeof(*owner->rows));
+    sequence->count = owner->base_count + owner->count;
+    sequence->generation = owner->generation;
+    sequence->transaction_active = 0;
+    free(owner->rows);
+    memset(owner, 0, sizeof(*owner));
+    free(owner);
+    *transaction = NULL;
+}
+
+void yvex_token_sequence_transaction_abort(
+    yvex_token_sequence_transaction **transaction)
+{
+    yvex_token_sequence_transaction *owner = transaction ? *transaction : NULL;
+    if (!owner) return;
+    if (owner->sequence) owner->sequence->transaction_active = 0;
+    free(owner->rows);
+    memset(owner, 0, sizeof(*owner));
+    free(owner);
+    *transaction = NULL;
+}
+
 int yvex_token_sequence_transition(yvex_token_sequence *sequence,
                                    unsigned long long ordinal,
                                    yvex_token_append_state expected,
@@ -1580,7 +1719,8 @@ int yvex_token_sequence_transition(yvex_token_sequence *sequence,
                                    yvex_error *err)
 {
     unsigned long long next_generation;
-    if (!sequence || ordinal >= sequence->count || sequence->rows[ordinal].state != expected ||
+    if (!sequence || sequence->transaction_active || ordinal >= sequence->count ||
+        sequence->rows[ordinal].state != expected ||
         next != (yvex_token_append_state)(expected + 1)) {
         yvex_error_set(err, YVEX_ERR_STATE, "tokenizer.append.transition",
                        "append transition is non-contiguous or stale");
@@ -1628,7 +1768,7 @@ int yvex_token_sequence_reset(yvex_token_sequence *sequence,
 {
     unsigned long long next_generation;
 
-    if (!sequence) {
+    if (!sequence || sequence->transaction_active) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "tokenizer.append.reset",
                        "token directory is required");
         return YVEX_ERR_INVALID_ARG;

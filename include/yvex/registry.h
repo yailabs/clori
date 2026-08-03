@@ -45,6 +45,7 @@ typedef struct {
     const char *runtime_binding;
     const char *runtime_target;
     const char *runtime_backend;
+    const char *runtime_mode;
     unsigned long long runtime_context;
 } yvex_model_registry_entry;
 

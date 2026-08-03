@@ -7,10 +7,183 @@
  */
 #include "src/cli/io/private.h"
 
+#include <ctype.h>
 #include <errno.h>
+#include <operator/registry.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+enum { COMPLETION_CANDIDATE_CAP = 256, COMPLETION_TEXT_CAP = 128 };
+
+typedef struct {
+    char text[COMPLETION_CANDIDATE_CAP][COMPLETION_TEXT_CAP];
+    size_t count;
+} completion_candidates;
+
+static int completion_visible(const yvex_operator_descriptor *descriptor)
+{
+    return descriptor->cli_projection &&
+           descriptor->visibility != YVEX_OPERATOR_VISIBILITY_REMOVED &&
+           descriptor->visibility != YVEX_OPERATOR_VISIBILITY_API_ONLY &&
+           descriptor->visibility != YVEX_OPERATOR_VISIBILITY_TEST_ONLY;
+}
+
+static int completion_prefix_matches(const yvex_operator_descriptor *descriptor,
+                                     size_t count, const char *const *words)
+{
+    size_t index;
+    if (count > descriptor->command_word_count) return 0;
+    for (index = 0u; index < count; ++index)
+        if (strcmp(descriptor->command_words[index], words[index])) return 0;
+    return 1;
+}
+
+static void completion_add(completion_candidates *candidates, const char *value)
+{
+    const unsigned char *cursor = (const unsigned char *)value;
+    size_t index;
+    if (!value[0] || strlen(value) >= COMPLETION_TEXT_CAP) return;
+    while (*cursor) {
+        if (!(isalnum(*cursor) || strchr("._:/@+-", *cursor))) return;
+        cursor++;
+    }
+    for (index = 0u; index < candidates->count; ++index)
+        if (!strcmp(candidates->text[index], value)) return;
+    if (candidates->count >= COMPLETION_CANDIDATE_CAP) return;
+    (void)snprintf(candidates->text[candidates->count], COMPLETION_TEXT_CAP, "%s", value);
+    candidates->count++;
+}
+
+static void completion_add_metadata(completion_candidates *candidates, const char *values)
+{
+    const char *cursor = values;
+    if (!strcmp(values, "none")) return;
+    while (*cursor) {
+        const char *end = strchr(cursor, '|');
+        size_t extent = end ? (size_t)(end - cursor) : strlen(cursor);
+        char item[COMPLETION_TEXT_CAP];
+        if (extent < sizeof(item)) {
+            memcpy(item, cursor, extent);
+            item[extent] = '\0';
+            completion_add(candidates, item);
+        }
+        if (!end) break;
+        cursor = end + 1;
+    }
+}
+
+static completion_candidates completion_collect(size_t prefix_count,
+                                                const char *const *prefix)
+{
+    completion_candidates candidates = {{{0}}, 0u};
+    size_t descriptor_index;
+    for (descriptor_index = 0u; descriptor_index < yvex_operator_descriptor_count;
+         ++descriptor_index) {
+        const yvex_operator_descriptor *descriptor =
+            &yvex_operator_descriptors[descriptor_index];
+        size_t index;
+        if (!completion_visible(descriptor) ||
+            !completion_prefix_matches(descriptor, prefix_count, prefix))
+            continue;
+        if (descriptor->command_word_count > prefix_count) {
+            completion_add(&candidates, descriptor->command_words[prefix_count]);
+            continue;
+        }
+        for (index = 0u; index < descriptor->flag_count; ++index) {
+            completion_add(&candidates, descriptor->flags[index].name);
+            completion_add_metadata(&candidates, descriptor->flags[index].aliases);
+        }
+        for (index = 0u; index < descriptor->argument_count; ++index)
+            completion_add_metadata(&candidates, descriptor->arguments[index].enum_values);
+    }
+    return candidates;
+}
+
+static void completion_emit_case(FILE *output, const char *shell,
+                                 size_t prefix_count, const char *const *prefix)
+{
+    completion_candidates candidates = completion_collect(prefix_count, prefix);
+    size_t index;
+    if (!candidates.count) return;
+    if (!strcmp(shell, "fish")) fputs("    case '", output);
+    else fputs("    '", output);
+    for (index = 0u; index < prefix_count; ++index)
+        fprintf(output, "%s%s", index ? " " : "", prefix[index]);
+    if (!strcmp(shell, "fish")) fputs("'\n      set candidates", output);
+    else fputs("') candidates='", output);
+    for (index = 0u; index < candidates.count; ++index)
+        fprintf(output, " %s", candidates.text[index]);
+    if (!strcmp(shell, "fish")) fputc('\n', output);
+    else fputs(" ' ;;\n", output);
+}
+
+static void completion_emit_cases(FILE *output, const char *shell)
+{
+    size_t descriptor_index, prefix_count, prior;
+    for (descriptor_index = 0u; descriptor_index < yvex_operator_descriptor_count;
+         ++descriptor_index) {
+        const yvex_operator_descriptor *descriptor =
+            &yvex_operator_descriptors[descriptor_index];
+        if (!completion_visible(descriptor)) continue;
+        for (prefix_count = 0u; prefix_count <= descriptor->command_word_count;
+             ++prefix_count) {
+            int seen = 0;
+            for (prior = 0u; prior < descriptor_index && !seen; ++prior) {
+                const yvex_operator_descriptor *candidate =
+                    &yvex_operator_descriptors[prior];
+                if (completion_visible(candidate) &&
+                    candidate->command_word_count >= prefix_count &&
+                    completion_prefix_matches(candidate, prefix_count,
+                                              descriptor->command_words))
+                    seen = 1;
+            }
+            if (!seen)
+                completion_emit_case(output, shell, prefix_count,
+                                     descriptor->command_words);
+        }
+    }
+}
+
+int yvex_cli_completion_command(int argc, char **argv, size_t consumed)
+{
+    const char *shell = consumed + 1u < (size_t)argc ? argv[consumed + 1u] : NULL;
+    if (!shell) return 2;
+    if (!strcmp(shell, "bash")) {
+        fputs("_yvex_complete() {\n"
+              "  local cur=${COMP_WORDS[COMP_CWORD]} path='' candidates=''\n"
+              "  if (( COMP_CWORD > 1 )); then "
+              "path=${COMP_WORDS[*]:1:$((COMP_CWORD-1))}; fi\n"
+              "  case \"$path\" in\n", stdout);
+        completion_emit_cases(stdout, shell);
+        fputs("  esac\n  COMPREPLY=( $(compgen -W \"$candidates\" -- \"$cur\") )\n"
+              "}\ncomplete -F _yvex_complete yvex\n", stdout);
+        return 0;
+    }
+    if (!strcmp(shell, "zsh")) {
+        fputs("#compdef yvex\n_yvex_complete() {\n"
+              "  local path='' candidates=''\n"
+              "  if (( CURRENT > 2 )); then path=${(j: :)words[2,$((CURRENT-1))]}; fi\n"
+              "  case \"$path\" in\n", stdout);
+        completion_emit_cases(stdout, shell);
+        fputs("  esac\n  compadd -- ${(z)candidates}\n}\ncompdef _yvex_complete yvex\n", stdout);
+        return 0;
+    }
+    if (!strcmp(shell, "fish")) {
+        fputs("function __yvex_candidates\n"
+              "  set -l tokens (commandline -opc)\n"
+              "  set -e tokens[1]\n"
+              "  set -l path (string join ' ' $tokens)\n"
+              "  set -l candidates\n"
+              "  switch $path\n", stdout);
+        completion_emit_cases(stdout, shell);
+        fputs("  end\n  printf '%s\\n' $candidates\nend\n"
+              "complete -c yvex -f -a '(__yvex_candidates)'\n", stdout);
+        return 0;
+    }
+    fprintf(stderr, "yvex: completion shell must be bash, zsh, or fish\n");
+    return 2;
+}
 
 int yvex_cli_out_vwritef(FILE *fp, const char *fmt, va_list ap)
 {

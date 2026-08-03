@@ -49,6 +49,7 @@ claims.
 | NVIDIA [Driver API module management](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MODULE.html) and [execution control](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXEC.html) | Distinct context, module load, function resolution, launch, synchronization, rollback, and cleanup states | `src/backend/cuda/backend.c`, `src/backend/cuda/capability.c`, `src/backend/cuda/ops.c` | `V010.CUDA.FAILCLOSED.0` and later exact runtime-operation proofs | Context availability as kernel support, successful launch return as numerical proof, generated artifacts in source control, or CUDA model support |
 | NVIDIA [Driver API graph management](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html) | Graph construction/capture, dependency nodes, instantiation, update, launch, stable-address requirements, invalidation and destruction | `src/backend/cuda/graph.c`, `src/runtime/` | `V010.RUNTIME.1` attention eager/piecewise/full execution modes | CUDA Graph labels as capture proof, eager aliases as graph execution, automatic performance claims, CPU fallback, or serialized graph artifacts |
 | DeepSeek [V4 technical report v1](https://arxiv.org/abs/2606.19348v1), official model snapshot at [`60d8d70770c6776ff598c94bb586a859a38244f1`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/tree/60d8d70770c6776ff598c94bb586a859a38244f1), its exact config/tokenizer sidecars, and [FlashMLA](https://github.com/deepseek-ai/FlashMLA) | Exact architecture identifier, hybrid attention, compressed KV, position rules, mHC, MoE topology, tokenizer/encoding contract, source dtype/quantization facts, and reference kernel behavior | `src/source/`, `src/model/families/`, `src/tokenizer/`, `src/graph/`, `src/backend/cuda/` | `V010.REBASE.DEEPSEEK.0`, `V010.MODEL.ARCH.IR.0`, `V010.TENSOR.COVERAGE.DEEPSEEK.0`, `V010.MAP.GGUF.DEEPSEEK.0`, `V010.RUNTIME.DEEPSEEK.TOKENIZER.0`, attention/MoE milestones | Facts absent from the local source, assumptions inferred from the family name, external runtime output, external GGUF support, or DeepSeek support in YVEX |
+| Official [DeepSeek-V4-Flash-DSpark snapshot](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-DSpark/tree/62af8fffb2f7030cac4de2f0169f5b8d1101b646), [DSpark paper v1](https://arxiv.org/abs/2607.05147v1), bundled inference code at the same source revision, DeepSpec at [`005e03b81cec38b7da6399833d609ee89a2587f2`](https://github.com/deepseek-ai/DeepSpec/tree/005e03b81cec38b7da6399833d609ee89a2587f2), and the vLLM DSpark implementation at [`d9dac2b3d4cdd57ff2f7c5311bc8aaf3eef3feec`](https://github.com/vllm-project/vllm/tree/d9dac2b3d4cdd57ff2f7c5311bc8aaf3eef3feec/vllm/v1/worker/gpu/spec_decode/dspark) | Five-position semi-autoregressive drafting, ordered target feature taps, three draft stages, noise queries, rank-256 Markov conditioning, confidence logits, full-target verification, stochastic residual sampling, and accepted-prefix commit | `src/source/`, `src/model/families/`, `src/graph/families/`, `src/runtime/`, `src/server/` | `V010.REBASE.DEEPSEEK.DSPARK.0` | External process topology, Python ownership, external runtime support, published speedups, load-aware scheduling, quality parity, or YVEX support before local live acceptance |
 
 ## Validation boundary
 
@@ -63,6 +64,20 @@ identity/config authority; the paper and runtimes resolve architecture
 semantics and independent topology expectations. The canonical YVEX result is
 the immutable owner under `src/model/families/`, not an inherited Python class
 hierarchy or external support claim.
+
+The current source rebase consumes the DSpark snapshot at
+`62af8fffb2f7030cac4de2f0169f5b8d1101b646`. Its configuration and tensor
+inventory are authoritative for payload identity and geometry. DSpark paper
+`arXiv:2607.05147v1`, the bundled inference code, DeepSpec commit
+`005e03b81cec38b7da6399833d609ee89a2587f2`, and vLLM DSpark commit
+`d9dac2b3d4cdd57ff2f7c5311bc8aaf3eef3feec` resolve proposal, verification,
+acceptance, and commit semantics. The official vLLM recipe uses greedy draft
+sampling with standard target rejection sampling; the distinct optional block
+verification method is not DSpark's default semantic contract. In particular,
+the public configuration's
+single next-token prediction declaration is not treated as the draft depth:
+the bundled inference configuration and tensor geometry establish three draft
+stages conditioned by target features from layers 40, 41, and 42.
 
 `V010.GRAPH.DEEPSEEK.ATTENTION.0` resolves the executable attention boundary
 against those same pinned sources and runtime-numeric authority commit

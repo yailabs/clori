@@ -228,8 +228,9 @@ cat >"$registry" <<EOF
     "alias": "current-model-runtime-profile",
     "path": "$artifact",
     "runtime_binding": "$binding",
-    "runtime_target": "deepseek4-v4-flash",
+    "runtime_target": "deepseek4-v4-flash-dspark",
     "runtime_backend": "cuda",
+    "runtime_mode": "dspark",
     "runtime_context": 4096
   }]
 }
@@ -245,7 +246,7 @@ grep -F 'selected model: current-model-runtime-profile' "$root/out" >/dev/null
 test "$(stat -c '%a' "$home_root/.config/yvex/model.conf")" = 600
 test "$(stat -c '%a' "$home_root/.config/yvex")" = 700
 HOME="$home_root" "$YVEX_BIN" model selected >"$root/out"
-grep -F 'backend=cuda context=4096' "$root/out" >/dev/null
+grep -F 'backend=cuda mode=dspark context=4096' "$root/out" >/dev/null
 grep -F "artifact=$artifact" "$root/out" >/dev/null
 grep -F "binding=$binding" "$root/out" >/dev/null
 
@@ -266,9 +267,11 @@ $artifact
 --runtime-binding
 $binding
 --target
-deepseek4-v4-flash
+deepseek4-v4-flash-dspark
 --backend
 cuda
+--generation-mode
+dspark
 --context
 4096
 EOF

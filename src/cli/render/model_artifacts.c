@@ -502,19 +502,21 @@ static const char *const literal_lines_41[] = {
 
 static const char *const literal_lines_42[] = {
     "alias: yvex inspect model full plan --model FILE_OR_ALIAS [options]", "\nExamples:",
-    "  yvex inspect model full report --model deepseek4-v4-flash-selected-embed --backend cpu",
-    "  yvex inspect model full report --model deepseek4-v4-flash-selected-embed-rmsnorm "
+    "  yvex inspect model full report --model deepseek4-v4-flash-dspark-selected-embed --backend cpu",
+    "  yvex inspect model full report --model deepseek4-v4-flash-dspark-selected-embed-rmsnorm "
     "--backend cpu --limit-tensors 8",
-    "  yvex inspect model full report --model ./candidate.gguf --target deepseek4-v4-flash --backend cuda",
-    "  yvex inspect model full materialization-plan --model deepseek4-v4-flash-selected-embed-rmsnorm --backend cpu "
+    "  yvex inspect model full report --model ./candidate.gguf --target deepseek4-v4-flash-dspark --backend cuda",
+    "  yvex inspect model full materialization-plan --model "
+        "deepseek4-v4-flash-dspark-selected-embed-rmsnorm --backend cpu "
         "--residency resident",
-    "  yvex inspect model full materialization-plan --model ./candidate.gguf --target deepseek4-v4-flash --backend "
+    "  yvex inspect model full materialization-plan --model ./candidate.gguf "
+        "--target deepseek4-v4-flash-dspark --backend "
         "cuda --residency hybrid",
     "  yvex inspect model full materialize --model ./tiny-fullish.gguf --backend cpu --limit-bytes 1048576",
-    "  yvex inspect model full materialize --model deepseek4-v4-flash-selected-embed-rmsnorm --backend cpu",
-    "  yvex inspect model full descriptor --model ./candidate.gguf --target deepseek4-v4-flash "
+    "  yvex inspect model full materialize --model deepseek4-v4-flash-dspark-selected-embed-rmsnorm --backend cpu",
+    "  yvex inspect model full descriptor --model ./candidate.gguf --target deepseek4-v4-flash-dspark "
         "--backend cpu --limit-tensors 40",
-    "  yvex inspect model full family-runtime --model deepseek4-v4-flash-selected-embed-rmsnorm "
+    "  yvex inspect model full family-runtime --model deepseek4-v4-flash-dspark-selected-embed-rmsnorm "
         "--family deepseek --backend cpu",
     "\nfullmodel report:", "  inventory and placement pressure report."};
 

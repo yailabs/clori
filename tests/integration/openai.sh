@@ -1,5 +1,5 @@
 #!/bin/sh
-# Exercises production HTTP/SSE translation over the real local protocol v4 codec.
+# Exercises production HTTP/SSE translation over the real local protocol v5 codec.
 set -eu
 
 YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}
@@ -55,64 +55,64 @@ done
 test "$attempt" -lt 100
 
 curl -fsS "$base/v1/models" >"$root/models.json"
-curl -fsS "$base/v1/models/deepseek-v4-flash" >"$root/model.json"
+curl -fsS "$base/v1/models/deepseek4-v4-flash-dspark" >"$root/model.json"
 curl -fsS -H 'Content-Type: application/json' "$base/v1/chat/completions" \
-    -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"Hello"}],"temperature":0}' \
+    -d '{"model":"deepseek4-v4-flash-dspark","messages":[{"role":"user","content":"Hello"}],"temperature":0}' \
     >"$root/chat.json"
 curl -fsS -H 'Content-Type: application/json' "$base/v1/chat/completions" \
-    -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"JSON"}],"temperature":0,"response_format":{"type":"json_object"}}' \
+    -d '{"model":"deepseek4-v4-flash-dspark","messages":[{"role":"user","content":"JSON"}],"temperature":0,"response_format":{"type":"json_object"}}' \
     >"$root/chat-json.json"
 curl -fsS -N -H 'Content-Type: application/json' "$base/v1/chat/completions" \
-    -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"Hello"}],"temperature":0,"stream":true,"stream_options":{"include_usage":true}}' \
+    -d '{"model":"deepseek4-v4-flash-dspark","messages":[{"role":"user","content":"Hello"}],"temperature":0,"stream":true,"stream_options":{"include_usage":true}}' \
     >"$root/chat.sse"
 
 tools='[{"type":"function","function":{"name":"get_match_context","description":"Get match context","parameters":{"type":"object","properties":{"match_id":{"type":"string"}},"required":["match_id"]},"strict":false}}]'
 response_tools='[{"type":"function","name":"get_match_context","description":"Get match context","parameters":{"type":"object","properties":{"match_id":{"type":"string"}},"required":["match_id"]},"strict":false}]'
 response_tool_choice='{"type":"function","name":"get_match_context"}'
 curl -fsS -H 'Content-Type: application/json' "$base/v1/chat/completions" \
-    -d "{\"model\":\"deepseek-v4-flash\",\"messages\":[{\"role\":\"user\",\"content\":\"Load m1\"}],\"temperature\":0,\"tools\":$tools,\"tool_choice\":\"auto\",\"parallel_tool_calls\":false}" \
+    -d "{\"model\":\"deepseek4-v4-flash-dspark\",\"messages\":[{\"role\":\"user\",\"content\":\"Load m1\"}],\"temperature\":0,\"tools\":$tools,\"tool_choice\":\"auto\",\"parallel_tool_calls\":false}" \
     >"$root/tool.json"
 curl -fsS -N -H 'Content-Type: application/json' "$base/v1/chat/completions" \
-    -d "{\"model\":\"deepseek-v4-flash\",\"messages\":[{\"role\":\"user\",\"content\":\"Load m1\"}],\"temperature\":0,\"stream\":true,\"stream_options\":{\"include_usage\":true},\"tools\":$tools,\"tool_choice\":\"auto\",\"parallel_tool_calls\":false}" \
+    -d "{\"model\":\"deepseek4-v4-flash-dspark\",\"messages\":[{\"role\":\"user\",\"content\":\"Load m1\"}],\"temperature\":0,\"stream\":true,\"stream_options\":{\"include_usage\":true},\"tools\":$tools,\"tool_choice\":\"auto\",\"parallel_tool_calls\":false}" \
     >"$root/tool.sse"
 
 curl --fail-with-body -sS -H 'Content-Type: application/json' "$base/v1/responses" \
-    -d "{\"model\":\"deepseek-v4-flash\",\"input\":\"Load m1\",\"temperature\":0,\"tools\":$response_tools,\"tool_choice\":$response_tool_choice,\"parallel_tool_calls\":false,\"store\":false}" \
+    -d "{\"model\":\"deepseek4-v4-flash-dspark\",\"input\":\"Load m1\",\"temperature\":0,\"tools\":$response_tools,\"tool_choice\":$response_tool_choice,\"parallel_tool_calls\":false,\"store\":false}" \
     >"$root/response-tool.json"
 response_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$root/response-tool.json")
 call_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["output"][0]["call_id"])' "$root/response-tool.json")
 curl -fsS -H 'Content-Type: application/json' "$base/v1/responses" \
-    -d "{\"model\":\"deepseek-v4-flash\",\"previous_response_id\":\"$response_id\",\"input\":[{\"type\":\"function_call_output\",\"call_id\":\"$call_id\",\"output\":\"{\\\"score\\\":2}\"}],\"temperature\":0,\"store\":false}" \
+    -d "{\"model\":\"deepseek4-v4-flash-dspark\",\"previous_response_id\":\"$response_id\",\"input\":[{\"type\":\"function_call_output\",\"call_id\":\"$call_id\",\"output\":\"{\\\"score\\\":2}\"}],\"temperature\":0,\"store\":false}" \
     >"$root/response-final.json"
 consumed_status=$(curl -sS -o "$root/consumed-response.json" -w '%{http_code}' \
     -H 'Content-Type: application/json' "$base/v1/responses" \
-    -d "{\"model\":\"deepseek-v4-flash\",\"previous_response_id\":\"$response_id\",\"input\":\"branch\",\"temperature\":0,\"store\":false}")
+    -d "{\"model\":\"deepseek4-v4-flash-dspark\",\"previous_response_id\":\"$response_id\",\"input\":\"branch\",\"temperature\":0,\"store\":false}")
 test "$consumed_status" = 409
 curl -fsS -N -H 'Content-Type: application/json' "$base/v1/responses" \
-    -d '{"model":"deepseek-v4-flash","input":"Hello","temperature":0,"stream":true,"store":false}' \
+    -d '{"model":"deepseek4-v4-flash-dspark","input":"Hello","temperature":0,"stream":true,"store":false}' \
     >"$root/responses.sse"
 curl -fsS -N -H 'Content-Type: application/json' "$base/v1/responses" \
-    -d "{\"model\":\"deepseek-v4-flash\",\"input\":\"Load m1\",\"temperature\":0,\"stream\":true,\"tools\":$response_tools,\"tool_choice\":$response_tool_choice,\"parallel_tool_calls\":false,\"store\":false}" \
+    -d "{\"model\":\"deepseek4-v4-flash-dspark\",\"input\":\"Load m1\",\"temperature\":0,\"stream\":true,\"tools\":$response_tools,\"tool_choice\":$response_tool_choice,\"parallel_tool_calls\":false,\"store\":false}" \
     >"$root/responses-tool.sse"
 
 status=$(curl -sS -o "$root/refusal.json" -w '%{http_code}' \
     -H 'Content-Type: application/json' "$base/v1/chat/completions" \
-    -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"x"}],"n":2}')
+    -d '{"model":"deepseek4-v4-flash-dspark","messages":[{"role":"user","content":"x"}],"n":2}')
 test "$status" = 422
 queue_status=$(curl -sS -o "$root/queue-full.json" -w '%{http_code}' \
     -H 'Content-Type: application/json' "$base/v1/chat/completions" \
-    -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"QUEUE_FULL"}],"temperature":0}')
+    -d '{"model":"deepseek4-v4-flash-dspark","messages":[{"role":"user","content":"QUEUE_FULL"}],"temperature":0}')
 test "$queue_status" = 429
 timeout_status=$(curl -sS -o "$root/timeout.json" -w '%{http_code}' \
     -H 'Content-Type: application/json' "$base/v1/chat/completions" \
-    -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"TIMEOUT"}],"temperature":0}')
+    -d '{"model":"deepseek4-v4-flash-dspark","messages":[{"role":"user","content":"TIMEOUT"}],"temperature":0}')
 test "$timeout_status" = 504
 
 # A vanished HTTP consumer must trigger the typed daemon cancellation path
 # before the gateway accepts another request.
 if curl --max-time 0.2 -fsS -N -H 'Content-Type: application/json' \
     "$base/v1/chat/completions" \
-    -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"DISCONNECT"}],"temperature":0,"stream":true}' \
+    -d '{"model":"deepseek4-v4-flash-dspark","messages":[{"role":"user","content":"DISCONNECT"}],"temperature":0,"stream":true}' \
     >"$root/disconnect.sse" 2>"$root/disconnect.err"; then
     echo 'disconnect fixture unexpectedly completed' >&2
     exit 1
@@ -133,8 +133,8 @@ health=json.load(open(root/'health.json'))
 assert health == {'status':'ok','adapter':'ready','yvexd':'ready','profile':'yvex.openai.compat.v1'}
 assert json.load(open(root/'health-after-disconnect.json')) == health
 models=json.load(open(root/'models.json'))
-assert models['object']=='list' and models['data'][0]['id']=='deepseek-v4-flash'
-assert json.load(open(root/'model.json'))['id']=='deepseek-v4-flash'
+assert models['object']=='list' and models['data'][0]['id']=='deepseek4-v4-flash-dspark'
+assert json.load(open(root/'model.json'))['id']=='deepseek4-v4-flash-dspark'
 chat=json.load(open(root/'chat.json'))
 assert chat['choices'][0]['message']['content']=='hello from yvex'
 assert chat['choices'][0]['finish_reason']=='stop'
@@ -211,4 +211,4 @@ closed=$(grep -c '^session.close ' "$root/host.err" || true)
 test "$created" -gt 0
 test "$created" = "$closed"
 
-echo 'OpenAI adapter integration: protocol-v4 Chat/Responses/SSE/tool/state/cleanup/refusal passed'
+echo 'OpenAI adapter integration: protocol-v5 Chat/Responses/SSE/tool/state/cleanup/refusal passed'

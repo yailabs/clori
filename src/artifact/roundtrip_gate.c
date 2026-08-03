@@ -32,33 +32,8 @@ static const yvex_complete_artifact_admission selected_deepseek_admission = {
     .tokenizer_complete = 1, .native_reader_accepted = 1, .official_reader_accepted = 1,
     .payload_integrity_accepted = 1, .materialization_input_ready = 1,
 };
-static const yvex_complete_artifact_admission deepseek_ds4_admission = {
-    .artifact_class = YVEX_ARTIFACT_CLASS_COMPLETE_YVEX,
-    .metadata_count = YVEX_DEEPSEEK_DS4_METADATA_COUNT,
-    .tensor_count = YVEX_SELECTED_DEEPSEEK_TENSOR_COUNT,
-    .payload_bytes = YVEX_DEEPSEEK_DS4_PAYLOAD_BYTES,
-    .file_bytes = YVEX_DEEPSEEK_DS4_FILE_BYTES,
-    .source_snapshot_identity = YVEX_SELECTED_DEEPSEEK_SOURCE_IDENTITY,
-    .mapping_identity = YVEX_SELECTED_DEEPSEEK_MAPPING_IDENTITY,
-    .payload_identity = YVEX_SELECTED_DEEPSEEK_PAYLOAD_IDENTITY,
-    .transform_identity = YVEX_DEEPSEEK_DS4_TRANSFORM_IDENTITY,
-    .profile_identity = YVEX_DEEPSEEK_DS4_PROFILE_IDENTITY,
-    .profile_name = YVEX_DEEPSEEK_DS4_PROFILE_NAME,
-    .quant_execution_identity = YVEX_DEEPSEEK_DS4_EXECUTION_IDENTITY,
-    .payload_plan_identity = YVEX_DEEPSEEK_DS4_PAYLOAD_PLAN_IDENTITY,
-    .payload_byte_identity = YVEX_DEEPSEEK_DS4_PAYLOAD_BYTE_IDENTITY,
-    .writer_plan_identity = YVEX_DEEPSEEK_DS4_WRITER_PLAN_IDENTITY,
-    .artifact_identity = YVEX_DEEPSEEK_DS4_ARTIFACT_IDENTITY,
-    .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
-    .tokenizer_complete = 1,
-    .native_reader_accepted = 1,
-    .official_reader_accepted = 1,
-    .payload_integrity_accepted = 1,
-    .materialization_input_ready = 1,
-};
 static const yvex_complete_artifact_admission *const admitted_deepseek_artifacts[] = {
     &selected_deepseek_admission,
-    &deepseek_ds4_admission,
 };
 static const char *const artifact_admission_names[] = {
     [YVEX_ARTIFACT_ADMISSION_OK] = "ok", [YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT] = "invalid-argument",

@@ -139,11 +139,12 @@ int main(int argc, char **argv)
     rc = yvex_model_register_deepseek_v4()->payload.open(
         &handoff, &options, &handoff_failure, &error);
     if (rc != YVEX_OK) {
-        fprintf(stderr, "handoff_failure=%s payload_failure=%u status=%s where=%s\n",
+        fprintf(stderr,
+                "handoff_failure=%s payload_failure=%u status=%s where=%s message=%s\n",
                 yvex_model_register_deepseek_v4()->payload.failure_name(handoff_failure.code),
                 (unsigned int)handoff_failure.payload_failure.code,
                 yvex_status_name(yvex_error_code(&error)),
-                yvex_error_where(&error));
+                yvex_error_where(&error), yvex_error_message(&error));
         return 1;
     }
     summary = yvex_model_register_deepseek_v4()->payload.summary(handoff);
@@ -167,31 +168,31 @@ int main(int argc, char **argv)
                transform_summary->transform_identity) != 0 ||
         transform_summary->schema_version !=
             YVEX_TRANSFORM_IR_SCHEMA_VERSION ||
-        transform_summary->source_value_count != 69187u ||
+        transform_summary->source_value_count != 72317u ||
         transform_summary->intermediate_value_count != 0u ||
-        transform_summary->value_count != 70547u ||
-        transform_summary->node_count != 1360u ||
-        transform_summary->edge_count != 69187u ||
-        transform_summary->terminal_count != 1360u ||
+        transform_summary->value_count != 73726u ||
+        transform_summary->node_count != 1409u ||
+        transform_summary->edge_count != 72317u ||
+        transform_summary->terminal_count != 1409u ||
         transform_summary->maximum_fan_in != 512u ||
         transform_summary->maximum_depth != 1u ||
         transform_summary->operation_counts[YVEX_TRANSFORM_OP_IDENTITY] !=
-            850u ||
+            878u ||
         transform_summary->operation_counts[
-            YVEX_TRANSFORM_OP_DECODE_SCALE_PAIR] != 375u ||
+            YVEX_TRANSFORM_OP_DECODE_SCALE_PAIR] != 390u ||
         transform_summary->operation_counts[
             YVEX_TRANSFORM_OP_CHECKED_CAST] != 3u ||
         transform_summary->operation_counts[
-            YVEX_TRANSFORM_OP_EXPERT_AGGREGATE] != 132u ||
+            YVEX_TRANSFORM_OP_EXPERT_AGGREGATE] != 138u ||
         transform_summary->payload_bytes_read != 0u ||
-        binding_summary->resolved_range_count != 69187u ||
-        binding_summary->source_count != 69187u ||
+        binding_summary->resolved_range_count != 72317u ||
+        binding_summary->source_count != 72317u ||
         binding_summary->payload_bytes_read != 0u ||
-        summary->descriptors_covered != 1360u ||
-        summary->contributions_resolved != 69187u ||
-        plan_summary->range_count != 69187u ||
-        verification->shard_count != 46u ||
-        verification->header_tensor_count != 69187u ||
+        summary->descriptors_covered != 1409u ||
+        summary->contributions_resolved != 72317u ||
+        plan_summary->range_count != 72317u ||
+        verification->shard_count != 48u ||
+        verification->header_tensor_count != 72317u ||
         verification->header_scan_count != 1u) {
         fprintf(stderr, "live_plan_invariant=failed\n");
         yvex_model_register_deepseek_v4()->payload.close(handoff);
@@ -244,7 +245,7 @@ int main(int argc, char **argv)
          result.trust_bytes_read != verification->shard_bytes ||
          result.delivered_logical_bytes != plan_summary->logical_bytes ||
          facts.trust_class != YVEX_SOURCE_PAYLOAD_TRUST_UPSTREAM_VERIFIED ||
-         facts.trusted_shard_count != 46u || facts.short_reads != 0u ||
+         facts.trusted_shard_count != 48u || facts.short_reads != 0u ||
          facts.digest_mismatches != 0u || facts.identity_drifts != 0u)) {
         fprintf(stderr, "live_stream_invariant=failed\n");
         yvex_model_register_deepseek_v4()->payload.close(handoff);
@@ -365,7 +366,7 @@ int main(int argc, char **argv)
            summary->shared_expert_contributions);
     printf("output_head_contributions=%llu\n",
            summary->output_head_contributions);
-    printf("mtp_contributions=%llu\n", summary->mtp_contributions);
+    printf("draft_contributions=%llu\n", summary->draft_contributions);
     yvex_model_register_deepseek_v4()->payload.close(handoff);
     return 0;
 }

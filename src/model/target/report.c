@@ -309,6 +309,12 @@ int yvex_model_target_validate_supported(
     report->exit_code = 2;
     if (contract_refusal_row && request->output_contract[0]) {
         yvex_model_target_report_add_row(report, "status: unsupported-target");
+    } else if (strcmp(request->target_id,
+                      YVEX_SOURCE_RETIRED_TARGET_ID) == 0) {
+        yvex_model_target_report_add_error(
+            report, "model-target %s: unsupported target: %s; use %s",
+            operation, YVEX_SOURCE_RETIRED_TARGET_ID,
+            YVEX_SOURCE_RELEASE_TARGET_ID);
     } else {
         yvex_model_target_report_add_error(
             report, "model-target %s: unsupported target: %s",

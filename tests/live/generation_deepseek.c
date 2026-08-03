@@ -20,8 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define LIVE_GENERATION_MAX_TOKENS 4ull
-#define LIVE_GENERATION_TEXT_BYTES 256ull
+#define LIVE_GENERATION_MAX_TOKENS 16ull
+#define LIVE_GENERATION_TEXT_BYTES 1024ull
 
 typedef struct {
     yvex_runtime_generation_plan_summary plan;
@@ -63,6 +63,16 @@ typedef struct {
     atomic_int cancel, stop;
 } live_position_cancel;
 
+typedef struct {
+    atomic_int cancel;
+    unsigned long long phase_counts[7];
+} live_speculation_cancel;
+
+typedef struct {
+    unsigned long long prompt_count, proposed, verifications;
+    unsigned long long accepted, rejected, maximum_accepted_prefix;
+} live_acceptance_corpus;
+
 static void live_failure(const char *step, int rc, const yvex_error *err)
 {
     fprintf(stderr, "generation_live step=%s status=%d where=%s reason=%s\n",
@@ -70,22 +80,53 @@ static void live_failure(const char *step, int rc, const yvex_error *err)
             err ? yvex_error_message(err) : "");
 }
 
+static int live_scope_state(const yvex_runtime_execution_session *session,
+                            int draft,
+                            yvex_graph_attention_state_summary *summary,
+                            yvex_error *err)
+{
+    const yvex_runtime_session_view *view = yvex_runtime_session_view_get(session);
+    const yvex_attention_state_provider *provider =
+        !view ? NULL : draft ? view->draft_attention_state_provider
+                            : view->attention_state_provider;
+    if (!provider || !provider->summary)
+        return YVEX_ERR_STATE;
+    return provider->summary(provider->context, summary, err);
+}
+
 static int live_state(const yvex_runtime_execution_session *session,
                       yvex_graph_attention_state_summary *summary,
                       yvex_error *err)
 {
-    const yvex_runtime_session_view *view = yvex_runtime_session_view_get(session);
-    if (!view || !view->attention_state_provider ||
-        !view->attention_state_provider->summary)
-        return YVEX_ERR_STATE;
-    return view->attention_state_provider->summary(
-        view->attention_state_provider->context, summary, err);
+    return live_scope_state(session, 0, summary, err);
 }
 
 static int live_cancel_at_position(void *opaque)
 {
     live_position_cancel *cancel = opaque;
     return !cancel || atomic_load_explicit(&cancel->cancel, memory_order_acquire);
+}
+
+static int live_cancel_flag(void *opaque)
+{
+    live_speculation_cancel *cancel = opaque;
+    return !cancel || atomic_load_explicit(&cancel->cancel, memory_order_acquire);
+}
+
+static int live_cancel_verification(
+    void *opaque, const yvex_runtime_speculation_progress *progress,
+    yvex_error *err)
+{
+    live_speculation_cancel *cancel = opaque;
+    if (!cancel || !progress ||
+        progress->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V3 ||
+        progress->kind > YVEX_SPECULATION_PROGRESS_CYCLE_COMMITTED)
+        return YVEX_ERR_INVALID_ARG;
+    cancel->phase_counts[progress->kind]++;
+    if (progress->kind == YVEX_SPECULATION_PROGRESS_VERIFICATION_STARTED)
+        atomic_store_explicit(&cancel->cancel, 1, memory_order_release);
+    yvex_error_clear(err);
+    return YVEX_OK;
 }
 
 static void *live_position_monitor_main(void *opaque)
@@ -124,7 +165,7 @@ static void *live_execute_main(void *opaque)
     yvex_runtime_generation_result result;
     unsigned char text[LIVE_GENERATION_TEXT_BYTES];
     yvex_runtime_generation_request request = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
         .text_bytes = sizeof(prompt) - 1ull,
         .encode_options = {.maximum_tokens = 8ull}};
@@ -169,23 +210,23 @@ static int live_input_open(yvex_transformer_input **input,
     return rc;
 }
 
-static int live_production(yvex_runtime_model *model, yvex_backend_kind backend,
-                           yvex_runtime_sampling_policy policy,
-                           unsigned long long maximum_tokens,
-                           live_generation *out, yvex_error *err)
+static int live_production_prompt(
+    yvex_runtime_model *model, yvex_backend_kind backend,
+    yvex_runtime_generation_mode mode, yvex_runtime_sampling_policy policy,
+    const unsigned char *prompt, unsigned long long prompt_bytes,
+    unsigned long long maximum_tokens, live_generation *out, yvex_error *err)
 {
-    static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
-        .context_capacity = 8ull, .prefill_chunk_tokens = 8ull,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
+        .context_capacity = 64ull, .prefill_chunk_tokens = 8ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
         .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
     yvex_runtime_generation_request request = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
-        .text_bytes = sizeof(prompt) - 1ull,
-        .encode_options = {.maximum_tokens = 8ull}};
+        .text_bytes = prompt_bytes,
+        .encode_options = {.maximum_tokens = 16ull}};
     yvex_runtime_model_failure failure = {0};
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_generation_context *context = NULL;
@@ -193,6 +234,7 @@ static int live_production(yvex_runtime_model *model, yvex_backend_kind backend,
     int rc, close_rc;
     memset(out, 0, sizeof(*out));
     options.backend = backend;
+    options.mode = mode;
     options.maximum_new_tokens = maximum_tokens;
     options.sampling_policy = policy;
     rc = yvex_runtime_session_open(&session, model, &session_options,
@@ -219,6 +261,19 @@ static int live_production(yvex_runtime_model *model, yvex_backend_kind backend,
     return rc;
 }
 
+static int live_production(yvex_runtime_model *model,
+                           yvex_backend_kind backend,
+                           yvex_runtime_generation_mode mode,
+                           yvex_runtime_sampling_policy policy,
+                           unsigned long long maximum_tokens,
+                           live_generation *out, yvex_error *err)
+{
+    static const unsigned char prompt[] = "Hi";
+    return live_production_prompt(
+        model, backend, mode, policy, prompt, sizeof(prompt) - 1ull,
+        maximum_tokens, out, err);
+}
+
 static int live_boundary_execute(
     yvex_runtime_model *model, yvex_backend_kind backend,
     yvex_runtime_sampling_policy policy, unsigned long long context_capacity,
@@ -227,13 +282,13 @@ static int live_boundary_execute(
     static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .context_capacity = context_capacity, .prefill_chunk_tokens = 1ull,
         .maximum_new_tokens = 1ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
         .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
     yvex_runtime_generation_request request = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
         .text_bytes = sizeof(prompt) - 1ull,
         .encode_options = {.maximum_tokens = 8ull}};
@@ -322,12 +377,12 @@ static int live_partial_execute(
     static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .context_capacity = 8ull, .prefill_chunk_tokens = 1ull,
         .maximum_new_tokens = 2ull,
         .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
     yvex_runtime_generation_request request = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
         .text_bytes = sizeof(prompt) - 1ull,
         .encode_options = {.maximum_tokens = 8ull}};
@@ -450,13 +505,13 @@ static int live_lifecycle_proof(yvex_runtime_model *model,
     static const unsigned char prompt[] = "Hi";
     yvex_runtime_session_open_request session_options = {.backend = backend};
     yvex_runtime_generation_options options = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .context_capacity = 8ull, .prefill_chunk_tokens = 8ull,
         .maximum_new_tokens = 1ull,
         .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
         .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
     yvex_runtime_generation_request request = {
-        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V2,
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
         .kind = YVEX_GENERATION_INPUT_TEXT, .text = prompt,
         .text_bytes = sizeof(prompt) - 1ull,
         .encode_options = {.maximum_tokens = 8ull}};
@@ -557,6 +612,153 @@ static int live_lifecycle_proof(yvex_runtime_model *model,
     return rc;
 }
 
+static int live_dspark_cancellation_proof(
+    yvex_runtime_model *model, yvex_backend_kind backend,
+    yvex_runtime_sampling_policy policy, yvex_error *err)
+{
+    static const unsigned char prompt[] = "Hi";
+    yvex_runtime_session_open_request session_options = {.backend = backend};
+    yvex_runtime_generation_options options = {
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
+        .backend = YVEX_BACKEND_KIND_CPU,
+        .mode = YVEX_GENERATION_MODE_DSPARK,
+        .context_capacity = 32ull,
+        .prefill_chunk_tokens = 8ull,
+        .maximum_new_tokens = 8ull,
+        .maximum_output_bytes = LIVE_GENERATION_TEXT_BYTES - 1ull,
+        .trace_policy = YVEX_RUNTIME_TRACE_SUMMARY};
+    yvex_runtime_generation_request request = {
+        .schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3,
+        .kind = YVEX_GENERATION_INPUT_TEXT,
+        .text = prompt,
+        .text_bytes = sizeof(prompt) - 1ull,
+        .encode_options = {.maximum_tokens = 8ull}};
+    yvex_runtime_generation_turn_request turn = {
+        .schema_version = YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1,
+        .prompt = &request,
+        .maximum_new_tokens = 8ull};
+    yvex_runtime_model_failure failure = {0};
+    yvex_runtime_execution_session *session = NULL;
+    yvex_runtime_generation_context *context = NULL;
+    yvex_runtime_generation_plan_summary plan = {0};
+    yvex_runtime_generation_token_result tokens[LIVE_GENERATION_MAX_TOKENS];
+    yvex_runtime_generation_result result;
+    yvex_graph_attention_state_summary target_state, draft_state;
+    live_speculation_cancel cancel = {0};
+    unsigned char text[LIVE_GENERATION_TEXT_BYTES];
+    yvex_error primary, cleanup;
+    int rc, execute_rc = YVEX_OK, close_rc;
+
+    yvex_error_clear(&primary);
+    options.backend = backend;
+    options.sampling_policy = policy;
+    options.cancel_requested = live_cancel_flag;
+    options.cancel_context = &cancel;
+    atomic_init(&cancel.cancel, 0);
+    turn.speculation_progress_sink = live_cancel_verification;
+    turn.speculation_progress_context = &cancel;
+    rc = yvex_runtime_session_open(&session, model, &session_options,
+                                   &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_generation_context_open(
+            &context, model, session, &options, err);
+    if (rc == YVEX_OK)
+        plan = *yvex_runtime_generation_plan_summary_get(context);
+    if (rc == YVEX_OK) {
+        execute_rc = yvex_runtime_generation_turn_execute(
+            context, &turn, tokens, LIVE_GENERATION_MAX_TOKENS,
+            text, sizeof(text), &result, err);
+        primary = *err;
+        rc = execute_rc == YVEX_ERR_CANCELLED ? YVEX_OK : YVEX_ERR_FORMAT;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_generation_result_validate(
+            &plan, tokens, LIVE_GENERATION_MAX_TOKENS, text, sizeof(text),
+            &result, err);
+    if (rc == YVEX_OK &&
+        (!result.cancelled || result.completed ||
+         result.stop_reason != YVEX_GENERATION_STOP_CANCELLED ||
+         result.model_committed_token_count || result.sampled_token_count ||
+         result.generated_text_bytes || result.draft_cycle_count != 1ull ||
+         result.draft_forward_count != 1ull ||
+         result.target_verification_count ||
+         result.proposed_token_count != 5ull ||
+         result.selected_verification_token_count == 0ull ||
+         result.accepted_draft_token_count ||
+         result.rejected_draft_token_count ||
+         result.discarded_draft_token_count != 5ull ||
+         result.confidence_logit_count != 5ull ||
+         cancel.phase_counts[YVEX_SPECULATION_PROGRESS_DRAFT_STARTED] != 1ull ||
+         cancel.phase_counts[YVEX_SPECULATION_PROGRESS_DRAFT_COMPLETED] != 1ull ||
+         cancel.phase_counts[
+             YVEX_SPECULATION_PROGRESS_VERIFICATION_STARTED] != 1ull ||
+         cancel.phase_counts[
+             YVEX_SPECULATION_PROGRESS_VERIFICATION_COMPLETED] ||
+         cancel.phase_counts[YVEX_SPECULATION_PROGRESS_PREFIX_ACCEPTED] ||
+         cancel.phase_counts[YVEX_SPECULATION_PROGRESS_CYCLE_COMMITTED]))
+        rc = YVEX_ERR_FORMAT;
+    if (rc == YVEX_OK) rc = live_scope_state(session, 0, &target_state, err);
+    if (rc == YVEX_OK) rc = live_scope_state(session, 1, &draft_state, err);
+    if (rc == YVEX_OK &&
+        (target_state.next_position != result.prompt_token_count ||
+         draft_state.next_position != result.prompt_token_count ||
+         target_state.transaction_active || draft_state.transaction_active))
+        rc = YVEX_ERR_STATE;
+    yvex_error_clear(&cleanup);
+    close_rc = yvex_runtime_generation_context_close(&context, &cleanup);
+    if (rc == YVEX_OK && close_rc != YVEX_OK) {
+        rc = close_rc;
+        *err = cleanup;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_session_reset_persistent_state(
+            session, &failure, err);
+    if (rc == YVEX_OK) rc = live_scope_state(session, 0, &target_state, err);
+    if (rc == YVEX_OK) rc = live_scope_state(session, 1, &draft_state, err);
+    if (rc == YVEX_OK &&
+        (target_state.next_position || draft_state.next_position ||
+         target_state.transaction_active || draft_state.transaction_active))
+        rc = YVEX_ERR_STATE;
+    options.cancel_requested = NULL;
+    options.cancel_context = NULL;
+    turn.maximum_new_tokens = 4ull;
+    turn.speculation_progress_sink = NULL;
+    turn.speculation_progress_context = NULL;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_generation_context_open(
+            &context, model, session, &options, err);
+    if (rc == YVEX_OK)
+        plan = *yvex_runtime_generation_plan_summary_get(context);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_generation_turn_execute(
+            context, &turn, tokens, LIVE_GENERATION_MAX_TOKENS,
+            text, sizeof(text), &result, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_generation_result_validate(
+            &plan, tokens, LIVE_GENERATION_MAX_TOKENS, text, sizeof(text),
+            &result, err);
+    if (rc == YVEX_OK &&
+        (!result.completed || result.execution_mode != YVEX_GENERATION_MODE_DSPARK ||
+         !result.model_committed_token_count || !result.draft_cycle_count ||
+         !result.target_verification_count))
+        rc = YVEX_ERR_FORMAT;
+    yvex_error_clear(&cleanup);
+    close_rc = yvex_runtime_generation_context_close(&context, &cleanup);
+    if (rc == YVEX_OK && close_rc != YVEX_OK) {
+        rc = close_rc;
+        *err = cleanup;
+    }
+    yvex_error_clear(&cleanup);
+    close_rc = yvex_runtime_session_close(&session, &cleanup);
+    if (rc == YVEX_OK && close_rc != YVEX_OK) {
+        rc = close_rc;
+        *err = cleanup;
+    }
+    if (rc == YVEX_OK) yvex_error_clear(err);
+    else if (!yvex_error_message(err)[0]) *err = primary;
+    return rc;
+}
+
 static int live_fragment_append(yvex_tokenizer_decoder *decoder,
                                 unsigned int token, live_manual *out,
                                 yvex_error *err)
@@ -585,7 +787,7 @@ static int live_manual_execute(yvex_runtime_model *model,
     static const unsigned char prompt[] = "Hi";
     const yvex_runtime_model_view *view = yvex_runtime_model_view_get(model);
     yvex_runtime_session_open_request session_options = {.backend = backend};
-    yvex_runtime_transformer_options transformer_options = {.context_capacity = 8ull};
+    yvex_runtime_transformer_options transformer_options = {.context_capacity = 32ull};
     yvex_runtime_decode_options decode_options = {.maximum_steps = LIVE_GENERATION_MAX_TOKENS};
     yvex_runtime_logits_options logits_options = {.maximum_rows = 1ull};
     yvex_runtime_sampling_options sampling_options = {
@@ -828,6 +1030,94 @@ static int live_compare(const live_generation *production,
     return YVEX_OK;
 }
 
+static int live_greedy_equivalence(const live_generation *target,
+                                   const live_generation *dspark,
+                                   yvex_error *err)
+{
+    unsigned long long index;
+    if (!target || !dspark ||
+        target->result.execution_mode != YVEX_GENERATION_MODE_TARGET_ONLY ||
+        dspark->result.execution_mode != YVEX_GENERATION_MODE_DSPARK ||
+        !target->result.completed || !dspark->result.completed ||
+        target->result.sampled_token_count != dspark->result.sampled_token_count ||
+        target->result.model_committed_token_count !=
+            dspark->result.model_committed_token_count ||
+        target->result.generated_text_bytes != dspark->result.generated_text_bytes ||
+        target->result.final_position != dspark->result.final_position ||
+        strcmp(target->result.final_persistent_state_digest,
+               dspark->result.final_persistent_state_digest) != 0 ||
+        memcmp(target->text, dspark->text,
+               (size_t)target->result.generated_text_bytes) != 0)
+        return YVEX_ERR_FORMAT;
+    for (index = 0ull; index < target->result.sampled_token_count; ++index)
+        if (target->tokens[index].sampled_token_id !=
+            dspark->tokens[index].sampled_token_id)
+            return YVEX_ERR_FORMAT;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static void live_acceptance_corpus_add(
+    live_acceptance_corpus *summary,
+    const yvex_runtime_generation_result *result)
+{
+    summary->prompt_count++;
+    summary->proposed += result->proposed_token_count;
+    summary->verifications += result->target_verification_count;
+    summary->accepted += result->accepted_draft_token_count;
+    summary->rejected += result->rejected_draft_token_count;
+    if (result->maximum_accepted_prefix > summary->maximum_accepted_prefix)
+        summary->maximum_accepted_prefix = result->maximum_accepted_prefix;
+}
+
+static int live_acceptance_corpus_proof(
+    yvex_runtime_model *model, yvex_backend_kind backend,
+    yvex_runtime_sampling_policy policy, unsigned long long maximum_tokens,
+    const live_generation *initial_target,
+    const live_generation *initial_dspark,
+    live_acceptance_corpus *summary, yvex_error *err)
+{
+    static const struct {
+        const unsigned char *text;
+        unsigned long long bytes;
+    } prompts[] = {
+        {(const unsigned char *)"The capital of France is", 24ull},
+        {(const unsigned char *)"One two three four", 18ull},
+    };
+    unsigned long long index;
+    int rc = live_greedy_equivalence(initial_target, initial_dspark, err);
+
+    memset(summary, 0, sizeof(*summary));
+    if (rc == YVEX_OK)
+        live_acceptance_corpus_add(summary, &initial_dspark->result);
+    for (index = 0ull;
+         rc == YVEX_OK && index < sizeof(prompts) / sizeof(prompts[0]);
+         ++index) {
+        live_generation target, dspark;
+        rc = live_production_prompt(
+            model, backend, YVEX_GENERATION_MODE_TARGET_ONLY, policy,
+            prompts[index].text, prompts[index].bytes, maximum_tokens,
+            &target, err);
+        if (rc == YVEX_OK)
+            rc = live_production_prompt(
+                model, backend, YVEX_GENERATION_MODE_DSPARK, policy,
+                prompts[index].text, prompts[index].bytes, maximum_tokens,
+                &dspark, err);
+        if (rc == YVEX_OK) rc = live_greedy_equivalence(&target, &dspark, err);
+        if (rc == YVEX_OK) live_acceptance_corpus_add(summary, &dspark.result);
+    }
+    if (rc == YVEX_OK &&
+        (summary->prompt_count != 3ull || !summary->proposed ||
+         !summary->verifications || !summary->accepted ||
+         summary->maximum_accepted_prefix < 2ull))
+        rc = YVEX_ERR_UNSUPPORTED;
+    if (rc != YVEX_OK && !yvex_error_message(err)[0])
+        yvex_error_set(
+            err, rc, "generation_live",
+            "the fixed DSpark acceptance corpus produced no multi-token accepted prefix");
+    return rc;
+}
+
 int main(int argc, char **argv)
 {
     yvex_runtime_model_open_request request = {0};
@@ -838,24 +1128,34 @@ int main(int argc, char **argv)
         .strategy = YVEX_SAMPLING_STRATEGY_GREEDY,
         .temperature = 1.0, .top_p = 1.0, .typical_p = 1.0};
     live_generation production;
+    live_generation reference;
     live_manual manual;
+    live_acceptance_corpus corpus = {0};
     yvex_backend_kind backend;
+    yvex_runtime_generation_mode mode;
     yvex_error err;
     unsigned long long maximum_tokens, seed;
     const char *step = "arguments";
     int rc;
-    if (argc != 7 ||
+    if (argc != 8 ||
         (strcmp(argv[3], "cpu") != 0 && strcmp(argv[3], "cuda") != 0) ||
-        (strcmp(argv[4], "greedy") != 0 && strcmp(argv[4], "stochastic") != 0) ||
-        sscanf(argv[5], "%llu", &seed) != 1 ||
-        sscanf(argv[6], "%llu", &maximum_tokens) != 1 ||
+        (strcmp(argv[4], "target-only") != 0 && strcmp(argv[4], "dspark") != 0) ||
+        (strcmp(argv[5], "greedy") != 0 && strcmp(argv[5], "stochastic") != 0) ||
+        sscanf(argv[6], "%llu", &seed) != 1 ||
+        sscanf(argv[7], "%llu", &maximum_tokens) != 1 ||
         !maximum_tokens || maximum_tokens > LIVE_GENERATION_MAX_TOKENS) {
-        fprintf(stderr, "usage: %s ARTIFACT BINDING cpu|cuda greedy|stochastic SEED MAX_TOKENS\n", argv[0]);
+        fprintf(stderr,
+                "usage: %s ARTIFACT BINDING cpu|cuda target-only|dspark "
+                "greedy|stochastic SEED MAX_TOKENS\n",
+                argv[0]);
         return 2;
     }
     backend = strcmp(argv[3], "cuda") == 0
                   ? YVEX_BACKEND_KIND_CUDA : YVEX_BACKEND_KIND_CPU;
-    if (strcmp(argv[4], "stochastic") == 0) {
+    mode = strcmp(argv[4], "dspark") == 0
+               ? YVEX_GENERATION_MODE_DSPARK
+               : YVEX_GENERATION_MODE_TARGET_ONLY;
+    if (strcmp(argv[5], "stochastic") == 0) {
         policy.strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC;
         policy.temperature = 0.8;
         policy.top_k = 50ull;
@@ -867,19 +1167,52 @@ int main(int argc, char **argv)
     }
     request.artifact_path = argv[1];
     request.runtime_binding_path = argv[2];
-    request.target_id = "deepseek4-v4-flash";
+    request.target_id = "deepseek4-v4-flash-dspark";
     rc = yvex_runtime_model_open(&model, &request, &failure, &err);
     if (rc == YVEX_OK) { step = "production"; rc = live_production(
-        model, backend, policy, maximum_tokens, &production, &err); }
-    if (rc == YVEX_OK) { step = "manual"; rc = live_manual_execute(
-        model, backend, policy, maximum_tokens, &manual, &err); }
-    if (rc == YVEX_OK) { step = "composition-compare"; rc = live_compare(
-        &production, &manual, &err); }
+        model, backend, mode, policy, maximum_tokens, &production, &err); }
+    if (rc == YVEX_OK && mode == YVEX_GENERATION_MODE_TARGET_ONLY) {
+        step = "manual";
+        rc = live_manual_execute(model, backend, policy, maximum_tokens,
+                                 &manual, &err);
+    }
+    if (rc == YVEX_OK && mode == YVEX_GENERATION_MODE_TARGET_ONLY) {
+        step = "composition-compare";
+        rc = live_compare(&production, &manual, &err);
+    }
+    if (rc == YVEX_OK && mode == YVEX_GENERATION_MODE_DSPARK &&
+        policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY) {
+        step = "target-only-reference";
+        rc = live_production(model, backend, YVEX_GENERATION_MODE_TARGET_ONLY,
+                             policy, maximum_tokens, &reference, &err);
+    }
+    if (rc == YVEX_OK && mode == YVEX_GENERATION_MODE_DSPARK &&
+        policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY) {
+        step = "greedy-equivalence";
+        rc = live_greedy_equivalence(&reference, &production, &err);
+    }
+    if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
+        mode == YVEX_GENERATION_MODE_DSPARK &&
+        policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
+        maximum_tokens >= 8ull) {
+        step = "acceptance-corpus";
+        rc = live_acceptance_corpus_proof(
+            model, backend, policy, maximum_tokens, &reference, &production,
+            &corpus, &err);
+    }
+    if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
+        mode == YVEX_GENERATION_MODE_DSPARK &&
+        policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
+        maximum_tokens >= 8ull) {
+        step = "speculation-cancellation";
+        rc = live_dspark_cancellation_proof(model, backend, policy, &err);
+    }
     if (rc == YVEX_OK) { step = "mutation"; rc = live_mutation_proof(
         &production, &err); }
     if (rc == YVEX_OK) { step = "lifecycle"; rc = live_lifecycle_proof(
         model, backend, policy, &err); }
     if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
+        mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
         policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
         maximum_tokens >= 3ull) {
         step = "stop-capacity";
@@ -888,6 +1221,7 @@ int main(int argc, char **argv)
             &err);
     }
     if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
+        mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
         policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
         maximum_tokens >= 3ull) {
         step = "partial-progress";
@@ -895,13 +1229,18 @@ int main(int argc, char **argv)
     }
     if (rc != YVEX_OK) live_failure(step, rc, &err);
     else {
-        printf("generation_backend=%s strategy=%s prompt_tokens=%llu "
+        printf("generation_backend=%s mode=%s strategy=%s prompt_tokens=%llu "
                "sampled=%llu committed=%llu decode_inputs_match=pass "
                "teacher_forced_tail=0 text_bytes=%llu text_digest=%s "
                "final_position=%llu state_digest=%s stop=%s "
-               "manual_composition=pass mutation_matrix=pass "
-               "cancellation_close=pass stop_capacity=%s partial_progress=%s tokens=",
-               argv[3], argv[4], production.result.prompt_token_count,
+               "manual_composition=%s mutation_matrix=pass "
+               "cancellation_close=pass stop_capacity=%s partial_progress=%s "
+               "draft_cycles=%llu proposed=%llu verified=%llu accepted=%llu "
+               "rejected=%llu max_accepted_prefix=%llu greedy_equivalence=%s "
+               "acceptance_corpus=%s corpus_prompts=%llu corpus_proposed=%llu "
+               "corpus_verified=%llu corpus_accepted=%llu corpus_rejected=%llu "
+               "corpus_max_accepted_prefix=%llu speculation_cancellation=%s tokens=",
+               argv[3], argv[4], argv[5], production.result.prompt_token_count,
                production.result.sampled_token_count,
                production.result.model_committed_token_count,
                production.result.generated_text_bytes,
@@ -910,14 +1249,31 @@ int main(int argc, char **argv)
                production.result.final_persistent_state_digest,
                yvex_runtime_generation_stop_reason_name(
                    production.result.stop_reason),
+               mode == YVEX_GENERATION_MODE_TARGET_ONLY ? "pass" : "not-applicable",
                backend == YVEX_BACKEND_KIND_CUDA &&
+                       mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
                        policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
                        maximum_tokens >= 3ull
                    ? "pass" : "not-run",
                backend == YVEX_BACKEND_KIND_CUDA &&
+                       mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
                        policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
                        maximum_tokens >= 3ull
-                   ? "pass" : "not-run");
+                   ? "pass" : "not-run",
+               production.result.draft_cycle_count,
+               production.result.proposed_token_count,
+               production.result.target_verification_count,
+               production.result.accepted_draft_token_count,
+               production.result.rejected_draft_token_count,
+               production.result.maximum_accepted_prefix,
+               mode == YVEX_GENERATION_MODE_DSPARK &&
+                       policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY
+                   ? "pass" : "not-applicable",
+               corpus.prompt_count ? "pass" : "not-run",
+               corpus.prompt_count, corpus.proposed, corpus.verifications,
+               corpus.accepted, corpus.rejected,
+               corpus.maximum_accepted_prefix,
+               corpus.prompt_count ? "pass" : "not-run");
         for (unsigned long long index = 0ull;
              index < production.result.sampled_token_count; ++index)
             printf("%s%u", index ? "," : "", production.tokens[index].sampled_token_id);

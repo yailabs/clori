@@ -216,11 +216,23 @@ int yvex_quant_cpu_dot(unsigned int qtype,
 #define YVEX_QUANT_PROFILE_SCHEMA_VERSION 1u
 #define YVEX_QUANT_PLAN_IDENTITY_CAP 65u
 #define YVEX_QUANT_RELEASE_PROFILE_NAME \
-    "deepseek-v4-flash-q8_0-q2_k-v1"
+    "deepseek-v4-flash-dspark-q8_0-q2_k-v1"
 #define YVEX_QUANT_REFERENCE_PROFILE_NAME \
-    "deepseek-v4-flash-source-faithful-v1"
-#define YVEX_QUANT_DS4_PROFILE_NAME \
-    "deepseek-v4-flash-ds4-like-q2-v1"
+    "deepseek-v4-flash-dspark-source-faithful-v1"
+#define YVEX_QUANT_DSPARK_PROFILE_NAME \
+    "deepseek-v4-flash-dspark-bootstrap-q2-v1"
+/*
+ * The bootstrap IQ2 decisions use the retained DS4 importance matrix only as
+ * a predecessor prior for the same routed-expert roles. Shared tensor names do
+ * not imply shared payloads: the DSpark snapshot differs from its predecessor,
+ * so this identity must remain attached to the earlier source and must never be
+ * reported as DSpark calibration. Fresh calibration belongs to the physical
+ * optimization and evaluation passes.
+ */
+#define YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY \
+    "cc774dffb6aa3a8e9f507b1dd454fbf7f5c68187138736f9a330ee9eaec07067"
+#define YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY \
+    "deepseek-v4-flash-chat-v2-rendered-prompts-v1"
 typedef enum {
     YVEX_QUANT_PLAN_BUILDING = 0,
     YVEX_QUANT_PLAN_SEALED,

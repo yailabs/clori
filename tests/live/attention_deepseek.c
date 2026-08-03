@@ -2078,7 +2078,7 @@ static int run_runtime_phase_cleanup_retry(
 
     memset(&request, 0, sizeof(request));
     memset(&result, 0, sizeof(result));
-    request.target = "deepseek4-v4-flash";
+    request.target = "deepseek4-v4-flash-dspark";
     request.artifact_path = artifact_path;
     request.runtime_binding_path = runtime_binding_path;
     request.backend = YVEX_BACKEND_KIND_CPU;
@@ -2166,7 +2166,7 @@ static int run_runtime_graph_oracle_suite(
     };
     model_request.artifact_path = artifact_path;
     model_request.runtime_binding_path = runtime_binding_path;
-    model_request.target_id = "deepseek4-v4-flash";
+    model_request.target_id = "deepseek4-v4-flash-dspark";
     rc = yvex_runtime_model_open(&model, &model_request, &failure, err);
     session_request.backend = YVEX_BACKEND_KIND_CUDA;
     session_request.attention_state_factory = &state_factory;

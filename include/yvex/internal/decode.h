@@ -7,11 +7,196 @@
  */
 #ifndef INCLUDE_YVEX_INTERNAL_DECODE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_DECODE_H_INCLUDED
+#include <yvex/internal/runtime.h>
 #include <yvex/internal/transformer.h>
+#include <yvex/model.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 #define YVEX_RUNTIME_DECODE_SCHEMA_V1 1u
+#define YVEX_SPECULATION_SCHEMA_V1 1u
+#define YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 1u
+#define YVEX_SPECULATION_MAX_BLOCK 8u
+#define YVEX_SPECULATION_MAX_FEATURE_LAYERS 8u
+#define YVEX_SPECULATION_IDENTITY_CAP (YVEX_SHA256_HEX_BYTES + 1u)
+
+typedef struct yvex_speculation_family_policy {
+    unsigned int schema_version;
+    unsigned long long block_size, noise_token_id;
+    unsigned long long target_feature_layer_count;
+    unsigned long long target_feature_layers[YVEX_SPECULATION_MAX_FEATURE_LAYERS];
+    unsigned long long target_feature_width, concatenated_feature_width;
+    unsigned long long draft_layer_count, markov_rank, accepted_prefix_maximum;
+    yvex_tensor_role feature_projection_role, feature_norm_role;
+    yvex_tensor_role output_norm_role, markov_embedding_role;
+    yvex_tensor_role markov_output_role, confidence_role;
+    int parallel_block_backbone, sequential_markov, confidence_available;
+    int shares_embedding, shares_output_head, target_verification_required;
+    char policy_identity[YVEX_SPECULATION_IDENTITY_CAP];
+} yvex_speculation_family_policy;
+
+typedef enum {
+    YVEX_SPECULATION_ACCEPT_GREEDY = 0,
+    YVEX_SPECULATION_ACCEPT_STOCHASTIC
+} yvex_speculation_acceptance_kind;
+
+typedef struct {
+    unsigned int schema_version;
+    yvex_speculation_acceptance_kind kind;
+    unsigned long long candidate_count, vocabulary_size, distribution_stride;
+    const unsigned int *candidate_token_ids;
+    const unsigned int *target_token_ids;
+    const float *draft_probabilities, *target_probabilities;
+    const double *acceptance_uniforms;
+    double correction_uniform;
+} yvex_speculation_acceptance_request;
+
+typedef struct {
+    unsigned int schema_version;
+    yvex_speculation_acceptance_kind kind;
+    unsigned long long proposed_count, accepted_draft_count, rejected_draft_count;
+    unsigned long long committed_count, rejection_index;
+    int all_candidates_accepted, correction_present, bonus_present;
+    unsigned int correction_or_bonus_token_id;
+    char policy_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char acceptance_identity[YVEX_SPECULATION_IDENTITY_CAP];
+} yvex_speculation_acceptance_result;
+
+typedef struct {
+    unsigned long long state_prefix_count, publication_token_count;
+    int terminal;
+} yvex_speculation_commit_plan;
+
+typedef struct yvex_runtime_logits_context yvex_runtime_logits_context;
+typedef struct yvex_runtime_sampling_context yvex_runtime_sampling_context;
+struct yvex_runtime_sampling_policy;
+typedef struct yvex_runtime_speculation_context yvex_runtime_speculation_context;
+
+typedef struct {
+    yvex_backend_kind backend;
+    unsigned long long context_capacity, maximum_host_bytes, maximum_device_bytes;
+    int (*cancel_requested)(void *context);
+    void *cancel_context;
+} yvex_runtime_speculation_options;
+
+typedef struct {
+    int completed;
+    unsigned long long token_start, token_count, position_after;
+    char projected_feature_digest[YVEX_SPECULATION_IDENTITY_CAP];
+    char persistent_state_digest[YVEX_SPECULATION_IDENTITY_CAP];
+    char execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
+} yvex_runtime_speculation_feature_result;
+
+typedef enum {
+    YVEX_RUNTIME_SPECULATION_PHASE_DRAFT_STARTED = 0,
+    YVEX_RUNTIME_SPECULATION_PHASE_DRAFT_COMPLETED,
+    YVEX_RUNTIME_SPECULATION_PHASE_VERIFICATION_STARTED,
+    YVEX_RUNTIME_SPECULATION_PHASE_VERIFICATION_COMPLETED
+} yvex_runtime_speculation_phase;
+
+typedef int (*yvex_runtime_speculation_phase_sink)(
+    void *context, yvex_runtime_speculation_phase phase,
+    unsigned long long elapsed_ns, yvex_error *err);
+
+typedef struct {
+    unsigned long long position, candidate_count;
+    unsigned int conditioning_token_id;
+    yvex_runtime_speculation_phase_sink phase_sink;
+    void *phase_context;
+} yvex_runtime_speculation_cycle_request;
+
+typedef struct {
+    int completed;
+    int draft_started, draft_completed;
+    int verification_started, verification_completed;
+    unsigned long long draft_proposed_count, candidate_count, committed_count;
+    unsigned long long target_verification_count;
+    unsigned int conditioning_token_id;
+    unsigned int candidate_token_ids[YVEX_SPECULATION_MAX_BLOCK];
+    unsigned int committed_token_ids[YVEX_SPECULATION_MAX_BLOCK + 2u];
+    float confidence_logits[YVEX_SPECULATION_MAX_BLOCK];
+    unsigned long long target_rng_draw_count, draft_rng_draw_count;
+    unsigned long long draft_ns, verification_ns, acceptance_ns;
+    yvex_speculation_acceptance_result acceptance;
+    char draft_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char verification_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char cycle_identity[YVEX_SPECULATION_IDENTITY_CAP];
+} yvex_runtime_speculation_cycle_result;
+
+typedef struct {
+    int completed;
+    int durable;
+    unsigned long long position;
+    unsigned int token_id;
+    unsigned long long target_rng_draw_count;
+    char source_distribution_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char sampling_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char cycle_identity[YVEX_SPECULATION_IDENTITY_CAP];
+} yvex_runtime_speculation_target_step_result;
+
+typedef struct {
+    int completed;
+    unsigned long long token_start, token_count, position_after, commit_ns;
+    yvex_runtime_transformer_result target_result;
+    char cycle_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char target_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char draft_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char target_state_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char draft_state_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char commit_identity[YVEX_SPECULATION_IDENTITY_CAP];
+} yvex_runtime_speculation_commit_result;
+
+int yvex_speculation_accept(
+    const yvex_speculation_acceptance_request *request,
+    unsigned int *committed_token_ids, unsigned long long committed_capacity,
+    yvex_speculation_acceptance_result *result, yvex_error *err);
+int yvex_speculation_candidate_extent(
+    unsigned long long policy_block_size,
+    unsigned long long remaining_output_tokens,
+    unsigned long long remaining_context_tokens,
+    unsigned long long *candidate_count, yvex_error *err);
+int yvex_speculation_commit_plan_build(
+    const yvex_speculation_acceptance_result *acceptance,
+    unsigned long long terminal_index,
+    yvex_speculation_commit_plan *plan, yvex_error *err);
+int yvex_runtime_speculation_context_open(
+    yvex_runtime_speculation_context **out, yvex_runtime_model *model,
+    yvex_runtime_execution_session *session,
+    yvex_runtime_transformer_context *target_transformer,
+    yvex_runtime_logits_context *target_logits,
+    yvex_runtime_sampling_context *target_sampling,
+    const struct yvex_runtime_sampling_policy *sampling_policy,
+    const yvex_runtime_speculation_options *options, yvex_error *err);
+const yvex_speculation_family_policy *yvex_runtime_speculation_policy_get(
+    const yvex_runtime_speculation_context *context);
+int yvex_runtime_speculation_prefill(
+    yvex_runtime_speculation_context *context, const unsigned int *token_ids,
+    unsigned long long token_start, unsigned long long token_count,
+    float *normalized_hidden, unsigned long long normalized_hidden_capacity,
+    yvex_runtime_transformer_result *target_result,
+    yvex_runtime_speculation_feature_result *draft_result, yvex_error *err);
+int yvex_runtime_speculation_cycle(
+    yvex_runtime_speculation_context *context,
+    const yvex_runtime_speculation_cycle_request *request,
+    yvex_runtime_speculation_cycle_result *result, yvex_error *err);
+int yvex_runtime_speculation_target_step(
+    yvex_runtime_speculation_context *context, unsigned long long position,
+    const float *target_probabilities, unsigned long long probability_capacity,
+    const char *distribution_identity,
+    yvex_runtime_speculation_target_step_result *result, yvex_error *err);
+int yvex_runtime_speculation_commit_prefix(
+    yvex_runtime_speculation_context *context,
+    unsigned long long committed_count, float *final_hidden,
+    unsigned long long final_hidden_capacity,
+    const yvex_runtime_commit_participant *publication,
+    yvex_runtime_speculation_commit_result *result, yvex_error *err);
+int yvex_runtime_speculation_cycle_abort(
+    yvex_runtime_speculation_context *context, yvex_error *err);
+int yvex_runtime_speculation_finish_terminal(
+    yvex_runtime_speculation_context *context,
+    const yvex_runtime_commit_participant *publication, yvex_error *err);
+int yvex_runtime_speculation_context_close(
+    yvex_runtime_speculation_context **context, yvex_error *err);
 typedef enum {
     YVEX_RUNTIME_DECODE_STATUS_NONE = 0,
     YVEX_RUNTIME_DECODE_STATUS_COMPLETE,
@@ -72,6 +257,13 @@ typedef struct {
     yvex_runtime_decode_step_result *steps;
     unsigned long long step_capacity;
 } yvex_runtime_decode_output;
+typedef struct {
+    const unsigned long long *layer_ordinals;
+    unsigned long long layer_count;
+    float *values;
+    unsigned long long capacity, row_count;
+    char digest[YVEX_SHA256_HEX_CAP];
+} yvex_runtime_decode_feature_output;
 typedef struct yvex_runtime_decode_context yvex_runtime_decode_context;
 int yvex_runtime_decode_context_open(
     yvex_runtime_decode_context **out,

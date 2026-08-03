@@ -28,6 +28,11 @@ must not redefine these terms. Qualify *model*, *support*, *complete*,
 | Runtime session | Mutable execution object with isolated sequence state, position, workspace, cancellation, and backend resources. |
 | Persistent state | Semantically observable state surviving an execution unit, including KV, recurrent state, position, or routing history. |
 | Workspace | Temporary memory without semantic meaning after its owning execution unit finishes. |
+| Draft plan | Immutable auxiliary execution plan that proposes tokens from admitted model features and weights. It is not a second runtime model or correctness authority. |
+| Candidate block | Ordered bounded proposal awaiting complete-target verification; its tokens are not committed output or persistent target state. |
+| Target verification | Complete target-model evaluation that determines the target-authored result for an ordered candidate block. Drafter confidence is not verification. |
+| Accepted prefix | Exact leading portion of one verified candidate result admitted for atomic target/session publication. Rejected suffix state is discarded. |
+| Speculative generation | Generation that uses an auxiliary proposal followed by complete-target verification while preserving target semantics and publishing only committed target-authored output. |
 | Semantic graph | Backend-neutral operations, typed values, state effects, and dependencies derived from model meaning. |
 | Executable graph | Lowered operations, physical bindings, memory plan, backend assignments, and execution variants. |
 | Launch graph | Device kernels, transfers, barriers, events, and dependencies submitted as one device-level execution structure. |

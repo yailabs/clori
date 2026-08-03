@@ -59,6 +59,7 @@ typedef struct {
     char binding[PATH_MAX];
     char target[128];
     char backend[8];
+    char mode[16];
     unsigned long long context;
 } client_model_config;
 static volatile sig_atomic_t repl_signal_state;
@@ -500,7 +501,8 @@ static void render_status(const yvex_server_summary *status, int json)
 {
     if (json) {
         printf("{\"protocol\":%u,\"status\":%u,\"target\":\"%s\","
-               "\"backend\":%u,\"ready\":%s,\"uptime_ns\":%llu,"
+               "\"backend\":%u,\"generation_mode\":\"%s\","
+               "\"ready\":%s,\"uptime_ns\":%llu,"
                "\"model_open_count\":%llu,\"model_close_count\":%llu,"
                "\"artifact_open_count\":%llu,\"binding_open_count\":%llu,"
                "\"materialization_count\":%llu,\"residency_build_count\":%llu,"
@@ -521,6 +523,8 @@ static void render_status(const yvex_server_summary *status, int json)
                "\"artifact_identity\":\"%s\",\"variant_identity\":\"%s\"}\n",
                YVEX_LOCAL_PROTOCOL_VERSION, (unsigned int)status->status,
                status->target_id, (unsigned int)status->backend,
+               status->generation_mode == YVEX_SERVER_GENERATION_DSPARK
+                   ? "dspark" : "target-only",
                status->runtime_ready ? "true" : "false",
                status->metrics.uptime_ns, status->metrics.model_open_count,
                status->metrics.model_close_count,
@@ -559,6 +563,9 @@ static void render_status(const yvex_server_summary *status, int json)
            status->backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu");
     printf("  state      %s\n",
            status->status == YVEX_SERVER_STATUS_READY ? "ready" : "not ready");
+    printf("  mode       %s\n",
+           status->generation_mode == YVEX_SERVER_GENERATION_DSPARK
+               ? "dspark" : "target-only");
     printf("  sessions   %llu active\n", status->session_count);
     printf("  queue      %llu/%llu\n", status->metrics.queue_depth,
            status->metrics.queue_capacity);
@@ -611,8 +618,11 @@ static int runtime_model(void)
     int rc = runtime_summary_fetch(&summary, &err);
     if (rc == YVEX_OK) {
         printf("live runtime model\n  target     %s\n  backend    %s\n"
+               "  mode       %s\n"
                "  model      %s\n  variant    %s\n  artifact   %s\n  binding    %s\n",
                summary.target_id, summary.backend == YVEX_BACKEND_KIND_CUDA ? "cuda" : "cpu",
+               summary.generation_mode == YVEX_SERVER_GENERATION_DSPARK
+                   ? "dspark" : "target-only",
                summary.runtime_model_identity, summary.physical_variant_identity,
                summary.artifact_identity, summary.runtime_binding_identity);
     }
@@ -684,9 +694,29 @@ static void render_engine_event(const yvex_server_event *event, int detailed)
     if (event->request_id[0]) printf(" · request %s", event->request_id);
     if (detailed && event->turn_id[0]) printf(" · turn %s", event->turn_id);
     if (detailed && event->phase[0]) printf(" · phase %s", event->phase);
-    if (view.value_a) printf(" · %s %llu", view.value_a, event->value_a);
-    if (view.value_b) printf(" · %s %llu", view.value_b, event->value_b);
-    if (view.value_c) printf(" · %s %llu", view.value_c, event->value_c);
+    if (event->kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
+        event->kind <= YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED) {
+        printf(" · cycle %llu", event->speculative_cycle);
+        if (event->proposed_tokens)
+            printf(" · proposed %llu", event->proposed_tokens);
+        if (event->selected_verification_tokens)
+            printf(" · verify %llu", event->selected_verification_tokens);
+        if (event->accepted_tokens)
+            printf(" · accepted %llu", event->accepted_tokens);
+        if (event->rejected_tokens)
+            printf(" · rejected %llu", event->rejected_tokens);
+        if (event->discarded_tokens)
+            printf(" · stop-discarded %llu", event->discarded_tokens);
+        if (detailed && event->confidence_logit_count)
+            printf(" · confidence logits %.4g..%.4g mean %.4g",
+                   event->confidence_logit_minimum,
+                   event->confidence_logit_maximum,
+                   event->confidence_logit_mean);
+    } else {
+        if (view.value_a) printf(" · %s %llu", view.value_a, event->value_a);
+        if (view.value_b) printf(" · %s %llu", view.value_b, event->value_b);
+        if (view.value_c) printf(" · %s %llu", view.value_c, event->value_c);
+    }
     if (event->seconds > 0.0) printf(" · %.3f s", event->seconds);
     if (event->rate > 0.0) printf(" · %.2f tok/s", event->rate);
     putchar('\n');
@@ -839,6 +869,13 @@ static int generation_turn(const char *session_name,
                    message.prefill_rate, message.generated_tokens,
                    message.decode_seconds, message.decode_rate,
                    message.first_token_seconds);
+            if (message.generation_mode == YVEX_SERVER_GENERATION_DSPARK)
+                printf("speculation  %llu proposed · %llu accepted · %llu rejected · "
+                       "%llu verification%s\n",
+                       message.proposed_tokens, message.accepted_draft_tokens,
+                       message.rejected_draft_tokens,
+                       message.target_verification_count,
+                       message.target_verification_count == 1u ? "" : "s");
             if (context_capacity)
                 printf("context      %llu / %llu\n", message.context_used,
                        context_capacity);
@@ -1479,9 +1516,9 @@ static int model_config_write(const client_model_config *config)
     }
     fd = -1;
     ok = fprintf(output,
-                 "name\t%s\nartifact\t%s\nbinding\t%s\ntarget\t%s\nbackend\t%s\ncontext\t%llu\n",
+                 "name\t%s\nartifact\t%s\nbinding\t%s\ntarget\t%s\nbackend\t%s\nmode\t%s\ncontext\t%llu\n",
                  config->name, config->artifact, config->binding, config->target,
-                 config->backend, config->context) > 0 &&
+                 config->backend, config->mode, config->context) > 0 &&
          fflush(output) == 0 && fsync(fileno(output)) == 0;
     if (fclose(output) != 0) ok = 0;
     output = NULL;
@@ -1540,6 +1577,10 @@ static int model_config_read(client_model_config *config)
                  strlen(value) < sizeof(config->backend) &&
                  snprintf(config->backend, sizeof(config->backend), "%s", value) > 0)
             fields++;
+        else if (!strcmp(line, "mode") && !config->mode[0] && value[0] &&
+                 strlen(value) < sizeof(config->mode) &&
+                 snprintf(config->mode, sizeof(config->mode), "%s", value) > 0)
+            fields++;
         else if (!strcmp(line, "context") && !config->context &&
                  parse_u64(value, &config->context, 0))
             fields++;
@@ -1549,8 +1590,9 @@ static int model_config_read(client_model_config *config)
         }
     }
     if (ferror(input) || fclose(input) != 0) fields = -1;
-    return fields == 6 && config->artifact[0] == '/' && config->binding[0] == '/' &&
-           (!strcmp(config->backend, "cpu") || !strcmp(config->backend, "cuda"));
+    return fields == 7 && config->artifact[0] == '/' && config->binding[0] == '/' &&
+           (!strcmp(config->backend, "cpu") || !strcmp(config->backend, "cuda")) &&
+           (!strcmp(config->mode, "target-only") || !strcmp(config->mode, "dspark"));
 }
 
 static int model_select_command(int argc, char **argv)
@@ -1585,7 +1627,8 @@ static int model_select_command(int argc, char **argv)
     if (strlen(entry->path) >= sizeof(config.artifact) ||
         strlen(entry->runtime_binding) >= sizeof(config.binding) ||
         strlen(entry->runtime_target) >= sizeof(config.target) ||
-        strlen(entry->runtime_backend) >= sizeof(config.backend)) {
+        strlen(entry->runtime_backend) >= sizeof(config.backend) ||
+        strlen(entry->runtime_mode) >= sizeof(config.mode)) {
         fprintf(stderr, "yvex: registered startup profile exceeds client configuration limits\n");
         yvex_model_registry_close(registry);
         return 1;
@@ -1602,7 +1645,8 @@ static int model_select_command(int argc, char **argv)
         snprintf(config.artifact, sizeof(config.artifact), "%s", entry->path) <= 0 ||
         snprintf(config.binding, sizeof(config.binding), "%s", entry->runtime_binding) <= 0 ||
         snprintf(config.target, sizeof(config.target), "%s", entry->runtime_target) <= 0 ||
-        snprintf(config.backend, sizeof(config.backend), "%s", entry->runtime_backend) <= 0) {
+        snprintf(config.backend, sizeof(config.backend), "%s", entry->runtime_backend) <= 0 ||
+        snprintf(config.mode, sizeof(config.mode), "%s", entry->runtime_mode) <= 0) {
         yvex_model_registry_close(registry);
         return 1;
     }
@@ -1625,8 +1669,9 @@ static int model_config_show(void)
                 "hint: run `yvex model list`, then `yvex model select NAME`\n");
         return 1;
     }
-    printf("%-20s backend=%s context=%llu\n  artifact=%s\n  binding=%s\n",
-           config.name, config.backend, config.context, config.artifact, config.binding);
+    printf("%-20s backend=%s mode=%s context=%llu\n  artifact=%s\n  binding=%s\n",
+           config.name, config.backend, config.mode, config.context,
+           config.artifact, config.binding);
     return 0;
 }
 
@@ -1668,7 +1713,7 @@ static int runtime_start(int argc, char **argv)
 {
     client_model_config config;
     char context[32];
-    char *arguments[14];
+    char *arguments[16];
     int count = 0;
     if (argc > 3) return exec_sibling("yvexd", argc, argv, 3);
     if (!model_config_read(&config)) {
@@ -1687,6 +1732,8 @@ static int runtime_start(int argc, char **argv)
     arguments[count++] = config.target;
     arguments[count++] = "--backend";
     arguments[count++] = config.backend;
+    arguments[count++] = "--generation-mode";
+    arguments[count++] = config.mode;
     arguments[count++] = "--context";
     arguments[count++] = context;
     arguments[count] = NULL;
@@ -1711,181 +1758,6 @@ static int help_command(int argc, char **argv, size_t consumed)
         return 2;
     }
     return yvex_client_render_help_path(count, path, advanced, json);
-}
-
-enum { COMPLETION_CANDIDATE_CAP = 256, COMPLETION_TEXT_CAP = 128 };
-
-typedef struct {
-    char text[COMPLETION_CANDIDATE_CAP][COMPLETION_TEXT_CAP];
-    size_t count;
-} completion_candidates;
-
-static int completion_visible(const yvex_operator_descriptor *descriptor)
-{
-    return descriptor->cli_projection &&
-           descriptor->visibility != YVEX_OPERATOR_VISIBILITY_REMOVED &&
-           descriptor->visibility != YVEX_OPERATOR_VISIBILITY_API_ONLY &&
-           descriptor->visibility != YVEX_OPERATOR_VISIBILITY_TEST_ONLY;
-}
-
-static int completion_prefix_matches(const yvex_operator_descriptor *descriptor,
-                                     size_t count, const char *const *words)
-{
-    size_t index;
-    if (count > descriptor->command_word_count) return 0;
-    for (index = 0u; index < count; ++index)
-        if (strcmp(descriptor->command_words[index], words[index])) return 0;
-    return 1;
-}
-
-static void completion_add(completion_candidates *candidates, const char *value)
-{
-    const unsigned char *cursor = (const unsigned char *)value;
-    size_t index;
-    if (!value[0] || strlen(value) >= COMPLETION_TEXT_CAP) return;
-    while (*cursor) {
-        if (!(isalnum(*cursor) || strchr("._:/@+-", *cursor))) return;
-        cursor++;
-    }
-    for (index = 0u; index < candidates->count; ++index)
-        if (!strcmp(candidates->text[index], value)) return;
-    if (candidates->count >= COMPLETION_CANDIDATE_CAP) return;
-    (void)snprintf(candidates->text[candidates->count], COMPLETION_TEXT_CAP, "%s", value);
-    candidates->count++;
-}
-
-static void completion_add_metadata(completion_candidates *candidates, const char *values)
-{
-    const char *cursor = values;
-    if (!strcmp(values, "none")) return;
-    while (*cursor) {
-        const char *end = strchr(cursor, '|');
-        size_t extent = end ? (size_t)(end - cursor) : strlen(cursor);
-        char item[COMPLETION_TEXT_CAP];
-        if (extent < sizeof(item)) {
-            memcpy(item, cursor, extent);
-            item[extent] = '\0';
-            completion_add(candidates, item);
-        }
-        if (!end) break;
-        cursor = end + 1;
-    }
-}
-
-static completion_candidates completion_collect(size_t prefix_count,
-                                                const char *const *prefix)
-{
-    completion_candidates candidates = {{{0}}, 0u};
-    size_t descriptor_index;
-    for (descriptor_index = 0u; descriptor_index < yvex_operator_descriptor_count;
-         ++descriptor_index) {
-        const yvex_operator_descriptor *descriptor =
-            &yvex_operator_descriptors[descriptor_index];
-        size_t index;
-        if (!completion_visible(descriptor) ||
-            !completion_prefix_matches(descriptor, prefix_count, prefix))
-            continue;
-        if (descriptor->command_word_count > prefix_count) {
-            completion_add(&candidates, descriptor->command_words[prefix_count]);
-            continue;
-        }
-        for (index = 0u; index < descriptor->flag_count; ++index) {
-            completion_add(&candidates, descriptor->flags[index].name);
-            completion_add_metadata(&candidates, descriptor->flags[index].aliases);
-        }
-        for (index = 0u; index < descriptor->argument_count; ++index)
-            completion_add_metadata(&candidates, descriptor->arguments[index].enum_values);
-    }
-    return candidates;
-}
-
-static void completion_emit_case(FILE *output, const char *shell,
-                                 size_t prefix_count, const char *const *prefix)
-{
-    completion_candidates candidates = completion_collect(prefix_count, prefix);
-    size_t index;
-    if (!candidates.count) return;
-    if (!strcmp(shell, "fish")) fputs("    case '", output);
-    else fputs("    '", output);
-    for (index = 0u; index < prefix_count; ++index)
-        fprintf(output, "%s%s", index ? " " : "", prefix[index]);
-    if (!strcmp(shell, "fish")) fputs("'\n      set candidates", output);
-    else fputs("') candidates='", output);
-    for (index = 0u; index < candidates.count; ++index)
-        fprintf(output, " %s", candidates.text[index]);
-    if (!strcmp(shell, "fish")) fputc('\n', output);
-    else fputs(" ' ;;\n", output);
-}
-/*
- * Emit every unique command-prefix case from immutable compiled descriptors.
- *
- * Writes deterministic completion cases.
- */
-static void completion_emit_cases(FILE *output, const char *shell)
-{
-    size_t descriptor_index, prefix_count, prior;
-    for (descriptor_index = 0u; descriptor_index < yvex_operator_descriptor_count;
-         ++descriptor_index) {
-        const yvex_operator_descriptor *descriptor =
-            &yvex_operator_descriptors[descriptor_index];
-        if (!completion_visible(descriptor)) continue;
-        for (prefix_count = 0u; prefix_count <= descriptor->command_word_count;
-             ++prefix_count) {
-            int seen = 0;
-            for (prior = 0u; prior < descriptor_index && !seen; ++prior) {
-                const yvex_operator_descriptor *candidate =
-                    &yvex_operator_descriptors[prior];
-                if (completion_visible(candidate) &&
-                    candidate->command_word_count >= prefix_count &&
-                    completion_prefix_matches(candidate, prefix_count,
-                                              descriptor->command_words))
-                    seen = 1;
-            }
-            if (!seen)
-                completion_emit_case(output, shell, prefix_count,
-                                     descriptor->command_words);
-        }
-    }
-}
-
-static int completion_command(int argc, char **argv, size_t consumed)
-{
-    const char *shell = consumed + 1u < (size_t)argc ? argv[consumed + 1u] : NULL;
-    if (!shell) return 2;
-    if (!strcmp(shell, "bash")) {
-        fputs("_yvex_complete() {\n"
-              "  local cur=${COMP_WORDS[COMP_CWORD]} path='' candidates=''\n"
-              "  if (( COMP_CWORD > 1 )); then "
-              "path=${COMP_WORDS[*]:1:$((COMP_CWORD-1))}; fi\n"
-              "  case \"$path\" in\n", stdout);
-        completion_emit_cases(stdout, shell);
-        fputs("  esac\n  COMPREPLY=( $(compgen -W \"$candidates\" -- \"$cur\") )\n"
-              "}\ncomplete -F _yvex_complete yvex\n", stdout);
-        return 0;
-    }
-    if (!strcmp(shell, "zsh")) {
-        fputs("#compdef yvex\n_yvex_complete() {\n"
-              "  local path='' candidates=''\n"
-              "  if (( CURRENT > 2 )); then path=${(j: :)words[2,$((CURRENT-1))]}; fi\n"
-              "  case \"$path\" in\n", stdout);
-        completion_emit_cases(stdout, shell);
-        fputs("  esac\n  compadd -- ${(z)candidates}\n}\ncompdef _yvex_complete yvex\n", stdout);
-        return 0;
-    }
-    if (!strcmp(shell, "fish")) {
-        fputs("function __yvex_candidates\n"
-              "  set -l tokens (commandline -opc)\n"
-              "  set -e tokens[1]\n"
-              "  set -l path (string join ' ' $tokens)\n"
-              "  set -l candidates\n"
-              "  switch $path\n", stdout);
-        completion_emit_cases(stdout, shell);
-        fputs("  end\n  printf '%s\\n' $candidates\nend\n"
-              "complete -c yvex -f -a '(__yvex_candidates)'\n", stdout);
-        return 0;
-    }
-    fprintf(stderr, "yvex: completion shell must be bash, zsh, or fish\n");
-    return 2;
 }
 
 static int console_status_fetch(const char *session_name,
@@ -1986,7 +1858,8 @@ int yvex_client_dispatch(const yvex_operator_descriptor *operation, int argc,
     case YVEX_OPERATOR_RUNTIME_MODEL_SELECTED: return model_config_show();
     case YVEX_OPERATOR_RUNTIME_MODEL_SELECT: return model_select_command(argc, argv);
     case YVEX_OPERATOR_RUNTIME_HELP: return help_command(argc, argv, consumed);
-    case YVEX_OPERATOR_RUNTIME_COMPLETION: return completion_command(argc, argv, consumed);
+    case YVEX_OPERATOR_RUNTIME_COMPLETION:
+        return yvex_cli_completion_command(argc, argv, consumed);
     case YVEX_OPERATOR_RUNTIME_VERSION:
         printf("yvex %s protocol=%u registry=%s commit=%s\n", yvex_version_string(),
                YVEX_LOCAL_PROTOCOL_VERSION, yvex_operator_registry_identity,

@@ -160,7 +160,7 @@ static void print_prepare_common(const yvex_cli_models_prepare_options *options,
     yvex_cli_out_writef(stdout, "conversion_plan_path: %s\n", plan_path);
     yvex_cli_out_writef(stdout, "registry_path: %s\n",
         registry_path && registry_path[0] ? registry_path : "unavailable");
-    yvex_cli_out_writef(stdout, "alias: deepseek4-v4-flash-selected-embed\n");
+    yvex_cli_out_writef(stdout, "alias: deepseek4-v4-flash-dspark-selected-embed\n");
     yvex_cli_out_writef(stdout, "overwrite: %s\n", options->overwrite ? "true" : "false");
     yvex_cli_out_writef(stdout, "dry_run: %s\n", options->dry_run ? "true" : "false");
     yvex_cli_out_writef(stdout, "register: %s\n", options->register_alias ? "true" : "false");
@@ -191,7 +191,7 @@ static void print_prepare_dry_run_stages(int register_alias)
 
 static const char *prepare_unsupported_reason(const char *target)
 {
-    if (strcmp(target, "deepseek4-v4-flash-selected-embed-rmsnorm") == 0) {
+    if (strcmp(target, "deepseek4-v4-flash-dspark-selected-embed-rmsnorm") == 0) {
         return "segment prepare is planned, not implemented by this preset";
     }
     if (strcmp(target, "glm-5.2-official-safetensors") == 0) {
@@ -538,8 +538,8 @@ static int prepare_create_parents(const char *artifact_path,
 
 int yvex_models_prepare_surface_command(int arg_count, char **args)
 {
-    static const char *target_alias = "deepseek4-v4-flash-selected-embed";
-    static const char *artifact_name = "deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf";
+    static const char *target_alias = "deepseek4-v4-flash-dspark-selected-embed";
+    static const char *artifact_name = "deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf";
     yvex_cli_models_prepare_options options;
     yvex_paths paths;
     yvex_operator_paths operator_paths;
@@ -619,8 +619,8 @@ int yvex_models_prepare_surface_command(int arg_count, char **args)
     }
     artifact_exists = path_exists(artifact_path);
 
-    rc = path_join2(manifest_path, sizeof(manifest_path), out_dir, "deepseek-source-manifest.json", &err,
-        "models_prepare");
+    rc = path_join2(manifest_path, sizeof(manifest_path), out_dir,
+                    YVEX_SOURCE_RELEASE_MANIFEST_LEAF, &err, "models_prepare");
     if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
     rc = path_join2(plan_path, sizeof(plan_path), out_dir, "deepseek-selected-plan.json", &err, "models_prepare");
     if (rc != YVEX_OK) return print_yvex_error(&err, exit_for_status(rc));
@@ -931,7 +931,7 @@ static int model_check_write_report(const yvex_cli_models_check_options *options
         return rc;
     }
     n = snprintf(report_name, sizeof(report_name),
-                 "model-check-deepseek4-v4-flash-selected-embed-%s-%s.txt",
+                 "model-check-deepseek4-v4-flash-dspark-selected-embed-%s-%s.txt",
                  report->backend_name, report->level_name);
     if (n < 0 || (size_t)n >= sizeof(report_name)) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "models_check", "report filename is too long");
@@ -1054,14 +1054,14 @@ static int print_model_check_unsupported(const yvex_cli_models_check_options *op
                options->level_name ? options->level_name : "quick");
         yvex_cli_out_writef(stdout, "backend: %s\n", options->backend_name ? options->backend_name : "cpu");
         yvex_cli_out_writef(stdout, "top_blocker: %s\n",
-               strcmp(target, "deepseek4-v4-flash-selected-embed-rmsnorm") == 0
+               strcmp(target, "deepseek4-v4-flash-dspark-selected-embed-rmsnorm") == 0
                    ? "segment check is planned"
                    : "source-only target cannot be checked as a YVEX-produced runtime artifact yet");
         yvex_cli_out_lines(stdout, literal_pair_0, sizeof(literal_pair_0) / sizeof(literal_pair_0[0]));
     } else {
         yvex_cli_out_writef(stdout, "status: model-check-unsupported\n");
         yvex_cli_out_writef(stdout, "target_id: %s\n", target);
-        if (strcmp(target, "deepseek4-v4-flash-selected-embed-rmsnorm") == 0) {
+        if (strcmp(target, "deepseek4-v4-flash-dspark-selected-embed-rmsnorm") == 0) {
             yvex_cli_out_writef(stdout, "reason: segment check is planned, not implemented by this preset\n");
         } else {
             yvex_cli_out_writef(stdout,
@@ -1093,7 +1093,7 @@ static int model_check_resolve_canonical_path(
     yvex_error *err)
 {
     static const char *artifact_name =
-        "deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf";
+        "deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf";
     yvex_paths paths;
     yvex_operator_paths operator_paths;
     char gguf_dir[YVEX_PATH_CAP];
@@ -1140,7 +1140,7 @@ static int model_check_resolve_ref(const yvex_cli_models_check_options *options,
     int rc;
 
     if (options->models_root &&
-        strcmp(options->target, "deepseek4-v4-flash-selected-embed") == 0 &&
+        strcmp(options->target, "deepseek4-v4-flash-dspark-selected-embed") == 0 &&
         !is_path_like_reference(options->target)) {
         return model_check_resolve_canonical_path(options, ref, report, err);
     }
@@ -1152,14 +1152,14 @@ static int model_check_resolve_ref(const yvex_cli_models_check_options *options,
     if (rc == YVEX_OK) {
         if (is_path_like_reference(options->target)) {
             snprintf(report->model_input_kind, sizeof(report->model_input_kind), "path");
-        } else if (strcmp(options->target, "deepseek4-v4-flash-selected-embed") == 0) {
+        } else if (strcmp(options->target, "deepseek4-v4-flash-dspark-selected-embed") == 0) {
             snprintf(report->model_input_kind, sizeof(report->model_input_kind), "target");
         } else {
             snprintf(report->model_input_kind, sizeof(report->model_input_kind), "alias");
         }
         return YVEX_OK;
     }
-    if (strcmp(options->target, "deepseek4-v4-flash-selected-embed") == 0) {
+    if (strcmp(options->target, "deepseek4-v4-flash-dspark-selected-embed") == 0) {
         yvex_error_clear(err);
         yvex_model_ref_clear(ref);
         return model_check_resolve_canonical_path(options, ref, report, err);
@@ -1313,7 +1313,7 @@ static int model_check_run_gate(const yvex_model_ref *ref,
         yvex_materialize_gate_options options = {0};
         yvex_materialize_gate_summary summary = {0};
         options.model_path = ref->path;
-        options.label = "deepseek-v4-flash-selected-embedding";
+        options.label = "deepseek-v4-flash-dspark-selected-embedding";
         options.family = "deepseek4";
         options.sha256 = ref->kind == YVEX_MODEL_REF_ALIAS ? ref->sha256 : NULL;
         options.metadata_status = "pass";
@@ -1332,7 +1332,7 @@ static int model_check_run_gate(const yvex_model_ref *ref,
         yvex_model_gate_options options = {0};
         yvex_model_gate_summary summary = {0};
         options.model_path = ref->path;
-        options.model_label = "deepseek-v4-flash-selected-embedding";
+        options.model_label = "deepseek-v4-flash-dspark-selected-embedding";
         options.family = "deepseek4";
         options.artifact_sha256 = ref->kind == YVEX_MODEL_REF_ALIAS ? ref->sha256 : NULL;
         options.expected_tensors = &model_expected;
@@ -1434,11 +1434,11 @@ int yvex_models_check_surface_command(int arg_count, char **args)
     yvex_error_clear(&run.error);
     rc = parse_models_check_options(arg_count, args, &run.options);
     if (rc != 0) return rc;
-    if (strcmp(run.options.target, "deepseek4-v4-flash-selected-embed-rmsnorm") == 0 ||
+    if (strcmp(run.options.target, "deepseek4-v4-flash-dspark-selected-embed-rmsnorm") == 0 ||
         strcmp(run.options.target, "glm-5.2-official-safetensors") == 0) {
         return print_model_check_unsupported(&run.options);
     }
-    if (strcmp(run.options.target, "deepseek4-v4-flash-selected-embed") != 0 &&
+    if (strcmp(run.options.target, "deepseek4-v4-flash-dspark-selected-embed") != 0 &&
         !is_path_like_reference(run.options.target)) {
         yvex_model_ref_options ref_options = {0};
         ref_options.allow_registry = 1;

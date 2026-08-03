@@ -573,11 +573,12 @@ static const char *const tensor_role_names[YVEX_TENSOR_ROLE_COUNT] = {
     [YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_GATE] = "moe_shared_expert_gate",
     [YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_UP] = "moe_shared_expert_up",
     [YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_DOWN] = "moe_shared_expert_down",
-    [YVEX_TENSOR_ROLE_MTP_EMBEDDING_PROJECTION] = "mtp_embedding_projection",
-    [YVEX_TENSOR_ROLE_MTP_HIDDEN_PROJECTION] = "mtp_hidden_projection",
-    [YVEX_TENSOR_ROLE_MTP_EMBEDDING_NORM] = "mtp_embedding_norm",
-    [YVEX_TENSOR_ROLE_MTP_HIDDEN_NORM] = "mtp_hidden_norm",
-    [YVEX_TENSOR_ROLE_MTP_OUTPUT_NORM] = "mtp_output_norm"
+    [YVEX_TENSOR_ROLE_DRAFT_FEATURE_PROJECTION] = "draft_feature_projection",
+    [YVEX_TENSOR_ROLE_DRAFT_FEATURE_NORM] = "draft_feature_norm",
+    [YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM] = "draft_output_norm",
+    [YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING] = "draft_markov_embedding",
+    [YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT] = "draft_markov_output",
+    [YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE] = "draft_confidence"
 };
 
 const char *yvex_tensor_role_name(yvex_tensor_role role)

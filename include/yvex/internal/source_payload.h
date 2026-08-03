@@ -109,6 +109,12 @@ typedef struct {
     unsigned int open_handles, peak_open_handles;
     unsigned long long range_lookup_count, shard_lookup_count, header_scan_count;
 } yvex_source_payload_session_facts;
+typedef struct {
+    yvex_source_verification verification;
+    yvex_source_payload_session_facts payload;
+    yvex_source_payload_stream_result stream;
+    int reused_published_identity;
+} yvex_source_payload_verification_result;
 typedef enum {
     YVEX_SOURCE_PAYLOAD_PROBE_COLD_ADVISORY = 0,
     YVEX_SOURCE_PAYLOAD_PROBE_WARM,
@@ -163,6 +169,18 @@ int yvex_source_payload_session_release(
 int yvex_source_payload_session_facts_get(
     const yvex_source_payload_session *session,
     yvex_source_payload_session_facts *out,
+    yvex_error *err);
+/*
+ * Verify every admitted shard before publishing the v3 payload identity. The source manifest is
+ * promoted transactionally; a current upstream-verified identity is reopened without rereading
+ * the payload. Local-only seals are re-read because their observed digests are not provider
+ * authority. Callers choose whether that weaker trust class is admissible through the budget.
+ */
+int yvex_source_payload_verify_snapshot(
+    const yvex_source_verify_options *verification_options,
+    const yvex_source_payload_budget *budget,
+    yvex_source_payload_verification_result *out,
+    yvex_source_payload_failure *failure,
     yvex_error *err);
 const yvex_source_payload_shard *yvex_source_payload_shard_at(
     yvex_source_payload_session *session,

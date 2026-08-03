@@ -5,11 +5,11 @@ set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
 OUT_DIR=${YVEX_TEST_OUT_DIR:-build/tests/cli-integrity-report}
-MODEL="$OUT_DIR/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf"
+MODEL="$OUT_DIR/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 REG="$OUT_DIR/models.local.json"
 STALE_REG="$OUT_DIR/stale.models.local.json"
 DTYPE_REG="$OUT_DIR/dtype.models.local.json"
-ALIAS=deepseek4-v4-flash-selected-embed
+ALIAS=deepseek4-v4-flash-dspark-selected-embed
 
 fail() {
     printf 'FAIL: %s\n' "$1" >&2

@@ -42,12 +42,72 @@ static int file_contains(const char *path, const char *needle)
     return fclose(fp) == 0 && found;
 }
 
+static int write_legacy_v3_copy(const char *source, const char *destination)
+{
+    static const char schema_v4[] = "yvex.models.local.v4";
+    static const char schema_v3[] = "yvex.models.local.v3";
+    FILE *fp;
+    char *bytes, *schema, *mode, *line_end;
+    long extent;
+    size_t size;
+
+    fp = fopen(source, "rb");
+    if (!fp || fseek(fp, 0, SEEK_END) != 0 || (extent = ftell(fp)) < 0 ||
+        fseek(fp, 0, SEEK_SET) != 0) {
+        if (fp) (void)fclose(fp);
+        return 0;
+    }
+    size = (size_t)extent;
+    bytes = malloc(size + 1u);
+    if (!bytes) {
+        (void)fclose(fp);
+        return 0;
+    }
+    if (fread(bytes, 1u, size, fp) != size) {
+        (void)fclose(fp);
+        free(bytes);
+        return 0;
+    }
+    if (fclose(fp) != 0) {
+        free(bytes);
+        return 0;
+    }
+    bytes[size] = '\0';
+    schema = strstr(bytes, schema_v4);
+    mode = strstr(bytes, "      \"runtime_mode\":");
+    line_end = mode ? strchr(mode, '\n') : NULL;
+    if (!schema || !mode || !line_end) {
+        free(bytes);
+        return 0;
+    }
+    memcpy(schema, schema_v3, sizeof(schema_v3) - 1u);
+    line_end++;
+    memmove(mode, line_end, size - (size_t)(line_end - bytes) + 1u);
+    size -= (size_t)(line_end - mode);
+    fp = fopen(destination, "wb");
+    if (!fp) {
+        free(bytes);
+        return 0;
+    }
+    if (fwrite(bytes, 1u, size, fp) != size) {
+        (void)fclose(fp);
+        free(bytes);
+        return 0;
+    }
+    if (fclose(fp) != 0) {
+        free(bytes);
+        return 0;
+    }
+    free(bytes);
+    return 1;
+}
+
 static int test_alias_validation(void)
 {
     yvex_error err;
     yvex_error_clear(&err);
 
-    YVEX_TEST_ASSERT(yvex_model_alias_validate("deepseek4-v4-flash-selected-embed", &err) == YVEX_OK,
+    YVEX_TEST_ASSERT(yvex_model_alias_validate("deepseek4-v4-flash-dspark-selected-embed", &err) == YVEX_OK,
                      "valid DeepSeek alias");
     YVEX_TEST_ASSERT(yvex_model_alias_validate("qwen3-8b-selected-embed", &err) == YVEX_OK,
                      "valid Qwen alias");
@@ -63,11 +123,11 @@ static int test_alias_validation(void)
                      "path traversal rejected");
     YVEX_TEST_ASSERT(yvex_model_alias_validate("latest", &err) != YVEX_OK,
                      "latest rejected");
-    YVEX_TEST_ASSERT(yvex_model_alias_validate("deepseek4-v4-flash-final-embed", &err) != YVEX_OK,
+    YVEX_TEST_ASSERT(yvex_model_alias_validate("deepseek4-v4-flash-dspark-final-embed", &err) != YVEX_OK,
                      "final segment rejected");
-    YVEX_TEST_ASSERT(yvex_model_alias_validate("deepseek4-v4-flash-new-embed", &err) != YVEX_OK,
+    YVEX_TEST_ASSERT(yvex_model_alias_validate("deepseek4-v4-flash-dspark-new-embed", &err) != YVEX_OK,
                      "new segment rejected");
-    YVEX_TEST_ASSERT(yvex_model_alias_validate("deepseek4-v4-flash-test-embed", &err) != YVEX_OK,
+    YVEX_TEST_ASSERT(yvex_model_alias_validate("deepseek4-v4-flash-dspark-test-embed", &err) != YVEX_OK,
                      "test segment rejected");
     return 0;
 }
@@ -76,14 +136,14 @@ static int test_derive_metadata(void)
 {
     yvex_model_registry_entry entry;
     yvex_error err;
-    const char *path = "build/tests/model-registry/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf";
+    const char *path = "build/tests/model-registry/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf";
 
     yvex_error_clear(&err);
     YVEX_TEST_ASSERT(yvex_model_registry_entry_derive_from_path(&entry, path, &err) == YVEX_OK,
                      "derive canonical filename");
-    YVEX_TEST_ASSERT_STREQ(entry.alias, "deepseek4-v4-flash-selected-embed", "derived alias");
+    YVEX_TEST_ASSERT_STREQ(entry.alias, "deepseek4-v4-flash-dspark-selected-embed", "derived alias");
     YVEX_TEST_ASSERT_STREQ(entry.family, "deepseek4", "derived family");
-    YVEX_TEST_ASSERT_STREQ(entry.model, "v4-flash", "derived model");
+    YVEX_TEST_ASSERT_STREQ(entry.model, "v4-flash-dspark", "derived model");
     YVEX_TEST_ASSERT_STREQ(entry.scope, "selected", "derived scope");
     YVEX_TEST_ASSERT_STREQ(entry.artifact_class, "embed", "derived class");
     YVEX_TEST_ASSERT_STREQ(entry.qprofile, "F16", "derived qprofile");
@@ -97,9 +157,9 @@ static void fill_entry(yvex_model_registry_entry *entry, const char *path,
                        const char *binding)
 {
     memset(entry, 0, sizeof(*entry));
-    entry->alias = "deepseek4-v4-flash-selected-embed";
+    entry->alias = "deepseek4-v4-flash-dspark-selected-embed";
     entry->family = "deepseek4";
-    entry->model = "v4-flash";
+    entry->model = "v4-flash-dspark";
     entry->scope = "selected";
     entry->artifact_class = "embed";
     entry->qprofile = "F16";
@@ -127,8 +187,9 @@ static void fill_entry(yvex_model_registry_entry *entry, const char *path,
     entry->selected_embedding_slice_bytes = 8ull;
     entry->execution_ready = 0;
     entry->runtime_binding = binding;
-    entry->runtime_target = "deepseek4-v4-flash";
+    entry->runtime_target = "deepseek4-v4-flash-dspark";
     entry->runtime_backend = "cuda";
+    entry->runtime_mode = "dspark";
     entry->runtime_context = 4096ull;
 }
 
@@ -136,7 +197,7 @@ static int test_registry_lifecycle(void)
 {
     const char *dir = "build/tests/model-registry";
     const char *registry_path = "build/tests/model-registry/models.local.json";
-    const char *model_path = "build/tests/model-registry/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf";
+    const char *model_path = "build/tests/model-registry/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf";
     const char *binding_path = "build/tests/model-registry/runtime.binding";
     char absolute_model[YVEX_PATH_CAP];
     char absolute_binding[YVEX_PATH_CAP];
@@ -172,16 +233,18 @@ static int test_registry_lifecycle(void)
     rc = yvex_model_registry_add(registry, &entry, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "add entry");
     YVEX_TEST_ASSERT(yvex_model_registry_count(registry) == 1, "count after add");
-    found = yvex_model_registry_find(registry, "deepseek4-v4-flash-selected-embed");
+    found = yvex_model_registry_find(registry, "deepseek4-v4-flash-dspark-selected-embed");
     YVEX_TEST_ASSERT(found != NULL, "find entry");
     YVEX_TEST_ASSERT_STREQ(found->path, absolute_model, "found path");
 
     rc = yvex_model_registry_save(registry, registry_path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "save registry");
-    YVEX_TEST_ASSERT(file_contains(registry_path, "\"schema\": \"yvex.models.local.v3\""),
-                     "registry writer publishes schema v3");
+    YVEX_TEST_ASSERT(file_contains(registry_path, "\"schema\": \"yvex.models.local.v4\""),
+                     "registry writer publishes schema v4");
     YVEX_TEST_ASSERT(file_contains(registry_path, "\"runtime_backend\": \"cuda\""),
                      "registry writer persists runtime profile");
+    YVEX_TEST_ASSERT(file_contains(registry_path, "\"runtime_mode\": \"dspark\""),
+                     "registry writer persists generation mode");
     YVEX_TEST_ASSERT(!file_contains(registry_path, "\"selected\":"),
                      "registry writer has no selected startup state");
     yvex_model_registry_close(registry);
@@ -191,7 +254,7 @@ static int test_registry_lifecycle(void)
     rc = yvex_model_registry_open(&registry, &options, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "reload registry");
     YVEX_TEST_ASSERT(yvex_model_registry_count(registry) == 1, "count after reload");
-    found = yvex_model_registry_find(registry, "deepseek4-v4-flash-selected-embed");
+    found = yvex_model_registry_find(registry, "deepseek4-v4-flash-dspark-selected-embed");
     YVEX_TEST_ASSERT(found != NULL, "entry after reload");
     YVEX_TEST_ASSERT_STREQ(found->support_level, "selected-tensor-materialized", "support after reload");
     YVEX_TEST_ASSERT_STREQ(found->primary_tensor_name, "token_embd.weight", "primary tensor after reload");
@@ -201,16 +264,18 @@ static int test_registry_lifecycle(void)
     YVEX_TEST_ASSERT(found->selected_embedding_ready == 1, "selected embedding readiness after reload");
     YVEX_TEST_ASSERT_STREQ(found->runtime_binding, absolute_binding,
                            "runtime binding after reload");
-    YVEX_TEST_ASSERT_STREQ(found->runtime_target, "deepseek4-v4-flash",
+    YVEX_TEST_ASSERT_STREQ(found->runtime_target, "deepseek4-v4-flash-dspark",
                            "runtime target after reload");
     YVEX_TEST_ASSERT_STREQ(found->runtime_backend, "cuda",
                            "runtime backend after reload");
+    YVEX_TEST_ASSERT_STREQ(found->runtime_mode, "dspark",
+                           "runtime mode after reload");
     YVEX_TEST_ASSERT(found->runtime_context == 4096ull,
                      "runtime context after reload");
     YVEX_TEST_ASSERT(yvex_model_registry_startup_validate(found, &err) == YVEX_OK,
                      "reloaded startup profile validates");
 
-    rc = yvex_model_registry_remove(registry, "deepseek4-v4-flash-selected-embed", &err);
+    rc = yvex_model_registry_remove(registry, "deepseek4-v4-flash-dspark-selected-embed", &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "remove entry");
     YVEX_TEST_ASSERT(yvex_model_registry_count(registry) == 0, "count after remove");
     yvex_model_registry_close(registry);
@@ -241,11 +306,35 @@ static int test_invalid_args(void)
     return 0;
 }
 
+static int test_legacy_v3_runtime_mode(void)
+{
+    const char *current = "build/tests/model-registry/models.local.json";
+    const char *legacy = "build/tests/model-registry/models.local.v3.json";
+    yvex_model_registry_options options = {0};
+    yvex_model_registry *registry = NULL;
+    const yvex_model_registry_entry *entry;
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(write_legacy_v3_copy(current, legacy),
+                     "construct a prior registry schema fixture");
+    options.registry_path = legacy;
+    YVEX_TEST_ASSERT(yvex_model_registry_open(&registry, &options, &err) == YVEX_OK,
+                     "registry schema v3 remains readable");
+    entry = yvex_model_registry_find(
+        registry, "deepseek4-v4-flash-dspark-selected-embed");
+    YVEX_TEST_ASSERT(entry != NULL, "schema v3 retains its model entry");
+    YVEX_TEST_ASSERT_STREQ(entry->runtime_mode, "target-only",
+                           "schema v3 acquires the safe target-only mode");
+    yvex_model_registry_close(registry);
+    return 0;
+}
+
 int yvex_test_model_registry(void)
 {
     if (test_alias_validation() != 0) return 1;
     if (test_derive_metadata() != 0) return 1;
     if (test_registry_lifecycle() != 0) return 1;
+    if (test_legacy_v3_runtime_mode() != 0) return 1;
     if (test_invalid_args() != 0) return 1;
     return 0;
 }

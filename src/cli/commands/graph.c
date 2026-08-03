@@ -1483,6 +1483,9 @@ static int graph_cli_transformer_generate(
     request.target = args->transformer.target;
     request.artifact_path = artifact;
     request.runtime_binding_path = binding;
+    request.mode = strcmp(args->transformer.generation_mode, "dspark") == 0
+                       ? YVEX_GENERATION_MODE_DSPARK
+                       : YVEX_GENERATION_MODE_TARGET_ONLY;
     if (args->transformer.text) {
         request.input_kind = YVEX_GENERATION_INPUT_TEXT;
         request.text = (const unsigned char *)args->transformer.text;

@@ -126,7 +126,7 @@ static const qtype_role_fact gemma_role_facts[] = {
 };
 
 static const qtype_gate_family_fact qtype_gate_rows[] = {
-    {"deepseek", "deepseek4-v4-flash", "blocked",
+    {"deepseek", "deepseek4-v4-flash-dspark", "blocked",
      "artifact-materialization-unimplemented", "V010.ARTIFACT.MATERIALIZE.0"},
     {"qwen", "qwen3-6-35b-a3b", "blocked", "family-quantization-plan-unimplemented", "not-scheduled"},
     {"gemma", "gemma-4-31b-it", "blocked", "family-quantization-plan-unimplemented", "not-scheduled"},

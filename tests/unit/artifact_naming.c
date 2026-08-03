@@ -45,7 +45,7 @@ static int test_deepseek_name(void)
     YVEX_TEST_ASSERT(yvex_conversion_suggest_artifact_name(out,
                                                            sizeof(out),
                                                            "deepseek4",
-                                                           "v4-flash",
+                                                           "v4-flash-dspark",
                                                            "selected",
                                                            "embed",
                                                            "F16",
@@ -55,7 +55,7 @@ static int test_deepseek_name(void)
                                                            &err) == YVEX_OK,
                      "deepseek conversion suggest");
     YVEX_TEST_ASSERT_STREQ(out,
-                           "deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf",
+                           "deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf",
                            "deepseek name");
     return 0;
 }

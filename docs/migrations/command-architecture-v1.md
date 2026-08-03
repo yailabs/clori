@@ -4,7 +4,7 @@ This deterministic migration matrix reconciles the frozen operator audit with
 `yvex.operator.registry.v1`. It is documentation, not runtime command authority.
 
 - Frozen audit baseline: `ec7dccede90c1a1efa87b4c2519c25b30d5e1733`
-- Registry identity: `0283c71f662f135b6ebfb3172c1cdce5a22a0bfbf9be6b80fc009abd807d4540`
+- Registry identity: `1e2b17f1a5403e1a9e12850b8f64bba0bb25c492bd9da03da60ee7b04fa5eae8`
 - Compatibility policy: pre-v0.1 breaking grammar cutover; removed paths never execute aliases.
 
 | Old path | Old operation | Final operation | Final projection | Visibility | Compatibility | Rationale |

@@ -1,28 +1,37 @@
-# DeepSeek-V4-Flash Technical Record
+# DeepSeek V4 Flash / DSpark Technical Record
 
-Status: current family record
+Status: current family and target record
 
-This record owns DeepSeek-V4-Flash family and target facts. It does not own
-macro gate state, operator procedures, or release promotion.
+This record owns current DeepSeek V4 Flash family facts and the exact DSpark
+target admitted by YVEX. It does not own macro gate state, operator procedure,
+or release promotion.
 
 ## Identity and source
 
 | Fact | Value |
 | --- | --- |
 | Family | DeepSeek V4 |
-| Canonical target | `deepseek4-v4-flash` |
-| Source repository | `deepseek-ai/DeepSeek-V4-Flash` |
-| Pinned revision | `60d8d70770c6776ff598c94bb586a859a38244f1` |
-| Runtime class | hybrid SWA/CSA/HCA decoder with mHC and MoE |
-| Main layers | 43 |
-| Auxiliary topology | one distinct MTP descriptor, not executed by the current product path |
+| Canonical target | `deepseek4-v4-flash-dspark` |
+| Source repository | `deepseek-ai/DeepSeek-V4-Flash-DSpark` |
+| Pinned revision | `62af8fffb2f7030cac4de2f0169f5b8d1101b646` |
+| Snapshot shape | 48 Safetensors shards; 72,317 indexed tensors |
+| Target topology | 43-layer hybrid SWA/CSA/HCA decoder with mHC and MoE |
+| Draft topology | five-position DSpark block conditioned by three target feature taps |
 
-Strict source verification retains configuration, tokenizer sidecars, 46
-safetensors headers, exact payload ranges, and snapshot identity. The family
-owner consumes those typed facts and does not reopen source configuration or
-reclassify tensor names.
+The external acquisition record binds the exact revision, sidecars, tokenizer,
+index, every shard header and payload identity, and the ordered aggregate
+snapshot identity. YVEX source intake independently produces and consumes its
+canonical `yvex.source_manifest.v3` payload manifest before compilation. The
+operator record is acquisition evidence, not a substitute input schema; a
+directory name, mutable branch, or local modification time is never source
+identity.
 
-## Architecture
+The superseded `deepseek-ai/DeepSeek-V4-Flash` snapshot and
+`deepseek4-v4-flash` target are not current aliases. Living product surfaces
+refuse the old target spelling with one migration hint. Historical records and
+Git retain its provenance.
+
+## Target architecture
 
 Layers 0 and 1 use sliding-window attention. Layers 2 through 42 alternate 21
 compressed sparse-attention layers at ratio 4 with 20 heavy-compression layers
@@ -36,87 +45,110 @@ transitions carry 24 by 16,384 mixing geometry, 20 Sinkhorn iterations,
 pre/post attention transforms, deferred feed-forward transforms, and final
 collapse before RMS normalization.
 
-## Mixture of experts
-
-Every main layer has one shared expert and 256 routed experts with top-6
+Every target layer has one shared expert and 256 routed experts with top-6
 selection. The first three layers use token-ID hash routing. The remaining 40
 use a learned BF16 router, sqrt-softplus scores, correction bias,
-deterministic no-aux top-k, and normalized route weights.
+deterministic no-aux top-k, and normalized route weights. Generic MoE,
+runtime, and backend owners execute the family-selected schedule.
 
-The runtime executes only selected routed expert subviews plus the shared
-expert. The family defines routing and composition; common MoE, runtime, and
-backend owners retain execution, memory, transaction, and cleanup mechanisms.
+## DSpark architecture
+
+DSpark proposes a block of five positions. The target execution plan captures
+the four mHC streams after target layers 40, 41, and 42, averages each tap,
+and projects the normalized features into three ordered draft stages. Draft
+queries use noise token `128799` and mutually visible block positions.
+
+The three draft Transformer/MoE stages are distinct from the public
+configuration's `num_nextn_predict_layers = 1`. The bundled inference
+configuration declares `n_mtp_layers = 3`, and the exact tensor geometry
+establishes those three executable stages. Stage zero owns the main feature
+projection and normalization. The final stage owns output normalization, the
+rank-256 Markov projections, confidence projection, and the final hidden
+combination. Target embedding and vocabulary output resources are shared by
+identity rather than copied into a second model.
+
+The Markov component is a low-rank token-conditioned vocabulary bias, not a
+second persistent recurrent state. Confidence values are scheduling facts;
+they never replace full-target verification or authorize publication.
 
 ## Tokenizer and output
 
 The target has a 128,000-entry base tokenizer plus 1,283 added-token records
-and an untied 129,280-entry output head. The current tokenizer owner admits
-exact prompt rendering, UTF-8 encode/decode, special/EOS classification,
-incremental detokenization, and committed token append semantics.
+and an untied 129,280-entry output head. The tokenizer owner admits exact
+prompt rendering, UTF-8 encode/decode, special/EOS classification,
+incremental detokenization, and committed-token append semantics.
 
-The source declares a one-million-token context contract. Current hosted
-context capacity is selected and admitted independently by the runtime; source
+The source declares a one-million-token context contract. Hosted context
+capacity is selected and admitted independently by the runtime; source
 capacity is not an automatic runtime configuration or performance claim.
 
-## Mapping and artifacts
+## Coverage, transformation, and artifact
 
-Exact coverage reconciles 69,187 source requirements. The logical GGUF map
-produces 1,360 terminal descriptors: 1,328 trunk descriptors follow the pinned
-llama.cpp mapping at `e920c523e3b8a0163fe498af5bf90df35ff51d25`, while 32
-MTP descriptors use `yvex.mtp.v1` because the pinned external converter omits
-MTP.
+Exact source coverage reconciles 72,317 source tensors, 3,130 more than the
+superseded snapshot inventory. The sealed Transformation IR has 1,409 terminal
+descriptors: 1,328 target-trunk descriptors and 81 DSpark descriptors. Every
+source tensor is required and mapped, explicitly shared, or rejected; scale
+companions, expert coordinates, target taps, draft stages, and global shared
+resources remain distinct.
 
-The mapping preserves FP8 E4M3 weights and UE8M0 companions, aggregates 256
-ordered FP4 expert pairs into the required MXFP4 storage geometry, and records
-checked I64-to-I32 hash-table conversion.
+The current bootstrap physical policy is
+`deepseek-v4-flash-dspark-bootstrap-q2-v1`. It preserves the admitted mixed
+IQ2_XXS/Q2_K decisions for the same target roles, not on an assumption that the
+replacement checkpoint has identical payload bytes. The retained DS4
+importance matrix remains bound to its predecessor source identity and is used
+only as a bootstrap prior; it is not represented as DSpark calibration. New
+draft norms, controls, feature and Markov projections, confidence tensors, and
+other sensitive small roles use conservative exact, BF16, or Q8_0 storage.
+Draft expert decisions are role-specific and cannot inherit an aggressive
+low-precision default from their auxiliary scope.
 
-Complete source-faithful, Q8_0/Q2_K, and mixed IQ2_XXS/Q2_K physical variants
-have been emitted and admitted outside Git. Each has a distinct physical
-variant, artifact, materialization, and runtime-binding identity. None is the
-release variant merely because it exists or executes.
+The complete GGUF records source, logical model, transformation, physical
+variant, target and draft role inventories, DSpark configuration, and exact
+artifact identity. One runtime binding requires target execution, draft
+execution, complete target verification, persistent target state, and bounded
+draft workspace. Container validity or target-only opening alone does not
+establish DSpark support.
 
-## Runtime and backend coverage
+## Hosted execution
 
-The current common runtime opens one exact artifact and binding, builds
-process-lifetime host residency, and creates isolated server-owned sessions.
-The production path includes:
+One immutable runtime model owns both `target-only` and `dspark` execution
+plans. One server session owns committed target state, token ledger,
+transcript, incremental decoder and sampling state, plus bounded draft and
+verification candidate state. No second process, model opening, tokenizer,
+session registry, CUDA context, or output head is created for drafting.
 
-- exact prompt tokenization and prefix comparison;
-- suffix prefill and family-correct persistent state;
-- 43-layer attention, mHC, and MoE composition;
-- final norm and full 129,280-coordinate output-head logits;
-- greedy and admitted stochastic sampling;
-- sampled-token decode feedback;
-- typed EOS, stop, cancellation, and partial progress;
-- incremental detokenization and committed streaming;
-- retained exact multi-turn sessions;
-- native and bounded OpenAI-compatible application projections.
+In DSpark mode, proposals do not advance position, KV, transcript, usage, or
+text. The complete target verifies the ordered candidate block. Greedy mode
+requires exact target-token equality; admitted stochastic mode uses
+target-distribution-preserving accept/reject and residual sampling. The runtime
+commits only the accepted target-authored prefix, discards the rejected suffix,
+and publishes text after model, token, decoder, and RNG state agree.
 
-CPU and the admitted mixed GB10 CUDA path consume the same logical owners. The
-GB10 path executes the backbone and output head on CUDA without CPU numerical
-fallback. Tokenizer work, sampling, protocol handling, and orchestration remain
-host-owned. Host-addressable or unified placement is not called complete device
-residency.
+Target-only remains the explicit semantic reference and debug mode. An
+explicit DSpark request fails closed when any draft tensor, plan, qtype,
+workspace, backend capability, or policy requirement is absent. It never
+silently falls back to target-only.
 
 ## Current capability
 
-DeepSeek-V4-Flash is the sole complete YVEX source-to-streamed-text vertical.
-This establishes model-backed generation through the admitted local product
-path. Startup optimization and bounded warm profiling are accepted, while warm
-decode optimization remains open.
+DeepSeek-V4-Flash-DSpark is the sole complete YVEX source-to-streamed-text vertical.
+The hosted native, interactive, and bounded OpenAI-compatible paths
+consume one target-verified runtime authority. Target-only and DSpark modes,
+multi-turn reuse, cancellation, reset, and committed-only streaming are
+implemented under private local protocol v5.
 
 ## Explicit non-claims
 
 This record does not claim:
 
-- MTP or speculative execution;
+- an optimized GB10 physical variant or a DSpark speedup;
+- native MXFP4/NVFP4 Tensor Core execution;
+- production load-aware confidence scheduling or continuous batching;
 - complete accelerator residency or device-side sampling/tokenization;
-- every context, sampling policy, concurrency level, or physical variant has
-  the same performance;
-- public/remote security, authentication, TLS, multi-model hosting,
-  continuous batching, or distributed serving;
-- model behavior or quality evaluation;
-- a release-path full-model benchmark;
+- multi-device or distributed serving;
+- model behavior or quality evaluation or quality parity;
+- a public full-model benchmark;
+- speculative support for another family;
 - release qualification.
 
 Current gate state is owned only by [`ROADMAP.md`](../../ROADMAP.md).

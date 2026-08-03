@@ -832,7 +832,8 @@ static int attn_prepare(attn_run *run) {
     run->initial_indexer_count = run->job->indexer_count;
     run->local_capacity = run->state->attention_graph_configured
                               ? run->state->attention_local_capacity
-                              : run->job->sliding_window - 1ull;
+                              : run->job->sliding_window -
+                                    (run->job->candidate_block_visible ? 0ull : 1ull);
     run->compressed_capacity = run->job->attention_class == YVEX_BACKEND_ATTENTION_SWA
         ? 0ull : (run->state->attention_graph_configured
                       ? run->state->attention_compressed_capacity
@@ -1031,6 +1032,10 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     unsigned long long main_extent = run->rolling[ROLL_MAIN].extent;
     unsigned long long index_extent = run->rolling[ROLL_INDEX].extent;
     run->ordinal = ordinal;
+    if (job->candidate_block_visible) {
+        local_count = run->initial_local_count + job->token_count;
+        local_offset = 0ull;
+    }
     job->token_position = position;
     job->local_count = local_count;
     job->compressed_count = compressed_count;
@@ -1390,7 +1395,8 @@ static int attn_reduce(attn_run *run) {
             (void *)&run->job->query_heads, (void *)&run->job->head_dimension,
             (void *)&run->job->sliding_window,
             (void *)&run->job->compression_ratio, &attention_class,
-            (void *)&run->job->token_position, &run->attention,
+            (void *)&run->job->token_position,
+            (void *)&run->job->candidate_block_visible, &run->attention,
             &run->device_status
         };
         rc = run->ops->launch(
@@ -1634,19 +1640,28 @@ static int attn_numerical_execute(attn_run *run) {
                 run, "cuda.deepseek_attention.cancel.after_request", 1);
         return rc;
     }
-    if (run->state->attention_mode == YVEX_BACKEND_CUDA_ATTENTION_FULL) {
+    if (run->state->attention_mode == YVEX_BACKEND_CUDA_ATTENTION_FULL &&
+        !run->job->candidate_block_visible) {
         rc = attn_graph_execute(run, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT);
         return rc == YVEX_OK
                    ? attn_cancel(
                          run, "cuda.deepseek_attention.cancel.after_full_graph", 1)
                    : rc;
     }
-    if (run->state->attention_mode != YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE)
+    if (run->state->attention_mode != YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE &&
+        !(run->state->attention_mode == YVEX_BACKEND_CUDA_ATTENTION_FULL &&
+          run->job->candidate_block_visible))
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_CAPABILITY,
             "cuda.deepseek_attention.graph.mode", YVEX_BACKEND_CUDA_ATTENTION_FULL,
             run->state->attention_mode, YVEX_ERR_UNSUPPORTED,
             "CUDA attention execution mode is unavailable");
+    /*
+     * Parallel draft attention needs every candidate key before any query is
+     * reduced. A monolithic per-token graph would read later candidate slots
+     * before their projections ran, so split this request at the projection
+     * boundary even when ordinary attention selected full capture.
+     */
     rc = attn_graph_execute(run, 0u, first_end);
     if (rc == YVEX_OK && run->job->attention_class != YVEX_BACKEND_ATTENTION_SWA)
         rc = attn_graph_execute(

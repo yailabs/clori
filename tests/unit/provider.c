@@ -40,7 +40,7 @@ static int request_build(yvex_provider_request *request,
     stops[0].bytes = stop;
     stops[0].count = sizeof(stop) - 1u;
     request->schema_version = YVEX_PROVIDER_SCHEMA_V1;
-    strcpy(request->model, "deepseek4-v4-flash");
+    strcpy(request->model, "deepseek4-v4-flash-dspark");
     request->messages = messages;
     request->message_count = 2u;
     request->tools = tools;

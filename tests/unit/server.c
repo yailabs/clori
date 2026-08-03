@@ -18,7 +18,7 @@ static void test_options(yvex_server_options *options)
     memset(options, 0, sizeof(*options));
     options->artifact_path = "/definitely-absent/yvex-model.gguf";
     options->runtime_binding_path = "/definitely-absent/yvex-binding";
-    options->target_id = "deepseek4-v4-flash";
+    options->target_id = "deepseek4-v4-flash-dspark";
     options->socket_path = "/tmp/yvex-test-host/yvexd.sock";
     options->backend = YVEX_BACKEND_KIND_CPU;
     options->context_capacity = 32u;
@@ -144,7 +144,9 @@ static int test_bounded_telemetry_overflow(void)
     yvex_error err;
     unsigned long long cursor = 0u, index;
     int rc, saw_drop = 0;
-    rc = yvex_server_telemetry_open(&telemetry, 2u, NULL, NULL, NULL, &err);
+    rc = yvex_server_telemetry_open(
+        &telemetry, 2u, YVEX_SERVER_GENERATION_TARGET_ONLY,
+        NULL, NULL, NULL, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "bounded telemetry open");
     for (index = 0u; index < 4u; ++index) {
         rc = yvex_server_telemetry_emit(
@@ -250,8 +252,9 @@ static int test_provider_telemetry(void)
     static const unsigned char text[] = "hello";
     yvex_provider_message message = {0};
     yvex_provider_request request = {0};
+    yvex_runtime_speculation_progress progress = {0};
     server_telemetry *telemetry = NULL;
-    yvex_server_event emitted, event;
+    yvex_server_event emitted, event, observation;
     yvex_error err;
     char json[4096];
     int rc;
@@ -262,7 +265,7 @@ static int test_provider_telemetry(void)
     message.content.bytes = text;
     message.content.count = sizeof(text) - 1u;
     request.schema_version = YVEX_PROVIDER_SCHEMA_V1;
-    strcpy(request.model, "deepseek4-v4-flash");
+    strcpy(request.model, "deepseek4-v4-flash-dspark");
     request.messages = &message;
     request.message_count = 1u;
     request.maximum_output_tokens = 4u;
@@ -270,12 +273,14 @@ static int test_provider_telemetry(void)
     strcpy(request.external_correlation_id, "chatcmpl-yvex-1");
     rc = yvex_provider_request_seal(&request, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry request seal");
-    rc = yvex_server_telemetry_open(&telemetry, 4u, NULL, NULL, NULL, &err);
+    rc = yvex_server_telemetry_open(
+        &telemetry, 4u, YVEX_SERVER_GENERATION_DSPARK,
+        NULL, NULL, NULL, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry open");
     rc = yvex_server_telemetry_emit_provider(
         telemetry, YVEX_SERVER_EVENT_REQUEST_STARTED,
         YVEX_SERVER_SEVERITY_INFO, "session", "r1", "t1", "turn",
-        1u, 0u, 4u, 0.0, 0.0, &request, &emitted, &err);
+        1u, 0u, 4u, 0.0, 0.0, NULL, &request, &emitted, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry emit");
     rc = yvex_server_telemetry_next(telemetry, 0u, 0, &event, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "provider telemetry read");
@@ -286,6 +291,16 @@ static int test_provider_telemetry(void)
     YVEX_TEST_ASSERT_STREQ(event.provider_request_identity,
                            request.request_identity,
                            "provider request event identity");
+    YVEX_TEST_ASSERT(event.generation_mode == YVEX_SERVER_GENERATION_DSPARK,
+                     "generic telemetry preserves the configured generation mode");
+    observation = event;
+    observation.process_id++;
+    observation.wall_time_ns++;
+    observation.monotonic_time_ns++;
+    rc = yvex_server_event_validate(&observation, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK,
+        "process and clock observations do not enter semantic event identity");
     rc = yvex_server_event_json(&event, json, sizeof(json), &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && strstr(json, "\"provider\":\"openai\"") != NULL,
                      "provider correlation JSON");
@@ -293,6 +308,47 @@ static int test_provider_telemetry(void)
     rc = yvex_server_event_validate(&event, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT,
                      "provider correlation mutation refuses");
+    progress.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V3;
+    progress.kind = YVEX_SPECULATION_PROGRESS_CYCLE_COMMITTED;
+    progress.cycle = 2u;
+    progress.proposed_tokens = 5u;
+    progress.selected_verification_tokens = 5u;
+    progress.accepted_tokens = 3u;
+    progress.rejected_tokens = 1u;
+    progress.discarded_tokens = 1u;
+    progress.verification_count = 1u;
+    progress.confidence_logit_count = 5u;
+    progress.confidence_logit_minimum = -1.0;
+    progress.confidence_logit_maximum = 2.0;
+    progress.confidence_logit_mean = 0.5;
+    progress.seconds = 0.25;
+    strcpy(progress.policy_identity, request.request_identity);
+    rc = yvex_server_telemetry_emit_provider(
+        telemetry, YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED,
+        YVEX_SERVER_SEVERITY_INFO, "session", "r1", "t1", "speculation",
+        0u, 0u, 0u, progress.seconds, 0.0, &progress, &request, &emitted,
+        &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK, "typed speculation telemetry emit");
+    rc = yvex_server_telemetry_next(telemetry, event.sequence, 0, &event, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && event.speculative_cycle == 2u &&
+                         event.proposed_tokens == 5u &&
+                         event.accepted_tokens == 3u &&
+                         event.rejected_tokens == 1u &&
+                         event.discarded_tokens == 1u &&
+                         event.verification_count == 1u &&
+                         event.confidence_logit_count == 5u &&
+                         event.confidence_logit_minimum == -1.0 &&
+                         event.confidence_logit_maximum == 2.0 &&
+                         event.confidence_logit_mean == 0.5 &&
+                         event.generation_mode == YVEX_SERVER_GENERATION_DSPARK,
+                     "typed speculation telemetry facts");
+    rc = yvex_server_event_json(&event, json, sizeof(json), &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK &&
+                         strstr(json, "\"speculative_cycle\":2") != NULL &&
+                         strstr(json, "\"accepted_tokens\":3") != NULL &&
+                         strstr(json, "\"discarded_tokens\":1") != NULL &&
+                         strstr(json, "\"confidence_logit_count\":5") != NULL,
+                     "typed speculation telemetry JSON");
     yvex_server_telemetry_close(&telemetry);
     return 0;
 }

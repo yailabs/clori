@@ -351,8 +351,8 @@ void fullmodel_classify_tensor(const yvex_tensor_info *tensor,
 int fullmodel_is_selected_target(const char *text)
 {
     return text &&
-           (strcmp(text, "deepseek4-v4-flash-selected-embed") == 0 ||
-            strcmp(text, "deepseek4-v4-flash-selected-embed-rmsnorm") == 0);
+           (strcmp(text, "deepseek4-v4-flash-dspark-selected-embed") == 0 ||
+            strcmp(text, "deepseek4-v4-flash-dspark-selected-embed-rmsnorm") == 0);
 }
 
 static int fullmodel_descriptor_tensor_matches(const yvex_tensor_info *tensor,
@@ -1293,7 +1293,7 @@ static int fullmodel_surface_prepare(yvex_cli_fullmodel_options *options,
     view->selected_target = fullmodel_is_selected_target(view->target_id) ||
                             fullmodel_is_selected_target(options->model);
     view->target_class = view->selected_target ? "selected-runtime-slice" :
-        (options->target && strcmp(options->target, "deepseek4-v4-flash") == 0
+        (options->target && strcmp(options->target, "deepseek4-v4-flash-dspark") == 0
              ? "full-runtime-model-planned" : "candidate-GGUF-path");
     view->source_artifact_class = view->selected_target
         ? "YVEX-produced selected GGUF" : "GGUF artifact";

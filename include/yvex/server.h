@@ -9,8 +9,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 4u
-#define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 2u
+#define YVEX_LOCAL_PROTOCOL_VERSION 5u
+#define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 3u
 #define YVEX_RUNTIME_METRICS_SCHEMA_VERSION 3u
 #define YVEX_SERVER_SESSION_NAME_CAP 64u
 #define YVEX_SERVER_ID_CAP 65u
@@ -38,6 +38,10 @@ typedef enum {
     YVEX_SERVER_CONSOLE_OFF = 0,
     YVEX_SERVER_CONSOLE_RAW
 } yvex_server_console_kind;
+typedef enum {
+    YVEX_SERVER_GENERATION_TARGET_ONLY = 0,
+    YVEX_SERVER_GENERATION_DSPARK
+} yvex_server_generation_mode;
 typedef enum {
     YVEX_SERVER_SESSION_CREATED = 0,
     YVEX_SERVER_SESSION_READY,
@@ -72,6 +76,13 @@ typedef enum {
     YVEX_SERVER_EVENT_PREFILL_STARTED,
     YVEX_SERVER_EVENT_PREFILL_PROGRESS,
     YVEX_SERVER_EVENT_PREFILL_COMPLETED,
+    YVEX_SERVER_EVENT_DRAFT_STARTED,
+    YVEX_SERVER_EVENT_DRAFT_COMPLETED,
+    YVEX_SERVER_EVENT_VERIFICATION_STARTED,
+    YVEX_SERVER_EVENT_VERIFICATION_COMPLETED,
+    YVEX_SERVER_EVENT_PREFIX_ACCEPTED,
+    YVEX_SERVER_EVENT_CANDIDATE_REJECTED,
+    YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED,
     YVEX_SERVER_EVENT_GENERATION_FIRST_TOKEN,
     YVEX_SERVER_EVENT_GENERATION_FRAGMENT,
     YVEX_SERVER_EVENT_GENERATION_PROGRESS,
@@ -104,7 +115,14 @@ typedef struct {
     char provider_request_identity[YVEX_PROVIDER_ID_CAP];
     char external_correlation_id[YVEX_PROVIDER_ID_CAP];
     unsigned long long value_a, value_b, value_c;
-    double seconds, rate;
+    yvex_server_generation_mode generation_mode;
+    unsigned long long speculative_cycle, proposed_tokens;
+    unsigned long long selected_verification_tokens, accepted_tokens;
+    unsigned long long rejected_tokens, discarded_tokens, verification_count;
+    unsigned long long confidence_logit_count;
+    double confidence_logit_minimum, confidence_logit_maximum;
+    double confidence_logit_mean, seconds, rate;
+    char speculation_policy_identity[YVEX_SHA256_HEX_CAP];
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char variant_identity[YVEX_SHA256_HEX_CAP];
@@ -132,6 +150,7 @@ typedef struct {
     const char *target_id;
     const char *socket_path;
     yvex_backend_kind backend;
+    yvex_server_generation_mode generation_mode;
     unsigned long long context_capacity, prefill_chunk_tokens;
     unsigned long long maximum_new_tokens, maximum_output_bytes;
     unsigned long long maximum_host_bytes, maximum_device_bytes;
@@ -147,6 +166,7 @@ typedef struct {
     unsigned int schema_version;
     yvex_server_status status;
     yvex_backend_kind backend;
+    yvex_server_generation_mode generation_mode;
     char socket_path[YVEX_SERVER_SOCKET_PATH_CAP];
     char target_id[128];
     char runtime_model_identity[YVEX_SHA256_HEX_CAP];
@@ -277,8 +297,21 @@ typedef struct {
     unsigned long long prompt_tokens, reused_tokens, prefill_tokens;
     unsigned long long generated_tokens, final_position, turn_count;
     unsigned long long context_used, kv_used_bytes;
+    yvex_server_generation_mode generation_mode;
+    unsigned long long draft_cycle_count, draft_forward_count;
+    unsigned long long proposed_tokens, selected_verification_tokens;
+    unsigned long long target_verification_count;
+    unsigned long long accepted_draft_tokens, rejected_draft_tokens;
+    unsigned long long discarded_draft_tokens;
+    unsigned long long target_correction_or_bonus_tokens;
+    unsigned long long maximum_accepted_prefix;
+    unsigned long long confidence_logit_count;
     double queue_seconds, prefill_seconds, first_token_seconds, decode_seconds;
     double prefill_rate, decode_rate, publication_seconds;
+    double draft_seconds, verification_seconds, speculative_commit_seconds;
+    double mean_accepted_prefix, effective_committed_rate;
+    double confidence_logit_minimum, confidence_logit_maximum;
+    double confidence_logit_mean;
     unsigned int stop_reason;
     yvex_client_generation_phase generation_phase;
     yvex_client_cancellation_class cancellation_class;
@@ -290,6 +323,7 @@ typedef struct {
     char state_digest[YVEX_SHA256_HEX_CAP];
     char generated_token_identity[YVEX_SHA256_HEX_CAP];
     char generated_text_digest[YVEX_SHA256_HEX_CAP];
+    char speculation_policy_identity[YVEX_SHA256_HEX_CAP];
     yvex_provider_output_kind provider_output_kind;
     yvex_provider_finish_class provider_finish;
     unsigned long long completion_tokens, total_tokens;

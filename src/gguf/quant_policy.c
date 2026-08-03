@@ -89,11 +89,11 @@ static const char *const collection_names[] = {
     "global", "attention", "compressor", "indexer", "norm", "mhc", "router",
     "routed_expert", "shared_expert", "auxiliary",
 };
-static const char *const scope_names[] = {"global", "main_layer", "mtp"};
+static const char *const scope_names[] = {"global", "main_layer", "draft"};
 static const char *const preset_names[] = {
     "source-faithful",
     YVEX_QUANT_RELEASE_PROFILE_NAME,
-    YVEX_QUANT_DS4_PROFILE_NAME,
+    YVEX_QUANT_DSPARK_PROFILE_NAME,
 };
 
 static int policy_name_value(const policy_name *rows, size_t count, const char *name,
@@ -215,7 +215,7 @@ static yvex_tensor_collection collection_from_name(const char *name) {
 static yvex_tensor_scope scope_from_name(const char *name) {
     return (yvex_tensor_scope)policy_table_index(
         scope_names, sizeof(scope_names) / sizeof(scope_names[0]), name,
-        YVEX_TENSOR_SCOPE_MTP + 1);
+        YVEX_TENSOR_SCOPE_DRAFT + 1);
 }
 
 const char *yvex_quant_selector_kind_name(yvex_quant_selector_kind kind) {
@@ -564,6 +564,34 @@ static int policy_preset_add(yvex_quant_policy *policy, unsigned long long match
     return policy_add_rule_v2(policy, &rule, err);
 }
 
+static int policy_preset_add_dspark(yvex_quant_policy *policy, yvex_error *err)
+{
+    static const yvex_tensor_role exact_roles[] = {
+        YVEX_TENSOR_ROLE_DRAFT_FEATURE_NORM,
+        YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM,
+        YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING,
+        YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT,
+        YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE,
+    };
+    unsigned long long index;
+    int rc = policy_preset_add(
+        policy, YVEX_QUANT_MATCH_SCOPE | YVEX_QUANT_MATCH_PHYSICAL_CLASS,
+        YVEX_TENSOR_ROLE_UNKNOWN, YVEX_QUANT_POLICY_OPERATION_ANY,
+        YVEX_TENSOR_SCOPE_DRAFT, YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE,
+        YVEX_QUANT_QTYPE_Q8_0, 0, 150u,
+        "conservative DSpark draft representation", err);
+    for (index = 0ull; rc == YVEX_OK &&
+                         index < sizeof(exact_roles) / sizeof(exact_roles[0]);
+         ++index)
+        rc = policy_preset_add(
+            policy, YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE,
+            exact_roles[index], YVEX_QUANT_POLICY_OPERATION_ANY,
+            YVEX_TENSOR_SCOPE_DRAFT, YVEX_QUANT_POLICY_PHYSICAL_ANY,
+            YVEX_QUANT_QTYPE_BF16, 0, 250u,
+            "exact DSpark norm, Markov, and confidence control", err);
+    return rc;
+}
+
 int yvex_quant_policy_preset_open(yvex_quant_policy **out, const char *name, yvex_error *err) {
     yvex_quant_policy *policy;
     int rc = YVEX_OK;
@@ -587,7 +615,7 @@ int yvex_quant_policy_preset_open(yvex_quant_policy **out, const char *name, yve
     }
     policy->schema_version = YVEX_QUANT_POLICY_SCHEMA_VERSION;
     policy->name = yvex_core_strdup(name);
-    policy->architecture = yvex_core_strdup("deepseek4-v4-flash");
+    policy->architecture = yvex_core_strdup("deepseek4-v4-flash-dspark");
     policy->preset_name = yvex_core_strdup(name);
     policy->source_kind = yvex_core_strdup("built-in-preset");
     if (!policy->name || !policy->architecture || !policy->preset_name || !policy->source_kind) {
@@ -616,7 +644,7 @@ int yvex_quant_policy_preset_open(yvex_quant_policy **out, const char *name, yve
                                    YVEX_TENSOR_SCOPE_GLOBAL,
                                    YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_Q2_K, 0, 100u,
                                    "verified release routed-expert aggregate", err);
-        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DS4_PROFILE_NAME) == 0)
+        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0)
             rc = policy_preset_add(policy,
                                    YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE |
                                        YVEX_QUANT_MATCH_OPERATION,
@@ -625,7 +653,7 @@ int yvex_quant_policy_preset_open(yvex_quant_policy **out, const char *name, yve
                                    YVEX_TENSOR_SCOPE_MAIN_LAYER,
                                    YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_IQ2_XXS, 1,
                                    200u, "imatrix-weighted routed expert gate", err);
-        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DS4_PROFILE_NAME) == 0)
+        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0)
             rc = policy_preset_add(policy,
                                    YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE |
                                        YVEX_QUANT_MATCH_OPERATION,
@@ -634,7 +662,7 @@ int yvex_quant_policy_preset_open(yvex_quant_policy **out, const char *name, yve
                                    YVEX_TENSOR_SCOPE_MAIN_LAYER,
                                    YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_IQ2_XXS, 1,
                                    200u, "imatrix-weighted routed expert up", err);
-        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DS4_PROFILE_NAME) == 0)
+        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0)
             rc = policy_preset_add(policy,
                                    YVEX_QUANT_MATCH_ROLE | YVEX_QUANT_MATCH_SCOPE |
                                        YVEX_QUANT_MATCH_OPERATION,
@@ -643,6 +671,8 @@ int yvex_quant_policy_preset_open(yvex_quant_policy **out, const char *name, yve
                                    YVEX_TENSOR_SCOPE_MAIN_LAYER,
                                    YVEX_QUANT_POLICY_PHYSICAL_ANY, YVEX_QUANT_QTYPE_Q2_K, 1, 200u,
                                    "imatrix-covered routed expert down", err);
+        if (rc == YVEX_OK && strcmp(name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0)
+            rc = policy_preset_add_dspark(policy, err);
     }
     if (rc == YVEX_OK)
         rc = yvex_quant_policy_validate(policy, NULL, err);
@@ -834,7 +864,7 @@ static int policy_parse_match(yvex_gguf_json *json, yvex_quant_policy_rule *rule
             char *value = yvex_gguf_json_string(json);
             rule->scope = scope_from_name(value);
             rule->match_mask |= YVEX_QUANT_MATCH_SCOPE;
-            if (!value || rule->scope > YVEX_TENSOR_SCOPE_MTP)
+            if (!value || rule->scope > YVEX_TENSOR_SCOPE_DRAFT)
                 rc = yvex_gguf_json_fail(json, "unknown scope matcher");
             free(value);
         } else if (strcmp(key, "tensor_name") == 0) {

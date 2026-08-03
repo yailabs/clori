@@ -4,6 +4,8 @@
  * Immutable ranges read once; mutable state uses stable addresses and explicit generations. Models
  * share weights; sessions own persistent state and mutable staging.
  */
+#include "src/runtime/private.h"
+
 #include <limits.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -324,16 +326,15 @@ static int state_resident_bank(const state_resident_layer *layer,
     return YVEX_OK;
 }
 
-static int state_resident_resolve(const void *context, const void *host,
-                                  unsigned long long bytes,
-                                  unsigned long long *device_address)
+int yvex_runtime_private_state_residency_resolve(
+    const void *context, const void *host, unsigned long long bytes,
+    unsigned long long *device_address)
 {
     const yvex_runtime_state_residency *residency = context;
     unsigned long long layer_index;
     uintptr_t pointer = (uintptr_t)host;
     if (device_address) *device_address = 0ull;
-    if (!residency || residency->summary.invalidated || !host || !bytes ||
-        !device_address)
+    if (!residency || !host || !bytes || !device_address)
         return YVEX_BACKEND_RESIDENT_INVALID;
     for (layer_index = 0ull; layer_index < residency->layer_count; ++layer_index) {
         const state_resident_layer *layer = &residency->layers[layer_index];
@@ -350,6 +351,8 @@ static int state_resident_resolve(const void *context, const void *host,
                         (unsigned long long)(pointer - base) > extent ||
                         bytes > extent - (unsigned long long)(pointer - base))
                         continue;
+                    if (residency->summary.invalidated)
+                        return YVEX_BACKEND_RESIDENT_INVALID;
                     *device_address =
                         (unsigned long long)(uintptr_t)layer->device[bank]->data +
                         layer->components[component].offset[span] +
@@ -1225,7 +1228,6 @@ int yvex_runtime_state_residency_close(
         yvex_error_clear(err);
         return YVEX_OK;
     }
-    yvex_backend_state_residency_detach(residency->backend);
     for (index = 0ull; index < residency->layer_count; ++index) {
         state_resident_layer *layer = &residency->layers[index];
         unsigned int bank;
@@ -1356,10 +1358,6 @@ int yvex_runtime_state_residency_prepare(
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.prepare",
                        "persistent state residency identity failed");
     }
-    if (rc == YVEX_OK && residency->summary.cuda_ready)
-        rc = yvex_backend_state_residency_attach(
-            backend, residency, state_resident_resolve,
-            residency->summary.generation, err);
     if (rc != YVEX_OK) {
         yvex_error primary = *err;
         yvex_error cleanup;
@@ -1489,7 +1487,6 @@ int yvex_runtime_state_residency_invalidate(
     if (!residency->summary.invalidated) {
         residency->summary.invalidated = 1;
         residency->summary.generation++;
-        yvex_backend_state_residency_detach(residency->backend);
     }
     yvex_error_clear(err);
     return YVEX_OK;

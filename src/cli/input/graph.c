@@ -48,6 +48,7 @@ static void graph_args_defaults(yvex_graph_args *out) {
     out->transformer.input_class = "token-ids";
     out->transformer.progress = "off";
     out->transformer.strategy = "greedy";
+    out->transformer.generation_mode = "target-only";
     out->transformer.temperature = sampling.temperature;
     out->transformer.top_p = sampling.top_p;
     out->transformer.min_p = sampling.min_p;
@@ -724,6 +725,8 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
         else if (strcmp(flag, "--input-file") == 0) out->transformer.input_file = value;
         else if (strcmp(flag, "--progress") == 0) out->transformer.progress = value;
         else if (strcmp(flag, "--strategy") == 0) out->transformer.strategy = value;
+        else if (strcmp(flag, "--generation-mode") == 0)
+            out->transformer.generation_mode = value;
         else if (strcmp(flag, "--system") == 0) out->transformer.system = value;
         else if (strcmp(flag, "--user") == 0) out->transformer.user = value;
         else if (strcmp(flag, "--text") == 0) out->transformer.text = value;
@@ -824,9 +827,14 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
         return graph_arg_error(
             err, "yvex: generation requires one text or user prompt, "
                  "prefill chunk tokens, and max new tokens");
+    if (strcmp(out->transformer.generation_mode, "target-only") != 0 &&
+        strcmp(out->transformer.generation_mode, "dspark") != 0)
+        return graph_arg_error(
+            err, "yvex: --generation-mode requires target-only or dspark");
     if (!out->transformer.generate &&
         (out->transformer.system || out->transformer.user || out->transformer.text ||
-         out->transformer.maximum_new_tokens))
+         out->transformer.maximum_new_tokens ||
+         strcmp(out->transformer.generation_mode, "target-only") != 0))
         return graph_arg_error(err, "yvex: prompt generation options require execute transformer generate");
     if (out->transformer.sample || out->transformer.generate) {
         int stochastic = strcmp(out->transformer.strategy, "stochastic") == 0;

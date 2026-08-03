@@ -9,7 +9,7 @@ adapter follows the hosted runtime lifecycle and owns no model, session, KV,
 worker, or telemetry authority.
 
 `yvex.openai.compat.v1` is a bounded, local application-provider profile. It
-adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v4 and
+adapts OpenAI-compatible HTTP/JSON/SSE requests to YVEX local protocol v5 and
 the existing `yvexd` model host. It is not a claim of full OpenAI API or OpenAI
 service equivalence.
 
@@ -26,14 +26,19 @@ Those moving interfaces do not expand this explicitly versioned YVEX subset.
 application or SDK
   -> loopback HTTP/1.1
   -> yvexd OpenAI adapter
-  -> provider-neutral request over YVEX protocol v4
+  -> provider-neutral request over YVEX protocol v5
   -> yvexd session and generation owners
 ```
 
 The adapter is source-separated from runtime mathematics, opens no second model
 or artifact, owns no KV, and executes no application tool. `yvexd` remains the
-only model host and process. The adapter refuses non-loopback bind addresses; authentication, TLS, CORS, and
-remote exposure are outside this profile.
+only model host and process. The adapter refuses non-loopback bind addresses;
+authentication, TLS, CORS, and remote exposure are outside this profile.
+
+When the selected runtime profile uses DSpark, the adapter receives only
+target-verified committed fragments from the same server turn. Draft
+candidates are never emitted over JSON/SSE and never enter compatibility
+usage. This internal execution mode does not change compatibility profile v1.
 
 The normal registry-backed runtime start enables the default loopback listener.
 Select a startup-ready model and start the host; the listener is prepared
@@ -42,7 +47,7 @@ before model admission and begins accepting requests only after
 
 ```sh
 ./yvex model list
-./yvex model select deepseek4-v4-flash-runtime-iq2xxs
+./yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs
 ./yvex runtime start
 ```
 
@@ -184,7 +189,9 @@ back.
 
 `prompt_tokens`, `completion_tokens`, and `total_tokens` retain their standard
 meanings. Reused-prefix counts remain YVEX telemetry facts and never replace
-prompt usage.
+prompt usage. DSpark proposal, verification, accepted-prefix, and rejection
+counters remain YVEX telemetry facts; `completion_tokens` counts only
+target-verified tokens committed by the runtime.
 
 ## HTTP and error contract
 

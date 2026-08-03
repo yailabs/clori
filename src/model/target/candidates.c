@@ -20,11 +20,11 @@ typedef struct {
 } candidate_fact;
 
 static const candidate_fact candidate_facts[] = {
-    {"deepseek4-v4-flash-selected-embed", "selected-runtime-slice",
+    {"deepseek4-v4-flash-dspark-selected-embed", "selected-runtime-slice",
      "selected-slice", "selected-slice-only", "ineligible-selected-slice",
      "selected-runtime-slice missing full model tensor coverage",
      "V010.GRAPH.DEEPSEEK.TRANSFORMER.0"},
-    {"deepseek4-v4-flash-selected-embed-rmsnorm", "selected-runtime-slice",
+    {"deepseek4-v4-flash-dspark-selected-embed-rmsnorm", "selected-runtime-slice",
      "diagnostic-runtime", "selected-slice-only", "ineligible-selected-slice",
      "selected-runtime-slice missing MoE router/expert tensor coverage",
      "V010.GRAPH.DEEPSEEK.TRANSFORMER.0"},

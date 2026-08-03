@@ -682,7 +682,15 @@ static int attention_validate_job(yvex_backend_attention_job *job,
         (job->phase == YVEX_BACKEND_ATTENTION_PHASE_DECODE &&
          job->token_count != 1ull) ||
         (job->phase != YVEX_BACKEND_ATTENTION_PHASE_DECODE &&
-         job->phase != YVEX_BACKEND_ATTENTION_PHASE_PREFILL) ||
+         job->phase != YVEX_BACKEND_ATTENTION_PHASE_PREFILL &&
+         job->phase != YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT &&
+         job->phase != YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_VERIFY) ||
+        (job->candidate_block_visible != 0 &&
+         job->candidate_block_visible != 1) ||
+        (job->candidate_block_visible &&
+         (job->phase != YVEX_BACKEND_ATTENTION_PHASE_SPECULATIVE_DRAFT ||
+          job->attention_class != YVEX_BACKEND_ATTENTION_SWA ||
+          job->token_count < 2ull)) ||
         !job->hidden_width || !job->q_rank || !job->query_heads ||
         !job->head_dimension || !job->kv_width || !job->max_device_bytes ||
         job->query_heads > ULLONG_MAX / job->head_dimension ||

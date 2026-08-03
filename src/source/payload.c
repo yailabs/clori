@@ -1351,3 +1351,120 @@ int yvex_source_payload_session_facts_get(const yvex_source_payload_session *ses
     yvex_error_clear(err);
     return YVEX_OK;
 }
+
+int yvex_source_payload_verify_snapshot(
+    const yvex_source_verify_options *verification_options,
+    const yvex_source_payload_budget *budget,
+    yvex_source_payload_verification_result *out,
+    yvex_source_payload_failure *failure,
+    yvex_error *err) {
+    yvex_source_verify_options admitted_options;
+    yvex_source_payload_open_options open_options;
+    yvex_source_tensor_snapshot *snapshot = NULL;
+    yvex_source_payload_session *session = NULL;
+    yvex_source_verification initial;
+    yvex_source_verification reopened;
+    yvex_source_payload_failure cleanup_failure;
+    yvex_error cleanup_error;
+    int rc;
+    int cleanup_rc;
+
+    if (out)
+        memset(out, 0, sizeof(*out));
+    if (failure)
+        memset(failure, 0, sizeof(*failure));
+    yvex_error_clear(err);
+    if (!verification_options || !verification_options->identity ||
+        !verification_options->source_path || !verification_options->source_path[0] || !budget ||
+        !out) {
+        return yvex_source_payload_refuse(
+            failure, YVEX_SOURCE_PAYLOAD_FAILURE_INVALID_ARGUMENT, err, YVEX_ERR_INVALID_ARG,
+            "source_payload_verify_snapshot",
+            "source verification options, payload budget, and output are required");
+    }
+
+    admitted_options = *verification_options;
+    admitted_options.promote_manifest = 1;
+    memset(&initial, 0, sizeof(initial));
+    rc = yvex_source_verify_with_snapshot(&admitted_options, &initial, &snapshot, err);
+    out->verification = initial;
+    if (rc != YVEX_OK)
+        goto cleanup;
+    if (!initial.verified || !snapshot) {
+        rc = yvex_source_payload_refuse(
+            failure, YVEX_SOURCE_PAYLOAD_FAILURE_METADATA_NOT_VERIFIED, err, YVEX_ERR_STATE,
+            "source_payload_verify_snapshot",
+            "exact source metadata and headers must verify before payload trust");
+        goto cleanup;
+    }
+
+    memset(&open_options, 0, sizeof(open_options));
+    open_options.verification_options = &admitted_options;
+    open_options.verification = &initial;
+    open_options.snapshot = snapshot;
+    open_options.budget = *budget;
+    open_options.manifest_path = initial.manifest_path;
+    rc = yvex_source_payload_session_open(&session, &open_options, failure, err);
+    yvex_source_tensor_snapshot_release(snapshot);
+    snapshot = NULL;
+    if (rc != YVEX_OK)
+        goto cleanup;
+    rc = yvex_source_payload_session_facts_get(session, &out->payload, err);
+    if (rc != YVEX_OK)
+        goto cleanup;
+    if (out->payload.state == YVEX_SOURCE_PAYLOAD_STATE_READY) {
+        out->reused_published_identity = 1;
+        out->stream.complete = 1;
+    } else if (out->payload.state == YVEX_SOURCE_PAYLOAD_STATE_UNTRUSTED) {
+        rc = yvex_source_payload_session_verify(
+            session, NULL, NULL, &out->stream, failure, err);
+        if (rc != YVEX_OK)
+            goto cleanup;
+        rc = yvex_source_payload_session_facts_get(session, &out->payload, err);
+        if (rc != YVEX_OK)
+            goto cleanup;
+    } else {
+        rc = yvex_source_payload_refuse(
+            failure, YVEX_SOURCE_PAYLOAD_FAILURE_INVALID_STATE, err, YVEX_ERR_STATE,
+            "source_payload_verify_snapshot",
+            "payload session did not enter a verifiable lifecycle state");
+        goto cleanup;
+    }
+
+cleanup:
+    yvex_source_tensor_snapshot_release(snapshot);
+    yvex_error_clear(&cleanup_error);
+    memset(&cleanup_failure, 0, sizeof(cleanup_failure));
+    cleanup_rc = yvex_source_payload_session_release(
+        &session, &cleanup_failure, &cleanup_error);
+    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) {
+        if (failure)
+            *failure = cleanup_failure;
+        if (err)
+            *err = cleanup_error;
+        return cleanup_rc;
+    }
+    if (rc != YVEX_OK)
+        return rc;
+
+    memset(&reopened, 0, sizeof(reopened));
+    rc = yvex_source_verify(&admitted_options, &reopened, err);
+    out->verification = reopened;
+    if (rc != YVEX_OK)
+        return rc;
+    if (!reopened.verified || !reopened.manifest_payload_trusted ||
+        strcmp(reopened.manifest_schema, "yvex.source_manifest.v3") != 0 ||
+        !yvex_sha256_hex_valid(reopened.manifest_payload_identity) ||
+        strcmp(reopened.manifest_payload_identity, out->payload.payload_identity) != 0 ||
+        reopened.manifest_payload_source_snapshot_identity !=
+            out->payload.source_snapshot_identity) {
+        return yvex_source_payload_refuse(
+            failure, YVEX_SOURCE_PAYLOAD_FAILURE_PAYLOAD_IDENTITY_MISMATCH, err, YVEX_ERR_FORMAT,
+            "source_payload_verify_snapshot",
+            "published payload identity did not reopen against the same source snapshot");
+    }
+    if (failure)
+        memset(failure, 0, sizeof(*failure));
+    yvex_error_clear(err);
+    return YVEX_OK;
+}

@@ -574,16 +574,20 @@ static const identity_field tensor_fields[] = {
 };
 
 static const identity_field auxiliary_tail_fields[] = {
-    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, previous_hidden_width),
-    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, embedding_projection_input),
-    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, embedding_projection_output),
-    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, hidden_projection_input),
-    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, hidden_projection_output),
-    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, requires_token_embedding),
-    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, requires_previous_hidden_state),
-    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, requires_embedding_norm),
-    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, requires_hidden_norm),
-    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, requires_separate_mhc_head)
+    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, has_feature_projection),
+    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, has_feature_norm),
+    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, has_output_norm),
+    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, feature_projection_input),
+    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, feature_projection_output),
+    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, feature_norm_width),
+    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, output_norm_width),
+    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, has_markov_head),
+    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, markov_rank),
+    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, markov_vocabulary_size),
+    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, has_confidence_head),
+    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, confidence_input_width),
+    ID_UNSIGNED(yvex_deepseek_v4_auxiliary_spec, confidence_output_width),
+    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, has_separate_mhc_head)
 };
 
 static const identity_field mhc_head_fields[] = {
@@ -595,8 +599,8 @@ static const identity_field mhc_head_fields[] = {
 };
 
 static const identity_field auxiliary_share_fields[] = {
+    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, shares_embedding),
     ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, shares_output_head),
-    ID_SIGNED(yvex_deepseek_v4_auxiliary_spec, shares_final_norm)
 };
 
 static const identity_field model_text_fields[] = {
@@ -605,7 +609,32 @@ static const identity_field model_text_fields[] = {
     ID_TEXT(yvex_deepseek_v4_model_spec, architecture),
     ID_TEXT(yvex_deepseek_v4_model_spec, repository),
     ID_TEXT(yvex_deepseek_v4_model_spec, revision),
+    ID_TEXT(yvex_deepseek_v4_model_spec, paper_revision),
+    ID_TEXT(yvex_deepseek_v4_model_spec, dspark_paper_revision),
+    ID_TEXT(yvex_deepseek_v4_model_spec, deepspec_revision),
+    ID_TEXT(yvex_deepseek_v4_model_spec, sglang_revision),
+    ID_TEXT(yvex_deepseek_v4_model_spec, vllm_revision),
     ID_TEXT(yvex_deepseek_v4_model_spec, hadamard_revision)
+};
+
+static const identity_field dspark_fields[] = {
+    ID_SIGNED(yvex_deepseek_v4_dspark_spec, present),
+    ID_UNSIGNED(yvex_deepseek_v4_dspark_spec, schema_version),
+    ID_UNSIGNED(yvex_deepseek_v4_dspark_spec, block_size),
+    ID_UNSIGNED(yvex_deepseek_v4_dspark_spec, noise_token_id),
+    ID_UNSIGNED(yvex_deepseek_v4_dspark_spec, target_layer_count),
+    ID_UNSIGNED(yvex_deepseek_v4_dspark_spec, target_feature_width),
+    ID_UNSIGNED(yvex_deepseek_v4_dspark_spec, concatenated_feature_width),
+    ID_UNSIGNED(yvex_deepseek_v4_dspark_spec, draft_layer_count),
+    ID_UNSIGNED(yvex_deepseek_v4_dspark_spec, markov_rank),
+    ID_UNSIGNED(yvex_deepseek_v4_dspark_spec, final_draft_layer),
+    ID_SIGNED(yvex_deepseek_v4_dspark_spec, parallel_block_backbone),
+    ID_SIGNED(yvex_deepseek_v4_dspark_spec, sequential_markov),
+    ID_SIGNED(yvex_deepseek_v4_dspark_spec, confidence_available),
+    ID_SIGNED(yvex_deepseek_v4_dspark_spec, shares_embedding),
+    ID_SIGNED(yvex_deepseek_v4_dspark_spec, shares_output_head),
+    ID_SIGNED(yvex_deepseek_v4_dspark_spec, target_verification_required),
+    ID_UNSIGNED(yvex_deepseek_v4_dspark_spec, accepted_prefix_maximum)
 };
 
 static const identity_field model_fields[] = {
@@ -773,6 +802,20 @@ static int identity_auxiliary(yvex_sha256 *hash, const yvex_deepseek_v4_auxiliar
                                sizeof(auxiliary_share_fields[0]));
 }
 
+static int identity_dspark(yvex_sha256 *hash,
+                           const yvex_deepseek_v4_dspark_spec *dspark)
+{
+    unsigned long long index;
+
+    if (!identity_fields(hash, dspark, dspark_fields,
+                         sizeof(dspark_fields) / sizeof(dspark_fields[0])))
+        return 0;
+    for (index = 0u; index < dspark->target_layer_count; ++index)
+        if (!deepseek_identity_u64(hash, dspark->target_layer_ids[index]))
+            return 0;
+    return 1;
+}
+
 /* Encode identity model fields in canonical identity order. */
 
 static int identity_model(yvex_sha256 *hash, const yvex_deepseek_v4_model_spec *model)
@@ -790,6 +833,7 @@ static int identity_model(yvex_sha256 *hash, const yvex_deepseek_v4_model_spec *
            identity_fields(hash, &model->source_constraint, source_constraint_fields,
                            sizeof(source_constraint_fields) /
                                sizeof(source_constraint_fields[0])) &&
+           identity_dspark(hash, &model->dspark) &&
            identity_fields(hash, &model->tokenizer, tokenizer_text_fields,
                            sizeof(tokenizer_text_fields) /
                                sizeof(tokenizer_text_fields[0])) &&
@@ -816,7 +860,7 @@ int yvex_transform_deepseek_architecture_identity(
     const yvex_deepseek_v4_ir *architecture,
     char output[YVEX_TRANSFORM_IR_IDENTITY_CAP])
 {
-    static const char domain[] = "yvex.logical-model.deepseek-v4-flash.v1";
+    static const char domain[] = "yvex.logical-model.deepseek-v4-flash-dspark.v2";
     const yvex_model_family_ir_api *family_ir =
         &yvex_model_register_deepseek_v4()->ir;
     const yvex_deepseek_v4_model_spec *model = family_ir->model(architecture);

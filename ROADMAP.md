@@ -15,9 +15,9 @@ those surfaces may silently change the order or claims recorded here.
 
 ## Product target
 
-YVEX v0.1.0 targets identity-bound DeepSeek-V4-Flash text generation on an
-NVIDIA DGX Spark / GB10 CUDA system from a complete GGUF artifact produced by
-YVEX. The accepted product topology is:
+YVEX v0.1.0 targets identity-bound DeepSeek-V4-Flash-DSpark text generation on
+an NVIDIA DGX Spark / GB10 CUDA system from a complete GGUF artifact produced
+by YVEX. The accepted product topology is:
 
 ```text
 yvex   one finite public command process
@@ -65,12 +65,14 @@ run, or a self-authored report cannot promote a capability by itself.
 | 3 | `V010.DOCS.INFORMATION.ARCHITECTURE.0` | `complete` | One governed information architecture separates doctrine, reference and implemented architecture, family facts, contracts, operations, development policy, project control, decisions, audits, migrations, releases, and history. | `V010.OPERATOR.COMMAND.ARCHITECTURE.0` |
 | 4 | `V010.REPO.CODE.COMMENTARY.0` | `complete` | Natural selective technical commentary replaces mandatory labeled prose across every governed first-party source while production lexical tokens remain unchanged. | `V010.DOCS.INFORMATION.ARCHITECTURE.0` |
 | 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `complete` | A mature daemon-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, watch, trace, and cancellation; explicit reasoning remains conditional on an admitted typed channel. | `V010.REPO.CODE.COMMENTARY.0` |
-| 6 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `active` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.OPERATOR.REPL.CONSOLE.0` |
-| 7 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
-| 8 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
-| 9 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
+| 6 | `V010.REBASE.DEEPSEEK.DSPARK.0` | `complete` | The sole DeepSeek vertical is rebound to the exact DSpark source and reaches target-verified speculative text through the hosted product path. | `V010.OPERATOR.REPL.CONSOLE.0` |
+| 7 | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` | `active` | Product levels, implementation layers, execution profiles, hardware/workload policy, and the implementation-gap map acquire one coherent architecture. | `V010.REBASE.DEEPSEEK.DSPARK.0` |
+| 8 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `blocked` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` |
+| 9 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
+| 10 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
+| 11 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
 
-Active Next: V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
+Active Next: V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0
 
 Detailed accepted and successor contracts for the current sequence are:
 
@@ -78,6 +80,7 @@ Detailed accepted and successor contracts for the current sequence are:
 - [Documentation and Information Architecture](docs/milestones/documentation-architecture.md)
 - [Natural Technical Commentary](docs/milestones/code-commentary.md)
 - [Mature Runtime Console and Interactive REPL](docs/milestones/runtime-console-repl.md)
+- [DeepSeek V4 Flash DSpark Rebase](docs/milestones/deepseek-dspark-rebase.md)
 
 The pre-implementation combined plans remain traceable without staying on the
 active path:
@@ -94,10 +97,10 @@ not a replacement historical ledger.
 
 | Boundary | Current truth |
 | --- | --- |
-| Source and compilation | The pinned DeepSeek source, tokenizer material, complete tensor coverage, Transformation IR, physical policy, qtypes, and deterministic GGUF emission have typed owners and identity-bound outputs. |
-| Artifact and admission | Complete source-faithful, Q8_0/Q2_K, and mixed IQ2_XXS/Q2_K artifacts exist outside Git; structural, payload, roundtrip, materialization, and binding admission are implemented. |
-| Runtime and generation | One authenticated model opens in `yvexd`; server-owned sessions retain exact KV and token state; the complete tokenizer-to-streamed-text path runs on CPU and the admitted mixed CUDA/host path. |
-| Application serving | Local protocol v4 and YVEX OpenAI Compatibility Profile v1 share one runtime, worker, queue, session registry, and telemetry authority. |
+| Source and compilation | The pinned 48-shard DSpark source, tokenizer, 72,317-tensor coverage, 1,409-terminal Transformation IR, bootstrap physical policy, qtypes, and deterministic GGUF emission have typed owners and identity-bound outputs. |
+| Artifact and admission | One complete DSpark bootstrap artifact contains the target and drafter; structural, payload, roundtrip, materialization, and one binding containing target/draft/verification plans are admitted outside Git. |
+| Runtime and generation | One authenticated model opens in `yvexd`; server-owned sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text run on CPU and the admitted mixed CUDA/host path. |
+| Application serving | Local protocol v5 and YVEX OpenAI Compatibility Profile v1 share one runtime, worker, queue, session registry, and telemetry authority. |
 | Product surface | `yvex` and `yvexd` are the only product executables. The former developer and OpenAI gateway executables are retired. |
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
@@ -163,7 +166,8 @@ is summarized here only to control progression.
 | long-lived runtime, sessions, streaming, and bounded local OpenAI compatibility | complete |
 | public command architecture | complete |
 | mature runtime console | complete |
-| warm GB10 performance admission | active; earlier work remains partial |
+| DSpark source rebase and verified speculative generation | complete |
+| warm GB10 performance admission | blocked; earlier work remains partial |
 | model behavior and quality evaluation | blocked |
 | full-model release benchmark | not measured |
 | release qualification | blocked |
@@ -173,8 +177,11 @@ Machine-readable readiness facts retained for claim guards:
 ```text
 canonical_operation_registry_ready=1
 generated_command_descriptors_ready=1
-protocol_v4_ready=1
+protocol_v5_ready=1
 mature_repl_console_ready=1
+deepseek_dspark_source_ready=1
+target_only_generation_ready=1
+dspark_verified_generation_ready=1
 semantic_watch_renderer_ready=1
 human_trace_renderer_ready=1
 explicit_reasoning_renderer_ready=0
@@ -226,6 +233,8 @@ YVEX does not currently claim:
 - a full-screen TUI or an explicit reasoning channel for a runtime profile that
   does not advertise one;
 - warm decode optimization or 5, 10, or 20 tokens/s admission;
+- DSpark acceleration, optimized block verification, or production load-aware
+  confidence scheduling;
 - model behavior or model quality evaluation;
 - a release-grade full-model benchmark;
 - release qualification;

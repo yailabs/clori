@@ -118,7 +118,9 @@ one composed attachment block, uses the stable `yvex>` prompt, and streams
 committed model text without role labels. Prefill progress comes from sealed
 server events; the terminal result separately renders prompt/reuse/prefill,
 generation, TTFT, context, stop, and session facts from the typed protocol
-result. Conversation output never includes raw events, logits, tensor facts,
+result. When DSpark is active, one compact speculation row projects proposed,
+accepted, and target-verification counts; candidate token text is never
+rendered. Conversation output never includes raw events, logits, tensor facts,
 or capability walls.
 
 The line editor owns bounded in-memory history, registry-derived slash
@@ -137,7 +139,8 @@ It includes at most one blocker and one actionable hint.
 
 `yvex runtime watch` subscribes to the compact stage sequence and renders event
 meaning with semantic counter names for startup, queue, tokenization, prefill,
-generation, cancellation, failure, and shutdown. It omits trace sequence,
+draft, verification, accepted-prefix commit, generation, cancellation,
+failure, and shutdown. It omits trace sequence,
 severity, turn, and phase detail. Content remains excluded by default.
 
 ### Raw stream

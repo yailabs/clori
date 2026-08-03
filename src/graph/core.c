@@ -229,12 +229,25 @@ int yvex_attention_execution_admit(
             options ? options->layer_index : YVEX_ATTENTION_NO_LAYER,
             YVEX_TENSOR_ROLE_UNKNOWN, 0ull, 1ull, err, YVEX_ERR_STATE,
             "attention publication must be singular and released before reuse");
-    *layer = yvex_attention_plan_layer_at(plan, options->layer_index);
+    /* A draft plan starts at the target layer coordinate where its feature tap
+     * lives; that coordinate is not its zero-based ordinal inside the draft
+     * plan. Execution selects the semantic coordinate, while traversal remains
+     * ordinal-based. */
+    *layer = yvex_attention_plan_layer_find(plan, options->layer_index);
     if (!*layer)
         return yvex_attention_reject(
             failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ARCHITECTURE, NULL,
             options->layer_index, YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, err,
             YVEX_ERR_BOUNDS, "attention execution layer is absent");
+    if (options->candidate_block_visible &&
+        ((*layer)->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
+         (*layer)->attention_class != YVEX_ATTENTION_CLASS_SWA ||
+         options->token_count < 2ull))
+        return yvex_attention_reject(
+            failure, YVEX_ATTENTION_FAILURE_INVALID_ARGUMENT, NULL,
+            (*layer)->layer_index, YVEX_TENSOR_ROLE_UNKNOWN, 2ull,
+            options->token_count, err, YVEX_ERR_INVALID_ARG,
+            "candidate-block visibility requires multi-token draft SWA execution");
     if (options->operation_scope != YVEX_ATTENTION_OPERATION_CORE &&
         options->operation_scope != YVEX_ATTENTION_OPERATION_ENVELOPE)
         return yvex_attention_reject(
@@ -302,6 +315,7 @@ typedef struct {
     yvex_attention_failure *failure;
     yvex_error *err;
     double scale;
+    int candidate_block_visible;
 } attention_reduce_context;
 
 static int reduce_visit_row(const attention_reduce_context *context, const float *query,
@@ -341,6 +355,23 @@ static int reduce_local_rows(const attention_reduce_context *context, unsigned l
                                    ? absolute + 1ull - context->layer->sliding_window
                                    : 0ull;
     unsigned long long candidate;
+    if (context->candidate_block_visible) {
+        for (candidate = 0ull; candidate < context->history->local_tail_count; ++candidate) {
+            const float *row = context->history->local_kv +
+                               candidate * context->history->local_kv_stride;
+            if (!reduce_visit_row(context, query, row, maximum, state, destination,
+                                  accumulate))
+                return 0;
+        }
+        for (candidate = 0ull; candidate < context->token_count; ++candidate) {
+            const float *row = context->current_kv +
+                               candidate * context->current_kv_stride;
+            if (!reduce_visit_row(context, query, row, maximum, state, destination,
+                                  accumulate))
+                return 0;
+        }
+        return 1;
+    }
     for (candidate = 0ull; candidate < context->history->local_tail_count; ++candidate) {
         unsigned long long position = context->history->local_positions[candidate];
         const float *row;
@@ -544,7 +575,8 @@ int yvex_attention_reduce_chunk(
     const unsigned long long *current_indexer_positions, const float *index_query,
     unsigned long long index_query_stride, const float *index_weights,
     unsigned long long index_weight_stride, const float *sinks, unsigned long long token_count,
-    unsigned long long token_position, float *out, unsigned long long *trace_topk_counts,
+    unsigned long long token_position, float *out, int candidate_block_visible,
+    unsigned long long *trace_topk_counts,
     unsigned long long *trace_topk_positions, unsigned long long trace_topk_stride,
     yvex_attention_scratch_budget *scratch, yvex_attention_cpu_result *result,
     yvex_attention_failure *failure, yvex_error *err) {
@@ -577,7 +609,8 @@ int yvex_attention_reduce_chunk(
                                         result,
                                         failure,
                                         err,
-                                        0.0};
+                                        0.0,
+                                        candidate_block_visible};
     unsigned long long *selected = NULL;
     size_t selected_reserved = 0u;
     unsigned long long token;
@@ -891,9 +924,10 @@ int yvex_attention_scratch_reserve(yvex_attention_scratch_budget *budget, unsign
 
 const yvex_runtime_tensor_binding *
 yvex_attention_binding_find(const yvex_runtime_descriptor *descriptor, yvex_tensor_role role,
-                            unsigned long long layer_index) {
-    return yvex_runtime_descriptor_find_role(descriptor, role, YVEX_TENSOR_SCOPE_MAIN_LAYER,
-                                             layer_index, YVEX_ATTENTION_NO_TENSOR_INDEX);
+                            const yvex_attention_layer_plan *layer) {
+    if (!layer) return NULL;
+    return yvex_runtime_descriptor_find_role(descriptor, role, layer->tensor_scope,
+                                             layer->layer_index, layer->predictor_index);
 }
 
 static int attention_row_geometry(const yvex_materialized_tensor_binding *binding,

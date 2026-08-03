@@ -26,7 +26,8 @@ typedef enum {
 } yvex_graph_report_mode;
 
 typedef struct {
-    unsigned long long layer_index;
+    unsigned long long ordinal, layer_index, predictor_index;
+    yvex_tensor_scope tensor_scope;
     yvex_attention_class attention_class;
     yvex_attention_compute_contract compute_contract;
     unsigned long long compression_ratio, sliding_window, query_heads, kv_heads;
@@ -61,6 +62,7 @@ typedef struct {
     const void *context;
     unsigned long long layer_count, auxiliary_layer_count;
     unsigned long long swa_layer_count, csa_layer_count, hca_layer_count;
+    yvex_tensor_scope tensor_scope;
     yvex_attention_recipe_identity_fn identity;
     yvex_attention_recipe_layer_fn layer;
 } yvex_attention_recipe;
@@ -221,6 +223,7 @@ typedef yvex_attention_publication yvex_attention_execution_trace;
 
 typedef struct {
     yvex_attention_status status;
+    yvex_tensor_scope tensor_scope;
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char materialization_plan_identity[YVEX_MATERIALIZATION_IDENTITY_CAP];
     char logical_model_identity[YVEX_RUNTIME_DESCRIPTOR_IDENTITY_CAP];
@@ -311,6 +314,7 @@ typedef struct {
     yvex_attention_publication *publication;
     yvex_attention_execution_trace *trace;
     const yvex_attention_cancellation *cancellation;
+    int candidate_block_visible;
 } yvex_attention_cpu_options;
 
 typedef struct {
@@ -342,6 +346,10 @@ typedef struct yvex_graph_family_api {
                       const yvex_materialization_session *session,
                       const yvex_runtime_descriptor *descriptor, yvex_attention_failure *failure,
                       yvex_error *err);
+    int (*draft_plan_build)(yvex_attention_plan **out, const void *family_ir,
+                            const yvex_materialization_session *session,
+                            const yvex_runtime_descriptor *descriptor,
+                            yvex_attention_failure *failure, yvex_error *err);
     void (*plan_close)(yvex_attention_plan *plan);
     const yvex_attention_summary *(*plan_summary)(const yvex_attention_plan *plan);
     unsigned long long (*plan_layer_count)(const yvex_attention_plan *plan);
@@ -393,9 +401,6 @@ int yvex_attention_workspace_capacity_resolve(
     const yvex_graph_family_api *family, const yvex_attention_plan *plan,
     unsigned long long *arena_bytes, yvex_error *err);
 
-struct yvex_runtime_family_adapter;
-const struct yvex_runtime_family_adapter *
-yvex_graph_runtime_family_at(unsigned long long index);
 struct yvex_model_family_api;
 struct yvex_compilation_runtime_binding_request;
 struct yvex_compilation_runtime_binding_result;
@@ -452,8 +457,14 @@ typedef int (*yvex_attention_activation_view_fn)(
 typedef int (*yvex_attention_device_view_fn)(
     void *context, unsigned long long layer_ordinal, unsigned long long token_count,
     const yvex_device_tensor **input, yvex_device_tensor **output, yvex_error *err);
+typedef enum {
+    YVEX_ATTENTION_TRANSACTION_COMMIT = 0,
+    YVEX_ATTENTION_TRANSACTION_ABORT,
+    YVEX_ATTENTION_TRANSACTION_STAGE
+} yvex_attention_transaction_disposition;
 typedef struct {
     yvex_backend_kind backend;
+    yvex_tensor_scope tensor_scope;
     yvex_backend *backend_context;
     const char *logical_model_identity;
     yvex_attention_probe_kind probe;
@@ -473,6 +484,8 @@ typedef struct {
     yvex_attention_evidence_level evidence_level;
     yvex_attention_probe_evidence_fn evidence;
     void *evidence_context;
+    yvex_attention_transaction_disposition transaction_disposition;
+    int candidate_block_visible;
 } yvex_attention_probe_request;
 typedef yvex_attention_probe_request yvex_attention_execution_request;
 typedef struct {

@@ -18,7 +18,8 @@ extern "C" {
 
 typedef enum {
     YVEX_LOGITS_SOURCE_PREFILL = 0,
-    YVEX_LOGITS_SOURCE_DECODE = 1
+    YVEX_LOGITS_SOURCE_DECODE = 1,
+    YVEX_LOGITS_SOURCE_DRAFT = 2
 } yvex_logits_source_phase;
 
 typedef struct yvex_logits_family_policy {
@@ -102,6 +103,9 @@ int yvex_runtime_logits_context_open(
     const yvex_runtime_logits_options *options, yvex_error *err);
 const yvex_runtime_logits_plan_summary *yvex_runtime_logits_plan_summary_get(
     const yvex_runtime_logits_context *context);
+int yvex_runtime_logits_admit_shared_draft_plan(
+    yvex_runtime_logits_context *context,
+    const yvex_transformer_plan *draft_plan, yvex_error *err);
 int yvex_runtime_logits_source_from_transformer(
     const yvex_runtime_logits_context *context,
     yvex_runtime_logits_source *source,
@@ -114,10 +118,24 @@ int yvex_runtime_logits_source_from_decode(
     const yvex_runtime_decode_step_result *producer,
     const float *normalized_hidden, unsigned long long hidden_capacity,
     yvex_error *err);
+int yvex_runtime_logits_source_from_draft(
+    const yvex_runtime_logits_context *context,
+    yvex_runtime_logits_source *source,
+    const yvex_transformer_plan *draft_plan,
+    const yvex_runtime_transformer_result *producer,
+    const float *normalized_hidden, unsigned long long hidden_capacity,
+    unsigned long long row_ordinal, yvex_error *err);
 int yvex_runtime_logits_project(
     yvex_runtime_logits_context *context,
     const yvex_runtime_logits_source *source, yvex_backend_kind backend,
     float *logits, unsigned long long logits_capacity,
+    yvex_runtime_logits_row_result *result, yvex_error *err);
+int yvex_runtime_logits_additive_adjust(
+    const yvex_runtime_logits_context *context, const float *base_logits,
+    unsigned long long base_capacity,
+    const yvex_runtime_logits_row_result *base_result,
+    const float *additive_logits, unsigned long long additive_capacity,
+    float *adjusted_logits, unsigned long long adjusted_capacity,
     yvex_runtime_logits_row_result *result, yvex_error *err);
 int yvex_runtime_logits_execute(
     yvex_runtime_logits_context *context,

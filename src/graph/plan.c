@@ -84,7 +84,10 @@ int yvex_attention_state_recipe_build(
     yvex_core_text_copy(recipe->attention_plan_identity,
                         sizeof(recipe->attention_plan_identity),
                         request->attention_plan_identity);
-    local_capacity = layer->sliding_window - 1ull;
+    /* A draft block reads the complete retained window before adding its ephemeral
+     * candidate rows. Target attention reserves one slot for the current row. */
+    local_capacity = layer->sliding_window -
+                     (layer->tensor_scope == YVEX_TENSOR_SCOPE_DRAFT ? 0ull : 1ull);
     if (request->final_position < local_capacity) local_capacity = request->final_position;
     state_recipe_history_add(recipe, YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY,
                              local_capacity, layer->head_dimension);
@@ -437,7 +440,10 @@ typedef struct {
          offsetof(yvex_attention_position_policy, member), kind}
 
 static const plan_hash_field plan_layer_fields[] = {
+    PLAN_FIELD(yvex_attention_layer_plan, ordinal, PLAN_HASH_U64),
     PLAN_FIELD(yvex_attention_layer_plan, layer_index, PLAN_HASH_U64),
+    PLAN_FIELD(yvex_attention_layer_plan, predictor_index, PLAN_HASH_U64),
+    PLAN_FIELD(yvex_attention_layer_plan, tensor_scope, PLAN_HASH_INT),
     PLAN_FIELD(yvex_attention_layer_plan, attention_class, PLAN_HASH_INT),
     PLAN_FIELD(yvex_attention_layer_plan, compute_contract, PLAN_HASH_INT),
     PLAN_FIELD(yvex_attention_layer_plan, compression_ratio, PLAN_HASH_U64),
@@ -599,6 +605,7 @@ static void attention_summary_initialize(
                         runtime->runtime_numeric_identity);
     summary->layer_count = recipe->layer_count;
     summary->auxiliary_layer_count = recipe->auxiliary_layer_count;
+    summary->tensor_scope = recipe->tensor_scope;
     summary->swa_layer_count = recipe->swa_layer_count;
     summary->csa_layer_count = recipe->csa_layer_count;
     summary->hca_layer_count = recipe->hca_layer_count;
@@ -661,13 +668,14 @@ int yvex_attention_plan_identity_compute(
     if (!summary || !layers || !layer_count || layer_count != summary->layer_count || !output)
         return 0;
     yvex_sha256_init(&hash);
-    (void)attention_hash_text(&hash, "yvex.deepseek.attention.plan.v3");
+    (void)attention_hash_text(&hash, "yvex.deepseek.attention.plan.v4");
     (void)attention_hash_text(&hash, summary->artifact_identity);
     (void)attention_hash_text(&hash, summary->materialization_plan_identity);
     (void)attention_hash_text(&hash, summary->logical_model_identity);
     (void)attention_hash_text(&hash, summary->runtime_descriptor_identity);
     (void)attention_hash_text(&hash, summary->runtime_numeric_identity);
     (void)attention_hash_u64(&hash, summary->layer_count);
+    (void)attention_hash_u64(&hash, summary->tensor_scope);
     (void)attention_hash_u64(&hash, summary->required_envelope_binding_count);
     for (i = 0ull; i < layer_count; ++i) {
         const yvex_attention_layer_plan *layer = &layers[i];
@@ -737,13 +745,14 @@ static int attention_bind_role(
     yvex_attention_summary *summary,
     yvex_tensor_scope scope,
     unsigned long long layer_index,
+    unsigned long long predictor_index,
     yvex_tensor_role role,
     yvex_attention_failure *failure,
     yvex_error *err)
 {
     const yvex_runtime_tensor_binding *binding =
         yvex_runtime_descriptor_find_role(
-            descriptor, role, scope, layer_index, YVEX_ATTENTION_NO_TENSOR_INDEX);
+            descriptor, role, scope, layer_index, predictor_index);
     const yvex_quant_numeric_capability *capability;
     unsigned long long total;
 
@@ -876,7 +885,8 @@ int yvex_attention_plan_import(yvex_attention_plan **out,
     yvex_core_text_copy(expected_identity, sizeof(expected_identity), summary->attention_plan_identity);
     for (i = 0ull; i < layer_count; ++i) {
         const yvex_attention_layer_plan *layer = &plan->layers[i];
-        if (layer->layer_index != i ||
+        if (layer->ordinal != i || layer->tensor_scope != summary->tensor_scope ||
+            layer->tensor_scope == YVEX_TENSOR_SCOPE_GLOBAL ||
             layer->compute_contract != YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1 ||
             !yvex_core_u64_add(required, layer->required_binding_count, &required) ||
             !yvex_core_u64_add(payload, layer->payload_bytes_bound, &payload) ||
@@ -884,7 +894,7 @@ int yvex_attention_plan_import(yvex_attention_plan **out,
             yvex_attention_plan_close(plan);
             return yvex_attention_reject(
                 failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ARCHITECTURE, NULL, i,
-                YVEX_TENSOR_ROLE_UNKNOWN, i, layer->layer_index, err, YVEX_ERR_FORMAT,
+                YVEX_TENSOR_ROLE_UNKNOWN, i, layer->ordinal, err, YVEX_ERR_FORMAT,
                 "runtime binding attention layer record is invalid");
         }
         swa += layer->attention_class == YVEX_ATTENTION_CLASS_SWA;
@@ -931,7 +941,7 @@ static int attention_bind_required_layer_roles(
     yvex_attention_failure *failure,
     yvex_error *err)
 {
-    yvex_tensor_scope scope = YVEX_TENSOR_SCOPE_MAIN_LAYER;
+    yvex_tensor_scope scope = layer->tensor_scope;
     unsigned long long layer_index = layer->layer_index;
     unsigned int index;
     int rc;
@@ -943,6 +953,7 @@ static int attention_bind_required_layer_roles(
         if (index >= ATTENTION_COMPRESSOR_ROLE_COUNT && !layer->indexer_required)
             continue;
         rc = attention_bind_role(descriptor, layer_plan, summary, scope, layer_index,
+                                 layer->predictor_index,
                                  attention_required_roles[index], failure, err);
         if (rc != YVEX_OK) return rc;
     }
@@ -1020,6 +1031,16 @@ int yvex_attention_plan_build(
                 failure, YVEX_DEEPSEEK_ATTENTION_FAILURE_ARCHITECTURE, NULL,
                 i, YVEX_TENSOR_ROLE_UNKNOWN, 1ull, 0ull, err,
                 YVEX_ERR_FORMAT, "DeepSeek attention layer is missing");
+        }
+        if (layer->ordinal != i || layer->tensor_scope != recipe->tensor_scope ||
+            layer->tensor_scope == YVEX_TENSOR_SCOPE_GLOBAL) {
+            rc = yvex_attention_reject(
+                failure, YVEX_ATTENTION_FAILURE_ARCHITECTURE, NULL,
+                layer->layer_index, YVEX_TENSOR_ROLE_UNKNOWN, i, layer->ordinal,
+                err, YVEX_ERR_FORMAT,
+                "attention layer scope or ordinal is inconsistent");
+            yvex_attention_plan_close(plan);
+            return rc;
         }
         if (layer->compute_contract !=
             YVEX_ATTENTION_COMPUTE_BF16_F32_RNE_V1) {
@@ -1109,14 +1130,29 @@ const yvex_attention_layer_plan *yvex_attention_plan_layer_at(
     return &plan->layers[index];
 }
 
-static const yvex_attention_layer_plan *attention_plan_find_layer(
+const yvex_attention_layer_plan *yvex_attention_plan_layer_find(
     const yvex_attention_plan *plan, unsigned long long layer_index)
 {
     unsigned long long index;
 
     if (!plan) return NULL;
     for (index = 0ull; index < plan->layer_count; ++index)
-        if (plan->layers[index].layer_index == layer_index) return &plan->layers[index];
+        if (plan->layers[index].layer_index == layer_index)
+            return &plan->layers[index];
+    return NULL;
+}
+
+static const yvex_attention_layer_plan *attention_plan_find_layer(
+    const yvex_attention_plan *plan, const yvex_runtime_tensor_binding *binding)
+{
+    unsigned long long index;
+
+    if (!plan) return NULL;
+    for (index = 0ull; index < plan->layer_count; ++index)
+        if (plan->layers[index].tensor_scope == binding->scope &&
+            plan->layers[index].layer_index == binding->layer_index &&
+            plan->layers[index].predictor_index == binding->predictor_index)
+            return &plan->layers[index];
     return NULL;
 }
 
@@ -1125,9 +1161,10 @@ yvex_attention_binding_class yvex_attention_plan_binding_classify(
 {
     const yvex_attention_layer_plan *layer;
 
-    if (!binding || !binding->binding || binding->scope != YVEX_TENSOR_SCOPE_MAIN_LAYER)
+    if (!binding || !binding->binding || !plan ||
+        binding->scope != plan->summary.tensor_scope)
         return YVEX_ATTENTION_BINDING_NOT_REQUIRED;
-    layer = attention_plan_find_layer(plan, binding->layer_index);
+    layer = attention_plan_find_layer(plan, binding);
     if (!layer) return YVEX_ATTENTION_BINDING_NOT_REQUIRED;
     for (unsigned int index = 0u; index < ATTENTION_REQUIRED_ROLE_COUNT; ++index) {
         if (binding->role != attention_required_roles[index]) continue;

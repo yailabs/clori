@@ -4,6 +4,7 @@
 #include <stdlib.h>
 
 #include <yvex/api.h>
+#include <yvex/internal/quant_numeric.h>
 
 #include "tests/test.h"
 
@@ -112,7 +113,7 @@ static int write_policy_v2(const char *path, unsigned int priority)
             "{\n"
             "  \"schema\": \"yvex.quant_policy.v2\",\n"
             "  \"name\": \"conjunctive-policy\",\n"
-            "  \"architecture\": \"deepseek4-v4-flash\",\n"
+            "  \"architecture\": \"deepseek4-v4-flash-dspark\",\n"
             "  \"rules\": [\n"
             "    {\"match\": {\"role\": \"moe_expert_gate\", "
             "\"scope\": \"main_layer\", \"layer_first\": 2, \"layer_last\": 41, "
@@ -207,6 +208,64 @@ static int test_policy_v2_and_presets(void)
     return 0;
 }
 
+static int test_dspark_bootstrap_policy(void)
+{
+    static const yvex_tensor_role exact_roles[] = {
+        YVEX_TENSOR_ROLE_DRAFT_FEATURE_NORM,
+        YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM,
+        YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING,
+        YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT,
+        YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE,
+    };
+    yvex_quant_policy *policy = NULL;
+    yvex_quant_policy_summary summary;
+    yvex_error err;
+    unsigned long long index, role_index;
+    int have_draft_default = 0;
+
+    YVEX_TEST_ASSERT(strlen(YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY) == 64u,
+                     "DSpark bootstrap calibration has an explicit source identity");
+    YVEX_TEST_ASSERT(YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY[0] != '\0',
+                     "DSpark bootstrap calibration has an explicit dataset identity");
+
+    YVEX_TEST_ASSERT(
+        yvex_quant_policy_preset_open(
+            &policy, "deepseek-v4-flash-dspark-bootstrap-q2-v1", &err) ==
+                YVEX_OK &&
+            yvex_quant_policy_get_summary(policy, &summary, &err) == YVEX_OK,
+        "open the DSpark bootstrap policy");
+    for (index = 0ull; index < summary.rule_count; ++index) {
+        const yvex_quant_policy_rule *rule =
+            yvex_quant_policy_rule_at(policy, index);
+        if (rule &&
+            (rule->match_mask & (YVEX_QUANT_MATCH_SCOPE |
+                                 YVEX_QUANT_MATCH_PHYSICAL_CLASS)) ==
+                (YVEX_QUANT_MATCH_SCOPE | YVEX_QUANT_MATCH_PHYSICAL_CLASS) &&
+            rule->scope == YVEX_TENSOR_SCOPE_DRAFT &&
+            rule->physical_class == YVEX_QUANT_POLICY_PHYSICAL_QUANTIZABLE &&
+            rule->qtype == YVEX_QUANT_QTYPE_Q8_0)
+            have_draft_default = 1;
+    }
+    YVEX_TEST_ASSERT(have_draft_default,
+                     "DSpark approximable tensors have an explicit conservative policy");
+    for (role_index = 0ull;
+         role_index < sizeof(exact_roles) / sizeof(exact_roles[0]); ++role_index) {
+        int found = 0;
+        for (index = 0ull; index < summary.rule_count; ++index) {
+            const yvex_quant_policy_rule *rule =
+                yvex_quant_policy_rule_at(policy, index);
+            if (rule && rule->role == exact_roles[role_index] &&
+                rule->scope == YVEX_TENSOR_SCOPE_DRAFT &&
+                rule->qtype == YVEX_QUANT_QTYPE_BF16)
+                found = 1;
+        }
+        YVEX_TEST_ASSERT(found,
+                         "DSpark control tensors remain exact in the bootstrap policy");
+    }
+    yvex_quant_policy_close(policy);
+    return 0;
+}
+
 int yvex_test_quant_policy(void)
 {
     if (test_names() != 0) return 1;
@@ -214,5 +273,5 @@ int yvex_test_quant_policy(void)
     if (test_reject_unknown_qtype() != 0) return 1;
     if (test_derive_fixture() != 0) return 1;
     if (test_policy_v2_and_presets() != 0) return 1;
-    return 0;
+    return test_dspark_bootstrap_policy();
 }

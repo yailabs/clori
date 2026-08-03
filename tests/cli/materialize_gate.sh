@@ -9,10 +9,10 @@ FIXTURE=tests/fixtures/gguf/valid-tokenizer-simple.gguf
 RANGE_BAD=tests/fixtures/gguf/tensor-offset-out-of-bounds.gguf
 SHAPE_BAD=tests/fixtures/gguf/tensor-dim-zero.gguf
 BAD_MAGIC=tests/fixtures/gguf/bad-magic.gguf
-MODEL="$OUT_DIR/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf"
+MODEL="$OUT_DIR/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 REG="$OUT_DIR/models.local.json"
 DRIFT_REG="$OUT_DIR/drift.models.local.json"
-ALIAS=deepseek4-v4-flash-selected-embed
+ALIAS=deepseek4-v4-flash-dspark-selected-embed
 
 fail() {
     printf 'FAIL: %s\n' "$1" >&2

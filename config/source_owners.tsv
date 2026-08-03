@@ -25,6 +25,7 @@ include/yvex/internal/model_artifact.h	model.artifacts	model.artifacts.internal	
 include/yvex/internal/model_target.h	model.target	model.target.internal	generic	private	internal-abi	model,source,cli	interface	none
 include/yvex/internal/quant_numeric.h	gguf	gguf.quant_numeric	generic	private	internal-abi	artifact,model,quant,backend	interface	none
 include/yvex/internal/runtime.h	runtime	runtime.internal	generic	private	internal-abi	runtime,graph,cli	interface	none
+src/runtime/private.h	runtime	runtime.private	generic	private	internal-abi	runtime	interface	none
 include/yvex/internal/source.h	source	source.internal	generic	private	internal-abi	model,compilation	interface	none
 include/yvex/internal/source_payload.h	source	source.payload	generic	private	internal-abi	model,compilation,cli	interface	none
 include/yvex/model.h	abi	abi.model	generic	public	public-abi	repository	interface	none
@@ -149,8 +150,12 @@ src/runtime/descriptor.c	runtime	runtime.descriptor	generic	private	resource-lif
 src/runtime/binding.c	runtime	runtime.binding	generic	private	file-serialization	artifact,graph,runtime,cli	implementation	none
 src/runtime/decode.c	runtime	runtime.decode	generic	private	transactional-execution	runtime,cli,tests	implementation	none
 src/runtime/generation.c	runtime	runtime.generation	generic	private	transactional-execution	runtime,cli,tests	implementation	none
+src/runtime/generation_context.c	runtime	runtime.generation_context	generic	private	resource-lifecycle	runtime,generation,tests	implementation	none
+src/runtime/generation_result.c	runtime	runtime.generation_result	generic	private	typed-report	runtime,cli,tests	implementation	none
+src/runtime/speculation.c	runtime	runtime.speculation	generic	private	proposal-verification-acceptance	runtime,generation,tests	implementation	none
 src/runtime/logits.c	runtime	runtime.logits	generic	private	transactional-execution	runtime,backend,cli,tests	implementation	none
 src/runtime/sampling.c	runtime	runtime.sampling	generic	private	transactional-execution	runtime,cli,tests	implementation	none
+src/runtime/session.c	runtime	runtime.session_transactions	generic	private	transactional-execution	runtime,generation,graph,tests	implementation	none
 src/runtime/moe.c	runtime	runtime.moe	generic	private	transactional-execution	runtime,graph,backend,cli,tests	implementation	none
 src/runtime/moe_input.c	runtime	runtime.moe_input	generic	private	file-serialization	runtime,cli,tests	implementation	none
 src/runtime/benchmark.c	runtime	runtime.benchmark	generic	private	file-serialization	runtime,cli,tests	implementation	none

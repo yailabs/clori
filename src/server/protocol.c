@@ -134,7 +134,42 @@ enum {
     TAG_CONSOLE_LIVE_MODEL_ID,
     TAG_CONSOLE_VARIANT_ID,
     TAG_CONSOLE_SESSION_NAME,
-    TAG_CONSOLE_SELECTED_MODEL_ID
+    TAG_CONSOLE_SELECTED_MODEL_ID,
+    TAG_RUNTIME_GENERATION_MODE,
+    TAG_GENERATION_MODE,
+    TAG_DRAFT_CYCLE_COUNT,
+    TAG_DRAFT_FORWARD_COUNT,
+    TAG_PROPOSED_TOKENS,
+    TAG_SELECTED_VERIFICATION_TOKENS,
+    TAG_TARGET_VERIFICATION_COUNT,
+    TAG_ACCEPTED_DRAFT_TOKENS,
+    TAG_REJECTED_DRAFT_TOKENS,
+    TAG_TARGET_CORRECTION_OR_BONUS_TOKENS,
+    TAG_MAXIMUM_ACCEPTED_PREFIX,
+    TAG_DRAFT_SECONDS,
+    TAG_VERIFICATION_SECONDS,
+    TAG_SPECULATIVE_COMMIT_SECONDS,
+    TAG_MEAN_ACCEPTED_PREFIX,
+    TAG_EFFECTIVE_COMMITTED_RATE,
+    TAG_SPECULATION_POLICY_ID,
+    TAG_EVENT_GENERATION_MODE,
+    TAG_EVENT_SPECULATIVE_CYCLE,
+    TAG_EVENT_PROPOSED_TOKENS,
+    TAG_EVENT_SELECTED_VERIFICATION_TOKENS,
+    TAG_EVENT_ACCEPTED_TOKENS,
+    TAG_EVENT_REJECTED_TOKENS,
+    TAG_EVENT_VERIFICATION_COUNT,
+    TAG_EVENT_SPECULATION_POLICY_ID,
+    TAG_DISCARDED_DRAFT_TOKENS,
+    TAG_EVENT_DISCARDED_TOKENS,
+    TAG_CONFIDENCE_LOGIT_COUNT,
+    TAG_CONFIDENCE_LOGIT_MINIMUM,
+    TAG_CONFIDENCE_LOGIT_MAXIMUM,
+    TAG_CONFIDENCE_LOGIT_MEAN,
+    TAG_EVENT_CONFIDENCE_LOGIT_COUNT,
+    TAG_EVENT_CONFIDENCE_LOGIT_MINIMUM,
+    TAG_EVENT_CONFIDENCE_LOGIT_MAXIMUM,
+    TAG_EVENT_CONFIDENCE_LOGIT_MEAN
 };
 typedef struct {
     unsigned char *data;
@@ -149,7 +184,7 @@ struct yvex_client {
     int fd;
 };
 _Static_assert(sizeof(double) == 8u, "local protocol requires binary64 double");
-_Static_assert(TAG_CONSOLE_SELECTED_MODEL_ID < 192u,
+_Static_assert(TAG_EVENT_CONFIDENCE_LOGIT_MEAN < 192u,
                "known protocol tags must fit the duplicate-field set");
 
 static int protocol_refuse(yvex_error *err, yvex_status status,
@@ -539,6 +574,8 @@ static int message_fields_valid(const yvex_client_message *message)
                       YVEX_CLIENT_CANCELLATION_FAILED) &&
            ENUM_VALID(message->stream_channel, YVEX_CLIENT_STREAM_UNSPECIFIED,
                       YVEX_CLIENT_STREAM_CONTROL_EVENT) &&
+           ENUM_VALID(message->generation_mode, YVEX_SERVER_GENERATION_TARGET_ONLY,
+                      YVEX_SERVER_GENERATION_DSPARK) &&
            ENUM_VALID(message->session_state, YVEX_SERVER_SESSION_CREATED,
                       YVEX_SERVER_SESSION_FAILED) &&
            ENUM_VALID(message->provider_output_kind,
@@ -588,6 +625,48 @@ static int message_fields_valid(const yvex_client_message *message)
            isfinite(message->decode_seconds) && isfinite(message->prefill_rate) &&
            isfinite(message->decode_rate) &&
            isfinite(message->publication_seconds) &&
+           isfinite(message->draft_seconds) &&
+           isfinite(message->verification_seconds) &&
+           isfinite(message->speculative_commit_seconds) &&
+           isfinite(message->mean_accepted_prefix) &&
+           isfinite(message->effective_committed_rate) &&
+           isfinite(message->confidence_logit_minimum) &&
+           isfinite(message->confidence_logit_maximum) &&
+           isfinite(message->confidence_logit_mean) &&
+           message->draft_forward_count <= message->draft_cycle_count &&
+           message->target_verification_count <= message->draft_forward_count &&
+           message->selected_verification_tokens <= message->proposed_tokens &&
+           message->accepted_draft_tokens + message->rejected_draft_tokens >=
+               message->accepted_draft_tokens &&
+           message->accepted_draft_tokens + message->rejected_draft_tokens <=
+               message->selected_verification_tokens &&
+           message->accepted_draft_tokens + message->rejected_draft_tokens +
+                   message->discarded_draft_tokens >=
+               message->accepted_draft_tokens + message->rejected_draft_tokens &&
+           message->accepted_draft_tokens + message->rejected_draft_tokens +
+                   message->discarded_draft_tokens ==
+               message->proposed_tokens &&
+           message->maximum_accepted_prefix <=
+               message->accepted_draft_tokens &&
+           message->target_correction_or_bonus_tokens <=
+               message->target_verification_count &&
+           (message->kind != YVEX_CLIENT_MESSAGE_TURN_COMPLETE ||
+            message->status != YVEX_OK ||
+            message->generation_phase != YVEX_CLIENT_PHASE_COMPLETE ||
+            message->generation_mode != YVEX_SERVER_GENERATION_DSPARK ||
+            (message->draft_cycle_count == message->draft_forward_count &&
+             message->draft_forward_count ==
+                 message->target_verification_count)) &&
+           message->confidence_logit_count <= message->proposed_tokens &&
+           (!message->confidence_logit_count ||
+            (message->confidence_logit_minimum <=
+                 message->confidence_logit_mean &&
+             message->confidence_logit_mean <=
+                 message->confidence_logit_maximum)) &&
+           (message->confidence_logit_count ||
+            (!message->confidence_logit_minimum &&
+             !message->confidence_logit_maximum &&
+             !message->confidence_logit_mean)) &&
            isfinite(message->event.seconds) && isfinite(message->event.rate) &&
            (message->kv_used_available || message->kv_used_bytes == 0u) &&
            (message->publication_timing_available ||
@@ -598,6 +677,61 @@ static int message_fields_valid(const yvex_client_message *message)
             message->console.selected_model_identity[0] == '\0');
 #undef BOOL_VALID
 #undef ENUM_VALID
+}
+
+static int protocol_event_write(wire_writer *writer,
+                                const yvex_server_event *event)
+{
+#define EVENT_U64(tag, field) \
+    writer_u64(writer, tag, (unsigned long long)(field))
+    int valid =
+        EVENT_U64(TAG_EVENT_SEQUENCE, event->sequence) &&
+        EVENT_U64(TAG_EVENT_WALL_TIME, event->wall_time_ns) &&
+        EVENT_U64(TAG_EVENT_MONOTONIC_TIME, event->monotonic_time_ns) &&
+        EVENT_U64(TAG_EVENT_PROCESS_ID, event->process_id) &&
+        EVENT_U64(TAG_EVENT_KIND, event->kind) &&
+        EVENT_U64(TAG_EVENT_SEVERITY, event->severity) &&
+        writer_text(writer, TAG_EVENT_SESSION_ID, event->session_id) &&
+        writer_text(writer, TAG_EVENT_REQUEST_ID, event->request_id) &&
+        writer_text(writer, TAG_EVENT_TURN_ID, event->turn_id) &&
+        writer_text(writer, TAG_EVENT_PHASE, event->phase) &&
+        writer_text(writer, TAG_EVENT_PROVIDER_ADAPTER,
+                    event->provider_adapter) &&
+        writer_text(writer, TAG_EVENT_PROVIDER_REQUEST_ID,
+                    event->provider_request_identity) &&
+        writer_text(writer, TAG_EVENT_EXTERNAL_CORRELATION_ID,
+                    event->external_correlation_id) &&
+        EVENT_U64(TAG_EVENT_VALUE_A, event->value_a) &&
+        EVENT_U64(TAG_EVENT_VALUE_B, event->value_b) &&
+        EVENT_U64(TAG_EVENT_VALUE_C, event->value_c) &&
+        EVENT_U64(TAG_EVENT_GENERATION_MODE, event->generation_mode) &&
+        EVENT_U64(TAG_EVENT_SPECULATIVE_CYCLE, event->speculative_cycle) &&
+        EVENT_U64(TAG_EVENT_PROPOSED_TOKENS, event->proposed_tokens) &&
+        EVENT_U64(TAG_EVENT_SELECTED_VERIFICATION_TOKENS,
+                  event->selected_verification_tokens) &&
+        EVENT_U64(TAG_EVENT_ACCEPTED_TOKENS, event->accepted_tokens) &&
+        EVENT_U64(TAG_EVENT_REJECTED_TOKENS, event->rejected_tokens) &&
+        EVENT_U64(TAG_EVENT_DISCARDED_TOKENS, event->discarded_tokens) &&
+        EVENT_U64(TAG_EVENT_VERIFICATION_COUNT, event->verification_count) &&
+        EVENT_U64(TAG_EVENT_CONFIDENCE_LOGIT_COUNT,
+                  event->confidence_logit_count) &&
+        writer_double(writer, TAG_EVENT_CONFIDENCE_LOGIT_MINIMUM,
+                      event->confidence_logit_minimum) &&
+        writer_double(writer, TAG_EVENT_CONFIDENCE_LOGIT_MAXIMUM,
+                      event->confidence_logit_maximum) &&
+        writer_double(writer, TAG_EVENT_CONFIDENCE_LOGIT_MEAN,
+                      event->confidence_logit_mean) &&
+        writer_text(writer, TAG_EVENT_SPECULATION_POLICY_ID,
+                    event->speculation_policy_identity) &&
+        writer_double(writer, TAG_EVENT_SECONDS, event->seconds) &&
+        writer_double(writer, TAG_EVENT_RATE, event->rate) &&
+        writer_text(writer, TAG_EVENT_VARIANT_ID, event->variant_identity) &&
+        writer_text(writer, TAG_EVENT_RUNTIME_MODEL_ID,
+                    event->runtime_model_identity) &&
+        writer_text(writer, TAG_EVENT_ARTIFACT_ID, event->artifact_identity) &&
+        writer_text(writer, TAG_EVENT_IDENTITY, event->event_identity);
+#undef EVENT_U64
+    return valid;
 }
 /*
  * Encode one server message with explicit field ownership.
@@ -658,6 +792,26 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
         !WRITE_U64(TAG_TURN_COUNT, message->turn_count) ||
         !WRITE_U64(TAG_CONTEXT_USED, message->context_used) ||
         !WRITE_U64(TAG_KV_USED_BYTES, message->kv_used_bytes) ||
+        !WRITE_U64(TAG_GENERATION_MODE, message->generation_mode) ||
+        !WRITE_U64(TAG_DRAFT_CYCLE_COUNT, message->draft_cycle_count) ||
+        !WRITE_U64(TAG_DRAFT_FORWARD_COUNT, message->draft_forward_count) ||
+        !WRITE_U64(TAG_PROPOSED_TOKENS, message->proposed_tokens) ||
+        !WRITE_U64(TAG_SELECTED_VERIFICATION_TOKENS,
+                   message->selected_verification_tokens) ||
+        !WRITE_U64(TAG_TARGET_VERIFICATION_COUNT,
+                   message->target_verification_count) ||
+        !WRITE_U64(TAG_ACCEPTED_DRAFT_TOKENS,
+                   message->accepted_draft_tokens) ||
+        !WRITE_U64(TAG_REJECTED_DRAFT_TOKENS,
+                   message->rejected_draft_tokens) ||
+        !WRITE_U64(TAG_DISCARDED_DRAFT_TOKENS,
+                   message->discarded_draft_tokens) ||
+        !WRITE_U64(TAG_TARGET_CORRECTION_OR_BONUS_TOKENS,
+                   message->target_correction_or_bonus_tokens) ||
+        !WRITE_U64(TAG_MAXIMUM_ACCEPTED_PREFIX,
+                   message->maximum_accepted_prefix) ||
+        !WRITE_U64(TAG_CONFIDENCE_LOGIT_COUNT,
+                   message->confidence_logit_count) ||
         !writer_double(&writer, TAG_QUEUE_SECONDS, message->queue_seconds) ||
         !writer_double(&writer, TAG_PREFILL_SECONDS, message->prefill_seconds) ||
         !writer_double(&writer, TAG_FIRST_TOKEN_SECONDS, message->first_token_seconds) ||
@@ -666,6 +820,21 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
         !writer_double(&writer, TAG_DECODE_RATE, message->decode_rate) ||
         !writer_double(&writer, TAG_PUBLICATION_SECONDS,
                        message->publication_seconds) ||
+        !writer_double(&writer, TAG_DRAFT_SECONDS, message->draft_seconds) ||
+        !writer_double(&writer, TAG_VERIFICATION_SECONDS,
+                       message->verification_seconds) ||
+        !writer_double(&writer, TAG_SPECULATIVE_COMMIT_SECONDS,
+                       message->speculative_commit_seconds) ||
+        !writer_double(&writer, TAG_MEAN_ACCEPTED_PREFIX,
+                       message->mean_accepted_prefix) ||
+        !writer_double(&writer, TAG_EFFECTIVE_COMMITTED_RATE,
+                       message->effective_committed_rate) ||
+        !writer_double(&writer, TAG_CONFIDENCE_LOGIT_MINIMUM,
+                       message->confidence_logit_minimum) ||
+        !writer_double(&writer, TAG_CONFIDENCE_LOGIT_MAXIMUM,
+                       message->confidence_logit_maximum) ||
+        !writer_double(&writer, TAG_CONFIDENCE_LOGIT_MEAN,
+                       message->confidence_logit_mean) ||
         !WRITE_U64(TAG_STOP_REASON, message->stop_reason) ||
         !WRITE_U64(TAG_GENERATION_PHASE, message->generation_phase) ||
         !WRITE_U64(TAG_CANCELLATION_CLASS, message->cancellation_class) ||
@@ -680,6 +849,8 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
                      message->generated_token_identity) ||
         !writer_text(&writer, TAG_GENERATED_TEXT_DIGEST,
                      message->generated_text_digest) ||
+        !writer_text(&writer, TAG_SPECULATION_POLICY_ID,
+                     message->speculation_policy_identity) ||
         !WRITE_U64(TAG_PROVIDER_OUTPUT_KIND, message->provider_output_kind) ||
         !WRITE_U64(TAG_PROVIDER_FINISH, message->provider_finish) ||
         !WRITE_U64(TAG_COMPLETION_TOKENS, message->completion_tokens) ||
@@ -692,6 +863,8 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
         !writer_text(&writer, TAG_TOOL_NAME, message->tool_name) ||
         !WRITE_U64(TAG_RUNTIME_STATUS, message->runtime.status) ||
         !WRITE_U64(TAG_RUNTIME_BACKEND, message->runtime.backend) ||
+        !WRITE_U64(TAG_RUNTIME_GENERATION_MODE,
+                   message->runtime.generation_mode) ||
         !writer_text(&writer, TAG_SOCKET_PATH, message->runtime.socket_path) ||
         !writer_text(&writer, TAG_TARGET_ID, message->runtime.target_id) ||
         !writer_text(&writer, TAG_RUNTIME_MODEL_ID,
@@ -744,36 +917,7 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
                      message->console.session_name) ||
         !writer_text(&writer, TAG_CONSOLE_SELECTED_MODEL_ID,
                      message->console.selected_model_identity) ||
-        !WRITE_U64(TAG_EVENT_SEQUENCE, message->event.sequence) ||
-        !WRITE_U64(TAG_EVENT_WALL_TIME, message->event.wall_time_ns) ||
-        !WRITE_U64(TAG_EVENT_MONOTONIC_TIME, message->event.monotonic_time_ns) ||
-        !WRITE_U64(TAG_EVENT_PROCESS_ID, message->event.process_id) ||
-        !WRITE_U64(TAG_EVENT_KIND, message->event.kind) ||
-        !WRITE_U64(TAG_EVENT_SEVERITY, message->event.severity) ||
-        !writer_text(&writer, TAG_EVENT_SESSION_ID,
-                     message->event.session_id) ||
-        !writer_text(&writer, TAG_EVENT_REQUEST_ID, message->event.request_id) ||
-        !writer_text(&writer, TAG_EVENT_TURN_ID, message->event.turn_id) ||
-        !writer_text(&writer, TAG_EVENT_PHASE, message->event.phase) ||
-        !writer_text(&writer, TAG_EVENT_PROVIDER_ADAPTER,
-                     message->event.provider_adapter) ||
-        !writer_text(&writer, TAG_EVENT_PROVIDER_REQUEST_ID,
-                     message->event.provider_request_identity) ||
-        !writer_text(&writer, TAG_EVENT_EXTERNAL_CORRELATION_ID,
-                     message->event.external_correlation_id) ||
-        !WRITE_U64(TAG_EVENT_VALUE_A, message->event.value_a) ||
-        !WRITE_U64(TAG_EVENT_VALUE_B, message->event.value_b) ||
-        !WRITE_U64(TAG_EVENT_VALUE_C, message->event.value_c) ||
-        !writer_double(&writer, TAG_EVENT_SECONDS, message->event.seconds) ||
-        !writer_double(&writer, TAG_EVENT_RATE, message->event.rate) ||
-        !writer_text(&writer, TAG_EVENT_VARIANT_ID,
-                     message->event.variant_identity) ||
-        !writer_text(&writer, TAG_EVENT_RUNTIME_MODEL_ID,
-                     message->event.runtime_model_identity) ||
-        !writer_text(&writer, TAG_EVENT_ARTIFACT_ID,
-                     message->event.artifact_identity) ||
-        !writer_text(&writer, TAG_EVENT_IDENTITY,
-                     message->event.event_identity))
+        !protocol_event_write(&writer, &message->event))
         return protocol_refuse(err, YVEX_ERR_BOUNDS,
                                "server message does not fit admitted frame");
 #undef WRITE_U64
@@ -781,6 +925,53 @@ int yvex_protocol_message_encode(const yvex_client_message *message,
     yvex_error_clear(err);
     return YVEX_OK;
 }
+static int message_speculation_u64_field(yvex_client_message *candidate,
+                                         unsigned int tag,
+                                         const unsigned char *bytes,
+                                         unsigned long long count)
+{
+    unsigned long long value;
+
+    switch (tag) {
+    case TAG_DRAFT_CYCLE_COUNT:
+    case TAG_DRAFT_FORWARD_COUNT:
+    case TAG_PROPOSED_TOKENS:
+    case TAG_SELECTED_VERIFICATION_TOKENS:
+    case TAG_TARGET_VERIFICATION_COUNT:
+    case TAG_ACCEPTED_DRAFT_TOKENS:
+    case TAG_REJECTED_DRAFT_TOKENS:
+    case TAG_DISCARDED_DRAFT_TOKENS:
+    case TAG_TARGET_CORRECTION_OR_BONUS_TOKENS:
+    case TAG_MAXIMUM_ACCEPTED_PREFIX:
+    case TAG_CONFIDENCE_LOGIT_COUNT:
+        break;
+    default:
+        return 0;
+    }
+    if (!reader_u64(bytes, count, &value)) return -1;
+    switch (tag) {
+    case TAG_DRAFT_CYCLE_COUNT: candidate->draft_cycle_count = value; break;
+    case TAG_DRAFT_FORWARD_COUNT: candidate->draft_forward_count = value; break;
+    case TAG_PROPOSED_TOKENS: candidate->proposed_tokens = value; break;
+    case TAG_SELECTED_VERIFICATION_TOKENS:
+        candidate->selected_verification_tokens = value;
+        break;
+    case TAG_TARGET_VERIFICATION_COUNT:
+        candidate->target_verification_count = value;
+        break;
+    case TAG_ACCEPTED_DRAFT_TOKENS: candidate->accepted_draft_tokens = value; break;
+    case TAG_REJECTED_DRAFT_TOKENS: candidate->rejected_draft_tokens = value; break;
+    case TAG_DISCARDED_DRAFT_TOKENS: candidate->discarded_draft_tokens = value; break;
+    case TAG_TARGET_CORRECTION_OR_BONUS_TOKENS:
+        candidate->target_correction_or_bonus_tokens = value;
+        break;
+    case TAG_MAXIMUM_ACCEPTED_PREFIX: candidate->maximum_accepted_prefix = value; break;
+    case TAG_CONFIDENCE_LOGIT_COUNT: candidate->confidence_logit_count = value; break;
+    default: return 0;
+    }
+    return 1;
+}
+
 /*
  * Decode one message-level protocol field outside runtime/event snapshots.
  *
@@ -832,6 +1023,12 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
     case TAG_TURN_COUNT: valid = BASE_U64(candidate->turn_count); break;
     case TAG_CONTEXT_USED: valid = BASE_U64(candidate->context_used); break;
     case TAG_KV_USED_BYTES: valid = BASE_U64(candidate->kv_used_bytes); break;
+    case TAG_GENERATION_MODE:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_GENERATION_DSPARK;
+        if (valid)
+            candidate->generation_mode = (yvex_server_generation_mode)value;
+        break;
     case TAG_QUEUE_SECONDS: valid = reader_double(bytes, count, &candidate->queue_seconds); break;
     case TAG_PREFILL_SECONDS: valid = reader_double(bytes, count, &candidate->prefill_seconds); break;
     case TAG_FIRST_TOKEN_SECONDS:
@@ -842,6 +1039,35 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
     case TAG_DECODE_RATE: valid = reader_double(bytes, count, &candidate->decode_rate); break;
     case TAG_PUBLICATION_SECONDS:
         valid = reader_double(bytes, count, &candidate->publication_seconds);
+        break;
+    case TAG_DRAFT_SECONDS:
+        valid = reader_double(bytes, count, &candidate->draft_seconds);
+        break;
+    case TAG_VERIFICATION_SECONDS:
+        valid = reader_double(bytes, count, &candidate->verification_seconds);
+        break;
+    case TAG_SPECULATIVE_COMMIT_SECONDS:
+        valid = reader_double(bytes, count,
+                              &candidate->speculative_commit_seconds);
+        break;
+    case TAG_MEAN_ACCEPTED_PREFIX:
+        valid = reader_double(bytes, count, &candidate->mean_accepted_prefix);
+        break;
+    case TAG_EFFECTIVE_COMMITTED_RATE:
+        valid = reader_double(bytes, count,
+                              &candidate->effective_committed_rate);
+        break;
+    case TAG_CONFIDENCE_LOGIT_MINIMUM:
+        valid = reader_double(bytes, count,
+                              &candidate->confidence_logit_minimum);
+        break;
+    case TAG_CONFIDENCE_LOGIT_MAXIMUM:
+        valid = reader_double(bytes, count,
+                              &candidate->confidence_logit_maximum);
+        break;
+    case TAG_CONFIDENCE_LOGIT_MEAN:
+        valid = reader_double(bytes, count,
+                              &candidate->confidence_logit_mean);
         break;
     case TAG_STOP_REASON:
         valid = reader_u64(bytes, count, &value) &&
@@ -894,6 +1120,11 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
         valid = reader_text(bytes, count, candidate->generated_text_digest,
                             sizeof(candidate->generated_text_digest));
         break;
+    case TAG_SPECULATION_POLICY_ID:
+        valid = reader_text(bytes, count,
+                            candidate->speculation_policy_identity,
+                            sizeof(candidate->speculation_policy_identity));
+        break;
     case TAG_PROVIDER_OUTPUT_KIND:
         valid = reader_u64(bytes, count, &value) &&
                 value <= YVEX_PROVIDER_OUTPUT_ERROR;
@@ -924,7 +1155,7 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
         valid = reader_text(bytes, count, candidate->tool_name,
                             sizeof(candidate->tool_name));
         break;
-    default: return 0;
+    default: return message_speculation_u64_field(candidate, tag, bytes, count);
     }
 #undef BASE_U64
     return valid ? 1 : -1;
@@ -952,6 +1183,13 @@ static int message_runtime_field(yvex_client_message *candidate,
         valid = reader_u64(bytes, count, &value) &&
                 value <= YVEX_BACKEND_KIND_ROCM;
         if (valid) candidate->runtime.backend = (yvex_backend_kind)value;
+        break;
+    case TAG_RUNTIME_GENERATION_MODE:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_GENERATION_DSPARK;
+        if (valid)
+            candidate->runtime.generation_mode =
+                (yvex_server_generation_mode)value;
         break;
     case TAG_SOCKET_PATH:
         valid = reader_text(bytes, count, candidate->runtime.socket_path,
@@ -1161,6 +1399,54 @@ static int message_event_field(yvex_client_message *candidate,
     case TAG_EVENT_VALUE_A: valid = EVENT_U64(candidate->event.value_a); break;
     case TAG_EVENT_VALUE_B: valid = EVENT_U64(candidate->event.value_b); break;
     case TAG_EVENT_VALUE_C: valid = EVENT_U64(candidate->event.value_c); break;
+    case TAG_EVENT_GENERATION_MODE:
+        valid = reader_u64(bytes, count, &value) &&
+                value <= YVEX_SERVER_GENERATION_DSPARK;
+        if (valid)
+            candidate->event.generation_mode =
+                (yvex_server_generation_mode)value;
+        break;
+    case TAG_EVENT_SPECULATIVE_CYCLE:
+        valid = EVENT_U64(candidate->event.speculative_cycle);
+        break;
+    case TAG_EVENT_PROPOSED_TOKENS:
+        valid = EVENT_U64(candidate->event.proposed_tokens);
+        break;
+    case TAG_EVENT_SELECTED_VERIFICATION_TOKENS:
+        valid = EVENT_U64(candidate->event.selected_verification_tokens);
+        break;
+    case TAG_EVENT_ACCEPTED_TOKENS:
+        valid = EVENT_U64(candidate->event.accepted_tokens);
+        break;
+    case TAG_EVENT_REJECTED_TOKENS:
+        valid = EVENT_U64(candidate->event.rejected_tokens);
+        break;
+    case TAG_EVENT_DISCARDED_TOKENS:
+        valid = EVENT_U64(candidate->event.discarded_tokens);
+        break;
+    case TAG_EVENT_VERIFICATION_COUNT:
+        valid = EVENT_U64(candidate->event.verification_count);
+        break;
+    case TAG_EVENT_CONFIDENCE_LOGIT_COUNT:
+        valid = EVENT_U64(candidate->event.confidence_logit_count);
+        break;
+    case TAG_EVENT_CONFIDENCE_LOGIT_MINIMUM:
+        valid = reader_double(bytes, count,
+                              &candidate->event.confidence_logit_minimum);
+        break;
+    case TAG_EVENT_CONFIDENCE_LOGIT_MAXIMUM:
+        valid = reader_double(bytes, count,
+                              &candidate->event.confidence_logit_maximum);
+        break;
+    case TAG_EVENT_CONFIDENCE_LOGIT_MEAN:
+        valid = reader_double(bytes, count,
+                              &candidate->event.confidence_logit_mean);
+        break;
+    case TAG_EVENT_SPECULATION_POLICY_ID:
+        valid = reader_text(bytes, count,
+                            candidate->event.speculation_policy_identity,
+                            sizeof(candidate->event.speculation_policy_identity));
+        break;
     case TAG_EVENT_SECONDS: valid = reader_double(bytes, count, &candidate->event.seconds); break;
     case TAG_EVENT_RATE: valid = reader_double(bytes, count, &candidate->event.rate); break;
     case TAG_EVENT_VARIANT_ID:
@@ -1189,7 +1475,7 @@ static int message_publish(const yvex_client_message *candidate, int next,
                            int valid, int have_kind,
                            yvex_client_message *message, yvex_error *err)
 {
-    if (next < 0 || !valid || !have_kind)
+    if (next < 0 || !valid || !have_kind || !message_fields_valid(candidate))
         return protocol_refuse(
             err, YVEX_ERR_FORMAT,
             "message frame contains malformed or duplicate fields");
@@ -1319,7 +1605,7 @@ static int frame_receive(int fd, unsigned int expected_kind,
                                "local protocol frame header is invalid");
     if (get_u16(header + 4u) != YVEX_LOCAL_PROTOCOL_VERSION)
         return protocol_refuse(err, YVEX_ERR_FORMAT,
-                               "local protocol version is incompatible; version 4 is required");
+                               "local protocol version is incompatible; version 5 is required");
     if (length) {
         bytes = malloc(length);
         if (!bytes)
@@ -1421,13 +1707,13 @@ int yvex_client_connect(yvex_client **out, const char *socket_path,
     if (yvex_client_send(client, &handshake, err) != YVEX_OK ||
         yvex_client_receive(client, &response, err) != YVEX_OK ||
         response.kind != YVEX_CLIENT_MESSAGE_ACK ||
-        response.status != YVEX_OK || strcmp(response.reason, "protocol-v4") != 0) {
+        response.status != YVEX_OK || strcmp(response.reason, "protocol-v5") != 0) {
         (void)close(client->fd);
         memset(client, 0, sizeof(*client));
         free(client);
         if (yvex_error_code(err) == YVEX_OK)
             yvex_error_set(err, YVEX_ERR_FORMAT, "server.protocol.handshake",
-                           "daemon did not admit local protocol version 4");
+                           "daemon did not admit local protocol version 5");
         return yvex_error_code(err);
     }
     if (yvex_client_timeout_set(client, 0u, err) != YVEX_OK) {

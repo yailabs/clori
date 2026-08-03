@@ -44,8 +44,11 @@ static int moe_test_family_plan(void)
     attention.rms_norm_epsilon = 1e-6;
     attention.mhc_epsilon = 1e-6;
     attention.mhc_residual_post_multiplier = 2.0;
+    attention.tensor_scope = YVEX_TENSOR_SCOPE_MAIN_LAYER;
+    attention.predictor_index = YVEX_MATERIALIZATION_NO_INDEX;
     for (layer = 0ull; layer < runtime.layer_count; ++layer) {
         yvex_moe_layer_plan projected;
+        attention.ordinal = layer;
         attention.layer_index = layer;
         YVEX_TEST_ASSERT(
             family->project_layer(layer, &runtime, &attention, &projected, &err) == YVEX_OK,

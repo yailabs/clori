@@ -108,7 +108,7 @@ static int test_deepseek_variant_admission_catalog(void)
     YVEX_TEST_ASSERT(snprintf(path, sizeof(path), "%s/candidate.gguf", root) < (int)sizeof(path),
                      "variant catalog path fits");
     fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    YVEX_TEST_ASSERT(fd >= 0 && ftruncate(fd, (off_t)YVEX_DEEPSEEK_DS4_FILE_BYTES) == 0 &&
+    YVEX_TEST_ASSERT(fd >= 0 && ftruncate(fd, (off_t)YVEX_SELECTED_DEEPSEEK_FILE_BYTES) == 0 &&
                          close(fd) == 0,
                      "variant sparse extent created");
     options.path = path;
@@ -117,12 +117,14 @@ static int test_deepseek_variant_admission_catalog(void)
                      "variant sparse artifact opened");
     YVEX_TEST_ASSERT(yvex_artifact_admit_deepseek(artifact, &admission, &failure, &err) == YVEX_OK,
                      "variant catalog admission reconstructed");
-    YVEX_TEST_ASSERT(admission.file_bytes == YVEX_DEEPSEEK_DS4_FILE_BYTES &&
-                         admission.payload_bytes == YVEX_DEEPSEEK_DS4_PAYLOAD_BYTES &&
-                         strcmp(admission.profile_identity, YVEX_DEEPSEEK_DS4_PROFILE_IDENTITY) == 0 &&
-                         strcmp(admission.artifact_identity, YVEX_DEEPSEEK_DS4_ARTIFACT_IDENTITY) == 0 &&
+    YVEX_TEST_ASSERT(admission.file_bytes == YVEX_SELECTED_DEEPSEEK_FILE_BYTES &&
+                         admission.payload_bytes == YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTES &&
+                         strcmp(admission.profile_identity,
+                                YVEX_SELECTED_DEEPSEEK_PROFILE_IDENTITY) == 0 &&
+                         strcmp(admission.artifact_identity,
+                                YVEX_SELECTED_DEEPSEEK_ARTIFACT_IDENTITY) == 0 &&
                          strcmp(admission.admission_identity,
-                                "df847745fa62e99bf2f9682af9b1fd72260365a0f69cc93a1b0c39ac034a3a51") == 0,
+                                "d8966a5222ef10f612595c657cbcf0a9cf557e277cb28bb44d85ad89c3bf42a0") == 0,
                      "variant catalog binds exact admitted identities");
     YVEX_TEST_ASSERT(!admission.artifact_identity_verified && admission.artifact_bytes_hashed == 0u,
                      "catalog reconstruction does not fabricate byte verification");

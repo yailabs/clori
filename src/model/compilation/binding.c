@@ -348,14 +348,23 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
     unsigned long long *tensor_indices;
     unsigned long long contribution_index;
     unsigned long long descriptor_index;
+    char identity_message[192];
     int rc;
 
     if (!map_summary || !map_summary->complete ||
         map_summary->mapping_identity != YVEX_DEEPSEEK_PAYLOAD_MAPPING_IDENTITY ||
         map_summary->source_identity != handoff->verification.source_snapshot_identity) {
+        (void)snprintf(
+            identity_message, sizeof(identity_message),
+            "canonical DeepSeek mapping identity mismatch: expected=%016llx actual=%016llx "
+            "source=%016llx verified_source=%016llx",
+            (unsigned long long)YVEX_DEEPSEEK_PAYLOAD_MAPPING_IDENTITY,
+            map_summary ? map_summary->mapping_identity : 0ull,
+            map_summary ? map_summary->source_identity : 0ull,
+            handoff->verification.source_snapshot_identity);
         return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_MAPPING_IDENTITY, ULLONG_MAX,
                               ULLONG_MAX, YVEX_ERR_FORMAT, err,
-                              "canonical DeepSeek mapping identity mismatch");
+                              identity_message);
     }
     if (map_summary->source_contribution_count >
         (unsigned long long)(SIZE_MAX / sizeof(tensor_indices[0]))) {
@@ -449,8 +458,8 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
             handoff->summary.output_head_contributions++;
             handoff->summary.output_head_logical_bytes += range->byte_length;
         }
-        if (descriptor->scope == YVEX_TENSOR_SCOPE_MTP)
-            handoff->summary.mtp_contributions++;
+        if (descriptor->scope == YVEX_TENSOR_SCOPE_DRAFT)
+            handoff->summary.draft_contributions++;
     }
     for (descriptor_index = 0u; descriptor_index < map_summary->descriptor_count;
          ++descriptor_index) {
@@ -493,7 +502,7 @@ static int handoff_resolve(yvex_deepseek_payload_handoff *handoff,
         handoff->summary.global_contributions != 0u && handoff->summary.norm_contributions != 0u &&
         handoff->summary.shared_expert_contributions != 0u &&
         handoff->summary.output_head_contributions != 0u &&
-        handoff->summary.mtp_contributions != 0u;
+        handoff->summary.draft_contributions != 0u;
     if (!handoff->summary.complete)
         return handoff_reject(failure, YVEX_DEEPSEEK_PAYLOAD_FAILURE_CONTRIBUTION, ULLONG_MAX,
                               ULLONG_MAX, YVEX_ERR_FORMAT, err,

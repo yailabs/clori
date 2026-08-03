@@ -9,10 +9,11 @@ identity-bound, verified open-weight execution. It derives explicit physical
 variants from verified source snapshots, admits complete artifacts, and runs
 them through one long-lived host with isolated sessions.
 
-The current complete vertical is DeepSeek-V4-Flash on CPU and the admitted
-mixed NVIDIA GB10 CUDA path. `yvexd` keeps one model open; `yvex` provides the
-public command surface; local applications may use the bounded
-`yvex.openai.compat.v1` HTTP/SSE profile in the same daemon. Evaluation,
+The current complete vertical is DeepSeek-V4-Flash-DSpark on CPU and the
+admitted mixed NVIDIA GB10 CUDA path. One `yvexd` model owns target-only and
+target-verified speculative generation; `yvex` provides the public command
+surface; local applications may use the bounded `yvex.openai.compat.v1`
+HTTP/SSE profile in the same daemon. Performance optimization, evaluation,
 release benchmarking, and release qualification remain open.
 
 ## Why YVEX
@@ -27,7 +28,7 @@ verified source snapshot
   -> complete artifact and runtime binding
   -> immutable runtime model
   -> isolated session state
-  -> admitted CPU/CUDA execution
+  -> target execution and optional verified DSpark proposal
   -> committed streamed text
 ```
 
@@ -56,8 +57,8 @@ select its alias:
 
 ```sh
 ./yvex model list
-./yvex model show deepseek4-v4-flash-runtime-iq2xxs
-./yvex model select deepseek4-v4-flash-runtime-iq2xxs
+./yvex model show deepseek4-v4-flash-dspark-runtime-iq2xxs
+./yvex model select deepseek4-v4-flash-dspark-runtime-iq2xxs
 ./yvex model selected
 ```
 
@@ -128,7 +129,7 @@ three-terminal observation, sessions, shutdown, configuration, and recovery.
 | `yvexd` | One long-lived model, worker, queue, session/KV registry, private protocol, loopback OpenAI adapter, and telemetry authority |
 | `libyvex` | Reusable compilation, artifact, runtime, graph, backend, tokenizer, and generation implementation |
 
-Runtime-facing `yvex` operations always cross private local protocol v4. The
+Runtime-facing `yvex` operations always cross private local protocol v5. The
 finite offline lane may link engine owners but never hosts a persistent model.
 One compiled operation registry drives command paths, syntax, help, JSON
 discovery, completion, and slash schemas without becoming a domain-policy
@@ -152,7 +153,7 @@ Live milestone and release-gate state remains only in
 - [Implemented system](docs/architecture/system.md),
   [compilation](docs/architecture/compilation.md), and
   [runtime](docs/architecture/runtime.md) — current YVEX architecture.
-- [DeepSeek-V4-Flash record](docs/model-families/deepseek-v4-flash.md) — exact
+- [DeepSeek-V4-Flash-DSpark record](docs/model-families/deepseek-v4-flash.md) — exact
   family facts and present evidence boundary.
 - [Runtime](docs/contracts/runtime.md),
   [artifact](docs/contracts/artifacts.md),
@@ -174,7 +175,7 @@ YVEX does not currently claim:
 - multi-model hosting, hot reload, continuous batching, or distributed serving;
 - session persistence across daemon restart;
 - complete accelerator residency, device-side sampling, or tokenizer execution;
-- MTP or speculative execution;
+- optimized DSpark execution or production load-aware confidence scheduling;
 - model behavior or quality evaluation;
 - a release-grade full-model benchmark;
 - a second complete model-family vertical;

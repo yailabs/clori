@@ -1379,7 +1379,7 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
     yvex_sha256_init(&hash);
 #define HASH(value) \
     do { if (!yvex_sha256_update_u64(&hash, (unsigned long long)(value))) goto failed; } while (0)
-    if (!yvex_sha256_update_text(&hash, "yvex.cuda.attention-topology.v6") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.cuda.attention-topology.v7") ||
         !yvex_sha256_update_text(&hash, state->attention_compatibility_identity) ||
         !yvex_sha256_update_text(&hash, state->attention_capture_bucket))
         goto failed;
@@ -1389,6 +1389,7 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
     HASH(state->attention_mode); HASH(YVEX_CUDA_ATTENTION_STAGE_COUNT);
     HASH(first); HASH(last);
     HASH(job->schema); HASH(job->phase); HASH(job->operation_scope);
+    HASH(job->candidate_block_visible);
     HASH(job->token_count); HASH(job->input_stride);
     HASH(job->attention_class);
     HASH(job->evidence_level);

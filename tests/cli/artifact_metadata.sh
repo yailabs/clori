@@ -5,15 +5,15 @@ set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
 OUT_DIR=${YVEX_TEST_OUT_DIR:-build/tests/cli-artifact-metadata}
-MODEL="$OUT_DIR/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf"
-F32_MODEL="$OUT_DIR/deepseek4-v4-flash-selected-embed-F32-noimatrix-yvex-v1.gguf"
+MODEL="$OUT_DIR/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
+F32_MODEL="$OUT_DIR/deepseek4-v4-flash-dspark-selected-embed-F32-noimatrix-yvex-v1.gguf"
 REG="$OUT_DIR/models.local.json"
 OLD_REG="$OUT_DIR/old.models.local.json"
 DTYPE_REG="$OUT_DIR/dtype.models.local.json"
 DIMS_REG="$OUT_DIR/dims.models.local.json"
 ARCH_REG="$OUT_DIR/arch.models.local.json"
 READY_REG="$OUT_DIR/readiness.models.local.json"
-ALIAS="deepseek4-v4-flash-selected-embed"
+ALIAS="deepseek4-v4-flash-dspark-selected-embed"
 
 fail() {
     printf 'FAIL: %s\n' "$1" >&2

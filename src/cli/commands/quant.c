@@ -119,7 +119,7 @@ static int quant_cli_options_valid(const quant_cli_options *options)
 {
     if (!options || !options->target || !options->source || !options->models_root ||
         !options->manifest || (!!options->preset == !!options->policy_path) ||
-        strcmp(options->target, "deepseek4-v4-flash") != 0)
+        strcmp(options->target, "deepseek4-v4-flash-dspark") != 0)
         return 0;
     if (options->backend && strcmp(options->backend, "cpu") != 0 &&
         strcmp(options->backend, "cuda") != 0)
@@ -146,7 +146,7 @@ static void quant_cli_context_close(quant_cli_context *context)
 }
 
 static int quant_cli_imatrix_open(quant_cli_context *context, const char *path,
-                                  const yvex_transform_ir_summary *transform, yvex_error *err)
+                                  yvex_error *err)
 {
     yvex_imatrix_data_options options;
     int rc;
@@ -154,9 +154,14 @@ static int quant_cli_imatrix_open(quant_cli_context *context, const char *path,
     if (!path) return YVEX_OK;
     memset(&options, 0, sizeof(options));
     options.path = path;
-    options.source_model_identity = transform->transform_identity;
+    /* The bootstrap profile deliberately carries forward the predecessor's
+     * routed-expert importance prior. Bind that provenance honestly; calling
+     * it calibration of the new DSpark transform would make two different
+     * source snapshots share one semantic claim. */
+    options.source_model_identity =
+        YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY;
     options.calibration_dataset_identity =
-        "deepseek-v4-flash-chat-v2-rendered-prompts-v1";
+        YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY;
     options.producer = "llama.cpp-imatrix";
     options.producer_version = 1u;
     options.maximum_mapped_bytes = 1024u * 1024u * 1024u;
@@ -234,7 +239,7 @@ static int quant_cli_context_open(quant_cli_context *context, const quant_cli_op
                     : NULL;
     if (rc == YVEX_OK && !transform) rc = YVEX_ERR_STATE;
     if (rc == YVEX_OK)
-        rc = quant_cli_imatrix_open(context, options->imatrix_path, transform, err);
+        rc = quant_cli_imatrix_open(context, options->imatrix_path, err);
     if (rc == YVEX_OK)
         rc = yvex_quant_plan_build_deepseek_policy(
             &context->plan,

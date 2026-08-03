@@ -5,12 +5,12 @@ set -eu
 
 YVEX_BIN=${YVEX_BIN:-./yvex}
 OUT_DIR=${YVEX_TEST_OUT_DIR:-build/tests/cli-artifact-identity}
-MODEL="$OUT_DIR/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf"
+MODEL="$OUT_DIR/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 STALE_DIR="$OUT_DIR/stale"
-STALE_MODEL="$STALE_DIR/deepseek4-v4-flash-selected-embed-F16-noimatrix-yvex-v1.gguf"
+STALE_MODEL="$STALE_DIR/deepseek4-v4-flash-dspark-selected-embed-F16-noimatrix-yvex-v1.gguf"
 REG="$OUT_DIR/models.local.json"
 STALE_REG="$OUT_DIR/stale.models.local.json"
-ALIAS="deepseek4-v4-flash-selected-embed"
+ALIAS="deepseek4-v4-flash-dspark-selected-embed"
 BAD_SHA="0000000000000000000000000000000000000000000000000000000000000000"
 
 fail() {

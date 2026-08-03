@@ -689,7 +689,7 @@ void yvex_model_artifacts_surface_tensor_collection_help(FILE *fp)
             "storage] [--include-residency] [--include-blockers]\n");
     yvex_cli_out_writef(fp, "\nExamples:\n");
     yvex_cli_out_writef(fp,
-        "  yvex inspect tensor collection report --model deepseek4-v4-flash-selected-embed-rmsnorm --family "
+        "  yvex inspect tensor collection report --model deepseek4-v4-flash-dspark-selected-embed-rmsnorm --family "
             "deepseek --collection moe --backend cpu --include-router --include-experts --include-blockers\n");
     yvex_cli_out_writef(fp,
         "  yvex inspect tensor collection report --model glm-5.2-official-safetensors --family glm --collection "

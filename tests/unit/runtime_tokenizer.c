@@ -117,7 +117,7 @@ static int provider_fixture(yvex_provider_request *request,
     tools[0].parameters_json = (yvex_provider_span){schema,
                                                     sizeof(schema) - 1u};
     request->schema_version = YVEX_PROVIDER_SCHEMA_V1;
-    strcpy(request->model, "deepseek4-v4-flash");
+    strcpy(request->model, "deepseek4-v4-flash-dspark");
     request->messages = messages;
     request->message_count = 1u;
     request->tools = tools;
@@ -329,6 +329,118 @@ static int test_classification_and_append(void)
     return 0;
 }
 
+static int test_candidate_transactions(void)
+{
+    yvex_tokenizer tokenizer;
+    yvex_token_info tokens[4];
+    yvex_tokenizer_decode_options options = {
+        .skip_special_tokens = 1, .require_complete_utf8 = 1};
+    yvex_tokenizer_decoder *decoder = NULL;
+    yvex_tokenizer_decoder_transaction *decoder_tx = NULL;
+    yvex_token_sequence *sequence = NULL;
+    yvex_token_sequence_transaction *sequence_tx = NULL;
+    yvex_tokenizer_fragment fragment = {0};
+    yvex_token_sequence_summary before, staged, published;
+    yvex_error err;
+    unsigned long long ordinal, index;
+    fixture_open(&tokenizer, tokens);
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_decoder_open(&decoder, &tokenizer, &options, &err) ==
+                YVEX_OK &&
+            yvex_tokenizer_decoder_push(decoder, 3u, &fragment, &err) ==
+                YVEX_OK,
+        "decoder transaction fixture opens");
+    yvex_tokenizer_fragment_clear(&fragment);
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_decoder_transaction_begin(decoder, &decoder_tx,
+                                                  &err) == YVEX_OK &&
+            yvex_tokenizer_decoder_transaction_push(decoder_tx, 1u,
+                                                     &fragment, &err) ==
+                YVEX_OK,
+        "decoder candidate begins without publication");
+    yvex_tokenizer_fragment_clear(&fragment);
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_decoder_transaction_push(decoder_tx, 2u, &fragment,
+                                                 &err) == YVEX_OK &&
+            fragment.byte_count == 4u &&
+            yvex_tokenizer_decoder_transaction_prepare(decoder_tx, &err) ==
+                YVEX_OK,
+        "decoder candidate prepares after its complete staged fragment");
+    yvex_tokenizer_fragment_clear(&fragment);
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_decoder_push(decoder, 3u, &fragment, &err) ==
+            YVEX_ERR_STATE,
+        "prepared decoder candidate remains exclusive");
+    yvex_tokenizer_decoder_transaction_abort(&decoder_tx);
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_decoder_push(decoder, 3u, &fragment, &err) == YVEX_OK &&
+            fragment.processed_token_count == 2u,
+        "decoder abort preserves the earlier published state");
+    yvex_tokenizer_fragment_clear(&fragment);
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_decoder_transaction_begin(decoder, &decoder_tx,
+                                                  &err) == YVEX_OK &&
+            yvex_tokenizer_decoder_transaction_push(decoder_tx, 3u,
+                                                     &fragment, &err) ==
+                YVEX_OK &&
+            yvex_tokenizer_decoder_transaction_prepare(decoder_tx, &err) ==
+                YVEX_OK,
+        "decoder candidate prepares for publication");
+    yvex_tokenizer_fragment_clear(&fragment);
+    yvex_tokenizer_decoder_transaction_publish(&decoder_tx);
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_decoder_push(decoder, 3u, &fragment, &err) == YVEX_OK &&
+            fragment.processed_token_count == 4u,
+        "decoder publication advances the complete candidate once");
+    yvex_tokenizer_fragment_clear(&fragment);
+
+    YVEX_TEST_ASSERT(yvex_token_sequence_open(&sequence, 4u, &err) == YVEX_OK &&
+                         yvex_token_sequence_summary_get(sequence, &before,
+                                                         &err) == YVEX_OK &&
+                         yvex_token_sequence_transaction_begin(
+                             sequence, 2u, &sequence_tx, &err) == YVEX_OK,
+                     "token-ledger candidate begins");
+    for (index = 0u; index < 2u; ++index) {
+        YVEX_TEST_ASSERT(
+            yvex_token_sequence_transaction_append(
+                sequence_tx, 2u + (unsigned int)index, 4u, &ordinal, &err) ==
+                YVEX_OK,
+            "token-ledger candidate appends");
+        YVEX_TEST_ASSERT(
+            yvex_token_sequence_transaction_transition(
+                sequence_tx, ordinal, YVEX_TOKEN_APPEND_PROPOSED,
+                YVEX_TOKEN_APPEND_APPENDED, &err) == YVEX_OK &&
+                yvex_token_sequence_transaction_transition(
+                    sequence_tx, ordinal, YVEX_TOKEN_APPEND_APPENDED,
+                    YVEX_TOKEN_APPEND_SUBMITTED, &err) == YVEX_OK &&
+                yvex_token_sequence_transaction_transition(
+                    sequence_tx, ordinal, YVEX_TOKEN_APPEND_SUBMITTED,
+                    YVEX_TOKEN_APPEND_MODEL_COMMITTED, &err) == YVEX_OK &&
+                yvex_token_sequence_transaction_transition(
+                    sequence_tx, ordinal, YVEX_TOKEN_APPEND_MODEL_COMMITTED,
+                    YVEX_TOKEN_APPEND_DETOKENIZED, &err) == YVEX_OK &&
+                yvex_token_sequence_transaction_transition(
+                    sequence_tx, ordinal, YVEX_TOKEN_APPEND_DETOKENIZED,
+                    YVEX_TOKEN_APPEND_TEXT_PUBLISHED, &err) == YVEX_OK,
+            "token-ledger candidate reaches publication state");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_token_sequence_summary_get(sequence, &staged, &err) == YVEX_OK &&
+            staged.count == before.count &&
+            yvex_token_sequence_transaction_prepare(sequence_tx, &err) ==
+                YVEX_OK,
+        "staged token-ledger prefix remains invisible");
+    yvex_token_sequence_transaction_publish(&sequence_tx);
+    YVEX_TEST_ASSERT(
+        yvex_token_sequence_summary_get(sequence, &published, &err) ==
+                YVEX_OK &&
+            published.count == 2u && published.generation > before.generation,
+        "token-ledger prefix publishes atomically");
+    yvex_token_sequence_close(&sequence);
+    yvex_tokenizer_decoder_close(&decoder);
+    return 0;
+}
+
 int yvex_test_runtime_tokenizer(void)
 {
     if (test_provider_projection() != 0)
@@ -336,6 +448,8 @@ int yvex_test_runtime_tokenizer(void)
     if (test_incremental_decoder() != 0)
         return 1;
     if (test_incremental_close_drain() != 0)
+        return 1;
+    if (test_candidate_transactions() != 0)
         return 1;
     return test_classification_and_append();
 }

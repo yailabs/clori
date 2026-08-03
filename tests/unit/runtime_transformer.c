@@ -32,7 +32,7 @@ static int transformer_test_plan(yvex_transformer_plan **out,
     unsigned int slot;
     memset(&summary, 0, sizeof(summary));
     memset(&layer, 0, sizeof(layer));
-    summary.schema_version = YVEX_TRANSFORMER_PLAN_SCHEMA_V1;
+    summary.schema_version = YVEX_TRANSFORMER_PLAN_SCHEMA_V2;
     summary.family_adapter_id = 1ull;
     summary.family_adapter_version = 1ull;
     summary.layer_count = 1ull;
@@ -75,13 +75,15 @@ static int transformer_test_plan(yvex_transformer_plan **out,
 static int transformer_test_family(void)
 {
     const yvex_runtime_family_adapter *adapter =
-        yvex_runtime_family_adapter_find("deepseek4-v4-flash");
+        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
     yvex_transformer_family_policy policy;
     YVEX_TEST_ASSERT(adapter && adapter->transformer_policy &&
                          adapter->transformer_policy(&policy),
                      "DeepSeek transformer policy is adapter-projected");
-    YVEX_TEST_ASSERT(adapter->adapter_version == 5ull && policy.residual_streams == 4ull &&
+    YVEX_TEST_ASSERT(adapter->adapter_version == 7ull && policy.residual_streams == 4ull &&
                          policy.hidden_width == 4096ull && policy.expanded_width == 16384ull &&
+                         policy.mhc_epsilon == 1e-6 &&
+                         policy.output_norm_epsilon == 1e-6 &&
                          policy.attention_then_moe && policy.deferred_ffn_post &&
                          policy.final_norm_after_head,
                      "DeepSeek adapter fixes exact four-stream ordered backbone semantics");
@@ -92,6 +94,9 @@ static int transformer_test_numeric(void)
 {
     yvex_transformer_plan *plan = NULL;
     float embedding[] = {1.0f, 2.0f}, expanded[4], next[4], normalized[2];
+    float pre_normalized[2], pre_expected[2];
+    float feature[] = {3.0f, -4.0f}, feature_expected[2];
+    float feature_norm[] = {0.5f, 1.5f};
     float residual[] = {1.0f, 2.0f, 3.0f, 4.0f};
     float combined[] = {5.0f, 6.0f}, post[] = {0.5f, 1.0f};
     float combination[] = {1.0f, 0.0f, 0.0f, 1.0f};
@@ -116,6 +121,8 @@ static int transformer_test_numeric(void)
         (float)((0.5 + 1e-6) * (next[0] + next[2]))));
     expected[1] = yvex_quant_bf16_decode(yvex_quant_bf16_encode(
         (float)((0.5 + 1e-6) * (next[1] + next[3]))));
+    pre_expected[0] = expected[0];
+    pre_expected[1] = expected[1];
     square = ((double)expected[0] * expected[0] + (double)expected[1] * expected[1]) / 2.0;
     inverse = 1.0 / sqrt(square + 1e-5);
     expected[0] = yvex_quant_bf16_decode(yvex_quant_bf16_encode((float)(expected[0] * inverse)));
@@ -124,6 +131,33 @@ static int transformer_test_numeric(void)
                          plan, next, 1ull, function, base, scale, norm, normalized, &err) == YVEX_OK &&
                          normalized[0] == expected[0] && normalized[1] == expected[1],
                      "final mHC head and RMSNorm match an independent full equation");
+    YVEX_TEST_ASSERT(
+        yvex_transformer_final_stage_capture(
+            plan, next, 1ull, function, base, scale, norm, pre_normalized,
+            normalized, &err) == YVEX_OK &&
+            pre_normalized[0] == pre_expected[0] &&
+            pre_normalized[1] == pre_expected[1] &&
+            normalized[0] == expected[0] && normalized[1] == expected[1],
+        "feature capture preserves the exact pre-output-normalized target state");
+    square = ((double)feature[0] * feature[0] +
+              (double)feature[1] * feature[1]) /
+             2.0;
+    inverse = 1.0 / sqrt(square + 1e-6);
+    feature_expected[0] = yvex_quant_bf16_decode(
+        yvex_quant_bf16_encode((float)(feature[0] * inverse * feature_norm[0])));
+    feature_expected[1] = yvex_quant_bf16_decode(
+        yvex_quant_bf16_encode((float)(feature[1] * inverse * feature_norm[1])));
+    YVEX_TEST_ASSERT(
+        yvex_transformer_feature_normalize(feature, 2ull, feature_norm, 1e-6,
+                                           &err) == YVEX_OK &&
+            feature[0] == feature_expected[0] &&
+            feature[1] == feature_expected[1],
+        "draft feature normalization matches an independent RMS equation");
+    feature[0] = NAN;
+    YVEX_TEST_ASSERT(
+        yvex_transformer_feature_normalize(feature, 2ull, feature_norm, 1e-6,
+                                           &err) == YVEX_ERR_FORMAT,
+        "non-finite draft feature normalization refuses");
     next[0] = NAN;
     YVEX_TEST_ASSERT(yvex_transformer_final_stage(
                          plan, next, 1ull, function, base, scale, norm, normalized, &err) ==

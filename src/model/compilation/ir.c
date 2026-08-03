@@ -973,7 +973,7 @@ static yvex_transform_scope deepseek_scope(
 {
     if (scope == YVEX_TENSOR_SCOPE_MAIN_LAYER)
         return YVEX_TRANSFORM_SCOPE_MAIN_LAYER;
-    if (scope == YVEX_TENSOR_SCOPE_MTP)
+    if (scope == YVEX_TENSOR_SCOPE_DRAFT)
         return YVEX_TRANSFORM_SCOPE_AUXILIARY;
     return YVEX_TRANSFORM_SCOPE_GLOBAL;
 }
@@ -1137,7 +1137,7 @@ static int deepseek_add_terminal(deepseek_transform_builder *builder,
     value.logical_key.layer_index = scope == YVEX_TENSOR_SCOPE_GLOBAL
         ? YVEX_TRANSFORM_IR_NO_ID : layer;
     value.logical_key.auxiliary_index =
-        scope == YVEX_TENSOR_SCOPE_MTP
+        scope == YVEX_TENSOR_SCOPE_DRAFT
             ? auxiliary : YVEX_TRANSFORM_IR_NO_ID;
     value.logical_key.group_index = 0u;
     rc = yvex_transform_builder_declare_value(
@@ -1503,42 +1503,46 @@ static int deepseek_build_graph(deepseek_transform_builder *builder)
                 1u, 0u, "deepseek_transform_auxiliary");
         (void)snprintf(prefix, sizeof(prefix), "mtp.%llu", layer);
         rc = deepseek_add_layer(builder, prefix, &aux->layer,
-                                YVEX_TENSOR_SCOPE_MTP, layer);
+                                YVEX_TENSOR_SCOPE_DRAFT, layer);
         if (rc != YVEX_OK) return rc;
-        (void)snprintf(base, sizeof(base), "%s.e_proj", prefix);
-        rc = deepseek_add_fp8(
-            builder, YVEX_TENSOR_ROLE_MTP_EMBEDDING_PROJECTION,
-            YVEX_TENSOR_COLLECTION_AUXILIARY,
-            YVEX_TENSOR_SCOPE_MTP, aux->layer.layer_index, layer,
-            base);
-        if (rc != YVEX_OK) return rc;
-        (void)snprintf(base, sizeof(base), "%s.h_proj", prefix);
-        rc = deepseek_add_fp8(
-            builder, YVEX_TENSOR_ROLE_MTP_HIDDEN_PROJECTION,
-            YVEX_TENSOR_COLLECTION_AUXILIARY,
-            YVEX_TENSOR_SCOPE_MTP, aux->layer.layer_index, layer,
-            base);
-        if (rc != YVEX_OK) return rc;
-#define MTP_DIRECT(role_id, suffix) do {                                       \
+#define DRAFT_DIRECT(role_id, suffix) do {                                     \
     (void)snprintf(name, sizeof(name), "%s.%s", prefix, suffix);             \
     rc = deepseek_add_direct(                                                   \
         builder, role_id, YVEX_TENSOR_COLLECTION_AUXILIARY,          \
-        YVEX_TENSOR_SCOPE_MTP, aux->layer.layer_index, layer, name,   \
+        YVEX_TENSOR_SCOPE_DRAFT, aux->layer.layer_index, layer, name,   \
         YVEX_NATIVE_DTYPE_BF16, 0);                                             \
     if (rc != YVEX_OK) return rc;                                               \
 } while (0)
-        MTP_DIRECT(YVEX_TENSOR_ROLE_MTP_EMBEDDING_NORM, "enorm.weight");
-        MTP_DIRECT(YVEX_TENSOR_ROLE_MTP_HIDDEN_NORM, "hnorm.weight");
-        MTP_DIRECT(YVEX_TENSOR_ROLE_MTP_OUTPUT_NORM, "norm.weight");
-#undef MTP_DIRECT
-        for (index = 0u; index < 3u; ++index) {
+        if (aux->has_feature_projection) {
+            (void)snprintf(base, sizeof(base), "%s.main_proj", prefix);
+            rc = deepseek_add_fp8(
+                builder, YVEX_TENSOR_ROLE_DRAFT_FEATURE_PROJECTION,
+                YVEX_TENSOR_COLLECTION_AUXILIARY,
+                YVEX_TENSOR_SCOPE_DRAFT, aux->layer.layer_index, layer, base);
+            if (rc != YVEX_OK) return rc;
+        }
+        if (aux->has_feature_norm)
+            DRAFT_DIRECT(YVEX_TENSOR_ROLE_DRAFT_FEATURE_NORM, "main_norm.weight");
+        if (aux->has_output_norm)
+            DRAFT_DIRECT(YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM, "norm.weight");
+        if (aux->has_markov_head) {
+            DRAFT_DIRECT(YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING,
+                         "markov_head.markov_w1.weight");
+            DRAFT_DIRECT(YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT,
+                         "markov_head.markov_w2.weight");
+        }
+        if (aux->has_confidence_head)
+            DRAFT_DIRECT(YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE,
+                         "confidence_head.proj.weight");
+#undef DRAFT_DIRECT
+        for (index = 0u; aux->has_separate_mhc_head && index < 3u; ++index) {
             (void)snprintf(name, sizeof(name), "%s.hc_head_%s", prefix,
                            index == 0u ? "fn" :
                            (index == 1u ? "base" : "scale"));
             rc = deepseek_add_direct(
                 builder, head_roles[index],
                 YVEX_TENSOR_COLLECTION_AUXILIARY,
-                YVEX_TENSOR_SCOPE_MTP, aux->layer.layer_index,
+                YVEX_TENSOR_SCOPE_DRAFT, aux->layer.layer_index,
                 layer, name, YVEX_NATIVE_DTYPE_F32, 0);
             if (rc != YVEX_OK) return rc;
         }
@@ -1569,10 +1573,10 @@ static int deepseek_validate_inputs(
             1u, 0u, "deepseek_transform_build");
     if (!verification->verified || verification->blocker_count != 0u ||
         model->main_layer_count != 43u ||
-        model->auxiliary_layer_count != 1u) {
+        model->auxiliary_layer_count != 3u) {
         return deepseek_refuse(
             builder, YVEX_TRANSFORM_FAILURE_ARCHITECTURE_NOT_ADMITTED,
-            44u, model->main_layer_count + model->auxiliary_layer_count,
+            46u, model->main_layer_count + model->auxiliary_layer_count,
             "deepseek_transform_build");
     }
     if (!summary->complete ||

@@ -34,9 +34,9 @@ static int quant_plan_invariants(const yvex_quant_plan_summary *summary, int pol
            summary->schema_version ==
                (policy_plan ? YVEX_QUANT_POLICY_SCHEMA_VERSION
                             : YVEX_QUANT_PROFILE_SCHEMA_VERSION) &&
-           summary->terminal_count == 1360u &&
-           summary->decision_count == 1360u &&
-           summary->source_value_count == 69187u &&
+           summary->terminal_count == 1409u &&
+           summary->decision_count == 1409u &&
+           summary->source_value_count == 72317u &&
            summary->mapping_identity ==
                YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY &&
            summary->payload_bytes_read == 0u &&
@@ -143,7 +143,7 @@ int main(int argc, char **argv)
     const char *preset_name = getenv("YVEX_QUANT_PRESET");
     const char *imatrix_path = getenv("YVEX_IMATRIX_PATH");
     int policy_plan = preset_name && preset_name[0];
-    int ds4_plan = policy_plan && strcmp(preset_name, YVEX_QUANT_DS4_PROFILE_NAME) == 0;
+    int ds4_plan = policy_plan && strcmp(preset_name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0;
     int compatibility_profile_equal = 0;
     int rc;
 
@@ -190,9 +190,9 @@ int main(int argc, char **argv)
             memset(&imatrix_options, 0, sizeof(imatrix_options));
             imatrix_options.path = imatrix_path;
             imatrix_options.source_model_identity =
-                transform_summary ? transform_summary->transform_identity : "missing";
+                YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY;
             imatrix_options.calibration_dataset_identity =
-                "deepseek-v4-flash-chat-v2-rendered-prompts-v1";
+                YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY;
             imatrix_options.producer = "llama.cpp-imatrix";
             imatrix_options.producer_version = 1u;
             imatrix_options.maximum_mapped_bytes = 1024u * 1024u * 1024u;

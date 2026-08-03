@@ -132,6 +132,10 @@ static int scan_file_compare(const void *a, const void *b) {
     return strcmp(fa->path, fb->path);
 }
 
+static int scan_is_acquisition_state(const char *rel_dir, const char *name) {
+    return (!rel_dir || rel_dir[0] == '\0') && strcmp(name, ".cache") == 0;
+}
+
 static int scan_dir(const char *root,
                     const char *rel_dir,
                     int include_files,
@@ -174,6 +178,15 @@ static int scan_dir(const char *root,
         }
 
         if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+            continue;
+        }
+
+        /*
+         * Hugging Face local-directory downloads keep revision and transfer state under this
+         * root-local cache. Provenance reads the revision metadata explicitly, but transient
+         * locks and range fragments must not become model-source files or alter its footprint.
+         */
+        if (scan_is_acquisition_state(rel_dir, ent->d_name)) {
             continue;
         }
 

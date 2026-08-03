@@ -68,7 +68,7 @@ static const char *const literal_lines_0[] = {
     "       reserved controls refuse until their typed runtime owners exist: [multi-layer ranges]",
     "           [--local-capacity N] [--compressed-capacity N] [--indexer-capacity N]",
     "",
-    "example: yvex execute attention run --target deepseek4-v4-flash --backend cpu --scope quick",
+    "example: yvex execute attention run --target deepseek4-v4-flash-dspark --backend cpu --scope quick",
     "boundary: attention commands execute canonical activations over admitted weights and session-persistent "
         "state; they are not prompt execution, transformer composition, or generation"
 };
@@ -1019,7 +1019,6 @@ static const attention_presence_rule attention_presence_rules[] = {
 #undef ATTENTION_PROBE_FIELD
 #undef ATTENTION_BENCHMARK_FIELD
 #undef ATTENTION_TIMING
-
 static int graph_attention_rule_present(
     const attention_presence_rule *rule,
     const yvex_graph_attention_operator_result *result)
@@ -1036,7 +1035,6 @@ static int graph_attention_rule_present(
     }
     return 0;
 }
-
 static unsigned int graph_attention_visible_groups(
     const yvex_graph_attention_operator_result *result, int detailed)
 {
@@ -1048,7 +1046,6 @@ static unsigned int graph_attention_visible_groups(
             visible |= (unsigned int)attention_presence_rules[index].condition;
     return visible;
 }
-
 static int graph_attention_emit(FILE *fp,
                                 int json,
                                 const yvex_graph_attention_operator_result *result,
@@ -1060,7 +1057,6 @@ static int graph_attention_emit(FILE *fp,
                   : yvex_cli_out_fields(fp, result, fields, count);
     return rc < 0 ? YVEX_ERR_IO : rc;
 }
-
 static int graph_attention_csv_cell(FILE *fp, const char *text)
 {
     const unsigned char *cursor = (const unsigned char *)(text ? text : "");
@@ -1071,7 +1067,6 @@ static int graph_attention_csv_cell(FILE *fp, const char *text)
     }
     return yvex_cli_out_char(fp, '"') < 0 ? YVEX_ERR_IO : YVEX_OK;
 }
-
 static int graph_csv_field(FILE *fp, const void *object,
                            const yvex_cli_field_spec *field)
 {
@@ -1118,7 +1113,6 @@ static int graph_csv_field(FILE *fp, const void *object,
         return YVEX_ERR_IO;
     return YVEX_OK;
 }
-
 static int graph_attention_render_fields(FILE *fp,
                                          yvex_graph_report_mode mode,
                                          const yvex_graph_attention_operator_result *result)
@@ -1145,7 +1139,6 @@ static int graph_attention_render_fields(FILE *fp,
     if (json) yvex_cli_json_end(fp);
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-
 int yvex_graph_attention_render(FILE *fp,
                                 yvex_graph_report_mode mode,
                                 const yvex_graph_attention_operator_result *result)
@@ -1153,7 +1146,6 @@ int yvex_graph_attention_render(FILE *fp,
     if (!fp || !result) return YVEX_ERR_INVALID_ARG;
     return graph_attention_render_fields(fp, mode, result);
 }
-
 int yvex_graph_moe_render(FILE *fp, yvex_graph_report_mode mode,
                           const yvex_moe_operator_result *result)
 {
@@ -1454,16 +1446,58 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
         yvex_cli_json_field_str(fp, "generation_plan_identity", result->plan.generation_plan_identity, 1);
         yvex_cli_json_field_str(fp, "generation_execution_identity", run->generation_execution_identity, 1);
         yvex_cli_json_field_str(fp, "prompt_identity", run->prompt_identity, 1);
+        yvex_cli_json_field_str(
+            fp, "execution_mode",
+            run->execution_mode == YVEX_GENERATION_MODE_DSPARK
+                ? "dspark" : "target-only",
+            1);
+        yvex_cli_json_field_str(fp, "speculation_policy_identity",
+                                run->speculation_policy_identity, 1);
         if (yvex_cli_out_writef(fp,
                 "  \"prompt_tokens\": %llu,\n  \"prefill_chunks\": %llu,\n"
                 "  \"sampled_tokens\": %llu,\n  \"model_committed_tokens\": %llu,\n"
                 "  \"decode_steps\": %llu,\n  \"logits_projections\": %llu,\n"
                 "  \"sampling_draws\": %llu,\n  \"generated_text_bytes\": %llu,\n"
+                "  \"draft_cycles\": %llu,\n  \"draft_forwards\": %llu,\n"
+                "  \"proposed_tokens\": %llu,\n"
+                "  \"selected_verification_tokens\": %llu,\n"
+                "  \"target_verifications\": %llu,\n"
+                "  \"accepted_draft_tokens\": %llu,\n"
+                "  \"rejected_draft_tokens\": %llu,\n"
+                "  \"discarded_draft_tokens\": %llu,\n"
+                "  \"target_correction_or_bonus_tokens\": %llu,\n"
+                "  \"maximum_accepted_prefix\": %llu,\n"
+                "  \"mean_accepted_prefix\": %.9f,\n"
+                "  \"confidence_logit_count\": %llu,\n"
+                "  \"confidence_logit_minimum\": %.9f,\n"
+                "  \"confidence_logit_maximum\": %.9f,\n"
+                "  \"confidence_logit_mean\": %.9f,\n"
+                "  \"draft_seconds\": %.9f,\n"
+                "  \"verification_seconds\": %.9f,\n"
+                "  \"speculative_commit_seconds\": %.9f,\n"
+                "  \"effective_committed_tokens_per_second\": %.9f,\n"
                 "  \"final_position\": %llu,\n  \"final_generation\": %llu,\n",
                 run->prompt_token_count, run->prefill_chunk_count, run->sampled_token_count,
                 run->model_committed_token_count, run->decode_step_count,
                 run->logits_projection_count, run->sampling_draw_count,
-                run->generated_text_bytes, run->final_position,
+                run->generated_text_bytes, run->draft_cycle_count,
+                run->draft_forward_count, run->proposed_token_count,
+                run->selected_verification_token_count,
+                run->target_verification_count,
+                run->accepted_draft_token_count,
+                run->rejected_draft_token_count,
+                run->discarded_draft_token_count,
+                run->target_correction_or_bonus_token_count,
+                run->maximum_accepted_prefix, run->mean_accepted_prefix,
+                run->confidence_logit_count,
+                run->confidence_logit_minimum,
+                run->confidence_logit_maximum,
+                run->confidence_logit_mean,
+                (double)run->draft_ns / 1000000000.0,
+                (double)run->verification_ns / 1000000000.0,
+                (double)run->speculative_commit_ns / 1000000000.0,
+                run->effective_committed_tokens_per_second,
+                run->final_position,
                 run->final_persistent_generation) < 0) return YVEX_ERR_IO;
         yvex_cli_json_field_str(fp, "generated_text_digest", run->generated_text_digest, 1);
         yvex_cli_json_field_str(fp, "persistent_state_digest", run->final_persistent_state_digest, 1);
@@ -1510,11 +1544,28 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
     } else {
         if (yvex_cli_out_writef(fp,
                 "status: %s\nprompt_tokens: %llu\nsampled_tokens: %llu\n"
-                "model_committed_tokens: %llu\ngenerated_text_bytes: %llu\n"
+                "model_committed_tokens: %llu\nexecution_mode: %s\n"
+                "generated_text_bytes: %llu\n"
                 "generated_text_digest: %s\nstop_reason: %s\n",
                 result->status, run->prompt_token_count, run->sampled_token_count,
-                run->model_committed_token_count, run->generated_text_bytes, run->generated_text_digest,
+                run->model_committed_token_count,
+                run->execution_mode == YVEX_GENERATION_MODE_DSPARK
+                    ? "dspark" : "target-only",
+                run->generated_text_bytes, run->generated_text_digest,
                 yvex_runtime_generation_stop_reason_name(run->stop_reason)) < 0)
+            return YVEX_ERR_IO;
+        if (run->execution_mode == YVEX_GENERATION_MODE_DSPARK &&
+            yvex_cli_out_writef(
+                fp, "speculation: proposed=%llu accepted=%llu rejected=%llu "
+                    "verifications=%llu max_prefix=%llu confidence=%llu "
+                    "[%.6g,%.6g] mean=%.6g\n",
+                run->proposed_token_count, run->accepted_draft_token_count,
+                run->rejected_draft_token_count,
+                run->target_verification_count,
+                run->maximum_accepted_prefix, run->confidence_logit_count,
+                run->confidence_logit_minimum,
+                run->confidence_logit_maximum,
+                run->confidence_logit_mean) < 0)
             return YVEX_ERR_IO;
         for (index = 0ull; index < result->token_count; ++index)
             if (yvex_cli_out_writef(fp, "token.%llu: id=%u committed=%s terminal=%s text_bytes=%llu\n",

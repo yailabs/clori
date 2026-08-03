@@ -102,10 +102,12 @@ artifact is still not a supported artifact.
 ## Model Registry And Startup Profiles
 
 `<yvex/registry.h>` owns the local model catalog and typed reference
-resolution. Registry schema `yvex.models.local.v3` may bind a catalog entry to
+resolution. Registry schema `yvex.models.local.v4` may bind a catalog entry to
 one complete startup profile: absolute artifact path, exact runtime-binding
-path, runtime target, admitted backend choice, and positive context capacity.
-Older v1/v2 catalogs remain readable but contain no complete startup profile.
+path, runtime target, admitted backend and generation-mode choices, and
+positive context capacity. Older v1/v2/v3 catalogs remain readable; v1/v2
+contain no complete startup profile, while v3 startup profiles are interpreted
+as explicit `target-only` mode.
 
 `yvex_model_registry_startup_validate` checks that all startup facts are
 present and that the two local files are readable. It does not authenticate
@@ -146,8 +148,8 @@ The internal runtime is family-neutral. Its main objects are:
 | --- | --- |
 | `yvex_runtime_binding` | immutable content-addressed bridge from an admitted artifact to runtime identities and executable requirements |
 | `yvex_runtime_family_adapter` | typed family projection; DeepSeek is the first admitted adapter, not a separate runtime |
-| `yvex_runtime_model` | immutable verified artifact handle, binding, imported descriptor/plan and read-only resident weights |
-| `yvex_runtime_execution_session` | mutable backend context, reusable workspace, persistent attention state/residency, cancellation and CUDA Graph registry |
+| `yvex_runtime_model` | immutable verified artifact handle, binding, imported target/draft/verification plans and read-only resident weights |
+| `yvex_runtime_execution_session` | mutable backend context, reusable workspace, committed target state, bounded speculative candidate state, cancellation and CUDA Graph registry |
 | execution descriptor | canonical pointer-free identity over phase, mode, scope, geometry, residency, workspace, state and device facts |
 
 The binding is generated transactionally outside the repository, named by its
@@ -401,7 +403,7 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v4
+## Application Provider And Local Protocol v5
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
 result ABI. A sealed request binds the model, ordered typed messages, explicit
@@ -411,19 +413,21 @@ adapter correlation, and request identity. Clone and wire-decode publish only a
 complete owned request graph. The provider owner neither parses HTTP nor
 renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v4 carries the sealed provider request through the
+`<yvex/server.h>` protocol v5 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
 function calls, usage, terminal completion, and failure. Typed events bind the
 provider adapter, provider-request identity, and external correlation ID while
 excluding prompt and output content.
 
-Protocol v4 removes the former model/artifact facade operations, adds a typed
-`console.status` snapshot, carries exact turn timing and cancellation classes,
-and labels published fragments with an explicit output channel. Facts that are
-not authoritative, including selected client configuration, active micro-phase,
-or KV byte use when unavailable, have explicit availability bits and are never
-fabricated. Version 3 frames refuse during the handshake; there is no private
-pre-v0.1 compatibility decoder.
+Protocol v5 carries selected generation mode, speculative lifecycle events,
+accepted-prefix facts, exact proposal/verification/commit accounting, turn
+timing and cancellation classes, and an explicit output channel for published
+fragments. It retains the typed `console.status` and the removal of former
+model/artifact facades introduced by the preceding protocol. Facts that are
+not authoritative, including selected client configuration, active
+micro-phase, or KV byte use when unavailable, have explicit availability bits
+and are never fabricated. Version 4 frames refuse during the handshake; there
+is no private pre-v0.1 compatibility decoder.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
 queue capacity, timeout, incompatible state and unsupported input without
@@ -440,11 +444,21 @@ owners directly. The exact HTTP profile is documented in
 ## Internal Generation And Hosted Turn Boundary
 
 `include/yvex/internal/generation.h` owns the family-neutral generation plan,
-prompt admission, exact suffix prefill, logits/sampling/decode loop, token
-transaction, stop reasons, incremental text publication, partial progress, and
-result validation. It borrows one admitted runtime model and one execution
-session; it does not reopen artifacts or duplicate tokenizer, Transformer,
-logits, sampling, or KV semantics.
+prompt admission, exact suffix prefill, target-only and speculative execution,
+accepted-prefix transaction, stop reasons, incremental committed-text
+publication, partial progress, and result validation. Its implementation is
+split among the admitted runtime generation, session, speculation, context,
+and result owners rather than exposing another ABI. It borrows one admitted
+runtime model and one execution session; it does not reopen artifacts or
+duplicate tokenizer, Transformer, logits, sampling, or KV semantics.
+
+The speculative boundary consumes a family-projected draft plan and generic
+proposal/verification contracts. Candidate tokens and draft RNG state remain
+private until full-target verification determines the accepted result. Model,
+token-ledger, incremental-decoder, text, and RNG participants prepare and
+publish one accepted prefix together; rejection and cancellation abort every
+uncommitted participant. Existing generated-token and completion-usage counts
+remain committed-target counts.
 
 `<yvex/server.h>` exposes the local protocol, one-model host, server session,
 typed event, metrics snapshot, and thin protocol-client lifecycles. `yvexd`

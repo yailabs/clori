@@ -4,9 +4,12 @@
  */
 #include "tests/test.h"
 
+#include <yvex/internal/artifact.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/model_target.h>
+#include <yvex/internal/quant_numeric.h>
+#include <yvex/internal/runtime.h>
 #include <yvex/internal/source.h>
 
 #include <limits.h>
@@ -38,17 +41,18 @@ static void arch_ir_verification_fixture(yvex_source_verification *source)
     source->tokenizer_json_valid = 1;
     source->tokenizer_config_valid = 1;
     source->generation_config_valid = 1;
+    source->inference_config_valid = 1;
     source->shard_index_present = 1;
     source->shard_index_valid = 1;
     source->shard_index_headers_match = 1;
     source->header_scan_count = 1;
-    source->header_shard_count = 46;
-    source->header_tensor_count = 69187;
-    source->shard_count = 46;
-    source->indexed_tensor_count = 69187;
+    source->header_shard_count = 48;
+    source->header_tensor_count = 72317;
+    source->shard_count = 48;
+    source->indexed_tensor_count = 72317;
     arch_ir_copy(source->resolved_source_path,
                  sizeof(source->resolved_source_path),
-                 "/verified/DeepSeek-V4-Flash");
+                 "/verified/DeepSeek-V4-Flash-DSpark");
     arch_ir_copy(source->manifest_target_id,
                  sizeof(source->manifest_target_id),
                  yvex_source_release_identity()->target_id);
@@ -119,10 +123,10 @@ static void arch_ir_verification_fixture(yvex_source_verification *source)
     source->sliding_window = 128;
     source->bos_token_id = 0;
     source->eos_token_id = 1;
-    source->compress_ratio_count = 44;
+    source->compress_ratio_count = 46;
     for (i = 0u; i < source->compress_ratio_count; ++i) {
         source->compress_ratios[i] =
-            i < 2u || i == 43u ? 0u : (i % 2u == 0u ? 4u : 128u);
+            i < 2u || i >= 43u ? 0u : (i % 2u == 0u ? 4u : 128u);
     }
     source->compress_rope_theta = 160000;
     source->hc_mult = 4;
@@ -131,6 +135,14 @@ static void arch_ir_verification_fixture(yvex_source_verification *source)
     source->index_n_heads = 64;
     source->index_topk = 512;
     source->num_nextn_predict_layers = 1;
+    source->dspark_block_size = 5;
+    source->dspark_noise_token_id = 128799;
+    source->dspark_target_layer_ids[0] = 40;
+    source->dspark_target_layer_ids[1] = 41;
+    source->dspark_target_layer_ids[2] = 42;
+    source->dspark_target_layer_count = 3;
+    source->dspark_markov_rank = 256;
+    source->dspark_inference_layer_count = 3;
     source->o_groups = 8;
     source->rope_theta = 10000;
     source->attention_bias = 0;
@@ -188,18 +200,55 @@ static int test_arch_ir_golden_topology(void)
     const yvex_deepseek_v4_layer_spec *swa;
     const yvex_deepseek_v4_layer_spec *csa;
     const yvex_deepseek_v4_layer_spec *hca;
-    const yvex_deepseek_v4_auxiliary_spec *mtp;
+    const yvex_deepseek_v4_auxiliary_spec *draft_first;
+    const yvex_deepseek_v4_auxiliary_spec *draft_middle;
+    const yvex_deepseek_v4_auxiliary_spec *draft_final;
+    const yvex_runtime_family_adapter *adapter;
+    char logical_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
 
     arch_ir_verification_fixture(&source);
     YVEX_TEST_ASSERT(arch_ir_build(&source, &ir, &failure) == YVEX_OK && ir,
                      "exact verified target builds architecture IR");
     model = yvex_model_register_deepseek_v4()->ir.model(ir);
     YVEX_TEST_ASSERT(model && model->main_layer_count == 43 &&
-                     model->auxiliary_layer_count == 1 &&
+                     model->auxiliary_layer_count == 3 &&
                      model->hidden_size == 4096 &&
                      model->vocabulary_size == 129280 &&
                      model->maximum_context == 1048576,
-                     "global DeepSeek-V4-Flash geometry is normalized");
+                     "global DeepSeek-V4-Flash-DSpark geometry is normalized");
+    adapter = yvex_runtime_family_at(0u);
+    YVEX_TEST_ASSERT(
+        adapter && yvex_model_register_deepseek_v4()->transform.architecture_identity(
+                       ir, logical_identity),
+        "runtime adapter and logical architecture identities are available");
+    YVEX_TEST_ASSERT_STREQ(
+        adapter->logical_transform_identity,
+        YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
+        "runtime adapter is bound to the admitted DSpark Transformation IR");
+    YVEX_TEST_ASSERT(
+        strcmp(logical_identity, adapter->logical_transform_identity) != 0,
+        "logical architecture and Transformation IR identities remain distinct");
+    YVEX_TEST_ASSERT(
+        strcmp(logical_identity,
+               YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY) != 0,
+        "current DSpark identity cannot impersonate retained predecessor calibration");
+    YVEX_TEST_ASSERT(
+        model->dspark.present && model->dspark.schema_version == 1u &&
+            model->dspark.block_size == 5u &&
+            model->dspark.noise_token_id == 128799u &&
+            model->dspark.target_layer_count == 3u &&
+            model->dspark.target_layer_ids[0] == 40u &&
+            model->dspark.target_layer_ids[1] == 41u &&
+            model->dspark.target_layer_ids[2] == 42u &&
+            model->dspark.concatenated_feature_width == 12288u &&
+            model->dspark.draft_layer_count == 3u &&
+            model->dspark.markov_rank == 256u &&
+            model->dspark.final_draft_layer == 2u &&
+            model->dspark.parallel_block_backbone &&
+            model->dspark.sequential_markov &&
+            model->dspark.confidence_available &&
+            model->dspark.target_verification_required,
+        "DSpark source facts become one exact typed architecture contract");
     YVEX_TEST_ASSERT(model->swa_layer_count == 2 &&
                      model->csa_layer_count == 21 &&
                      model->hca_layer_count == 20,
@@ -355,22 +404,37 @@ static int test_arch_ir_golden_topology(void)
                      hca->moe.correction_bias_width == 256,
                      "learned MoE requires hidden-state noaux routing");
 
-    mtp = yvex_model_register_deepseek_v4()->ir.auxiliary_at(ir, 0);
-    YVEX_TEST_ASSERT(mtp && mtp->layer.layer_index == 43 &&
-                     mtp->layer.attention_class ==
+    draft_first = yvex_model_register_deepseek_v4()->ir.auxiliary_at(ir, 0);
+    draft_middle = yvex_model_register_deepseek_v4()->ir.auxiliary_at(ir, 1);
+    draft_final = yvex_model_register_deepseek_v4()->ir.auxiliary_at(ir, 2);
+    YVEX_TEST_ASSERT(draft_first && draft_first->layer.layer_index == 43 &&
+                     draft_first->layer.attention_class ==
                          YVEX_ATTENTION_CLASS_SWA &&
-                     mtp->layer.moe.router_class ==
+                     draft_first->layer.moe.router_class ==
                          YVEX_DEEPSEEK_V4_ROUTER_LEARNED_HIDDEN_STATE &&
-                     mtp->previous_hidden_width == 16384 &&
-                     mtp->requires_token_embedding &&
-                     mtp->requires_previous_hidden_state &&
-                     mtp->requires_separate_mhc_head &&
-                     mtp->mhc_head.function_rows == 4 &&
-                     mtp->mhc_head.function_columns == 16384 &&
-                     mtp->shares_output_head && mtp->shares_final_norm,
-                     "MTP topology is separate from the 43 main layers");
+                     draft_first->has_feature_projection &&
+                     draft_first->feature_projection_input == 12288u &&
+                     draft_first->feature_projection_output == 4096u &&
+                     draft_first->has_feature_norm &&
+                     !draft_first->has_markov_head &&
+                     draft_middle && draft_middle->layer.layer_index == 44u &&
+                     !draft_middle->has_feature_projection &&
+                     !draft_middle->has_output_norm &&
+                     draft_final && draft_final->layer.layer_index == 45u &&
+                     draft_final->has_output_norm &&
+                     draft_final->has_markov_head &&
+                     draft_final->markov_rank == 256u &&
+                     draft_final->markov_vocabulary_size == 129280u &&
+                     draft_final->has_confidence_head &&
+                     draft_final->confidence_input_width == 4352u &&
+                     draft_final->has_separate_mhc_head &&
+                     draft_final->mhc_head.function_rows == 4 &&
+                     draft_final->mhc_head.function_columns == 16384 &&
+                     draft_first->shares_embedding &&
+                     draft_final->shares_output_head,
+                     "three DSpark blocks own distinct source-backed roles");
     YVEX_TEST_ASSERT(yvex_model_register_deepseek_v4()->ir.layer_at(ir, 43) == NULL &&
-                     yvex_model_register_deepseek_v4()->ir.auxiliary_at(ir, 1) == NULL,
+                     yvex_model_register_deepseek_v4()->ir.auxiliary_at(ir, 3) == NULL,
                      "borrowed accessors are bounds checked");
     yvex_model_register_deepseek_v4()->ir.close(ir);
     return 0;
@@ -413,7 +477,7 @@ static int test_arch_ir_position_authority(void)
                 ->layer.position.original_context == 0u &&
             yvex_model_register_deepseek_v4()->ir.auxiliary_at(ir, 0u)
                 ->layer.position.theta == source.rope_theta,
-        "uncompressed MTP attention also disables YaRN");
+        "uncompressed draft attention also disables YaRN");
     yvex_model_register_deepseek_v4()->ir.close(ir);
     return 0;
 }
@@ -440,6 +504,42 @@ static int test_arch_ir_refusal_matrix(void)
     if (arch_ir_expect_failure(&source,
             YVEX_DEEPSEEK_V4_IR_FAILURE_SOURCE_NOT_VERIFIED,
             "incomplete sidecar evidence refuses") != 0) return 1;
+
+    arch_ir_verification_fixture(&source);
+    source.header_shard_count = 47u;
+    if (arch_ir_expect_failure(&source,
+            YVEX_DEEPSEEK_V4_IR_FAILURE_SOURCE_NOT_VERIFIED,
+            "incomplete pinned shard inventory refuses") != 0) return 1;
+
+    arch_ir_verification_fixture(&source);
+    source.dspark_block_size = 4u;
+    if (arch_ir_expect_failure(&source,
+            YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_DSPARK,
+            "wrong DSpark block geometry refuses") != 0) return 1;
+
+    arch_ir_verification_fixture(&source);
+    source.dspark_target_layer_ids[1] = 39u;
+    if (arch_ir_expect_failure(&source,
+            YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_DSPARK,
+            "wrong DSpark target feature order refuses") != 0) return 1;
+
+    arch_ir_verification_fixture(&source);
+    source.dspark_noise_token_id = source.vocab_size;
+    if (arch_ir_expect_failure(&source,
+            YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_DSPARK,
+            "out-of-vocabulary DSpark noise token refuses") != 0) return 1;
+
+    arch_ir_verification_fixture(&source);
+    source.dspark_markov_rank = 128u;
+    if (arch_ir_expect_failure(&source,
+            YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_DSPARK,
+            "wrong DSpark Markov geometry refuses") != 0) return 1;
+
+    arch_ir_verification_fixture(&source);
+    source.dspark_inference_layer_count = 2u;
+    if (arch_ir_expect_failure(&source,
+            YVEX_DEEPSEEK_V4_IR_FAILURE_INVALID_DSPARK,
+            "wrong DSpark inference depth refuses") != 0) return 1;
 
     arch_ir_verification_fixture(&source);
     source.compress_ratio_count = 43;

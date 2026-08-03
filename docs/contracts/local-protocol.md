@@ -1,8 +1,8 @@
-# Local Protocol v4
+# Local Protocol v5
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_CLIENT_PROTOCOL_VERSION = 4`.
+Schema/version: `YVEX_CLIENT_PROTOCOL_VERSION = 5`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -16,20 +16,21 @@ private UID-owned Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 4 and exchanges bounded typed frames.
+Every connection negotiates version 5 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the model worker.
 
-Version 3 is refused explicitly. There is no private pre-v0.1 compatibility
+Version 4 is refused explicitly. There is no private pre-v0.1 compatibility
 decoder. Unknown operations and response kinds fail closed.
 
 ## Operations
 
-Protocol v4 carries runtime start-state/status/stop, live model and memory
-facts, session lifecycle, generation turns and cancellation, event
-subscriptions, and composed console status. Offline compile, artifact, inspect,
-execute, profile, and system operations do not cross this protocol.
+Protocol v5 carries runtime start-state/status/stop, live model and memory
+facts, selected target-only or DSpark generation mode, session lifecycle,
+generation turns and cancellation, speculative lifecycle events, event
+subscriptions, and composed console status. Offline compile, artifact,
+inspect, execute, profile, and system operations do not cross this protocol.
 
 The removed model/artifact facade operation values are absent. Artifact
 inspection is an offline-engine operation; live model inspection comes from
@@ -67,6 +68,11 @@ Ordinary current DeepSeek text uses the final-text channel. An unavailable
 explicit-reasoning channel remains unavailable; clients may not infer hidden
 reasoning or classify prose by style.
 
+DSpark proposal tokens are not stream fragments. Drafting, verification, and
+accepted-prefix events carry typed counters, but final text is emitted only
+after the target-authored prefix and matching session state commit. A client
+never retracts a candidate because no candidate is published.
+
 ## Status and console facts
 
 `runtime.status` returns the bounded runtime snapshot. `console.status` returns
@@ -74,6 +80,7 @@ a server-composed snapshot containing, where authoritative:
 
 - readiness and runtime configuration;
 - live model, artifact, binding, physical variant, backend, and context;
+- selected generation mode and speculative policy identity when admitted;
 - client attachment and selected session;
 - session position, turn count, context and KV use;
 - active phase, progress, cancellation, and last terminal facts.
@@ -87,7 +94,17 @@ The terminal generation result carries exact prompt, reuse and new-prefill
 token counts; prefill time/rate; TTFT; generated-token count; generation/decode
 time/rate; inter-token facts where available; final position; stop or
 cancellation class; usage; state/turn identity; and publication timing where
-owned. Exact seconds are never reconstructed from rounded rates.
+owned. A speculative result additionally carries draft cycles and forwards,
+proposed and selected-verification tokens, target verifications, accepted,
+rejected and discarded drafts, correction/bonus tokens, maximum and mean
+accepted prefix, confidence facts, separate draft/verification/commit timing,
+effective committed rate, and policy identity. Exact seconds are never
+reconstructed from rounded rates.
+
+Existing generated-token and completion-usage fields retain their meaning:
+only target-verified committed tokens count. Proposal counts remain separate.
+The runtime's decode-step count likewise denotes committed sequence positions;
+draft-forward and target-verification counts report execution calls separately.
 
 ## Side effects
 
@@ -103,6 +120,11 @@ timeout, cancellation, transport, and internal classes. A malformed client,
 write failure, or disconnect closes only its connection and correlated work as
 required. The daemon and other sessions survive.
 
+Cancellation during draft or verification discards uncommitted candidate
+state. If an accepted prefix committed before cancellation, the terminal
+message reports that exact partial progress. Rejected or disconnected work
+cannot make proposal state visible to a later request.
+
 Frame buffers, subscriber state, and connection resources are bounded and
 released on every exit path. No terminal success precedes model completion.
 
@@ -115,6 +137,6 @@ format.
 
 ## Non-claims
 
-Protocol v4 is not a public remote API, authentication protocol, TLS transport,
+Protocol v5 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
 quality contract.

@@ -563,7 +563,7 @@ static int write_scale_fixture(const char *path,
 static int test_target_scale_directory(void)
 {
     const char *path = READER_TEST_DIR "/target-scale.gguf";
-    const unsigned long long tensor_count = 69187ull;
+    const unsigned long long tensor_count = 72317ull;
     const unsigned long long token_count = 129280ull;
     yvex_artifact *artifact = NULL;
     yvex_gguf *gguf = NULL;

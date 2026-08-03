@@ -7,6 +7,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "src/server/private.h"
 #include <limits.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -27,6 +28,7 @@ struct server_telemetry {
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char variant_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long active_subscribers;
+    yvex_server_generation_mode generation_mode;
     int mutex_ready, condition_ready, closing;
 };
 static int event_identity(yvex_server_event *event);
@@ -71,12 +73,9 @@ static int event_identity(yvex_server_event *event)
     if (!event)
         return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.server.event.v2") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.server.event.v3") ||
         !yvex_sha256_update_u64(&hash, event->schema_version) ||
         !yvex_sha256_update_u64(&hash, event->sequence) ||
-        !yvex_sha256_update_u64(&hash, event->wall_time_ns) ||
-        !yvex_sha256_update_u64(&hash, event->monotonic_time_ns) ||
-        !yvex_sha256_update_u64(&hash, event->process_id) ||
         !yvex_sha256_update_u64(&hash, event->kind) ||
         !yvex_sha256_update_u64(&hash, event->severity) ||
         !yvex_sha256_update_text(&hash, event->session_id) ||
@@ -89,8 +88,23 @@ static int event_identity(yvex_server_event *event)
         !yvex_sha256_update_u64(&hash, event->value_a) ||
         !yvex_sha256_update_u64(&hash, event->value_b) ||
         !yvex_sha256_update_u64(&hash, event->value_c) ||
+        !yvex_sha256_update_u64(&hash, event->generation_mode) ||
+        !yvex_sha256_update_u64(&hash, event->speculative_cycle) ||
+        !yvex_sha256_update_u64(&hash, event->proposed_tokens) ||
+        !yvex_sha256_update_u64(&hash,
+                                event->selected_verification_tokens) ||
+        !yvex_sha256_update_u64(&hash, event->accepted_tokens) ||
+        !yvex_sha256_update_u64(&hash, event->rejected_tokens) ||
+        !yvex_sha256_update_u64(&hash, event->discarded_tokens) ||
+        !yvex_sha256_update_u64(&hash, event->verification_count) ||
+        !yvex_sha256_update_u64(&hash, event->confidence_logit_count) ||
+        !hash_double(&hash, event->confidence_logit_minimum) ||
+        !hash_double(&hash, event->confidence_logit_maximum) ||
+        !hash_double(&hash, event->confidence_logit_mean) ||
         !hash_double(&hash, event->seconds) ||
         !hash_double(&hash, event->rate) ||
+        !yvex_sha256_update_text(&hash,
+                                 event->speculation_policy_identity) ||
         !yvex_sha256_update_text(&hash, event->runtime_model_identity) ||
         !yvex_sha256_update_text(&hash, event->artifact_identity) ||
         !yvex_sha256_update_text(&hash, event->variant_identity) ||
@@ -101,13 +115,15 @@ static int event_identity(yvex_server_event *event)
 }
 
 int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capacity,
+                          yvex_server_generation_mode generation_mode,
                           const char *runtime_model_identity,
                           const char *artifact_identity,
                           const char *variant_identity, yvex_error *err)
 {
     server_telemetry *telemetry;
     if (out) *out = NULL;
-    if (!out || !capacity || capacity > SIZE_MAX / sizeof(yvex_server_event)) {
+    if (!out || !capacity || capacity > SIZE_MAX / sizeof(yvex_server_event) ||
+        generation_mode > YVEX_SERVER_GENERATION_DSPARK) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.open",
                        "bounded telemetry capacity is required");
         return YVEX_ERR_INVALID_ARG;
@@ -124,6 +140,7 @@ int yvex_server_telemetry_open(server_telemetry **out, unsigned long long capaci
     }
     telemetry->capacity = capacity;
     telemetry->next_sequence = 1u;
+    telemetry->generation_mode = generation_mode;
     telemetry->metrics.schema_version = YVEX_RUNTIME_METRICS_SCHEMA_VERSION;
     (void)clock_gettime(CLOCK_MONOTONIC, &telemetry->started);
     yvex_core_text_copy(telemetry->runtime_model_identity,
@@ -167,6 +184,7 @@ int yvex_server_telemetry_emit_provider(
     const char *request_id, const char *turn_id, const char *phase,
     unsigned long long value_a, unsigned long long value_b,
     unsigned long long value_c, double seconds, double rate,
+    const yvex_runtime_speculation_progress *speculation,
     const yvex_provider_request *provider, yvex_server_event *emitted,
     yvex_error *err)
 {
@@ -185,6 +203,27 @@ int yvex_server_telemetry_emit_provider(
                        "sealed provider correlation facts are required");
         return YVEX_ERR_INVALID_ARG;
     }
+    if (speculation &&
+        (speculation->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V3 ||
+         speculation->kind > YVEX_SPECULATION_PROGRESS_CYCLE_COMMITTED ||
+         speculation->confidence_logit_count > speculation->proposed_tokens ||
+         !isfinite(speculation->confidence_logit_minimum) ||
+         !isfinite(speculation->confidence_logit_maximum) ||
+         !isfinite(speculation->confidence_logit_mean) ||
+         (speculation->confidence_logit_count &&
+          (speculation->confidence_logit_minimum >
+               speculation->confidence_logit_mean ||
+           speculation->confidence_logit_mean >
+               speculation->confidence_logit_maximum)) ||
+         (!speculation->confidence_logit_count &&
+          (speculation->confidence_logit_minimum ||
+           speculation->confidence_logit_maximum ||
+           speculation->confidence_logit_mean)) ||
+         !yvex_sha256_hex_valid(speculation->policy_identity))) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "server.telemetry.emit",
+                       "complete typed speculation progress is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
     memset(&event, 0, sizeof(event));
     event.schema_version = YVEX_RUNTIME_EVENT_SCHEMA_VERSION;
     event.wall_time_ns = time_ns(CLOCK_REALTIME);
@@ -197,6 +236,25 @@ int yvex_server_telemetry_emit_provider(
     event.value_c = value_c;
     event.seconds = seconds;
     event.rate = rate;
+    event.generation_mode = telemetry->generation_mode;
+    if (speculation) {
+        event.speculative_cycle = speculation->cycle;
+        event.proposed_tokens = speculation->proposed_tokens;
+        event.selected_verification_tokens =
+            speculation->selected_verification_tokens;
+        event.accepted_tokens = speculation->accepted_tokens;
+        event.rejected_tokens = speculation->rejected_tokens;
+        event.discarded_tokens = speculation->discarded_tokens;
+        event.verification_count = speculation->verification_count;
+        event.confidence_logit_count = speculation->confidence_logit_count;
+        event.confidence_logit_minimum =
+            speculation->confidence_logit_minimum;
+        event.confidence_logit_maximum =
+            speculation->confidence_logit_maximum;
+        event.confidence_logit_mean = speculation->confidence_logit_mean;
+        yvex_runtime_identity_copy(event.speculation_policy_identity,
+                                   speculation->policy_identity);
+    }
     yvex_core_text_copy(event.session_id, sizeof(event.session_id),
                         session_id ? session_id : "");
     yvex_core_text_copy(event.request_id, sizeof(event.request_id),
@@ -241,8 +299,20 @@ int yvex_server_telemetry_emit_provider(
         dropped.value_a = telemetry->metrics.telemetry_dropped + 2u;
         dropped.value_b = telemetry->capacity;
         dropped.value_c = 0u;
+        dropped.speculative_cycle = 0u;
+        dropped.proposed_tokens = 0u;
+        dropped.selected_verification_tokens = 0u;
+        dropped.accepted_tokens = 0u;
+        dropped.rejected_tokens = 0u;
+        dropped.discarded_tokens = 0u;
+        dropped.verification_count = 0u;
+        dropped.confidence_logit_count = 0u;
+        dropped.confidence_logit_minimum = 0.0;
+        dropped.confidence_logit_maximum = 0.0;
+        dropped.confidence_logit_mean = 0.0;
         dropped.seconds = 0.0;
         dropped.rate = 0.0;
+        dropped.speculation_policy_identity[0] = '\0';
         yvex_core_text_copy(dropped.phase, sizeof(dropped.phase), "telemetry");
         telemetry->metrics.telemetry_dropped += 2u;
         if (!event_append_locked(telemetry, &dropped) ||
@@ -283,7 +353,7 @@ int yvex_server_telemetry_emit(server_telemetry *telemetry,
 {
     return yvex_server_telemetry_emit_provider(
         telemetry, kind, severity, session_id, request_id, turn_id, phase,
-        value_a, value_b, value_c, seconds, rate, NULL, NULL, err);
+        value_a, value_b, value_c, seconds, rate, NULL, NULL, NULL, err);
 }
 
 int yvex_server_telemetry_next(server_telemetry *telemetry,
@@ -518,7 +588,10 @@ const char *yvex_server_event_kind_name(yvex_server_event_kind kind)
         "session.detached", "session.reset", "session.closed",
         "request.received", "request.queued", "request.started",
         "tokenizer.completed", "prefill.started", "prefill.progress",
-        "prefill.completed", "generation.first_token", "generation.fragment",
+        "prefill.completed", "draft.started", "draft.completed",
+        "verification.started", "verification.completed", "prefix.accepted",
+        "candidate.rejected", "speculative.cycle.committed",
+        "generation.first_token", "generation.fragment",
         "generation.progress", "generation.profile", "generation.completed",
         "generation.cancelled", "generation.failed", "client.disconnected", "telemetry.dropped",
         "runtime.shutdown.start", "runtime.shutdown.complete"};
@@ -543,6 +616,10 @@ int yvex_server_event_validate(const yvex_server_event *event, yvex_error *err)
 {
     yvex_server_event candidate;
     char supplied[YVEX_SHA256_HEX_CAP];
+    int speculative;
+    speculative = event && event->kind >= YVEX_SERVER_EVENT_DRAFT_STARTED &&
+                  event->kind <=
+                      YVEX_SERVER_EVENT_SPECULATIVE_CYCLE_COMMITTED;
     if (!event || event->schema_version != YVEX_RUNTIME_EVENT_SCHEMA_VERSION ||
         event->kind > YVEX_SERVER_EVENT_RUNTIME_SHUTDOWN_COMPLETE ||
         event->severity > YVEX_SERVER_SEVERITY_FATAL ||
@@ -552,6 +629,34 @@ int yvex_server_event_validate(const yvex_server_event *event, yvex_error *err)
         (!event->provider_adapter[0] &&
          (event->provider_request_identity[0] ||
           event->external_correlation_id[0])) ||
+        event->generation_mode > YVEX_SERVER_GENERATION_DSPARK ||
+        !isfinite(event->confidence_logit_minimum) ||
+        !isfinite(event->confidence_logit_maximum) ||
+        !isfinite(event->confidence_logit_mean) ||
+        !isfinite(event->seconds) || !isfinite(event->rate) ||
+        (speculative &&
+         (event->generation_mode != YVEX_SERVER_GENERATION_DSPARK ||
+          !event->speculative_cycle ||
+          event->confidence_logit_count > event->proposed_tokens ||
+          (event->confidence_logit_count &&
+           (event->confidence_logit_minimum >
+                event->confidence_logit_mean ||
+            event->confidence_logit_mean >
+                event->confidence_logit_maximum)) ||
+          (!event->confidence_logit_count &&
+           (event->confidence_logit_minimum ||
+            event->confidence_logit_maximum ||
+            event->confidence_logit_mean)) ||
+          !yvex_sha256_hex_valid(event->speculation_policy_identity))) ||
+        (!speculative &&
+         (event->speculative_cycle || event->proposed_tokens ||
+          event->selected_verification_tokens || event->accepted_tokens ||
+          event->rejected_tokens || event->discarded_tokens ||
+          event->verification_count || event->confidence_logit_count ||
+          event->confidence_logit_minimum ||
+          event->confidence_logit_maximum ||
+          event->confidence_logit_mean ||
+          event->speculation_policy_identity[0])) ||
         !yvex_sha256_hex_valid(event->event_identity)) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "server.telemetry.validate",
                        "complete versioned event evidence is required");
@@ -584,13 +689,24 @@ int yvex_server_event_json(const yvex_server_event *event, char *output,
         return YVEX_ERR_INVALID_ARG;
     }
     length = snprintf(output, (size_t)capacity,
-                      "{\"schema\":2,\"sequence\":%llu,\"process\":%llu,"
+                      "{\"schema\":3,\"sequence\":%llu,\"process\":%llu,"
                       "\"wall_time_ns\":%llu,\"monotonic_time_ns\":%llu,\"kind\":\"%s\","
                       "\"severity\":%u,\"session\":\"%s\",\"request\":\"%s\","
                       "\"turn\":\"%s\",\"phase\":\"%s\","
                       "\"provider\":\"%s\",\"provider_request_identity\":\"%s\","
                       "\"external_correlation_id\":\"%s\",\"a\":%llu,"
-                      "\"b\":%llu,\"c\":%llu,\"seconds\":%.9g,\"rate\":%.9g,"
+                      "\"b\":%llu,\"c\":%llu,\"generation_mode\":%u,"
+                      "\"speculative_cycle\":%llu,\"proposed_tokens\":%llu,"
+                      "\"selected_verification_tokens\":%llu,"
+                      "\"accepted_tokens\":%llu,\"rejected_tokens\":%llu,"
+                      "\"discarded_tokens\":%llu,"
+                      "\"verification_count\":%llu,"
+                      "\"confidence_logit_count\":%llu,"
+                      "\"confidence_logit_minimum\":%.9g,"
+                      "\"confidence_logit_maximum\":%.9g,"
+                      "\"confidence_logit_mean\":%.9g,"
+                      "\"speculation_policy_identity\":\"%s\","
+                      "\"seconds\":%.9g,\"rate\":%.9g,"
                       "\"runtime_model_identity\":\"%s\","
                       "\"artifact_identity\":\"%s\",\"variant_identity\":\"%s\","
                       "\"identity\":\"%s\"}\n",
@@ -603,6 +719,17 @@ int yvex_server_event_json(const yvex_server_event *event, char *output,
                       event->provider_request_identity,
                       event->external_correlation_id,
                       event->value_a, event->value_b, event->value_c,
+                      (unsigned int)event->generation_mode,
+                      event->speculative_cycle, event->proposed_tokens,
+                      event->selected_verification_tokens,
+                      event->accepted_tokens, event->rejected_tokens,
+                      event->discarded_tokens,
+                      event->verification_count,
+                      event->confidence_logit_count,
+                      event->confidence_logit_minimum,
+                      event->confidence_logit_maximum,
+                      event->confidence_logit_mean,
+                      event->speculation_policy_identity,
                       event->seconds, event->rate,
                       event->runtime_model_identity, event->artifact_identity,
                       event->variant_identity, event->event_identity);
