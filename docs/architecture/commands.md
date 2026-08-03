@@ -58,8 +58,11 @@ There is no independent hosted `load` operation. In the normal product path,
 `yvex runtime start` reads the selected profile and executes the sibling
 `yvexd` in the foreground. The daemon authenticates those identities, creates
 one immutable runtime model, establishes host/device residency, then publishes
-readiness. Direct daemon options remain an advanced administration boundary,
-not the normal model-selection workflow.
+readiness. The client prints and flushes the selected profile, target, backend,
+generation mode, and context before executing the daemon, so a long admission
+never begins without identifying the model being opened. Direct daemon options
+remain an advanced administration boundary, not the normal model-selection
+workflow.
 `yvex chat` and `yvex run` are protocol clients of that resident model; they do
 not link into runtime execution or open weights locally. The complete operator
 sequence and memory interpretation live in the
@@ -114,12 +117,12 @@ retain semantic validation and defaults.
 ### Conversation
 
 The REPL is a linear client attached to the already resident daemon. It renders
-one composed attachment block, uses the stable `yvex>` prompt, and streams
+one composed attachment line, uses the stable `yvex>` prompt, and streams
 committed model text without role labels. Prefill progress comes from sealed
-server events; the terminal result separately renders prompt/reuse/prefill,
+server events; one inline terminal result renders prompt/reuse/prefill,
 generation, TTFT, context, stop, and session facts from the typed protocol
-result. When DSpark is active, one compact speculation row projects proposed,
-accepted, and target-verification counts; candidate token text is never
+result. When DSpark is active, the same line projects proposed, accepted,
+rejected, and target-verification counts. Candidate token text is never
 rendered. Conversation output never includes raw events, logits, tensor facts,
 or capability walls.
 
@@ -137,11 +140,12 @@ It includes at most one blocker and one actionable hint.
 
 ### Operational stream
 
-`yvex runtime watch` subscribes to the compact stage sequence and renders event
-meaning with semantic counter names for startup, queue, tokenization, prefill,
-draft, verification, accepted-prefix commit, generation, cancellation,
-failure, and shutdown. It omits trace sequence,
-severity, turn, and phase detail. Content remains excluded by default.
+`yvex runtime watch` subscribes to the compact stage sequence and renders only
+operator-significant startup, queue, tokenization, prefill, first-token,
+speculative commit, completion, cancellation, failure, and shutdown facts. It
+omits connection churn, fragments, intermediate draft/verification steps,
+profile rows, trace sequence, severity, turn, and phase detail. Content remains
+excluded by default.
 
 ### Raw stream
 
@@ -198,8 +202,12 @@ while lifecycle and terminal events remain explicit.
 - Daemon raw console: stdout only when selected.
 - Daemon fatal process diagnostic: stderr.
 
-All views respect `NO_COLOR`, TTY detection, explicit byte lengths, and Unicode
-boundaries supplied by the execute tokenizer decoder.
+Human views use one terminal-style owner: cyan for prompt and active work,
+green for readiness and completion, orange for warning or cancellation, red
+for refusal, and dim text for secondary facts. All views respect `NO_COLOR`,
+TTY detection, explicit byte lengths, and Unicode boundaries supplied by the
+execute tokenizer decoder. Redirected and machine-readable output contains no
+ANSI controls.
 
 ## Non-claims
 

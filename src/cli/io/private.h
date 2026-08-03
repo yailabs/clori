@@ -51,6 +51,16 @@ typedef struct {
     const char *fallback;
 } yvex_cli_field_spec;
 
+typedef struct {
+    const char *reset;
+    const char *strong;
+    const char *accent;
+    const char *dim;
+    const char *success;
+    const char *warning;
+    const char *error;
+} yvex_cli_terminal_style;
+
 typedef enum {
     YVEX_MODELS_OPTION_TEXT = 0,
     YVEX_MODELS_OPTION_FLAG,
@@ -459,6 +469,7 @@ int yvex_cli_out_char(FILE *fp, int ch);
 int yvex_cli_out_flush(FILE *fp);
 FILE *yvex_cli_out_stdout(void);
 FILE *yvex_cli_out_stderr(void);
+void yvex_cli_terminal_style_get(FILE *fp, yvex_cli_terminal_style *style);
 void yvex_cli_out_line(FILE *fp, const char *text);
 void yvex_cli_out_lines(FILE *fp, const char *const *lines, size_t line_count);
 void yvex_cli_out_kv_str(FILE *fp, const char *key, const char *value);

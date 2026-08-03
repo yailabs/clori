@@ -408,9 +408,9 @@ grep 'selected model: deepseek4-v4-flash-dspark-selected-embed' "$ROOT/use.out"
 
 "$YVEX_BIN" model selected > "$ROOT/current.out"
 grep 'deepseek4-v4-flash-dspark-selected-embed' "$ROOT/current.out"
-grep 'backend=cpu mode=dspark context=4096' "$ROOT/current.out"
-grep "artifact=$ARTIFACT" "$ROOT/current.out"
-grep "binding=$BINDING" "$ROOT/current.out"
+grep 'backend=cpu · mode=dspark · context=4096' "$ROOT/current.out"
+! grep 'artifact=' "$ROOT/current.out"
+! grep 'binding=' "$ROOT/current.out"
 
 "$YVEX_BIN" model list --registry "$REG" --output nope > "$ROOT/list-bad-output.out" 2> "$ROOT/list-bad-output.err" && exit 1 || true
 grep 'unsupported output mode: nope' "$ROOT/list-bad-output.err"

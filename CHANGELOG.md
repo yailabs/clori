@@ -41,6 +41,10 @@ change. Git history preserves implementation chronology.
 - Made hosted startup registry-first: `model list` reports complete startup
   profiles, `model select NAME` resolves one profile without path flags, and
   `runtime start` opens the selected model without environment variables.
+- Made the human terminal surface compact and semantic: startup announces the
+  selected model before admission, REPL state and turn metrics stay inline,
+  TTY color respects `NO_COLOR`, and operational watch no longer duplicates
+  connection churn or detailed trace/profile output.
 - Reorganized documentation by authority and lifecycle, with canonical
   terminology, family records, contracts, operator procedures, frozen audits,
   and validated migration paths.

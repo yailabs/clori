@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 enum { COMPLETION_CANDIDATE_CAP = 256, COMPLETION_TEXT_CAP = 128 };
 
@@ -231,6 +232,35 @@ FILE *yvex_cli_out_stdout(void)
 FILE *yvex_cli_out_stderr(void)
 {
     return stderr;
+}
+
+void yvex_cli_terminal_style_get(FILE *fp, yvex_cli_terminal_style *style)
+{
+    FILE *stream = fp ? fp : stdout;
+    const char *terminal;
+    int fd;
+
+    if (!style) return;
+    memset(style, 0, sizeof(*style));
+    style->reset = "";
+    style->strong = "";
+    style->accent = "";
+    style->dim = "";
+    style->success = "";
+    style->warning = "";
+    style->error = "";
+    fd = fileno(stream);
+    terminal = getenv("TERM");
+    if (fd < 0 || !isatty(fd) || getenv("NO_COLOR") ||
+        (terminal && !strcmp(terminal, "dumb")))
+        return;
+    style->reset = "\033[0m";
+    style->strong = "\033[1m";
+    style->accent = "\033[36m";
+    style->dim = "\033[2m";
+    style->success = "\033[32m";
+    style->warning = "\033[38;5;208m";
+    style->error = "\033[31m";
 }
 
 void yvex_cli_out_line(FILE *fp, const char *text)

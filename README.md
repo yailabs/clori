@@ -80,9 +80,11 @@ continue with step 4. Otherwise, run this in the first terminal:
 There is no separate model-load command. `runtime start` starts `yvexd`, reads
 the selected registry profile, authenticates its artifact and binding, copies
 the encoded weights into the daemon's process-lifetime host arena, builds
-runtime residency, and keeps that runtime model open. Leave this foreground
-terminal running. A large model can take several minutes before the local
-runtime becomes ready.
+runtime residency, and keeps that runtime model open. Before admission starts,
+it prints the selected profile, target, backend, mode, and context on one line,
+so the foreground terminal identifies the model being loaded during a long
+startup. Leave that terminal running. A large model can take several minutes
+before the local runtime becomes ready.
 
 ### 4. Verify the resident runtime
 
@@ -135,11 +137,12 @@ One compiled operation registry drives command paths, syntax, help, JSON
 discovery, completion, and slash schemas without becoming a domain-policy
 owner.
 
-The daemon-backed console uses one `yvex>` prompt, registry-derived slash
-commands, server-authored prefill progress, typed final metrics, semantic
-watch, and a detailed human trace. Ctrl-D exits cleanly even when discarding an
-unfinished line. Unsupported explicit-reasoning controls remain absent rather
-than inferring hidden reasoning.
+The daemon-backed console uses one `yvex>` prompt, one inline attachment view,
+in-place server-authored prefill progress, one compact turn summary, semantic
+TTY color, a curated operational watch, and a detailed human trace.
+Ctrl-D exits cleanly even when discarding an unfinished line. Unsupported
+explicit-reasoning controls remain absent rather than inferring hidden
+reasoning.
 Live milestone and release-gate state remains only in
 [`ROADMAP.md`](ROADMAP.md).
 

@@ -58,10 +58,14 @@ runtime model.
 `yvexd --console raw` and `yvex runtime trace --json` emit canonical JSONL for
 the admitted trace schema. `runtime status` is a bounded snapshot rather than
 an event replay. Human `runtime watch` renders the compact semantic stage
-stream. Human `runtime trace` adds sequence, severity, turn, phase, timing, and
-rate to the same semantic facts. Neither renderer exposes generic positional
-counter names. Native prefill progress sent to the REPL is another projection
-of the sealed event, not a synthetic client event.
+stream: it retains operator-significant lifecycle, queue, prefill, first-token,
+speculative-commit, completion, cancellation, and failure events while
+suppressing connection churn, fragments, intermediate draft/verification
+steps, and profile rows. Human `runtime trace` retains the full subscribed
+event sequence and adds sequence, severity, turn, phase, timing, and rate.
+Neither renderer exposes generic positional counter names. Native prefill
+progress sent to the REPL is another projection of the sealed event, not a
+synthetic client event.
 
 Speculative events carry named generation mode, cycle, proposed,
 selected-verification, accepted, rejected, discarded, verification, confidence,

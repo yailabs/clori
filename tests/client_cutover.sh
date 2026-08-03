@@ -246,9 +246,10 @@ grep -F 'selected model: current-model-runtime-profile' "$root/out" >/dev/null
 test "$(stat -c '%a' "$home_root/.config/yvex/model.conf")" = 600
 test "$(stat -c '%a' "$home_root/.config/yvex")" = 700
 HOME="$home_root" "$YVEX_BIN" model selected >"$root/out"
-grep -F 'backend=cuda mode=dspark context=4096' "$root/out" >/dev/null
-grep -F "artifact=$artifact" "$root/out" >/dev/null
-grep -F "binding=$binding" "$root/out" >/dev/null
+grep -F 'target deepseek4-v4-flash-dspark · backend=cuda · mode=dspark · context=4096' \
+    "$root/out" >/dev/null
+! grep -F 'artifact=' "$root/out" >/dev/null
+! grep -F 'binding=' "$root/out" >/dev/null
 
 # A flag-free start projects the selected profile into yvexd's startup vector. Keep this proof
 # isolated from the resident daemon by placing the client beside a recording test double.
@@ -260,7 +261,10 @@ printf '%s\n' "$@" >"$YVEX_TEST_DAEMON_ARGS"
 EOF
 chmod 700 "$root/product-bin/yvexd"
 HOME="$home_root" YVEX_TEST_DAEMON_ARGS="$root/daemon-arguments" \
-    "$root/product-bin/yvex" runtime start
+    "$root/product-bin/yvex" runtime start >"$root/start.out"
+grep -F 'loading selected model current-model-runtime-profile' "$root/start.out" >/dev/null
+grep -F 'target deepseek4-v4-flash-dspark · CUDA · DSpark · context 4096' \
+    "$root/start.out" >/dev/null
 cat >"$root/expected-daemon-arguments" <<EOF
 --model
 $artifact

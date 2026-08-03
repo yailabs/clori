@@ -90,6 +90,16 @@ binary. Foreground operation is intentional: keep this terminal open. Exactly
 one daemon owns the model, sessions, KV, worker, local socket, OpenAI listener,
 and telemetry.
 
+Before the potentially long admission begins, the command prints the complete
+selected startup identity in one line, for example:
+
+```text
+YVEX runtime · loading selected model deepseek4-v4-flash-dspark-runtime-iq2xxs · target deepseek4-v4-flash-dspark · CUDA · DSpark · context 4096
+```
+
+This is the model the new daemon is about to open. It is not a projection of a
+previously running daemon and it is flushed before control passes to `yvexd`.
+
 Startup authenticates the selected artifact and binding, creates the immutable
 runtime model, builds residency once, and only then publishes the local socket.
 Large models can spend several minutes in this phase. From a second terminal,
@@ -159,10 +169,7 @@ start` in the first and run `runtime status`, then `chat`, in the second.
 Chat opens one concise attachment view and the stable prompt:
 
 ```text
-YVEX 0.1.0 · protocol 5
-deepseek-v4-flash-dspark · CUDA · DSpark · variant 0123456789ab
-runtime ready · attached to resident runtime
-session main · position 0 · turns 0 · context 0/4096 · KV unavailable
+YVEX 0.1.0 · protocol 5 · deepseek4-v4-flash-dspark · CUDA · DSpark · variant 0123456789ab · ● ready · attached to resident runtime · session main · position 0 · turns 0 · context 0/4096
 
 yvex>
 ```
@@ -170,10 +177,16 @@ yvex>
 The exact identities come from the running daemon; the example values are not
 admission evidence. Model output is streamed directly without repeated role
 labels. During a turn, the console updates one daemon-authored prefill line in
-place. The terminal result then reports prefill and generation separately,
-including TTFT, context, stop reason, and session. When DSpark is active, one
-compact speculation row reports proposals, accepted drafts, and target
-verification count. Candidate token text is never displayed.
+place. The terminal result then reports prefill, generation, TTFT, speculation,
+context, stop reason, and session on one compact line. Candidate token text is
+never displayed.
+
+On a TTY, cyan marks the prompt and active work, green marks readiness and
+completion, orange marks cancellation or warning, red marks refusal, and dim
+text carries secondary facts. Redirected and machine-readable output never
+contains terminal controls. Set `NO_COLOR=1` to disable color explicitly; if
+that variable is already exported in the shell, unset it to see the semantic
+colors.
 
 Slash commands are discovered from the canonical registry. `/help` lists the
 admitted set; `/status`, `/runtime`, `/model`, `/memory`, and `/context` inspect
@@ -277,12 +290,13 @@ daemon console:
 ```
 
 `watch` requests the compact stage stream, while `trace` requests the detailed
-event stream. Watch names the operational event and its semantic counters.
-Human trace additionally shows sequence, severity, turn, phase, timing, and
-rate. `trace --json` emits the canonical complete JSONL event record. Prompts
-and answers remain absent from all three by default. DSpark trace events expose
-draft, target verification, accepted-prefix, rejection, and commit facts using
-named fields; watch remains compact.
+event stream. Watch shows operator-significant queue, request, prefill,
+first-token, committed speculative-cycle, completion, cancellation, failure,
+and lifecycle transitions. It suppresses connection churn, token fragments,
+intermediate draft/verification steps, and generation-profile rows. Human
+trace retains those details and adds sequence, severity, turn, phase, timing,
+and rate. `trace --json` emits the canonical complete JSONL event record.
+Prompts and answers remain absent from all three by default.
 
 Raw daemon JSONL is selected at host startup with `--console raw`. Increase
 `--trace-level` from `summary` to `stages`, `tokens`, or `full` only when the

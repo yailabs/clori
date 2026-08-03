@@ -104,7 +104,7 @@ grep -E '"resident_device_bytes":[1-9][0-9]*' "$root/status.after.json" >/dev/nu
 grep -F '"output_head_upload_count":1' "$root/status.after.json" >/dev/null
 
 mkfifo "$root/repl.input"
-XDG_RUNTIME_DIR="$runtime" script -q -f -e \
+NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
     -c "$YVEX_BIN chat --session repl-live --max-new-tokens 1" \
     "$root/repl.typescript" <"$root/repl.input" >/dev/null &
 repl_pid=$!
@@ -130,10 +130,12 @@ printf '\004' >&3
 exec 3>&-
 wait "$repl_pid"
 repl_pid=
-grep -F 'runtime ready · attached to resident runtime' "$root/repl.typescript" >/dev/null
+grep -F '● ready' "$root/repl.typescript" >/dev/null
+grep -F 'attached to resident runtime' "$root/repl.typescript" >/dev/null
 grep -F 'session repl-live' "$root/repl.typescript" >/dev/null
-grep -F 'generation   1 tokens' "$root/repl.typescript" >/dev/null
-grep -F 'prefill      ' "$root/repl.typescript" >/dev/null
+grep -F 'generation' "$root/repl.typescript" >/dev/null
+grep -F '1 tokens' "$root/repl.typescript" >/dev/null
+grep -F 'prefill' "$root/repl.typescript" >/dev/null
 ! grep -F 'assistant>' "$root/repl.typescript" >/dev/null
 ! grep -F 'you>' "$root/repl.typescript" >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show repl-live >"$root/repl.session"
