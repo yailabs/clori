@@ -1169,7 +1169,7 @@ static int repl_command(const char *line, char current[YVEX_SERVER_SESSION_NAME_
             (void)yvex_client_render_help_path(invocation.argument_count,
                                                 invocation.arguments, 0, 0);
         else
-            yvex_cli_out_repl_catalog(0);
+            yvex_cli_out_repl_catalog();
         break;
     case YVEX_OPERATOR_RUNTIME_CONSOLE_STATUS:
         (void)console_status(current);
@@ -1276,7 +1276,7 @@ static int chat(const char *session_name, unsigned long long maximum_new_tokens)
         return client_error(&err);
     }
     render_console_status(&status, 1);
-    yvex_cli_out_repl_catalog(1);
+    yvex_cli_out_repl_catalog();
     yvex_cli_terminal_style_get(stdout, &style);
     (void)snprintf(prompt, sizeof(prompt), "%syvex>%s ", style.accent, style.reset);
     for (;;) {
@@ -1775,11 +1775,38 @@ static void render_console_status(const yvex_client_message *message, int startu
                                                        : status->live_model_identity;
     yvex_cli_terminal_style style;
     yvex_cli_terminal_style_get(stdout, &style);
-    if (startup)
-        printf("%sYVEX %s%s · protocol %u · ", style.strong, yvex_version_string(),
+    if (startup) {
+        printf("%sYVEX %s%s · protocol %u\n\n", style.strong, yvex_version_string(),
                style.reset, YVEX_LOCAL_PROTOCOL_VERSION);
-    else
-        printf("%sconsole%s · ", style.strong, style.reset);
+        printf("  %s%-10s%s %s", style.dim, "model", style.reset, target);
+        printf("\n  %s%-10s%s %.12s\n", style.dim, "variant", style.reset, status->physical_variant_identity);
+        printf("  %s%-10s%s %s%s%s · %s · %s%s · %s%s\n", style.dim, "runtime",
+               style.reset, status->runtime_ready ? style.success : style.warning,
+               status->runtime_ready ? "● ready" : "● not ready", style.reset,
+               status->attached ? "attached to resident runtime" : "detached from runtime",
+               style.accent, backend_name(status->backend),
+               generation_mode_name(message->runtime.generation_mode), style.reset);
+        printf("  %s%-10s%s %s · position %llu · turns %llu\n", style.dim, "session",
+               style.reset, status->session_name, status->position, status->turn_count);
+        printf("  %s%-10s%s %llu/%llu", style.dim, "context", style.reset,
+               status->context_used, status->context_capacity);
+        if (status->kv_used_available)
+            printf(" · KV %.2f MiB", (double)status->kv_used_bytes / 1048576.0);
+        printf("\n  %s%-10s%s %.2f GiB host · %.2f GiB device\n", style.dim, "memory", style.reset,
+               (double)message->runtime.metrics.resident_host_bytes / 1073741824.0,
+               (double)message->runtime.metrics.resident_device_bytes / 1073741824.0);
+        printf("  %s%-10s%s ", style.dim, "OpenAI", style.reset);
+        if (message->runtime.openai_listener_enabled)
+            printf("%s● %s%s · 127.0.0.1:%u", message->runtime.openai_listener_ready
+                                                    ? style.success : style.warning,
+                   message->runtime.openai_listener_ready ? "ready" : "starting",
+                   style.reset, (unsigned int)message->runtime.openai_port);
+        else
+            printf("%sdisabled%s", style.dim, style.reset);
+        puts("\n");
+        return;
+    }
+    printf("%sconsole%s · ", style.strong, style.reset);
     printf("%s · %s · %s · variant %.12s · %s%s%s · %s · "
            "session %s · position %llu · turns %llu · context %llu/%llu",
            target, backend_name(status->backend),
@@ -1793,23 +1820,9 @@ static void render_console_status(const yvex_client_message *message, int startu
            status->context_capacity);
     if (status->kv_used_available)
         printf(" · KV %.2f MiB", (double)status->kv_used_bytes / 1048576.0);
-    if (startup) {
-        printf(" · %smemory %.2f GiB host/%.2f GiB device%s", style.dim,
-               (double)message->runtime.metrics.resident_host_bytes / 1073741824.0,
-               (double)message->runtime.metrics.resident_device_bytes / 1073741824.0,
-               style.reset);
-        if (message->runtime.openai_listener_enabled)
-            printf(" · OpenAI %s%s%s 127.0.0.1:%u",
-                   message->runtime.openai_listener_ready ? style.success : style.warning,
-                   message->runtime.openai_listener_ready ? "ready" : "starting",
-                   style.reset, (unsigned int)message->runtime.openai_port);
-        else
-            printf(" · OpenAI %sdisabled%s", style.dim, style.reset);
-    } else {
-        printf(" · live %.12s", status->live_model_identity);
-        if (status->selected_model_available)
-            printf(" · selected %.12s", status->selected_model_identity);
-    }
+    printf(" · live %.12s", status->live_model_identity);
+    if (status->selected_model_available)
+        printf(" · selected %.12s", status->selected_model_identity);
     putchar('\n');
 }
 

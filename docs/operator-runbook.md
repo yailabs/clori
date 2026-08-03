@@ -169,8 +169,25 @@ start` in the first and run `runtime status`, then `chat`, in the second.
 Chat opens one concise attachment view and the stable prompt:
 
 ```text
-YVEX 0.1.0 · protocol 5 · deepseek4-v4-flash-dspark · CUDA · DSpark · variant 0123456789ab · ● ready · attached to resident runtime · session main · position 0 · turns 0 · context 0/4096 · memory 100.84 GiB host/0.02 GiB device · OpenAI ready 127.0.0.1:8001
-commands · /help · /status · /context · /memory · /model · /runtime · /attach · /cancel · /close · /detach · /sessions · /new · /reset · /session · /quit · Ctrl-C cancel · Ctrl-D exit
+YVEX 0.1.0 · protocol 5
+
+  model      deepseek4-v4-flash-dspark
+  variant    abcdef012345
+  runtime    ● ready · attached to resident runtime · CUDA · DSpark
+  session    main · position 0 · turns 0
+  context    0/4096
+  memory     100.84 GiB host · 0.02 GiB device
+  OpenAI     ● ready · 127.0.0.1:8001
+
+commands
+  /help        Discover canonical commands and operations.
+  /context     Show authoritative context and KV use for the attached session.
+  /status      Return one composed runtime and attached-session snapshot.
+  ...
+  /quit        Exit the interactive client.
+
+  Ctrl-C       cancel an active turn or clear input; press again to exit
+  Ctrl-D       exit and discard an unfinished line
 
 yvex>
 ```

@@ -85,24 +85,27 @@ exec 3>&-
 wait "$repl_pid"
 repl_pid=
 
-grep -F 'YVEX ' "$root/typescript" >/dev/null
-grep -F 'deepseek4-v4-flash-dspark · CUDA · target-only · variant dddddddddddd' \
-    "$root/typescript" >/dev/null
-grep -F '● ready' "$root/typescript" >/dev/null
-grep -F 'attached to resident runtime' "$root/typescript" >/dev/null
-grep -F 'session pty · position 0 · turns 0 · context 0/4096' "$root/typescript" >/dev/null
-grep -F 'memory 0.00 GiB host/0.00 GiB device' "$root/typescript" >/dev/null
-grep -F 'OpenAI ' "$root/typescript" >/dev/null
-grep -F 'disabled' "$root/typescript" >/dev/null
-grep -F 'commands' "$root/typescript" >/dev/null
-grep -F '/help' "$root/typescript" >/dev/null
-grep -F '/status' "$root/typescript" >/dev/null
-grep -F '/runtime' "$root/typescript" >/dev/null
-grep -F '/sessions' "$root/typescript" >/dev/null
-grep -F '/cancel' "$root/typescript" >/dev/null
-grep -F '/quit' "$root/typescript" >/dev/null
-grep -F 'Ctrl-C' "$root/typescript" >/dev/null
-grep -F 'Ctrl-D' "$root/typescript" >/dev/null
+esc=$(printf '\033')
+sed "s/${esc}\\[[0-9;]*m//g" "$root/typescript" | tr -d '\r' \
+    >"$root/typescript.plain"
+grep -F 'YVEX 0.1.0 · protocol 5' "$root/typescript.plain" >/dev/null
+grep -F '  model      deepseek4-v4-flash-dspark' \
+    "$root/typescript.plain" >/dev/null
+grep -F '  variant    dddddddddddd' "$root/typescript.plain" >/dev/null
+grep -F '  runtime    ● ready · attached to resident runtime · CUDA · target-only' \
+    "$root/typescript.plain" >/dev/null
+grep -F '  session    pty · position 0 · turns 0' "$root/typescript.plain" >/dev/null
+grep -F '  context    0/4096' "$root/typescript.plain" >/dev/null
+grep -F '  memory     0.00 GiB host · 0.00 GiB device' \
+    "$root/typescript.plain" >/dev/null
+grep -F '  OpenAI     disabled' "$root/typescript.plain" >/dev/null
+grep -Fx 'commands' "$root/typescript.plain" >/dev/null
+grep -F '  /help        Discover canonical commands and operations.' \
+    "$root/typescript.plain" >/dev/null
+grep -F '  /status      Return one composed runtime and attached-session snapshot.' \
+    "$root/typescript.plain" >/dev/null
+test "$(grep -Ec '^  /' "$root/typescript.plain")" -eq 15
+! grep -F 'commands ·' "$root/typescript.plain" >/dev/null
 grep -F 'yvex>' "$root/typescript" >/dev/null
 grep -F 'processing 4 input tokens · 2/4 · 50.0%' "$root/typescript" >/dev/null
 grep -F 'processing 4 input tokens · 4/4 · 100%' "$root/typescript" >/dev/null
@@ -114,7 +117,6 @@ grep -E '4 new/5 prompt/1 reused.*3 tokens.*TTFT 2\.50 s.*context 8/4096.*stop m
 ! grep -F 'KV unavailable' "$root/typescript" >/dev/null
 ! grep -F 'you>' "$root/typescript" >/dev/null
 ! grep -F 'assistant>' "$root/typescript" >/dev/null
-esc=$(printf '\033')
 grep -F "${esc}[38;5;81m" "$root/typescript" >/dev/null
 grep -F "${esc}[38;5;114m" "$root/typescript" >/dev/null
 grep -F "${esc}[?2004h" "$root/typescript" >/dev/null

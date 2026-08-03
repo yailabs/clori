@@ -116,17 +116,18 @@ retain semantic validation and defaults.
 
 ### Conversation
 
-The REPL is a linear client attached to the already resident daemon. Its first
-line composes the live target, backend, generation mode, physical variant,
-readiness, attachment, session, context, memory, and OpenAI-listener facts. A
-second inline catalog projects every admitted slash command from the compiled
-registry before the stable `yvex>` prompt. It streams committed model text
-without role labels. Prefill progress comes from sealed server events; one
-inline terminal result renders prompt/reuse/prefill, generation, TTFT, context,
-stop, and session facts from the typed protocol result. When DSpark is active,
-the same line projects proposed, accepted, rejected, and target-verification
-counts. Candidate token text is never rendered. Conversation output never
-includes raw events, logits, tensor facts, or capability walls.
+The REPL is a linear client attached to the already resident daemon. A compact
+vertical attachment block separates the live target, physical variant, runtime,
+session, context, memory, and OpenAI-listener facts instead of relying on
+terminal wrapping. The complete slash catalog then projects one registry-owned
+command and summary per line before the stable `yvex>` prompt. It streams
+committed model text without role labels. Prefill progress comes from sealed
+server events; one inline terminal result renders prompt/reuse/prefill,
+generation, TTFT, context, stop, and session facts from the typed protocol
+result. When DSpark is active, the same result line projects proposed, accepted,
+rejected, and target-verification counts. Candidate token text is never
+rendered. Conversation output never includes raw events, logits, tensor facts,
+or capability walls.
 
 The line editor owns bounded in-memory history, registry-derived slash
 completion, UTF-8 deletion, bracketed multiline paste, resize redraw, and

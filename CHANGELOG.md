@@ -42,9 +42,10 @@ change. Git history preserves implementation chronology.
   profiles, `model select NAME` resolves one profile without path flags, and
   `runtime start` opens the selected model without environment variables.
 - Made the human terminal surface compact and semantic: startup announces the
-  selected model before admission; REPL state, commands, and turn metrics stay
-  inline; TTY color respects `NO_COLOR`; and categorized operational watch
-  separates signal from connection churn and detailed trace/profile output.
+  selected model before admission; REPL attachment facts and commands use a
+  stable vertical hierarchy while turn metrics remain compact; TTY color
+  respects `NO_COLOR`; and categorized operational watch separates signal from
+  connection churn and detailed trace/profile output.
 - Reorganized documentation by authority and lifecycle, with canonical
   terminology, family records, contracts, operator procedures, frozen audits,
   and validated migration paths.

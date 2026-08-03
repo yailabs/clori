@@ -497,36 +497,31 @@ int yvex_cli_out_server_event(const yvex_server_event *event, int detailed)
     return 1;
 }
 
-void yvex_cli_out_repl_catalog(int compact)
+void yvex_cli_out_repl_catalog(void)
 {
     yvex_cli_terminal_style style;
     size_t index, pass;
     yvex_cli_terminal_style_get(stdout, &style);
     printf("%scommands%s", style.strong, style.reset);
-    for (pass = 0u; pass < 4u; ++pass) {
+    for (pass = 0u; pass < 3u; ++pass) {
         for (index = 0u; index < yvex_operator_descriptor_count; ++index) {
             const yvex_operator_descriptor *descriptor = &yvex_operator_descriptors[index];
             int is_help = descriptor->runtime_adapter == YVEX_OPERATOR_RUNTIME_HELP;
-            int is_status =
-                descriptor->runtime_adapter == YVEX_OPERATOR_RUNTIME_CONSOLE_STATUS;
             int is_quit = descriptor->repl_adapter == YVEX_OPERATOR_REPL_QUIT;
             if (!strcmp(descriptor->slash_projection, "none") ||
                 (pass == 0u && !is_help) ||
-                (pass == 1u && !is_status) ||
-                (pass == 2u && (is_help || is_status || is_quit)) ||
-                (pass == 3u && !is_quit))
+                (pass == 1u && (is_help || is_quit)) ||
+                (pass == 2u && !is_quit))
                 continue;
-            if (compact)
-                printf(" · %s%s%s", style.accent, descriptor->slash_projection, style.reset);
-            else
-                printf("\n  %s%-12s%s %s%s%s", style.accent,
-                       descriptor->slash_projection, style.reset, style.dim,
-                       descriptor->summary, style.reset);
+            printf("\n  %s%-12s%s %s%s%s", style.accent,
+                   descriptor->slash_projection, style.reset, style.dim,
+                   descriptor->summary, style.reset);
         }
     }
-    if (compact)
-        printf(" · %sCtrl-C%s cancel · %sCtrl-D%s exit", style.dim, style.reset,
-               style.dim, style.reset);
+    printf("\n\n  %s%-12s%s %scancel an active turn or clear input; press again to exit%s",
+           style.warning, "Ctrl-C", style.reset, style.dim, style.reset);
+    printf("\n  %s%-12s%s %sexit and discard an unfinished line%s", style.accent,
+           "Ctrl-D", style.reset, style.dim, style.reset);
     puts("\n");
 }
 

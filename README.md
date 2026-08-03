@@ -137,10 +137,10 @@ One compiled operation registry drives command paths, syntax, help, JSON
 discovery, completion, and slash schemas without becoming a domain-policy
 owner.
 
-The daemon-backed console uses one `yvex>` prompt, one inline attachment view,
-an immediately visible registry-derived slash catalog, in-place server-authored
-prefill progress, one compact turn summary, semantic TTY color, a categorized
-operational watch, and a detailed human trace.
+The daemon-backed console uses one `yvex>` prompt, one compact vertical
+attachment view, an immediately visible registry-derived slash catalog,
+in-place server-authored prefill progress, one compact turn summary, semantic
+TTY color, a categorized operational watch, and a detailed human trace.
 Ctrl-D exits cleanly even when discarding an unfinished line. Unsupported
 explicit-reasoning controls remain absent rather than inferring hidden
 reasoning.
