@@ -32,6 +32,9 @@ change. Git history preserves implementation chronology.
 - An operator-reachable, identity-bound CUDA bandwidth fixture that records raw
   streaming, D2D and coherent-host samples instead of treating peak hardware
   bandwidth as measured evidence.
+- An identity-bound phase roofline ledger on real CUDA generation. Audit and
+  JSON output distinguish measured duration/work from unavailable byte,
+  occupancy and batched-execution facts instead of projecting zeros.
 
 ### Changed
 

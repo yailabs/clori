@@ -362,13 +362,16 @@ static int generation_capacity_hardware(
 static int generation_capacity_workload(
     yvex_runtime_generation_context *context, yvex_error *err)
 {
-    const yvex_model_execution_descriptor *model;
     const yvex_runtime_descriptor_summary *runtime =
         yvex_runtime_descriptor_summary_get(context->model_view->descriptor);
-    model = runtime && runtime->model_execution.schema_version
-                ? &runtime->model_execution
-                : NULL;
-    if (!model) return YVEX_OK;
+    const yvex_model_execution_descriptor *model =
+        runtime && runtime->model_execution.schema_version
+            ? &runtime->model_execution
+            : NULL;
+    const yvex_speculation_family_policy *speculation =
+        context->speculation
+            ? yvex_runtime_speculation_policy_get(context->speculation)
+            : NULL;
     memset(&context->workload_profile, 0, sizeof(context->workload_profile));
     context->workload_profile.schema_version =
         YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1;
@@ -388,9 +391,10 @@ static int generation_capacity_workload(
     context->workload_profile.moe_row_tile =
         context->options.prefill_chunk_tokens;
     context->workload_profile.output_head_rows =
-        context->options.mode == YVEX_GENERATION_MODE_DSPARK
-            ? model->verification_width_maximum
-            : 1ull;
+        speculation ? speculation->block_size + 1ull
+                    : (context->options.mode == YVEX_GENERATION_MODE_DSPARK && model
+                           ? model->verification_width_maximum
+                           : 1ull);
     context->workload_profile.system_reserve_bytes =
         YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE;
     context->workload_profile.latency_priority = 1;
@@ -415,14 +419,14 @@ static int generation_capacity_build(
     yvex_execution_state_class_request states[YVEX_MODEL_STATE_CLASS_COUNT];
     yvex_execution_capacity_plan_request request = {0};
     unsigned long long workspace, index, count = 0ull;
+    if (generation_capacity_hardware(context, err) != YVEX_OK) return yvex_error_code(err);
     if (!model) return YVEX_OK;
+    if (generation_capacity_workload(context, err) != YVEX_OK) return yvex_error_code(err);
     if (context->options.context_capacity > model->maximum_context)
         return generation_context_refuse(
             err, YVEX_ERR_BOUNDS,
             "requested context exceeds the model-authored maximum");
-    if (generation_capacity_hardware(context, err) != YVEX_OK ||
-        generation_capacity_workload(context, err) != YVEX_OK ||
-        generation_capacity_graph_geometry(context, model, &geometry, err) != YVEX_OK ||
+    if (generation_capacity_graph_geometry(context, model, &geometry, err) != YVEX_OK ||
         yvex_runtime_residency_snapshot(context->model_view->residency, &residency,
                                         NULL, NULL, err) != YVEX_OK)
         return yvex_error_code(err);
@@ -772,6 +776,9 @@ int yvex_runtime_generation_context_open(
     if (rc != YVEX_OK) goto failure;
     rc = generation_execution_owners_open(
         context, options, &logits_plan, err);
+    if (rc != YVEX_OK) goto failure;
+    if (!context->workload_profile.schema_version)
+        rc = generation_capacity_workload(context, err);
     if (rc != YVEX_OK) goto failure;
     rc = generation_plan_build(context, err);
     if (rc != YVEX_OK) goto failure;

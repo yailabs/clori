@@ -202,6 +202,15 @@ and marks its priority provisional whenever a measured phase lacks the active
 byte or movement facts needed for a memory lower bound. A missing phase or
 counter is unavailable, never numeric zero.
 
+CUDA generation now builds this ledger for the phases it actually executes,
+independently of trace verbosity. Prefill, ordinary decode, output projection,
+DSpark draft/verification and accepted-state promotion contribute exact
+duration, work and committed-token facts. Active-byte, occupancy and batched
+decode facts remain unavailable until their numerical or scheduler owners can
+measure them; the resulting optimization priority is therefore explicitly
+provisional. The offline generation operator exposes the ledger in audit and
+JSON projections without adding it to protocol v6.
+
 ## Memory and residency
 
 The process distinguishes file mapping, anonymous host residency, locked or

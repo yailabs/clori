@@ -510,6 +510,49 @@ static int generation_partial_turn_validate(
            yvex_sha256_hex_valid(partial->token_ledger_identity);
 }
 
+static int generation_roofline_validate(
+    const yvex_runtime_generation_plan_summary *plan,
+    const yvex_runtime_generation_result *result)
+{
+    const yvex_execution_roofline_ledger *ledger = &result->roofline;
+    unsigned long long index, measured_count = 0ull;
+    unsigned long long phase_mask = 0ull, rooflined_mask = 0ull;
+    if (!result->roofline_available)
+        return !ledger->schema_version && !ledger->identity[0];
+    if (ledger->schema_version != YVEX_EXECUTION_PHASE_ROOFLINE_SCHEMA_V1 ||
+        ledger->phase_count != YVEX_EXECUTION_ROOFLINE_PHASE_COUNT ||
+        !ledger->measured_phase_count ||
+        ledger->measured_phase_count > YVEX_EXECUTION_ROOFLINE_PHASE_COUNT ||
+        strcmp(ledger->artifact_identity, result->profile.artifact_identity) != 0 ||
+        strcmp(ledger->execution_profile_identity, plan->execution_profile_identity) != 0 ||
+        strcmp(ledger->kernel_bundle_identity, plan->kernel_bundle_identity) != 0 ||
+        strcmp(ledger->workload_profile_identity, result->profile.workload_identity) != 0 ||
+        !yvex_sha256_hex_valid(ledger->hardware_profile_identity) ||
+        !yvex_sha256_hex_valid(ledger->identity)) return 0;
+    for (index = 0ull; index < ledger->phase_count; ++index) {
+        const yvex_execution_phase_roofline *phase = &ledger->phases[index];
+        unsigned long long bit = 1ull << index;
+        if (phase->measurement.phase != (yvex_execution_roofline_phase)index ||
+            phase->missing_fact_mask !=
+                (YVEX_EXECUTION_PHASE_FACT_ALL & ~phase->measurement.fact_mask)) return 0;
+        if (!phase->available) continue;
+        phase_mask |= bit;
+        measured_count++;
+        if (!phase->measurement.measured_duration_ns || !phase->measurement.work_units ||
+            !(phase->measurement.fact_mask &
+              YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_DURATION)) ||
+            !(phase->measurement.fact_mask &
+              YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_WORK))) return 0;
+        if (phase->roofline_available) rooflined_mask |= bit;
+    }
+    return phase_mask == ledger->measured_phase_mask &&
+           rooflined_mask == ledger->rooflined_phase_mask &&
+           ledger->missing_phase_mask ==
+               (((1ull << YVEX_EXECUTION_ROOFLINE_PHASE_COUNT) - 1ull) & ~phase_mask) &&
+           ledger->measured_phase_count == measured_count &&
+           ledger->priority_provisional == (rooflined_mask != phase_mask);
+}
+
 int yvex_runtime_generation_result_validate(
     const yvex_runtime_generation_plan_summary *plan,
     const yvex_runtime_generation_token_result *tokens,
@@ -556,6 +599,7 @@ int yvex_runtime_generation_result_validate(
             result->prompt_token_count - result->reusable_prefix_token_count ||
         result->profile.schema_version != YVEX_RUNTIME_PROFILE_SCHEMA_V2 ||
         runtime_profile_validate(&result->profile, NULL) != YVEX_OK ||
+        !generation_roofline_validate(plan, result) ||
         !yvex_sha256_hex_valid(result->reusable_prefix_identity) ||
         !generation_partial_turn_validate(result) ||
         strcmp(result->speculation_policy_identity,

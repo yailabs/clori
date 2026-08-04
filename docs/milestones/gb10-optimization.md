@@ -62,6 +62,12 @@ provisional until active-byte and movement evidence can establish a roofline.
 The additive internal change does not bump a persisted or wire contract and
 keeps the original zero-mask v1 writer representation readable.
 
+The production CUDA generation path now records partial phase evidence without
+depending on trace verbosity and exposes it through the finite offline
+generation operator. Duration, work and committed-token accounting is live;
+byte and occupancy facts remain unavailable, so current optimization ordering
+is provisional rather than a promoted kernel-priority decision.
+
 Physical-variant research uses a funnel: role-level numerical probes,
 representative-layer encoding, kernel microbenchmarks, bounded logit and DSpark
 acceptance checks, then complete emission only for surviving candidates. A
@@ -86,7 +92,8 @@ scheduler before a concrete external consumer may justify a new ABI.
 
 The currently admitted code establishes model-derived geometry, v7/v8 binding
 coexistence, typed capacity/page planning, pre-materialization memory refusal,
-the phase-ledger contract, and identity-bound native SM121 CUBIN admission.
+the availability-aware production phase ledger, and identity-bound native
+SM121 CUBIN admission.
 It does not yet establish Tensor Core execution, specialized attention,
 width-N production MoE, device
 stochastic sampling, device-resident DSpark, paged state allocation, prefix

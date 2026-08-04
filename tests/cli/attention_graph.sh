@@ -134,6 +134,7 @@ result = json.load(open(sys.argv[1], encoding="utf-8"))
 assert result["command"] == "execute transformer generate"
 assert result["status"] == "refused"
 assert not result["generation_ready"] and not result["cli_generate_ready"]
+assert result["roofline"] is None
 assert result["generated_tokens"] == []
 PY
 contains "$OUT_DIR/generate-refusal.err" "runtime binding open failed"

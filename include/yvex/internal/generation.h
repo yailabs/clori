@@ -426,6 +426,8 @@ typedef struct {
     char generation_execution_identity[YVEX_SHA256_HEX_CAP];
     yvex_runtime_partial_turn partial_turn;
     yvex_runtime_profile_record profile;
+    int roofline_available;
+    yvex_execution_roofline_ledger roofline;
 } yvex_runtime_generation_result;
 typedef int (*yvex_runtime_generation_fragment_sink)(
     void *context, const yvex_runtime_generation_token_result *token,

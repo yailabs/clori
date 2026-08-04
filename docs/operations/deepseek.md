@@ -143,6 +143,11 @@ These are finite engineering and conformance operations, not hosted-generation
 aliases. They may open the engine directly but never create a persistent model
 authority.
 
+`execute transformer generate --audit` prints the identity-bound CUDA phase
+ledger after a real finite request. `--json` exposes the same seven stable phase
+slots and their measured/missing fact masks. Missing active bytes, occupancy or
+batched-decode work are reported as unavailable and must not be read as zero.
+
 For a bounded direct comparison over one admitted artifact and binding, the
 engineering generator accepts `--generation-mode target-only|dspark`. This is
 not the ordinary chat path and does not alter the selected daemon profile.

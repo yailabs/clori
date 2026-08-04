@@ -1,9 +1,4 @@
-/*
- * Provide normal, table, audit, and help text rendering for graph reports.
- *
- * All output goes through src/cli/io writer helpers. Graph rendering is not graph runtime or
- * generation readiness.
- */
+/* Render typed graph reports only through CLI I/O; projection never establishes readiness. */
 #include "src/cli/render/private.h"
 #include "src/cli/io/private.h"
 #include "src/cli/model_artifacts/private.h"
@@ -103,12 +98,9 @@ static const yvex_cli_field_spec moe_fields[] = {
     MOE_FIELD("family", YVEX_CLI_FIELD_TEXT_ARRAY, family),
     MOE_FIELD("backend", YVEX_CLI_FIELD_TEXT_ARRAY, backend),
     MOE_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY, artifact_identity),
-    MOE_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-              runtime_binding_identity),
-    MOE_FIELD("runtime_descriptor_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-              runtime_descriptor_identity),
-    MOE_FIELD("runtime_numeric_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-              runtime_numeric_identity),
+    MOE_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY, runtime_binding_identity),
+    MOE_FIELD("runtime_descriptor_identity", YVEX_CLI_FIELD_TEXT_ARRAY, runtime_descriptor_identity),
+    MOE_FIELD("runtime_numeric_identity", YVEX_CLI_FIELD_TEXT_ARRAY, runtime_numeric_identity),
     MOE_FIELD("moe_plan_identity", YVEX_CLI_FIELD_TEXT_ARRAY, moe_plan_identity),
     MOE_FIELD("layers", YVEX_CLI_FIELD_U64, layer_count),
     MOE_FIELD("tokens", YVEX_CLI_FIELD_U64, token_count),
@@ -118,16 +110,11 @@ static const yvex_cli_field_spec moe_fields[] = {
     MOE_FIELD("shared_experts", YVEX_CLI_FIELD_U64, shared_experts),
     MOE_FIELD("experts_per_token", YVEX_CLI_FIELD_U64, experts_per_token),
     MOE_EXECUTION_FIELD("layers_executed", YVEX_CLI_FIELD_U64, layers_executed),
-    MOE_EXECUTION_FIELD("hash_router_executions", YVEX_CLI_FIELD_U64,
-                        hash_router_executions),
-    MOE_EXECUTION_FIELD("learned_router_executions", YVEX_CLI_FIELD_U64,
-                        learned_router_executions),
-    MOE_EXECUTION_FIELD("routed_expert_executions", YVEX_CLI_FIELD_U64,
-                        routed_expert_executions),
-    MOE_EXECUTION_FIELD("shared_expert_executions", YVEX_CLI_FIELD_U64,
-                        shared_expert_executions),
-    MOE_EXECUTION_FIELD("expert_subviews_accessed", YVEX_CLI_FIELD_U64,
-                        expert_subviews_accessed),
+    MOE_EXECUTION_FIELD("hash_router_executions", YVEX_CLI_FIELD_U64, hash_router_executions),
+    MOE_EXECUTION_FIELD("learned_router_executions", YVEX_CLI_FIELD_U64, learned_router_executions),
+    MOE_EXECUTION_FIELD("routed_expert_executions", YVEX_CLI_FIELD_U64, routed_expert_executions),
+    MOE_EXECUTION_FIELD("shared_expert_executions", YVEX_CLI_FIELD_U64, shared_expert_executions),
+    MOE_EXECUTION_FIELD("expert_subviews_accessed", YVEX_CLI_FIELD_U64, expert_subviews_accessed),
     MOE_EXECUTION_FIELD("encoded_bytes_read", YVEX_CLI_FIELD_U64, encoded_bytes_read),
     MOE_EXECUTION_FIELD("h2d_bytes", YVEX_CLI_FIELD_U64, host_to_device_bytes),
     MOE_EXECUTION_FIELD("d2h_bytes", YVEX_CLI_FIELD_U64, device_to_host_bytes),
@@ -145,10 +132,8 @@ static const yvex_cli_field_spec moe_fields[] = {
     MOE_EXECUTION_FIELD("routing_digest", YVEX_CLI_FIELD_TEXT_ARRAY, routing_digest),
     MOE_EXECUTION_FIELD("routed_digest", YVEX_CLI_FIELD_TEXT_ARRAY, routed_digest),
     MOE_EXECUTION_FIELD("shared_digest", YVEX_CLI_FIELD_TEXT_ARRAY, shared_digest),
-    MOE_EXECUTION_FIELD("combined_output_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
-                        combined_output_digest),
-    MOE_EXECUTION_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                        execution_identity),
+    MOE_EXECUTION_FIELD("combined_output_digest", YVEX_CLI_FIELD_TEXT_ARRAY, combined_output_digest),
+    MOE_EXECUTION_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY, execution_identity),
     MOE_FIELD("moe_plan_ready", YVEX_CLI_FIELD_BOOL, moe_plan_ready),
     MOE_FIELD("moe_router_ready", YVEX_CLI_FIELD_BOOL, moe_router_ready),
     MOE_FIELD("moe_routed_expert_ready", YVEX_CLI_FIELD_BOOL, moe_routed_expert_ready),
@@ -174,87 +159,58 @@ static const yvex_cli_field_spec transformer_fields[] = {
     TRANSFORMER_FIELD("backend", YVEX_CLI_FIELD_TEXT_ARRAY, backend),
     TRANSFORMER_FIELD("phase", YVEX_CLI_FIELD_TEXT_ARRAY, phase),
     TRANSFORMER_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY, artifact_identity),
-    TRANSFORMER_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                      runtime_binding_identity),
-    TRANSFORMER_FIELD("transformer_plan_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                      transformer_plan_identity),
-    TRANSFORMER_EXECUTION_FIELD("input_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                                input_identity),
+    TRANSFORMER_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY, runtime_binding_identity),
+    TRANSFORMER_FIELD("transformer_plan_identity", YVEX_CLI_FIELD_TEXT_ARRAY, transformer_plan_identity),
+    TRANSFORMER_EXECUTION_FIELD("input_identity", YVEX_CLI_FIELD_TEXT_ARRAY, input_identity),
     TRANSFORMER_EXECUTION_FIELD("token_start", YVEX_CLI_FIELD_U64, token_start),
     TRANSFORMER_EXECUTION_FIELD("token_count", YVEX_CLI_FIELD_U64, token_count),
     TRANSFORMER_EXECUTION_FIELD("chunk_count", YVEX_CLI_FIELD_U64, chunk_count),
-    TRANSFORMER_EXECUTION_FIELD("committed_prefix", YVEX_CLI_FIELD_U64,
-                                committed_prefix),
+    TRANSFORMER_EXECUTION_FIELD("committed_prefix", YVEX_CLI_FIELD_U64, committed_prefix),
     TRANSFORMER_EXECUTION_FIELD("position_before", YVEX_CLI_FIELD_U64, position_before),
     TRANSFORMER_EXECUTION_FIELD("position_after", YVEX_CLI_FIELD_U64, position_after),
-    TRANSFORMER_EXECUTION_FIELD("generation_before", YVEX_CLI_FIELD_U64,
-                                generation_before),
-    TRANSFORMER_EXECUTION_FIELD("generation_after", YVEX_CLI_FIELD_U64,
-                                generation_after),
+    TRANSFORMER_EXECUTION_FIELD("generation_before", YVEX_CLI_FIELD_U64, generation_before),
+    TRANSFORMER_EXECUTION_FIELD("generation_after", YVEX_CLI_FIELD_U64, generation_after),
     TRANSFORMER_FIELD("hidden_width", YVEX_CLI_FIELD_U64, hidden_width),
     TRANSFORMER_FIELD("expanded_width", YVEX_CLI_FIELD_U64, expanded_width),
     TRANSFORMER_FIELD("layers", YVEX_CLI_FIELD_U64, layer_count),
     TRANSFORMER_EXECUTION_FIELD("embedding_rows", YVEX_CLI_FIELD_U64, embedding_rows),
-    TRANSFORMER_EXECUTION_FIELD("embedding_bytes", YVEX_CLI_FIELD_U64,
-                                embedding_bytes),
-    TRANSFORMER_EXECUTION_FIELD("layers_executed", YVEX_CLI_FIELD_U64,
-                                layers_executed),
+    TRANSFORMER_EXECUTION_FIELD("embedding_bytes", YVEX_CLI_FIELD_U64, embedding_bytes),
+    TRANSFORMER_EXECUTION_FIELD("layers_executed", YVEX_CLI_FIELD_U64, layers_executed),
     TRANSFORMER_EXECUTION_FIELD("swa_layers", YVEX_CLI_FIELD_U64, swa_layers),
     TRANSFORMER_EXECUTION_FIELD("csa_layers", YVEX_CLI_FIELD_U64, csa_layers),
     TRANSFORMER_EXECUTION_FIELD("hca_layers", YVEX_CLI_FIELD_U64, hca_layers),
-    TRANSFORMER_EXECUTION_FIELD("hash_router_executions", YVEX_CLI_FIELD_U64,
-                                hash_routers),
-    TRANSFORMER_EXECUTION_FIELD("learned_router_executions", YVEX_CLI_FIELD_U64,
-                                learned_routers),
-    TRANSFORMER_EXECUTION_FIELD("routed_expert_executions", YVEX_CLI_FIELD_U64,
-                                routed_experts),
-    TRANSFORMER_EXECUTION_FIELD("shared_expert_executions", YVEX_CLI_FIELD_U64,
-                                shared_experts),
+    TRANSFORMER_EXECUTION_FIELD("hash_router_executions", YVEX_CLI_FIELD_U64, hash_routers),
+    TRANSFORMER_EXECUTION_FIELD("learned_router_executions", YVEX_CLI_FIELD_U64, learned_routers),
+    TRANSFORMER_EXECUTION_FIELD("routed_expert_executions", YVEX_CLI_FIELD_U64, routed_experts),
+    TRANSFORMER_EXECUTION_FIELD("shared_expert_executions", YVEX_CLI_FIELD_U64, shared_experts),
     TRANSFORMER_EXECUTION_FIELD("h2d_bytes", YVEX_CLI_FIELD_U64, h2d_bytes),
     TRANSFORMER_EXECUTION_FIELD("d2h_bytes", YVEX_CLI_FIELD_U64, d2h_bytes),
-    TRANSFORMER_EXECUTION_FIELD("kernel_launches", YVEX_CLI_FIELD_U64,
-                                kernel_launches),
-    TRANSFORMER_EXECUTION_FIELD("embedding_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
-                                embedding_digest),
-    TRANSFORMER_EXECUTION_FIELD("routing_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
-                                routing_digest),
+    TRANSFORMER_EXECUTION_FIELD("kernel_launches", YVEX_CLI_FIELD_U64, kernel_launches),
+    TRANSFORMER_EXECUTION_FIELD("embedding_digest", YVEX_CLI_FIELD_TEXT_ARRAY, embedding_digest),
+    TRANSFORMER_EXECUTION_FIELD("routing_digest", YVEX_CLI_FIELD_TEXT_ARRAY, routing_digest),
     TRANSFORMER_EXECUTION_FIELD("layer_digest", YVEX_CLI_FIELD_TEXT_ARRAY, layer_digest),
-    TRANSFORMER_EXECUTION_FIELD("final_expanded_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
-                                final_expanded_digest),
-    TRANSFORMER_EXECUTION_FIELD("normalized_hidden_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
-                                normalized_hidden_digest),
-    TRANSFORMER_EXECUTION_FIELD("persistent_state_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
-                                persistent_state_digest),
-    TRANSFORMER_EXECUTION_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                                execution_identity),
+    TRANSFORMER_EXECUTION_FIELD("final_expanded_digest", YVEX_CLI_FIELD_TEXT_ARRAY, final_expanded_digest),
+    TRANSFORMER_EXECUTION_FIELD("normalized_hidden_digest", YVEX_CLI_FIELD_TEXT_ARRAY, normalized_hidden_digest),
+    TRANSFORMER_EXECUTION_FIELD("persistent_state_digest", YVEX_CLI_FIELD_TEXT_ARRAY, persistent_state_digest),
+    TRANSFORMER_EXECUTION_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY, execution_identity),
     TRANSFORMER_FIELD("embedding_ready", YVEX_CLI_FIELD_BOOL, embedding_ready),
-    TRANSFORMER_FIELD("transformer_plan_ready", YVEX_CLI_FIELD_BOOL,
-                      transformer_plan_ready),
-    TRANSFORMER_FIELD("transformer_block_ready", YVEX_CLI_FIELD_BOOL,
-                      transformer_block_ready),
-    TRANSFORMER_FIELD("transformer_stack_ready", YVEX_CLI_FIELD_BOOL,
-                      transformer_stack_ready),
-    TRANSFORMER_FIELD("transformer_final_head_ready", YVEX_CLI_FIELD_BOOL,
-                      transformer_final_head_ready),
-    TRANSFORMER_FIELD("transformer_final_norm_ready", YVEX_CLI_FIELD_BOOL,
-                      transformer_final_norm_ready),
-    TRANSFORMER_FIELD("transformer_hidden_state_ready", YVEX_CLI_FIELD_BOOL,
-                      transformer_hidden_state_ready),
-    TRANSFORMER_FIELD("full_model_prefill_ready", YVEX_CLI_FIELD_BOOL,
-                      full_model_prefill_ready),
+    TRANSFORMER_FIELD("transformer_plan_ready", YVEX_CLI_FIELD_BOOL, transformer_plan_ready),
+    TRANSFORMER_FIELD("transformer_block_ready", YVEX_CLI_FIELD_BOOL, transformer_block_ready),
+    TRANSFORMER_FIELD("transformer_stack_ready", YVEX_CLI_FIELD_BOOL, transformer_stack_ready),
+    TRANSFORMER_FIELD("transformer_final_head_ready", YVEX_CLI_FIELD_BOOL, transformer_final_head_ready),
+    TRANSFORMER_FIELD("transformer_final_norm_ready", YVEX_CLI_FIELD_BOOL, transformer_final_norm_ready),
+    TRANSFORMER_FIELD("transformer_hidden_state_ready", YVEX_CLI_FIELD_BOOL, transformer_hidden_state_ready),
+    TRANSFORMER_FIELD("full_model_prefill_ready", YVEX_CLI_FIELD_BOOL, full_model_prefill_ready),
     TRANSFORMER_FIELD("transformer_ready", YVEX_CLI_FIELD_BOOL, transformer_ready),
     TRANSFORMER_FIELD("single_token_transformer_component_ready", YVEX_CLI_FIELD_BOOL,
                       single_token_transformer_component_ready),
     TRANSFORMER_FIELD("model_decode_ready", YVEX_CLI_FIELD_BOOL, model_decode_ready),
     TRANSFORMER_FIELD("logits_ready", YVEX_CLI_FIELD_BOOL, logits_ready),
     TRANSFORMER_FIELD("sampling_ready", YVEX_CLI_FIELD_BOOL, sampling_ready),
-    TRANSFORMER_FIELD("tokenizer_runtime_ready", YVEX_CLI_FIELD_BOOL,
-                      tokenizer_runtime_ready),
+    TRANSFORMER_FIELD("tokenizer_runtime_ready", YVEX_CLI_FIELD_BOOL, tokenizer_runtime_ready),
     TRANSFORMER_FIELD("generation_ready", YVEX_CLI_FIELD_BOOL, generation_ready),
-    TRANSFORMER_FIELD("model_behavior_evaluation_ready", YVEX_CLI_FIELD_BOOL,
-                      model_behavior_evaluation_ready),
-    TRANSFORMER_FIELD("release_qualification_ready", YVEX_CLI_FIELD_BOOL,
-                      release_qualification_ready),
+    TRANSFORMER_FIELD("model_behavior_evaluation_ready", YVEX_CLI_FIELD_BOOL, model_behavior_evaluation_ready),
+    TRANSFORMER_FIELD("release_qualification_ready", YVEX_CLI_FIELD_BOOL, release_qualification_ready),
     TRANSFORMER_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
     TRANSFORMER_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
 };
@@ -271,74 +227,49 @@ static const yvex_cli_field_spec decode_fields[] = {
     DECODE_FIELD("backend", YVEX_CLI_FIELD_TEXT_ARRAY, backend),
     DECODE_FIELD("phase", YVEX_CLI_FIELD_TEXT_ARRAY, phase),
     DECODE_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY, artifact_identity),
-    DECODE_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                 runtime_binding_identity),
-    DECODE_FIELD("transformer_plan_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                 transformer_plan_identity),
+    DECODE_FIELD("runtime_binding_identity", YVEX_CLI_FIELD_TEXT_ARRAY, runtime_binding_identity),
+    DECODE_FIELD("transformer_plan_identity", YVEX_CLI_FIELD_TEXT_ARRAY, transformer_plan_identity),
     DECODE_FIELD("hidden_width", YVEX_CLI_FIELD_U64, hidden_width),
     DECODE_FIELD("layers", YVEX_CLI_FIELD_U64, layer_count),
-    DECODE_FIELD("prefill_tokens_committed", YVEX_CLI_FIELD_U64,
-                 prefill_tokens_committed),
-    DECODE_EXECUTION_FIELD("input_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                           input_identity),
-    DECODE_EXECUTION_FIELD("decode_steps_requested", YVEX_CLI_FIELD_U64,
-                           requested_steps),
-    DECODE_EXECUTION_FIELD("decode_steps_completed", YVEX_CLI_FIELD_U64,
-                           completed_steps),
+    DECODE_FIELD("prefill_tokens_committed", YVEX_CLI_FIELD_U64, prefill_tokens_committed),
+    DECODE_EXECUTION_FIELD("input_identity", YVEX_CLI_FIELD_TEXT_ARRAY, input_identity),
+    DECODE_EXECUTION_FIELD("decode_steps_requested", YVEX_CLI_FIELD_U64, requested_steps),
+    DECODE_EXECUTION_FIELD("decode_steps_completed", YVEX_CLI_FIELD_U64, completed_steps),
     DECODE_EXECUTION_FIELD("partial", YVEX_CLI_FIELD_BOOL, partial),
-    DECODE_EXECUTION_FIELD("has_incomplete_step", YVEX_CLI_FIELD_BOOL,
-                           has_incomplete_step),
-    DECODE_EXECUTION_FIELD("first_incomplete_step", YVEX_CLI_FIELD_U64,
-                           first_incomplete_step),
-    DECODE_EXECUTION_FIELD("initial_committed_prefix", YVEX_CLI_FIELD_U64,
-                           initial_committed_prefix),
-    DECODE_EXECUTION_FIELD("final_committed_prefix", YVEX_CLI_FIELD_U64,
-                           final_committed_prefix),
-    DECODE_EXECUTION_FIELD("generation_before", YVEX_CLI_FIELD_U64,
-                           generation_before),
-    DECODE_EXECUTION_FIELD("generation_after", YVEX_CLI_FIELD_U64,
-                           generation_after),
+    DECODE_EXECUTION_FIELD("has_incomplete_step", YVEX_CLI_FIELD_BOOL, has_incomplete_step),
+    DECODE_EXECUTION_FIELD("first_incomplete_step", YVEX_CLI_FIELD_U64, first_incomplete_step),
+    DECODE_EXECUTION_FIELD("initial_committed_prefix", YVEX_CLI_FIELD_U64, initial_committed_prefix),
+    DECODE_EXECUTION_FIELD("final_committed_prefix", YVEX_CLI_FIELD_U64, final_committed_prefix),
+    DECODE_EXECUTION_FIELD("generation_before", YVEX_CLI_FIELD_U64, generation_before),
+    DECODE_EXECUTION_FIELD("generation_after", YVEX_CLI_FIELD_U64, generation_after),
     DECODE_EXECUTION_FIELD("layers_executed", YVEX_CLI_FIELD_U64, layers_executed),
     DECODE_EXECUTION_FIELD("swa_layers", YVEX_CLI_FIELD_U64, swa_layers),
     DECODE_EXECUTION_FIELD("csa_layers", YVEX_CLI_FIELD_U64, csa_layers),
     DECODE_EXECUTION_FIELD("hca_layers", YVEX_CLI_FIELD_U64, hca_layers),
-    DECODE_EXECUTION_FIELD("hash_router_executions", YVEX_CLI_FIELD_U64,
-                           hash_routers),
-    DECODE_EXECUTION_FIELD("learned_router_executions", YVEX_CLI_FIELD_U64,
-                           learned_routers),
-    DECODE_EXECUTION_FIELD("routed_expert_executions", YVEX_CLI_FIELD_U64,
-                           routed_experts),
-    DECODE_EXECUTION_FIELD("shared_expert_executions", YVEX_CLI_FIELD_U64,
-                           shared_experts),
+    DECODE_EXECUTION_FIELD("hash_router_executions", YVEX_CLI_FIELD_U64, hash_routers),
+    DECODE_EXECUTION_FIELD("learned_router_executions", YVEX_CLI_FIELD_U64, learned_routers),
+    DECODE_EXECUTION_FIELD("routed_expert_executions", YVEX_CLI_FIELD_U64, routed_experts),
+    DECODE_EXECUTION_FIELD("shared_expert_executions", YVEX_CLI_FIELD_U64, shared_experts),
     DECODE_EXECUTION_FIELD("h2d_bytes", YVEX_CLI_FIELD_U64, h2d_bytes),
     DECODE_EXECUTION_FIELD("d2h_bytes", YVEX_CLI_FIELD_U64, d2h_bytes),
     DECODE_EXECUTION_FIELD("kernel_launches", YVEX_CLI_FIELD_U64, kernel_launches),
-    DECODE_EXECUTION_FIELD("aggregate_hidden_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
-                           aggregate_hidden_digest),
-    DECODE_EXECUTION_FIELD("aggregate_state_digest", YVEX_CLI_FIELD_TEXT_ARRAY,
-                           aggregate_state_digest),
-    DECODE_EXECUTION_FIELD("decode_execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
-                           decode_execution_identity),
+    DECODE_EXECUTION_FIELD("aggregate_hidden_digest", YVEX_CLI_FIELD_TEXT_ARRAY, aggregate_hidden_digest),
+    DECODE_EXECUTION_FIELD("aggregate_state_digest", YVEX_CLI_FIELD_TEXT_ARRAY, aggregate_state_digest),
+    DECODE_EXECUTION_FIELD("decode_execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY, decode_execution_identity),
     DECODE_FIELD("decode_step_ready", YVEX_CLI_FIELD_BOOL, decode_step_ready),
     DECODE_FIELD("decode_repeat_ready", YVEX_CLI_FIELD_BOOL, decode_repeat_ready),
-    DECODE_FIELD("decode_hidden_state_ready", YVEX_CLI_FIELD_BOOL,
-                 decode_hidden_state_ready),
-    DECODE_FIELD("decode_partial_progress_ready", YVEX_CLI_FIELD_BOOL,
-                 decode_partial_progress_ready),
+    DECODE_FIELD("decode_hidden_state_ready", YVEX_CLI_FIELD_BOOL, decode_hidden_state_ready),
+    DECODE_FIELD("decode_partial_progress_ready", YVEX_CLI_FIELD_BOOL, decode_partial_progress_ready),
     DECODE_FIELD("moe_decode_composed", YVEX_CLI_FIELD_BOOL, moe_decode_composed),
     DECODE_FIELD("model_decode_ready", YVEX_CLI_FIELD_BOOL, model_decode_ready),
     DECODE_FIELD("logits_ready", YVEX_CLI_FIELD_BOOL, logits_ready),
     DECODE_FIELD("output_head_ready", YVEX_CLI_FIELD_BOOL, output_head_ready),
     DECODE_FIELD("sampling_ready", YVEX_CLI_FIELD_BOOL, sampling_ready),
-    DECODE_FIELD("tokenizer_runtime_ready", YVEX_CLI_FIELD_BOOL,
-                 tokenizer_runtime_ready),
+    DECODE_FIELD("tokenizer_runtime_ready", YVEX_CLI_FIELD_BOOL, tokenizer_runtime_ready),
     DECODE_FIELD("generation_ready", YVEX_CLI_FIELD_BOOL, generation_ready),
-    DECODE_FIELD("model_behavior_evaluation_ready", YVEX_CLI_FIELD_BOOL,
-                 model_behavior_evaluation_ready),
-    DECODE_FIELD("full_model_benchmark_ready", YVEX_CLI_FIELD_BOOL,
-                 full_model_benchmark_ready),
-    DECODE_FIELD("release_qualification_ready", YVEX_CLI_FIELD_BOOL,
-                 release_qualification_ready),
+    DECODE_FIELD("model_behavior_evaluation_ready", YVEX_CLI_FIELD_BOOL, model_behavior_evaluation_ready),
+    DECODE_FIELD("full_model_benchmark_ready", YVEX_CLI_FIELD_BOOL, full_model_benchmark_ready),
+    DECODE_FIELD("release_qualification_ready", YVEX_CLI_FIELD_BOOL, release_qualification_ready),
     DECODE_FIELD("reason", YVEX_CLI_FIELD_TEXT_ARRAY, reason),
     DECODE_FIELD("completed", YVEX_CLI_FIELD_BOOL, completed),
 };
@@ -1167,7 +1098,6 @@ int yvex_graph_moe_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-
 int yvex_graph_transformer_render(FILE *fp, yvex_graph_report_mode mode,
                                   const yvex_transformer_operator_result *result)
 {
@@ -1246,7 +1176,6 @@ static int graph_decode_steps_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
-
 int yvex_graph_decode_render(FILE *fp, yvex_graph_report_mode mode,
                              const yvex_decode_operator_result *result)
 {
@@ -1330,7 +1259,6 @@ static int graph_logits_rows_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
-
 int yvex_graph_logits_render(FILE *fp, yvex_graph_report_mode mode,
                              const yvex_logits_operator_result *result)
 {
@@ -1358,7 +1286,6 @@ int yvex_graph_logits_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-
 static int graph_sampling_rows(FILE *fp, yvex_graph_report_mode mode,
                                const yvex_sampling_operator_result *result)
 {
@@ -1400,7 +1327,6 @@ static int graph_sampling_rows(FILE *fp, yvex_graph_report_mode mode,
     if (mode == YVEX_GRAPH_REPORT_MODE_JSON) yvex_cli_out_line(fp, "  ]");
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
-
 int yvex_graph_sampling_render(FILE *fp, yvex_graph_report_mode mode,
                                const yvex_sampling_operator_result *result)
 {
@@ -1428,7 +1354,85 @@ int yvex_graph_sampling_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return rc < 0 || ferror(fp) ? YVEX_ERR_IO : rc;
 }
-
+static const char *const generation_roofline_names[] = {
+    "prefill-layer", "decode-layer", "verify-sweep", "draft-sweep",
+    "output-head", "state-promotion", "batched-decode"};
+static int graph_generation_roofline_json(FILE *fp, const yvex_runtime_generation_result *run)
+{
+    const yvex_execution_roofline_ledger *ledger = &run->roofline;
+    unsigned long long index;
+    if (!run->roofline_available)
+        return yvex_cli_out_puts(fp, "  \"roofline\": null,\n") < 0 ? YVEX_ERR_IO : YVEX_OK;
+    if (yvex_cli_out_writef(
+            fp, "  \"roofline\": {\"schema\":%u,\"identity\":\"%s\","
+                "\"measured_phase_mask\":%llu,\"missing_phase_mask\":%llu,"
+                "\"rooflined_phase_mask\":%llu,\"priority_provisional\":%s,"
+                "\"phases\":[\n", ledger->schema_version, ledger->identity,
+            ledger->measured_phase_mask, ledger->missing_phase_mask,
+            ledger->rooflined_phase_mask,
+            ledger->priority_provisional ? "true" : "false") < 0) return YVEX_ERR_IO;
+    for (index = 0ull; index < ledger->phase_count; ++index) {
+        const yvex_execution_phase_roofline *phase = &ledger->phases[index];
+        const yvex_execution_phase_measurement *value = &phase->measurement;
+        if (yvex_cli_out_writef(
+                fp, "    {\"name\":\"%s\",\"available\":%s,\"roofline_available\":%s,"
+                    "\"fact_mask\":%llu,\"missing_fact_mask\":%llu,"
+                    "\"active_weight_bytes\":%llu,\"state_bytes\":%llu,"
+                    "\"activation_bytes\":%llu,\"temporary_bytes\":%llu,"
+                    "\"h2d_bytes\":%llu,\"d2h_bytes\":%llu,\"d2d_bytes\":%llu,"
+                    "\"kernel_count\":%llu,\"synchronization_count\":%llu,"
+                    "\"occupancy_parts_per_million\":%llu,\"minimum_memory_time_ns\":%llu,"
+                    "\"duration_ns\":%llu,\"work_units\":%llu,\"committed_tokens\":%llu,"
+                    "\"active_device_bytes\":%llu,\"transfer_bytes\":%llu,"
+                    "\"measured_bytes_per_second\":%llu,\"roofline_utilization_ppm\":%llu,"
+                    "\"optimization_headroom_ns\":%llu,\"priority\":%llu}%s\n",
+                generation_roofline_names[index], phase->available ? "true" : "false",
+                phase->roofline_available ? "true" : "false", value->fact_mask,
+                phase->missing_fact_mask, value->active_weight_bytes, value->state_bytes,
+                value->activation_bytes, value->temporary_bytes, value->h2d_bytes,
+                value->d2h_bytes, value->d2d_bytes, value->kernel_count,
+                value->synchronization_count, value->occupancy_parts_per_million,
+                phase->minimum_memory_time_ns, value->measured_duration_ns, value->work_units,
+                value->committed_tokens, phase->active_device_bytes, phase->transfer_bytes,
+                phase->measured_bytes_per_second, phase->roofline_utilization_parts_per_million,
+                phase->optimization_headroom_ns, phase->optimization_priority,
+                index + 1ull < ledger->phase_count ? "," : "") < 0) return YVEX_ERR_IO;
+    }
+    return yvex_cli_out_puts(fp, "  ]},\n") < 0 ? YVEX_ERR_IO : YVEX_OK;
+}
+static int graph_generation_roofline_audit(FILE *fp, const yvex_runtime_generation_result *run)
+{
+    const yvex_execution_roofline_ledger *ledger = &run->roofline;
+    unsigned long long index;
+    if (!run->roofline_available) return YVEX_OK;
+    if (yvex_cli_out_writef(
+            fp, "roofline: identity=%s measured=%llu missing=%llu rooflined=%llu provisional=%s\n",
+            ledger->identity, ledger->measured_phase_mask, ledger->missing_phase_mask,
+            ledger->rooflined_phase_mask, ledger->priority_provisional ? "true" : "false") < 0)
+        return YVEX_ERR_IO;
+    for (index = 0ull; index < ledger->phase_count; ++index) {
+        const yvex_execution_phase_roofline *phase = &ledger->phases[index];
+        const yvex_execution_phase_measurement *value = &phase->measurement;
+        if (yvex_cli_out_writef(
+                fp, "roofline.%s: available=%s facts=%llu missing=%llu "
+                    "weight=%llu state=%llu activation=%llu temporary=%llu "
+                    "movement=%llu/%llu/%llu kernels=%llu syncs=%llu occupancy_ppm=%llu "
+                    "minimum_ns=%llu duration_ns=%llu work=%llu committed=%llu "
+                    "active=%llu transfer=%llu measured_bps=%llu utilization_ppm=%llu "
+                    "headroom_ns=%llu priority=%llu\n",
+                generation_roofline_names[index], phase->available ? "true" : "false",
+                value->fact_mask, phase->missing_fact_mask, value->active_weight_bytes,
+                value->state_bytes, value->activation_bytes, value->temporary_bytes,
+                value->h2d_bytes, value->d2h_bytes, value->d2d_bytes, value->kernel_count,
+                value->synchronization_count, value->occupancy_parts_per_million,
+                phase->minimum_memory_time_ns, value->measured_duration_ns, value->work_units,
+                value->committed_tokens, phase->active_device_bytes, phase->transfer_bytes,
+                phase->measured_bytes_per_second, phase->roofline_utilization_parts_per_million,
+                phase->optimization_headroom_ns, phase->optimization_priority) < 0)
+            return YVEX_ERR_IO;
+    }
+    return YVEX_OK;
+}
 int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                                  const yvex_generation_operator_result *result)
 {
@@ -1523,6 +1527,7 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                     index + 1ull == YVEX_RUNTIME_PROFILE_COUNTER_COUNT ? "" : ",") < 0)
                 return YVEX_ERR_IO;
         yvex_cli_out_puts(fp, "}},\n");
+        if (graph_generation_roofline_json(fp, run) != YVEX_OK) return YVEX_ERR_IO;
         yvex_cli_out_puts(fp, "  \"generated_tokens\": [\n");
         for (index = 0ull; index < result->token_count; ++index) {
             const yvex_runtime_generation_token_result *token = &result->tokens[index];
@@ -1566,6 +1571,8 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
                 run->confidence_logit_maximum,
                 run->confidence_logit_mean) < 0)
             return YVEX_ERR_IO;
+        if (mode == YVEX_GRAPH_REPORT_MODE_AUDIT &&
+            graph_generation_roofline_audit(fp, run) != YVEX_OK) return YVEX_ERR_IO;
         for (index = 0ull; index < result->token_count; ++index)
             if (yvex_cli_out_writef(fp, "token.%llu: id=%u committed=%s terminal=%s text_bytes=%llu\n",
                     index, result->tokens[index].sampled_token_id,
@@ -1575,7 +1582,6 @@ int yvex_graph_generation_render(FILE *fp, yvex_graph_report_mode mode,
     }
     return ferror(fp) ? YVEX_ERR_IO : YVEX_OK;
 }
-
 int yvex_graph_render_help(FILE *fp)
 {
     yvex_cli_out_lines(fp, literal_lines_0, sizeof(literal_lines_0) / sizeof(literal_lines_0[0]));
@@ -1630,7 +1636,6 @@ static const descriptor_role_collection descriptor_role_collections[] = {
 {"moe_expert_gate", "moe"}, {"moe_expert_up", "moe"}, {"moe_expert_down", "moe"}, {"output_head", "output"},
     {"tokenizer_metadata", "tokenizer-runtime-input"},
 };
-
 static const char *fullmodel_descriptor_role_collection(const char *role)
 {
     size_t index;
@@ -1642,7 +1647,6 @@ static const char *fullmodel_descriptor_role_collection(const char *role)
     }
     return "unknown";
 }
-
 static const char *fullmodel_descriptor_role_residency(const char *role,
                                                        const char *backend,
                                                        int present)
@@ -1651,7 +1655,6 @@ static const char *fullmodel_descriptor_role_residency(const char *role,
     if (role && strcmp(role, "tokenizer_metadata") == 0) return "host-runtime-metadata";
     return backend && strcmp(backend, "cuda") == 0 ? "cuda-resident-planned" : "cpu-resident-planned";
 }
-
 static void fullmodel_print_descriptor_role(yvex_model_context *ctx,
                                             const yvex_fullmodel_collections *collections,
                                             const char *role,
@@ -1761,7 +1764,6 @@ static const graph_requirement_spec graph_requirements[] = {
 #undef GRAPH_MLP
 #undef GRAPH_ATTENTION
 #undef GRAPH_FIXED
-
 static void fullmodel_print_descriptor_graph_requirements(const yvex_fullmodel_collections *collections)
 {
     size_t index;
@@ -1834,7 +1836,6 @@ REQUIRED_MASK(0, 0, 0, 0), DESCRIPTOR_BLOCKER_UNKNOWN, "unknown tensor role", "u
 };
 #undef REQUIRED_MASK
 #undef COLLECTION_OFF
-
 static int descriptor_collection_ready(const descriptor_collection_spec *spec,
                                        const yvex_fullmodel_collections *collections,
                                        unsigned long long count)
@@ -1850,7 +1851,6 @@ static int descriptor_collection_ready(const descriptor_collection_spec *spec,
     }
     return 0;
 }
-
 static void fullmodel_print_descriptor_inventory(
     yvex_model_context *ctx,
     const yvex_fullmodel_collections *collections,
@@ -1880,7 +1880,6 @@ static void fullmodel_print_descriptor_inventory(
             ready ? "none" : spec->missing_blocker);
     }
 }
-
 void fullmodel_print_descriptor_report(const yvex_cli_fullmodel_options *options,
                                               yvex_model_ref *ref,
                                               yvex_model_context *ctx,

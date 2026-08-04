@@ -79,6 +79,9 @@ static int generation_test_execution_identity_excludes_measurement(void)
     result.speculative_commit_ns = 777ull;
     result.mean_accepted_prefix = 3.0;
     result.effective_committed_tokens_per_second = 0.75;
+    result.roofline_available = 1;
+    memset(result.roofline.identity, 'a', YVEX_SHA256_HEX_CAP - 1u);
+    result.roofline.identity[YVEX_SHA256_HEX_CAP - 1u] = '\0';
     YVEX_TEST_ASSERT(
         yvex_runtime_generation_execution_identity(&result, NULL, after) &&
             strcmp(before, after) == 0,

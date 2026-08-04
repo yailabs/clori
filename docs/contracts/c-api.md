@@ -174,6 +174,13 @@ never projected as a zero measurement. This does not earn a schema bump: the
 contract is non-persisted, non-wire, rebuilt with every binary, and has no old
 binary reader. Duration and work remain mandatory for every admitted record.
 
+The internal generation result carries an optional phase ledger. This additive
+source ABI is rebuilt with every product binary, is not serialized as C object
+memory, and is excluded from semantic generation identity. It therefore does
+not change generation ABI v4, protocol v6 or event schema v3. Result validation
+checks ledger identities and availability masks when present; old internal
+results with no ledger retain their zero-initialized meaning.
+
 The binding is generated transactionally outside the repository, named by its
 content identity and independently reopened. Runtime open validates it against
 the exact admitted artifact. Runtime execution does not read source headers or
