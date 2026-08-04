@@ -13,6 +13,7 @@
 
 #include "src/backend/cuda/private.h"
 #include <yvex/internal/quant_numeric.h>
+#include <yvex/internal/transformer.h>
 
 #include "tests/test.h"
 
@@ -316,6 +317,126 @@ static int quant_cuda_argmax(yvex_backend *backend)
     return 0;
 }
 
+static int quant_cuda_tensor(yvex_backend *backend, const char *name,
+                             unsigned int dtype, const void *source,
+                             unsigned long long bytes,
+                             yvex_device_tensor **tensor, yvex_error *err)
+{
+    yvex_backend_tensor_desc descriptor = {0};
+    descriptor.name = name;
+    descriptor.dtype = dtype;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = dtype == YVEX_DTYPE_F32 ? bytes / sizeof(float) : bytes;
+    descriptor.bytes = bytes;
+    return yvex_backend_tensor_alloc(backend, &descriptor, tensor, err) == YVEX_OK &&
+           (!source || yvex_backend_tensor_write(
+                           backend, *tensor, source, bytes, err) == YVEX_OK);
+}
+
+static int quant_cuda_transformer_facts(yvex_backend *backend)
+{
+    enum { TOKENS = 2, HIDDEN = 32, STREAMS = 2 };
+    yvex_device_tensor *encoded_device = NULL, *embedding_device = NULL;
+    yvex_device_tensor *expanded_device = NULL, *function_device = NULL;
+    yvex_device_tensor *base_device = NULL, *scale_device = NULL;
+    yvex_device_tensor *norm_device = NULL, *output_device = NULL;
+    unsigned char *row = NULL, *encoded = NULL;
+    float source[TOKENS * HIDDEN] = {0};
+    float embedding[TOKENS * HIDDEN], expanded[TOKENS * HIDDEN * STREAMS];
+    float function[STREAMS * STREAMS * HIDDEN] = {0};
+    float base[STREAMS] = {0}, scale[1] = {1.0f}, norm[HIDDEN];
+    float output[TOKENS * HIDDEN];
+    yvex_backend_cuda_operation_facts facts;
+    yvex_error err;
+    size_t row_bytes = 0u, current_bytes = 0u;
+    unsigned long long index;
+    int rc;
+
+    for (index = 0ull; index < HIDDEN; ++index) norm[index] = 1.0f;
+    for (index = 0ull; index < TOKENS; ++index) {
+        YVEX_TEST_ASSERT(quant_cuda_encode_row(
+                             YVEX_GGUF_QTYPE_Q8_0, source + index * HIDDEN,
+                             HIDDEN, &row, &current_bytes),
+                         "transformer embedding row encodes");
+        if (!index) {
+            row_bytes = current_bytes;
+            encoded = (unsigned char *)malloc(TOKENS * row_bytes);
+        }
+        YVEX_TEST_ASSERT(encoded && current_bytes == row_bytes,
+                         "transformer embedding encoding has stable rows");
+        memcpy(encoded + index * row_bytes, row, row_bytes);
+        free(row);
+        row = NULL;
+    }
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "transformer_encoded", YVEX_DTYPE_I8,
+                          encoded, TOKENS * row_bytes, &encoded_device, &err) &&
+            quant_cuda_tensor(backend, "transformer_embedding", YVEX_DTYPE_F32,
+                              NULL, sizeof(embedding), &embedding_device, &err) &&
+            quant_cuda_tensor(backend, "transformer_expanded", YVEX_DTYPE_F32,
+                              NULL, sizeof(expanded), &expanded_device, &err),
+        "transformer initial tensors allocate");
+    rc = yvex_backend_transformer_cuda_initial(
+        backend, encoded_device, YVEX_GGUF_QTYPE_Q8_0, TOKENS, HIDDEN, STREAMS,
+        embedding_device, expanded_device, &facts, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && facts.compulsory_memory_facts_available &&
+            facts.active_weight_bytes == TOKENS * row_bytes && !facts.state_bytes &&
+            facts.activation_bytes == sizeof(embedding) + sizeof(expanded) &&
+            facts.temporary_bytes == sizeof(int) &&
+            yvex_backend_tensor_read(backend, embedding_device, embedding,
+                                     sizeof(embedding), &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, expanded_device, expanded,
+                                     sizeof(expanded), &err) == YVEX_OK,
+        "transformer initial reports exact compulsory memory spans");
+    for (index = 0ull; index < TOKENS * HIDDEN * STREAMS; ++index)
+        YVEX_TEST_ASSERT(expanded[index] == 0.0f,
+                         "transformer initial publishes finite repeated streams");
+
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "transformer_function", YVEX_DTYPE_F32,
+                          function, sizeof(function), &function_device, &err) &&
+            quant_cuda_tensor(backend, "transformer_base", YVEX_DTYPE_F32,
+                              base, sizeof(base), &base_device, &err) &&
+            quant_cuda_tensor(backend, "transformer_scale", YVEX_DTYPE_F32,
+                              scale, sizeof(scale), &scale_device, &err) &&
+            quant_cuda_tensor(backend, "transformer_norm", YVEX_DTYPE_F32,
+                              norm, sizeof(norm), &norm_device, &err) &&
+            quant_cuda_tensor(backend, "transformer_output", YVEX_DTYPE_F32,
+                              NULL, sizeof(output), &output_device, &err),
+        "transformer final tensors allocate");
+    rc = yvex_backend_transformer_cuda_final(
+        backend, expanded_device, function_device, base_device, scale_device,
+        norm_device, TOKENS, HIDDEN, STREAMS, 1e-6, 1e-6, output_device,
+        &facts, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && facts.compulsory_memory_facts_available &&
+            facts.active_weight_bytes == sizeof(function) + sizeof(base) +
+                                             sizeof(scale) + sizeof(norm) &&
+            !facts.state_bytes &&
+            facts.activation_bytes == sizeof(expanded) + sizeof(output) &&
+            facts.temporary_bytes == sizeof(int) &&
+            yvex_backend_tensor_read(backend, output_device, output,
+                                     sizeof(output), &err) == YVEX_OK,
+        "transformer final reports exact compulsory memory spans");
+    for (index = 0ull; index < TOKENS * HIDDEN; ++index)
+        YVEX_TEST_ASSERT(output[index] == 0.0f,
+                         "transformer final publishes finite normalized rows");
+
+    free(encoded);
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &output_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &norm_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &scale_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &base_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &function_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &expanded_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &embedding_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &encoded_device, &err) == YVEX_OK,
+        "transformer fact tensors release");
+    return 0;
+}
+
 /* Proves typed geometry, alignment, capability, and failure cleanup refusals. */
 static int quant_cuda_refusals(const yvex_backend_options *options)
 {
@@ -476,6 +597,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "IQ2_XXS production Q8 activation matvec");
     YVEX_TEST_ASSERT(quant_cuda_argmax(backend) == 0,
                      "production device argmax");
+    YVEX_TEST_ASSERT(quant_cuda_transformer_facts(backend) == 0,
+                     "transformer envelope physical facts");
     yvex_backend_close(backend);
     return quant_cuda_refusals(&options);
 }

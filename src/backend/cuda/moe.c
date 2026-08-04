@@ -592,6 +592,7 @@ int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
 {
     const yvex_moe_layer_plan *layer = execution && execution->job
                                            ? execution->job->layer : NULL;
+    unsigned long long activation_elements, activation_bytes;
     int rc;
     if (!execution || !layer || !result || execution->finished)
         return moe_cuda_refuse(err, YVEX_ERR_INVALID_ARG, "CUDA MoE finish is invalid");
@@ -663,6 +664,14 @@ int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
 #undef DOWNLOAD
     if (rc == YVEX_OK) rc = moe_cuda_sync_status(execution, "cuda.moe.finish-sync", err);
     if (rc != YVEX_OK) return rc;
+    if (execution->job->device_input && execution->job->device_output) {
+        if (!yvex_core_u64_mul(layer->expanded_width, 2ull, &activation_elements) ||
+            !yvex_core_u64_mul(activation_elements, sizeof(float), &activation_bytes))
+            return moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
+                                   "CUDA MoE compulsory activation extent overflowed");
+        result->memory.activation_bytes = activation_bytes;
+        result->memory.temporary_bytes = execution->work.peak_bytes;
+    }
     result->expert_subviews_accessed += execution->subviews;
     result->host_to_device_bytes += execution->h2d;
     result->device_to_host_bytes += execution->d2h;

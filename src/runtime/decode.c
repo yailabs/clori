@@ -389,6 +389,7 @@ static int decode_step_locked(
         result->attention_weight_bytes = transformer.attention_weight_bytes;
         result->expert_weight_bytes = transformer.expert_weight_bytes;
         result->final_weight_bytes = transformer.final_weight_bytes;
+        result->memory = transformer.memory;
         result->h2d_bytes = transformer.h2d_bytes;
         result->d2h_bytes = transformer.d2h_bytes;
         result->kernel_launches = transformer.kernel_launches;
@@ -452,8 +453,9 @@ int yvex_runtime_decode_step(
     return rc;
 }
 
-static void decode_accumulate(yvex_runtime_decode_result *result,
-                              const yvex_runtime_decode_step_result *step)
+static int decode_accumulate(yvex_runtime_decode_result *result,
+                             const yvex_runtime_decode_step_result *step,
+                             yvex_error *err)
 {
     result->layers_executed += step->layers_executed;
     result->swa_layers += step->swa_layers;
@@ -487,6 +489,7 @@ static void decode_accumulate(yvex_runtime_decode_result *result,
     result->moe_ns += step->moe_ns;
     result->final_ns += step->final_ns;
     result->synchronization_ns += step->synchronization_ns;
+    return yvex_execution_memory_facts_merge(&result->memory, &step->memory, err);
 }
 /*
  * Finalize ordered aggregate evidence over completed caller-owned hidden rows.
@@ -594,7 +597,7 @@ int yvex_runtime_decode_execute(
             result->completed_steps++;
             result->final_committed_prefix = output->steps[index].position_after;
             result->generation_after = output->steps[index].generation_after;
-            decode_accumulate(result, &output->steps[index]);
+            rc = decode_accumulate(result, &output->steps[index], err);
         }
     }
     primary = err ? *err : (yvex_error){0};

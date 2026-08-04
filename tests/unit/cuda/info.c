@@ -282,6 +282,9 @@ static int assert_grouped_moe(yvex_backend *backend)
     YVEX_TEST_ASSERT(memcmp(normal_device, audit_device, sizeof(normal_device)) == 0 &&
                          normal.router.selected_experts[0] ==
                              audit.router.selected_experts[0] &&
+                         normal.memory.activation_bytes ==
+                             2ull * layer.expanded_width * sizeof(float) &&
+                         normal.memory.temporary_bytes != 0ull &&
                          normal.upload_count == 0ull &&
                          normal.device_to_host_bytes < audit.device_to_host_bytes &&
                          normal.device_synchronizations == 1ull,

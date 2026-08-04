@@ -1,5 +1,6 @@
 #include "tests/test.h"
 
+#include <limits.h>
 #include <string.h>
 
 #include <yvex/internal/backend.h>
@@ -470,6 +471,49 @@ static int execution_test_roofline(void)
     return 0;
 }
 
+static int execution_test_memory_facts(void)
+{
+    yvex_execution_memory_facts facts = {0}, before;
+    const yvex_execution_memory_facts delta = {
+        .active_weight_bytes = 1ull, .state_bytes = 2ull,
+        .activation_bytes = 3ull, .temporary_bytes = 4ull,
+        .measured_operations = 2ull, .complete = 1};
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(yvex_execution_memory_facts_add(
+                         &facts, 10ull, 20ull, 30ull, 40ull, 1ull, 0ull, &err) == YVEX_OK &&
+                         facts.active_weight_bytes == 10ull && facts.state_bytes == 20ull &&
+                         facts.activation_bytes == 30ull && facts.temporary_bytes == 40ull &&
+                         facts.measured_operations == 1ull && !facts.missing_operations &&
+                         facts.complete,
+                     "one measured operation should make compulsory memory facts complete");
+    YVEX_TEST_ASSERT(yvex_execution_memory_facts_merge(&facts, &delta, &err) == YVEX_OK &&
+                         facts.active_weight_bytes == 11ull && facts.state_bytes == 22ull &&
+                         facts.activation_bytes == 33ull && facts.temporary_bytes == 44ull &&
+                         facts.measured_operations == 3ull && facts.complete,
+                     "canonical memory facts should merge measured operations exactly");
+    before = facts;
+    YVEX_TEST_ASSERT(yvex_execution_memory_facts_merge(
+                         &facts, &(yvex_execution_memory_facts){0}, &err) == YVEX_OK &&
+                         memcmp(&facts, &before, sizeof(facts)) == 0,
+                     "an empty child aggregate should be the merge identity");
+    YVEX_TEST_ASSERT(yvex_execution_memory_facts_add(
+                         &facts, 0ull, 0ull, 0ull, 0ull, 0ull, 1ull, &err) == YVEX_OK &&
+                         facts.missing_operations == 1ull && !facts.complete,
+                     "one missing operation should make aggregate memory evidence incomplete");
+    facts.active_weight_bytes = ULLONG_MAX;
+    before = facts;
+    YVEX_TEST_ASSERT(yvex_execution_memory_facts_add(
+                         &facts, 1ull, 0ull, 0ull, 0ull, 1ull, 0ull, &err) == YVEX_ERR_BOUNDS &&
+                         memcmp(&facts, &before, sizeof(facts)) == 0,
+                     "memory-fact overflow should preserve the prior aggregate transactionally");
+    YVEX_TEST_ASSERT(yvex_execution_memory_facts_add(
+                         &facts, 0ull, 0ull, 0ull, 0ull, 0ull, 0ull, &err) == YVEX_ERR_INVALID_ARG &&
+                         memcmp(&facts, &before, sizeof(facts)) == 0,
+                     "memory facts should refuse an ownerless zero-operation delta");
+    return 0;
+}
+
 static int execution_test_shape(void)
 {
     yvex_execution_shape_registry *registry = NULL;
@@ -574,6 +618,7 @@ int yvex_test_runtime_execution(void)
 {
     if (execution_test_planning() != 0) return 1;
     if (execution_test_profile() != 0) return 1;
+    if (execution_test_memory_facts() != 0) return 1;
     if (execution_test_roofline() != 0) return 1;
     if (execution_test_shape() != 0) return 1;
     return execution_test_device_view();

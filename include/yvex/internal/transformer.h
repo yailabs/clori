@@ -194,6 +194,7 @@ typedef struct {
     unsigned long long row_expert_pairs, unique_experts;
     unsigned long long grouped_expert_operations, expert_subviews_accessed;
     unsigned long long attention_weight_bytes, expert_weight_bytes, final_weight_bytes;
+    yvex_execution_memory_facts memory;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
@@ -224,6 +225,7 @@ typedef struct {
     unsigned long long row_expert_pairs, unique_experts;
     unsigned long long grouped_expert_operations, expert_subviews_accessed;
     unsigned long long attention_weight_bytes, expert_weight_bytes, final_weight_bytes;
+    yvex_execution_memory_facts memory;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;

@@ -886,6 +886,50 @@ int yvex_attention_cuda_reject(
         context->layer ? context->layer->layer_index : context->opts->layer_index,
         YVEX_TENSOR_ROLE_UNKNOWN, expected, actual, context->err, status, reason);
 }
+
+static int attention_cuda_memory_facts(attention_cuda_context *context)
+{
+    const yvex_backend_attention_job *job = &context->job;
+    unsigned long long state_elements = 0ull, state_positions, activation_elements;
+    unsigned long long value, state_bytes, position_bytes, activation_bytes;
+    const yvex_backend_attention_rolling *rolling[] = {
+        &job->main_rolling, &job->indexer_rolling};
+    unsigned int index;
+    if (!job->device_input || !job->device_output)
+        return yvex_execution_memory_facts_add(
+                   &context->result->memory, 0ull, 0ull, 0ull, 0ull,
+                   0ull, 1ull, context->err) == YVEX_OK;
+#define ADD_STATE(count_, stride_)                                                \
+    do {                                                                          \
+        if (!yvex_core_u64_mul((count_), (stride_), &value) ||                    \
+            !yvex_core_u64_add(state_elements, value, &state_elements)) return 0; \
+    } while (0)
+    ADD_STATE(job->local_count, job->local_stride);
+    ADD_STATE(job->compressed_count, job->compressed_stride);
+    ADD_STATE(job->indexer_count, job->indexer_stride);
+    for (index = 0u; index < sizeof(rolling) / sizeof(rolling[0]); ++index)
+        if (rolling[index]->present &&
+            (!yvex_core_u64_add(state_elements, rolling[index]->kv_state_capacity,
+                                &state_elements) ||
+             !yvex_core_u64_add(state_elements, rolling[index]->score_state_capacity,
+                                &state_elements))) return 0;
+#undef ADD_STATE
+    if (!yvex_core_u64_add(job->local_count, job->compressed_count, &state_positions) ||
+        !yvex_core_u64_add(state_positions, job->indexer_count, &state_positions) ||
+        !yvex_core_u64_mul(state_elements, sizeof(float), &state_bytes) ||
+        !yvex_core_u64_mul(state_positions, sizeof(unsigned long long), &position_bytes) ||
+        !yvex_core_u64_add(state_bytes, position_bytes, &state_bytes) ||
+        !yvex_core_u64_mul(job->token_count,
+                           job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
+                               ? job->residual_expanded_width : job->hidden_width,
+                           &activation_elements) ||
+        !yvex_core_u64_mul(activation_elements, 2ull, &activation_elements) ||
+        !yvex_core_u64_mul(activation_elements, sizeof(float), &activation_bytes)) return 0;
+    return yvex_execution_memory_facts_add(
+               &context->result->memory, context->weights.payload_bytes_read,
+               state_bytes, activation_bytes, context->cuda_output.peak_device_bytes,
+               1ull, 0ull, context->err) == YVEX_OK;
+}
 /*
  * Publish CUDA evidence and rolling state after complete device execution.
  *
@@ -907,6 +951,11 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
             context->token_count, context->cuda_output.tokens_executed,
             YVEX_ERR_STATE,
             "CUDA attention backend did not complete the admitted token range");
+    if (!attention_cuda_memory_facts(context))
+        return yvex_attention_cuda_reject(
+            context, YVEX_DEEPSEEK_ATTENTION_FAILURE_SCRATCH,
+            ULLONG_MAX, context->token_count, YVEX_ERR_BOUNDS,
+            "CUDA attention compulsory memory extent overflowed");
     context->trace.compressed_count = context->cuda_output.compressed_count;
     context->trace.indexer_count = context->cuda_output.indexer_count;
     context->trace.compressed_stride = context->trace.compressed_count

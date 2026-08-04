@@ -207,24 +207,25 @@ independently of trace verbosity. Prefill, ordinary decode, output projection,
 DSpark draft/verification and accepted-state promotion contribute exact
 duration, work and committed-token facts. Target-only prefill and decode add
 encoded embedding, attention and expert bytes, decoded final-stage bytes and
-kernel launches. Those target-only transformer phases also project exact
-H2D/D2H/D2D movement and synchronization from embedding, attention, MoE,
-selected feature and final-stage producers. Output projection adds encoded head
-bytes, the compulsory hidden-input/logit-output activation spans, and the
-actually allocated status and Q8-activation scratch. Output-head state is an
-exact zero because the operation consumes no persistent sequence state. Its
-phase movement is also exact: a host-sourced hidden row contributes H2D,
-forensic full logits contribute D2H, and every production row includes the
-bounded CUDA status transfer. The output-head phase therefore earns a complete
-memory lower bound without treating tensor capacity, workspace peak, cache
-behavior or estimated DRAM transactions as measured traffic. Greedy selection
-still performs no full-vocabulary D2H. Draft and verify sweeps add exact
-transformer/output-row launches, H2D/D2H/D2D movement and synchronization.
-Transformer state, activation, temporary, occupancy, DSpark active-byte and
-batched-decode facts remain unavailable, so the global optimization priority
-stays provisional. The offline generation operator exposes the ledger in audit
-and JSON projections without adding it to protocol v6 or making trace verbosity
-a numerical dependency.
+kernel launches. One checked compulsory-memory fact owner aggregates measured
+and missing operations transactionally. Device-native embedding, attention,
+MoE and final projection report their active weights, touched sequence-state
+spans, external activation spans and actual temporary workspace; a target phase
+earns its complete memory mask only when every contributing operation reports
+those facts. Those phases also project exact H2D/D2H/D2D movement and
+synchronization from embedding, attention, MoE, selected feature and final-stage
+producers. Output projection uses the same fact owner for encoded head bytes,
+the compulsory hidden-input/logit-output activation spans, actually allocated
+status and Q8-activation scratch, and exact zero persistent-state bytes. Its
+movement is exact: a host-sourced hidden row contributes H2D, forensic full
+logits contribute D2H, and every production row includes the bounded CUDA
+status transfer. Greedy selection still performs no full-vocabulary D2H.
+Draft and verify sweeps add exact transformer/output-row launches,
+H2D/D2H/D2D movement and synchronization. Their active-byte facts, occupancy
+and batched-decode facts remain unavailable, so the global optimization
+priority stays provisional. The offline generation operator exposes the ledger
+in audit and JSON projections without adding it to protocol v6 or making trace
+verbosity a numerical dependency.
 
 Prefix selection also snapshots state-residency counters around its serialized
 mutation. Promotion therefore reports exact H2D and one synchronization per

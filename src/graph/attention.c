@@ -1395,6 +1395,10 @@ static int attention_probe_backend_execute(
         context->candidate.peak_device_bytes = run->evidence.cuda_peak_device_bytes;
     if (run->evidence.topk_selected > context->candidate.topk_selected)
         context->candidate.topk_selected = run->evidence.topk_selected;
+    if (cuda && yvex_execution_memory_facts_merge(
+                    &context->candidate.memory, &run->evidence.memory,
+                    context->error) != YVEX_OK)
+        return yvex_error_code(context->error);
     return YVEX_OK;
 }
 /*

@@ -68,13 +68,12 @@ typedef struct {
     unsigned int schema_version;
     int completed, host_values_available, device_values_available;
     int finite_count_available, range_available, raw_digest_available;
-    int compulsory_memory_facts_available;
     yvex_execution_evidence_profile evidence_profile;
     yvex_logits_source_phase source_phase;
     unsigned long long source_position, vocabulary_size, hidden_width;
     unsigned long long logits_count, finite_count;
     float minimum_logit, maximum_logit;
-    unsigned long long active_weight_bytes, state_bytes, activation_bytes, temporary_bytes;
+    yvex_execution_memory_facts memory;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches, device_synchronizations;
     unsigned long long full_array_host_scan_bytes;
     yvex_execution_device_view device_logits;

@@ -99,8 +99,16 @@ static int transformer_cuda_facts_add(
     unsigned long long device_synchronizations, yvex_error *err)
 {
     unsigned long long downloads, uploads, synchronizations;
-    if (!result || !facts ||
-        !yvex_core_u64_add(facts->upload_count, h2d_bytes != 0ull, &uploads) ||
+    if (!result || !facts)
+        return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG,
+                                           "CUDA physical facts are required");
+    if (yvex_execution_memory_facts_add(
+            &result->memory, facts->active_weight_bytes, facts->state_bytes,
+            facts->activation_bytes, facts->temporary_bytes,
+            facts->compulsory_memory_facts_available,
+            !facts->compulsory_memory_facts_available, err) != YVEX_OK)
+        return yvex_error_code(err);
+    if (!yvex_core_u64_add(facts->upload_count, h2d_bytes != 0ull, &uploads) ||
         !yvex_core_u64_add(facts->download_count, download_count, &downloads) ||
         !yvex_core_u64_add(facts->device_synchronizations, device_synchronizations, &synchronizations) ||
         !yvex_core_u64_add(result->h2d_bytes, h2d_bytes, &result->h2d_bytes) ||
@@ -174,7 +182,6 @@ static int transformer_feature_request_validate(
                 "transformer feature layers must be unique and ordered");
     return YVEX_OK;
 }
-
 static const yvex_materialized_tensor_binding *transformer_runtime_binding(
     const yvex_runtime_transformer_context *context, yvex_transformer_weight_slot slot)
 {
@@ -185,7 +192,6 @@ static const yvex_materialized_tensor_binding *transformer_runtime_binding(
                      context->model_view->materialization, summary->weights[slot].tensor_id)
                : NULL;
 }
-
 static int transformer_runtime_binding_project(
     const yvex_runtime_model_view *view, yvex_tensor_role role,
     yvex_tensor_scope scope, unsigned long long layer_index,
@@ -281,7 +287,6 @@ static int transformer_runtime_plan_facts(
     }
     return YVEX_OK;
 }
-
 static int transformer_runtime_read(yvex_runtime_transformer_context *context,
                                     const yvex_materialized_tensor_binding *binding,
                                     unsigned long long offset, unsigned long long bytes,
@@ -297,7 +302,6 @@ static int transformer_runtime_read(yvex_runtime_transformer_context *context,
                                               offset, destination, (size_t)bytes,
                                               &failure, err);
 }
-
 static int transformer_runtime_decode(const yvex_materialized_tensor_binding *binding,
                                       const unsigned char *encoded, unsigned long long bytes,
                                       float *decoded, unsigned long long count,
@@ -364,7 +368,6 @@ static int transformer_runtime_globals(yvex_runtime_transformer_context *context
     context->host_bytes = total;
     return YVEX_OK;
 }
-
 static int transformer_device_tensor_open(
     yvex_runtime_transformer_context *context, yvex_device_tensor **out,
     const char *name, yvex_dtype dtype, unsigned long long elements,
@@ -435,7 +438,6 @@ static int transformer_device_buffers(yvex_runtime_transformer_context *context,
     }
     return rc;
 }
-
 static int transformer_runtime_buffers(yvex_runtime_transformer_context *context,
                                        unsigned long long tokens, yvex_error *err)
 {
@@ -493,7 +495,6 @@ static int transformer_encoded_subview(const yvex_device_tensor *source,
     view->bytes = bytes;
     return 1;
 }
-
 static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_error *err)
 {
     yvex_runtime_transformer_context *context = chunk->owner;
@@ -573,7 +574,6 @@ static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_
     return yvex_transformer_initial_residual(context->plan, context->embedding,
                                              chunk->token_count, context->expanded_a, err);
 }
-
 static int transformer_hash_values(yvex_sha256 *hash, const float *values,
                                    unsigned long long count)
 {
@@ -586,7 +586,6 @@ static int transformer_hash_values(yvex_sha256 *hash, const float *values,
     }
     return 1;
 }
-
 static int transformer_core_feature_activation(
     void *opaque, unsigned long long layer_ordinal,
     unsigned long long token_count, const float **input,
@@ -604,7 +603,6 @@ static int transformer_core_feature_activation(
     *stride = view->hidden_width;
     return YVEX_OK;
 }
-
 static int transformer_activation_view(void *opaque, unsigned long long layer_ordinal,
                                        unsigned long long token_count, const float **input,
                                        unsigned long long *stride, yvex_error *err)
@@ -620,7 +618,6 @@ static int transformer_activation_view(void *opaque, unsigned long long layer_or
     *stride = s->expanded_width;
     return YVEX_OK;
 }
-
 static int transformer_device_view(void *opaque, unsigned long long layer_ordinal,
                                    unsigned long long token_count,
                                    const yvex_device_tensor **input,
@@ -759,6 +756,7 @@ int yvex_runtime_transformer_execute_block(
     result->grouped_expert_operations = moe_result.grouped_expert_operations;
     result->expert_subviews_accessed = moe_result.expert_subviews_accessed;
     result->expert_weight_bytes = moe_result.encoded_bytes_read;
+    result->memory = moe_result.memory;
     result->h2d_bytes = moe_result.h2d_bytes;
     result->d2h_bytes = moe_result.d2h_bytes;
     result->d2d_bytes = moe_result.d2d_bytes;
@@ -852,6 +850,9 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
     chunk->result->grouped_expert_operations += block.grouped_expert_operations;
     chunk->result->expert_subviews_accessed += block.expert_subviews_accessed;
     chunk->result->expert_weight_bytes += block.expert_weight_bytes;
+    if (yvex_execution_memory_facts_merge(
+            &chunk->result->memory, &block.memory, err) != YVEX_OK)
+        return yvex_error_code(err);
     chunk->result->h2d_bytes += block.h2d_bytes;
     chunk->result->d2h_bytes += block.d2h_bytes;
     chunk->result->d2d_bytes += block.d2d_bytes;
@@ -973,7 +974,6 @@ static int transformer_state_summary(const yvex_runtime_transformer_context *con
                                           "transformer persistent state is unavailable");
     return YVEX_OK;
 }
-
 static int transformer_capacity_build(yvex_graph_attention_capacity_plan **out,
                                       const yvex_runtime_model_view *model,
                                       yvex_tensor_scope scope,
@@ -993,7 +993,6 @@ static int transformer_capacity_build(yvex_graph_attention_capacity_plan **out,
                                                      transformer_runtime_attention(model, scope),
                                                      &request, err);
 }
-
 static yvex_execution_context_band transformer_context_band(
     unsigned long long position, unsigned long long capacity)
 {
@@ -1003,7 +1002,6 @@ static yvex_execution_context_band transformer_context_band(
         return YVEX_EXECUTION_CONTEXT_LONG;
     return YVEX_EXECUTION_CONTEXT_NEAR_CAPACITY;
 }
-
 static unsigned long long transformer_required_capacity(
     const yvex_graph_attention_state_component_summary *component,
     unsigned long long width)
@@ -1014,7 +1012,6 @@ static unsigned long long transformer_required_capacity(
     required = component->entry_count + width;
     return required < component->capacity ? required : component->capacity;
 }
-
 static int transformer_shape_admit(
     yvex_runtime_transformer_context *context,
     const yvex_transformer_input_summary *input,
@@ -1217,7 +1214,6 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
         rc = transformer_shape_admit(context, input, request, state, &session, err);
     return rc;
 }
-
 static int transformer_values_digest(const char *domain, const float *values,
                                      unsigned long long count,
                                      char output[YVEX_SHA256_HEX_CAP])
@@ -1231,7 +1227,6 @@ static int transformer_values_digest(const char *domain, const float *values,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-
 static int transformer_core_features_execute(
     yvex_runtime_transformer_context *context, unsigned long long token_start,
     const float *features, unsigned long long token_count,
@@ -1781,6 +1776,11 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
             result->csa_layers += attention_result.csa_layers_executed;
             result->hca_layers += attention_result.hca_layers_executed;
             result->attention_weight_bytes += attention_result.payload_bytes_read;
+            if (yvex_execution_memory_facts_merge(
+                    &result->memory, &attention_result.memory, err) != YVEX_OK) {
+                rc = yvex_error_code(err);
+                break;
+            }
             result->h2d_bytes += attention_result.h2d_bytes;
             result->d2h_bytes += attention_result.d2h_bytes;
             result->d2d_bytes += attention_result.d2d_bytes;

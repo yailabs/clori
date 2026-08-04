@@ -6,11 +6,11 @@
  */
 #ifndef INCLUDE_YVEX_INTERNAL_GRAPH_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_GRAPH_H_INCLUDED
-
 #include <stddef.h>
 #include <yvex/backend.h>
 #include <yvex/core.h>
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/execution.h>
 #include <yvex/internal/model.h>
 #include <yvex/registry.h>
 
@@ -333,6 +333,7 @@ typedef struct {
     unsigned long long cuda_kernel_launches, cuda_peak_host_bytes, cuda_peak_device_bytes;
     unsigned long long cuda_h2d_bytes, cuda_d2h_bytes, cuda_d2d_bytes;
     unsigned long long cuda_stream_synchronizations, cuda_device_synchronizations;
+    yvex_execution_memory_facts memory;
     unsigned long long cuda_device_execution_elapsed_ns;
     unsigned long long cuda_host_workspace_capacity, cuda_host_workspace_used;
     unsigned long long cuda_host_workspace_peak, cuda_host_workspace_allocations;
@@ -553,6 +554,7 @@ typedef struct {
     unsigned long long kernel_launches, peak_device_bytes, comparison_values;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
     unsigned long long stream_synchronizations, device_synchronizations;
+    yvex_execution_memory_facts memory;
     unsigned long long cuda_device_execution_elapsed_ns;
     unsigned long long comparison_output_values, comparison_state_values;
     unsigned long long comparison_finite_values, comparison_nonfinite_values;

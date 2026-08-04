@@ -509,6 +509,17 @@ static int runtime_moe_layer_owned(yvex_runtime_moe_context *context,
         return rc;
     }
     result->encoded_bytes_read += fixed_bytes;
+    if (result->memory.activation_bytes || result->memory.temporary_bytes) {
+        unsigned long long activation = result->memory.activation_bytes;
+        unsigned long long temporary = result->memory.temporary_bytes;
+        memset(&result->memory, 0, sizeof(result->memory));
+        if (yvex_execution_memory_facts_add(
+                &result->memory, result->encoded_bytes_read, 0ull, activation,
+                temporary, 1ull, 0ull, err) != YVEX_OK)
+            return yvex_error_code(err);
+    } else if (yvex_execution_memory_facts_add(
+                   &result->memory, 0ull, 0ull, 0ull, 0ull,
+                   0ull, 1ull, err) != YVEX_OK) return yvex_error_code(err);
     if (yvex_backend_kind_of(context->session_view->backend) != YVEX_BACKEND_KIND_CUDA)
         result->cache_misses = result->expert_subviews_accessed;
     for (slot = 0ull; slot < YVEX_MOE_WEIGHT_COUNT; ++slot) {
@@ -732,6 +743,11 @@ int yvex_runtime_moe_execute(yvex_runtime_moe_context *context,
             result->shared_expert_executions += layer->shared_experts;
             result->expert_subviews_accessed += staged.expert_subviews_accessed;
             result->encoded_bytes_read += staged.encoded_bytes_read;
+            if (yvex_execution_memory_facts_merge(
+                    &result->memory, &staged.memory, err) != YVEX_OK) {
+                rc = yvex_error_code(err);
+                break;
+            }
             result->host_to_device_bytes += staged.host_to_device_bytes;
             result->device_to_host_bytes += staged.device_to_host_bytes;
             result->kernel_launches += staged.kernel_launches;
@@ -910,6 +926,9 @@ static int runtime_moe_batch_account(yvex_moe_row_batch_result *batch,
     batch->device_synchronizations += row->device_synchronizations;
     batch->total_ns += row->total_ns;
     batch->synchronization_ns += row->synchronization_ns;
+    if (yvex_execution_memory_facts_merge(
+            &batch->memory, &row->memory, NULL) != YVEX_OK)
+        return 0;
     for (rank = 0ull; rank < row->router.selected_count; ++rank) {
         unsigned long long expert = row->router.selected_experts[rank];
         if (expert >= seen_count) return 0;

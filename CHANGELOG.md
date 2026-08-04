@@ -46,6 +46,12 @@ change. Git history preserves implementation chronology.
   output-head rows now publish complete compulsory weight, activation,
   temporary and zero-state byte facts, giving that phase a real memory lower
   bound without estimating traffic from allocation capacity.
+- Compulsory memory accounting now has one transactional internal fact owner.
+  CUDA embedding, attention, MoE and final projection contribute measured or
+  explicitly missing operations through transformer and decode aggregation;
+  target generation publishes a complete phase memory mask only when every
+  contributing operation is measured. Output-head reporting uses the same
+  representation instead of retaining duplicate mutable fields.
 
 ### Changed
 

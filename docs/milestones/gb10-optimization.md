@@ -65,14 +65,21 @@ keeps the original zero-mask v1 writer representation readable.
 The production CUDA generation path now records partial phase evidence without
 depending on trace verbosity and exposes it through the finite offline
 generation operator. Duration, work and committed-token accounting is live.
-Target-only prefill/decode report exact active-weight and launch facts.
+Target-only prefill/decode aggregate compulsory memory through one checked fact
+type. Device-native embedding, attention, MoE and final projection contribute
+exact active weights, touched state, external activations and actual temporary
+workspace; measured and missing operation counts prevent a partial aggregate
+from acquiring the complete memory mask. Transactional overflow preserves the
+prior aggregate. These phases also report exact launch facts.
 Output projection reports encoded weights, compulsory input/output activation
 spans, actually allocated temporary spans, exact zero persistent-state bytes,
 movement, launches and synchronization. Those facts complete its memory lower
 bound without substituting allocation capacity or workspace peaks. Target-only
 transformer phases additionally report exact
 H2D/D2H/D2D movement and synchronization, including selected feature and
-bounded status transfers. DSpark draft/verification report exact launch,
+bounded status transfers. Output projection now consumes the same canonical
+memory representation rather than maintaining a parallel report truth. DSpark
+draft/verification report exact launch,
 H2D/D2H/D2D movement and synchronization across their transformer and batched
 output-head work. Their active weights, state, activation, temporary and
 occupancy remain unavailable. Current optimization ordering is therefore

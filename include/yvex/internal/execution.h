@@ -289,6 +289,21 @@ typedef enum {
      YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVATION) |              \
      YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_TEMPORARY))
 
+typedef struct {
+    unsigned long long active_weight_bytes, state_bytes, activation_bytes, temporary_bytes;
+    unsigned long long measured_operations, missing_operations;
+    int complete;
+} yvex_execution_memory_facts;
+
+int yvex_execution_memory_facts_add(
+    yvex_execution_memory_facts *facts, unsigned long long active_weight_bytes,
+    unsigned long long state_bytes, unsigned long long activation_bytes,
+    unsigned long long temporary_bytes, unsigned long long measured_operations,
+    unsigned long long missing_operations, yvex_error *err);
+int yvex_execution_memory_facts_merge(
+    yvex_execution_memory_facts *facts,
+    const yvex_execution_memory_facts *delta, yvex_error *err);
+
 /* Memory facts count compulsory device spans once, not capacity or observed DRAM transactions. */
 typedef struct {
     yvex_execution_roofline_phase phase;

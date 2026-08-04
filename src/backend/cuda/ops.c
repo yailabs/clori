@@ -1673,6 +1673,7 @@ int yvex_backend_transformer_cuda_initial(
     CUdeviceptr status = 0ull, encoded_ptr, embedding_ptr, expanded_ptr;
     unsigned long long count, expanded_count, encoded_required, token, residual_stream;
     size_t embedding_bytes, expanded_bytes, row_bytes;
+    unsigned long long activation_bytes;
     unsigned int grid;
     int host_status = 0, rc, cleanup_rc;
     yvex_error cleanup;
@@ -1686,6 +1687,8 @@ int yvex_backend_transformer_cuda_initial(
         !yvex_cuda_work_checked_bytes(count, sizeof(float), &embedding_bytes) ||
         !yvex_cuda_work_checked_bytes(expanded_count, sizeof(float), &expanded_bytes) ||
         !yvex_cuda_work_checked_bytes(hidden_width, sizeof(float), &row_bytes) ||
+        !yvex_core_u64_add((unsigned long long)embedding_bytes,
+                           (unsigned long long)expanded_bytes, &activation_bytes) ||
         !backend_tensor_owner_is(backend, encoded) ||
         count % geometry->block_size ||
         encoded->bytes < encoded_required ||
@@ -1746,6 +1749,10 @@ int yvex_backend_transformer_cuda_initial(
         facts->kernel_launches = 1ull;
         facts->download_count = 1ull;
         facts->device_synchronizations = 1ull;
+        facts->active_weight_bytes = encoded_required;
+        facts->activation_bytes = activation_bytes;
+        facts->temporary_bytes = sizeof(host_status);
+        facts->compulsory_memory_facts_available = 1;
         yvex_error_clear(err);
     }
     return rc;
@@ -1764,6 +1771,8 @@ int yvex_backend_transformer_cuda_final(
     yvex_cuda_work work = {0};
     CUdeviceptr status = 0ull, input_ptr, function_ptr, base_ptr, scale_ptr, norm_ptr, output_ptr;
     unsigned long long expanded_width, expanded_count, function_count, output_count;
+    unsigned long long weight_count, activation_count;
+    size_t weight_bytes, activation_bytes;
     int host_status = 0, rc, cleanup_rc;
     yvex_error cleanup;
     if (facts) memset(facts, 0, sizeof(*facts));
@@ -1772,6 +1781,12 @@ int yvex_backend_transformer_cuda_final(
         !yvex_core_u64_mul(token_count, expanded_width, &expanded_count) ||
         !yvex_core_u64_mul(residual_streams, expanded_width, &function_count) ||
         !yvex_core_u64_mul(token_count, hidden_width, &output_count) ||
+        !yvex_core_u64_add(function_count, residual_streams, &weight_count) ||
+        !yvex_core_u64_add(weight_count, 1ull, &weight_count) ||
+        !yvex_core_u64_add(weight_count, hidden_width, &weight_count) ||
+        !yvex_core_u64_add(expanded_count, output_count, &activation_count) ||
+        !yvex_cuda_work_checked_bytes(weight_count, sizeof(float), &weight_bytes) ||
+        !yvex_cuda_work_checked_bytes(activation_count, sizeof(float), &activation_bytes) ||
         token_count > UINT_MAX || !backend_tensor_f32_elements(expanded, expanded_count) ||
         !backend_tensor_f32_elements(function, function_count) ||
         !backend_tensor_f32_elements(base, residual_streams) ||
@@ -1816,6 +1831,10 @@ int yvex_backend_transformer_cuda_final(
         facts->kernel_launches = 1ull;
         facts->download_count = 1ull;
         facts->device_synchronizations = 1ull;
+        facts->active_weight_bytes = weight_bytes;
+        facts->activation_bytes = activation_bytes;
+        facts->temporary_bytes = sizeof(host_status);
+        facts->compulsory_memory_facts_available = 1;
         yvex_error_clear(err);
     }
     return rc;

@@ -178,6 +178,7 @@ typedef struct {
     unsigned long long host_to_device_bytes, device_to_host_bytes, kernel_launches;
     unsigned long long cache_hits, cache_misses, upload_count, download_count;
     unsigned long long stream_synchronizations, device_synchronizations, device_to_device_bytes;
+    yvex_execution_memory_facts memory;
     unsigned long long ingress_ns, routing_ns, routed_ns, shared_ns, post_ns, total_ns;
     unsigned long long synchronization_ns;
     unsigned long long qtype_counts[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];
@@ -218,6 +219,7 @@ typedef struct {
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches;
     unsigned long long upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
+    yvex_execution_memory_facts memory;
     unsigned long long total_ns, synchronization_ns;
     char execution_profile_identity[YVEX_SHA256_HEX_CAP];
     char routing_digest[YVEX_SHA256_HEX_CAP];
@@ -266,6 +268,7 @@ typedef struct {
     unsigned long long encoded_bytes_read, host_to_device_bytes, device_to_host_bytes;
     unsigned long long kernel_launches, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations, device_to_device_bytes;
+    yvex_execution_memory_facts memory;
     unsigned long long ingress_ns, routing_ns, routed_ns, shared_ns, post_ns, total_ns;
     unsigned long long synchronization_ns;
     unsigned long long qtype_counts[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP];

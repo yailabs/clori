@@ -960,6 +960,57 @@ static int roofline_measurement_build(
     return 1;
 }
 
+int yvex_execution_memory_facts_add(
+    yvex_execution_memory_facts *facts, unsigned long long active_weight_bytes,
+    unsigned long long state_bytes, unsigned long long activation_bytes,
+    unsigned long long temporary_bytes, unsigned long long measured_operations,
+    unsigned long long missing_operations, yvex_error *err)
+{
+    yvex_execution_memory_facts candidate;
+    if (!facts || (!measured_operations && !missing_operations))
+        return execution_refuse(err, YVEX_ERR_INVALID_ARG,
+                                "runtime.execution.memory-facts",
+                                "one measured or missing operation count is required");
+    candidate = *facts;
+    if (!yvex_core_u64_add(candidate.active_weight_bytes, active_weight_bytes,
+                           &candidate.active_weight_bytes) ||
+        !yvex_core_u64_add(candidate.state_bytes, state_bytes, &candidate.state_bytes) ||
+        !yvex_core_u64_add(candidate.activation_bytes, activation_bytes,
+                           &candidate.activation_bytes) ||
+        !yvex_core_u64_add(candidate.temporary_bytes, temporary_bytes,
+                           &candidate.temporary_bytes) ||
+        !yvex_core_u64_add(candidate.measured_operations, measured_operations,
+                           &candidate.measured_operations) ||
+        !yvex_core_u64_add(candidate.missing_operations, missing_operations,
+                           &candidate.missing_operations))
+        return execution_refuse(err, YVEX_ERR_BOUNDS,
+                                "runtime.execution.memory-facts",
+                                "compulsory memory counters overflowed");
+    candidate.complete = candidate.measured_operations != 0ull &&
+                         candidate.missing_operations == 0ull;
+    *facts = candidate;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_execution_memory_facts_merge(
+    yvex_execution_memory_facts *facts,
+    const yvex_execution_memory_facts *delta, yvex_error *err)
+{
+    if (!delta)
+        return execution_refuse(err, YVEX_ERR_INVALID_ARG,
+                                "runtime.execution.memory-facts",
+                                "memory fact delta is required");
+    if (!delta->measured_operations && !delta->missing_operations) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    return yvex_execution_memory_facts_add(
+        facts, delta->active_weight_bytes, delta->state_bytes,
+        delta->activation_bytes, delta->temporary_bytes,
+        delta->measured_operations, delta->missing_operations, err);
+}
+
 int yvex_execution_phase_measurement_accumulate(
     yvex_execution_phase_measurement *measurements,
     unsigned long long measurement_capacity,
