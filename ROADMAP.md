@@ -67,13 +67,13 @@ run, or a self-authored report cannot promote a capability by itself.
 | 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `complete` | A mature daemon-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, watch, trace, and cancellation; explicit reasoning remains conditional on an admitted typed channel. | `V010.REPO.CODE.COMMENTARY.0` |
 | 6 | `V010.REBASE.DEEPSEEK.DSPARK.0` | `complete` | The sole DeepSeek vertical is rebound to the exact DSpark source and reaches target-verified speculative text through the hosted product path. | `V010.OPERATOR.REPL.CONSOLE.0` |
 | 7 | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` | `complete` | Identity-bound execution profiles, Physical Execution IR, prefix-addressable candidate state, shape-safe CUDA admission, exact partial turns, typed device views, and operational projections form one verified execution substrate. | `V010.REBASE.DEEPSEEK.DSPARK.0` |
-| 8 | `V010.REPO.ARCHITECTURE.COMPRESSION.0` | `active` | One source-membership authority and fewer ceremonial owners, internal ABIs, symbols, build declarations, targets, and duplicate registry facts preserve the accepted execution behavior in a directly navigable repository. | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` |
-| 9 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `blocked` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.REPO.ARCHITECTURE.COMPRESSION.0` |
+| 8 | `V010.REPO.ARCHITECTURE.COMPRESSION.0` | `complete` | One source-membership authority and fewer ceremonial owners, internal ABIs, symbols, build declarations, targets, and duplicate registry facts preserve the accepted execution behavior in a directly navigable repository. | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` |
+| 9 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `active` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.REPO.ARCHITECTURE.COMPRESSION.0` |
 | 10 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
 | 11 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
 | 12 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
 
-Active Next: V010.REPO.ARCHITECTURE.COMPRESSION.0
+Active Next: V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
 
 Detailed accepted and successor contracts for the current sequence are:
 
