@@ -208,14 +208,15 @@ DSpark draft/verification and accepted-state promotion contribute exact
 duration, work and committed-token facts. Target-only prefill and decode add
 encoded embedding, attention and expert bytes, decoded final-stage bytes and
 kernel launches. Output projection adds encoded head bytes, kernel launches and
-exact projection synchronization count. Its row-level H2D/D2H counters remain
-available in the runtime profile, but phase movement stays unavailable until
-the CUDA producer also accounts its bounded status transfer. Draft and verify
-sweeps add their transformer and output-row launches. State, activation,
-temporary, occupancy, movement, DSpark active-byte and batched-decode facts
-remain unavailable; the resulting optimization priority is therefore
-explicitly provisional. The offline generation operator exposes the ledger in
-audit and JSON projections without adding it to protocol v6.
+exact projection synchronization count. Its phase movement is exact: a
+host-sourced hidden row contributes H2D, forensic full logits contribute D2H,
+and every production row includes the bounded CUDA status transfer. Greedy
+selection still performs no full-vocabulary D2H. Draft and verify sweeps add
+their transformer and output-row launches. Transformer state, activation,
+temporary, occupancy, complete phase movement, DSpark active-byte and
+batched-decode facts remain unavailable; the resulting optimization priority
+is therefore explicitly provisional. The offline generation operator exposes
+the ledger in audit and JSON projections without adding it to protocol v6.
 
 ## Memory and residency
 

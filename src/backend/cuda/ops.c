@@ -1663,7 +1663,8 @@ int yvex_backend_transformer_cuda_initial(
     yvex_backend *backend, const yvex_device_tensor *encoded, unsigned int qtype,
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, yvex_device_tensor *embedding,
-    yvex_device_tensor *expanded, yvex_error *err)
+    yvex_device_tensor *expanded, yvex_backend_cuda_operation_facts *facts,
+    yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     const yvex_gguf_qtype_geometry *geometry = yvex_gguf_qtype_geometry_find(qtype);
@@ -1675,7 +1676,8 @@ int yvex_backend_transformer_cuda_initial(
     unsigned int grid;
     int host_status = 0, rc, cleanup_rc;
     yvex_error cleanup;
-    if (!state || !geometry || !geometry->block_size || !geometry->bytes_per_block ||
+    if (facts) memset(facts, 0, sizeof(*facts));
+    if (!state || !geometry || !geometry->block_size || !geometry->bytes_per_block || !facts ||
         !encoded || !embedding || !expanded || !token_count || !hidden_width ||
         !residual_streams || !yvex_core_u64_mul(token_count, hidden_width, &count) ||
         !yvex_core_u64_mul(count, residual_streams, &expanded_count) ||
@@ -1736,7 +1738,16 @@ int yvex_backend_transformer_cuda_initial(
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
     if (rc == YVEX_OK && cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
-    if (rc == YVEX_OK) { embedding->is_written = 1; expanded->is_written = 1; yvex_error_clear(err); }
+    if (rc == YVEX_OK) {
+        embedding->is_written = 1;
+        expanded->is_written = 1;
+        facts->d2h_bytes = sizeof(host_status);
+        facts->d2d_bytes = expanded_bytes;
+        facts->kernel_launches = 1ull;
+        facts->download_count = 1ull;
+        facts->device_synchronizations = 1ull;
+        yvex_error_clear(err);
+    }
     return rc;
 }
 
@@ -1746,7 +1757,8 @@ int yvex_backend_transformer_cuda_final(
     const yvex_device_tensor *scale, const yvex_device_tensor *norm,
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, double epsilon, double mhc_epsilon,
-    yvex_device_tensor *output, yvex_error *err)
+    yvex_device_tensor *output, yvex_backend_cuda_operation_facts *facts,
+    yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
@@ -1754,7 +1766,8 @@ int yvex_backend_transformer_cuda_final(
     unsigned long long expanded_width, expanded_count, function_count, output_count;
     int host_status = 0, rc, cleanup_rc;
     yvex_error cleanup;
-    if (!state || !token_count || !hidden_width || !residual_streams ||
+    if (facts) memset(facts, 0, sizeof(*facts));
+    if (!state || !facts || !token_count || !hidden_width || !residual_streams ||
         !yvex_core_u64_mul(hidden_width, residual_streams, &expanded_width) ||
         !yvex_core_u64_mul(token_count, expanded_width, &expanded_count) ||
         !yvex_core_u64_mul(residual_streams, expanded_width, &function_count) ||
@@ -1797,7 +1810,14 @@ int yvex_backend_transformer_cuda_final(
     yvex_error_clear(&cleanup);
     cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
     if (rc == YVEX_OK && cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
-    if (rc == YVEX_OK) { output->is_written = 1; yvex_error_clear(err); }
+    if (rc == YVEX_OK) {
+        output->is_written = 1;
+        facts->d2h_bytes = sizeof(host_status);
+        facts->kernel_launches = 1ull;
+        facts->download_count = 1ull;
+        facts->device_synchronizations = 1ull;
+        yvex_error_clear(err);
+    }
     return rc;
 }
 

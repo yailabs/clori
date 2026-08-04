@@ -331,7 +331,8 @@ typedef struct {
     unsigned long long local_entries, compressed_entries, payload_bytes_read;
     unsigned long long state_raw_entries, state_compressed_entries, state_indexer_entries;
     unsigned long long cuda_kernel_launches, cuda_peak_host_bytes, cuda_peak_device_bytes;
-    unsigned long long cuda_h2d_bytes, cuda_d2h_bytes;
+    unsigned long long cuda_h2d_bytes, cuda_d2h_bytes, cuda_d2d_bytes;
+    unsigned long long cuda_stream_synchronizations, cuda_device_synchronizations;
     unsigned long long cuda_device_execution_elapsed_ns;
     unsigned long long cuda_host_workspace_capacity, cuda_host_workspace_used;
     unsigned long long cuda_host_workspace_peak, cuda_host_workspace_allocations;
@@ -550,7 +551,9 @@ typedef struct {
     unsigned long long swa_layers_executed, csa_layers_executed, hca_layers_executed;
     unsigned long long topk_selected, hca_ratio, payload_bytes_read;
     unsigned long long kernel_launches, peak_device_bytes, comparison_values;
-    unsigned long long h2d_bytes, d2h_bytes, cuda_device_execution_elapsed_ns;
+    unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
+    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long cuda_device_execution_elapsed_ns;
     unsigned long long comparison_output_values, comparison_state_values;
     unsigned long long comparison_finite_values, comparison_nonfinite_values;
     unsigned long long first_failing_layer, first_failing_coordinate;

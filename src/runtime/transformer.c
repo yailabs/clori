@@ -1,10 +1,6 @@
 /*
- * Compose admitted embedding, attention, MoE, residual, and final-stage owners without rebuilding
- * plans.
- *
- * One attention transaction spans all 43 blocks and final hidden validation before one state
- * commit. Production numeric-token to normalized-hidden backbone execution over one runtime
- * session.
+ * Compose admitted embedding, attention, MoE, residual, and final-stage owners. One attention
+ * transaction spans all admitted blocks and final hidden validation before committing state.
  */
 #include <yvex/internal/transformer.h>
 #include <math.h>
@@ -96,7 +92,30 @@ static int transformer_runtime_refuse(yvex_error *err, yvex_status status, const
     yvex_error_set(err, status, "runtime.transformer", reason);
     return status;
 }
-
+static int transformer_cuda_facts_add(
+    yvex_runtime_transformer_result *result,
+    const yvex_backend_cuda_operation_facts *facts,
+    unsigned long long h2d_bytes, unsigned long long download_count,
+    unsigned long long device_synchronizations, yvex_error *err)
+{
+    unsigned long long downloads, uploads, synchronizations;
+    if (!result || !facts ||
+        !yvex_core_u64_add(facts->upload_count, h2d_bytes != 0ull, &uploads) ||
+        !yvex_core_u64_add(facts->download_count, download_count, &downloads) ||
+        !yvex_core_u64_add(facts->device_synchronizations, device_synchronizations, &synchronizations) ||
+        !yvex_core_u64_add(result->h2d_bytes, h2d_bytes, &result->h2d_bytes) ||
+        !yvex_core_u64_add(result->d2h_bytes, facts->d2h_bytes, &result->d2h_bytes) ||
+        !yvex_core_u64_add(result->d2d_bytes, facts->d2d_bytes, &result->d2d_bytes) ||
+        !yvex_core_u64_add(result->kernel_launches, facts->kernel_launches, &result->kernel_launches) ||
+        !yvex_core_u64_add(result->upload_count, uploads, &result->upload_count) ||
+        !yvex_core_u64_add(result->download_count, downloads, &result->download_count) ||
+        !yvex_core_u64_add(result->stream_synchronizations, facts->stream_synchronizations,
+                           &result->stream_synchronizations) ||
+        !yvex_core_u64_add(result->device_synchronizations, synchronizations,
+                           &result->device_synchronizations))
+        return transformer_runtime_refuse(err, YVEX_ERR_BOUNDS, "CUDA physical accounting overflowed");
+    return YVEX_OK;
+}
 static int transformer_feature_request_validate(
     const yvex_transformer_plan_summary *plan,
     const yvex_transformer_input_summary *input,
@@ -203,11 +222,7 @@ static int transformer_runtime_binding_project(
         .qtype = binding->qtype};
     return YVEX_OK;
 }
-/*
- * Assemble typed family/runtime facts for the family-neutral graph plan.
- *
- * Runtime owns adapter/descriptor projection; graph owns plan identity.
- */
+/* Assemble typed family/runtime facts for the family-neutral graph plan; graph owns identity. */
 static int transformer_runtime_plan_facts(
     const yvex_runtime_model_view *view, yvex_tensor_scope scope,
     yvex_transformer_plan_facts *facts,
@@ -363,11 +378,7 @@ static int transformer_device_tensor_open(
     descriptor.bytes = bytes;
     return yvex_backend_tensor_alloc(context->session_view->backend, &descriptor, out, err);
 }
-/*
- * Seal all stable CUDA transformer activation and final-weight resources.
- *
- * Partial resources remain context-owned for deterministic close.
- */
+/* Seal stable CUDA transformer resources; partial resources remain owned for deterministic close. */
 static int transformer_device_buffers(yvex_runtime_transformer_context *context,
                                       unsigned long long hidden,
                                       unsigned long long expanded,
@@ -538,6 +549,7 @@ static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_
             err, YVEX_ERR_STATE, "transformer embedding digest update failed");
     if (chunk->backend == YVEX_BACKEND_KIND_CUDA) {
         unsigned long long bytes = chunk->token_count * context->embedding_row_bytes;
+        yvex_backend_cuda_operation_facts facts;
         yvex_device_tensor encoded_view;
         int rc;
         if (!transformer_encoded_subview(context->device_embedding_encoded,
@@ -553,10 +565,10 @@ static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_
                 context->session_view->backend, &encoded_view,
                 binding->qtype, chunk->token_count, s->hidden_width,
                 s->residual_streams, context->device_embedding,
-                context->device_residual[0], err);
+                context->device_residual[0], &facts, err);
         if (rc != YVEX_OK) return rc;
-        chunk->result->h2d_bytes += bytes;
-        chunk->result->kernel_launches++;
+        rc = transformer_cuda_facts_add(chunk->result, &facts, bytes, 0ull, 1ull, err);
+        if (rc != YVEX_OK) return rc;
     }
     return yvex_transformer_initial_residual(context->plan, context->embedding,
                                              chunk->token_count, context->expanded_a, err);
@@ -624,9 +636,7 @@ static int transformer_device_view(void *opaque, unsigned long long layer_ordina
     return YVEX_OK;
 }
 
-/* DSpark consumes the mean across the four HC streams after exact target
- * layers. Capture is opt-in so ordinary target execution pays no transfer or
- * reduction cost. */
+/* DSpark consumes the mean across HC streams only at source-selected target layers. */
 static int transformer_feature_capture(transformer_chunk_context *chunk,
                                        unsigned long long completed_layer,
                                        yvex_error *err)
@@ -669,11 +679,8 @@ static int transformer_feature_capture(transformer_chunk_context *chunk,
     return YVEX_OK;
 }
 /*
- * Complete one ordered transformer block from its staged attention publication.
- *
- * Exact layer/token coordinates, active-transaction publication, and output workspace. Executes
- * MoE/deferred mHC post and publishes field-wise block evidence. Internal production block API;
- * the request coordinator owns attention and KV commit.
+ * Complete one ordered block from staged attention, execute MoE/deferred mHC post, and publish
+ * block evidence. The request coordinator retains attention and KV commit authority.
  */
 int yvex_runtime_transformer_execute_block(
     yvex_runtime_transformer_context *context, unsigned long long layer_ordinal,
@@ -799,11 +806,7 @@ int yvex_runtime_transformer_execute_block(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-/*
- * Complete and advance one ordered block inside the active all-layer transaction.
- *
- * Block, digest, download, or final-stage refusal aborts the outer transaction.
- */
+/* Complete one ordered block; any evidence or final-stage refusal aborts the outer transaction. */
 static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                                       const yvex_attention_publication *publication,
                                       yvex_error *err)
@@ -877,6 +880,8 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
         unsigned long long expanded_bytes = chunk->token_count * s->expanded_width * sizeof(float);
         unsigned long long hidden_bytes = chunk->token_count * s->hidden_width * sizeof(float);
         unsigned long long started_ns = yvex_core_monotonic_ns();
+        unsigned long long read_count = 0ull;
+        yvex_backend_cuda_operation_facts facts = {0};
         if (chunk->output->pre_normalized_hidden) {
             rc = yvex_backend_tensor_read(context->session_view->backend,
                                           &chunk->device_current, chunk->current,
@@ -899,7 +904,8 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                 context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_SCALE],
                 context->device_global[YVEX_TRANSFORMER_WEIGHT_OUTPUT_NORM],
                 chunk->token_count, s->hidden_width, s->residual_streams,
-                s->output_norm_epsilon, s->mhc_epsilon, &chunk->device_hidden, err);
+                s->output_norm_epsilon, s->mhc_epsilon, &chunk->device_hidden,
+                &facts, err);
             if (rc == YVEX_OK &&
                 context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL)
                 rc = yvex_backend_tensor_read(
@@ -913,6 +919,17 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                     context->candidate_hidden, hidden_bytes, err);
         }
         if (rc == YVEX_OK) {
+            read_count = chunk->output->pre_normalized_hidden
+                             ? 1ull
+                             : (unsigned long long)(context->options.evidence_level ==
+                                                    YVEX_ATTENTION_EVIDENCE_FULL) +
+                                   (unsigned long long)(chunk->output->normalized_hidden != NULL ||
+                                                        context->options.evidence_level ==
+                                                            YVEX_ATTENTION_EVIDENCE_FULL);
+            rc = transformer_cuda_facts_add(
+                chunk->result, &facts, 0ull, read_count, read_count, err);
+        }
+        if (rc == YVEX_OK) {
             if (!chunk->output->pre_normalized_hidden &&
                 (chunk->output->normalized_hidden ||
                  context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL))
@@ -920,8 +937,6 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
             if (chunk->output->pre_normalized_hidden ||
                 context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL)
                 chunk->result->d2h_bytes += expanded_bytes;
-            if (!chunk->output->pre_normalized_hidden)
-                chunk->result->kernel_launches++;
             chunk->result->final_ns += yvex_core_monotonic_ns() - started_ns;
         }
         return rc;
@@ -1354,11 +1369,7 @@ int yvex_runtime_transformer_stage_core_features(
         context, token_start, features, token_count,
         YVEX_ATTENTION_TRANSACTION_STAGE, result, err);
 }
-/*
- * Allocate and seal one transformer execution context over a model/session pair.
- *
- * Typed refusal with complete rollback.
- */
+/* Allocate and seal one transformer context over a model/session pair with complete rollback. */
 int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out,
                                           yvex_runtime_model *model,
                                           yvex_runtime_execution_session *session,
@@ -1424,11 +1435,7 @@ failure:
     (void)yvex_runtime_transformer_context_close(&context, NULL);
     return rc;
 }
-/*
- * Borrow one context-owned plan.
- *
- * Borrowed lifetime ends when the context closes.
- */
+/* Borrow one context-owned plan until the context closes. */
 const yvex_transformer_plan *yvex_runtime_transformer_context_plan(
     const yvex_runtime_transformer_context *context)
 {
@@ -1478,11 +1485,7 @@ static int transformer_execution_identity(
     yvex_sha256_hex(digest, result->execution_identity);
     return YVEX_OK;
 }
-/*
- * Validate one token input against the exact model binding and transformer plan.
- *
- * Propagates typed identity, payload, or snapshot refusal.
- */
+/* Validate one token input against the exact binding and plan, preserving typed refusal. */
 int yvex_runtime_transformer_context_validate_input(
     const yvex_runtime_transformer_context *context,
     const yvex_transformer_input *input, yvex_error *err)
@@ -1626,10 +1629,8 @@ static int transformer_execution_finish(
     return rc;
 }
 /*
- * Execute an identity-bound token request as independently committed chunks.
- *
- * Matching context/input/backend, output capacity, and deterministic chunk size. Commits each
- * complete full-stack chunk and publishes normalized hidden rows after commit.
+ * Execute identity-bound tokens as deterministic, independently committed full-stack chunks and
+ * publish normalized hidden rows only after each commit.
  */
 int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
                                      const yvex_transformer_input *input,
@@ -1780,6 +1781,9 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
             result->attention_weight_bytes += attention_result.payload_bytes_read;
             result->h2d_bytes += attention_result.h2d_bytes;
             result->d2h_bytes += attention_result.d2h_bytes;
+            result->d2d_bytes += attention_result.d2d_bytes;
+            result->stream_synchronizations += attention_result.stream_synchronizations;
+            result->device_synchronizations += attention_result.device_synchronizations;
             result->kernel_launches += attention_result.kernel_launches;
             result->attention_device_ns +=
                 attention_result.cuda_device_execution_elapsed_ns;
@@ -1864,11 +1868,7 @@ static void transformer_operator_refuse(yvex_transformer_operator_result *result
                         err && yvex_error_is_set(err) ? yvex_error_message(err)
                                                      : "transformer execution refused");
 }
-/*
- * Execute one production transformer request through operator-owned resources.
- *
- * Retains only a cleanup lease when deterministic cleanup itself refuses.
- */
+/* Execute through operator-owned resources, retaining a lease only when cleanup refuses. */
 int yvex_transformer_operator_execute(const yvex_transformer_operator_request *request,
                                       yvex_transformer_operator_result *result,
                                       yvex_runtime_cleanup_lease **retained_cleanup,

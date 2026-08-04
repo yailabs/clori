@@ -1377,6 +1377,15 @@ static int attention_probe_backend_execute(
         !yvex_core_u64_add(context->candidate.d2h_bytes,
                            run->evidence.cuda_d2h_bytes,
                            &context->candidate.d2h_bytes) ||
+        !yvex_core_u64_add(context->candidate.d2d_bytes,
+                           run->evidence.cuda_d2d_bytes,
+                           &context->candidate.d2d_bytes) ||
+        !yvex_core_u64_add(context->candidate.stream_synchronizations,
+                           run->evidence.cuda_stream_synchronizations,
+                           &context->candidate.stream_synchronizations) ||
+        !yvex_core_u64_add(context->candidate.device_synchronizations,
+                           run->evidence.cuda_device_synchronizations,
+                           &context->candidate.device_synchronizations) ||
         !yvex_core_u64_add(context->candidate.cuda_device_execution_elapsed_ns,
                            run->evidence.cuda_device_execution_elapsed_ns,
                            &context->candidate.cuda_device_execution_elapsed_ns))

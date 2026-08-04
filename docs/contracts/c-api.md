@@ -187,11 +187,11 @@ results with no ledger retain their zero-initialized meaning.
 CUDA producers currently expose exact active-weight and launch facts for
 target-only prefill and decode, exact active-weight, launch and synchronization
 facts for output projection, and exact launch facts for draft and verification
-sweeps. Output-head payload movement remains unavailable in
-the phase record because the lower CUDA owner does not yet include its bounded
-status transfer in the row counters. State, activation, temporary, occupancy
-and movement stay explicitly unavailable until their producing owners measure
-them; a partial record is not a complete roofline.
+sweeps. Output-head phase movement is also exact and includes its bounded CUDA
+status transfer without treating that transfer as full-vocabulary D2H. State,
+activation, temporary, occupancy and transformer-phase movement stay explicitly
+unavailable until every producing owner measures them; a partial record is not
+a complete roofline.
 
 The binding is generated transactionally outside the repository, named by its
 content identity and independently reopened. Runtime open validates it against

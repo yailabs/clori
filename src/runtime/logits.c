@@ -712,7 +712,8 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
                                yvex_runtime_logits_row_result *result,
                                yvex_error *err)
 {
-    unsigned long long hidden_bytes, logits_bytes, launches = 0ull;
+    unsigned long long hidden_bytes, logits_bytes;
+    yvex_backend_cuda_operation_facts facts;
     yvex_device_tensor borrowed_hidden;
     const yvex_device_tensor *device_hidden = context->device_hidden;
     int rc;
@@ -743,17 +744,18 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
             context->plan.summary.row_bytes, device_hidden,
-            context->device_logits, &launches, err);
+            context->device_logits, &facts, err);
     if (rc == YVEX_OK && !context->options.device_greedy_selection)
         rc = yvex_backend_tensor_read(context->session_view->backend,
                                       context->device_logits,
                                       context->candidate, logits_bytes, err);
     if (rc == YVEX_OK) {
         result->h2d_bytes = source->device_values_available ? 0ull : hidden_bytes;
-        result->d2h_bytes = context->options.device_greedy_selection
-                                ? 0ull : logits_bytes;
-        result->kernel_launches = launches;
-        result->device_synchronizations = 1ull + !source->device_values_available +
+        result->d2h_bytes = facts.d2h_bytes +
+                            (context->options.device_greedy_selection ? 0ull : logits_bytes);
+        result->kernel_launches = facts.kernel_launches;
+        result->device_synchronizations = facts.device_synchronizations +
+                                          !source->device_values_available +
                                           !context->options.device_greedy_selection;
     }
     return rc;

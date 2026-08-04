@@ -49,20 +49,20 @@ int yvex_backend_cuda_encoded_matvec(
     unsigned long long encoded_bytes, unsigned int qtype,
     unsigned long long row_count, unsigned long long row_width,
     unsigned long long row_bytes, const yvex_device_tensor *input,
-    yvex_device_tensor *output, unsigned long long *kernel_launches,
+    yvex_device_tensor *output, yvex_backend_cuda_operation_facts *facts,
     yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
     unsigned long long device_address = 0ull, input_bytes, output_bytes;
     CUdeviceptr encoded_ptr, input_ptr, output_ptr, status = 0ull, quantized = 0ull;
-    unsigned long long start_row = 0ull;
+    unsigned long long start_row = 0ull, launches = 0ull;
     int output_bf16 = 0, host_status = 0, rc, cleanup_rc, q8_path, q8_input = 0;
     int forensic_numeric = 0;
     yvex_error cleanup;
-    if (kernel_launches) *kernel_launches = 0ull;
+    if (facts) memset(facts, 0, sizeof(*facts));
     if (!state || !resident_encoded || !encoded_bytes || !row_count ||
-        !row_width || !row_bytes || row_count > UINT_MAX ||
+        !row_width || !row_bytes || row_count > UINT_MAX || !facts ||
         !yvex_core_u64_mul(row_width, sizeof(float), &input_bytes) ||
         !yvex_core_u64_mul(row_count, sizeof(float), &output_bytes) ||
         row_count > ULLONG_MAX / row_bytes || row_count * row_bytes != encoded_bytes ||
@@ -107,7 +107,7 @@ int yvex_backend_cuda_encoded_matvec(
                                   state->q8_quantize_function, (unsigned int)blocks,
                                   CUDA_QTYPE_MATVEC_BLOCK, 0u, params,
                                   "cuda.encoded-matvec.q8", err);
-            if (rc == YVEX_OK && kernel_launches) *kernel_launches = 1ull;
+            if (rc == YVEX_OK) launches = 1ull;
         }
     }
     if (rc == YVEX_OK) {
@@ -126,7 +126,7 @@ int yvex_backend_cuda_encoded_matvec(
             backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, state->qtype_matvec_function,
             grid, CUDA_QTYPE_MATVEC_BLOCK, 0u, q8_path ? q8_params : params,
             "cuda.encoded-matvec.launch", err);
-        if (rc == YVEX_OK && kernel_launches) (*kernel_launches)++;
+        if (rc == YVEX_OK) launches++;
     }
     if (rc == YVEX_OK)
         rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -149,6 +149,10 @@ int yvex_backend_cuda_encoded_matvec(
     }
     if (rc == YVEX_OK) {
         output->is_written = 1;
+        facts->d2h_bytes = sizeof(host_status);
+        facts->kernel_launches = launches;
+        facts->download_count = 1ull;
+        facts->device_synchronizations = 1ull;
         yvex_error_clear(err);
     }
     return rc;
@@ -157,7 +161,7 @@ int yvex_backend_cuda_encoded_matvec(
 int yvex_backend_cuda_argmax_f32(
     yvex_backend *backend, const yvex_device_tensor *values,
     unsigned long long count, unsigned int *selected_token, float *selected_value,
-    unsigned long long *tie_count, unsigned long long *kernel_launches,
+    unsigned long long *tie_count, yvex_backend_cuda_operation_facts *facts,
     yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -172,9 +176,9 @@ int yvex_backend_cuda_argmax_f32(
     if (selected_token) *selected_token = 0u;
     if (selected_value) *selected_value = 0.0f;
     if (tie_count) *tie_count = 0ull;
-    if (kernel_launches) *kernel_launches = 0ull;
+    if (facts) memset(facts, 0, sizeof(*facts));
     if (!state || !selected_token || !selected_value || !tie_count || !count ||
-        count > UINT_MAX || !backend_tensor_owner_is(backend, values) ||
+        !facts || count > UINT_MAX || !backend_tensor_owner_is(backend, values) ||
         values->dtype != YVEX_DTYPE_F32 || !values->is_written ||
         values->bytes < count * sizeof(float)) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.argmax",
@@ -204,7 +208,6 @@ int yvex_backend_cuda_argmax_f32(
             backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
             state->argmax_f32_function, 1u, 128u, 0u, params,
             "cuda.argmax.launch", err);
-        if (rc == YVEX_OK && kernel_launches) *kernel_launches = 1ull;
     }
     if (rc == YVEX_OK)
         rc = yvex_cuda_synchronize(
@@ -235,6 +238,11 @@ int yvex_backend_cuda_argmax_f32(
         *selected_token = token;
         *selected_value = value;
         *tie_count = ties;
+        facts->d2h_bytes = sizeof(host_status) + sizeof(token) +
+                           sizeof(value) + sizeof(ties);
+        facts->kernel_launches = 1ull;
+        facts->download_count = 4ull;
+        facts->device_synchronizations = 1ull;
         yvex_error_clear(err);
     }
     return rc;

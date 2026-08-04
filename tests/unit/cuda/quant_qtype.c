@@ -194,7 +194,8 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
     yvex_quant_failure failure;
     yvex_error err;
     size_t row_bytes = 0u;
-    unsigned long long launches = 0ull, index;
+    yvex_backend_cuda_operation_facts facts;
+    unsigned long long index;
     unsigned int row_index;
     int rc;
 
@@ -251,8 +252,10 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
                      "Q8 activation output allocates");
     rc = yvex_backend_cuda_encoded_matvec(
         backend, mapped, descriptor.bytes ? ROWS * row_bytes : 0u, qtype,
-        ROWS, WIDTH, row_bytes, input, output, &launches, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && launches == 2ull &&
+        ROWS, WIDTH, row_bytes, input, output, &facts, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
+                         facts.d2h_bytes == sizeof(int) &&
+                         facts.device_synchronizations == 1ull &&
                          yvex_backend_tensor_read(
                              backend, output, actual, sizeof(actual), &err) == YVEX_OK,
                      "Q8 activation production matvec launches quantize plus projection");
@@ -279,7 +282,8 @@ static int quant_cuda_argmax(yvex_backend *backend)
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *device = NULL;
     yvex_error err;
-    unsigned long long ties = 0ull, launches = 0ull;
+    yvex_backend_cuda_operation_facts facts;
+    unsigned long long ties = 0ull;
     unsigned int token = UINT_MAX;
     float selected = 0.0f;
     int rc;
@@ -295,9 +299,12 @@ static int quant_cuda_argmax(yvex_backend *backend)
         "device argmax input is resident");
     rc = yvex_backend_cuda_argmax_f32(
         backend, device, descriptor.dims[0], &token, &selected, &ties,
-        &launches, &err);
+        &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && token == 1u && selected == 3.5f &&
-                         ties == 2ull && launches == 1ull,
+                         ties == 2ull && facts.kernel_launches == 1ull &&
+                         facts.d2h_bytes == sizeof(int) + sizeof(unsigned int) +
+                                                sizeof(float) + sizeof(unsigned long long) &&
+                         facts.device_synchronizations == 1ull,
                      "device argmax selects the lowest token across exact ties");
     YVEX_TEST_ASSERT(yvex_backend_tensor_release(backend, &device, &err) == YVEX_OK,
                      "device argmax releases its input");

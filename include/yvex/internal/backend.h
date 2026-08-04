@@ -126,7 +126,8 @@ typedef struct {
     unsigned long long tokens_executed, compressed_count, indexer_count;
     unsigned long long topk_count, valid_candidate_count;
     unsigned long long host_bytes, peak_host_bytes, device_bytes, peak_device_bytes;
-    unsigned long long kernel_launches, h2d_bytes, d2h_bytes;
+    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, d2d_bytes;
+    unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long device_execution_elapsed_ns, host_workspace_capacity;
     unsigned long long host_workspace_used, host_workspace_peak, host_workspace_allocation_count;
     int host_workspace_reused;
@@ -324,20 +325,16 @@ static inline int backend_tensor_owner_is(const yvex_backend *backend,
 int yvex_backend_tensor_f32_subview(
     const yvex_device_tensor *source, unsigned long long offset,
     unsigned long long count, yvex_device_tensor *view);
-int yvex_backend_bandwidth_probe(yvex_backend *backend,
-                                 yvex_backend_bandwidth_evidence *out,
-                                 yvex_error *err);
+int yvex_backend_bandwidth_probe(yvex_backend *backend, yvex_backend_bandwidth_evidence *out, yvex_error *err);
 /* Rewind a serialized device workspace while preserving its stable address and peak. */
 static inline void backend_workspace_reset(yvex_backend *backend)
 {
-    if (backend)
-        backend->workspace_cursor = 0ull;
+    if (backend) backend->workspace_cursor = 0ull;
 }
 /* Rewind a serialized host workspace while preserving its storage and peak. */
 static inline void backend_host_workspace_reset(yvex_backend *backend)
 {
-    if (backend)
-        backend->host_workspace_cursor = 0ull;
+    if (backend) backend->host_workspace_cursor = 0ull;
 }
 double yvex_backend_nth_root(double value, unsigned long long degree);
 int yvex_backend_memory_can_add(const yvex_backend *backend, unsigned long long bytes,
@@ -364,15 +361,18 @@ int yvex_backend_resident_attach(yvex_backend *backend, const unsigned char *hos
 int yvex_backend_resident_detach(yvex_backend *backend, yvex_error *err);
 int yvex_backend_resident_resolve(const yvex_backend *backend, const unsigned char *host,
                                   unsigned long long bytes, unsigned long long *device_address);
+typedef struct yvex_backend_cuda_operation_facts {
+    unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches;
+    unsigned long long upload_count, download_count;
+    unsigned long long stream_synchronizations, device_synchronizations;
+} yvex_backend_cuda_operation_facts;
 int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
     unsigned long long row_width, unsigned long long row_bytes, const yvex_device_tensor *input,
-    yvex_device_tensor *output, unsigned long long *kernel_launches, yvex_error *err);
-int yvex_backend_cuda_argmax_f32(
-    yvex_backend *backend, const yvex_device_tensor *values,
+    yvex_device_tensor *output, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+int yvex_backend_cuda_argmax_f32(yvex_backend *backend, const yvex_device_tensor *values,
     unsigned long long count, unsigned int *selected_token, float *selected_value,
-    unsigned long long *tie_count, unsigned long long *kernel_launches,
-    yvex_error *err);
+    unsigned long long *tie_count, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 int yvex_backend_state_residency_attach(
     yvex_backend *backend, const void *context,
     yvex_backend_state_resolve_fn resolve, unsigned long long generation,

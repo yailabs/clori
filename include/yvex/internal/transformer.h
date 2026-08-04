@@ -11,6 +11,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+typedef struct yvex_backend_cuda_operation_facts yvex_backend_cuda_operation_facts;
 #define YVEX_TRANSFORMER_PLAN_SCHEMA_V2 2u
 #define YVEX_TRANSFORMER_INPUT_SCHEMA_V1 1u
 #define YVEX_TRANSFORMER_INPUT_SUFFIX ".yvex-transformer-input"
@@ -151,14 +152,16 @@ int yvex_backend_transformer_cuda_initial(
     yvex_backend *backend, const yvex_device_tensor *encoded, unsigned int qtype,
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, yvex_device_tensor *embedding,
-    yvex_device_tensor *expanded, yvex_error *err);
+    yvex_device_tensor *expanded, yvex_backend_cuda_operation_facts *facts,
+    yvex_error *err);
 int yvex_backend_transformer_cuda_final(
     yvex_backend *backend, const yvex_device_tensor *expanded,
     const yvex_device_tensor *function, const yvex_device_tensor *base,
     const yvex_device_tensor *scale, const yvex_device_tensor *norm,
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, double epsilon, double mhc_epsilon,
-    yvex_device_tensor *output, yvex_error *err);
+    yvex_device_tensor *output, yvex_backend_cuda_operation_facts *facts,
+    yvex_error *err);
 typedef struct yvex_runtime_transformer_context yvex_runtime_transformer_context;
 typedef enum {
     YVEX_TRANSFORMER_PHASE_PREFILL = 0,

@@ -951,6 +951,11 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
     context->result->cuda_kernel_launches = context->cuda_output.kernel_launches;
     context->result->cuda_h2d_bytes = context->cuda_output.h2d_bytes;
     context->result->cuda_d2h_bytes = context->cuda_output.d2h_bytes;
+    context->result->cuda_d2d_bytes = context->cuda_output.d2d_bytes;
+    context->result->cuda_stream_synchronizations =
+        context->cuda_output.stream_synchronizations;
+    context->result->cuda_device_synchronizations =
+        context->cuda_output.device_synchronizations;
     context->result->cuda_device_execution_elapsed_ns =
         context->cuda_output.device_execution_elapsed_ns;
     if (!yvex_core_u64_add(context->trace_bytes,

@@ -68,7 +68,8 @@ typedef struct {
     float selected_logit, maximum_logit;
     double temperature, selected_probability, selected_log_probability;
     unsigned long long tied_maximum_count, effective_top_k, rng_draw_count;
-    unsigned long long d2h_bytes, kernel_launches, full_array_host_scan_bytes;
+    unsigned long long d2h_bytes, kernel_launches, device_synchronizations;
+    unsigned long long full_array_host_scan_bytes;
     double effective_top_p, effective_min_p, effective_typical_p;
     double min_p_threshold, entropy, typical_retained_mass, top_p_retained_mass;
     double normalization_error;

@@ -67,11 +67,11 @@ depending on trace verbosity and exposes it through the finite offline
 generation operator. Duration, work and committed-token accounting is live.
 Target-only prefill/decode and output projection now report exact active-weight
 and launch facts; output projection additionally reports its exact
-synchronization facts, while DSpark draft/verification report exact launches.
-State, activation, temporary, occupancy and movement remain unavailable; in
-particular output movement cannot be complete until its bounded CUDA status
-transfer is producer-accounted. Current optimization ordering is therefore
-provisional rather than a promoted kernel-priority decision.
+synchronization and H2D/D2H facts, including the bounded CUDA status transfer,
+while DSpark draft/verification report exact launches. Transformer state,
+activation, temporary, occupancy and complete phase movement remain
+unavailable. Current optimization ordering is therefore provisional rather
+than a promoted kernel-priority decision.
 
 Physical-variant research uses a funnel: role-level numerical probes,
 representative-layer encoding, kernel microbenchmarks, bounded logit and DSpark

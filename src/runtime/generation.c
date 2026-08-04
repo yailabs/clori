@@ -543,9 +543,10 @@ static int generation_project_logits(
         if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_OUTPUT_HEAD,
                 completed - started, 1ull, 0ull, logits_plan->encoded_bytes,
-                0ull, 0ull, 0ull,
+                logits_result->h2d_bytes, logits_result->d2h_bytes, 0ull,
                 logits_result->kernel_launches, logits_result->device_synchronizations,
                 YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT) |
+                    YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_MOVEMENT) |
                     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS) |
                     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS), err);
         if (rc == YVEX_OK && profile->mode != YVEX_RUNTIME_PROFILE_OFF &&

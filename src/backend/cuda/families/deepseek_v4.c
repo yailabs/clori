@@ -85,7 +85,8 @@ typedef struct {
     unsigned long long local_storage_extent, compressed_storage_extent, indexer_storage_extent;
     unsigned long long local_capacity, compressed_capacity, indexer_capacity;
     unsigned long long index_query_extent, emission_position, topk_count, staged_valid_count;
-    unsigned long long h2d_bytes, d2h_bytes, device_execution_elapsed_ns;
+    unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, device_execution_elapsed_ns;
+    unsigned long long stream_synchronizations, device_synchronizations;
     int *staged_status; unsigned long long *staged_selected_count, *staged_candidate_count;
     int host_workspace_reused, host_status;
     unsigned long long ordinal, phase_start_position, input_extent;
@@ -134,6 +135,12 @@ static int attn_run_fail(attn_run *run, yvex_backend_attention_failure_code code
                                    yvex_status status, const char *message) {
     return run->ops->fail(
         run->failure, code, stage, expected, actual, run->err, status, message);
+}
+static int attn_account_d2d(attn_run *run, size_t bytes, const char *stage) {
+    if (yvex_core_u64_add(run->d2d_bytes, bytes, &run->d2d_bytes)) return YVEX_OK;
+    return attn_run_fail(run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET, stage,
+                         ULLONG_MAX, bytes, YVEX_ERR_BOUNDS,
+                         "CUDA attention D2D accounting overflowed");
 }
 
 static int attn_cancel(attn_run *run, const char *stage, int device_work_pending) {
@@ -638,8 +645,8 @@ static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
                             : !stream
                                   ? run->state->driver.cuMemcpyDtoD_v2(*target, device_source, bytes)
                                   : (CUresult)1;
-        return yvex_cuda_status(
-            &run->state->driver, copy, stage, run->err);
+        rc = yvex_cuda_status(&run->state->driver, copy, stage, run->err);
+        return rc == YVEX_OK ? attn_account_d2d(run, bytes, stage) : rc;
     }
 }
 typedef struct {
@@ -1588,6 +1595,7 @@ static int attn_graph_enqueue(void *opaque, int enqueue_kernels, yvex_error *err
 static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int last) {
     attn_graph_piece piece = {run, first, last};
     yvex_backend_cuda_graph_info info;
+    size_t initializer;
     char identity[160];
     int rc;
     if (yvex_cuda_attention_graph_key(run->backend, run->job, first, last,
@@ -1615,7 +1623,18 @@ static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int la
             "cuda.deepseek_attention.graph.timing", ULLONG_MAX,
             info.last_device_elapsed_ns, YVEX_ERR_BOUNDS,
             "CUDA attention graph device timing overflowed");
-    if (rc == YVEX_OK) run->resources.launches += info.inventory.kernel_node_count;
+    if (rc == YVEX_OK) {
+        run->resources.launches += info.inventory.kernel_node_count;
+        run->stream_synchronizations += 1ull + (unsigned long long)run->state->timing_ready;
+        if (first == 0u ||
+            (run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_CORE &&
+             first == YVEX_CUDA_ATTENTION_STAGE_PROJECT))
+            for (initializer = 0u; rc == YVEX_OK && initializer < run->initializer_count;
+                 ++initializer)
+                if (run->initializers[initializer].device_source)
+                    rc = attn_account_d2d(run, run->initializers[initializer].bytes,
+                                          run->initializers[initializer].stage);
+    }
     return rc;
 }
 
@@ -1701,16 +1720,38 @@ static int attn_numerical_execute(attn_run *run) {
 }
 
 static int attn_synchronize(attn_run *run) {
-    unsigned long long expected_topk, token;
+    unsigned long long expected_topk, output_elements, token;
     size_t index;
     int rc = YVEX_OK;
+    if (run->job->device_output &&
+        !yvex_core_u64_mul(run->job->token_count, run->job->residual_expanded_width,
+                           &output_elements))
+        return attn_run_fail(
+            run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET,
+            "cuda.deepseek_attention.copy.device-output", ULLONG_MAX,
+            run->job->token_count, YVEX_ERR_BOUNDS,
+            "CUDA attention device output extent overflowed");
     if (run->job->device_output)
         rc = yvex_cuda_activation_copy(run->backend, run->phase_envelope_output,
-            run->job->device_output, run->job->token_count * run->job->residual_expanded_width,
+            run->job->device_output, output_elements,
             "cuda.deepseek_attention.copy.device-output", run->err);
+    if (rc == YVEX_OK && run->job->device_output) {
+        size_t bytes;
+        if (!yvex_cuda_work_checked_bytes(output_elements, sizeof(float), &bytes))
+            return attn_run_fail(
+                run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET,
+                "cuda.deepseek_attention.copy.device-output", ULLONG_MAX,
+                run->job->token_count, YVEX_ERR_BOUNDS,
+                "CUDA attention device output accounting overflowed");
+        rc = attn_account_d2d(run, bytes, "cuda.deepseek_attention.copy.device-output");
+    }
     if (rc == YVEX_OK && !attn_graph_mode(run))
         rc = yvex_cuda_synchronize(run->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
             "cuda.deepseek_attention.synchronize", run->err);
+    if (rc == YVEX_OK && !attn_graph_mode(run)) {
+        run->stream_synchronizations += (unsigned long long)run->state->timing_ready;
+        run->device_synchronizations++;
+    }
     if (rc == YVEX_OK && run->job->retain_prefix_checkpoints) {
         run->rolling[ROLL_MAIN].after_kv = run->phase_main_kv +
             run->rolling[ROLL_MAIN].extent * sizeof(float);
@@ -1888,6 +1929,9 @@ static int attn_publish(attn_run *run) {
     run->output->kernel_launches = run->resources.launches;
     run->output->h2d_bytes = run->h2d_bytes;
     run->output->d2h_bytes = run->d2h_bytes;
+    run->output->d2d_bytes = run->d2d_bytes;
+    run->output->stream_synchronizations = run->stream_synchronizations;
+    run->output->device_synchronizations = run->device_synchronizations;
     run->output->device_execution_elapsed_ns = run->device_execution_elapsed_ns;
     run->backend->stats.h2d_bytes = backend_h2d;
     run->backend->stats.d2h_bytes = backend_d2h;

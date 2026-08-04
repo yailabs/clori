@@ -990,8 +990,9 @@ static int sampling_select_device_greedy(
     yvex_runtime_sampling_result *result, yvex_error *err)
 {
     yvex_device_tensor view;
+    yvex_backend_cuda_operation_facts facts;
     unsigned int selected;
-    unsigned long long ties, launches;
+    unsigned long long ties;
     float maximum;
     int rc;
     if (!yvex_backend_tensor_f32_subview(
@@ -1002,7 +1003,7 @@ static int sampling_select_device_greedy(
                                "device logits subview is incompatible");
     rc = yvex_backend_cuda_argmax_f32(
         source->device_logits.backend, &view, source->vocabulary_size,
-        &selected, &maximum, &ties, &launches, err);
+        &selected, &maximum, &ties, &facts, err);
     if (rc != YVEX_OK) return rc;
     result->device_selection = 1;
     result->maximum_logit = result->selected_logit = maximum;
@@ -1010,9 +1011,9 @@ static int sampling_select_device_greedy(
     result->selected_token_id = selected;
     result->selected_probability = 1.0;
     result->selected_log_probability = 0.0;
-    result->d2h_bytes = sizeof(unsigned int) + sizeof(float) +
-                        sizeof(unsigned long long) + sizeof(int);
-    result->kernel_launches = launches;
+    result->d2h_bytes = facts.d2h_bytes;
+    result->kernel_launches = facts.kernel_launches;
+    result->device_synchronizations = facts.device_synchronizations;
     result->candidates_after_top_k = result->candidates_after_min_p =
         result->candidates_after_typical_p = result->candidates_after_top_p =
             result->final_candidate_count = source->vocabulary_size;
