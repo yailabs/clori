@@ -5,6 +5,8 @@
  * full shard payload trust.
  */
 #define _XOPEN_SOURCE 700
+#include <errno.h>
+#include <fcntl.h>
 #include <ctype.h>
 #include <limits.h>
 #include <stddef.h>
@@ -12,6 +14,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/source.h>
 #include <yvex/internal/source_payload.h>
@@ -25,6 +29,12 @@ static int provenance_refuse(yvex_error *err,
 }
 
 #define SOURCE_MANIFEST_CAP (32u * 1024u * 1024u)
+#define SOURCE_ACQUISITION_MANIFEST_CAP (4u * 1024u * 1024u)
+
+struct yvex_source_acquisition {
+    yvex_source_acquisition_facts facts;
+    yvex_source_acquisition_file *files;
+};
 
 static const yvex_source_target_identity release_source_identity = {
     YVEX_SOURCE_RELEASE_TARGET_ID,
@@ -1151,4 +1161,580 @@ int yvex_source_provenance_manifest_matches(const yvex_source_verify_options *op
            out->manifest_payload_source_snapshot_identity == out->source_snapshot_identity &&
            out->manifest_payload_tensor_count == out->header_tensor_count &&
            out->manifest_payload_logical_tensor_bytes == out->declared_tensor_bytes;
+}
+
+static const char *const source_acquisition_failure_names[] = {
+    "none", "invalid-argument", "manifest-missing", "manifest-format",
+    "source-identity", "resource-budget", "path", "symlink", "non-regular",
+    "size", "digest", "duplicate", "io", "allocation"
+};
+
+static const char *source_acquisition_failure_name(
+    yvex_source_acquisition_failure_code code)
+{
+    size_t count = sizeof(source_acquisition_failure_names) /
+                   sizeof(source_acquisition_failure_names[0]);
+
+    return (unsigned int)code < count ? source_acquisition_failure_names[code] : "unknown";
+}
+
+static int source_acquisition_refuse(
+    yvex_source_acquisition_failure *failure,
+    yvex_source_acquisition_failure_code code,
+    unsigned long long file_index,
+    const char *path,
+    yvex_status status,
+    yvex_error *err,
+    const char *message)
+{
+    if (failure) {
+        memset(failure, 0, sizeof(*failure));
+        failure->code = code;
+        failure->file_index = file_index;
+        yvex_core_text_copy(failure->path, sizeof(failure->path), path ? path : "");
+    }
+    yvex_error_setf(err, status, "source_acquisition", "%s: %s",
+                    source_acquisition_failure_name(code), message);
+    return status;
+}
+
+void yvex_source_acquisition_options_default(yvex_source_acquisition_options *options)
+{
+    if (!options) return;
+    memset(options, 0, sizeof(*options));
+    options->maximum_files = YVEX_SOURCE_ACQUISITION_FILE_CAP;
+    options->maximum_source_bytes = 200000000000ull;
+    options->verify_digests = 1;
+}
+
+static int source_acquisition_path_valid(const char *path)
+{
+    const char *component = path;
+    const char *cursor;
+
+    if (!path || !path[0] || path[0] == '/') return 0;
+    for (cursor = path;; ++cursor) {
+        unsigned char byte = (unsigned char)*cursor;
+        size_t length;
+
+        if (byte == '\\' || byte == '\n' || byte == '\r' || byte == '\t') return 0;
+        if (byte != '/' && byte != '\0') continue;
+        length = (size_t)(cursor - component);
+        if (length == 0u || (length == 1u && component[0] == '.') ||
+            (length == 2u && component[0] == '.' && component[1] == '.')) return 0;
+        if (byte == '\0') return 1;
+        component = cursor + 1;
+    }
+}
+
+static int source_acquisition_parse_class(yvex_json *json,
+                                          yvex_source_acquisition_file *file)
+{
+    char value[16];
+
+    if (!yvex_json_string(json, value, sizeof(value))) return 0;
+    if (strcmp(value, "metadata") == 0) {
+        file->classification = YVEX_SOURCE_ACQUISITION_FILE_METADATA;
+        return 1;
+    }
+    if (strcmp(value, "shard") == 0) {
+        file->classification = YVEX_SOURCE_ACQUISITION_FILE_SHARD;
+        return 1;
+    }
+    return 0;
+}
+
+static int source_acquisition_parse_file(yvex_json *json,
+                                         yvex_source_acquisition_file *file)
+{
+    enum {
+        FIELD_ACTUAL_SHA = 1u << 0, FIELD_ACTUAL_SIZE = 1u << 1,
+        FIELD_CLASS = 1u << 2, FIELD_COMPONENT = 1u << 3,
+        FIELD_EXPECTED_SHA = 1u << 4, FIELD_EXPECTED_SIZE = 1u << 5,
+        FIELD_GIT = 1u << 6, FIELD_LFS = 1u << 7, FIELD_PATH = 1u << 8,
+        FIELD_VERIFIED = 1u << 9, FIELD_XET = 1u << 10
+    };
+    const unsigned int required = (1u << 11) - 1u;
+    yvex_json_iter iterator;
+    yvex_json_item item;
+    char key[YVEX_JSON_KEY_CAP];
+    unsigned int seen = 0u;
+    int verified = 0;
+
+    memset(file, 0, sizeof(*file));
+    if (!yvex_json_iter_begin(json, &iterator, YVEX_JSON_COLLECTION_OBJECT)) return 0;
+    while ((item = yvex_json_object_member(&iterator, key, sizeof(key))) ==
+           YVEX_JSON_ITEM_READY) {
+#define SOURCE_ACQUISITION_TEXT(name, bit, member)                                    \
+        if (strcmp(key, name) == 0) {                                                 \
+            if ((seen & bit) || !yvex_json_string(                                   \
+                                    json, file->member, sizeof(file->member))) return 0; \
+            seen |= bit;                                                              \
+        }
+        SOURCE_ACQUISITION_TEXT("actual_sha256", FIELD_ACTUAL_SHA, actual_sha256)
+        else if (strcmp(key, "actual_size") == 0) {
+            if ((seen & FIELD_ACTUAL_SIZE) || !yvex_json_u64(json, &file->actual_size)) return 0;
+            seen |= FIELD_ACTUAL_SIZE;
+        }
+        else if (strcmp(key, "classification") == 0) {
+            if ((seen & FIELD_CLASS) || !source_acquisition_parse_class(json, file)) return 0;
+            seen |= FIELD_CLASS;
+        }
+        else SOURCE_ACQUISITION_TEXT("component", FIELD_COMPONENT, component)
+        else SOURCE_ACQUISITION_TEXT("expected_sha256", FIELD_EXPECTED_SHA, expected_sha256)
+        else if (strcmp(key, "expected_size") == 0) {
+            if ((seen & FIELD_EXPECTED_SIZE) || !yvex_json_u64(json, &file->expected_size)) return 0;
+            seen |= FIELD_EXPECTED_SIZE;
+        }
+        else SOURCE_ACQUISITION_TEXT("git_oid", FIELD_GIT, git_oid)
+        else SOURCE_ACQUISITION_TEXT("lfs_oid", FIELD_LFS, lfs_oid)
+        else SOURCE_ACQUISITION_TEXT("path", FIELD_PATH, path)
+        else if (strcmp(key, "verified") == 0) {
+            if ((seen & FIELD_VERIFIED) || !yvex_json_bool(json, &verified)) return 0;
+            seen |= FIELD_VERIFIED;
+        }
+        else SOURCE_ACQUISITION_TEXT("xet_hash", FIELD_XET, xet_hash)
+        else if (!yvex_json_skip_value(json)) return 0;
+#undef SOURCE_ACQUISITION_TEXT
+    }
+    return item == YVEX_JSON_ITEM_END && seen == required && verified &&
+           source_acquisition_path_valid(file->path) && file->component[0] &&
+           file->actual_size == file->expected_size &&
+           yvex_sha256_hex_valid(file->actual_sha256) &&
+           (!file->expected_sha256[0] ||
+            (yvex_sha256_hex_valid(file->expected_sha256) &&
+             strcmp(file->actual_sha256, file->expected_sha256) == 0));
+}
+
+static int source_acquisition_parse_files(yvex_json *json,
+                                          yvex_source_acquisition *acquisition,
+                                          unsigned long long maximum_files)
+{
+    yvex_json_iter iterator;
+    yvex_json_item item;
+    unsigned long long count = 0u;
+
+    acquisition->files = (yvex_source_acquisition_file *)calloc(
+        (size_t)maximum_files, sizeof(acquisition->files[0]));
+    if (!acquisition->files) return -1;
+    if (!yvex_json_iter_begin(json, &iterator, YVEX_JSON_COLLECTION_ARRAY)) return 0;
+    while ((item = yvex_json_array_value(&iterator)) == YVEX_JSON_ITEM_READY) {
+        yvex_source_acquisition_file *file;
+        if (count >= maximum_files) return -2;
+        file = &acquisition->files[count];
+        if (!source_acquisition_parse_file(json, file)) return 0;
+        if (count && strcmp(acquisition->files[count - 1u].path, file->path) >= 0) return -3;
+        if (file->classification == YVEX_SOURCE_ACQUISITION_FILE_SHARD) {
+            acquisition->facts.shard_count++;
+            if (!yvex_core_u64_add(acquisition->facts.shard_bytes, file->actual_size,
+                                   &acquisition->facts.shard_bytes)) return -2;
+        } else if (!yvex_core_u64_add(acquisition->facts.metadata_bytes, file->actual_size,
+                                      &acquisition->facts.metadata_bytes)) return -2;
+        if (!yvex_core_u64_add(acquisition->facts.source_bytes, file->actual_size,
+                               &acquisition->facts.source_bytes)) return -2;
+        count++;
+    }
+    acquisition->facts.file_count = count;
+    return item == YVEX_JSON_ITEM_END && !iterator.trailing_separator && count ? 1 : 0;
+}
+
+typedef struct {
+    unsigned long long file_count;
+    unsigned long long shard_count;
+    unsigned long long metadata_bytes;
+    unsigned long long shard_bytes;
+    unsigned long long source_bytes;
+    unsigned int seen;
+    int complete;
+} source_acquisition_declared;
+
+static int source_acquisition_parse_manifest(
+    const char *data,
+    size_t length,
+    yvex_source_acquisition *acquisition,
+    source_acquisition_declared *declared,
+    unsigned long long maximum_files)
+{
+    yvex_json json;
+    yvex_json_iter iterator;
+    yvex_json_item item;
+    char key[YVEX_JSON_KEY_CAP];
+    char schema[64] = {0};
+
+    yvex_json_init(&json, data, length);
+    if (!yvex_json_iter_begin(&json, &iterator, YVEX_JSON_COLLECTION_OBJECT)) return 0;
+    while ((item = yvex_json_object_member(&iterator, key, sizeof(key))) ==
+           YVEX_JSON_ITEM_READY) {
+        if (strcmp(key, "acquisition_complete") == 0) {
+            if (!yvex_json_bool(&json, &declared->complete)) return 0;
+            declared->seen |= 1u << 0;
+        } else if (strcmp(key, "acquisition_identity") == 0) {
+            if (!yvex_json_string(&json, acquisition->facts.acquisition_identity,
+                                  sizeof(acquisition->facts.acquisition_identity))) return 0;
+            declared->seen |= 1u << 1;
+        } else if (strcmp(key, "admitted_subtree") == 0) {
+            if (!yvex_json_string(&json, acquisition->facts.subtree,
+                                  sizeof(acquisition->facts.subtree))) return 0;
+            declared->seen |= 1u << 2;
+        } else if (strcmp(key, "files") == 0) {
+            int parsed = source_acquisition_parse_files(&json, acquisition, maximum_files);
+            if (parsed != 1) return parsed;
+            declared->file_count = acquisition->facts.file_count;
+            declared->seen |= 1u << 3;
+        } else if (strcmp(key, "metadata_bytes") == 0) {
+            if (!yvex_json_u64(&json, &declared->metadata_bytes)) return 0;
+            declared->seen |= 1u << 4;
+        } else if (strcmp(key, "repository") == 0) {
+            if (!yvex_json_string(&json, acquisition->facts.repository,
+                                  sizeof(acquisition->facts.repository))) return 0;
+            declared->seen |= 1u << 5;
+        } else if (strcmp(key, "revision") == 0) {
+            if (!yvex_json_string(&json, acquisition->facts.revision,
+                                  sizeof(acquisition->facts.revision))) return 0;
+            declared->seen |= 1u << 6;
+        } else if (strcmp(key, "schema") == 0) {
+            if (!yvex_json_string(&json, schema, sizeof(schema))) return 0;
+            declared->seen |= 1u << 7;
+        } else if (strcmp(key, "shard_bytes") == 0) {
+            if (!yvex_json_u64(&json, &declared->shard_bytes)) return 0;
+            declared->seen |= 1u << 8;
+        } else if (strcmp(key, "shards") == 0) {
+            if (!yvex_json_u64(&json, &declared->shard_count)) return 0;
+            declared->seen |= 1u << 9;
+        } else if (strcmp(key, "source_bytes") == 0) {
+            if (!yvex_json_u64(&json, &declared->source_bytes)) return 0;
+            declared->seen |= 1u << 10;
+        } else if (!yvex_json_skip_value(&json)) return 0;
+    }
+    return item == YVEX_JSON_ITEM_END && yvex_json_complete(&json) &&
+           declared->seen == ((1u << 11) - 1u) && declared->complete &&
+           strcmp(schema, YVEX_SOURCE_ACQUISITION_SCHEMA) == 0;
+}
+
+static int source_acquisition_open_relative(int root_fd,
+                                            const char *path,
+                                            int *symlink_refused)
+{
+    char copy[YVEX_PATH_CAP];
+    char *cursor;
+    char *save = NULL;
+    int directory_fd;
+
+    if (!source_acquisition_path_valid(path) || strlen(path) >= sizeof(copy)) return -1;
+    memcpy(copy, path, strlen(path) + 1u);
+    directory_fd = dup(root_fd);
+    if (directory_fd < 0) return -1;
+    cursor = strtok_r(copy, "/", &save);
+    while (cursor) {
+        char *next = strtok_r(NULL, "/", &save);
+        int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW;
+        int next_fd;
+
+        if (next) flags |= O_DIRECTORY;
+        next_fd = openat(directory_fd, cursor, flags);
+        close(directory_fd);
+        if (next_fd < 0) {
+            if (symlink_refused && errno == ELOOP) *symlink_refused = 1;
+            return -1;
+        }
+        directory_fd = next_fd;
+        cursor = next;
+    }
+    return directory_fd;
+}
+
+static int source_acquisition_hash_file(
+    int root_fd,
+    const yvex_source_acquisition_file *file,
+    unsigned long long *bytes_read,
+    char digest_hex[65],
+    int *symlink_refused)
+{
+    unsigned char buffer[1024u * 1024u];
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_sha256 hash;
+    struct stat before;
+    struct stat after;
+    unsigned long long total = 0u;
+    int fd = source_acquisition_open_relative(root_fd, file->path, symlink_refused);
+    ssize_t count;
+
+    if (fd < 0) return 0;
+    if (fstat(fd, &before) != 0 || !S_ISREG(before.st_mode) || before.st_size < 0 ||
+        (unsigned long long)before.st_size != file->expected_size) {
+        close(fd);
+        return 0;
+    }
+    yvex_sha256_init(&hash);
+    while ((count = read(fd, buffer, sizeof(buffer))) > 0) {
+        if (!yvex_sha256_update(&hash, buffer, (size_t)count) ||
+            !yvex_core_u64_add(total, (unsigned long long)count, &total)) {
+            close(fd);
+            return 0;
+        }
+    }
+    if (count < 0 || fstat(fd, &after) != 0 || before.st_dev != after.st_dev ||
+        before.st_ino != after.st_ino || before.st_size != after.st_size ||
+        before.st_mtime != after.st_mtime || total != file->expected_size ||
+        !yvex_sha256_final(&hash, digest)) {
+        close(fd);
+        return 0;
+    }
+    close(fd);
+    yvex_sha256_hex(digest, digest_hex);
+    *bytes_read = total;
+    return 1;
+}
+
+static int source_acquisition_identity(const yvex_source_acquisition *acquisition,
+                                       char output[65])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, YVEX_SOURCE_ACQUISITION_SCHEMA) ||
+        !yvex_sha256_update_text(&hash, acquisition->facts.repository) ||
+        !yvex_sha256_update_text(&hash, acquisition->facts.revision) ||
+        !yvex_sha256_update_text(&hash, acquisition->facts.subtree) ||
+        !yvex_sha256_update_u64(&hash, acquisition->facts.file_count)) return 0;
+    for (index = 0u; index < acquisition->facts.file_count; ++index) {
+        const yvex_source_acquisition_file *file = &acquisition->files[index];
+        const char *classification =
+            file->classification == YVEX_SOURCE_ACQUISITION_FILE_SHARD ? "shard" : "metadata";
+        if (!yvex_sha256_update_text(&hash, file->path) ||
+            !yvex_sha256_update_u64(&hash, file->expected_size) ||
+            !yvex_sha256_update_text(&hash, file->expected_sha256) ||
+            !yvex_sha256_update_text(&hash, file->actual_sha256) ||
+            !yvex_sha256_update_text(&hash, file->git_oid) ||
+            !yvex_sha256_update_text(&hash, file->lfs_oid) ||
+            !yvex_sha256_update_text(&hash, file->xet_hash) ||
+            !yvex_sha256_update_text(&hash, classification) ||
+            !yvex_sha256_update_text(&hash, file->component)) return 0;
+    }
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+static int source_acquisition_verify_files(
+    yvex_source_acquisition *acquisition,
+    const yvex_source_acquisition_options *options,
+    yvex_source_acquisition_failure *failure,
+    yvex_error *err)
+{
+    struct stat root_status;
+    unsigned long long index;
+    int root_fd;
+
+    if (lstat(options->source_root, &root_status) != 0 ||
+        !S_ISDIR(root_status.st_mode) || S_ISLNK(root_status.st_mode)) {
+        return source_acquisition_refuse(
+            failure, YVEX_SOURCE_ACQUISITION_FAILURE_PATH, 0u,
+            options->source_root, YVEX_ERR_IO, err,
+            "source root must be a real directory");
+    }
+    root_fd = open(options->source_root,
+                   O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
+    if (root_fd < 0) {
+        return source_acquisition_refuse(
+            failure, YVEX_SOURCE_ACQUISITION_FAILURE_IO, 0u,
+            options->source_root, YVEX_ERR_IO, err,
+            "cannot open source root");
+    }
+    for (index = 0u; index < acquisition->facts.file_count; ++index) {
+        const yvex_source_acquisition_file *file = &acquisition->files[index];
+        unsigned long long bytes = 0u;
+        char digest[65];
+        int symlink_refused = 0;
+
+        if (!source_acquisition_hash_file(root_fd, file, &bytes, digest,
+                                          &symlink_refused)) {
+            close(root_fd);
+            return source_acquisition_refuse(
+                failure,
+                symlink_refused ? YVEX_SOURCE_ACQUISITION_FAILURE_SYMLINK
+                                : YVEX_SOURCE_ACQUISITION_FAILURE_SIZE,
+                index, file->path, YVEX_ERR_FORMAT, err,
+                symlink_refused
+                    ? "source path contains a symlink"
+                    : "source file is missing, non-regular, replaced, or wrong-sized");
+        }
+        if (options->verify_digests &&
+            strcmp(digest, file->actual_sha256) != 0) {
+            close(root_fd);
+            return source_acquisition_refuse(
+                failure, YVEX_SOURCE_ACQUISITION_FAILURE_DIGEST, index,
+                file->path, YVEX_ERR_FORMAT, err,
+                "source file digest mismatch");
+        }
+        if (!yvex_core_u64_add(acquisition->facts.payload_bytes_read, bytes,
+                               &acquisition->facts.payload_bytes_read)) {
+            close(root_fd);
+            return source_acquisition_refuse(
+                failure, YVEX_SOURCE_ACQUISITION_FAILURE_RESOURCE_BUDGET,
+                index, file->path, YVEX_ERR_BOUNDS, err,
+                "source verification byte count overflow");
+        }
+    }
+    close(root_fd);
+    yvex_core_execution_observation_record(
+        YVEX_CORE_OBSERVE_SOURCE_PAYLOAD_BYTES,
+        acquisition->facts.payload_bytes_read);
+    return YVEX_OK;
+}
+
+static int source_acquisition_manifest_path(
+    const yvex_source_acquisition_options *options,
+    char output[YVEX_PATH_CAP],
+    yvex_source_acquisition_failure *failure,
+    yvex_error *err)
+{
+    if (yvex_source_path_join(output, YVEX_PATH_CAP, options->source_root,
+                              YVEX_SOURCE_ACQUISITION_MANIFEST)) return YVEX_OK;
+    return source_acquisition_refuse(
+        failure, YVEX_SOURCE_ACQUISITION_FAILURE_PATH, 0u, NULL,
+        YVEX_ERR_BOUNDS, err, "source manifest path exceeds bounds");
+}
+
+static int source_acquisition_validate_manifest(
+    yvex_source_acquisition *acquisition,
+    const source_acquisition_declared *declared,
+    const yvex_source_acquisition_options *options,
+    yvex_source_acquisition_failure *failure,
+    yvex_error *err)
+{
+    char computed_identity[65];
+
+    if (strcmp(acquisition->facts.repository, options->expected_repository) != 0 ||
+        strcmp(acquisition->facts.revision, options->expected_revision) != 0 ||
+        strcmp(acquisition->facts.subtree, options->expected_subtree) != 0) {
+        return source_acquisition_refuse(
+            failure, YVEX_SOURCE_ACQUISITION_FAILURE_SOURCE_IDENTITY,
+            0u, NULL, YVEX_ERR_FORMAT, err,
+            "repository, revision, or subtree identity mismatch");
+    }
+    if (acquisition->facts.source_bytes > options->maximum_source_bytes ||
+        declared->file_count != acquisition->facts.file_count ||
+        declared->shard_count != acquisition->facts.shard_count ||
+        declared->metadata_bytes != acquisition->facts.metadata_bytes ||
+        declared->shard_bytes != acquisition->facts.shard_bytes ||
+        declared->source_bytes != acquisition->facts.source_bytes) {
+        return source_acquisition_refuse(
+            failure, YVEX_SOURCE_ACQUISITION_FAILURE_RESOURCE_BUDGET,
+            0u, NULL, YVEX_ERR_BOUNDS, err,
+            "source acquisition totals or budget disagree");
+    }
+    if (!source_acquisition_identity(acquisition, computed_identity) ||
+        strcmp(computed_identity, acquisition->facts.acquisition_identity) != 0) {
+        return source_acquisition_refuse(
+            failure, YVEX_SOURCE_ACQUISITION_FAILURE_SOURCE_IDENTITY,
+            0u, NULL, YVEX_ERR_FORMAT, err,
+            "source acquisition identity mismatch");
+    }
+    return YVEX_OK;
+}
+
+int yvex_source_acquisition_open(
+    yvex_source_acquisition **out,
+    const yvex_source_acquisition_options *options,
+    yvex_source_acquisition_failure *failure,
+    yvex_error *err)
+{
+    yvex_source_acquisition *acquisition = NULL;
+    source_acquisition_declared declared = {0};
+    char *manifest = NULL;
+    char manifest_path[YVEX_PATH_CAP];
+    size_t manifest_length = 0u;
+    int parsed;
+    int rc;
+
+    if (!out || !options || !options->source_root ||
+        !options->expected_repository || !options->expected_revision ||
+        !options->expected_subtree || !options->maximum_files ||
+        options->maximum_files > YVEX_SOURCE_ACQUISITION_FILE_CAP ||
+        !options->maximum_source_bytes) {
+        return source_acquisition_refuse(
+            failure, YVEX_SOURCE_ACQUISITION_FAILURE_INVALID_ARGUMENT,
+            0u, NULL, YVEX_ERR_INVALID_ARG, err,
+            "bounded source acquisition options are required");
+    }
+    *out = NULL;
+    rc = source_acquisition_manifest_path(options, manifest_path, failure, err);
+    if (rc != YVEX_OK) return rc;
+    manifest = yvex_read_bounded_file(
+        manifest_path, SOURCE_ACQUISITION_MANIFEST_CAP, &manifest_length, err);
+    if (!manifest) {
+        return source_acquisition_refuse(
+            failure, YVEX_SOURCE_ACQUISITION_FAILURE_MANIFEST_MISSING,
+            0u, YVEX_SOURCE_ACQUISITION_MANIFEST, YVEX_ERR_IO, err,
+            "source acquisition manifest is unavailable");
+    }
+    acquisition = (yvex_source_acquisition *)calloc(1u, sizeof(*acquisition));
+    if (!acquisition) {
+        free(manifest);
+        return source_acquisition_refuse(
+            failure, YVEX_SOURCE_ACQUISITION_FAILURE_ALLOCATION,
+            0u, NULL, YVEX_ERR_NOMEM, err,
+            "source acquisition allocation failed");
+    }
+    parsed = source_acquisition_parse_manifest(
+        manifest, manifest_length, acquisition, &declared,
+        options->maximum_files);
+    free(manifest);
+    if (parsed != 1) {
+        yvex_source_acquisition_failure_code code =
+            parsed == -1 ? YVEX_SOURCE_ACQUISITION_FAILURE_ALLOCATION
+                         : parsed == -2
+                               ? YVEX_SOURCE_ACQUISITION_FAILURE_RESOURCE_BUDGET
+                               : parsed == -3
+                                     ? YVEX_SOURCE_ACQUISITION_FAILURE_DUPLICATE
+                                     : YVEX_SOURCE_ACQUISITION_FAILURE_MANIFEST_FORMAT;
+        rc = source_acquisition_refuse(
+            failure, code, 0u, YVEX_SOURCE_ACQUISITION_MANIFEST,
+            parsed == -1 ? YVEX_ERR_NOMEM : YVEX_ERR_FORMAT, err,
+            "source acquisition manifest is not canonical");
+        yvex_source_acquisition_release(&acquisition);
+        return rc;
+    }
+    rc = source_acquisition_validate_manifest(
+        acquisition, &declared, options, failure, err);
+    if (rc == YVEX_OK) {
+        rc = source_acquisition_verify_files(
+            acquisition, options, failure, err);
+    }
+    if (rc != YVEX_OK) {
+        yvex_source_acquisition_release(&acquisition);
+        return rc;
+    }
+    acquisition->facts.complete = 1;
+    if (failure) memset(failure, 0, sizeof(*failure));
+    *out = acquisition;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+void yvex_source_acquisition_release(yvex_source_acquisition **acquisition)
+{
+    if (!acquisition || !*acquisition) return;
+    free((*acquisition)->files);
+    memset(*acquisition, 0, sizeof(**acquisition));
+    free(*acquisition);
+    *acquisition = NULL;
+}
+
+const yvex_source_acquisition_facts *yvex_source_acquisition_facts_get(
+    const yvex_source_acquisition *acquisition)
+{
+    return acquisition ? &acquisition->facts : NULL;
+}
+
+const yvex_source_acquisition_file *yvex_source_acquisition_file_at(
+    const yvex_source_acquisition *acquisition,
+    unsigned long long index)
+{
+    return acquisition && index < acquisition->facts.file_count
+               ? &acquisition->files[index]
+               : NULL;
 }
