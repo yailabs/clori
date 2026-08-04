@@ -88,8 +88,10 @@ provisional rather than a promoted kernel-priority decision.
 Accepted-prefix promotion now contributes its exact state-residency H2D,
 synchronization and zero kernel/D2H/D2D facts. These counters are deltas around
 the serialized session mutation, not estimates from configured capacity.
-Compulsory state-copy and temporary bytes are still unavailable, so promotion
-does not yet earn a complete memory roofline. Repeated occupancy evidence is a
+The uploaded destination span is the exact compulsory device-state byte count;
+promotion has no active weights, device activations or temporary device span.
+It therefore earns the complete memory mask without treating host-side
+candidate projection as device traffic. Repeated occupancy evidence is a
 work-unit-weighted mean with transactional overflow refusal.
 
 Physical-variant research uses a funnel: role-level numerical probes,

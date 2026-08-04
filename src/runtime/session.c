@@ -586,6 +586,7 @@ int yvex_runtime_session_select_attention_prefix(
     unsigned long long prefix_count, unsigned long long extension_count,
     yvex_runtime_state_promotion_facts *facts, yvex_error *err)
 {
+    yvex_runtime_state_promotion_facts candidate = {0};
     yvex_attention_state_provider *provider;
     yvex_runtime_state_residency *residency;
     yvex_runtime_state_residency_summary before = {0}, after = {0};
@@ -649,12 +650,15 @@ int yvex_runtime_session_select_attention_prefix(
         rc = YVEX_ERR_STATE;
     }
     if (rc == YVEX_OK) {
-        facts->schema_version = YVEX_RUNTIME_STATE_PROMOTION_FACTS_SCHEMA_V1;
-        facts->available = 1;
-        facts->h2d_bytes = after.upload_bytes - before.upload_bytes;
-        facts->synchronization_count = after.cuda_ready
-                                           ? after.upload_count - before.upload_count
-                                           : 0ull;
+        candidate.schema_version = YVEX_RUNTIME_STATE_PROMOTION_FACTS_SCHEMA_V1;
+        candidate.available = 1;
+        candidate.h2d_bytes = after.upload_bytes - before.upload_bytes;
+        candidate.synchronization_count = after.cuda_ready
+                                                ? after.upload_count - before.upload_count
+                                                : 0ull;
+        rc = yvex_execution_memory_facts_add(
+            &candidate.memory, 0ull, candidate.h2d_bytes, 0ull, 0ull, 1ull, 0ull, err);
+        if (rc == YVEX_OK) *facts = candidate;
     }
     (void)pthread_mutex_unlock(&session->lifecycle_mutex);
     return rc;

@@ -181,16 +181,17 @@ static const unsigned long long generation_transformer_phase_facts =
 static int generation_phase_time(
     yvex_runtime_generation_context *context, yvex_execution_roofline_phase phase,
     unsigned long long duration, unsigned long long work, unsigned long long committed,
-    unsigned long long active_weight, const yvex_execution_memory_facts *m,
-    unsigned long long h2d, unsigned long long d2h, unsigned long long d2d,
-    unsigned long long kernels, unsigned long long synchronizations, unsigned long long fact_mask, yvex_error *err)
+    const yvex_execution_memory_facts *m, unsigned long long h2d,
+    unsigned long long d2h, unsigned long long d2d,
+    unsigned long long kernels, unsigned long long synchronizations,
+    unsigned long long fact_mask, yvex_error *err)
 {
     yvex_execution_phase_measurement delta = {
         .phase = phase, .fact_mask = fact_mask |
             YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_DURATION) |
             YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_WORK) |
             YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_COMMITTED_TOKENS),
-        .active_weight_bytes = active_weight, .state_bytes = m ? m->state_bytes : 0ull,
+        .active_weight_bytes = m ? m->active_weight_bytes : 0ull, .state_bytes = m ? m->state_bytes : 0ull,
         .activation_bytes = m ? m->activation_bytes : 0ull, .temporary_bytes = m ? m->temporary_bytes : 0ull,
         .h2d_bytes = h2d, .d2h_bytes = d2h, .d2d_bytes = d2d, .kernel_count = kernels,
         .synchronization_count = synchronizations, .measured_duration_ns = duration, .work_units = work,
@@ -428,7 +429,7 @@ static int generation_prefill(
         yvex_runtime_transformer_result result;
         yvex_runtime_speculation_feature_result draft_result = {0};
         unsigned long long count = suffix_count - offset, values, started, completed;
-        unsigned long long active_weight = 0ull, synchronizations = 0ull;
+        unsigned long long synchronizations = 0ull;
         if (count > maximum_chunk) count = maximum_chunk;
         memset(&summary, 0, sizeof(summary));
         summary.schema_version = YVEX_TRANSFORMER_INPUT_SCHEMA_V1;
@@ -466,16 +467,12 @@ static int generation_prefill(
         yvex_transformer_input_close(&input);
         if (rc == YVEX_OK) rc = yvex_runtime_generation_profile_transformer(profile, &result, err);
         if (rc == YVEX_OK && !context->speculation &&
-            (!yvex_core_u64_add(result.embedding_bytes, result.attention_weight_bytes,
-                                &active_weight) ||
-             !yvex_core_u64_add(active_weight, result.expert_weight_bytes, &active_weight) ||
-             !yvex_core_u64_add(active_weight, result.final_weight_bytes, &active_weight) ||
-             !yvex_core_u64_add(result.stream_synchronizations, result.device_synchronizations,
-                                &synchronizations)))
+            !yvex_core_u64_add(result.stream_synchronizations, result.device_synchronizations,
+                               &synchronizations))
             rc = generation_refuse(err, YVEX_ERR_BOUNDS, "prefill physical accounting overflowed");
         if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER,
-                completed - started, count, 0ull, active_weight,
+                completed - started, count, 0ull,
                 !context->speculation && result.memory.complete ? &result.memory : NULL,
                 context->speculation ? 0ull : result.h2d_bytes, context->speculation ? 0ull : result.d2h_bytes,
                 context->speculation ? 0ull : result.d2d_bytes, context->speculation ? 0ull : result.kernel_launches,
@@ -533,7 +530,7 @@ static int generation_project_logits(
                                            completed - started, err);
         if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_OUTPUT_HEAD,
-                completed - started, 1ull, 0ull, logits_result->memory.active_weight_bytes,
+                completed - started, 1ull, 0ull,
                 logits_result->memory.complete ? &logits_result->memory : NULL,
                 logits_result->h2d_bytes,
                 logits_result->d2h_bytes, logits_result->d2d_bytes,
@@ -668,7 +665,7 @@ static int generation_commit_ordinary(
     yvex_runtime_decode_step_result *decode_result, yvex_error *err)
 {
     yvex_tokenizer_fragment fragment;
-    unsigned long long next_text, started, completed, active_weight = 0ull, synchronizations = 0ull;
+    unsigned long long next_text, started, completed, synchronizations = 0ull;
     const int device_only =
         context->options.backend == YVEX_BACKEND_KIND_CUDA &&
         context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
@@ -724,18 +721,12 @@ static int generation_commit_ordinary(
                                    decode_result->persistent_state_digest);
         result->model_committed_token_count++;
         result->decode_step_count++;
-        if (!yvex_core_u64_add(decode_result->embedding_weight_bytes,
-                               decode_result->attention_weight_bytes, &active_weight) ||
-            !yvex_core_u64_add(active_weight, decode_result->expert_weight_bytes,
-                               &active_weight) ||
-            !yvex_core_u64_add(active_weight, decode_result->final_weight_bytes,
-                               &active_weight) ||
-            !yvex_core_u64_add(decode_result->stream_synchronizations,
+        if (!yvex_core_u64_add(decode_result->stream_synchronizations,
                                decode_result->device_synchronizations, &synchronizations))
             rc = generation_refuse(err, YVEX_ERR_BOUNDS, "decode physical accounting overflowed");
         if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_DECODE_LAYER,
-                completed - started, 1ull, 1ull, active_weight,
+                completed - started, 1ull, 1ull,
                 decode_result->memory.complete ? &decode_result->memory : NULL,
                 decode_result->h2d_bytes, decode_result->d2h_bytes,
                 decode_result->d2d_bytes, decode_result->kernel_launches, synchronizations,
@@ -1321,27 +1312,31 @@ static int generation_speculative_candidate_cycle(
     }
     if (rc == YVEX_OK)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_DRAFT_SWEEP,
-            cycle.draft_ns, cycle.draft_proposed_count, 0ull, 0ull, NULL,
+            cycle.draft_ns, cycle.draft_proposed_count, 0ull, NULL,
             cycle.draft_h2d_bytes, cycle.draft_d2h_bytes, cycle.draft_d2d_bytes,
             cycle.draft_kernel_launches, cycle.draft_synchronizations,
             generation_transformer_phase_facts & ~(1ull << YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT), err);
     if (rc == YVEX_OK)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_VERIFY_SWEEP,
             cycle.verification_ns, cycle.candidate_count + 1ull, commit->completed ? commit->token_count : 0ull,
-            0ull, NULL, cycle.verification_h2d_bytes,
+            NULL, cycle.verification_h2d_bytes,
             cycle.verification_d2h_bytes, cycle.verification_d2d_bytes,
             cycle.verification_kernel_launches, cycle.verification_synchronizations,
             generation_transformer_phase_facts & ~(1ull << YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT), err);
     if (rc == YVEX_OK && commit->completed && commit->promotion_ns)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_STATE_PROMOTION,
             commit->promotion_ns, commit->verified_prefix_count, commit->token_count,
-            0ull, NULL, commit->promotion_physical.h2d_bytes,
+            commit->promotion_physical.memory.complete
+                ? &commit->promotion_physical.memory : NULL,
+            commit->promotion_physical.h2d_bytes,
             commit->promotion_physical.d2h_bytes,
             commit->promotion_physical.d2d_bytes, commit->promotion_physical.kernel_count,
             commit->promotion_physical.synchronization_count,
             commit->promotion_physical.available
-                ? generation_transformer_phase_facts &
-                      ~YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT)
+                ? (generation_transformer_phase_facts &
+                      ~YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT)) |
+                      (commit->promotion_physical.memory.complete
+                           ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull)
                 : 0ull, err);
     return rc;
 }

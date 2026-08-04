@@ -2554,6 +2554,7 @@ static int test_runtime_injected_state_provider(
     yvex_runtime_execution_session *session = NULL;
     yvex_runtime_model_failure failure;
     yvex_runtime_session_summary summary;
+    yvex_runtime_state_promotion_facts promotion;
     injected_state_control control;
     yvex_attention_state_provider_factory factory;
     yvex_runtime_session_open_request request;
@@ -2580,9 +2581,20 @@ static int test_runtime_injected_state_provider(
     control.active->summary.transaction_active = 1;
     control.active->summary.staged_layer_count = 1ull;
     YVEX_TEST_ASSERT(yvex_runtime_session_begin(session, &failure, &err) == YVEX_OK &&
+                         yvex_runtime_session_select_attention_prefix(
+                             session, YVEX_TENSOR_SCOPE_GLOBAL, 1ull, 0ull,
+                             &promotion, &err) == YVEX_OK &&
+                         promotion.schema_version ==
+                             YVEX_RUNTIME_STATE_PROMOTION_FACTS_SCHEMA_V1 &&
+                         promotion.available && promotion.memory.complete &&
+                         promotion.memory.measured_operations == 1ull &&
+                         !promotion.memory.active_weight_bytes &&
+                         !promotion.memory.state_bytes &&
+                         !promotion.memory.activation_bytes &&
+                         !promotion.memory.temporary_bytes &&
                          yvex_runtime_session_finish(session, YVEX_OK, &err) == YVEX_OK &&
                          control.commits == 1u && control.active->summary.commit_count == 1ull,
-                     "successful session finish commits through the injected provider");
+                     "CPU prefix promotion reports complete zero device spans and commits");
     YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session &&
                          control.releases == 1u && !control.active,
                      "successful injected provider closes through its owner");

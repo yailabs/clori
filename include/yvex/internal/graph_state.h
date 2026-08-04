@@ -249,6 +249,7 @@ typedef struct {
 typedef struct {
     unsigned int schema_version;
     int available;
+    yvex_execution_memory_facts memory;
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
     unsigned long long kernel_count, synchronization_count;
 } yvex_runtime_state_promotion_facts;
