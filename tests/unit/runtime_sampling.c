@@ -925,6 +925,29 @@ static int sampling_test_partial_logits_prefix(void)
                          result.raw_logits_count, result.rows, 2ull,
                          &result.execution, &err) == YVEX_OK,
                      "partial logits validator admits only the completed prefix");
+    result.execution.grouped_execution = 1;
+    result.execution.grouped_rows = 2ull;
+    result.execution.physical.memory.activation_bytes =
+        2ull * (plan.hidden_width + plan.vocabulary_size) * sizeof(float);
+    result.execution.physical.memory.temporary_bytes = sizeof(int);
+    result.execution.physical.memory.measured_operations = 1ull;
+    result.execution.physical.memory.complete = 1;
+    result.execution.physical.kernel_count = 2ull;
+    result.execution.physical.synchronization_count = 3ull;
+    YVEX_TEST_ASSERT(yvex_runtime_logits_result_validate(
+                         &result.plan, result.raw_logits,
+                         result.raw_logits_count, result.rows, 2ull,
+                         &result.execution, &err) == YVEX_OK,
+                     "partial grouped logits retain complete physical batch facts");
+    result.execution.grouped_rows = 1ull;
+    YVEX_TEST_ASSERT(yvex_runtime_logits_result_validate(
+                         &result.plan, result.raw_logits,
+                         result.raw_logits_count, result.rows, 2ull,
+                         &result.execution, &err) == YVEX_ERR_FORMAT,
+                     "grouped logits reject physical geometry smaller than the request");
+    result.execution.grouped_execution = 0;
+    result.execution.grouped_rows = 0ull;
+    memset(&result.execution.physical, 0, sizeof(result.execution.physical));
     YVEX_TEST_ASSERT(yvex_runtime_sampling_policy_seal(&policy, 4ull, &err) == YVEX_OK &&
                          yvex_runtime_sampling_context_open(
                              &context, &plan, &policy, &options, &err) == YVEX_OK &&

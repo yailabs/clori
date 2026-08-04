@@ -97,8 +97,8 @@ typedef enum {
 } yvex_output_head_selection_policy;
 
 /*
- * Output width is an admitted graph shape. Rows remain ordered through one operation even while
- * the portable backend projects them independently.
+ * Output width is an admitted graph shape. Rows remain ordered whether the backend groups a
+ * compatible device operation or selects the retained row-local reference.
  */
 typedef struct {
     unsigned int schema_version;
@@ -113,9 +113,10 @@ typedef struct {
 
 typedef struct {
     unsigned int schema_version;
-    int completed, partial;
+    int completed, partial, grouped_execution;
     unsigned long long requested_rows, completed_rows, first_incomplete_row;
-    unsigned long long final_source_position;
+    unsigned long long final_source_position, grouped_rows;
+    yvex_execution_physical_facts physical;
     char aggregate_logits_digest[YVEX_SHA256_HEX_CAP];
     char output_head_contract_identity[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];

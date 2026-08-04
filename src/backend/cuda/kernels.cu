@@ -6,7 +6,6 @@
  * execution.
  */
 #include <yvex/qtype.h>
-
 extern "C" __global__ void yvex_embed_f32(
     const float *embedding, const unsigned int *token_ids, float *out,
     unsigned long long hidden_size, unsigned long long vocab_size,
@@ -38,7 +37,6 @@ extern "C" __global__ void yvex_embed_f32(
     }
     out[idx] = embedding[((unsigned long long)token_id * hidden_size) + dim];
 }
-
 static __device__ float f16_bits_to_float(unsigned int h)
 {
     unsigned int sign = (h & 0x8000u) << 16;
@@ -90,7 +88,6 @@ static __device__ float float_to_bf16_rne(float value)
     if (lower > 0x8000u || (lower == 0x8000u && (upper & 1u))) upper++;
     return __uint_as_float(upper << 16);
 }
-
 extern "C" __global__ void yvex_attention_bf16_round(
     float *values, unsigned long long count, int *status)
 {
@@ -292,7 +289,6 @@ static __device__ float qtype_value(const unsigned char *encoded,
     }
     return __uint_as_float(0x7fc00000u);
 }
-
 extern "C" __global__ void yvex_qtype_row_dot(
     const unsigned char *encoded, const float *vector,
     unsigned long long elements, unsigned int qtype, float *out)
@@ -306,7 +302,6 @@ extern "C" __global__ void yvex_qtype_row_dot(
                (double)vector[index];
     out[0] = (float)sum;
 }
-
 extern "C" __global__ void yvex_embed_f16_to_f32(
     const unsigned short *embedding, const unsigned int *token_ids, float *out,
     unsigned long long hidden_size, unsigned long long vocab_size,
@@ -338,7 +333,6 @@ extern "C" __global__ void yvex_embed_f16_to_f32(
     }
     out[idx] = f16_bits_to_float((unsigned int)embedding[((unsigned long long)token_id * hidden_size) + dim]);
 }
-
 extern "C" __global__ void yvex_rms_norm_f32_weight_f32(
     const float *input, const float *weight, float *out,
     unsigned long long hidden_size, float epsilon)
@@ -369,7 +363,6 @@ extern "C" __global__ void yvex_rms_norm_f32_weight_f32(
         out[i] = input[i] * inv_rms * weight[i];
     }
 }
-
 extern "C" __global__ void yvex_rms_norm_f32_weight_f16(
     const float *input, const unsigned short *weight, float *out,
     unsigned long long hidden_size, float epsilon)
@@ -437,7 +430,6 @@ extern "C" __global__ void yvex_rope_f32(
     out[even_index] = (even * cosine) - (odd * sine);
     out[odd_index] = (even * sine) + (odd * cosine);
 }
-
 extern "C" __global__ void yvex_matmul_f32(
     const float *input, const float *weight, float *out,
     unsigned long long m, unsigned long long k, unsigned long long n)
@@ -466,7 +458,6 @@ extern "C" __global__ void yvex_matmul_f32(
     }
     out[idx] = sum;
 }
-
 extern "C" __global__ void yvex_mlp_f32(
     const float *input, const float *gate_weight, const float *up_weight,
     const float *down_weight, float *intermediate, float *out,
@@ -539,7 +530,6 @@ extern "C" __global__ void yvex_mlp_f32(
         out[index] = sum;
     }
 }
-
 extern "C" __global__ void yvex_attention_f32(
     const float *query, const float *keys, const float *values,
     float *score_scratch, float *probability_scratch, float *out,
@@ -816,6 +806,7 @@ extern "C" __global__ void yvex_qtype_matvec(
     unsigned long long row_width,
     unsigned long long start_row,
     unsigned long long row_count,
+    unsigned long long input_rows,
     unsigned int qtype,
     const void *vector,
     int q8_input,
@@ -826,28 +817,36 @@ extern "C" __global__ void yvex_qtype_matvec(
 {
     unsigned int lane = threadIdx.x & 31u;
     unsigned int warp = threadIdx.x >> 5u;
-    unsigned long long row = (unsigned long long)blockIdx.x * 8ull + warp;
+    unsigned long long pair = (unsigned long long)blockIdx.x * 8ull + warp;
+    unsigned long long input_row = row_count ? pair / row_count : input_rows;
+    unsigned long long row = row_count ? pair % row_count : row_count;
     const unsigned char *row_data;
+    const void *input;
     float sum;
     if (!status) return;
-    if (*status != 0 || row >= row_count) return;
-    if (!encoded || !vector || !out || !row_bytes || !row_width) {
+    if (*status != 0 || input_row >= input_rows) return;
+    if (!encoded || !vector || !out || !row_bytes || !row_width || !row_count) {
         atomicCAS(status, 0, 2);
         return;
     }
     row_data = encoded + (start_row + row) * row_bytes;
+    input = q8_input
+        ? (const void *)((const unsigned char *)vector +
+                         input_row * (row_width / YVEX_CUDA_Q8_K_BLOCK) * YVEX_CUDA_Q8_K_BYTES)
+        : (const void *)((const float *)vector + input_row * row_width);
     if (forensic_numeric) {
         if (lane == 0u) {
             double reference = 0.0;
-            const float *input = (const float *)vector;
+            const float *reference_input = (const float *)input;
             for (unsigned long long i = 0ull; i < row_width; ++i) {
                 double weight = (double)qtype_value(row_data, i, qtype);
-                double value = (double)float_to_bf16_rne(input[i]);
+                double value = (double)float_to_bf16_rne(reference_input[i]);
                 reference = __dadd_rn(reference, __dmul_rn(weight, value));
             }
             float value = (float)reference;
             if (!isfinite(value)) atomicCAS(status, 0, 1);
-            else out[row] = output_bf16 ? float_to_bf16_rne(value) : value;
+            else out[input_row * row_count + row] =
+                output_bf16 ? float_to_bf16_rne(value) : value;
         }
         return;
     }
@@ -857,16 +856,17 @@ extern "C" __global__ void yvex_qtype_matvec(
             if (!lane) atomicCAS(status, 0, 2);
             return;
         }
-        sum = q8_warp_dot(row_data, (const unsigned char *)vector, blocks,
+        sum = q8_warp_dot(row_data, (const unsigned char *)input, blocks,
                           row_bytes / blocks, qtype);
     } else
-        sum = qtype_warp_dot(row_data, (const float *)vector, row_width, qtype, status);
+        sum = qtype_warp_dot(row_data, (const float *)input, row_width, qtype, status);
     if (lane == 0u) {
         if (!isfinite(sum)) atomicCAS(status, 0, 1);
         else {
             float value = sum;
             if (!isfinite(value)) atomicCAS(status, 0, 1);
-            else out[row] = output_bf16 ? float_to_bf16_rne(value) : value;
+            else out[input_row * row_count + row] =
+                output_bf16 ? float_to_bf16_rne(value) : value;
         }
     }
 }

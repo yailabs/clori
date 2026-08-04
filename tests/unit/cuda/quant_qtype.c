@@ -186,23 +186,30 @@ static void quant_q8_reference(const float input[512], float output[512])
 
 static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
 {
-    enum { ROWS = 3, WIDTH = 512 };
+    enum { ROWS = 3, INPUT_ROWS = 3, WIDTH = 512 };
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *resident = NULL, *input = NULL, *output = NULL;
     unsigned char *mapped = NULL, *row = NULL;
-    float source[ROWS * WIDTH], vector[WIDTH], q8_vector[WIDTH];
-    float exact[ROWS], expected[ROWS], actual[ROWS];
+    float source[ROWS * WIDTH], vectors[INPUT_ROWS * WIDTH];
+    float q8_vectors[INPUT_ROWS * WIDTH];
+    float exact[INPUT_ROWS * ROWS], expected[INPUT_ROWS * ROWS];
+    float actual[INPUT_ROWS * ROWS];
     yvex_quant_failure failure;
     yvex_error err;
     size_t row_bytes = 0u;
     yvex_backend_cuda_operation_facts facts;
     unsigned long long index;
-    unsigned int row_index;
+    unsigned int input_index, row_index;
     int rc;
 
-    for (index = 0ull; index < WIDTH; ++index)
-        vector[index] = (float)((int)(index % 29ull) - 14) / 13.0f;
-    quant_q8_reference(vector, q8_vector);
+    for (input_index = 0u; input_index < INPUT_ROWS; ++input_index) {
+        for (index = 0ull; index < WIDTH; ++index)
+            vectors[input_index * WIDTH + index] =
+                (float)((int)((index + input_index * 5u) % 29ull) - 14) /
+                (float)(13u + input_index);
+        quant_q8_reference(vectors + input_index * WIDTH,
+                           q8_vectors + input_index * WIDTH);
+    }
     for (index = 0ull; index < ROWS * WIDTH; ++index)
         source[index] = (float)((int)((index * 7ull + 3ull) % 41ull) - 20) /
                         (float)(2ull + index % 11ull);
@@ -227,50 +234,57 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
         memcpy(mapped + row_index * row_bytes, row, row_bytes);
         free(row);
         row = NULL;
-        YVEX_TEST_ASSERT(yvex_quant_cpu_dot(
-                             qtype, mapped + row_index * row_bytes, row_bytes,
-                             vector, WIDTH, &exact[row_index], &failure, &err) == YVEX_OK &&
-                         yvex_quant_cpu_dot(
-                             qtype, mapped + row_index * row_bytes, row_bytes,
-                             q8_vector, WIDTH, &expected[row_index], &failure, &err) == YVEX_OK,
-                         "Q8 activation CPU reference succeeds");
+        for (input_index = 0u; input_index < INPUT_ROWS; ++input_index) {
+            unsigned int output_index = input_index * ROWS + row_index;
+            YVEX_TEST_ASSERT(
+                yvex_quant_cpu_dot(
+                    qtype, mapped + row_index * row_bytes, row_bytes,
+                    vectors + input_index * WIDTH, WIDTH, &exact[output_index],
+                    &failure, &err) == YVEX_OK &&
+                    yvex_quant_cpu_dot(
+                        qtype, mapped + row_index * row_bytes, row_bytes,
+                        q8_vectors + input_index * WIDTH, WIDTH,
+                        &expected[output_index], &failure, &err) == YVEX_OK,
+                "Q8 activation CPU reference succeeds for every input row");
+        }
     }
     YVEX_TEST_ASSERT(yvex_backend_resident_attach(
                          backend, mapped, descriptor.bytes, resident, 11ull, &err) == YVEX_OK,
                      "Q8 activation resident matrix attaches");
     descriptor.name = "q8_activation_input";
     descriptor.dtype = YVEX_DTYPE_F32;
-    descriptor.dims[0] = WIDTH;
-    descriptor.bytes = sizeof(vector);
+    descriptor.dims[0] = INPUT_ROWS * WIDTH;
+    descriptor.bytes = sizeof(vectors);
     YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &input, &err) == YVEX_OK &&
                          yvex_backend_tensor_write(
-                             backend, input, vector, sizeof(vector), &err) == YVEX_OK,
-                     "Q8 activation input uploads once");
+                             backend, input, vectors, sizeof(vectors), &err) == YVEX_OK,
+                     "Q8 activation row batch uploads once");
     descriptor.name = "q8_activation_output";
-    descriptor.dims[0] = ROWS;
+    descriptor.dims[0] = INPUT_ROWS * ROWS;
     descriptor.bytes = sizeof(actual);
     YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &output, &err) == YVEX_OK,
                      "Q8 activation output allocates");
     rc = yvex_backend_cuda_encoded_matvec(
         backend, mapped, descriptor.bytes ? ROWS * row_bytes : 0u, qtype,
-        ROWS, WIDTH, row_bytes, input, output, &facts, &err);
+        ROWS, WIDTH, row_bytes, INPUT_ROWS, input, output, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
                          facts.d2h_bytes == sizeof(int) &&
                          facts.device_synchronizations == 1ull &&
                          facts.compulsory_memory_facts_available &&
                          facts.active_weight_bytes == ROWS * row_bytes &&
                          facts.state_bytes == 0ull &&
-                         facts.activation_bytes == sizeof(vector) + sizeof(actual) &&
-                         facts.temporary_bytes == sizeof(int) + (WIDTH / 256u) * 292u &&
+                         facts.activation_bytes == sizeof(vectors) + sizeof(actual) &&
+                         facts.temporary_bytes ==
+                             sizeof(int) + INPUT_ROWS * (WIDTH / 256u) * 292u &&
                          yvex_backend_tensor_read(
                              backend, output, actual, sizeof(actual), &err) == YVEX_OK,
-                     "Q8 activation production matvec launches quantize plus projection");
-    for (row_index = 0u; row_index < ROWS; ++row_index) {
-        double difference = fabs((double)actual[row_index] - expected[row_index]);
-        double exact_difference = fabs((double)actual[row_index] - exact[row_index]);
-        double approximation = 0.1 * (1.0 + fabs((double)exact[row_index]));
-        YVEX_TEST_ASSERT(difference <= 1e-5 * (1.0 + fabs((double)expected[row_index])),
-                         "Q8 activation CUDA matvec matches independent codec reference");
+                     "Q8 activation production row batch uses one quantize and projection launch");
+    for (index = 0ull; index < INPUT_ROWS * ROWS; ++index) {
+        double difference = fabs((double)actual[index] - expected[index]);
+        double exact_difference = fabs((double)actual[index] - exact[index]);
+        double approximation = 0.1 * (1.0 + fabs((double)exact[index]));
+        YVEX_TEST_ASSERT(difference <= 1e-5 * (1.0 + fabs((double)expected[index])),
+                         "Q8 activation CUDA row batch matches independent codec reference");
         YVEX_TEST_ASSERT(exact_difference <= approximation,
                          "Q8 activation matvec remains within bounded execution approximation");
     }

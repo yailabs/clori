@@ -33,7 +33,7 @@ struct yvex_runtime_logits_context {
     yvex_runtime_logits_options options;
     const unsigned char *resident_head;
     unsigned long long resident_head_bytes;
-    float *candidate;
+    float *candidate, *host_hidden_rows;
     yvex_device_tensor *device_hidden, *device_logits;
     pthread_mutex_t mutex;
     unsigned long long execution_count;
@@ -257,7 +257,8 @@ int yvex_runtime_logits_context_open(
     yvex_runtime_logits_context *context = NULL;
     yvex_runtime_model_summary model_summary;
     yvex_runtime_residency_summary residency;
-    unsigned long long candidate_bytes, device_bytes;
+    unsigned long long candidate_bytes, hidden_elements, hidden_bytes;
+    unsigned long long logits_elements, device_elements, device_bytes, device_total, host_bytes;
     int rc;
     if (out) *out = NULL;
     if (!out || !model || !session || !transformer_plan || !options ||
@@ -304,9 +305,13 @@ int yvex_runtime_logits_context_open(
         goto failure;
     if (!yvex_core_u64_mul(context->plan.summary.vocabulary_size,
                            sizeof(float), &candidate_bytes) ||
-        candidate_bytes > SIZE_MAX ||
-        (options->maximum_host_bytes && candidate_bytes + sizeof(*context) >
-                                                options->maximum_host_bytes)) {
+        !yvex_core_u64_mul(options->maximum_rows,
+                           context->plan.summary.hidden_width, &hidden_elements) ||
+        !yvex_core_u64_mul(hidden_elements, sizeof(float), &hidden_bytes) ||
+        !yvex_core_u64_add(candidate_bytes,
+                           sizeof(*context), &host_bytes) ||
+        candidate_bytes > SIZE_MAX || hidden_bytes > SIZE_MAX ||
+        (options->maximum_host_bytes && host_bytes > options->maximum_host_bytes)) {
         rc = logits_refuse(err, YVEX_ERR_NOMEM,
                            "logits host workspace exceeds its budget");
         goto failure;
@@ -319,21 +324,31 @@ int yvex_runtime_logits_context_open(
     }
     if (yvex_backend_kind_of(context->session_view->backend) ==
         YVEX_BACKEND_KIND_CUDA) {
-        if (!yvex_core_u64_add(candidate_bytes,
-                               context->plan.summary.hidden_width * sizeof(float),
-                               &device_bytes) ||
-            (options->maximum_device_bytes &&
-             residency.device_resident_bytes + device_bytes >
-                 options->maximum_device_bytes)) {
+        if (!yvex_core_u64_add(host_bytes, hidden_bytes, &host_bytes) ||
+            (options->maximum_host_bytes && host_bytes > options->maximum_host_bytes) ||
+            !yvex_core_u64_mul(options->maximum_rows,
+                               context->plan.summary.vocabulary_size,
+                               &logits_elements) ||
+            !yvex_core_u64_add(hidden_elements, logits_elements, &device_elements) ||
+            !yvex_core_u64_mul(device_elements, sizeof(float), &device_bytes) ||
+            !yvex_core_u64_add(residency.device_resident_bytes, device_bytes,
+                               &device_total) ||
+            (options->maximum_device_bytes && device_total > options->maximum_device_bytes)) {
             rc = logits_refuse(err, YVEX_ERR_NOMEM,
                                "logits CUDA workspace exceeds its budget");
             goto failure;
         }
+        context->host_hidden_rows = (float *)malloc((size_t)hidden_bytes);
+        if (!context->host_hidden_rows) {
+            rc = logits_refuse(err, YVEX_ERR_NOMEM,
+                               "logits row-batch staging allocation failed");
+            goto failure;
+        }
         rc = logits_device_open(context, &context->device_hidden,
-                                "logits.hidden", context->plan.summary.hidden_width, err);
+                                "logits.hidden", hidden_elements, err);
         if (rc == YVEX_OK)
             rc = logits_device_open(context, &context->device_logits,
-                                    "logits.output", context->plan.summary.vocabulary_size, err);
+                                    "logits.output", logits_elements, err);
         if (rc != YVEX_OK) goto failure;
     }
     if (pthread_mutex_init(&context->mutex, NULL) != 0) {
@@ -743,7 +758,7 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
             context->session_view->backend, context->resident_head,
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
-            context->plan.summary.row_bytes, device_hidden,
+            context->plan.summary.row_bytes, 1ull, device_hidden,
             context->device_logits, &facts, err);
     if (rc == YVEX_OK && !context->options.device_greedy_selection)
         rc = yvex_backend_tensor_read(context->session_view->backend,
@@ -826,7 +841,7 @@ static int logits_row_identity_build(yvex_runtime_logits_row_result *result)
 
 static int logits_row_finish(yvex_runtime_logits_context *context,
                              const yvex_runtime_logits_source *source,
-                             yvex_backend_kind backend,
+                             yvex_backend_kind backend, const float *host_values,
                              yvex_runtime_logits_row_result *result,
                              yvex_error *err)
 {
@@ -857,8 +872,11 @@ static int logits_row_finish(yvex_runtime_logits_context *context,
                                      &result->device_logits, err) != YVEX_OK)
             return yvex_error_code(err);
     } else {
+        if (!host_values)
+            return logits_refuse(err, YVEX_ERR_STATE,
+                                 "host logits values are unavailable");
         for (index = 0ull; index < result->vocabulary_size; ++index) {
-            float value = context->candidate[index];
+            float value = host_values[index];
             if (!isfinite(value))
                 return logits_refuse(
                     err, YVEX_ERR_FORMAT,
@@ -869,7 +887,7 @@ static int logits_row_finish(yvex_runtime_logits_context *context,
         if (!yvex_core_u64_mul(result->vocabulary_size, sizeof(float),
                                &scan_bytes) ||
             !logits_values_digest("yvex.runtime.raw-logits.v1",
-                                  context->candidate, result->logits_count,
+                                  host_values, result->logits_count,
                                   result->raw_logits_digest))
             return logits_refuse(err, YVEX_ERR_STATE,
                                  "raw logits evidence derivation failed");
@@ -1038,6 +1056,49 @@ int yvex_runtime_logits_additive_adjust(
     return YVEX_OK;
 }
 
+static int logits_physical_add_row(
+    yvex_execution_physical_facts *physical,
+    const yvex_runtime_logits_row_result *row, yvex_error *err)
+{
+    int rc;
+    if (!physical || !row)
+        return logits_refuse(err, YVEX_ERR_INVALID_ARG,
+                             "logits physical row is unavailable");
+    rc = yvex_execution_memory_facts_merge(&physical->memory, &row->memory, err);
+    if (rc != YVEX_OK) return rc;
+    if (!yvex_core_u64_add(physical->h2d_bytes, row->h2d_bytes,
+                           &physical->h2d_bytes) ||
+        !yvex_core_u64_add(physical->d2h_bytes, row->d2h_bytes,
+                           &physical->d2h_bytes) ||
+        !yvex_core_u64_add(physical->d2d_bytes, row->d2d_bytes,
+                           &physical->d2d_bytes) ||
+        !yvex_core_u64_add(physical->kernel_count, row->kernel_launches,
+                           &physical->kernel_count) ||
+        !yvex_core_u64_add(physical->synchronization_count,
+                           row->device_synchronizations,
+                           &physical->synchronization_count))
+        return logits_refuse(err, YVEX_ERR_BOUNDS,
+                             "logits physical row accounting overflowed");
+    return YVEX_OK;
+}
+
+static int logits_physical_equal(
+    const yvex_execution_physical_facts *left,
+    const yvex_execution_physical_facts *right)
+{
+    return left && right &&
+           left->memory.active_weight_bytes == right->memory.active_weight_bytes &&
+           left->memory.state_bytes == right->memory.state_bytes &&
+           left->memory.activation_bytes == right->memory.activation_bytes &&
+           left->memory.temporary_bytes == right->memory.temporary_bytes &&
+           left->memory.measured_operations == right->memory.measured_operations &&
+           left->memory.missing_operations == right->memory.missing_operations &&
+           left->memory.complete == right->memory.complete &&
+           left->h2d_bytes == right->h2d_bytes && left->d2h_bytes == right->d2h_bytes &&
+           left->d2d_bytes == right->d2d_bytes && left->kernel_count == right->kernel_count &&
+           left->synchronization_count == right->synchronization_count;
+}
+
 int yvex_runtime_logits_result_validate(
     const yvex_runtime_logits_plan_summary *plan, const float *logits,
     unsigned long long logits_capacity,
@@ -1045,7 +1106,9 @@ int yvex_runtime_logits_result_validate(
     unsigned long long row_capacity,
     const yvex_runtime_logits_result *result, yvex_error *err)
 {
-    unsigned long long valid_count, index;
+    yvex_execution_physical_facts expected = {0};
+    unsigned long long valid_count, index, row_values, activation_values;
+    unsigned long long activation_bytes;
     if (!plan || !logits || !rows || !result ||
         result->schema_version != YVEX_RUNTIME_LOGITS_SCHEMA_V1 ||
         !plan->vocabulary_size || !result->completed_rows ||
@@ -1065,11 +1128,39 @@ int yvex_runtime_logits_result_validate(
         (!result->completed && !result->partial))
         return logits_refuse(err, YVEX_ERR_FORMAT,
                              "repeated logits completion directory is inconsistent");
-    for (index = 0ull; index < result->completed_rows; ++index)
+    if (!yvex_core_u64_add(plan->hidden_width, plan->vocabulary_size,
+                           &row_values) ||
+        !yvex_core_u64_mul(result->grouped_rows, row_values,
+                           &activation_values) ||
+        !yvex_core_u64_mul(activation_values, sizeof(float),
+                           &activation_bytes))
+        return logits_refuse(err, YVEX_ERR_BOUNDS,
+                             "grouped logits physical extent overflowed");
+    if ((result->grouped_execution &&
+         (result->grouped_rows != result->requested_rows ||
+          !result->physical.memory.complete ||
+          result->physical.memory.active_weight_bytes != plan->encoded_bytes ||
+          result->physical.memory.state_bytes ||
+          result->physical.memory.activation_bytes != activation_bytes ||
+          !result->physical.memory.temporary_bytes ||
+          !result->physical.kernel_count ||
+          !result->physical.synchronization_count)) ||
+        (!result->grouped_execution && result->grouped_rows))
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "grouped logits physical facts are inconsistent");
+    for (index = 0ull; index < result->completed_rows; ++index) {
         if (yvex_runtime_logits_row_validate(
                 plan, logits + index * plan->vocabulary_size,
                 plan->vocabulary_size, &rows[index], err) != YVEX_OK)
             return yvex_error_code(err);
+        if (!result->grouped_execution &&
+            logits_physical_add_row(&expected, &rows[index], err) != YVEX_OK)
+            return yvex_error_code(err);
+    }
+    if (!result->grouped_execution &&
+        !logits_physical_equal(&expected, &result->physical))
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "row-local logits physical facts are inconsistent");
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -1129,7 +1220,8 @@ int yvex_runtime_logits_project(
     else if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA)
         rc = logits_project_cuda(context, source, result, err);
     if (rc == YVEX_OK)
-        rc = logits_row_finish(context, source, backend, result, err);
+        rc = logits_row_finish(context, source, backend, context->candidate,
+                               result, err);
     if (rc == YVEX_OK && !context->options.device_greedy_selection &&
         yvex_core_u64_mul(context->plan.summary.vocabulary_size, sizeof(float),
                           &output_bytes))
@@ -1184,9 +1276,167 @@ static int logits_batch_contract(
     return YVEX_OK;
 }
 
+static int logits_cuda_batch_compatible(
+    const yvex_runtime_logits_context *context,
+    const yvex_runtime_logits_source *sources, unsigned long long row_count)
+{
+    const yvex_execution_device_view *first;
+    unsigned long long index, row_offset, expected_offset;
+    int all_host = 1, all_device = 1;
+    yvex_error ignored;
+    if (!context || !sources || row_count < 2ull ||
+        yvex_backend_kind_of(context->session_view->backend) != YVEX_BACKEND_KIND_CUDA)
+        return 0;
+    for (index = 0ull; index < row_count; ++index) {
+        yvex_error_clear(&ignored);
+        if (logits_source_validate(context, &sources[index], &ignored) != YVEX_OK)
+            return 0;
+        all_host = all_host && sources[index].host_values_available;
+        all_device = all_device && sources[index].device_values_available;
+    }
+    if (all_host) return 1;
+    if (!all_device) return 0;
+    first = &sources[0].device_hidden;
+    for (index = 1ull; index < row_count; ++index) {
+        const yvex_execution_device_view *current = &sources[index].device_hidden;
+        if (!yvex_core_u64_mul(index, context->plan.summary.hidden_width,
+                               &row_offset) ||
+            !yvex_core_u64_add(first->element_offset, row_offset,
+                               &expected_offset) ||
+            current->tensor != first->tensor || current->backend != first->backend ||
+            current->element_offset != expected_offset ||
+            current->model_generation != first->model_generation ||
+            current->session_generation != first->session_generation ||
+            current->state_generation != first->state_generation ||
+            strcmp(current->execution_profile_identity,
+                   first->execution_profile_identity) != 0)
+            return 0;
+    }
+    return 1;
+}
+
+static int logits_cuda_batch_physical(
+    yvex_runtime_logits_result *result,
+    const yvex_backend_cuda_operation_facts *facts, int device_input,
+    unsigned long long hidden_bytes, unsigned long long logits_bytes,
+    yvex_error *err)
+{
+    yvex_execution_physical_facts physical = {0};
+    if (!result || !facts ||
+        !yvex_core_u64_add(facts->d2h_bytes, logits_bytes,
+                           &physical.d2h_bytes) ||
+        !yvex_core_u64_add(facts->device_synchronizations,
+                           device_input ? 1ull : 2ull,
+                           &physical.synchronization_count))
+        return logits_refuse(err, YVEX_ERR_BOUNDS,
+                             "grouped logits physical accounting overflowed");
+    physical.h2d_bytes = device_input ? 0ull : hidden_bytes;
+    physical.d2d_bytes = facts->d2d_bytes;
+    physical.kernel_count = facts->kernel_launches;
+    if (yvex_execution_memory_facts_add(
+            &physical.memory, facts->active_weight_bytes, facts->state_bytes,
+            facts->activation_bytes, facts->temporary_bytes,
+            facts->compulsory_memory_facts_available,
+            !facts->compulsory_memory_facts_available, err) != YVEX_OK)
+        return yvex_error_code(err);
+    result->physical = physical;
+    return YVEX_OK;
+}
+
 /*
- * Execute an ordered output-head graph with complete-row partial-progress semantics. The portable
- * backend is row-local internally, but row count and result policy belong to this batch contract.
+ * Project compatible rows through one CUDA output-head operation.
+ *
+ * Host rows use one bounded staging upload. Device rows borrow only one contiguous producer view;
+ * incompatible layouts stay on the retained row-local path.
+ */
+static int logits_project_cuda_batch(
+    yvex_runtime_logits_context *context,
+    const yvex_runtime_logits_source *sources, unsigned long long row_count,
+    float *logits, yvex_runtime_logits_row_result *rows,
+    yvex_runtime_logits_result *result, yvex_error *err)
+{
+    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_device_tensor borrowed_hidden;
+    const yvex_device_tensor *device_hidden = context->device_hidden;
+    unsigned long long hidden_elements, logits_elements, hidden_bytes, logits_bytes, index;
+    int device_input = sources[0].device_values_available;
+    int rc = logits_enter(context, err);
+    if (rc != YVEX_OK) return rc;
+    if (!context->device_hidden || !context->device_logits ||
+        !yvex_core_u64_mul(row_count, context->plan.summary.hidden_width,
+                           &hidden_elements) ||
+        !yvex_core_u64_mul(row_count, context->plan.summary.vocabulary_size,
+                           &logits_elements) ||
+        !yvex_core_u64_mul(hidden_elements, sizeof(float), &hidden_bytes) ||
+        !yvex_core_u64_mul(logits_elements, sizeof(float), &logits_bytes))
+        rc = logits_refuse(err, YVEX_ERR_BOUNDS,
+                           "grouped logits CUDA extent overflowed");
+    if (rc == YVEX_OK && context->options.cancel_requested &&
+        context->options.cancel_requested(context->options.cancel_context))
+        rc = logits_refuse(err, YVEX_ERR_CANCELLED,
+                           "grouped logits projection was cancelled before execution");
+    if (rc == YVEX_OK && device_input) {
+        if (!yvex_backend_tensor_f32_subview(
+                sources[0].device_hidden.tensor,
+                sources[0].device_hidden.element_offset,
+                hidden_elements, &borrowed_hidden))
+            rc = logits_refuse(err, YVEX_ERR_FORMAT,
+                               "grouped device hidden rows cannot be borrowed");
+        else
+            device_hidden = &borrowed_hidden;
+    }
+    if (rc == YVEX_OK && !device_input) {
+        for (index = 0ull; index < row_count; ++index)
+            memcpy(context->host_hidden_rows +
+                       index * context->plan.summary.hidden_width,
+                   sources[index].normalized_hidden,
+                   (size_t)context->plan.summary.hidden_width * sizeof(float));
+        rc = yvex_backend_tensor_write(
+            context->session_view->backend, context->device_hidden,
+            context->host_hidden_rows, hidden_bytes, err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_backend_cuda_encoded_matvec(
+            context->session_view->backend, context->resident_head,
+            context->resident_head_bytes, context->plan.summary.qtype,
+            context->plan.summary.row_count, context->plan.summary.row_width,
+            context->plan.summary.row_bytes, row_count, device_hidden,
+            context->device_logits, &facts, err);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_tensor_read(context->session_view->backend,
+                                      context->device_logits, logits,
+                                      logits_bytes, err);
+    if (rc == YVEX_OK)
+        rc = logits_cuda_batch_physical(result, &facts, device_input,
+                                        hidden_bytes, logits_bytes, err);
+    if (rc == YVEX_OK) {
+        result->grouped_execution = 1;
+        result->grouped_rows = row_count;
+    }
+    for (index = 0ull; rc == YVEX_OK && index < row_count; ++index) {
+        if (context->options.cancel_requested &&
+            context->options.cancel_requested(context->options.cancel_context)) {
+            rc = logits_refuse(err, YVEX_ERR_CANCELLED,
+                               "grouped logits publication was cancelled");
+            break;
+        }
+        rc = logits_row_finish(
+            context, &sources[index], YVEX_BACKEND_KIND_CUDA,
+            logits + index * context->plan.summary.vocabulary_size,
+            &rows[index], err);
+        if (rc == YVEX_OK) {
+            result->completed_rows++;
+            result->final_source_position = sources[index].source_position;
+        }
+    }
+    logits_leave(context, rc == YVEX_OK);
+    return rc;
+}
+
+/*
+ * Execute an ordered output-head graph with complete-row partial-progress semantics.
+ *
+ * Compatible CUDA rows use one grouped operation; other layouts retain the bounded row oracle.
  */
 int yvex_runtime_logits_execute_rows(
     yvex_runtime_logits_context *context,
@@ -1199,10 +1449,12 @@ int yvex_runtime_logits_execute_rows(
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index, required;
+    int grouped;
     int rc = YVEX_OK;
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !request || !sources || context->options.device_greedy_selection ||
         !rows || row_capacity < request->row_count || !result ||
+        request->row_count > SIZE_MAX / sizeof(*rows) ||
         !yvex_core_u64_mul(request->row_count, context->plan.summary.vocabulary_size,
                            &required) || !logits || logits_capacity < required)
         return logits_refuse(err, YVEX_ERR_INVALID_ARG,
@@ -1213,29 +1465,45 @@ int yvex_runtime_logits_execute_rows(
     result->schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1;
     result->requested_rows = request->row_count;
     result->first_incomplete_row = request->row_count;
+    memset(rows, 0, (size_t)request->row_count * sizeof(*rows));
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.aggregate.v1"))
         return logits_refuse(err, YVEX_ERR_STATE,
                              "aggregate logits hash initialization failed");
-    for (index = 0ull; index < request->row_count; ++index) {
-        rc = yvex_runtime_logits_project(
-            context, &sources[index], request->backend,
-            logits + index * context->plan.summary.vocabulary_size,
-            context->plan.summary.vocabulary_size, &rows[index], err);
-        if (rc != YVEX_OK) {
-            result->partial = index != 0ull;
-            result->first_incomplete_row = index;
-            break;
+    grouped = request->backend == YVEX_BACKEND_KIND_CUDA &&
+              logits_cuda_batch_compatible(context, sources,
+                                           request->row_count);
+    if (grouped)
+        rc = logits_project_cuda_batch(context, sources, request->row_count,
+                                       logits, rows, result, err);
+    else {
+        for (index = 0ull; index < request->row_count; ++index) {
+            rc = yvex_runtime_logits_project(
+                context, &sources[index], request->backend,
+                logits + index * context->plan.summary.vocabulary_size,
+                context->plan.summary.vocabulary_size, &rows[index], err);
+            if (rc != YVEX_OK) break;
+            rc = logits_physical_add_row(&result->physical, &rows[index], err);
+            if (rc != YVEX_OK) break;
+            result->completed_rows++;
+            result->final_source_position = sources[index].source_position;
         }
-        result->completed_rows++;
-        result->final_source_position = sources[index].source_position;
+    }
+    if (rc != YVEX_OK) {
+        result->partial = result->completed_rows != 0ull;
+        result->first_incomplete_row = result->completed_rows;
+    }
+    for (index = 0ull; index < result->completed_rows; ++index)
         if (!yvex_sha256_update_text(&hash, rows[index].raw_logits_digest)) {
             rc = logits_refuse(err, YVEX_ERR_STATE,
                                "aggregate logits digest update failed");
-            result->first_incomplete_row = index + 1ull;
+            result->partial = index != 0ull;
+            result->completed_rows = index;
+            result->first_incomplete_row = index;
+            result->final_source_position =
+                index ? sources[index - 1ull].source_position : 0ull;
             break;
         }
-    }
     if (!yvex_sha256_final(&hash, digest))
         return logits_refuse(err, YVEX_ERR_STATE,
                              "aggregate logits digest finalization failed");
@@ -1308,6 +1576,7 @@ int yvex_runtime_logits_context_close(yvex_runtime_logits_context **context,
                                          &(*context)->device_hidden, err);
     if (rc != YVEX_OK) return rc;
     if ((*context)->mutex_ready) (void)pthread_mutex_destroy(&(*context)->mutex);
+    free((*context)->host_hidden_rows);
     free((*context)->candidate);
     memset(*context, 0, sizeof(**context));
     free(*context);

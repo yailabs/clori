@@ -86,6 +86,16 @@ outside the device-byte lower bound; their elapsed cost remains inside the
 phase duration. Occupancy remains unavailable, so optimization ordering is
 still provisional rather than a promoted kernel-priority decision.
 
+Compatible width-N CUDA output rows now execute through one encoded-head
+operation. Host producers use one bounded row-batch upload; device producers
+must expose one contiguous identity-compatible view. The encoded head is
+counted once, Q8 activation preparation and projection launch once for the
+complete width, and the full output block is downloaded once for the retained
+host sampling consumer. Aggregate physical facts belong to the ordered logits
+execution rather than being multiplied into each row. Mixed, non-contiguous or
+invalid source directories remain on the explicit row-local reference path,
+which preserves complete-row failure semantics.
+
 Accepted-prefix promotion now contributes its exact state-residency H2D,
 synchronization and zero kernel/D2H/D2D facts. These counters are deltas around
 the serialized session mutation, not estimates from configured capacity.

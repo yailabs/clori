@@ -48,13 +48,14 @@ int yvex_backend_cuda_encoded_matvec(
     yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype,
     unsigned long long row_count, unsigned long long row_width,
-    unsigned long long row_bytes, const yvex_device_tensor *input,
-    yvex_device_tensor *output, yvex_backend_cuda_operation_facts *facts,
-    yvex_error *err)
+    unsigned long long row_bytes, unsigned long long input_rows,
+    const yvex_device_tensor *input, yvex_device_tensor *output,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
     unsigned long long device_address = 0ull, input_bytes, output_bytes, activation_bytes;
+    unsigned long long input_elements, output_elements, projection_rows;
     unsigned long long temporary_bytes = sizeof(int), q8_workspace_bytes = 0ull;
     CUdeviceptr encoded_ptr, input_ptr, output_ptr, status = 0ull, quantized = 0ull;
     unsigned long long start_row = 0ull, launches = 0ull;
@@ -62,11 +63,16 @@ int yvex_backend_cuda_encoded_matvec(
     int forensic_numeric = 0;
     yvex_error cleanup;
     if (facts) memset(facts, 0, sizeof(*facts));
-    if (!state || !resident_encoded || !encoded_bytes || !row_count ||
-        !row_width || !row_bytes || row_count > UINT_MAX || !facts ||
-        !yvex_core_u64_mul(row_width, sizeof(float), &input_bytes) ||
-        !yvex_core_u64_mul(row_count, sizeof(float), &output_bytes) ||
+    if (!state || !resident_encoded || !encoded_bytes || !row_count || !input_rows ||
+        !row_width || !row_bytes || !facts ||
+        !yvex_core_u64_mul(input_rows, row_width, &input_elements) ||
+        !yvex_core_u64_mul(input_rows, row_count, &output_elements) ||
+        !yvex_core_u64_mul(input_elements, sizeof(float), &input_bytes) ||
+        !yvex_core_u64_mul(output_elements, sizeof(float), &output_bytes) ||
         !yvex_core_u64_add(input_bytes, output_bytes, &activation_bytes) ||
+        !yvex_core_u64_add(output_elements, CUDA_QTYPE_MATVEC_ROWS - 1ull,
+                           &projection_rows) ||
+        projection_rows / CUDA_QTYPE_MATVEC_ROWS > UINT_MAX ||
         row_count > ULLONG_MAX / row_bytes || row_count * row_bytes != encoded_bytes ||
         !backend_tensor_owner_is(backend, input) || input->dtype != YVEX_DTYPE_F32 ||
         input->bytes < input_bytes || !backend_tensor_owner_is(backend, output) ||
@@ -94,8 +100,10 @@ int yvex_backend_cuda_encoded_matvec(
               (qtype == YVEX_GGUF_QTYPE_IQ2_XXS || qtype == YVEX_GGUF_QTYPE_Q2_K ||
                qtype == YVEX_GGUF_QTYPE_Q8_0);
     if (rc == YVEX_OK && q8_path) {
-        unsigned long long blocks = row_width / 256ull;
-        if (blocks > UINT_MAX || !yvex_core_u64_mul(blocks, 292ull, &q8_workspace_bytes) ||
+        unsigned long long blocks = row_width / 256ull, quantize_tasks;
+        if (!yvex_core_u64_mul(blocks, input_rows, &quantize_tasks) ||
+            quantize_tasks > UINT_MAX ||
+            !yvex_core_u64_mul(quantize_tasks, 292ull, &q8_workspace_bytes) ||
             q8_workspace_bytes > SIZE_MAX ||
             !yvex_core_u64_add(temporary_bytes, q8_workspace_bytes, &temporary_bytes)) {
             yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.encoded-matvec",
@@ -105,10 +113,9 @@ int yvex_backend_cuda_encoded_matvec(
             rc = yvex_cuda_work_allocate(&work, &quantized, (size_t)q8_workspace_bytes,
                                          NULL, 0, "cuda.encoded-matvec.q8", NULL, err);
         if (rc == YVEX_OK) {
-            unsigned long long one = 1ull;
-            void *params[] = {&quantized, &input_ptr, &row_width, &one, &status};
+            void *params[] = {&quantized, &input_ptr, &row_width, &input_rows, &status};
             rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-                                  state->q8_quantize_function, (unsigned int)blocks,
+                                  state->q8_quantize_function, (unsigned int)quantize_tasks,
                                   CUDA_QTYPE_MATVEC_BLOCK, 0u, params,
                                   "cuda.encoded-matvec.q8", err);
             if (rc == YVEX_OK) launches = 1ull;
@@ -116,15 +123,14 @@ int yvex_backend_cuda_encoded_matvec(
     }
     if (rc == YVEX_OK) {
         void *params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
-                          &row_count, &qtype, &input_ptr, &q8_input,
+                          &row_count, &input_rows, &qtype, &input_ptr, &q8_input,
                           &forensic_numeric, &output_ptr,
                           &output_bf16, &status};
         void *q8_params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
-                             &row_count, &qtype, &quantized, &q8_input,
+                             &row_count, &input_rows, &qtype, &quantized, &q8_input,
                              &forensic_numeric, &output_ptr,
                              &output_bf16, &status};
-        unsigned int grid = (unsigned int)((row_count + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
-                                           CUDA_QTYPE_MATVEC_ROWS);
+        unsigned int grid = (unsigned int)(projection_rows / CUDA_QTYPE_MATVEC_ROWS);
         q8_input = q8_path;
         rc = yvex_cuda_launch(
             backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, state->qtype_matvec_function,

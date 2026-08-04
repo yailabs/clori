@@ -216,16 +216,19 @@ those facts. Those phases also project exact H2D/D2H/D2D movement and
 synchronization from embedding, attention, MoE, selected feature and final-stage
 producers. Output projection uses the same fact owner for encoded head bytes,
 the compulsory hidden-input/logit-output activation spans, actually allocated
-status and Q8-activation scratch, and exact zero persistent-state bytes. Its
-movement is exact: a host-sourced hidden row contributes H2D, forensic full
-logits contribute D2H, and every production row includes the bounded CUDA
-status transfer. Greedy selection still performs no full-vocabulary D2H.
-Draft and verify sweeps add exact transformer/output-row launches,
-H2D/D2H/D2D movement and synchronization. Their active-byte facts, occupancy
-and batched-decode facts remain unavailable, so the global optimization
-priority stays provisional. The offline generation operator exposes the ledger
-in audit and JSON projections without adding it to protocol v6 or making trace
-verbosity a numerical dependency.
+status and Q8-activation scratch, and exact zero persistent-state bytes.
+Compatible multi-row CUDA sources use one bounded host upload or one contiguous
+device view, prepare activations once, execute the encoded head once and return
+one ordered output block. Mixed or non-contiguous directories use the explicit
+row-local reference path. Draft and verification merge the resulting aggregate
+facts once rather than treating one physical head execution as repeated row
+work. Movement remains exact, and greedy selection still performs no full-
+vocabulary D2H. Draft and verify sweeps add exact transformer/output launches,
+H2D/D2H/D2D movement and synchronization. Their transformer active-byte facts,
+occupancy and batched-decode facts remain unavailable, so the global
+optimization priority stays provisional. The offline generation operator
+exposes the ledger in audit and JSON projections without adding it to protocol
+v6 or making trace verbosity a numerical dependency.
 
 Prefix selection also snapshots state-residency counters around its serialized
 mutation. Promotion therefore reports exact H2D and one synchronization per

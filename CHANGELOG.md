@@ -45,7 +45,10 @@ change. Git history preserves implementation chronology.
   use a checked work-weighted mean instead of additive accumulation. CUDA
   output-head rows now publish complete compulsory weight, activation,
   temporary and zero-state byte facts, giving that phase a real memory lower
-  bound without estimating traffic from allocation capacity.
+  bound without estimating traffic from allocation capacity. Compatible
+  width-N CUDA rows now share Q8 activation preparation and one encoded-head
+  execution, while the ordered logits result owns one aggregate physical-facts
+  record and incompatible inputs retain an explicit row-local fallback.
 - Compulsory memory accounting now has one transactional internal fact owner.
   CUDA embedding, attention, MoE and final projection contribute measured or
   explicitly missing operations through transformer and decode aggregation;

@@ -369,8 +369,9 @@ typedef struct yvex_backend_cuda_operation_facts {
 } yvex_backend_cuda_operation_facts;
 int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
-    unsigned long long row_width, unsigned long long row_bytes, const yvex_device_tensor *input,
-    yvex_device_tensor *output, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+    unsigned long long row_width, unsigned long long row_bytes, unsigned long long input_rows,
+    const yvex_device_tensor *input, yvex_device_tensor *output,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 int yvex_backend_cuda_argmax_f32(yvex_backend *backend, const yvex_device_tensor *values,
     unsigned long long count, unsigned int *selected_token, float *selected_value,
     unsigned long long *tie_count, yvex_backend_cuda_operation_facts *facts, yvex_error *err);

@@ -187,12 +187,13 @@ results with no ledger retain their zero-initialized meaning.
 CUDA producers currently expose exact active-weight and launch facts for
 target-only prefill and decode together with their exact H2D/D2H/D2D movement
 and synchronization facts. Output projection exposes exact active-weight,
-launch, movement and synchronization facts, including its bounded CUDA status
-transfer without treating that transfer as full-vocabulary D2H. Draft and
-verification sweeps expose exact launches, H2D/D2H/D2D movement and
-synchronization across transformer and output-head work. Their active weight,
-state, activation, temporary and occupancy stay explicitly unavailable; a
-partial record is not a complete roofline.
+activation, temporary, launch, movement and synchronization facts, including
+its bounded CUDA status transfer without treating that transfer as full-
+vocabulary D2H. Compatible width-N rows contribute one aggregate output-head
+execution instead of multiplying that work into each logical row. Draft and
+verification sweeps merge that aggregate once with their transformer facts.
+Their transformer active weight, state, activation, temporary and occupancy
+stay explicitly unavailable; a partial record is not a complete roofline.
 
 Accepted-prefix selection returns a v1 in-process physical-facts record. It
 derives CUDA H2D and synchronization deltas from the session-owned state
@@ -353,7 +354,13 @@ prefill or decode hidden rows. `yvex_runtime_logits_project` computes every
 vocabulary coordinate directly from the resident encoded output head and
 publishes the caller-owned row only after complete success.
 `yvex_runtime_logits_execute` preserves earlier complete rows on a later
-failure and records the exact first incomplete row.
+failure and records the exact first incomplete row. On CUDA it groups a
+compatible width-N directory when host rows form one bounded batch or device
+rows form one contiguous identity-compatible view. The group performs one
+activation preparation, one encoded-head execution and one ordered output
+transfer; its result owns the aggregate physical facts. Mixed, non-contiguous
+or invalid sources take the explicit row-local path, preserving the same
+complete-row publication and failure contract.
 
 The logits API publishes raw F32 values and field-wise plan, source, residency,
 backend, row, and aggregate identities. It neither repeats final norm nor owns

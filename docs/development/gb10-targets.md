@@ -88,12 +88,14 @@ quality or release qualification.
 
 ## Next-owner obligations
 
-The GB10 optimization owner must replace portable token-local MoE, row-local
-output projection, eager attention, host stochastic sampling where selected,
-reference layouts and host feature materialization only through the existing
-typed execution profile. It must keep prefix promotion, shape admission,
-partial-turn semantics, protocol channels and one model/session authority
-unchanged.
+The GB10 optimization owner must replace portable token-local MoE, eager
+attention, host stochastic sampling where selected, reference layouts and host
+feature materialization only through the existing typed execution profile.
+Compatible width-N CUDA output rows already share activation preparation and
+one encoded-head execution; incompatible and reference directories retain an
+explicit row-local fallback. Batched device selection remains an open physical
+owner. The wave must keep prefix promotion, shape admission, partial-turn
+semantics, protocol channels and one model/session authority unchanged.
 
 Kernel order follows the identity-bound phase roofline ledger. Attention, MoE
 and output-head work retain their technical dependencies, but profiling of

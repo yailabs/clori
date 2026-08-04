@@ -149,12 +149,13 @@ static int live_execute(live_logits *execution,
     yvex_runtime_transformer_output prefill_output;
     yvex_runtime_decode_request decode_request = {.backend = backend};
     yvex_runtime_decode_output decode_output;
-    unsigned long long hidden_width, vocabulary, logits_values;
+    unsigned long long hidden_width, vocabulary, logits_values, activation_bytes;
     int rc;
     if (!logits_plan || !transformer_plan) return YVEX_ERR_STATE;
     hidden_width = transformer_plan->hidden_width;
     vocabulary = logits_plan->vocabulary_size;
     logits_values = LIVE_LOGITS_ROWS * vocabulary;
+    activation_bytes = LIVE_LOGITS_ROWS * (hidden_width + vocabulary) * sizeof(float);
     execution->prefill_hidden = (float *)calloc((size_t)hidden_width, sizeof(float));
     execution->decode_hidden = (float *)calloc((size_t)(2ull * hidden_width), sizeof(float));
     execution->raw_logits = (float *)malloc((size_t)logits_values * sizeof(float));
@@ -209,7 +210,23 @@ static int live_execute(live_logits *execution,
          execution->before_logits.warm_device_allocations !=
              execution->after_logits.warm_device_allocations ||
          execution->before_logits.warm_device_frees !=
-             execution->after_logits.warm_device_frees)) {
+             execution->after_logits.warm_device_frees ||
+         (backend == YVEX_BACKEND_KIND_CPU &&
+          (execution->result.grouped_execution || execution->result.grouped_rows ||
+           execution->result.physical.kernel_count)) ||
+         (backend == YVEX_BACKEND_KIND_CUDA &&
+          (!execution->result.grouped_execution ||
+           execution->result.grouped_rows != LIVE_LOGITS_ROWS ||
+           execution->result.physical.memory.active_weight_bytes !=
+               logits_plan->encoded_bytes ||
+           execution->result.physical.memory.activation_bytes != activation_bytes ||
+           !execution->result.physical.memory.complete ||
+           execution->result.physical.h2d_bytes !=
+               LIVE_LOGITS_ROWS * hidden_width * sizeof(float) ||
+           execution->result.physical.d2h_bytes !=
+               sizeof(int) + logits_values * sizeof(float) ||
+           !execution->result.physical.kernel_count ||
+           execution->result.physical.synchronization_count != 3ull)))) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "test.logits.structure",
                        "logits completion or warm resource invariants failed");
         rc = YVEX_ERR_FORMAT;

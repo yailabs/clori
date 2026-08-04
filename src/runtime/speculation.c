@@ -855,12 +855,12 @@ static int speculation_transformer_execute(yvex_runtime_speculation_context *con
 static int speculation_project_draft_base(yvex_runtime_speculation_context *context,
     const yvex_runtime_transformer_result *draft,
     yvex_runtime_logits_row_result *rows, unsigned long long count,
+    yvex_runtime_logits_result *execution,
     yvex_error *err)
 {
     const yvex_transformer_plan *plan =
         yvex_runtime_transformer_context_plan(context->draft_transformer);
     yvex_runtime_logits_source sources[YVEX_SPECULATION_MAX_BLOCK] = {{0}};
-    yvex_runtime_logits_result execution = {0};
     yvex_output_head_batch_request request = {0};
     unsigned long long row;
     for (row = 0ull; row < count; ++row) {
@@ -880,7 +880,7 @@ static int speculation_project_draft_base(yvex_runtime_speculation_context *cont
     request.execution_profile_identity = context->options.execution_profile->identity;
     return yvex_runtime_logits_execute_rows(
         context->target_logits, &request, sources, context->base_logits,
-        count * context->vocabulary_size, rows, count, &execution, err);
+        count * context->vocabulary_size, rows, count, execution, err);
 }
 
 static unsigned int speculation_argmax(const float *values,
@@ -956,44 +956,49 @@ static unsigned int speculation_argmax(const float *values,
     return (unsigned int)selected;
 }
 
+static int speculation_physical_add(yvex_execution_physical_facts *facts,
+    const yvex_execution_memory_facts *memory, unsigned long long h2d, unsigned long long d2h,
+    unsigned long long d2d, unsigned long long kernels, unsigned long long synchronizations,
+    yvex_error *err)
+{
+    int rc = yvex_execution_memory_facts_merge(&facts->memory, memory, err);
+    if (rc != YVEX_OK) return rc;
+    if (!yvex_core_u64_add(facts->h2d_bytes, h2d, &facts->h2d_bytes) ||
+        !yvex_core_u64_add(facts->d2h_bytes, d2h, &facts->d2h_bytes) ||
+        !yvex_core_u64_add(facts->d2d_bytes, d2d, &facts->d2d_bytes) ||
+        !yvex_core_u64_add(facts->kernel_count, kernels, &facts->kernel_count) ||
+        !yvex_core_u64_add(facts->synchronization_count, synchronizations,
+                           &facts->synchronization_count))
+        return speculation_refuse(err, YVEX_ERR_BOUNDS, "DSpark physical accounting overflowed");
+    return YVEX_OK;
+}
+
 static int speculation_phase_physical(const yvex_runtime_transformer_result *transformer,
-    const yvex_runtime_logits_row_result *rows, unsigned long long row_count,
+    const yvex_runtime_logits_result *execution,
     yvex_execution_physical_facts *facts, yvex_error *err)
 {
     yvex_execution_physical_facts candidate = {0};
-    unsigned long long row;
+    unsigned long long transformer_sync;
     int rc;
-    if (!transformer || !rows || !row_count || !facts)
+    if (!transformer || !execution || !execution->completed || !execution->completed_rows || !facts)
         return speculation_refuse(err, YVEX_ERR_INVALID_ARG,
                                   "DSpark physical accounting requires complete owners");
-    candidate.h2d_bytes = transformer->h2d_bytes;
-    candidate.d2h_bytes = transformer->d2h_bytes;
-    candidate.d2d_bytes = transformer->d2d_bytes;
-    candidate.kernel_count = transformer->kernel_launches;
     if (!yvex_core_u64_add(transformer->stream_synchronizations,
                            transformer->device_synchronizations,
-                           &candidate.synchronization_count)) goto overflow;
-    rc = yvex_execution_memory_facts_merge(&candidate.memory, &transformer->memory, err);
-    for (row = 0ull; rc == YVEX_OK && row < row_count; ++row) {
-        rc = yvex_execution_memory_facts_merge(&candidate.memory, &rows[row].memory, err);
-        if (rc == YVEX_OK &&
-            (!yvex_core_u64_add(candidate.h2d_bytes, rows[row].h2d_bytes,
-                               &candidate.h2d_bytes) ||
-            !yvex_core_u64_add(candidate.d2h_bytes, rows[row].d2h_bytes,
-                               &candidate.d2h_bytes) ||
-            !yvex_core_u64_add(candidate.d2d_bytes, rows[row].d2d_bytes,
-                               &candidate.d2d_bytes) ||
-            !yvex_core_u64_add(candidate.kernel_count, rows[row].kernel_launches,
-                               &candidate.kernel_count) ||
-            !yvex_core_u64_add(candidate.synchronization_count,
-                               rows[row].device_synchronizations,
-                               &candidate.synchronization_count))) goto overflow;
-    }
+                           &transformer_sync))
+        return speculation_refuse(err, YVEX_ERR_BOUNDS, "DSpark physical accounting overflowed");
+    rc = speculation_physical_add(
+        &candidate, &transformer->memory, transformer->h2d_bytes, transformer->d2h_bytes,
+        transformer->d2d_bytes, transformer->kernel_launches, transformer_sync, err);
+    if (rc == YVEX_OK)
+        rc = speculation_physical_add(
+            &candidate, &execution->physical.memory, execution->physical.h2d_bytes,
+            execution->physical.d2h_bytes,
+            execution->physical.d2d_bytes, execution->physical.kernel_count,
+            execution->physical.synchronization_count, err);
     if (rc != YVEX_OK) return rc;
     *facts = candidate;
     return YVEX_OK;
-overflow:
-    return speculation_refuse(err, YVEX_ERR_BOUNDS, "DSpark physical accounting overflowed");
 }
 
 static int speculation_execute_draft(yvex_runtime_speculation_context *context,
@@ -1002,6 +1007,7 @@ static int speculation_execute_draft(yvex_runtime_speculation_context *context,
 {
     yvex_runtime_transformer_result draft = {0};
     yvex_runtime_logits_row_result rows[YVEX_SPECULATION_MAX_BLOCK] = {{0}};
+    yvex_runtime_logits_result logits_execution = {0};
     yvex_runtime_sampling_uniform_result draw_result = {0};
     yvex_sha256 hash;
     unsigned long long started, index, draft_count = context->policy.block_size;
@@ -1027,9 +1033,10 @@ static int speculation_execute_draft(yvex_runtime_speculation_context *context,
         YVEX_ATTENTION_TRANSACTION_ABORT, NULL, 0ull,
         context->draft_hidden, context->draft_pre_normalized, NULL, &draft, err);
     if (rc == YVEX_OK)
-        rc = speculation_project_draft_base(context, &draft, rows, draft_count, err);
+        rc = speculation_project_draft_base(
+            context, &draft, rows, draft_count, &logits_execution, err);
     if (rc == YVEX_OK)
-        rc = speculation_phase_physical(&draft, rows, draft_count,
+        rc = speculation_phase_physical(&draft, &logits_execution,
                                         &result->draft_physical, err);
     if (rc == YVEX_OK &&
         context->sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC)
@@ -1147,7 +1154,7 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
             logits, request->candidate_count + 1ull, &logits_execution, err);
     if (rc == YVEX_OK)
         rc = speculation_phase_physical(
-            &target, logits, request->candidate_count + 1ull,
+            &target, &logits_execution,
             &result->verification_physical, err);
     for (row = 0ull; rc == YVEX_OK && row <= request->candidate_count; ++row) {
         yvex_runtime_sampling_source sampling_source = {0};

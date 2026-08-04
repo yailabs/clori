@@ -457,6 +457,7 @@ static int attention_matvec(yvex_cuda_work *work,
                weight->qtype == YVEX_GGUF_QTYPE_Q8_0);
     if (q8_path) {
         unsigned long long blocks = weight->row_width / 256ull, quantized_bytes;
+        unsigned long long one = 1ull;
         CUdeviceptr quantized;
         int rc;
         if (blocks > UINT_MAX || blocks > ULLONG_MAX / 292ull)
@@ -474,7 +475,6 @@ static int attention_matvec(yvex_cuda_work *work,
         }
         quantized = work->q8_input;
         if (rc == YVEX_OK) {
-            unsigned long long one = 1ull;
             void *params[] = {&quantized, &vector, (void *)&weight->row_width,
                               &one, &status};
             rc = attention_launch(work, work->state->q8_quantize_function,
@@ -486,7 +486,7 @@ static int attention_matvec(yvex_cuda_work *work,
             void *params[] = {
                 &device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &start_row, &rows,
-                (void *)&weight->qtype, &quantized, &q8_input,
+                &one, (void *)&weight->qtype, &quantized, &q8_input,
                 &work->forensic_numeric, &out,
                 &output_bf16, &status
             };
@@ -499,10 +499,11 @@ static int attention_matvec(yvex_cuda_work *work,
         return rc;
     }
     {
+        unsigned long long one = 1ull;
         void *params[] = {
             &device_weight, (void *)&weight->row_bytes,
             (void *)&weight->row_width, &start_row, &rows,
-            (void *)&weight->qtype, &vector, &q8_input,
+            &one, (void *)&weight->qtype, &vector, &q8_input,
             &work->forensic_numeric, &out, &output_bf16, &status
         };
         unsigned int grid = (unsigned int)((rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
