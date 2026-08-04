@@ -212,7 +212,10 @@ class NetworkProvider(Provider):
     def repository(self, repo: str, revision: str) -> dict[str, Any]:
         quoted_repo = urllib.parse.quote(repo, safe="/")
         quoted_revision = urllib.parse.quote(revision, safe="")
-        url = f"https://huggingface.co/api/models/{quoted_repo}/revision/{quoted_revision}"
+        url = (
+            f"https://huggingface.co/api/models/{quoted_repo}/revision/{quoted_revision}"
+            "?expand%5B%5D=sha&expand%5B%5D=cardData"
+        )
         data, _ = self.request(url, "repository-metadata", MAX_API_BYTES)
         try:
             return require_mapping(json.loads(data), "repository metadata")
