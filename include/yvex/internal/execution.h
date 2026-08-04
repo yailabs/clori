@@ -283,7 +283,13 @@ typedef enum {
 #define YVEX_EXECUTION_PHASE_FACT_BIT(fact) (1ull << (unsigned int)(fact))
 #define YVEX_EXECUTION_PHASE_FACT_ALL \
     ((1ull << YVEX_EXECUTION_PHASE_FACT_COUNT) - 1ull)
+#define YVEX_EXECUTION_PHASE_MEMORY_FACTS                                                \
+    (YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT) |           \
+     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_STATE) |                   \
+     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVATION) |              \
+     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_TEMPORARY))
 
+/* Memory facts count compulsory device spans once, not capacity or observed DRAM transactions. */
 typedef struct {
     yvex_execution_roofline_phase phase;
     /* Zero is the original v1 representation and means that every fact is available. */

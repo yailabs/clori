@@ -753,10 +753,17 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
         result->h2d_bytes = source->device_values_available ? 0ull : hidden_bytes;
         result->d2h_bytes = facts.d2h_bytes +
                             (context->options.device_greedy_selection ? 0ull : logits_bytes);
+        result->d2d_bytes = facts.d2d_bytes;
         result->kernel_launches = facts.kernel_launches;
         result->device_synchronizations = facts.device_synchronizations +
                                           !source->device_values_available +
                                           !context->options.device_greedy_selection;
+        result->active_weight_bytes = facts.active_weight_bytes;
+        result->state_bytes = facts.state_bytes;
+        result->activation_bytes = facts.activation_bytes;
+        result->temporary_bytes = facts.temporary_bytes;
+        result->compulsory_memory_facts_available =
+            facts.compulsory_memory_facts_available;
     }
     return rc;
 }
@@ -911,7 +918,11 @@ int yvex_runtime_logits_row_validate(
 {
     yvex_runtime_logits_row_result canonical;
     char raw_digest[YVEX_SHA256_HEX_CAP];
-    if (!plan || !result || !result->completed ||
+    unsigned long long hidden_bytes, logits_bytes, activation_bytes;
+    if (!plan || !yvex_core_u64_mul(plan->hidden_width, sizeof(float), &hidden_bytes) ||
+        !yvex_core_u64_mul(plan->vocabulary_size, sizeof(float), &logits_bytes) ||
+        !yvex_core_u64_add(hidden_bytes, logits_bytes, &activation_bytes) ||
+        !result || !result->completed ||
         result->schema_version != YVEX_RUNTIME_LOGITS_SCHEMA_V1 ||
         result->source_phase > YVEX_LOGITS_SOURCE_DRAFT ||
         result->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
@@ -922,7 +933,14 @@ int yvex_runtime_logits_row_validate(
                plan->output_head_plan_identity) != 0 ||
         !yvex_sha256_hex_valid(result->source_hidden_digest) ||
         !yvex_sha256_hex_valid(result->output_head_residency_identity) ||
-        !yvex_sha256_hex_valid(result->backend_execution_identity))
+        !yvex_sha256_hex_valid(result->backend_execution_identity) ||
+        result->compulsory_memory_facts_available != (result->kernel_launches != 0ull) ||
+        (result->compulsory_memory_facts_available &&
+         (result->active_weight_bytes != plan->encoded_bytes || result->state_bytes ||
+          result->activation_bytes != activation_bytes || !result->temporary_bytes)) ||
+        (!result->compulsory_memory_facts_available &&
+         (result->active_weight_bytes || result->state_bytes ||
+          result->activation_bytes || result->temporary_bytes)))
         return logits_refuse(err, YVEX_ERR_FORMAT,
                              "complete logits row geometry or payload is stale");
     if (result->host_values_available &&
@@ -989,8 +1007,11 @@ int yvex_runtime_logits_additive_adjust(
     *result = *base_result;
     result->minimum_logit = minimum;
     result->maximum_logit = maximum;
-    result->h2d_bytes = result->d2h_bytes = result->kernel_launches = 0ull;
+    result->h2d_bytes = result->d2h_bytes = result->d2d_bytes = result->kernel_launches = 0ull;
     result->device_synchronizations = 0ull;
+    result->active_weight_bytes = result->state_bytes = 0ull;
+    result->activation_bytes = result->temporary_bytes = 0ull;
+    result->compulsory_memory_facts_available = 0;
     if (!yvex_core_u64_mul(plan->vocabulary_size, sizeof(float), &index) ||
         !yvex_core_u64_add(result->full_array_host_scan_bytes, index,
                            &result->full_array_host_scan_bytes))

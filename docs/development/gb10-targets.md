@@ -43,6 +43,11 @@ active-byte lower bound. This separates the physical closure threshold from
 engineering ambition. Existing YVEX and stretch targets are not lowered when
 comparability is absent.
 
+An active-byte lower bound counts each compulsory device span once for the
+measured phase. It is neither allocated capacity nor a claim about cache reuse
+or profiler-observed DRAM transactions. A byte class remains unavailable until
+its producing owner can publish that exact lower bound.
+
 | Workload | Context / width | Current measured | Hard functional minimum | Competitive threshold | YVEX engineering target | Stretch target | Physical bound / governing evidence | Confidence |
 | --- | --- | ---: | ---: | --- | ---: | ---: | --- | --- |
 | target-only decode | short, width 1 | 0.432 token/s retained warm baseline | correct sequence; >0 | unadmitted | 20 token/s | 25 token/s | active bytes, 273 GB/s, launch and synchronization depth | low |

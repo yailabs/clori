@@ -362,9 +362,10 @@ int yvex_backend_resident_detach(yvex_backend *backend, yvex_error *err);
 int yvex_backend_resident_resolve(const yvex_backend *backend, const unsigned char *host,
                                   unsigned long long bytes, unsigned long long *device_address);
 typedef struct yvex_backend_cuda_operation_facts {
-    unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches;
-    unsigned long long upload_count, download_count;
-    unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches, upload_count, download_count;
+    unsigned long long stream_synchronizations, device_synchronizations, active_weight_bytes, state_bytes;
+    unsigned long long activation_bytes, temporary_bytes;
+    int compulsory_memory_facts_available;
 } yvex_backend_cuda_operation_facts;
 int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
@@ -373,10 +374,8 @@ int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char 
 int yvex_backend_cuda_argmax_f32(yvex_backend *backend, const yvex_device_tensor *values,
     unsigned long long count, unsigned int *selected_token, float *selected_value,
     unsigned long long *tie_count, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
-int yvex_backend_state_residency_attach(
-    yvex_backend *backend, const void *context,
-    yvex_backend_state_resolve_fn resolve, unsigned long long generation,
-    yvex_error *err);
+int yvex_backend_state_residency_attach(yvex_backend *backend, const void *context,
+    yvex_backend_state_resolve_fn resolve, unsigned long long generation, yvex_error *err);
 void yvex_backend_state_residency_detach(yvex_backend *backend);
 int yvex_backend_state_residency_resolve(
     const yvex_backend *backend, const void *host, unsigned long long bytes,

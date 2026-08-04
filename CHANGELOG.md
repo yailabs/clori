@@ -42,7 +42,10 @@ change. Git history preserves implementation chronology.
   synchronization facts across their transformer and output-head work.
   Accepted-prefix promotion publishes exact state-residency H2D,
   synchronization and zero kernel/D2H/D2D facts; repeated occupancy samples
-  use a checked work-weighted mean instead of additive accumulation.
+  use a checked work-weighted mean instead of additive accumulation. CUDA
+  output-head rows now publish complete compulsory weight, activation,
+  temporary and zero-state byte facts, giving that phase a real memory lower
+  bound without estimating traffic from allocation capacity.
 
 ### Changed
 

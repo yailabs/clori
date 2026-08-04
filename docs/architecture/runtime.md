@@ -210,16 +210,21 @@ encoded embedding, attention and expert bytes, decoded final-stage bytes and
 kernel launches. Those target-only transformer phases also project exact
 H2D/D2H/D2D movement and synchronization from embedding, attention, MoE,
 selected feature and final-stage producers. Output projection adds encoded head
-bytes, kernel launches and exact projection synchronization count. Its phase
-movement is exact: a host-sourced hidden row contributes H2D, forensic full
-logits contribute D2H, and every production row includes the bounded CUDA
-status transfer. Greedy selection still performs no full-vocabulary D2H. Draft
-and verify sweeps add exact transformer/output-row launches, H2D/D2H/D2D
-movement and synchronization. State, activation, temporary, occupancy, DSpark
-active-byte and batched-decode facts remain unavailable, so optimization
-priority stays provisional. The offline generation operator exposes the ledger
-in audit and JSON projections without adding it to protocol v6 or making trace
-verbosity a numerical dependency.
+bytes, the compulsory hidden-input/logit-output activation spans, and the
+actually allocated status and Q8-activation scratch. Output-head state is an
+exact zero because the operation consumes no persistent sequence state. Its
+phase movement is also exact: a host-sourced hidden row contributes H2D,
+forensic full logits contribute D2H, and every production row includes the
+bounded CUDA status transfer. The output-head phase therefore earns a complete
+memory lower bound without treating tensor capacity, workspace peak, cache
+behavior or estimated DRAM transactions as measured traffic. Greedy selection
+still performs no full-vocabulary D2H. Draft and verify sweeps add exact
+transformer/output-row launches, H2D/D2H/D2D movement and synchronization.
+Transformer state, activation, temporary, occupancy, DSpark active-byte and
+batched-decode facts remain unavailable, so the global optimization priority
+stays provisional. The offline generation operator exposes the ledger in audit
+and JSON projections without adding it to protocol v6 or making trace verbosity
+a numerical dependency.
 
 Prefix selection also snapshots state-residency counters around its serialized
 mutation. Promotion therefore reports exact H2D and one synchronization per

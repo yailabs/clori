@@ -18,8 +18,7 @@ typedef struct {
 } generation_terminal_publication;
 static int generation_refuse(yvex_error *err, yvex_status status, const char *reason);
 static int generation_token_classify(const yvex_runtime_generation_context *context,
-    unsigned int token,
-    yvex_tokenizer_token_classification *classification,
+    unsigned int token, yvex_tokenizer_token_classification *classification,
     int *additional_stop, yvex_error *err);
 static int generation_publication_prepare(void *opaque, yvex_error *err)
 {
@@ -177,11 +176,13 @@ static int generation_refuse(yvex_error *err, yvex_status status, const char *re
 }
 static const unsigned long long generation_transformer_phase_facts =
     (1ull << YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT) | (1ull << YVEX_EXECUTION_PHASE_FACT_MOVEMENT) |
-    (1ull << YVEX_EXECUTION_PHASE_FACT_KERNELS) | (1ull << YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS);
+    (1ull << YVEX_EXECUTION_PHASE_FACT_KERNELS) |
+    (1ull << YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS);
 static int generation_phase_time(
     yvex_runtime_generation_context *context, yvex_execution_roofline_phase phase,
     unsigned long long duration, unsigned long long work, unsigned long long committed,
-    unsigned long long active_weight, unsigned long long h2d, unsigned long long d2h, unsigned long long d2d,
+    unsigned long long active_weight, unsigned long long state, unsigned long long activation,
+    unsigned long long temporary, unsigned long long h2d, unsigned long long d2h, unsigned long long d2d,
     unsigned long long kernels, unsigned long long synchronizations,
     unsigned long long fact_mask, yvex_error *err)
 {
@@ -191,7 +192,8 @@ static int generation_phase_time(
             YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_DURATION) |
             YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_WORK) |
             YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_COMMITTED_TOKENS),
-        .active_weight_bytes = active_weight, .h2d_bytes = h2d,
+        .active_weight_bytes = active_weight, .state_bytes = state,
+        .activation_bytes = activation, .temporary_bytes = temporary, .h2d_bytes = h2d,
         .d2h_bytes = d2h, .d2d_bytes = d2d, .kernel_count = kernels,
         .synchronization_count = synchronizations, .measured_duration_ns = duration, .work_units = work,
         .committed_tokens = committed};
@@ -464,9 +466,7 @@ static int generation_prefill(
                 context->transformer, input, &request, &output, &result, err);
         completed = yvex_core_monotonic_ns();
         yvex_transformer_input_close(&input);
-        if (rc == YVEX_OK) {
-            rc = yvex_runtime_generation_profile_transformer(profile, &result, err);
-        }
+        if (rc == YVEX_OK) rc = yvex_runtime_generation_profile_transformer(profile, &result, err);
         if (rc == YVEX_OK && !context->speculation &&
             (!yvex_core_u64_add(result.embedding_bytes, result.attention_weight_bytes,
                                 &active_weight) ||
@@ -477,7 +477,7 @@ static int generation_prefill(
             rc = generation_refuse(err, YVEX_ERR_BOUNDS, "prefill physical accounting overflowed");
         if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER,
-                completed - started, count, 0ull, active_weight,
+                completed - started, count, 0ull, active_weight, 0ull, 0ull, 0ull,
                 context->speculation ? 0ull : result.h2d_bytes, context->speculation ? 0ull : result.d2h_bytes,
                 context->speculation ? 0ull : result.d2d_bytes, context->speculation ? 0ull : result.kernel_launches,
                 context->speculation ? 0ull : synchronizations,
@@ -508,8 +508,6 @@ static int generation_project_logits(
     const yvex_runtime_decode_step_result *decode, yvex_runtime_logits_row_result *logits_result,
     yvex_runtime_profile_record *profile, yvex_error *err)
 {
-    const yvex_runtime_logits_plan_summary *logits_plan =
-        yvex_runtime_logits_plan_summary_get(context->logits);
     yvex_runtime_logits_source logits_source;
     unsigned long long started, completed;
     int rc;
@@ -535,10 +533,13 @@ static int generation_project_logits(
                                            completed - started, err);
         if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_OUTPUT_HEAD,
-                completed - started, 1ull, 0ull, logits_plan->encoded_bytes,
-                logits_result->h2d_bytes, logits_result->d2h_bytes, 0ull,
+                completed - started, 1ull, 0ull, logits_result->active_weight_bytes,
+                logits_result->state_bytes, logits_result->activation_bytes,
+                logits_result->temporary_bytes, logits_result->h2d_bytes,
+                logits_result->d2h_bytes, logits_result->d2d_bytes,
                 logits_result->kernel_launches, logits_result->device_synchronizations,
-                YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT) |
+                (logits_result->compulsory_memory_facts_available
+                     ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull) |
                     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_MOVEMENT) |
                     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS) |
                     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS), err);
@@ -734,7 +735,7 @@ static int generation_commit_ordinary(
             rc = generation_refuse(err, YVEX_ERR_BOUNDS, "decode physical accounting overflowed");
         if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_DECODE_LAYER,
-                completed - started, 1ull, 1ull, active_weight,
+                completed - started, 1ull, 1ull, active_weight, 0ull, 0ull, 0ull,
                 decode_result->h2d_bytes, decode_result->d2h_bytes,
                 decode_result->d2d_bytes, decode_result->kernel_launches, synchronizations,
                 generation_transformer_phase_facts, err);
@@ -1259,9 +1260,7 @@ static int generation_speculative_candidate_cycle(
         rc = generation_refuse(
             err, YVEX_ERR_STATE,
             "a terminal target anchor escaped pre-verification admission");
-    if (rc == YVEX_OK && *terminal) {
-        terminal_id = committed[terminal_index];
-    }
+    if (rc == YVEX_OK && *terminal) terminal_id = committed[terminal_index];
     if (rc == YVEX_OK)
         rc = yvex_speculation_commit_plan_build(
             &cycle.acceptance,
@@ -1320,21 +1319,22 @@ static int generation_speculative_candidate_cycle(
     }
     if (rc == YVEX_OK)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_DRAFT_SWEEP,
-            cycle.draft_ns, cycle.draft_proposed_count, 0ull,
-            0ull, cycle.draft_h2d_bytes, cycle.draft_d2h_bytes, cycle.draft_d2d_bytes,
+            cycle.draft_ns, cycle.draft_proposed_count, 0ull, 0ull, 0ull, 0ull, 0ull,
+            cycle.draft_h2d_bytes, cycle.draft_d2h_bytes, cycle.draft_d2d_bytes,
             cycle.draft_kernel_launches, cycle.draft_synchronizations,
             generation_transformer_phase_facts & ~(1ull << YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT), err);
     if (rc == YVEX_OK)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_VERIFY_SWEEP,
-            cycle.verification_ns, cycle.candidate_count + 1ull,
-            commit->completed ? commit->token_count : 0ull,
-            0ull, cycle.verification_h2d_bytes, cycle.verification_d2h_bytes, cycle.verification_d2d_bytes,
+            cycle.verification_ns, cycle.candidate_count + 1ull, commit->completed ? commit->token_count : 0ull,
+            0ull, 0ull, 0ull, 0ull, cycle.verification_h2d_bytes,
+            cycle.verification_d2h_bytes, cycle.verification_d2d_bytes,
             cycle.verification_kernel_launches, cycle.verification_synchronizations,
             generation_transformer_phase_facts & ~(1ull << YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT), err);
     if (rc == YVEX_OK && commit->completed && commit->promotion_ns)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_STATE_PROMOTION,
             commit->promotion_ns, commit->verified_prefix_count, commit->token_count,
-            0ull, commit->promotion_physical.h2d_bytes, commit->promotion_physical.d2h_bytes,
+            0ull, 0ull, 0ull, 0ull, commit->promotion_physical.h2d_bytes,
+            commit->promotion_physical.d2h_bytes,
             commit->promotion_physical.d2d_bytes, commit->promotion_physical.kernel_count,
             commit->promotion_physical.synchronization_count,
             commit->promotion_physical.available
@@ -1984,9 +1984,7 @@ int yvex_runtime_generation_turn_execute(
         if (cleanup_rc != YVEX_OK) {
             rc = cleanup_rc;
             if (err) *err = cleanup;
-        } else if (err) {
-            *err = primary;
-        }
+        } else if (err) *err = primary;
     }
     rc = generation_result_finish(context, tokens, text, text_capacity,
                                   result, rc, err);

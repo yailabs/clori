@@ -256,6 +256,11 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
     YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
                          facts.d2h_bytes == sizeof(int) &&
                          facts.device_synchronizations == 1ull &&
+                         facts.compulsory_memory_facts_available &&
+                         facts.active_weight_bytes == ROWS * row_bytes &&
+                         facts.state_bytes == 0ull &&
+                         facts.activation_bytes == sizeof(vector) + sizeof(actual) &&
+                         facts.temporary_bytes == sizeof(int) + (WIDTH / 256u) * 292u &&
                          yvex_backend_tensor_read(
                              backend, output, actual, sizeof(actual), &err) == YVEX_OK,
                      "Q8 activation production matvec launches quantize plus projection");

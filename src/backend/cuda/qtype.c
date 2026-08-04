@@ -54,7 +54,8 @@ int yvex_backend_cuda_encoded_matvec(
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
-    unsigned long long device_address = 0ull, input_bytes, output_bytes;
+    unsigned long long device_address = 0ull, input_bytes, output_bytes, activation_bytes;
+    unsigned long long temporary_bytes = sizeof(int), q8_workspace_bytes = 0ull;
     CUdeviceptr encoded_ptr, input_ptr, output_ptr, status = 0ull, quantized = 0ull;
     unsigned long long start_row = 0ull, launches = 0ull;
     int output_bf16 = 0, host_status = 0, rc, cleanup_rc, q8_path, q8_input = 0;
@@ -65,6 +66,7 @@ int yvex_backend_cuda_encoded_matvec(
         !row_width || !row_bytes || row_count > UINT_MAX || !facts ||
         !yvex_core_u64_mul(row_width, sizeof(float), &input_bytes) ||
         !yvex_core_u64_mul(row_count, sizeof(float), &output_bytes) ||
+        !yvex_core_u64_add(input_bytes, output_bytes, &activation_bytes) ||
         row_count > ULLONG_MAX / row_bytes || row_count * row_bytes != encoded_bytes ||
         !backend_tensor_owner_is(backend, input) || input->dtype != YVEX_DTYPE_F32 ||
         input->bytes < input_bytes || !backend_tensor_owner_is(backend, output) ||
@@ -93,12 +95,14 @@ int yvex_backend_cuda_encoded_matvec(
                qtype == YVEX_GGUF_QTYPE_Q8_0);
     if (rc == YVEX_OK && q8_path) {
         unsigned long long blocks = row_width / 256ull;
-        if (blocks > UINT_MAX || blocks > ULLONG_MAX / 292ull) {
+        if (blocks > UINT_MAX || !yvex_core_u64_mul(blocks, 292ull, &q8_workspace_bytes) ||
+            q8_workspace_bytes > SIZE_MAX ||
+            !yvex_core_u64_add(temporary_bytes, q8_workspace_bytes, &temporary_bytes)) {
             yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.encoded-matvec",
                            "Q8 activation workspace exceeds launch bounds");
             rc = YVEX_ERR_BOUNDS;
         } else
-            rc = yvex_cuda_work_allocate(&work, &quantized, (size_t)(blocks * 292ull),
+            rc = yvex_cuda_work_allocate(&work, &quantized, (size_t)q8_workspace_bytes,
                                          NULL, 0, "cuda.encoded-matvec.q8", NULL, err);
         if (rc == YVEX_OK) {
             unsigned long long one = 1ull;
@@ -153,6 +157,10 @@ int yvex_backend_cuda_encoded_matvec(
         facts->kernel_launches = launches;
         facts->download_count = 1ull;
         facts->device_synchronizations = 1ull;
+        facts->active_weight_bytes = encoded_bytes;
+        facts->activation_bytes = activation_bytes;
+        facts->temporary_bytes = temporary_bytes;
+        facts->compulsory_memory_facts_available = 1;
         yvex_error_clear(err);
     }
     return rc;
