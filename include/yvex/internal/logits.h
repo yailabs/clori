@@ -87,7 +87,7 @@ typedef struct {
 
 typedef enum {
     YVEX_OUTPUT_HEAD_RESULT_HOST_LOGITS = 0,
-    YVEX_OUTPUT_HEAD_RESULT_DEVICE_SELECTION
+    YVEX_OUTPUT_HEAD_RESULT_DEVICE_LOGITS
 } yvex_output_head_result_class;
 
 typedef enum {

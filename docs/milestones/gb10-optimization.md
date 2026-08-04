@@ -103,6 +103,17 @@ execution rather than being multiplied into each row. Mixed, non-contiguous or
 invalid source directories remain on the explicit row-local reference path,
 which preserves complete-row failure semantics.
 
+The same width-N owner can now retain the complete output block on CUDA and
+publish one identity-bound row view per vocabulary row. Production device
+results require a compiled profile, device-native execution class and
+contiguous CUDA source directory; they cannot fall back to row-local or host
+output. Their aggregate movement excludes the vocabulary download, each row
+binds the correct target or draft state generation, and the device sampling
+owner consumes the views before the reusable output buffer is overwritten.
+The host result class and its full-array evidence remain the explicit
+reference path. This uses the existing internal logits/device-view schemas and
+changes no persisted, wire or public C contract.
+
 CUDA attention graph replay now separates mutable state preparation from the
 captured kernel topology. The graph-stream preamble refreshes the current state
 bank before capture and every warm replay; promotion generation is therefore
@@ -182,7 +193,8 @@ scheduler before a concrete external consumer may justify a new ABI.
 The currently admitted code establishes model-derived geometry, v7/v8 binding
 coexistence, typed capacity/page planning, pre-materialization memory refusal,
 the availability-aware production phase ledger, and identity-bound native
-SM121 CUBIN admission.
+SM121 CUBIN admission. It also establishes identity-bound width-N CUDA logits
+publication without full-vocabulary host materialization.
 It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE or zero per-layer MoE synchronization, full-model
 live qualification of target-only device stochastic sampling, device-resident

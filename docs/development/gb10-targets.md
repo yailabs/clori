@@ -99,7 +99,9 @@ replaced only through the existing typed execution profile. Compatible width-N
 CUDA output rows already share activation
 preparation and one encoded-head execution; incompatible and reference
 directories retain an explicit row-local fallback. Batched device selection
-remains an open physical owner. The wave must keep prefix promotion, shape
+now consumes ordered resident logits views with no vocabulary D2H; DSpark
+distribution and acceptance still require their separate device cutover. The
+wave must keep prefix promotion, shape
 admission, partial-turn semantics, protocol channels and one model/session
 authority unchanged.
 

@@ -3,8 +3,10 @@
  * head. Three complete 129280-value rows are compared per backend without tracked dumps.
  * Test-only consumer of the production Transformer, decode, residency, and logits APIs.
  */
-#include <yvex/internal/logits.h>
+#include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/execution.h>
+#include <yvex/internal/logits.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/sampling.h>
 
@@ -45,6 +47,11 @@ typedef struct {
     yvex_runtime_sampling_execution execution;
     yvex_runtime_sampling_context_summary summary;
 } live_sampling_result;
+
+typedef struct {
+    yvex_runtime_logits_result logits;
+    live_sampling_result sampling;
+} live_device_result;
 
 static void live_fail(const char *step, int rc, const yvex_error *err)
 {
@@ -299,6 +306,176 @@ static int live_compare(const float *actual, const float *reference,
             comparison->first_failure = index;
     }
     return comparison->first_failure == count;
+}
+
+static int live_device_profile(live_logits *execution, yvex_runtime_model *model,
+                               yvex_compiled_execution_profile *profile,
+                               yvex_error *err)
+{
+    const yvex_runtime_model_view *model_view = yvex_runtime_model_view_get(model);
+    const yvex_runtime_session_view *session_view =
+        yvex_runtime_session_view_get(execution->session);
+    const yvex_physical_execution_summary *physical = model_view
+        ? yvex_physical_execution_ir_summary(model_view->physical_execution) : NULL;
+    const yvex_runtime_binding_summary *binding = model_view ? model_view->binding : NULL;
+    yvex_backend_cuda_attention_graph_summary kernels;
+    yvex_runtime_session_summary session;
+    yvex_compiled_execution_profile_request request = {0};
+    char hardware[YVEX_EXECUTION_TEXT_CAP];
+    int written;
+    if (!model_view || !session_view || !physical || !binding) {
+        yvex_error_set(err, YVEX_ERR_STATE, "test.logits.device-profile",
+                       "compiled device profile owners are unavailable");
+        return YVEX_ERR_STATE;
+    }
+    if (yvex_runtime_session_summary_copy(execution->session, &session, err) != YVEX_OK ||
+        yvex_backend_cuda_attention_graph_summary_get(
+            session_view->backend, &kernels, err) != YVEX_OK)
+        return yvex_error_code(err);
+    written = snprintf(hardware, sizeof(hardware), "native-cuda-sm%d%d",
+                       session.compute_capability_major, session.compute_capability_minor);
+    if (written < 0 || (size_t)written >= sizeof(hardware)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "test.logits.device-profile",
+                       "hardware-profile rendering overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    request.schema_version = YVEX_COMPILED_EXECUTION_PROFILE_SCHEMA_V1;
+    request.logical_model_identity = binding->logical_model_identity;
+    request.physical_variant_identity = binding->profile_identity;
+    request.physical_execution_identity = physical->identity;
+    request.artifact_identity = binding->artifact_identity;
+    request.materialization_identity = binding->materialization_identity;
+    request.runtime_binding_identity = binding->identity;
+    request.kernel_bundle_identity = kernels.cuda_build_identity;
+    request.hardware_profile = hardware;
+    request.backend = YVEX_BACKEND_KIND_CUDA;
+    request.device_index = session.device_index;
+    request.compute_major = session.compute_capability_major;
+    request.compute_minor = session.compute_capability_minor;
+    request.context_capacity = 3ull;
+    request.generation_mode = YVEX_EXECUTION_GENERATION_TARGET_ONLY;
+    request.workload = YVEX_EXECUTION_WORKLOAD_QUALIFICATION;
+    request.evidence = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
+    request.execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
+    request.token_local_moe_reference = 1;
+    request.eager_attention_reference = 1;
+    return yvex_compiled_execution_profile_seal(&request, profile, err);
+}
+
+static int live_device_batch(live_logits *execution, yvex_runtime_model *model,
+                             const live_sampling_result *host_greedy,
+                             live_device_result *out, yvex_error *err)
+{
+    yvex_runtime_logits_context *logits = NULL;
+    yvex_runtime_sampling_context *sampling = NULL;
+    yvex_compiled_execution_profile profile;
+    yvex_runtime_logits_options logits_options = {
+        .maximum_rows = LIVE_LOGITS_ROWS, .maximum_host_bytes = 128ull * 1024ull,
+        .evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION, .device_selection = 1};
+    yvex_runtime_sampling_options sampling_options = {
+        .maximum_rows = LIVE_LOGITS_ROWS, .device_selection = 1};
+    yvex_runtime_sampling_policy policy = {
+        .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
+        .strategy = YVEX_SAMPLING_STRATEGY_GREEDY,
+        .temperature = 1.0, .top_p = 1.0, .typical_p = 1.0};
+    yvex_output_head_batch_request request = {0};
+    yvex_runtime_logits_source sources[LIVE_LOGITS_ROWS];
+    yvex_runtime_logits_row_result rows[LIVE_LOGITS_ROWS];
+    yvex_runtime_sampling_source sampling_sources[LIVE_LOGITS_ROWS];
+    const yvex_runtime_logits_plan_summary *plan;
+    yvex_error cleanup;
+    unsigned long long index, activation_elements, activation_bytes, hidden_elements;
+    unsigned long long hidden_bytes;
+    int rc, close_rc;
+    memset(out, 0, sizeof(*out));
+    rc = live_device_profile(execution, model, &profile, err);
+    logits_options.execution_profile = &profile;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_logits_context_open(
+            &logits, model, execution->session,
+            yvex_runtime_transformer_context_plan(execution->transformer),
+            &logits_options, err);
+    plan = yvex_runtime_logits_plan_summary_get(logits);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_logits_source_from_transformer(
+            logits, &sources[0], &execution->prefill_result,
+            execution->prefill_hidden, plan->hidden_width, 0ull, err);
+    for (index = 1ull; rc == YVEX_OK && index < LIVE_LOGITS_ROWS; ++index)
+        rc = yvex_runtime_logits_source_from_decode(
+            logits, &sources[index], &execution->decode_steps[index - 1ull],
+            execution->decode_hidden + (index - 1ull) * plan->hidden_width,
+            plan->hidden_width, err);
+    request.schema_version = YVEX_OUTPUT_HEAD_BATCH_SCHEMA_V1;
+    request.row_count = LIVE_LOGITS_ROWS;
+    request.output_vocabulary = plan ? plan->vocabulary_size : 0ull;
+    request.backend = YVEX_BACKEND_KIND_CUDA;
+    request.result_class = YVEX_OUTPUT_HEAD_RESULT_DEVICE_LOGITS;
+    request.selection_policy = YVEX_OUTPUT_HEAD_SELECTION_RAW;
+    request.evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
+    request.execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
+    request.execution_profile_identity = profile.identity;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_logits_execute_rows(
+            logits, &request, sources, NULL, 0ull, rows, LIVE_LOGITS_ROWS,
+            &out->logits, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_logits_result_validate(
+            plan, NULL, 0ull, rows, LIVE_LOGITS_ROWS, &out->logits, err);
+    if (rc == YVEX_OK &&
+        (!yvex_core_u64_mul(LIVE_LOGITS_ROWS, plan->hidden_width, &hidden_elements) ||
+         !yvex_core_u64_mul(hidden_elements, sizeof(float), &hidden_bytes) ||
+         !yvex_core_u64_add(plan->hidden_width, plan->vocabulary_size,
+                            &activation_elements) ||
+         !yvex_core_u64_mul(LIVE_LOGITS_ROWS, activation_elements,
+                            &activation_elements) ||
+         !yvex_core_u64_mul(activation_elements, sizeof(float), &activation_bytes)))
+        rc = YVEX_ERR_BOUNDS;
+    if (rc == YVEX_OK &&
+        (!out->logits.completed || !out->logits.grouped_execution ||
+         out->logits.grouped_rows != LIVE_LOGITS_ROWS ||
+         out->logits.physical.h2d_bytes != hidden_bytes ||
+         out->logits.physical.d2h_bytes != sizeof(int) ||
+         out->logits.physical.memory.activation_bytes != activation_bytes ||
+         out->logits.physical.synchronization_count != 2ull))
+        rc = YVEX_ERR_FORMAT;
+    for (index = 0ull; rc == YVEX_OK && index < LIVE_LOGITS_ROWS; ++index)
+        if (!rows[index].completed || rows[index].host_values_available ||
+            !rows[index].device_values_available || rows[index].full_array_host_scan_bytes ||
+            rows[index].device_logits.element_offset != index * plan->vocabulary_size ||
+            rows[index].device_logits.tensor != rows[0].device_logits.tensor)
+            rc = YVEX_ERR_FORMAT;
+    sampling_options.maximum_vocabulary_size = plan ? plan->vocabulary_size : 0ull;
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_sampling_policy_seal(&policy, plan->vocabulary_size, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_sampling_context_open(
+            &sampling, plan, &policy, &sampling_options, err);
+    for (index = 0ull; rc == YVEX_OK && index < LIVE_LOGITS_ROWS; ++index)
+        rc = yvex_runtime_sampling_source_from_logits(
+            sampling, &sampling_sources[index], NULL, 0ull, &rows[index], err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_sampling_execute(
+            sampling, sampling_sources, LIVE_LOGITS_ROWS, out->sampling.rows,
+            LIVE_LOGITS_ROWS, &out->sampling.execution, err);
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_sampling_context_snapshot(
+            sampling, &out->sampling.summary, err);
+    for (index = 0ull; rc == YVEX_OK && index < LIVE_LOGITS_ROWS; ++index)
+        if (!out->sampling.rows[index].device_selection ||
+            out->sampling.rows[index].full_array_host_scan_bytes ||
+            out->sampling.rows[index].selected_token_id !=
+                host_greedy->rows[index].selected_token_id)
+            rc = YVEX_ERR_FORMAT;
+    if (rc != YVEX_OK && !yvex_error_is_set(err))
+        yvex_error_set(err, rc, "test.logits.device-batch",
+                       "device-resident output batch invariants failed");
+    yvex_error_clear(&cleanup);
+    close_rc = yvex_runtime_sampling_context_close(&sampling, &cleanup);
+    if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; *err = cleanup; }
+    yvex_error_clear(&cleanup);
+    close_rc = yvex_runtime_logits_context_close(&logits, &cleanup);
+    if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; *err = cleanup; }
+    return rc;
 }
 
 /*
@@ -565,6 +742,7 @@ int main(int argc, char **argv)
     live_logits cpu = {0}, cuda = {0};
     live_comparison cpu_reference, cuda_reference, cpu_cuda;
     live_sampling_result greedy, categorical, filtered, reproduced;
+    live_device_result device;
     yvex_runtime_sampling_policy greedy_policy = {
         .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
         .strategy = YVEX_SAMPLING_STRATEGY_GREEDY,
@@ -600,7 +778,10 @@ int main(int argc, char **argv)
         yvex_runtime_transformer_context_plan(cpu.transformer));
     if (rc == YVEX_OK) { step = "stream-open"; rc = live_input_open(&stream, plan, tokens, 0ull, 3ull, argv[3], &err); }
     if (rc == YVEX_OK) { step = "prefill-open"; rc = live_input_open(&prefill, plan, tokens, 0ull, 1ull, NULL, &err); }
-    if (rc == YVEX_OK) { step = "decode-open"; rc = live_input_open(&decode, plan, tokens + 1u, 1ull, 2ull, NULL, &err); }
+    if (rc == YVEX_OK) {
+        step = "decode-open";
+        rc = live_input_open(&decode, plan, tokens + 1u, 1ull, 2ull, NULL, &err);
+    }
     if (rc == YVEX_OK) { step = "cpu-execute"; rc = live_execute(&cpu, prefill, decode, YVEX_BACKEND_KIND_CPU, &err); }
     if (rc == YVEX_OK) { step = "cpu-reference"; rc = live_reference(&cpu, model, &err); }
     logits_plan = yvex_runtime_logits_plan_summary_get(cpu.logits);
@@ -612,7 +793,10 @@ int main(int argc, char **argv)
     }
     if (rc == YVEX_OK) { step = "cpu-failure-proofs"; rc = live_failure_proofs(&cpu, model, &err); }
     if (rc == YVEX_OK) { step = "cuda-open"; rc = live_open(&cuda, model, YVEX_BACKEND_KIND_CUDA, &err); }
-    if (rc == YVEX_OK) { step = "cuda-execute"; rc = live_execute(&cuda, prefill, decode, YVEX_BACKEND_KIND_CUDA, &err); }
+    if (rc == YVEX_OK) {
+        step = "cuda-execute";
+        rc = live_execute(&cuda, prefill, decode, YVEX_BACKEND_KIND_CUDA, &err);
+    }
     if (rc == YVEX_OK) { step = "cuda-reference"; rc = live_reference(&cuda, model, &err); }
     if (rc == YVEX_OK &&
         (!live_compare(cuda.raw_logits, cuda.reference_logits, values, 0, &cuda_reference) ||
@@ -625,6 +809,10 @@ int main(int argc, char **argv)
         step = "sampling-greedy";
         rc = live_sampling_policy(logits_plan, &cpu, &cuda,
                                   greedy_policy, &greedy, &err);
+    }
+    if (rc == YVEX_OK) {
+        step = "device-logits-batch";
+        rc = live_device_batch(&cuda, model, &greedy, &device, &err);
     }
     if (rc == YVEX_OK) {
         step = "sampling-categorical";
@@ -669,6 +857,8 @@ int main(int argc, char **argv)
                "sampling_greedy_tokens=%u,%u,%u sampling_stochastic_tokens=%u,%u,%u "
                "filtered_candidates=%llu,%llu,%llu sampling_reference=pass reproducibility=pass "
                "warm_sampling_allocations=0\n"
+               "device_logits_rows=%llu device_logits_d2h=%llu device_logits_syncs=%llu "
+               "device_greedy_tokens=%u,%u,%u full_vocabulary_d2h=0 host_scan_bytes=0\n"
                "sampling_policy_identity=%s candidate_identity=%s selected_identity=%s "
                "aggregate_sampling_identity=%s selected_probability=%.17g "
                "selected_log_probability=%.17g rng_draws=%llu\n"
@@ -690,6 +880,11 @@ int main(int argc, char **argv)
                filtered.rows[0].final_candidate_count,
                filtered.rows[1].final_candidate_count,
                filtered.rows[2].final_candidate_count,
+               device.logits.completed_rows, device.logits.physical.d2h_bytes,
+               device.logits.physical.synchronization_count,
+               device.sampling.rows[0].selected_token_id,
+               device.sampling.rows[1].selected_token_id,
+               device.sampling.rows[2].selected_token_id,
                categorical.rows[0].policy_identity,
                categorical.rows[0].candidate_set_identity,
                categorical.rows[0].selected_token_identity,

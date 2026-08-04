@@ -49,6 +49,9 @@ change. Git history preserves implementation chronology.
   width-N CUDA rows now share Q8 activation preparation and one encoded-head
   execution, while the ordered logits result owns one aggregate physical-facts
   record and incompatible inputs retain an explicit row-local fallback.
+  Device-native output batches now publish contiguous identity-bound logits
+  row views for downstream CUDA selection without allocating or downloading a
+  complete host vocabulary buffer.
 - Production CUDA MoE now routes a complete compatible row batch, orders its
   row/expert pairs by expert, executes resident routed and shared packs through
   one width-N backend transaction, and derives workspace from admitted layer
