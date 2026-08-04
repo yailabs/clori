@@ -1,9 +1,5 @@
-/*
- * Generation composes lower owners without taking over their state. A sampled token becomes
- * visible only after that ID is accepted as decode input and its state transaction commits.
- * Completed token transactions are not rolled back: failure reports the last committed model and
- * text state so cancellation, retry, and server publication observe the same prefix.
- */
+/* Generation composes lower owners without taking over their state. Tokens become visible only
+ * after state commit; later failures retain that published prefix across retry and cancellation. */
 #include "src/runtime/private.h"
 #include <pthread.h>
 #include <stdatomic.h>
@@ -180,6 +176,9 @@ static int generation_refuse(yvex_error *err, yvex_status status, const char *re
     yvex_error_set(err, status, "runtime.generation", reason);
     return status;
 }
+static const unsigned long long generation_transformer_phase_facts =
+    (1ull << YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT) | (1ull << YVEX_EXECUTION_PHASE_FACT_MOVEMENT) |
+    (1ull << YVEX_EXECUTION_PHASE_FACT_KERNELS) | (1ull << YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS);
 static int generation_phase_time(
     yvex_runtime_generation_context *context, yvex_execution_roofline_phase phase,
     unsigned long long duration,
@@ -436,7 +435,7 @@ static int generation_prefill(
         yvex_runtime_transformer_result result;
         yvex_runtime_speculation_feature_result draft_result = {0};
         unsigned long long count = suffix_count - offset, values, started, completed;
-        unsigned long long active_weight = 0ull;
+        unsigned long long active_weight = 0ull, synchronizations = 0ull;
         if (count > maximum_chunk) count = maximum_chunk;
         memset(&summary, 0, sizeof(summary));
         summary.schema_version = YVEX_TRANSFORMER_INPUT_SCHEMA_V1;
@@ -479,16 +478,17 @@ static int generation_prefill(
             (!yvex_core_u64_add(result.embedding_bytes, result.attention_weight_bytes,
                                 &active_weight) ||
              !yvex_core_u64_add(active_weight, result.expert_weight_bytes, &active_weight) ||
-             !yvex_core_u64_add(active_weight, result.final_weight_bytes, &active_weight)))
-            rc = generation_refuse(err, YVEX_ERR_BOUNDS,
-                                   "prefill active weight accounting overflowed");
+             !yvex_core_u64_add(active_weight, result.final_weight_bytes, &active_weight) ||
+             !yvex_core_u64_add(result.stream_synchronizations, result.device_synchronizations,
+                                &synchronizations)))
+            rc = generation_refuse(err, YVEX_ERR_BOUNDS, "prefill physical accounting overflowed");
         if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER,
-                completed - started, count, 0ull, active_weight, 0ull, 0ull, 0ull,
-                context->speculation ? 0ull : result.kernel_launches, 0ull,
-                context->speculation ? 0ull :
-                    YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT) |
-                    YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS), err);
+                completed - started, count, 0ull, active_weight,
+                context->speculation ? 0ull : result.h2d_bytes, context->speculation ? 0ull : result.d2h_bytes,
+                context->speculation ? 0ull : result.d2d_bytes, context->speculation ? 0ull : result.kernel_launches,
+                context->speculation ? 0ull : synchronizations,
+                context->speculation ? 0ull : generation_transformer_phase_facts, err);
         if (rc == YVEX_OK) {
             *final_result = result;
             *final_hidden_count = buffer ? values : 0ull;
@@ -674,7 +674,7 @@ static int generation_commit_ordinary(
     yvex_runtime_decode_step_result *decode_result, yvex_error *err)
 {
     yvex_tokenizer_fragment fragment;
-    unsigned long long next_text, started, completed, active_weight = 0ull;
+    unsigned long long next_text, started, completed, active_weight = 0ull, synchronizations = 0ull;
     const int device_only =
         context->options.backend == YVEX_BACKEND_KIND_CUDA &&
         context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
@@ -735,15 +735,16 @@ static int generation_commit_ordinary(
             !yvex_core_u64_add(active_weight, decode_result->expert_weight_bytes,
                                &active_weight) ||
             !yvex_core_u64_add(active_weight, decode_result->final_weight_bytes,
-                               &active_weight))
-            rc = generation_refuse(err, YVEX_ERR_BOUNDS,
-                                   "decode active weight accounting overflowed");
+                               &active_weight) ||
+            !yvex_core_u64_add(decode_result->stream_synchronizations,
+                               decode_result->device_synchronizations, &synchronizations))
+            rc = generation_refuse(err, YVEX_ERR_BOUNDS, "decode physical accounting overflowed");
         if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_DECODE_LAYER,
-                completed - started, 1ull, 1ull, active_weight, 0ull, 0ull, 0ull,
-                decode_result->kernel_launches, 0ull,
-                YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT) |
-                    YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS), err);
+                completed - started, 1ull, 1ull, active_weight,
+                decode_result->h2d_bytes, decode_result->d2h_bytes,
+                decode_result->d2d_bytes, decode_result->kernel_launches, synchronizations,
+                generation_transformer_phase_facts, err);
     }
     if (rc == YVEX_OK) rc = generation_cancelled(context, err);
     if (rc == YVEX_OK) {
@@ -1052,8 +1053,7 @@ static void generation_speculative_account_cycle(
     result->verification_ns += cycle->verification_ns;
     generation_speculative_account_confidence(result, cycle);
 }
-/* A failed cycle still owns observable work. Completed proposals and verification attempts remain
- * measured, while uncommitted proposals are discarded and acquire no output meaning. */
+/* Failed cycles retain work evidence; uncommitted proposals acquire no output meaning. */
 static void generation_speculative_account_incomplete(
     yvex_runtime_generation_result *result,
     const yvex_runtime_speculation_cycle_result *cycle)
@@ -1524,8 +1524,7 @@ static int generation_profile_final_counters(
 #undef ADD_COUNTER
     return rc;
 }
-/* Finalize success or partial progress from authoritative KV/RNG snapshots and fieldwise
- * identities. Snapshot refusal replaces success but never erases lower-owner progress. */
+/* KV/RNG snapshots finalize progress without erasing evidence when snapshotting refuses. */
 static int generation_result_finish(
     yvex_runtime_generation_context *context,
     yvex_runtime_generation_token_result *tokens,

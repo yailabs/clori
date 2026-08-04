@@ -207,16 +207,18 @@ independently of trace verbosity. Prefill, ordinary decode, output projection,
 DSpark draft/verification and accepted-state promotion contribute exact
 duration, work and committed-token facts. Target-only prefill and decode add
 encoded embedding, attention and expert bytes, decoded final-stage bytes and
-kernel launches. Output projection adds encoded head bytes, kernel launches and
-exact projection synchronization count. Its phase movement is exact: a
-host-sourced hidden row contributes H2D, forensic full logits contribute D2H,
-and every production row includes the bounded CUDA status transfer. Greedy
-selection still performs no full-vocabulary D2H. Draft and verify sweeps add
-their transformer and output-row launches. Transformer state, activation,
-temporary, occupancy, complete phase movement, DSpark active-byte and
-batched-decode facts remain unavailable; the resulting optimization priority
-is therefore explicitly provisional. The offline generation operator exposes
-the ledger in audit and JSON projections without adding it to protocol v6.
+kernel launches. Those target-only transformer phases also project exact
+H2D/D2H/D2D movement and synchronization from embedding, attention, MoE,
+selected feature and final-stage producers. Output projection adds encoded head
+bytes, kernel launches and exact projection synchronization count. Its phase
+movement is exact: a host-sourced hidden row contributes H2D, forensic full
+logits contribute D2H, and every production row includes the bounded CUDA
+status transfer. Greedy selection still performs no full-vocabulary D2H. Draft
+and verify sweeps add their transformer and output-row launches; their combined
+movement is not yet projected. State, activation, temporary, occupancy, DSpark
+active-byte and batched-decode facts remain unavailable, so optimization
+priority stays provisional. The offline generation operator exposes the ledger
+in audit and JSON projections without adding it to protocol v6.
 
 ## Memory and residency
 

@@ -185,13 +185,13 @@ checks ledger identities and availability masks when present; old internal
 results with no ledger retain their zero-initialized meaning.
 
 CUDA producers currently expose exact active-weight and launch facts for
-target-only prefill and decode, exact active-weight, launch and synchronization
-facts for output projection, and exact launch facts for draft and verification
-sweeps. Output-head phase movement is also exact and includes its bounded CUDA
-status transfer without treating that transfer as full-vocabulary D2H. State,
-activation, temporary, occupancy and transformer-phase movement stay explicitly
-unavailable until every producing owner measures them; a partial record is not
-a complete roofline.
+target-only prefill and decode together with their exact H2D/D2H/D2D movement
+and synchronization facts. Output projection exposes exact active-weight,
+launch, movement and synchronization facts, including its bounded CUDA status
+transfer without treating that transfer as full-vocabulary D2H. Draft and
+verification sweeps expose exact launches, but their combined transformer
+movement remains unavailable. State, activation, temporary and occupancy stay
+explicitly unavailable; a partial record is not a complete roofline.
 
 The binding is generated transactionally outside the repository, named by its
 content identity and independently reopened. Runtime open validates it against

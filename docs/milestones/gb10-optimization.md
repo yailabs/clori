@@ -66,12 +66,13 @@ The production CUDA generation path now records partial phase evidence without
 depending on trace verbosity and exposes it through the finite offline
 generation operator. Duration, work and committed-token accounting is live.
 Target-only prefill/decode and output projection now report exact active-weight
-and launch facts; output projection additionally reports its exact
-synchronization and H2D/D2H facts, including the bounded CUDA status transfer,
-while DSpark draft/verification report exact launches. Transformer state,
-activation, temporary, occupancy and complete phase movement remain
-unavailable. Current optimization ordering is therefore provisional rather
-than a promoted kernel-priority decision.
+and launch facts. Target-only transformer phases additionally report exact
+H2D/D2H/D2D movement and synchronization, including selected feature and
+bounded status transfers. Output projection reports its exact synchronization
+and H2D/D2H facts. DSpark draft/verification report exact launches, but their
+combined transformer movement is not yet projected. State, activation,
+temporary and occupancy remain unavailable. Current optimization ordering is
+therefore provisional rather than a promoted kernel-priority decision.
 
 Physical-variant research uses a funnel: role-level numerical probes,
 representative-layer encoding, kernel microbenchmarks, bounded logit and DSpark

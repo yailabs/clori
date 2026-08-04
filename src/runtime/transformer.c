@@ -636,7 +636,7 @@ static int transformer_device_view(void *opaque, unsigned long long layer_ordina
     return YVEX_OK;
 }
 
-/* DSpark consumes the mean across HC streams only at source-selected target layers. */
+/* DSpark captures source-selected HC means only, avoiding transfers on ordinary target layers. */
 static int transformer_feature_capture(transformer_chunk_context *chunk,
                                        unsigned long long completed_layer,
                                        yvex_error *err)
@@ -660,6 +660,8 @@ static int transformer_feature_capture(transformer_chunk_context *chunk,
             chunk->current, bytes, err);
         if (rc != YVEX_OK) return rc;
         chunk->result->d2h_bytes += bytes;
+        chunk->result->download_count++;
+        chunk->result->device_synchronizations++;
     }
     for (token = 0ull; token < chunk->token_count; ++token) {
         destination = chunk->output->features +

@@ -35,10 +35,11 @@ change. Git history preserves implementation chronology.
 - An identity-bound phase roofline ledger on real CUDA generation. Audit and
   JSON output distinguish measured facts from unavailable ones. Target-only
   prefill/decode and output projection publish exact active-weight and launch
-  counts; output projection also publishes exact H2D/D2H movement and
-  synchronization, including bounded CUDA status traffic. DSpark
-  draft/verification publish exact launch counts; transformer-phase movement
-  remains unavailable until every lower producer is projected.
+  counts. Target-only transformer phases now publish exact H2D/D2H/D2D
+  movement and synchronization, including feature and status transfers;
+  output projection publishes its exact H2D/D2H movement and synchronization.
+  DSpark draft/verification publish exact launch counts, while their combined
+  transformer movement remains unavailable until both scopes are projected.
 
 ### Changed
 
