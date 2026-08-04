@@ -636,7 +636,9 @@ CUstream yvex_cuda_launch_stream(const yvex_backend *backend)
 {
     const yvex_cuda_backend_state *state =
         backend && backend->kind == YVEX_BACKEND_KIND_CUDA ? yvex_cuda_state(backend) : NULL;
-    return state && state->capture_owner ? state->capture_stream : NULL;
+    if (!state) return NULL;
+    if (state->capture_owner) return state->capture_stream;
+    return state->parameter_update_owner ? state->parameter_update_owner->stream : NULL;
 }
 /*
  * Report whether a backend is inside one explicit, exclusive stream capture.
@@ -1221,6 +1223,7 @@ int yvex_cuda_graph_kernel_update(yvex_backend *backend,
  * Owns capture/instantiate/upload/replay and returns immutable graph counters.
  */
 int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_identity,
+                            yvex_cuda_graph_prepare_fn prepare,
                             yvex_cuda_graph_enqueue_fn enqueue, void *context,
                             yvex_backend_cuda_graph_info *info, yvex_error *err)
 {
@@ -1259,6 +1262,12 @@ int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_ide
         if (rc != YVEX_OK)
             return rc;
         created = 1;
+    }
+    if (prepare) {
+        state->parameter_update_owner = graph;
+        rc = prepare(context, err);
+        state->parameter_update_owner = NULL;
+        if (rc != YVEX_OK) goto failed;
     }
     if (graph->state != YVEX_BACKEND_CUDA_GRAPH_INSTANTIATED ||
         graph->update_requested) {
@@ -1384,7 +1393,7 @@ int yvex_cuda_attention_graph_key(const yvex_backend *backend,
         !yvex_sha256_update_text(&hash, state->attention_compatibility_identity) ||
         !yvex_sha256_update_text(&hash, state->attention_capture_bucket))
         goto failed;
-    HASH(backend->resident_generation); HASH(backend->state_residency_generation);
+    HASH(backend->resident_generation);
     HASH(backend->workspace_generation);
     HASH(backend->host_workspace_generation);
     HASH(state->attention_mode); HASH(YVEX_CUDA_ATTENTION_STAGE_COUNT);

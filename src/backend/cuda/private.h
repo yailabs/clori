@@ -238,6 +238,7 @@ typedef struct {
 } yvex_cuda_backend_state;
 typedef int (*yvex_cuda_graph_enqueue_fn)(void *context, int enqueue_kernels,
                                           yvex_error *err);
+typedef int (*yvex_cuda_graph_prepare_fn)(void *context, yvex_error *err);
 /* Canonical contiguous stages in the admitted CUDA attention launch schedule. */
 typedef enum {
     YVEX_CUDA_ATTENTION_STAGE_ENVELOPE_PRE = 0,
@@ -331,6 +332,7 @@ int yvex_cuda_capture_active(const yvex_backend *backend);
 int yvex_cuda_graphs_close_all(yvex_backend *backend, yvex_error *err);
 int yvex_cuda_graph_execute(yvex_backend *backend,
                             const char *compatibility_identity,
+                            yvex_cuda_graph_prepare_fn prepare,
                             yvex_cuda_graph_enqueue_fn enqueue,
                             void *context,
                             yvex_backend_cuda_graph_info *info,

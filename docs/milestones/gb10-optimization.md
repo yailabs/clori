@@ -96,6 +96,13 @@ execution rather than being multiplied into each row. Mixed, non-contiguous or
 invalid source directories remain on the explicit row-local reference path,
 which preserves complete-row failure semantics.
 
+CUDA attention graph replay now separates mutable state preparation from the
+captured kernel topology. The graph-stream preamble refreshes the current state
+bank before capture and every warm replay; promotion generation is therefore
+not a graph-key fact while allocation, workspace, capacity and execution shape
+remain compatibility facts. Live piecewise/full execution proves repeated
+state commits against the independent attention oracle without recapture.
+
 Accepted-prefix promotion now contributes its exact state-residency H2D,
 synchronization and zero kernel/D2H/D2D facts. These counters are deltas around
 the serialized session mutation, not estimates from configured capacity.

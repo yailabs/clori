@@ -115,10 +115,10 @@ residual, feature, logits, probability, candidate, accepted-prefix and
 workspace values with explicit owner, identity, generation, extent, lifetime,
 synchronization and materialization policy. Production greedy selection uses a
 device argmax and transfers only the selected token and bounded status.
-Stochastic sampling, token-local MoE, row-local output projection, eager
-attention and host feature projection remain explicitly named portable
-reference adapters. Unsupported CUDA operations fail closed; no requested
-CUDA execution silently falls back to CPU.
+Stochastic sampling, token-local MoE, incompatible-row output projection,
+eager production-generation attention and host feature projection remain
+explicitly named portable reference adapters. Unsupported CUDA operations fail
+closed; no requested CUDA execution silently falls back to CPU.
 
 The CUDA kernel owner emits portable PTX and, for an explicit `sm_121` build,
 an independently identified native CUBIN. Module admission selects the native
@@ -133,6 +133,14 @@ but makes no Tensor Core claim.
 Persistent state includes committed position and family-correct attention/KV
 representations. It is session-owned and capacity-bounded. Workspace is
 separate reusable temporary storage.
+
+CUDA attention graph compatibility binds allocation topology, workspace and
+execution shape, not the mutable state generation. Before every capture or
+replay, a graph-stream preamble rebinds and refreshes the current committed or
+candidate state bank. Promotion may therefore preserve an admitted executable
+while reset, invalidation and resource teardown retain their explicit lifetime
+boundaries. A preamble failure refuses the launch without publishing state or
+discarding an otherwise valid executable.
 
 An ordinary execution unit follows:
 

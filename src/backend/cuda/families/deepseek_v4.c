@@ -1467,11 +1467,7 @@ static int attn_reduce(attn_run *run) {
         1, run->device_status, "cuda.deepseek_attention.output_b",
         run->failure, run->err);
 }
-/*
- * Execute the optional immediate mHC residual egress on device.
- *
- * Completed core output and device-resident ingress coefficients.
- */
+/* Apply optional mHC residual egress to completed core output without host materialization. */
 static int attn_envelope_post(attn_run *run) {
     unsigned long long expanded = run->job->residual_expanded_width;
     unsigned long long streams = run->job->residual_stream_count;
@@ -1514,17 +1510,15 @@ static int attn_initializers_enqueue(attn_run *run) {
         if (init->device_source) {
             CUstream stream = yvex_cuda_launch_stream(run->backend);
             rc = stream && run->state->driver.cuMemcpyDtoDAsync_v2
-                     ? yvex_cuda_status(
-                           &run->state->driver,
-                           run->state->driver.cuMemcpyDtoDAsync_v2(
-                               *init->device, init->device_source,
-                               init->bytes, stream),
-                           init->stage, run->err)
+                     ? yvex_cuda_status(&run->state->driver,
+                                        run->state->driver.cuMemcpyDtoDAsync_v2(
+                                            *init->device, init->device_source,
+                                            init->bytes, stream),
+                                        init->stage, run->err)
                      : YVEX_ERR_UNSUPPORTED;
             if (rc == YVEX_ERR_UNSUPPORTED)
-                yvex_error_set(
-                    run->err, YVEX_ERR_UNSUPPORTED, init->stage,
-                    "captured device-state copy is unavailable");
+                yvex_error_set(run->err, YVEX_ERR_UNSUPPORTED, init->stage,
+                               "captured device-state copy is unavailable");
         } else {
             rc = run->ops->initialize(
                 &run->resources, *init->device, init->bytes, init->source,
@@ -1575,10 +1569,6 @@ static int attn_graph_enqueue(void *opaque, int enqueue_kernels, yvex_error *err
     int rc = YVEX_OK;
     (void)err;
     piece->run->resources.prepare_only = !enqueue_kernels;
-    if (piece->first == 0u ||
-        (piece->run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_CORE &&
-         piece->first == YVEX_CUDA_ATTENTION_STAGE_PROJECT))
-        rc = attn_initializers_enqueue(piece->run);
     for (token = 0ull; rc == YVEX_OK && token < piece->run->job->token_count; ++token) {
         attn_phase_bind(piece->run, token);
         for (stage = piece->first; rc == YVEX_OK && stage < piece->last; ++stage)
@@ -1590,6 +1580,17 @@ static int attn_graph_enqueue(void *opaque, int enqueue_kernels, yvex_error *err
     }
     piece->run->resources.prepare_only = 0;
     return rc;
+}
+
+/* State promotion changes source addresses, so refresh copies on the graph stream before replay. */
+static int attn_graph_prepare(void *opaque, yvex_error *err) {
+    attn_graph_piece *piece = (attn_graph_piece *)opaque;
+    (void)err;
+    if (piece->first == 0u ||
+        (piece->run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_CORE &&
+         piece->first == YVEX_CUDA_ATTENTION_STAGE_PROJECT))
+        return attn_initializers_enqueue(piece->run);
+    return YVEX_OK;
 }
 
 static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int last) {
@@ -1604,9 +1605,8 @@ static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int la
             run, YVEX_BACKEND_ATTENTION_FAILURE_CAPABILITY,
             "cuda.deepseek_attention.graph.identity", 1ull, 0ull,
             YVEX_ERR_STATE, "CUDA attention graph compatibility identity is incomplete");
-    rc = yvex_cuda_graph_execute(run->backend, identity,
-                                 attn_graph_enqueue, &piece, &info,
-                                 run->err);
+    rc = yvex_cuda_graph_execute(run->backend, identity, attn_graph_prepare,
+                                 attn_graph_enqueue, &piece, &info, run->err);
     if (rc != YVEX_OK && run->failure &&
         run->failure->code == YVEX_BACKEND_ATTENTION_FAILURE_NONE) {
         run->failure->code = YVEX_BACKEND_ATTENTION_FAILURE_LAUNCH;
@@ -1881,11 +1881,7 @@ static int attn_stage_inputs(attn_run *run) {
     }
     return YVEX_OK;
 }
-/*
- * Publish one fully admitted attention result transaction.
- *
- * Sole caller-visible commit step.
- */
+/* Publish the fully admitted transaction as the sole caller-visible commit. */
 static int attn_publish(attn_run *run) {
     yvex_backend_host_workspace_summary workspace;
     unsigned long long backend_h2d, backend_d2h;

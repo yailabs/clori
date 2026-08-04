@@ -58,6 +58,9 @@ change. Git history preserves implementation chronology.
 
 ### Changed
 
+- CUDA attention graphs now refresh mutable state-bank inputs before capture
+  and replay, allowing allocation-stable graphs to survive committed-state
+  promotion without restoring stale state or recapturing each turn.
 - Consolidated the product topology to the public `yvex` command and the
   long-lived `yvexd` host; the OpenAI-compatible listener now runs inside the
   daemon.

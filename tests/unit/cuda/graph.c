@@ -424,9 +424,11 @@ typedef struct {
 
 typedef struct {
     yvex_backend *backend;
-    const yvex_device_tensor *input;
+    yvex_device_tensor *input;
     yvex_device_tensor *output;
     unsigned long long position;
+    unsigned int prepare_count;
+    int prepare_failure;
 } rope_graph_fixture;
 
 typedef struct {
@@ -439,7 +441,27 @@ typedef struct {
 static int enqueue_rope_fixture(void *opaque, int enqueue_kernels, yvex_error *err)
 {
     rope_graph_fixture *fixture = (rope_graph_fixture *)opaque;
-    (void)enqueue_kernels;
+    yvex_cuda_backend_state *state = yvex_cuda_state(fixture->backend);
+    CUdeviceptr input;
+    CUdeviceptr output;
+    unsigned long long width = 8ull;
+    unsigned long long position = fixture->position;
+    float inverse_root = 0.1f;
+    void *params[5];
+
+    if (!enqueue_kernels) {
+        input = yvex_cuda_tensor_ptr(fixture->input);
+        output = yvex_cuda_tensor_ptr(fixture->output);
+        params[0] = &input;
+        params[1] = &output;
+        params[2] = &width;
+        params[3] = &position;
+        params[4] = &inverse_root;
+        return yvex_cuda_graph_kernel_update(
+            fixture->backend, YVEX_BACKEND_VARIANT_ROPE_F32,
+            state->rope_function, 1u, 128u, 0u, params,
+            "cuda.rope.launch", err);
+    }
     return yvex_backend_op_rope(fixture->backend, fixture->input, fixture->position,
                                 10000.0f, fixture->output, err);
 }
@@ -448,6 +470,19 @@ static int enqueue_empty_fixture(void *opaque, int enqueue_kernels, yvex_error *
 {
     (void)opaque;
     (void)enqueue_kernels;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int prepare_rope_fixture(void *opaque, yvex_error *err)
+{
+    rope_graph_fixture *fixture = (rope_graph_fixture *)opaque;
+    fixture->prepare_count++;
+    if (fixture->prepare_failure) {
+        yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.graph.fixture.prepare",
+                       "injected graph preamble failure");
+        return YVEX_ERR_BACKEND;
+    }
     yvex_error_clear(err);
     return YVEX_OK;
 }
@@ -538,13 +573,13 @@ static int test_rolling_cursor_update(yvex_backend *backend)
 
     fixture.cursor = 3ull;
     rc = yvex_cuda_graph_execute(
-        backend, "cuda-rolling-dynamic-cursor-v1", enqueue_rolling_fixture,
+        backend, "cuda-rolling-dynamic-cursor-v1", NULL, enqueue_rolling_fixture,
         &fixture, &info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && info.capture_count == 1ull,
                      "capture one real rolling transition");
     fixture.cursor = 0ull;
     rc = yvex_cuda_graph_execute(
-        backend, "cuda-rolling-dynamic-cursor-v1", enqueue_rolling_fixture,
+        backend, "cuda-rolling-dynamic-cursor-v1", NULL, enqueue_rolling_fixture,
         &fixture, &info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && info.replay_count == 2ull,
                      "replay rolling transition with a new cursor");
@@ -566,6 +601,57 @@ static int test_rolling_cursor_update(yvex_backend *backend)
         YVEX_TEST_ASSERT(
             yvex_backend_tensor_release(backend, tensors[i], &err) == YVEX_OK,
             "release rolling state fixture");
+    return 0;
+}
+
+/* Prove allocation-stable dynamic work runs before both capture and replay. */
+static int test_graph_prepare_lifecycle(yvex_backend *backend)
+{
+    rope_graph_fixture fixture = {0};
+    yvex_backend_cuda_graph_info info;
+    yvex_backend_tensor_desc desc;
+    yvex_error err;
+    int rc;
+
+    fixture.backend = backend;
+    fixture.position = 5ull;
+    make_desc(&desc, "graph_prepare_input");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &desc, &fixture.input, &err) == YVEX_OK,
+        "allocate graph preamble input");
+    make_desc(&desc, "graph_prepare_output");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &desc, &fixture.output, &err) == YVEX_OK,
+        "allocate graph preamble output");
+    rc = yvex_cuda_graph_execute(
+        backend, "cuda-graph-prepare-lifecycle-v1", prepare_rope_fixture,
+        enqueue_rope_fixture, &fixture, &info, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && fixture.prepare_count == 1u &&
+                         info.capture_count == 1ull && info.replay_count == 1ull,
+                     "graph preamble precedes initial capture");
+    rc = yvex_cuda_graph_execute(
+        backend, "cuda-graph-prepare-lifecycle-v1", prepare_rope_fixture,
+        enqueue_rope_fixture, &fixture, &info, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && fixture.prepare_count == 2u &&
+                         info.capture_count == 1ull && info.replay_count == 2ull,
+                     "graph preamble repeats without recapture");
+    fixture.prepare_failure = 1;
+    rc = yvex_cuda_graph_execute(
+        backend, "cuda-graph-prepare-lifecycle-v1", prepare_rope_fixture,
+        enqueue_rope_fixture, &fixture, &info, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_BACKEND && fixture.prepare_count == 3u,
+                     "graph preamble failure refuses launch");
+    fixture.prepare_failure = 0;
+    rc = yvex_cuda_graph_execute(
+        backend, "cuda-graph-prepare-lifecycle-v1", prepare_rope_fixture,
+        enqueue_rope_fixture, &fixture, &info, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && info.capture_count == 1ull &&
+                         info.replay_count == 3ull,
+                     "preamble failure preserves the admitted executable");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &fixture.output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &fixture.input, &err) == YVEX_OK,
+        "release graph preamble tensors");
     return 0;
 }
 
@@ -731,7 +817,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     memcpy(fixture.staged_input, input_data, sizeof(input_data));
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:empty-capture-v1",
-        enqueue_empty_fixture, NULL, &graph_info, &err);
+        NULL, enqueue_empty_fixture, NULL, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_UNSUPPORTED,
                      "production registry rejects an empty Driver capture");
     rc = yvex_backend_cuda_attention_graph_registry_count(backend, &count, &err);
@@ -741,7 +827,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "inject captured output-copy failure");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:failed-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_BACKEND,
                      "captured output-copy fault refuses complete graph admission");
     YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_ATTENTION_FAILURE") == 0,
@@ -754,7 +840,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "inject enqueue failure before abandoned-graph destroy");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:abort-destroy-retry-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_BACKEND,
                      "abandoned-graph destroy failure is typed");
     YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_ATTENTION_FAILURE") == 0,
@@ -784,7 +870,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                          "inject partial graph preparation failure");
         rc = yvex_cuda_graph_execute(
             backend, "attention-config-piecewise-v1:retryable-fault-v1",
-            enqueue_attention_fixture, &fixture, &graph_info, &err);
+            NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
         YVEX_TEST_ASSERT(rc != YVEX_OK, "partial graph preparation failure is typed");
         rc = yvex_backend_cuda_attention_graph_registry_count(backend, &count, &err);
         YVEX_TEST_ASSERT(rc == YVEX_OK && count == 0ull,
@@ -793,7 +879,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                          "clear partial graph preparation failure");
         rc = yvex_cuda_graph_execute(
             backend, "attention-config-piecewise-v1:retryable-fault-v1",
-            enqueue_attention_fixture, &fixture, &graph_info, &err);
+            NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
         YVEX_TEST_ASSERT(rc == YVEX_OK, "graph preparation retry succeeds");
         rc = yvex_backend_cuda_attention_graph_registry_apply(
             backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_RELEASE, &count, &err);
@@ -802,7 +888,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     }
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && graph_info.inventory.kernel_node_count > 0ull &&
                      graph_info.inventory.memcpy_node_count >= 2ull &&
                      graph_info.inventory.memset_node_count > 0ull &&
@@ -833,7 +919,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     YVEX_TEST_ASSERT(rc == YVEX_OK, "read advanced-position eager reference");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && graph_info.capture_count == 1ull &&
                      graph_info.instantiate_count == 1ull &&
                      graph_info.upload_count == 1ull && graph_info.replay_count == 2ull,
@@ -853,7 +939,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "inject CUDA graph-exec update incompatibility");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_UNSUPPORTED,
                      "production registry preserves the admitted graph after update refusal");
     rc = yvex_backend_cuda_attention_graph_registry_get(backend, 0ull, &entry, &err);
@@ -869,7 +955,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "request compatible update for every attention graph");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && graph_info.update_count == 1ull &&
                      graph_info.replay_count == 3ull &&
                      graph_info.last_update_elapsed_ns > 0ull,
@@ -887,7 +973,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "permute captured Driver node enumeration");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_GRAPH_NODE_ORDER") == 0,
                      "clear captured Driver node permutation");
     YVEX_TEST_ASSERT(rc == YVEX_OK && graph_info.update_count == 2ull &&
@@ -898,7 +984,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     fixture.replay_function = yvex_cuda_state(backend)->rms_norm_f32_function;
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     fixture.replay_function = NULL;
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
                      "replay refuses a mutated captured kernel function before launch");
@@ -912,7 +998,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "request update under mutated kernel bundle identity");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && graph_info.update_count == 3ull &&
                      graph_info.replay_count == 5ull &&
                      strcmp(graph_info.launch_graph_identity,
@@ -926,7 +1012,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "request update after restoring admitted kernel bundle identity");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && graph_info.update_count == 4ull &&
                      graph_info.replay_count == 6ull &&
                      strcmp(graph_info.launch_graph_identity,
@@ -936,7 +1022,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "inject production registry launch failure");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_BACKEND,
                      "production registry launch failure is typed");
     rc = yvex_backend_cuda_attention_graph_registry_get(backend, 0ull, &entry, &err);
@@ -959,13 +1045,13 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "invalidated registry owner exposes no executable graph identity");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "recapture production graph after launch failure");
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_GRAPH_FAILURE", "synchronize", 1) == 0,
                      "inject graph replay synchronization failure");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_BACKEND,
                      "graph replay synchronization failure is typed");
     YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_GRAPH_FAILURE") == 0,
@@ -979,7 +1065,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     failed_synchronize_count = entry.graph.synchronize_count;
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
                      "poisoned executable refuses stale replay before quiescence");
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_GRAPH_FAILURE", "quiesce", 1) == 0,
@@ -1000,12 +1086,12 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "cleanup proves stream quiescence before handle destruction");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "quiesced invalidation permits safe graph recapture and reuse");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:atomic-peer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "capture peer graph for atomic invalidation proof");
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_GRAPH_FAILURE", "exec-destroy", 1) == 0,
                      "inject registry-wide executable cleanup failure");
@@ -1025,7 +1111,7 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      "peer registry graph is poisoned before fallible cleanup");
     rc = yvex_cuda_graph_execute(
         backend, "attention-config-piecewise-v1:unit-transfer-v1",
-        enqueue_attention_fixture, &fixture, &graph_info, &err);
+        NULL, enqueue_attention_fixture, &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_STATE,
                      "cleanup-failed registry graph refuses stale replay");
     YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_GRAPH_FAILURE") == 0,
@@ -1079,8 +1165,8 @@ static int test_attention_graph_configuration(yvex_backend *backend)
     backend->state_residency_generation = 7ull;
     rc = yvex_cuda_attention_graph_key(
         backend, &job, 0u, YVEX_CUDA_ATTENTION_STAGE_COUNT, dynamic_key, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && strcmp(full_key, dynamic_key) != 0,
-                     "persistent-state generation invalidates CUDA graph compatibility");
+    YVEX_TEST_ASSERT(rc == YVEX_OK && strcmp(full_key, dynamic_key) == 0,
+                     "persistent-state generation preserves allocation-stable graph compatibility");
     backend->state_residency_generation = 0ull;
     job.token_position = 3ull;
     job.local_count = 3ull;
@@ -1240,9 +1326,11 @@ static int test_backend_graph_close_retry(void)
             backend, YVEX_BACKEND_CUDA_ATTENTION_EAGER, "cuda-close-retry-v1",
             "not-applicable", 0ull, 0ull, 0ull, &err) == YVEX_OK,
         "configure registry identity for checked backend close retry");
-    fixture = (rope_graph_fixture){backend, input, output, 7ull};
+    fixture = (rope_graph_fixture){
+        .backend = backend, .input = input, .output = output, .position = 7ull
+    };
     rc = yvex_cuda_graph_execute(
-        backend, "cuda-close-retry-v1:rope", enqueue_rope_fixture,
+        backend, "cuda-close-retry-v1:rope", NULL, enqueue_rope_fixture,
         &fixture, &graph_info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && graph_info.inventory.kernel_node_count == 1ull,
                      "capture real production kernel through the registry");
@@ -1331,6 +1419,8 @@ int yvex_cuda_test_graph(void)
                      "CUDA attention graph mode configuration");
     YVEX_TEST_ASSERT(test_rolling_cursor_update(backend) == 0,
                      "CUDA rolling cursor replay update");
+    YVEX_TEST_ASSERT(test_graph_prepare_lifecycle(backend) == 0,
+                     "CUDA graph dynamic preamble lifecycle");
     rc = yvex_backend_close_checked(&backend, NULL);
     YVEX_TEST_ASSERT(rc == YVEX_OK && !backend, "checked CUDA backend cleanup");
     rc = test_deferred_raw_release();

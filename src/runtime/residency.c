@@ -1416,18 +1416,15 @@ int yvex_runtime_state_residency_stage(
 int yvex_runtime_state_residency_publish(
     yvex_runtime_state_residency *residency, yvex_error *err)
 {
-    unsigned long long affected = 0ull;
     if (!residency || residency->summary.invalidated ||
         residency->summary.staged_layer_count != residency->summary.layer_count) {
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.state.residency.publish",
                        "complete staged persistent state residency is required");
         return YVEX_ERR_STATE;
     }
-    if (residency->summary.cuda_ready &&
-        yvex_backend_cuda_attention_graph_registry_apply(
-            residency->backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_INVALIDATE,
-            &affected, err) != YVEX_OK)
-        return yvex_error_code(err);
+    /* Graph kernels rebind current state-bank pointers on replay. Publication changes content and
+     * generation, not allocation layout, so invalidating the topology registry here would force
+     * one capture per committed turn without protecting any pointer lifetime. */
     yvex_error_clear(err);
     return YVEX_OK;
 }
