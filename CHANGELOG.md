@@ -49,6 +49,11 @@ change. Git history preserves implementation chronology.
   width-N CUDA rows now share Q8 activation preparation and one encoded-head
   execution, while the ordered logits result owns one aggregate physical-facts
   record and incompatible inputs retain an explicit row-local fallback.
+- Production CUDA MoE now routes a complete compatible row batch, orders its
+  row/expert pairs by expert, executes resident routed and shared packs through
+  one width-N backend transaction, and derives workspace from admitted layer
+  qtypes and row capacity. The token-local CPU/CUDA implementation remains the
+  explicit portable audit/reference oracle.
 - Compulsory memory accounting now has one transactional internal fact owner.
   CUDA embedding, attention, MoE and final projection contribute measured or
   explicitly missing operations through transformer and decode aggregation;

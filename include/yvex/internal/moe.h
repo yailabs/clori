@@ -1,8 +1,8 @@
 /*
  * Expose the complete production MoE-local boundary without CLI-shaped numerical APIs.
  *
- * Family policy is projected by adapter identity and only selected expert subviews are consumed.
- * Internal graph/runtime/backend ABI for one token-local MoE block.
+ * Family policy is projected by adapter identity. Production CUDA consumes one ordered row batch;
+ * the token-local entrypoints remain the independent CPU/CUDA numerical oracle.
  */
 #ifndef INCLUDE_YVEX_INTERNAL_MOE_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_MOE_H_INCLUDED
@@ -18,7 +18,6 @@ extern "C" {
 #define YVEX_MOE_INPUT_SUFFIX ".yvex-moe-input"
 #define YVEX_MOE_NO_TENSOR ULLONG_MAX
 #define YVEX_MOE_MAX_SELECTED 16u
-#define YVEX_MOE_CUDA_WORKSPACE_BYTES (16ull * 1024ull * 1024ull)
 typedef struct yvex_runtime_binding_summary yvex_runtime_binding_summary;
 typedef struct yvex_runtime_model yvex_runtime_model;
 typedef struct yvex_runtime_execution_session yvex_runtime_execution_session;
@@ -207,6 +206,9 @@ typedef struct {
     float *combined_rows, *routed_rows, *shared_rows, *post_rows, *combination_rows;
     unsigned long long combined_capacity, routed_capacity, shared_capacity;
     unsigned long long post_capacity, combination_capacity;
+    unsigned long long *selected_experts;
+    float *selected_weights;
+    unsigned long long selection_capacity;
 } yvex_moe_row_batch_output;
 
 typedef struct {
@@ -225,6 +227,23 @@ typedef struct {
     char routing_digest[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
 } yvex_moe_row_batch_result;
+/*
+ * Optional backend-owned width-N implementation. The table keeps concrete CUDA helpers private
+ * while runtime can admit capability, derive the exact stable workspace, and dispatch through one
+ * family-neutral ABI.
+ */
+typedef struct {
+    int (*workspace_required)(const yvex_moe_layer_plan *layer,
+                              unsigned long long row_count,
+                              unsigned long long *bytes,
+                              yvex_error *err);
+    int (*execute_rows)(yvex_backend *backend, const yvex_moe_layer_job *job,
+                        const yvex_moe_row_batch *batch,
+                        const yvex_moe_row_batch_output *output,
+                        yvex_moe_row_batch_result *result, yvex_error *err);
+} yvex_backend_moe_operations;
+const yvex_backend_moe_operations *yvex_backend_moe_operations_get(
+    const yvex_backend *backend);
 int yvex_moe_ffn_prepare_cpu(const yvex_moe_layer_job *job, float *normalized,
                              float *post, float *combination, yvex_error *err);
 int yvex_moe_route_cpu(const yvex_moe_layer_job *job, const float *normalized,
@@ -248,7 +267,7 @@ int yvex_backend_moe_finish(yvex_backend_moe_execution *execution,
 int yvex_backend_moe_close(yvex_backend_moe_execution **execution, yvex_error *err);
 typedef struct yvex_runtime_moe_context yvex_runtime_moe_context;
 typedef struct {
-    unsigned long long maximum_host_bytes, maximum_device_bytes;
+    unsigned long long maximum_host_bytes, maximum_device_bytes, row_capacity;
     yvex_tensor_scope tensor_scope;
     int (*cancel_requested)(void *context);
     void *cancel_context;
@@ -279,7 +298,9 @@ typedef struct {
 } yvex_runtime_moe_result;
 int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_model *model,
                                   yvex_runtime_execution_session *session,
-                                  const yvex_runtime_moe_options *options, yvex_error *err);
+                                  const yvex_runtime_moe_options *options,
+                                  unsigned long long *cuda_workspace_bytes,
+                                  yvex_error *err);
 const yvex_moe_plan *yvex_runtime_moe_context_plan(const yvex_runtime_moe_context *context);
 int yvex_runtime_moe_execute(yvex_runtime_moe_context *context,
                              const yvex_moe_input *input,

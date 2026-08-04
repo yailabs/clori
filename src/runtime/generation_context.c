@@ -17,6 +17,7 @@
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/execution.h>
+#include <yvex/internal/moe.h>
 
 static int generation_context_refuse(yvex_error *err, yvex_status status,
                                      const char *reason)
@@ -558,7 +559,10 @@ static int generation_execution_profile_build(
     request.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
     request.host_stochastic_reference =
         context->options.sampling_policy.strategy != YVEX_SAMPLING_STRATEGY_GREEDY;
-    request.token_local_moe_reference = 1;
+    request.token_local_moe_reference =
+        context->options.backend != YVEX_BACKEND_KIND_CUDA ||
+        context->options.evidence_profile != YVEX_EXECUTION_EVIDENCE_PRODUCTION ||
+        yvex_backend_moe_operations_get(session_view->backend) == NULL;
     request.eager_attention_reference =
         context->options.backend != YVEX_BACKEND_KIND_CUDA ||
         context->options.mode == YVEX_GENERATION_MODE_DSPARK ||

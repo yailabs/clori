@@ -198,8 +198,14 @@ typedef struct {
     CUfunction deepseek_topk_function;
     CUfunction deepseek_reduce_function;
     CUfunction moe_route_function;
+    CUfunction moe_route_rows_function;
+    CUfunction moe_pair_order_function;
     CUfunction moe_grouped_up_function;
     CUfunction moe_grouped_down_function;
+    CUfunction moe_grouped_up_rows_function;
+    CUfunction moe_grouped_down_rows_function;
+    CUfunction moe_reduce_rows_function;
+    CUfunction moe_combine_rows_function;
     CUfunction moe_swiglu_function;
     CUfunction moe_accumulate_function;
     CUfunction mlp_function;
@@ -426,12 +432,14 @@ typedef struct {
     int (*round_bf16)(yvex_cuda_work *, CUdeviceptr, unsigned long long, CUdeviceptr,
                       const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*matvec)(yvex_cuda_work *, const yvex_backend_attention_weight *, CUdeviceptr,
-                  unsigned long long, unsigned long long, CUdeviceptr, CUdeviceptr, int,
-                  CUdeviceptr, const char *, yvex_backend_attention_failure *, yvex_error *);
+                  unsigned long long, unsigned long long, unsigned long long, CUdeviceptr,
+                  CUdeviceptr, int, CUdeviceptr, const char *,
+                  yvex_backend_attention_failure *, yvex_error *);
     int (*decode)(yvex_cuda_work *, const yvex_backend_attention_weight *, CUdeviceptr,
                   unsigned long long, unsigned long long, CUdeviceptr, CUdeviceptr,
                   const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*weighted_norm)(yvex_cuda_work *, CUdeviceptr, unsigned long long,
+                         unsigned long long,
                          const yvex_backend_attention_weight *, CUdeviceptr, double,
                          CUdeviceptr, const char *, yvex_backend_attention_failure *, yvex_error *);
     int (*unit_norm)(yvex_cuda_work *, CUdeviceptr, unsigned long long, unsigned long long,

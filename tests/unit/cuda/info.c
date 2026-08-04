@@ -140,18 +140,28 @@ static int assert_grouped_moe(yvex_backend *backend)
                                    0.0f, 1.0f, 1.0f, 0.0f};
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *anchor = NULL, *input = NULL, *normal_output = NULL;
-    yvex_device_tensor *audit_output = NULL, *workspace = NULL;
+    yvex_device_tensor *audit_output = NULL, *batch_input = NULL;
+    yvex_device_tensor *batch_output = NULL, *reference_output = NULL, *workspace = NULL;
     yvex_backend_moe_execution *execution = NULL;
     yvex_moe_layer_plan layer = {0};
     yvex_moe_layer_job job = {0};
     yvex_moe_layer_result normal, audit;
     yvex_moe_weight_view selected[3];
+    const yvex_backend_moe_operations *row_operations;
+    yvex_moe_row_batch row_batch = {0};
+    yvex_moe_row_batch_output row_output = {0};
+    yvex_moe_row_batch_result row_result;
     moe_fixture_weights fixture = {0};
     yvex_error err;
     float host_input[2] = {1.0f, 0.5f};
+    float host_batch[4] = {1.0f, 0.5f, 0.5f, 1.0f};
     float normal_device[2], audit_device[2];
+    float batch_device[4], reference_device[4];
     float combined[2], routed_output[2], shared_output[2], post[1], combination[1];
-    unsigned long long address = 0ull, expert;
+    float batch_combined[4] = {0}, batch_routed[4] = {0}, batch_shared[4] = {0};
+    float batch_post[2] = {0}, batch_combination[2] = {0}, batch_weights[2] = {0};
+    unsigned long long batch_selected[2] = {0};
+    unsigned long long address = 0ull, expert, workspace_bytes = 0ull, slot;
     int rc;
     memset(&descriptor, 0, sizeof(descriptor));
     descriptor.name = "grouped-moe-anchor";
@@ -189,6 +199,8 @@ static int assert_grouped_moe(yvex_backend *backend)
     layer.mhc_post_multiplier = layer.routed_scaling_factor = 1.0;
     layer.activation_limit = 10.0;
     layer.requires_correction_bias = layer.normalize_topk_probabilities = 1;
+    for (slot = 0ull; slot < YVEX_MOE_WEIGHT_COUNT; ++slot)
+        layer.tensor_ids[slot] = YVEX_MOE_NO_TENSOR;
     job.layer = &layer;
     job.expanded_input = host_input;
     job.token_id_present = 1;
@@ -217,6 +229,15 @@ static int assert_grouped_moe(yvex_backend *backend)
                        YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_UP, 2ull, 2ull, identity);
     moe_fixture_weight(&fixture, &job.weights[YVEX_MOE_WEIGHT_SHARED_DOWN],
                        YVEX_TENSOR_ROLE_MOE_SHARED_EXPERT_DOWN, 2ull, 2ull, identity);
+    for (slot = 0ull; slot < YVEX_MOE_WEIGHT_COUNT; ++slot)
+        if (job.weights[slot].device_address)
+            layer.tensor_ids[slot] = job.weights[slot].tensor_id;
+    row_operations = yvex_backend_moe_operations_get(backend);
+    YVEX_TEST_ASSERT(row_operations &&
+                         row_operations->workspace_required(
+                             &layer, 2ull, &workspace_bytes, &err) == YVEX_OK &&
+                         workspace_bytes != 0ull,
+                     "derive grouped MoE workspace from width and layer geometry");
 #define ALLOCATE_TENSOR(OWNER_, NAME_, BYTES_)                                             \
     do {                                                                                   \
         memset(&descriptor, 0, sizeof(descriptor));                                        \
@@ -232,10 +253,15 @@ static int assert_grouped_moe(yvex_backend *backend)
     ALLOCATE_TENSOR(input, "grouped-moe-input", sizeof(host_input));
     ALLOCATE_TENSOR(normal_output, "grouped-moe-normal", sizeof(host_input));
     ALLOCATE_TENSOR(audit_output, "grouped-moe-audit", sizeof(host_input));
-    ALLOCATE_TENSOR(workspace, "grouped-moe-workspace", YVEX_MOE_CUDA_WORKSPACE_BYTES);
+    ALLOCATE_TENSOR(batch_input, "grouped-moe-batch-input", sizeof(host_batch));
+    ALLOCATE_TENSOR(batch_output, "grouped-moe-batch-output", sizeof(host_batch));
+    ALLOCATE_TENSOR(reference_output, "grouped-moe-reference-output", sizeof(host_batch));
+    ALLOCATE_TENSOR(workspace, "grouped-moe-workspace", workspace_bytes);
 #undef ALLOCATE_TENSOR
     YVEX_TEST_ASSERT(yvex_backend_tensor_write(
                          backend, input, host_input, sizeof(host_input), &err) == YVEX_OK &&
+                         yvex_backend_tensor_write(
+                             backend, batch_input, host_batch, sizeof(host_batch), &err) == YVEX_OK &&
                          yvex_backend_workspace_attach(backend, workspace, 1ull, &err) == YVEX_OK,
                      "prepare grouped MoE device input and workspace");
     job.device_input = input;
@@ -289,8 +315,74 @@ static int assert_grouped_moe(yvex_backend *backend)
                          normal.device_to_host_bytes < audit.device_to_host_bytes &&
                          normal.device_synchronizations == 1ull,
                      "grouped and audit MoE agree with reduced movement and synchronization");
+    for (slot = 0ull; slot < 2ull; ++slot) {
+        yvex_device_tensor input_view, output_view;
+        yvex_moe_layer_result reference;
+        YVEX_TEST_ASSERT(
+            yvex_backend_tensor_f32_subview(batch_input, slot * 2ull, 2ull, &input_view) &&
+                yvex_backend_tensor_f32_subview(reference_output, slot * 2ull, 2ull,
+                                                &output_view),
+            "form one-row MoE reference views");
+        job.device_input = &input_view;
+        job.device_output = &output_view;
+        job.expanded_input = host_batch + slot * 2ull;
+        job.evidence_level = YVEX_ATTENTION_EVIDENCE_SUMMARY;
+        moe_fixture_result(&reference, combined, routed_output, shared_output, post, combination);
+        rc = yvex_backend_moe_begin(&execution, backend, &job, &reference, &err);
+        if (rc == YVEX_OK)
+            rc = yvex_backend_moe_add_expert(
+                execution, &job.weights[YVEX_MOE_WEIGHT_SHARED_GATE],
+                &job.weights[YVEX_MOE_WEIGHT_SHARED_UP],
+                &job.weights[YVEX_MOE_WEIGHT_SHARED_DOWN], 1.0f, 1, &err);
+        if (rc == YVEX_OK) rc = yvex_backend_moe_finish(execution, &reference, &err);
+        YVEX_TEST_ASSERT(rc == YVEX_OK &&
+                             yvex_backend_moe_close(&execution, &err) == YVEX_OK,
+                         "execute one-row MoE reference for width-N comparison");
+    }
+    memset(&row_batch, 0, sizeof(row_batch));
+    row_batch.schema_version = YVEX_MOE_ROW_BATCH_SCHEMA_V1;
+    row_batch.row_count = 2ull;
+    row_batch.row_width = row_batch.row_stride = 2ull;
+    row_batch.expanded_rows = host_batch;
+    row_batch.device_rows = batch_input;
+    row_batch.device_outputs = batch_output;
+    row_batch.token_ids = (const unsigned int[]){7u, 11u};
+    row_batch.token_ids_present = 1;
+    row_batch.execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
+    row_output.combined_rows = batch_combined;
+    row_output.combined_capacity = 4ull;
+    row_output.routed_rows = batch_routed;
+    row_output.routed_capacity = 4ull;
+    row_output.shared_rows = batch_shared;
+    row_output.shared_capacity = 4ull;
+    row_output.post_rows = batch_post;
+    row_output.post_capacity = 2ull;
+    row_output.combination_rows = batch_combination;
+    row_output.combination_capacity = 2ull;
+    row_output.selected_experts = batch_selected;
+    row_output.selected_weights = batch_weights;
+    row_output.selection_capacity = 2ull;
+    job.device_input = batch_input;
+    job.device_output = batch_output;
+    job.expanded_input = host_batch;
+    rc = row_operations->execute_rows(
+        backend, &job, &row_batch, &row_output, &row_result, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && row_result.completed == 1 && row_result.row_count == 2ull &&
+            row_result.row_expert_pairs == 2ull && row_result.unique_experts >= 1ull &&
+            row_result.kernel_launches < 2ull * normal.kernel_launches &&
+            row_result.device_synchronizations == 1ull &&
+            yvex_backend_tensor_read(backend, batch_output, batch_device,
+                                     sizeof(batch_device), &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, reference_output, reference_device,
+                                     sizeof(reference_device), &err) == YVEX_OK &&
+            memcmp(batch_device, reference_device, sizeof(batch_device)) == 0,
+        "width-N MoE equals two one-row oracles with one grouped transaction");
     yvex_backend_workspace_detach(backend);
     YVEX_TEST_ASSERT(yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &reference_output, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &batch_output, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &batch_input, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &audit_output, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &normal_output, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&

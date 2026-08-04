@@ -435,6 +435,7 @@ static int attention_matvec(yvex_cuda_work *work,
                                CUdeviceptr device_weight,
                                unsigned long long start_row,
                                unsigned long long rows,
+                               unsigned long long input_rows,
                                CUdeviceptr vector,
                                CUdeviceptr out,
                                int output_bf16,
@@ -444,9 +445,12 @@ static int attention_matvec(yvex_cuda_work *work,
                                yvex_error *err)
 {
     int q8_path, q8_input = 0;
+    unsigned long long output_rows;
     if (!weight || !weight->present || !device_weight || !vector || !out ||
-        !rows || start_row > weight->row_count ||
-        rows > weight->row_count - start_row || rows > UINT_MAX)
+        !rows || !input_rows || start_row > weight->row_count ||
+        rows > weight->row_count - start_row ||
+        !yvex_core_u64_mul(rows, input_rows, &output_rows) ||
+        output_rows > UINT_MAX * (unsigned long long)CUDA_QTYPE_MATVEC_ROWS)
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             weight ? weight->row_count : 0ull, start_row + rows, err,
@@ -456,16 +460,17 @@ static int attention_matvec(yvex_cuda_work *work,
                weight->qtype == YVEX_GGUF_QTYPE_Q2_K ||
                weight->qtype == YVEX_GGUF_QTYPE_Q8_0);
     if (q8_path) {
-        unsigned long long blocks = weight->row_width / 256ull, quantized_bytes;
-        unsigned long long one = 1ull;
+        unsigned long long blocks = weight->row_width / 256ull;
+        unsigned long long quantize_tasks, quantized_bytes;
         CUdeviceptr quantized;
         int rc;
-        if (blocks > UINT_MAX || blocks > ULLONG_MAX / 292ull)
+        if (!yvex_core_u64_mul(blocks, input_rows, &quantize_tasks) ||
+            !yvex_core_u64_mul(quantize_tasks, 292ull, &quantized_bytes) ||
+            quantize_tasks > UINT_MAX)
             return attention_fail(
                 failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
-                UINT_MAX, blocks, err, YVEX_ERR_BOUNDS,
+                UINT_MAX, quantize_tasks, err, YVEX_ERR_BOUNDS,
                 "CUDA Q8 activation geometry is invalid");
-        quantized_bytes = blocks * 292ull;
         rc = YVEX_OK;
         if (quantized_bytes > work->q8_capacity) {
             rc = yvex_cuda_work_allocate(work, &work->q8_input,
@@ -476,9 +481,9 @@ static int attention_matvec(yvex_cuda_work *work,
         quantized = work->q8_input;
         if (rc == YVEX_OK) {
             void *params[] = {&quantized, &vector, (void *)&weight->row_width,
-                              &one, &status};
+                              &input_rows, &status};
             rc = attention_launch(work, work->state->q8_quantize_function,
-                                  (unsigned int)blocks, CUDA_ATTENTION_BLOCK, 0u,
+                                  (unsigned int)quantize_tasks, CUDA_ATTENTION_BLOCK, 0u,
                                   params, "cuda.q8-activation", failure, err);
         }
         if (rc == YVEX_OK) {
@@ -486,11 +491,11 @@ static int attention_matvec(yvex_cuda_work *work,
             void *params[] = {
                 &device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &start_row, &rows,
-                &one, (void *)&weight->qtype, &quantized, &q8_input,
+                &input_rows, (void *)&weight->qtype, &quantized, &q8_input,
                 &work->forensic_numeric, &out,
                 &output_bf16, &status
             };
-            unsigned int grid = (unsigned int)((rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
+            unsigned int grid = (unsigned int)((output_rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
                                                CUDA_QTYPE_MATVEC_ROWS);
             rc = attention_launch(work, work->state->qtype_matvec_function,
                                   grid, CUDA_ATTENTION_BLOCK, 0u, params, stage,
@@ -499,14 +504,13 @@ static int attention_matvec(yvex_cuda_work *work,
         return rc;
     }
     {
-        unsigned long long one = 1ull;
         void *params[] = {
             &device_weight, (void *)&weight->row_bytes,
             (void *)&weight->row_width, &start_row, &rows,
-            &one, (void *)&weight->qtype, &vector, &q8_input,
+            &input_rows, (void *)&weight->qtype, &vector, &q8_input,
             &work->forensic_numeric, &out, &output_bf16, &status
         };
-        unsigned int grid = (unsigned int)((rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
+        unsigned int grid = (unsigned int)((output_rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
                                            CUDA_QTYPE_MATVEC_ROWS);
         return attention_launch(
             work, work->state->qtype_matvec_function,
@@ -549,12 +553,13 @@ static int attention_decode(yvex_cuda_work *work,
 
 static int attention_weighted_norm(
     yvex_cuda_work *work, CUdeviceptr values, unsigned long long count,
+    unsigned long long vectors,
     const yvex_backend_attention_weight *weight, CUdeviceptr device_weight,
     double epsilon, CUdeviceptr status, const char *stage,
     yvex_backend_attention_failure *failure, yvex_error *err)
 {
-    if (!weight || !weight->present || weight->row_count != 1ull ||
-        weight->row_width != count)
+    if (!weight || !weight->present || !vectors || vectors > UINT_MAX ||
+        weight->row_count != 1ull || weight->row_width != count)
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             count, weight ? weight->row_width : 0ull, err, YVEX_ERR_FORMAT,
@@ -562,10 +567,10 @@ static int attention_weighted_norm(
     {
         void *params[] = {
             &values, &count, &device_weight, (void *)&weight->qtype,
-            &epsilon, &status
+            &epsilon, &vectors, &status
         };
         return attention_launch(
-            work, work->state->deepseek_weighted_norm_function, 1u,
+            work, work->state->deepseek_weighted_norm_function, (unsigned int)vectors,
             1u, 0u, params, stage, failure, err);
     }
 }

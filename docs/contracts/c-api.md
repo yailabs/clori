@@ -283,19 +283,27 @@ token IDs. Token IDs are routing input only. The adapter rejects unsafe files,
 stale identities, malformed layer order or geometry, invalid ranges, payload
 digest mismatch, non-finite values, drift, and resource overflow.
 
-`yvex_runtime_moe_context_open` seals reusable session resources.
-`yvex_runtime_moe_execute_layer` is the in-memory token-local consumer for
-future transformer composition; it accepts one expanded hidden activation and
+`yvex_runtime_moe_context_open` seals reusable session resources and returns
+the exact CUDA workspace requirement derived from the admitted layer geometry
+and maximum row width. `yvex_runtime_moe_execute_layer` is the retained
+token-local CPU/CUDA oracle; it accepts one expanded hidden activation and
 returns distinct router, routed, shared, combined, and deferred mHC post facts.
+`yvex_runtime_moe_execute_layer_rows` is the ordered width-N contract.
+Production CUDA routes the complete row set, constructs one deterministic
+expert-major pair order, executes grouped routed and shared paths, and publishes
+only bounded selected-expert facts after one batch synchronization. Portable,
+audit, and forensic execution retain the row-local oracle.
 `yvex_runtime_moe_execute` executes an ordered all-layer input and publishes
 only after the complete request succeeds. Reset and close preserve session
 isolation and never advance persistent KV or sequence position.
 
-The CPU and CUDA backends consume `yvex_moe_layer_job`. They execute only exact
-selected routed-expert subviews plus the separate shared expert. CUDA performs
-all numerical stages on device and has no CPU fallback. `yvex_moe_operator_result`
-is a copied result surface; it is not capability authority and is not a
-transformer or generation result.
+The CPU and CUDA backends consume `yvex_moe_layer_job`. The retained oracle
+executes exact selected routed-expert subviews plus the separate shared expert;
+the production CUDA row operation consumes resident complete expert packs
+through a private capability table. CUDA performs all numerical stages on
+device and has no CPU fallback. `yvex_moe_operator_result` is a copied result
+surface; it is not capability authority and is not a transformer or generation
+result.
 
 ### Internal Transformer Execution Boundary
 

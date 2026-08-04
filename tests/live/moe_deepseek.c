@@ -148,7 +148,7 @@ static int live_context_open(yvex_runtime_execution_session **session,
     if (requested_options) options = *requested_options;
     rc = yvex_runtime_session_open(session, model, &request, &failure, err);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_moe_context_open(context, model, *session, &options, err);
+        rc = yvex_runtime_moe_context_open(context, model, *session, &options, NULL, err);
     return rc;
 }
 

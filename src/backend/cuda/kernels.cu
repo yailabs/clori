@@ -560,17 +560,19 @@ extern "C" __global__ void yvex_deepseek_decode(
 
 extern "C" __global__ void yvex_deepseek_weighted_norm(
     float *values, unsigned long long count, const unsigned char *weight,
-    unsigned int weight_qtype, double epsilon, int *status)
+    unsigned int weight_qtype, double epsilon, unsigned long long vectors,
+    int *status)
 {
     unsigned int lane = threadIdx.x;
     double mean = 0.0;
     if (!status) return;
-    if (*status != 0 || blockIdx.x != 0u) return;
-    if (!values || !weight || !count || epsilon <= 0.0) {
+    if (*status != 0 || (unsigned long long)blockIdx.x >= vectors) return;
+    if (!values || !weight || !count || !vectors || epsilon <= 0.0) {
         if (lane == 0u) atomicCAS(status, 0, 2);
         return;
     }
     if (lane != 0u) return;
+    values += (unsigned long long)blockIdx.x * count;
     for (unsigned long long i = 0ull; i < count; ++i) {
         double value = (double)values[i];
         if (!isfinite(value)) {
@@ -899,18 +901,24 @@ extern "C" __global__ void yvex_deepseek_mhc_pre(
     unsigned long long stream_width, unsigned long long mixing_rows,
     unsigned long long sinkhorn_iterations, double rms_epsilon,
     double mhc_epsilon, double post_multiplier, float *collapsed,
-    float *post, float *combination, int *status)
+    float *post, float *combination, unsigned long long row_count, int *status)
 {
-    if (!status || blockIdx.x != 0u || threadIdx.x != 0u || *status != 0)
+    unsigned long long batch = (unsigned long long)blockIdx.x;
+    if (!status || batch >= row_count || threadIdx.x != 0u || *status != 0)
         return;
     if (!residual || !linear_mix || !scale || !base || !collapsed || !post ||
-        !combination || !streams || !stream_width || !sinkhorn_iterations ||
+        !combination || !row_count || !streams || !stream_width || !sinkhorn_iterations ||
         mixing_rows != (streams + 2ull) * streams || rms_epsilon <= 0.0 ||
         mhc_epsilon <= 0.0 || post_multiplier <= 0.0) {
         atomicCAS(status, 0, 2);
         return;
     }
     unsigned long long expanded = streams * stream_width;
+    residual += batch * expanded;
+    linear_mix += batch * mixing_rows;
+    collapsed += batch * stream_width;
+    post += batch * streams;
+    combination += batch * streams * streams;
     double squares = 0.0;
     for (unsigned long long lane = 0ull; lane < expanded; ++lane) {
         float value = float_to_bf16_rne(residual[lane]);
@@ -1002,20 +1010,28 @@ extern "C" __global__ void yvex_deepseek_mhc_pre(
 extern "C" __global__ void yvex_deepseek_mhc_post(
     const float *core, const float *residual, const float *post,
     const float *combination, unsigned long long streams,
-    unsigned long long stream_width, float *output, int *status)
+    unsigned long long stream_width, float *output,
+    unsigned long long row_count, int *status)
 {
     unsigned long long index =
         (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
         (unsigned long long)threadIdx.x;
     unsigned long long expanded = streams * stream_width;
-    if (!status || *status != 0 || index >= expanded) return;
+    unsigned long long total = row_count * expanded;
+    if (!status || *status != 0 || index >= total) return;
     if (!core || !residual || !post || !combination || !output || !streams ||
-        !stream_width) {
+        !stream_width || !row_count) {
         atomicCAS(status, 0, 2);
         return;
     }
-    unsigned long long target = index / stream_width;
-    unsigned long long lane = index % stream_width;
+    unsigned long long batch = index / expanded;
+    unsigned long long local = index % expanded;
+    unsigned long long target = local / stream_width;
+    unsigned long long lane = local % stream_width;
+    core += batch * stream_width;
+    residual += batch * expanded;
+    post += batch * streams;
+    combination += batch * streams * streams;
     double value = (double)post[target] * (double)core[lane];
     for (unsigned long long source = 0ull; source < streams; ++source)
         value += (double)combination[source * streams + target] *

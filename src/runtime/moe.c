@@ -1,5 +1,5 @@
 /*
- * Execute complete token-local MoE blocks through reusable session-owned resources.
+ * Execute complete MoE blocks through reusable session-owned resources.
  *
  * One context binds one model/session and reads only fixed or selected expert ranges. Runtime
  * coordinates admitted graph/backend owners without reconstructing compiler or family truth.
@@ -29,6 +29,9 @@ struct yvex_runtime_moe_context {
     float *scratch, *normalized, *post, *combination;
     float *expert, *routed, *shared, *combined;
     unsigned long long hidden_capacity, residual_capacity;
+    unsigned long long *batch_selected_experts;
+    float *batch_selected_weights;
+    unsigned long long batch_selection_capacity, cuda_workspace_bytes;
     float *candidate_combined, *candidate_post, *candidate_combination;
     unsigned long long candidate_tokens, candidate_layers;
     yvex_device_tensor *device_workspace;
@@ -147,6 +150,8 @@ static int runtime_moe_access(yvex_runtime_moe_context *context,
 static int runtime_moe_buffer_plan(yvex_runtime_moe_context *context, yvex_error *err)
 {
     const yvex_moe_plan_summary *summary = yvex_moe_plan_summary_get(context->plan);
+    const yvex_backend_moe_operations *backend_operations =
+        yvex_backend_moe_operations_get(context->session_view->backend);
     unsigned long long layer_index, slot, total = sizeof(*context), scratch_count, scratch_bytes;
     int cuda = yvex_backend_kind_of(context->session_view->backend) == YVEX_BACKEND_KIND_CUDA;
     for (layer_index = 0ull; layer_index < summary->layer_count; ++layer_index) {
@@ -155,6 +160,21 @@ static int runtime_moe_buffer_plan(yvex_runtime_moe_context *context, yvex_error
             context->hidden_capacity = layer->hidden_width;
         if (layer->residual_streams > context->residual_capacity)
             context->residual_capacity = layer->residual_streams;
+        if (backend_operations) {
+            unsigned long long selection_count, workspace_bytes;
+            if (!yvex_core_u64_mul(context->options.row_capacity,
+                                   layer->experts_per_token, &selection_count) ||
+                backend_operations->workspace_required(
+                    layer, context->options.row_capacity, &workspace_bytes, err) != YVEX_OK)
+                return yvex_error_code(err) == YVEX_OK
+                           ? runtime_moe_refuse(err, YVEX_ERR_BOUNDS,
+                                               "MoE row capacity overflowed")
+                           : yvex_error_code(err);
+            if (selection_count > context->batch_selection_capacity)
+                context->batch_selection_capacity = selection_count;
+            if (workspace_bytes > context->cuda_workspace_bytes)
+                context->cuda_workspace_bytes = workspace_bytes;
+        }
         for (slot = 0ull; slot < YVEX_MOE_WEIGHT_COUNT; ++slot) {
             const yvex_materialized_tensor_binding *binding;
             unsigned long long bytes;
@@ -199,6 +219,24 @@ static int runtime_moe_buffer_plan(yvex_runtime_moe_context *context, yvex_error
         !yvex_core_u64_mul(scratch_count, sizeof(float), &scratch_bytes) ||
         !yvex_core_u64_add(total, scratch_bytes, &total))
         goto overflow;
+    if (context->batch_selection_capacity) {
+        unsigned long long expert_bytes, weight_bytes;
+        if (!yvex_core_u64_mul(context->batch_selection_capacity,
+                               sizeof(*context->batch_selected_experts), &expert_bytes) ||
+            !yvex_core_u64_mul(context->batch_selection_capacity,
+                               sizeof(*context->batch_selected_weights), &weight_bytes) ||
+            !yvex_core_u64_add(total, expert_bytes, &total) ||
+            !yvex_core_u64_add(total, weight_bytes, &total))
+            goto overflow;
+        context->batch_selected_experts = yvex_core_calloc(
+            (size_t)context->batch_selection_capacity,
+            sizeof(*context->batch_selected_experts));
+        context->batch_selected_weights = yvex_core_calloc(
+            (size_t)context->batch_selection_capacity,
+            sizeof(*context->batch_selected_weights));
+        if (!context->batch_selected_experts || !context->batch_selected_weights)
+            goto allocation;
+    }
     if (context->options.maximum_host_bytes && total > context->options.maximum_host_bytes)
         return runtime_moe_refuse(err, YVEX_ERR_BOUNDS, "MoE host buffers exceed their budget");
     context->scratch = (float *)calloc((size_t)scratch_count, sizeof(float));
@@ -226,20 +264,23 @@ static int runtime_moe_cuda_workspace(yvex_runtime_moe_context *context, yvex_er
     if (yvex_runtime_session_summary_copy(context->session, &session_summary, err) != YVEX_OK)
         return yvex_error_code(err);
     if (session_summary.device_workspace_bytes) {
-        if (session_summary.device_workspace_bytes < YVEX_MOE_CUDA_WORKSPACE_BYTES)
+        if (session_summary.device_workspace_bytes < context->cuda_workspace_bytes)
             return runtime_moe_refuse(err, YVEX_ERR_BOUNDS,
                                       "existing CUDA workspace is too small for MoE");
         context->workspace_ready = 1;
         return YVEX_OK;
     }
+    if (!context->cuda_workspace_bytes)
+        return runtime_moe_refuse(err, YVEX_ERR_UNSUPPORTED,
+                                  "CUDA MoE workspace geometry is unavailable");
     if (context->options.maximum_device_bytes &&
-        YVEX_MOE_CUDA_WORKSPACE_BYTES > context->options.maximum_device_bytes)
+        context->cuda_workspace_bytes > context->options.maximum_device_bytes)
         return runtime_moe_refuse(err, YVEX_ERR_BOUNDS, "MoE CUDA workspace exceeds its budget");
     descriptor.name = "moe_workspace";
     descriptor.dtype = YVEX_DTYPE_F32;
     descriptor.rank = 1u;
-    descriptor.dims[0] = YVEX_MOE_CUDA_WORKSPACE_BYTES / sizeof(float);
-    descriptor.bytes = YVEX_MOE_CUDA_WORKSPACE_BYTES;
+    descriptor.dims[0] = context->cuda_workspace_bytes / sizeof(float);
+    descriptor.bytes = context->cuda_workspace_bytes;
     rc = yvex_backend_tensor_alloc(context->session_view->backend, &descriptor,
                                    &context->device_workspace, err);
     if (rc == YVEX_OK)
@@ -254,7 +295,8 @@ static int runtime_moe_cuda_workspace(yvex_runtime_moe_context *context, yvex_er
 
 static int runtime_moe_load_layer(yvex_runtime_moe_context *context,
                                   const yvex_moe_layer_plan *layer,
-                                  unsigned int token_id, yvex_moe_layer_job *job,
+                                  unsigned int token_id, int complete_router_table,
+                                  yvex_moe_layer_job *job,
                                   unsigned long long *bytes_read, yvex_error *err)
 {
     unsigned long long slot;
@@ -292,12 +334,15 @@ static int runtime_moe_load_layer(yvex_runtime_moe_context *context,
         rows = binding->row_count;
         bytes = binding->encoded_bytes;
         if (slot == YVEX_MOE_WEIGHT_ROUTER_TABLE) {
-            if ((unsigned long long)token_id >= layer->hash_table_rows)
+            if (!complete_router_table &&
+                (unsigned long long)token_id >= layer->hash_table_rows)
                 return runtime_moe_refuse(err, YVEX_ERR_BOUNDS,
                                           "MoE token ID exceeds hash router table");
-            bytes = binding->encoded_bytes / binding->row_count;
-            offset = (unsigned long long)token_id * bytes;
-            rows = 1ull;
+            if (!complete_router_table) {
+                bytes = binding->encoded_bytes / binding->row_count;
+                offset = (unsigned long long)token_id * bytes;
+                rows = 1ull;
+            }
         }
         if (runtime_moe_access(context, binding, offset, bytes, &context->fixed[slot],
                                &data, &device_address, err) != YVEX_OK ||
@@ -482,7 +527,7 @@ static int runtime_moe_layer_owned(yvex_runtime_moe_context *context,
         return runtime_moe_refuse(err, !layer || !expanded_input || !token_id_present
                                            ? YVEX_ERR_INVALID_ARG : YVEX_ERR_CANCELLED,
                                   "MoE layer request is invalid or cancelled");
-    rc = runtime_moe_load_layer(context, layer, token_id, &job, &fixed_bytes, err);
+    rc = runtime_moe_load_layer(context, layer, token_id, 0, &job, &fixed_bytes, err);
     job.expanded_input = expanded_input;
     job.device_input = device_input;
     job.device_output = device_output;
@@ -554,12 +599,15 @@ static int runtime_moe_layer_owned(yvex_runtime_moe_context *context,
 
 int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_model *model,
                                   yvex_runtime_execution_session *session,
-                                  const yvex_runtime_moe_options *options, yvex_error *err)
+                                  const yvex_runtime_moe_options *options,
+                                  unsigned long long *cuda_workspace_bytes,
+                                  yvex_error *err)
 {
     yvex_runtime_moe_context *context;
     const yvex_moe_plan_summary *summary;
     int rc;
     if (out) *out = NULL;
+    if (cuda_workspace_bytes) *cuda_workspace_bytes = 0ull;
     if (!out || !model || !session || !options ||
         (options->tensor_scope != YVEX_TENSOR_SCOPE_GLOBAL &&
          options->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT))
@@ -571,6 +619,7 @@ int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_m
     context->model_view = yvex_runtime_model_view_get(model);
     context->session_view = yvex_runtime_session_view_get(session);
     context->options = *options;
+    if (!context->options.row_capacity) context->options.row_capacity = 1ull;
     if (!context->model_view || !context->session_view || context->session_view->model != model ||
         !context->model_view->binding->capabilities.moe_plan_ready ||
         !context->model_view->binding->capabilities.moe_router_ready ||
@@ -602,6 +651,7 @@ int yvex_runtime_moe_context_open(yvex_runtime_moe_context **out, yvex_runtime_m
         yvex_backend_kind_of(context->session_view->backend) == YVEX_BACKEND_KIND_CUDA)
         rc = runtime_moe_cuda_workspace(context, err);
     if (rc != YVEX_OK) goto fail;
+    if (cuda_workspace_bytes) *cuda_workspace_bytes = context->cuda_workspace_bytes;
     *out = context;
     yvex_error_clear(err);
     return YVEX_OK;
@@ -982,22 +1032,32 @@ int yvex_runtime_moe_execute_layer_rows(
     const yvex_moe_layer_plan *layer = context
         ? yvex_moe_plan_layer_at(context->plan, layer_index) : NULL;
     yvex_runtime_session_summary session;
+    const yvex_backend_moe_operations *backend_operations = context
+        ? yvex_backend_moe_operations_get(context->session_view->backend) : NULL;
+    yvex_moe_layer_job batch_job;
+    yvex_moe_row_batch_output staged_output;
     yvex_sha256 routing_hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES], *seen = NULL;
-    unsigned long long row, hidden_count, residual_count, combination_count;
+    unsigned long long row, hidden_count, residual_count, combination_count, fixed_bytes = 0ull;
     int rc = YVEX_OK, locked = 0;
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !plan || !layer || !batch || !output || !result ||
         batch->schema_version != YVEX_MOE_ROW_BATCH_SCHEMA_V1 || !batch->row_count ||
-        batch->row_width != layer->hidden_width * layer->residual_streams ||
+        batch->row_width != layer->expanded_width ||
         batch->row_stride < batch->row_width || !batch->expanded_rows || !batch->token_ids ||
-        !batch->token_ids_present || batch->execution_class != YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE ||
+        !batch->token_ids_present || batch->row_count > context->options.row_capacity ||
+        (batch->execution_class != YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE &&
+         batch->execution_class != YVEX_EXECUTION_CLASS_DEVICE_NATIVE) ||
         (context->options.execution_profile &&
-         (!context->options.execution_profile->token_local_moe_reference ||
+         ((context->options.execution_profile->token_local_moe_reference !=
+           (batch->execution_class == YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE)) ||
           !batch->execution_profile_identity ||
           strcmp(batch->execution_profile_identity,
                  context->options.execution_profile->identity) != 0)) ||
         (!context->options.execution_profile && batch->execution_profile_identity) ||
+        (batch->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE &&
+         (!backend_operations || !batch->device_rows || !batch->device_outputs ||
+          !context->batch_selected_experts || !context->batch_selected_weights)) ||
         !yvex_core_u64_mul(batch->row_count, layer->hidden_width, &hidden_count) ||
         !yvex_core_u64_mul(batch->row_count, layer->residual_streams, &residual_count) ||
         !yvex_core_u64_mul(residual_count, layer->residual_streams, &combination_count) ||
@@ -1027,7 +1087,58 @@ int yvex_runtime_moe_execute_layer_rows(
     }
     yvex_sha256_init(&routing_hash);
     (void)yvex_sha256_update_text(&routing_hash, "yvex.runtime.moe-row-routing.v1");
-    for (row = 0ull; row < batch->row_count && rc == YVEX_OK; ++row) {
+    if (batch->execution_class == YVEX_EXECUTION_CLASS_DEVICE_NATIVE) {
+        unsigned long long reported_unique;
+        staged_output = *output;
+        staged_output.selected_experts = context->batch_selected_experts;
+        staged_output.selected_weights = context->batch_selected_weights;
+        staged_output.selection_capacity = context->batch_selection_capacity;
+        rc = runtime_moe_load_layer(
+            context, layer, batch->token_ids[0], 1, &batch_job, &fixed_bytes, err);
+        if (rc == YVEX_OK) {
+            batch_job.expanded_input = batch->expanded_rows;
+            batch_job.device_input = batch->device_rows;
+            batch_job.device_output = batch->device_outputs;
+            rc = backend_operations->execute_rows(
+                context->session_view->backend, &batch_job, batch, &staged_output,
+                result, err);
+        }
+        reported_unique = result->unique_experts;
+        result->unique_experts = 0ull;
+        for (row = 0ull; row < batch->row_count && rc == YVEX_OK; ++row) {
+            yvex_moe_router_result router = {0};
+            unsigned long long rank;
+            char routing_identity[YVEX_SHA256_HEX_CAP];
+            router.selected_count = layer->experts_per_token;
+            for (rank = 0ull; rank < layer->experts_per_token; ++rank) {
+                unsigned long long index = row * layer->experts_per_token + rank;
+                unsigned long long expert = context->batch_selected_experts[index];
+                if (expert >= layer->routed_experts) {
+                    rc = runtime_moe_refuse(
+                        err, YVEX_ERR_STATE,
+                        "CUDA width-N MoE selected an expert outside its plan");
+                    break;
+                }
+                router.selected_experts[rank] = expert;
+                router.selected_weights[rank] = context->batch_selected_weights[index];
+                if (!seen[expert]) {
+                    seen[expert] = 1u;
+                    result->unique_experts++;
+                }
+            }
+            if (rc == YVEX_OK &&
+                (!yvex_moe_router_result_identity(
+                     &router, layer->routed_experts, routing_identity) ||
+                 !yvex_sha256_update_text(&routing_hash, routing_identity)))
+                rc = runtime_moe_refuse(
+                    err, YVEX_ERR_STATE,
+                    "CUDA width-N MoE routing identity update failed");
+        }
+        if (rc == YVEX_OK && reported_unique != result->unique_experts)
+            rc = runtime_moe_refuse(
+                err, YVEX_ERR_STATE,
+                "CUDA width-N MoE expert grouping disagrees with publication");
+    } else for (row = 0ull; row < batch->row_count && rc == YVEX_OK; ++row) {
         yvex_moe_layer_result staged;
         yvex_device_tensor device_input, device_output;
         const yvex_device_tensor *device_input_ptr = NULL;
@@ -1140,6 +1251,8 @@ int yvex_runtime_moe_context_close(yvex_runtime_moe_context **context, yvex_erro
         free((*context)->fixed[index].data);
     for (index = 0ull; index < 3ull; ++index) free((*context)->selected[index].data);
     free((*context)->scratch);
+    yvex_core_free((*context)->batch_selected_experts);
+    yvex_core_free((*context)->batch_selected_weights);
     free((*context)->candidate_combined);
     free((*context)->candidate_post);
     free((*context)->candidate_combination);
@@ -1220,7 +1333,7 @@ int yvex_runtime_moe_operator_execute(const yvex_moe_operator_request *request,
     options.cancel_requested = request->cancel_requested;
     options.cancel_context = request->cancel_context;
     if (rc == YVEX_OK)
-        rc = yvex_runtime_moe_context_open(&context, model, session, &options, err);
+        rc = yvex_runtime_moe_context_open(&context, model, session, &options, NULL, err);
     if (rc == YVEX_OK) {
         rc = yvex_runtime_cleanup_lease_adopt(cleanup, context, runtime_moe_cleanup, err);
         adopted = rc == YVEX_OK;

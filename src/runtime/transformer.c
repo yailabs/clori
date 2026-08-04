@@ -1,5 +1,4 @@
-/* Compose admitted transformer owners; one transaction spans all blocks through final hidden
- * validation before state publication. */
+/* Compose transformer owners under one transaction through final hidden-state publication. */
 #include <yvex/internal/transformer.h>
 #include <math.h>
 #include <pthread.h>
@@ -37,7 +36,7 @@ struct yvex_runtime_transformer_context {
     yvex_device_tensor *device_global[YVEX_TRANSFORMER_WEIGHT_COUNT];
     float *embedding, *expanded_a, *expanded_b, *candidate_hidden;
     float *moe_combined, *moe_post, *moe_combination, *moe_routed, *moe_shared;
-    unsigned long long token_capacity, host_bytes, final_weight_bytes, execution_count;
+    unsigned long long token_capacity, host_bytes, final_weight_bytes, execution_count, moe_workspace_bytes;
     char workspace_identity[YVEX_SHA256_HEX_CAP];
     pthread_mutex_t mutex;
     int mutex_ready, busy, invalidated;
@@ -724,6 +723,9 @@ int yvex_runtime_transformer_execute_block(
     batch.token_ids = token_ids;
     batch.token_ids_present = 1;
     batch.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
+    if (normal_cuda && context->options.execution_profile &&
+        !context->options.execution_profile->token_local_moe_reference)
+        batch.execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
     batch.execution_profile_identity = context->options.execution_profile
                                            ? context->options.execution_profile->identity : NULL;
     batch_output.combined_rows = context->moe_combined;
@@ -1170,7 +1172,7 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
             input->token_count != 1ull || request->chunk_tokens != 1ull ||
             request->retain_prefix_checkpoints || !session.busy ||
             !session.host_workspace_owned || !session.host_workspace_pinned ||
-            session.device_workspace_bytes < YVEX_MOE_CUDA_WORKSPACE_BYTES ||
+            session.device_workspace_bytes < context->moe_workspace_bytes ||
             !yvex_sha256_hex_valid(session.workspace_identity))
             return transformer_runtime_refuse(
                 err, YVEX_ERR_STATE,
@@ -1192,7 +1194,7 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_prepare_attention_workspace(
             context->session, mode, YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
-            YVEX_ATTENTION_EVIDENCE_NONE, capacity, YVEX_MOE_CUDA_WORKSPACE_BYTES,
+            YVEX_ATTENTION_EVIDENCE_NONE, capacity, context->moe_workspace_bytes,
             &failure, err);
     capacity_summary = yvex_graph_attention_capacity_plan_summary(capacity);
     if (rc == YVEX_OK && mode == YVEX_RUNTIME_MODE_FULL)
@@ -1407,13 +1409,16 @@ int yvex_runtime_transformer_context_open(yvex_runtime_transformer_context **out
     memset(&moe_options, 0, sizeof(moe_options));
     moe_options.maximum_host_bytes = options->maximum_host_bytes;
     moe_options.maximum_device_bytes = options->maximum_device_bytes;
+    moe_options.row_capacity = options->workspace_token_capacity
+                                   ? options->workspace_token_capacity : 1ull;
     moe_options.tensor_scope = options->tensor_scope;
     moe_options.cancel_requested = options->cancel_requested;
     moe_options.cancel_context = options->cancel_context;
     moe_options.defer_cuda_workspace = 1;
     moe_options.evidence_level = options->evidence_level;
     moe_options.execution_profile = options->execution_profile;
-    rc = yvex_runtime_moe_context_open(&context->moe, model, session, &moe_options, err);
+    rc = yvex_runtime_moe_context_open(&context->moe, model, session, &moe_options,
+                                       &context->moe_workspace_bytes, err);
     moe_plan = yvex_runtime_moe_context_plan(context->moe);
     if (rc == YVEX_OK)
         rc = transformer_runtime_plan_facts(
@@ -1446,7 +1451,6 @@ const yvex_runtime_execution_session *yvex_runtime_transformer_context_session(
 {
     return context ? context->session : NULL;
 }
-
 static int transformer_execution_identity(
     const yvex_transformer_plan_summary *plan,
     const yvex_runtime_transformer_request *request,
@@ -1495,7 +1499,6 @@ int yvex_runtime_transformer_context_validate_input(
     return yvex_transformer_input_validate(input, context->plan,
                                            context->model_view->binding, err);
 }
-
 static int transformer_execution_finish(
     yvex_runtime_transformer_context *context,
     const yvex_transformer_input_summary *input_summary,
@@ -1508,7 +1511,6 @@ static int transformer_execution_finish(
     yvex_graph_attention_state_summary after = {0};
     unsigned char layer_digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_error primary = err ? *err : (yvex_error){0}, summary_error;
-
     yvex_error_clear(&summary_error);
     if (transformer_state_summary(context, &after, &summary_error) != YVEX_OK &&
         rc == YVEX_OK) {
@@ -1855,13 +1857,11 @@ int yvex_runtime_transformer_context_close(yvex_runtime_transformer_context **co
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int transformer_runtime_cleanup(void **opaque, yvex_error *err)
 {
     return yvex_runtime_transformer_context_close(
         (yvex_runtime_transformer_context **)opaque, err);
 }
-
 static void transformer_operator_refuse(yvex_transformer_operator_result *result,
                                         const yvex_error *err)
 {

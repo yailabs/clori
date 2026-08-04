@@ -1155,7 +1155,7 @@ static int attn_envelope_pre(attn_run *run) {
         &run->resources,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_FUNCTION],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_FUNCTION], 0ull,
-        run->job->mhc_mixing_rows, run->input, run->mhc_mix, 0,
+        run->job->mhc_mixing_rows, 1ull, run->input, run->mhc_mix, 0,
         run->device_status, "cuda.deepseek_attention.mhc_function",
         run->failure, run->err);
     if (rc == YVEX_OK)
@@ -1173,13 +1173,14 @@ static int attn_envelope_pre(attn_run *run) {
             run->job->mhc_mixing_rows, run->mhc_base, run->device_status,
             "cuda.deepseek_attention.mhc_base", run->failure, run->err);
     if (rc == YVEX_OK) {
+        unsigned long long one = 1ull;
         void *params[] = {
             &run->input, &run->mhc_mix, &run->mhc_scale, &run->mhc_base,
             &streams, &width, (void *)&run->job->mhc_mixing_rows,
             (void *)&run->job->mhc_sinkhorn_iterations,
             (void *)&run->job->rms_epsilon, (void *)&run->job->mhc_epsilon,
             (void *)&run->job->mhc_residual_post_multiplier, &run->core_input,
-            &run->mhc_post, &run->mhc_combination, &run->device_status
+            &run->mhc_post, &run->mhc_combination, &one, &run->device_status
         };
         rc = run->ops->launch(
             &run->resources, run->state->deepseek_mhc_pre_function, 1u, 1u, 0u,
@@ -1187,7 +1188,7 @@ static int attn_envelope_pre(attn_run *run) {
     }
     if (rc == YVEX_OK)
         rc = run->ops->weighted_norm(
-            &run->resources, run->core_input, run->job->hidden_width,
+            &run->resources, run->core_input, run->job->hidden_width, 1ull,
             &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_INPUT_NORM],
             run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_INPUT_NORM],
             run->job->rms_epsilon, run->device_status,
@@ -1206,11 +1207,11 @@ static int attn_project(attn_run *run) {
         &run->resources,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_Q_A],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_Q_A], 0ull,
-        run->job->q_rank, run->core_input, run->q_low, 1, run->device_status,
+        run->job->q_rank, 1ull, run->core_input, run->q_low, 1, run->device_status,
         "cuda.deepseek_attention.q_a", run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->weighted_norm(
-        &run->resources, run->q_low, run->job->q_rank,
+        &run->resources, run->q_low, run->job->q_rank, 1ull,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_Q_A_NORM],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_Q_A_NORM],
         run->job->rms_epsilon, run->device_status,
@@ -1220,18 +1221,18 @@ static int attn_project(attn_run *run) {
         &run->resources,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_Q_B],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_Q_B], 0ull,
-        run->query_width, run->q_low, run->query, 1, run->device_status,
+        run->query_width, 1ull, run->q_low, run->query, 1, run->device_status,
         "cuda.deepseek_attention.q_b", run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->matvec(
         &run->resources,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_KV],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_KV], 0ull,
-        run->job->kv_width, run->core_input, run->raw_kv, 1, run->device_status,
+        run->job->kv_width, 1ull, run->core_input, run->raw_kv, 1, run->device_status,
         "cuda.deepseek_attention.kv", run->failure, run->err);
     if (rc != YVEX_OK) return rc;
     rc = run->ops->weighted_norm(
-        &run->resources, run->raw_kv, run->job->kv_width,
+        &run->resources, run->raw_kv, run->job->kv_width, 1ull,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_KV_NORM],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_KV_NORM],
         run->job->rms_epsilon, run->device_status,
@@ -1287,12 +1288,12 @@ static int attn_rolling_execute(attn_run *run, unsigned int kind) {
     int emit, rc;
     rc = run->ops->matvec(
         &run->resources, &run->job->weights[base], run->weight[base], 0ull,
-        rolling->state_width, run->core_input, device->kv, 0, run->device_status,
+        rolling->state_width, 1ull, run->core_input, device->kv, 0, run->device_status,
         stage, run->failure, run->err);
     if (rc == YVEX_OK)
         rc = run->ops->matvec(
             &run->resources, &run->job->weights[base + 1],
-            run->weight[base + 1], 0ull, rolling->state_width, run->core_input,
+            run->weight[base + 1], 0ull, rolling->state_width, 1ull, run->core_input,
             device->score, 0, run->device_status, stage, run->failure,
             run->err);
     if (rc == YVEX_OK)
@@ -1319,7 +1320,7 @@ static int attn_rolling_execute(attn_run *run, unsigned int kind) {
     }
     if (rc != YVEX_OK || (!emit && !attn_graph_mode(run))) return rc;
     rc = run->ops->weighted_norm(
-        &run->resources, device->value, rolling->head_dimension,
+        &run->resources, device->value, rolling->head_dimension, 1ull,
         &run->job->weights[base + 3], run->weight[base + 3],
         run->job->rms_epsilon, run->device_status, stage, run->failure,
         run->err);
@@ -1349,7 +1350,7 @@ static int attn_index_topk(attn_run *run) {
         &run->resources,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_Q],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_Q], 0ull,
-        run->index_query_extent, run->q_low, run->index_query,
+        run->index_query_extent, 1ull, run->q_low, run->index_query,
         1, run->device_status, "cuda.deepseek_attention.index_query",
         run->failure, run->err);
     if (rc != YVEX_OK) return rc;
@@ -1357,7 +1358,7 @@ static int attn_index_topk(attn_run *run) {
         &run->resources,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_PROJECTION],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_INDEX_PROJECTION], 0ull,
-        run->job->indexer_heads, run->core_input, run->index_weights,
+        run->job->indexer_heads, 1ull, run->core_input, run->index_weights,
         1, run->device_status, "cuda.deepseek_attention.index_weights",
         run->failure, run->err);
     if (rc != YVEX_OK) return rc;
@@ -1454,7 +1455,7 @@ static int attn_reduce(attn_run *run) {
             &run->resources,
             &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_A],
             run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_A],
-            group * run->job->output_rank, run->job->output_rank,
+            group * run->job->output_rank, run->job->output_rank, 1ull,
             group_input, group_output, 1, run->device_status,
             "cuda.deepseek_attention.output_a", run->failure, run->err);
         if (rc != YVEX_OK) return rc;
@@ -1463,7 +1464,7 @@ static int attn_reduce(attn_run *run) {
         &run->resources,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_B],
         run->weight[YVEX_BACKEND_ATTENTION_WEIGHT_OUT_B], 0ull,
-        run->job->hidden_width, run->low, run->final_output,
+        run->job->hidden_width, 1ull, run->low, run->final_output,
         1, run->device_status, "cuda.deepseek_attention.output_b",
         run->failure, run->err);
 }
@@ -1483,10 +1484,11 @@ static int attn_envelope_post(attn_run *run) {
     grid = (unsigned int)((expanded + YVEX_CUDA_ATTN_BLOCK - 1ull) /
                           YVEX_CUDA_ATTN_BLOCK);
     {
+        unsigned long long one = 1ull;
         void *params[] = {
             &run->final_output, &run->input, &run->mhc_post,
             &run->mhc_combination, &streams, &width,
-            &run->envelope_output, &run->device_status
+            &run->envelope_output, &one, &run->device_status
         };
         return run->ops->launch(
             &run->resources, run->state->deepseek_mhc_post_function, grid,

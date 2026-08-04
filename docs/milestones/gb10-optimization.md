@@ -127,6 +127,16 @@ boundary. This earns kernel-bundle identity v3; it changes neither a persisted
 model contract nor public API and creates the compilation boundary needed for
 real width-N MoE without exceeding translation-unit policy.
 
+Production CUDA MoE now consumes the existing width-N runtime contract through
+one backend capability table. Workspace size derives from every admitted layer
+qtype and the compiled row capacity. Each layer routes all rows, builds a
+deterministic expert-major pair order, executes resident routed/shared packs,
+and publishes only selected experts, weights, unique count, and bounded status.
+The independent token-local CPU/CUDA implementation remains reachable only as
+the portable audit/reference oracle. The internal source ABI rebuilds
+atomically; no persisted, wire, public C, execution-profile, or state-layout
+schema changes.
+
 Accepted-prefix promotion now contributes its exact state-residency H2D,
 synchronization and zero kernel/D2H/D2D facts. These counters are deltas around
 the serialized session mutation, not estimates from configured capacity.
@@ -163,7 +173,7 @@ coexistence, typed capacity/page planning, pre-materialization memory refusal,
 the availability-aware production phase ledger, and identity-bound native
 SM121 CUBIN admission.
 It does not yet establish Tensor Core execution, specialized attention,
-width-N production MoE, device
+GB10-competitive grouped MoE or zero per-layer MoE synchronization, device
 stochastic sampling, device-resident DSpark, paged state allocation, prefix
 persistence, continuous batching, competitive throughput, evaluation,
 benchmark qualification, release qualification, or Hugging Face publication.

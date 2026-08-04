@@ -115,21 +115,26 @@ residual, feature, logits, probability, candidate, accepted-prefix and
 workspace values with explicit owner, identity, generation, extent, lifetime,
 synchronization and materialization policy. Production greedy selection uses a
 device argmax and transfers only the selected token and bounded status.
-Stochastic sampling, token-local MoE, incompatible-row output projection,
-DSpark generation attention and host feature projection remain explicitly
-named portable reference adapters. Target-only CUDA generation selects full
-graph execution only when the binding and live Driver capability both admit
-it; the compiled profile records whether eager attention remains. Unsupported
-CUDA operations fail closed; no requested CUDA execution silently falls back
-to CPU.
+Production CUDA MoE routes compatible rows together, orders row/expert pairs
+by expert, executes grouped routed and shared paths, and transfers only bounded
+routing/status facts. Its workspace derives from layer qtypes and admitted row
+capacity instead of a fixed allocation. The token-local CPU/CUDA path remains
+the explicit audit/reference oracle; one final synchronization per MoE layer
+remains optimization debt. Stochastic sampling, incompatible-row output
+projection, DSpark generation attention and host feature projection remain
+explicitly named portable reference adapters. Target-only CUDA generation
+selects full graph execution only when the binding and live Driver capability
+both admit it; the compiled profile records whether eager attention remains.
+Unsupported CUDA operations fail closed; no requested CUDA execution silently
+falls back to CPU.
 
 The CUDA kernel owner emits portable PTX and, for an explicit `sm_121` build,
 an independently identified native CUBIN. Module admission selects the native
 image only when the runtime device is capability 12.1 and includes image class,
-architecture and bytes in kernel-bundle identity v2. A competitive native gate
-refuses PTX-only selection. Binary inspection proves 29 SASS functions in the
-current bundle; it finds no MMA instructions, so this establishes native code
-but makes no Tensor Core claim.
+architecture and ordered module bytes in kernel-bundle identity v3. A
+competitive native gate refuses PTX-only selection. Binary inspection proves
+native SASS but no admitted MMA instruction evidence, so this establishes
+native code without making a Tensor Core claim.
 
 ## Persistent state
 
