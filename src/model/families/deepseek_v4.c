@@ -12,6 +12,7 @@
 #include <yvex/internal/source.h>
 
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdatomic.h>
@@ -970,6 +971,7 @@ static void deepseek_v4_fill_model(
     model->maximum_context = source->max_position_embeddings;
     model->main_layer_count = source->num_hidden_layers;
     model->auxiliary_layer_count = source->dspark_inference_layer_count;
+    model->source_snapshot_identity = source->source_snapshot_identity;
     model->source_header_scan_count = source->header_scan_count;
     model->source_header_tensor_count = source->header_tensor_count;
     model->source_payload_bytes_read = 0u;
@@ -1226,6 +1228,185 @@ static const yvex_deepseek_v4_model_spec *family_ir_model(
     const yvex_deepseek_v4_ir *ir)
 {
     return ir ? &ir->model : NULL;
+}
+
+static int deepseek_execution_hash_finish(
+    yvex_sha256 *hash, char output[YVEX_MODEL_EXECUTION_IDENTITY_CAP])
+{
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+
+    if (!yvex_sha256_final(hash, digest)) return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+static int deepseek_execution_identities(
+    const yvex_deepseek_v4_ir *ir, const char *logical_model_identity,
+    char source_identity[YVEX_MODEL_EXECUTION_IDENTITY_CAP],
+    char schedule_identity[YVEX_MODEL_EXECUTION_IDENTITY_CAP],
+    char state_identity[YVEX_MODEL_EXECUTION_IDENTITY_CAP])
+{
+    yvex_sha256 source, schedule, state;
+    unsigned long long index;
+
+    yvex_sha256_init(&source);
+    yvex_sha256_init(&schedule);
+    yvex_sha256_init(&state);
+    if (!yvex_sha256_update_text(&source, "yvex.source-model.deepseek-v4.v1") ||
+        !yvex_sha256_update_text(&source, ir->model.repository) ||
+        !yvex_sha256_update_text(&source, ir->model.revision) ||
+        !yvex_sha256_update_u64(&source, ir->model.source_snapshot_identity) ||
+        !yvex_sha256_update_text(&schedule, "yvex.attention-schedule.deepseek-v4.v1") ||
+        !yvex_sha256_update_text(&schedule, logical_model_identity) ||
+        !yvex_sha256_update_text(&state, "yvex.persistent-state.deepseek-v4.v1") ||
+        !yvex_sha256_update_text(&state, logical_model_identity))
+        return 0;
+    for (index = 0ull; index < ir->model.main_layer_count; ++index) {
+        const yvex_deepseek_v4_layer_spec *layer = &ir->layers[index];
+#define HASH_SCHEDULE(field) \
+        if (!yvex_sha256_update_u64(&schedule, layer->field)) return 0
+#define HASH_STATE(field) \
+        if (!yvex_sha256_update_u64(&state, layer->field)) return 0
+        HASH_SCHEDULE(layer_index);
+        HASH_SCHEDULE(attention_class);
+        HASH_SCHEDULE(compute_contract);
+        HASH_SCHEDULE(compression_ratio);
+        HASH_SCHEDULE(query_heads);
+        HASH_SCHEDULE(kv_heads);
+        HASH_SCHEDULE(head_dimension);
+        HASH_SCHEDULE(rope_head_dimension);
+        HASH_SCHEDULE(query_lora_rank);
+        HASH_SCHEDULE(output_lora_rank);
+        HASH_SCHEDULE(indexer_heads);
+        HASH_SCHEDULE(indexer_head_dimension);
+        HASH_SCHEDULE(indexer_topk);
+        HASH_STATE(layer_index);
+        HASH_STATE(attention_class);
+        HASH_STATE(kv.class_id);
+        HASH_STATE(kv.compression_ratio);
+        HASH_STATE(kv.sliding_window);
+        HASH_STATE(kv.requires_state_cache);
+        HASH_STATE(kv.requires_uncompressed_tail);
+        HASH_STATE(kv.requires_compressed_core);
+        HASH_STATE(kv.requires_indexer_cache);
+        HASH_STATE(mhc.residual_streams);
+        HASH_STATE(mhc.stream_width);
+#undef HASH_SCHEDULE
+#undef HASH_STATE
+    }
+    return deepseek_execution_hash_finish(&source, source_identity) &&
+           deepseek_execution_hash_finish(&schedule, schedule_identity) &&
+           deepseek_execution_hash_finish(&state, state_identity);
+}
+
+static int family_ir_execution_descriptor(
+    const yvex_deepseek_v4_ir *ir, const char *logical_model_identity,
+    yvex_model_execution_descriptor *descriptor, yvex_error *err)
+{
+    yvex_model_execution_descriptor_request request = {0};
+    const yvex_deepseek_v4_layer_spec *first;
+    char source_identity[YVEX_MODEL_EXECUTION_IDENTITY_CAP];
+    char schedule_identity[YVEX_MODEL_EXECUTION_IDENTITY_CAP];
+    char state_identity[YVEX_MODEL_EXECUTION_IDENTITY_CAP];
+    unsigned long long index, minimum_ratio = ULLONG_MAX, maximum_ratio = 0ull;
+    unsigned long long original_context = 0ull, compressed_rope_theta = 0ull;
+    unsigned long long state_mask = 0ull, confidence_width = 0ull;
+
+    if (!ir || !descriptor || !yvex_sha256_hex_valid(logical_model_identity) ||
+        !ir->model.main_layer_count || !(first = &ir->layers[0]) ||
+        !deepseek_execution_identities(ir, logical_model_identity, source_identity,
+                                       schedule_identity, state_identity)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model.deepseek.execution-descriptor",
+                       "sealed DeepSeek architecture and logical identity are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    for (index = 0ull; index < ir->model.main_layer_count; ++index) {
+        unsigned long long ratio = ir->layers[index].compression_ratio;
+        if (ratio && ratio < minimum_ratio) minimum_ratio = ratio;
+        if (ratio > maximum_ratio) maximum_ratio = ratio;
+        if (ir->layers[index].position.original_context > original_context)
+            original_context = ir->layers[index].position.original_context;
+        if (ratio && !compressed_rope_theta)
+            compressed_rope_theta = ir->layers[index].position.theta;
+    }
+    for (index = 0ull; index < ir->model.auxiliary_layer_count; ++index)
+        if (ir->auxiliary[index].has_confidence_head &&
+            ir->auxiliary[index].confidence_output_width > confidence_width)
+            confidence_width = ir->auxiliary[index].confidence_output_width;
+    if (minimum_ratio == ULLONG_MAX) minimum_ratio = 0ull;
+    if (ir->model.swa_layer_count)
+        state_mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING);
+    if (ir->model.csa_layer_count || ir->model.hca_layer_count)
+        state_mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_COMPRESSED_HISTORY) |
+                      YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_MAIN_ROLLING);
+    if (ir->model.hca_layer_count)
+        state_mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_HCA_HISTORY);
+    if (ir->model.csa_layer_count)
+        state_mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_INDEXER_HISTORY) |
+                      YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_INDEXER_ROLLING);
+    if (first->mhc.residual_streams)
+        state_mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_RESIDUAL_MIXING);
+    if (ir->model.dspark.present)
+        state_mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_DRAFT_PERSISTENT);
+    state_mask |= YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_CANDIDATE_DELTA) |
+                  YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_PREFIX_CHECKPOINT);
+    request = (yvex_model_execution_descriptor_request){
+        .schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1,
+        .logical_model_identity = logical_model_identity,
+        .source_model_identity = source_identity,
+        .attention_schedule_identity = schedule_identity,
+        .persistent_state_identity = state_identity,
+        .maximum_context = ir->model.maximum_context,
+        .original_context = original_context,
+        .rope_scaling = YVEX_MODEL_ROPE_SCALING_YARN,
+        .rope_theta = first->position.theta,
+        .compressed_rope_theta = compressed_rope_theta,
+        .rope_scaling_factor = first->position.scaling_factor,
+        .rope_beta_fast = first->position.beta_fast,
+        .rope_beta_slow = first->position.beta_slow,
+        .layer_count = ir->model.main_layer_count,
+        .hidden_width = ir->model.hidden_size,
+        .vocabulary_size = ir->model.vocabulary_size,
+        .attention_heads = first->query_heads,
+        .kv_heads = first->kv_heads,
+        .head_width = first->head_dimension,
+        .swa_layers = ir->model.swa_layer_count,
+        .csa_layers = ir->model.csa_layer_count,
+        .hca_layers = ir->model.hca_layer_count,
+        .sliding_window = first->kv.sliding_window,
+        .minimum_compression_ratio = minimum_ratio,
+        .maximum_compression_ratio = maximum_ratio,
+        .index_heads = first->indexer_heads,
+        .index_head_width = first->indexer_head_dimension,
+        .index_topk = first->indexer_topk,
+        .residual_streams = first->mhc.residual_streams,
+        .mhc_sinkhorn_iterations = first->mhc.sinkhorn_iterations,
+        .mhc_epsilon = first->mhc.epsilon,
+        .normalization_epsilon = ir->model.final_norm_epsilon,
+        .routed_experts = first->moe.routed_experts,
+        .experts_per_row = first->moe.experts_per_token,
+        .shared_experts = first->moe.shared_experts,
+        .routed_ffn_width = first->moe.expert_intermediate_size,
+        .shared_ffn_width = first->moe.shared_intermediate_size,
+        .hash_router_layer_count = ir->model.hash_router_layer_count,
+        .routed_scaling_factor = first->moe.routed_scaling_factor,
+        .activation_limit = first->moe.activation_limit,
+        .output_input_width = ir->model.output.input_width,
+        .output_vocabulary_size = ir->model.output.vocabulary_size,
+        .proposal_width = ir->model.dspark.block_size,
+        .verification_width_maximum = ir->model.dspark.block_size + 1ull,
+        .draft_layer_count = ir->model.dspark.draft_layer_count,
+        .target_feature_count = ir->model.dspark.target_layer_count,
+        .target_feature_width = ir->model.dspark.target_feature_width,
+        .markov_rank = ir->model.dspark.markov_rank,
+        .confidence_width = confidence_width,
+        .persistent_state_class_mask = state_mask,
+        .bos_token_id = ir->model.tokenizer.bos_token_id,
+        .eos_token_id = ir->model.tokenizer.eos_token_id,
+        .draft_noise_token_id = ir->model.dspark.noise_token_id};
+    for (index = 0ull; index < ir->model.dspark.target_layer_count; ++index)
+        request.target_feature_layers[index] = ir->model.dspark.target_layer_ids[index];
+    return yvex_model_execution_descriptor_seal(&request, descriptor, err);
 }
 
 static unsigned long long family_ir_layer_count(
@@ -1649,6 +1830,7 @@ const yvex_model_family_api *yvex_model_register_deepseek_v4(void)
             family_ir_build_with_allocator,
             family_ir_close,
             family_ir_model,
+            family_ir_execution_descriptor,
             family_ir_layer_count,
             family_ir_layer_at,
             family_ir_auxiliary_count,

@@ -18,7 +18,7 @@ extern "C" {
 #define YVEX_SPECULATION_SCHEMA_V1 1u
 #define YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 1u
 #define YVEX_SPECULATION_MAX_BLOCK 8u
-#define YVEX_SPECULATION_MAX_FEATURE_LAYERS 8u
+#define YVEX_SPECULATION_MAX_FEATURE_LAYERS YVEX_MODEL_EXECUTION_FEATURE_LAYER_CAP
 #define YVEX_SPECULATION_IDENTITY_CAP (YVEX_SHA256_HEX_BYTES + 1u)
 
 typedef struct yvex_speculation_family_policy {
@@ -218,6 +218,9 @@ typedef struct {
     unsigned long long generation_before, generation_after;
     unsigned long long layers_executed, swa_layers, csa_layers, hca_layers;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
+    unsigned long long row_expert_pairs, unique_experts;
+    unsigned long long grouped_expert_operations, expert_subviews_accessed;
+    unsigned long long expert_weight_bytes;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
@@ -242,6 +245,9 @@ typedef struct {
     unsigned long long generation_before, generation_after;
     unsigned long long layers_executed, swa_layers, csa_layers, hca_layers;
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
+    unsigned long long row_expert_pairs, unique_experts;
+    unsigned long long grouped_expert_operations, expert_subviews_accessed;
+    unsigned long long expert_weight_bytes;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;

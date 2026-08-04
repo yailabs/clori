@@ -1,8 +1,4 @@
-/*
- * Compose admitted generic graph mechanisms for the DeepSeek-V4 schedule.
- *
- * Planning reads no payload; incomplete attention remains unsupported. Family evidence.
- */
+/* Compose admitted generic graph mechanisms without reading tensor payloads. */
 #include "src/graph/private.h"
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/graph_state.h>
@@ -1823,15 +1819,29 @@ static const yvex_graph_family_api deepseek_graph_api = {
     .cuda_token_execute = graph_cuda_request_execute,
     .cpu_chunk_execute = graph_cpu_chunk_execute
 };
-const yvex_graph_family_api *yvex_graph_lower_deepseek_v4(void)
-{
-    return &deepseek_graph_api;
+const yvex_graph_family_api *yvex_graph_lower_deepseek_v4(void) { return &deepseek_graph_api; }
+/* Preserve the accepted v7 family projection while v8 consumes sealed source-derived facts. */
+static const yvex_model_execution_descriptor deepseek_legacy_execution = {
+    .schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1, .maximum_context = 1048576ull,
+    .hidden_width = 4096ull, .residual_streams = 4ull, .mhc_sinkhorn_iterations = 20ull,
+    .mhc_epsilon = 1e-6, .normalization_epsilon = 1e-6, .shared_experts = 1ull,
+    .hash_router_layer_count = 3ull, .routed_ffn_width = 2048ull, .shared_ffn_width = 2048ull,
+    .routed_scaling_factor = 1.5, .activation_limit = 10.0, .proposal_width = 5ull,
+    .draft_noise_token_id = 128799ull, .target_feature_count = 3ull,
+    .target_feature_layers = {40ull, 41ull, 42ull}, .target_feature_width = 4096ull,
+    .draft_layer_count = 3ull, .markov_rank = 256ull};
+static const yvex_model_execution_descriptor *deepseek_execution_model(const yvex_runtime_descriptor_summary *runtime) {
+    if (!runtime) return NULL;
+    if (!runtime->model_execution.schema_version) return &deepseek_legacy_execution;
+    return runtime->model_execution.schema_version == YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1
+               ? &runtime->model_execution : NULL;
 }
 static int deepseek_moe_layer(unsigned long long index, const yvex_runtime_descriptor_summary *runtime,
                               const yvex_attention_layer_plan *attention, yvex_moe_layer_plan *out,
                               yvex_error *err)
 {
-    if (!runtime || !attention || !out || attention->ordinal != index ||
+    const yvex_model_execution_descriptor *model = deepseek_execution_model(runtime);
+    if (!model || !attention || !out || attention->ordinal != index ||
         (attention->tensor_scope == YVEX_TENSOR_SCOPE_MAIN_LAYER &&
          (attention->layer_index >= runtime->layer_count ||
           attention->predictor_index != YVEX_MATERIALIZATION_NO_INDEX)) ||
@@ -1846,26 +1856,26 @@ static int deepseek_moe_layer(unsigned long long index, const yvex_runtime_descr
     }
     memset(out, 0, sizeof(*out));
     out->schema_version = YVEX_MOE_PLAN_SCHEMA_V1; out->ordinal = index;
-    out->layer_index = attention->layer_index;
-    out->predictor_index = attention->predictor_index;
+    out->layer_index = attention->layer_index; out->predictor_index = attention->predictor_index;
     out->tensor_scope = attention->tensor_scope;
     out->router_class = attention->tensor_scope == YVEX_TENSOR_SCOPE_MAIN_LAYER &&
-                                attention->layer_index < 3ull
+                                attention->layer_index < model->hash_router_layer_count
                             ? YVEX_MOE_ROUTER_HASH_TOKEN_ID :
                                       YVEX_MOE_ROUTER_LEARNED_HIDDEN_STATE;
     out->scoring = YVEX_MOE_SCORING_SQRT_SOFTPLUS; out->topk_policy = YVEX_MOE_TOPK_NOAUX_TC;
     out->activation = YVEX_MOE_ACTIVATION_SILU; out->hidden_width = attention->hidden_dimension;
-    out->residual_streams = attention->residual_stream_count; out->expanded_width = attention->residual_expanded_width;
-    out->mhc_mixing_rows = attention->mhc_mixing_rows;
+    out->residual_streams = attention->residual_stream_count;
+    out->expanded_width = attention->residual_expanded_width; out->mhc_mixing_rows = attention->mhc_mixing_rows;
     out->mhc_sinkhorn_iterations = attention->mhc_sinkhorn_iterations;
     out->rms_epsilon = attention->rms_norm_epsilon; out->mhc_epsilon = attention->mhc_epsilon;
     out->mhc_post_multiplier = attention->mhc_residual_post_multiplier;
-    out->routed_experts = runtime->routed_experts; out->shared_experts = 1ull;
+    out->routed_experts = runtime->routed_experts; out->shared_experts = model->shared_experts;
     out->experts_per_token = runtime->experts_per_token;
-    out->expert_intermediate_width = out->shared_intermediate_width = 2048ull;
+    out->expert_intermediate_width = model->routed_ffn_width;
+    out->shared_intermediate_width = model->shared_ffn_width;
     out->hash_table_rows = runtime->vocabulary_size; out->hash_table_columns = out->experts_per_token;
-    out->correction_bias_width = out->routed_experts; out->routed_scaling_factor = 1.5;
-    out->activation_limit = 10.0;
+    out->correction_bias_width = out->routed_experts;
+    out->routed_scaling_factor = model->routed_scaling_factor; out->activation_limit = model->activation_limit;
     out->requires_token_ids = out->router_class == YVEX_MOE_ROUTER_HASH_TOKEN_ID;
     out->requires_correction_bias = !out->requires_token_ids; out->normalize_topk_probabilities = 1;
     yvex_error_clear(err);
@@ -1877,8 +1887,7 @@ const yvex_moe_family_api *yvex_graph_moe_family_at(unsigned long long index) {
     return index == 0ull ? &deepseek_moe_api : NULL;
 }
 static int deepseek_mixer_capability(yvex_sequence_mixer_semantics semantics,
-                                     yvex_runtime_mixer_capability *out)
-{
+                                     yvex_runtime_mixer_capability *out) {
     if (!out) return 0;
     out->family = YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION;
     out->semantics = semantics;
@@ -1895,8 +1904,7 @@ static int deepseek_mixer_capability(yvex_sequence_mixer_semantics semantics,
     }
     return 1;
 }
-static int deepseek_execution_capabilities(yvex_runtime_capabilities *out)
-{
+static int deepseek_execution_capabilities(yvex_runtime_capabilities *out) {
     if (!out) return 0;
     *out = (yvex_runtime_capabilities){
         .attention_semantics_ready = 1, .attention_core_ready = 1,
@@ -1905,62 +1913,64 @@ static int deepseek_execution_capabilities(yvex_runtime_capabilities *out)
         .cuda_piecewise_graph_implemented = 1, .cuda_full_graph_implemented = 1,
         .attention_state_delta_ready = 1, .attention_operator_ready = 1,
         .attention_trace_ready = 1, .attention_profile_ready = 1,
-        .attention_benchmark_ready = 1, .moe_plan_ready = 1,
-        .moe_router_ready = 1, .moe_routed_expert_ready = 1,
+        .attention_benchmark_ready = 1, .moe_plan_ready = 1, .moe_router_ready = 1,
+        .moe_routed_expert_ready = 1,
         .moe_shared_expert_ready = 1, .moe_block_ready = 1, .transformer_ready = 1,
         .output_head_binding_ready = 1, .output_head_projection_ready = 1,
         .logits_cpu_ready = 1, .logits_cuda_ready = 1, .logits_prefill_ready = 1,
         .logits_decode_ready = 1, .logits_full_vocabulary_ready = 1,
-        .logits_hidden_contract_ready = 1, .logits_partial_progress_ready = 1,
-        .logits_ready = 1};
+        .logits_hidden_contract_ready = 1, .logits_partial_progress_ready = 1, .logits_ready = 1};
     return yvex_runtime_capabilities_contract_valid(out);
 }
-static int deepseek_transformer_policy(yvex_transformer_family_policy *out)
-{
-    if (!out) return 0;
+static int deepseek_transformer_policy(const yvex_runtime_descriptor_summary *runtime,
+                                       yvex_transformer_family_policy *out) {
+    const yvex_model_execution_descriptor *model = deepseek_execution_model(runtime);
+    unsigned long long expanded_width;
+    if (!model || !out || !yvex_core_u64_mul(model->residual_streams, model->hidden_width,
+                                              &expanded_width)) return 0;
     *out = (yvex_transformer_family_policy){
         .schema_version = YVEX_TRANSFORMER_PLAN_SCHEMA_V2,
         .initial_policy = YVEX_TRANSFORMER_INITIAL_REPEAT_STREAMS,
         .final_policy = YVEX_TRANSFORMER_FINAL_SIGMOID_MHC_RMS,
-        .residual_streams = 4ull, .hidden_width = 4096ull,
-        .expanded_width = 16384ull, .maximum_context = 1048576ull,
-        .sinkhorn_iterations = 20ull, .mhc_epsilon = 1e-6,
-        .output_norm_epsilon = 1e-6, .attention_then_moe = 1,
-        .deferred_ffn_post = 1, .final_norm_after_head = 1};
+        .residual_streams = model->residual_streams, .hidden_width = model->hidden_width,
+        .expanded_width = expanded_width, .maximum_context = model->maximum_context,
+        .sinkhorn_iterations = model->mhc_sinkhorn_iterations, .mhc_epsilon = model->mhc_epsilon,
+        .output_norm_epsilon = model->normalization_epsilon,
+        .attention_then_moe = 1, .deferred_ffn_post = 1, .final_norm_after_head = 1};
     return 1;
 }
-static int deepseek_logits_policy(yvex_logits_family_policy *out)
-{
+static int deepseek_logits_policy(yvex_logits_family_policy *out) {
     if (!out) return 0;
     *out = (yvex_logits_family_policy){
         .schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1,
         .separate_output_head = 1, .tied_output_head = 0, .output_head_bias = 0};
     return 1;
 }
-static int deepseek_speculation_policy(yvex_speculation_family_policy *out)
-{
+static int deepseek_speculation_policy(const yvex_runtime_descriptor_summary *runtime,
+                                       yvex_speculation_family_policy *out) {
+    const yvex_model_execution_descriptor *model = deepseek_execution_model(runtime);
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long index;
-    if (!out) return 0;
+    unsigned long long index, feature_width;
+    if (!model || !out || model->target_feature_count > YVEX_SPECULATION_MAX_FEATURE_LAYERS ||
+        !yvex_core_u64_mul(model->target_feature_count, model->target_feature_width,
+                           &feature_width)) return 0;
     *out = (yvex_speculation_family_policy){
         .schema_version = YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1,
-        .block_size = 5ull, .noise_token_id = 128799ull,
-        .target_feature_layer_count = 3ull,
-        .target_feature_layers = {40ull, 41ull, 42ull},
-        .target_feature_width = 4096ull,
-        .concatenated_feature_width = 12288ull,
-        .draft_layer_count = 3ull, .markov_rank = 256ull,
-        .accepted_prefix_maximum = 5ull,
+        .block_size = model->proposal_width, .noise_token_id = model->draft_noise_token_id,
+        .target_feature_layer_count = model->target_feature_count, .target_feature_width = model->target_feature_width,
+        .concatenated_feature_width = feature_width,
+        .draft_layer_count = model->draft_layer_count, .markov_rank = model->markov_rank,
+        .accepted_prefix_maximum = model->proposal_width,
         .feature_projection_role = YVEX_TENSOR_ROLE_DRAFT_FEATURE_PROJECTION,
         .feature_norm_role = YVEX_TENSOR_ROLE_DRAFT_FEATURE_NORM,
         .output_norm_role = YVEX_TENSOR_ROLE_DRAFT_OUTPUT_NORM,
         .markov_embedding_role = YVEX_TENSOR_ROLE_DRAFT_MARKOV_EMBEDDING,
         .markov_output_role = YVEX_TENSOR_ROLE_DRAFT_MARKOV_OUTPUT,
         .confidence_role = YVEX_TENSOR_ROLE_DRAFT_CONFIDENCE,
-        .parallel_block_backbone = 1, .sequential_markov = 1,
-        .confidence_available = 1, .shares_embedding = 1,
-        .shares_output_head = 1, .target_verification_required = 1};
+        .parallel_block_backbone = 1, .sequential_markov = 1, .confidence_available = 1,
+        .shares_embedding = 1, .shares_output_head = 1, .target_verification_required = 1};
+    memcpy(out->target_feature_layers, model->target_feature_layers, sizeof(out->target_feature_layers));
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.deepseek-v4.dspark.policy.v1") ||
         !yvex_sha256_update_u64(&hash, out->block_size) ||
@@ -1969,8 +1979,7 @@ static int deepseek_speculation_policy(yvex_speculation_family_policy *out)
         !yvex_sha256_update_u64(&hash, out->target_feature_width) ||
         !yvex_sha256_update_u64(&hash, out->concatenated_feature_width) ||
         !yvex_sha256_update_u64(&hash, out->draft_layer_count) ||
-        !yvex_sha256_update_u64(&hash, out->markov_rank))
-        return 0;
+        !yvex_sha256_update_u64(&hash, out->markov_rank)) return 0;
     for (index = 0ull; index < out->target_feature_layer_count; ++index)
         if (!yvex_sha256_update_u64(&hash, out->target_feature_layers[index])) return 0;
     if (!yvex_sha256_final(&hash, digest)) return 0;
@@ -1978,21 +1987,14 @@ static int deepseek_speculation_policy(yvex_speculation_family_policy *out)
     return 1;
 }
 static const yvex_runtime_family_adapter deepseek_adapter = {
-    .schema_version = YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V2,
-    .adapter_id = 0x44535634ull, .adapter_version = 7ull,
-    .target_id = "deepseek4-v4-flash-dspark",
-    .family_name = "deepseek-v4-flash-dspark",
-    .operator_family_key = "deepseek",
-    .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
+    .schema_version = YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3, .adapter_id = 0x44535634ull, .adapter_version = 7ull,
+    .target_id = "deepseek4-v4-flash-dspark", .family_name = "deepseek-v4-flash-dspark",
+    .operator_family_key = "deepseek", .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
     .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,
-    .mixer_family = YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION,
-    .mixer_capability = deepseek_mixer_capability,
-    .graph = yvex_graph_lower_deepseek_v4,
-    .execution_capabilities = deepseek_execution_capabilities,
-    .transformer_policy = deepseek_transformer_policy,
-    .logits_policy = deepseek_logits_policy,
+    .mixer_family = YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION, .mixer_capability = deepseek_mixer_capability,
+    .graph = yvex_graph_lower_deepseek_v4, .execution_capabilities = deepseek_execution_capabilities,
+    .transformer_policy = deepseek_transformer_policy, .logits_policy = deepseek_logits_policy,
     .speculation_policy = deepseek_speculation_policy};
-const yvex_runtime_family_adapter *yvex_runtime_family_at(unsigned long long index)
-{
+const yvex_runtime_family_adapter *yvex_runtime_family_at(unsigned long long index) {
     return index == 0ull ? &deepseek_adapter : NULL;
 }

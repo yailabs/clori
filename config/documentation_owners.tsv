@@ -15,6 +15,7 @@ docs/audits/code-commentary-7c90ce1/README.md	audit	frozen	contributors	frozen	c
 docs/audits/documentation-architecture-51a5c/README.md	audit	frozen	contributors	frozen	documentation_architecture_baseline_audit
 docs/audits/documentation-architecture-51a5c/findings.md	audit	frozen	contributors	frozen	documentation_architecture_baseline_findings
 docs/audits/execution-substrate-dd91fb/README.md	audit	frozen	contributors	frozen	execution_substrate_baseline_and_disposition_audit
+docs/audits/gb10-optimization-691814/README.md	audit	frozen	contributors	frozen	gb10_optimization_baseline_audit
 docs/audits/operator-surface-ec7dcc/README.md	audit	frozen	contributors	frozen	operator_surface_audit
 docs/audits/operator-surface-ec7dcc/findings.md	audit	frozen	contributors	frozen	operator_surface_findings
 docs/audits/operator-surface-ec7dcc/project-control-input.md	audit	frozen	contributors	frozen	operator_audit_project_control_input
@@ -48,6 +49,7 @@ docs/milestones/code-commentary.md	milestone	canonical	contributors	accepted	cod
 docs/milestones/command-architecture.md	milestone	canonical	contributors	accepted	command_architecture_boundary
 docs/milestones/deepseek-dspark-rebase.md	milestone	canonical	contributors	accepted	deepseek_dspark_rebase_boundary
 docs/milestones/documentation-architecture.md	milestone	canonical	contributors	accepted	documentation_architecture_boundary
+docs/milestones/gb10-optimization.md	milestone	canonical	contributors	planned	gb10_optimization_boundary
 docs/milestones/product-architecture.md	milestone	canonical	contributors	accepted	execution_substrate_refoundation_boundary
 docs/milestones/repository-compression.md	milestone	canonical	contributors	accepted	repository_architecture_compression_boundary
 docs/milestones/runtime-console-repl.md	milestone	canonical	contributors	accepted	runtime_console_boundary

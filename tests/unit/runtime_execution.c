@@ -11,6 +11,254 @@ static void execution_test_identity(char output[YVEX_SHA256_HEX_CAP], char digit
     output[YVEX_SHA256_HEX_CAP - 1u] = '\0';
 }
 
+static int execution_test_planning(void)
+{
+    char logical[YVEX_SHA256_HEX_CAP], source[YVEX_SHA256_HEX_CAP];
+    char schedule[YVEX_SHA256_HEX_CAP], state[YVEX_SHA256_HEX_CAP];
+    yvex_model_execution_descriptor_request model_request = {0};
+    yvex_model_execution_descriptor model, changed;
+    yvex_execution_hardware_profile hardware = {0};
+    yvex_execution_workload_profile workload = {0};
+    yvex_execution_capacity_plan_request capacity_request = {0};
+    yvex_execution_capacity_plan capacity, repeated;
+    yvex_execution_state_class_request states[YVEX_MODEL_STATE_CLASS_COUNT] = {{0}};
+    unsigned char wire[YVEX_MODEL_EXECUTION_WIRE_BYTES];
+    unsigned long long index;
+    yvex_error err;
+
+    execution_test_identity(logical, 'a');
+    execution_test_identity(source, 'b');
+    execution_test_identity(schedule, 'c');
+    execution_test_identity(state, 'd');
+    model_request.schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1;
+    model_request.logical_model_identity = logical;
+    model_request.source_model_identity = source;
+    model_request.attention_schedule_identity = schedule;
+    model_request.persistent_state_identity = state;
+    model_request.maximum_context = 1048576ull;
+    model_request.original_context = 65536ull;
+    model_request.rope_scaling = YVEX_MODEL_ROPE_SCALING_YARN;
+    model_request.rope_theta = 10000ull;
+    model_request.compressed_rope_theta = 160000ull;
+    model_request.rope_scaling_factor = 16ull;
+    model_request.rope_beta_fast = 32ull;
+    model_request.rope_beta_slow = 1ull;
+    model_request.layer_count = 43ull;
+    model_request.hidden_width = 4096ull;
+    model_request.vocabulary_size = 129280ull;
+    model_request.attention_heads = 32ull;
+    model_request.kv_heads = 32ull;
+    model_request.head_width = 128ull;
+    model_request.swa_layers = 10ull;
+    model_request.csa_layers = 20ull;
+    model_request.hca_layers = 13ull;
+    model_request.sliding_window = 128ull;
+    model_request.minimum_compression_ratio = 4ull;
+    model_request.maximum_compression_ratio = 128ull;
+    model_request.index_heads = 64ull;
+    model_request.index_head_width = 128ull;
+    model_request.index_topk = 512ull;
+    model_request.residual_streams = 4ull;
+    model_request.mhc_sinkhorn_iterations = 20ull;
+    model_request.mhc_epsilon = 1e-6;
+    model_request.normalization_epsilon = 1e-6;
+    model_request.routed_experts = 256ull;
+    model_request.experts_per_row = 6ull;
+    model_request.shared_experts = 1ull;
+    model_request.routed_ffn_width = 2048ull;
+    model_request.shared_ffn_width = 2048ull;
+    model_request.hash_router_layer_count = 3ull;
+    model_request.routed_scaling_factor = 1.5;
+    model_request.activation_limit = 10.0;
+    model_request.output_input_width = 4096ull;
+    model_request.output_vocabulary_size = 129280ull;
+    model_request.proposal_width = 5ull;
+    model_request.verification_width_maximum = 6ull;
+    model_request.draft_layer_count = 3ull;
+    model_request.target_feature_count = 3ull;
+    model_request.target_feature_layers[0] = 40ull;
+    model_request.target_feature_layers[1] = 41ull;
+    model_request.target_feature_layers[2] = 42ull;
+    model_request.target_feature_width = 4096ull;
+    model_request.markov_rank = 256ull;
+    model_request.confidence_width = 1ull;
+    model_request.persistent_state_class_mask = 0x3ffull;
+    model_request.bos_token_id = 0ull;
+    model_request.eos_token_id = 1ull;
+    model_request.draft_noise_token_id = 128799ull;
+    YVEX_TEST_ASSERT(yvex_model_execution_descriptor_seal(
+                         &model_request, &model, &err) == YVEX_OK,
+                     "source-derived model execution descriptor should seal");
+    YVEX_TEST_ASSERT(yvex_model_execution_descriptor_seal(
+                         &model_request, &changed, &err) == YVEX_OK &&
+                         strcmp(model.identity, changed.identity) == 0,
+                     "model execution descriptor identity should be deterministic");
+    model_request.routed_experts = 128ull;
+    YVEX_TEST_ASSERT(yvex_model_execution_descriptor_seal(
+                         &model_request, &changed, &err) == YVEX_OK &&
+                         strcmp(model.identity, changed.identity) != 0,
+                     "changed synthetic expert geometry should change identity");
+    model_request.routed_experts = 256ull;
+    model_request.layer_count = 42ull;
+    YVEX_TEST_ASSERT(yvex_model_execution_descriptor_seal(
+                         &model_request, &changed, &err) == YVEX_ERR_INVALID_ARG,
+                     "schedule count must refuse a changed synthetic layer count");
+    model_request.layer_count = 43ull;
+    model_request.maximum_context = 524288ull;
+    YVEX_TEST_ASSERT(yvex_model_execution_descriptor_seal(
+                         &model_request, &changed, &err) == YVEX_OK &&
+                         strcmp(model.identity, changed.identity) != 0,
+                     "changed synthetic context must change execution identity");
+    model_request.maximum_context = 1048576ull;
+    model_request.proposal_width = 4ull;
+    YVEX_TEST_ASSERT(yvex_model_execution_descriptor_seal(
+                         &model_request, &changed, &err) == YVEX_OK &&
+                         strcmp(model.identity, changed.identity) != 0,
+                     "changed synthetic proposal geometry must change execution identity");
+    model_request.proposal_width = 5ull;
+    execution_test_identity(schedule, 'e');
+    model_request.attention_schedule_identity = schedule;
+    YVEX_TEST_ASSERT(yvex_model_execution_descriptor_seal(
+                         &model_request, &changed, &err) == YVEX_OK &&
+                         strcmp(model.identity, changed.identity) != 0,
+                     "changed synthetic attention schedule must change execution identity");
+    YVEX_TEST_ASSERT(yvex_model_execution_descriptor_encode(&model, wire, &err) == YVEX_OK &&
+                         yvex_model_execution_descriptor_decode(
+                             wire, sizeof(wire), &changed, &err) == YVEX_OK &&
+                         strcmp(model.identity, changed.identity) == 0,
+                     "model execution wire record roundtrips canonically");
+    memset(wire + 24u, 0xff, 8u);
+    YVEX_TEST_ASSERT(yvex_model_execution_descriptor_decode(
+                         wire, sizeof(wire), &changed, &err) == YVEX_ERR_FORMAT,
+                     "model execution wire record refuses an invalid enum value");
+
+    hardware.schema_version = YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1;
+    hardware.backend = YVEX_BACKEND_KIND_CUDA;
+    hardware.admitted_fact_mask =
+        (1ull << YVEX_EXECUTION_HARDWARE_FACT_COUNT) - 1ull;
+    hardware.compute_major = 12;
+    hardware.compute_minor = 1;
+    hardware.sm_count = 48ull;
+    hardware.copy_engine_count = 2ull;
+    hardware.l2_bytes = 24ull * 1024ull * 1024ull;
+    hardware.total_memory_bytes = 128ull * 1024ull * 1024ull * 1024ull;
+    hardware.usable_memory_bytes = 119ull * 1024ull * 1024ull * 1024ull;
+    hardware.sustainable_read_bytes_per_second = 215ull * 1000ull * 1000ull * 1000ull;
+    hardware.sustainable_copy_bytes_per_second = 205ull * 1000ull * 1000ull * 1000ull;
+    hardware.host_page_bytes = 4096ull;
+    hardware.device_page_bytes = 65536ull;
+    hardware.unified_addressing = 1;
+    hardware.coherent_host_memory = 1;
+    hardware.virtual_memory = 1;
+    hardware.graph_capture = 1;
+    hardware.native_architecture_code = 1;
+    memcpy(hardware.name, "gb10-sm121-measured", sizeof("gb10-sm121-measured"));
+    YVEX_TEST_ASSERT(yvex_execution_hardware_profile_seal(&hardware, &err) == YVEX_OK,
+                     "measured hardware profile should seal");
+
+    workload.schema_version = YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1;
+    workload.kind = YVEX_EXECUTION_WORKLOAD_BALANCED_SERVING;
+    workload.minimum_session_context = 65536ull;
+    workload.requested_session_context = 131072ull;
+    workload.concurrent_sequences = 4ull;
+    workload.logical_batch_tokens = 2048ull;
+    workload.prefill_chunk_tokens = 512ull;
+    workload.attention_microbatch_rows = 32ull;
+    workload.moe_row_tile = 128ull;
+    workload.output_head_rows = 32ull;
+    workload.prefix_cache_bytes = 1ull * 1024ull * 1024ull * 1024ull;
+    workload.persistent_state_bytes = 1ull * 1024ull * 1024ull * 1024ull;
+    workload.system_reserve_bytes = 12ull * 1024ull * 1024ull * 1024ull;
+    workload.continuous_batching = 1;
+    workload.prefix_sharing = 1;
+    workload.durable_state = 1;
+    memcpy(workload.name, "balanced-serving", sizeof("balanced-serving"));
+    YVEX_TEST_ASSERT(yvex_execution_workload_profile_seal(&workload, &err) == YVEX_OK,
+                     "bounded serving workload should seal");
+
+    capacity_request.schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
+    capacity_request.model = &model;
+    capacity_request.hardware = &hardware;
+    capacity_request.workload = &workload;
+    capacity_request.model_bytes = 90ull * 1024ull * 1024ull * 1024ull;
+    capacity_request.derived_layout_bytes = 1ull * 1024ull * 1024ull * 1024ull;
+    for (index = 0ull; index < YVEX_MODEL_STATE_CLASS_COUNT; ++index) {
+        states[index].state_class = (yvex_model_state_class)index;
+        states[index].extent = YVEX_EXECUTION_STATE_EXTENT_CONTEXT;
+        states[index].logical_block_tokens = 1ull;
+        states[index].bytes_per_block = 256ull;
+        states[index].alignment_bytes = 256ull;
+        states[index].kernel_tile_tokens = 1ull;
+        states[index].promotion_granularity_tokens = 1ull;
+        states[index].page_table_entry_bytes = 16ull;
+    }
+    states[YVEX_MODEL_STATE_SWA_RING].extent = YVEX_EXECUTION_STATE_EXTENT_FIXED;
+    states[YVEX_MODEL_STATE_SWA_RING].bytes_per_block = 4096ull;
+    states[YVEX_MODEL_STATE_SWA_RING].fixed_tokens_per_sequence = 128ull;
+    states[YVEX_MODEL_STATE_COMPRESSED_HISTORY].logical_block_tokens = 8ull;
+    states[YVEX_MODEL_STATE_COMPRESSED_HISTORY].bytes_per_block = 4096ull;
+    states[YVEX_MODEL_STATE_COMPRESSED_HISTORY].kernel_tile_tokens = 8ull;
+    states[YVEX_MODEL_STATE_HCA_HISTORY].logical_block_tokens = 4ull;
+    states[YVEX_MODEL_STATE_HCA_HISTORY].bytes_per_block = 4096ull;
+    states[YVEX_MODEL_STATE_HCA_HISTORY].kernel_tile_tokens = 4ull;
+    states[YVEX_MODEL_STATE_INDEXER_HISTORY].kernel_tile_tokens = 16ull;
+    for (index = YVEX_MODEL_STATE_MAIN_ROLLING;
+         index <= YVEX_MODEL_STATE_DRAFT_PERSISTENT; ++index) {
+        states[index].extent = YVEX_EXECUTION_STATE_EXTENT_FIXED;
+        states[index].fixed_tokens_per_sequence = 1ull;
+        states[index].bytes_per_block = 4096ull;
+    }
+    states[YVEX_MODEL_STATE_CANDIDATE_DELTA].extent =
+        YVEX_EXECUTION_STATE_EXTENT_CANDIDATE;
+    states[YVEX_MODEL_STATE_CANDIDATE_DELTA].bytes_per_block = 32ull * 1024ull;
+    states[YVEX_MODEL_STATE_CANDIDATE_DELTA].promotion_granularity_tokens = 6ull;
+    states[YVEX_MODEL_STATE_PREFIX_CHECKPOINT].extent =
+        YVEX_EXECUTION_STATE_EXTENT_PREFIX_BUDGET;
+    states[YVEX_MODEL_STATE_PREFIX_CHECKPOINT].kernel_tile_tokens = 16ull;
+    states[YVEX_MODEL_STATE_PREFIX_CHECKPOINT].shared = 1;
+    states[YVEX_MODEL_STATE_PREFIX_CHECKPOINT].copy_on_write = 1;
+    capacity_request.state_classes = states;
+    capacity_request.state_class_count = YVEX_MODEL_STATE_CLASS_COUNT;
+    capacity_request.workspace_bytes = 2ull * 1024ull * 1024ull * 1024ull;
+    capacity_request.scheduler_bytes = 128ull * 1024ull * 1024ull;
+    capacity_request.graph_bytes = 256ull * 1024ull * 1024ull;
+    YVEX_TEST_ASSERT(yvex_execution_capacity_plan_build(
+                         &capacity_request, &capacity, &err) == YVEX_OK &&
+                         capacity.per_session_maximum == 131072ull &&
+                         capacity.concurrent_sequences == 4ull &&
+                         capacity.state_class_count == YVEX_MODEL_STATE_CLASS_COUNT &&
+                         capacity.state_classes[YVEX_MODEL_STATE_SWA_RING].page_tokens == 16ull &&
+                         capacity.state_classes[YVEX_MODEL_STATE_COMPRESSED_HISTORY].page_tokens ==
+                             128ull &&
+                         capacity.state_classes[YVEX_MODEL_STATE_CANDIDATE_DELTA].page_tokens ==
+                             6ull &&
+                         capacity.system_reserve_bytes ==
+                             12ull * 1024ull * 1024ull * 1024ull,
+                     "capacity planner should derive distinct state-class page geometries");
+    YVEX_TEST_ASSERT(yvex_execution_capacity_plan_build(
+                         &capacity_request, &repeated, &err) == YVEX_OK &&
+                         strcmp(capacity.identity, repeated.identity) == 0,
+                     "capacity plan identity should be deterministic");
+    {
+        yvex_execution_state_class_request swap = states[0];
+        states[0] = states[1];
+        states[1] = swap;
+        YVEX_TEST_ASSERT(yvex_execution_capacity_plan_build(
+                             &capacity_request, &repeated, &err) ==
+                             YVEX_ERR_INVALID_ARG,
+                         "state-class planning order must be canonical");
+        swap = states[0];
+        states[0] = states[1];
+        states[1] = swap;
+    }
+    hardware.usable_memory_bytes = 96ull * 1024ull * 1024ull * 1024ull;
+    YVEX_TEST_ASSERT(yvex_execution_hardware_profile_seal(&hardware, &err) == YVEX_OK &&
+                         yvex_execution_capacity_plan_build(
+                             &capacity_request, &repeated, &err) == YVEX_ERR_BOUNDS,
+                     "capacity planner should refuse before an unsafe admission");
+    return 0;
+}
+
 static int execution_test_profile(void)
 {
     char identity[YVEX_SHA256_HEX_CAP];
@@ -50,6 +298,83 @@ static int execution_test_profile(void)
                          &request, &second, &err) == YVEX_OK &&
                          strcmp(first.identity, second.identity) != 0,
                      "evidence profile should change execution identity");
+    return 0;
+}
+
+static int execution_test_roofline(void)
+{
+    yvex_execution_hardware_profile hardware = {0};
+    yvex_execution_phase_measurement measurements[YVEX_EXECUTION_ROOFLINE_PHASE_COUNT] = {{0}};
+    yvex_execution_roofline_ledger_request request = {0};
+    yvex_execution_roofline_ledger ledger, repeated;
+    char identity[YVEX_SHA256_HEX_CAP];
+    yvex_error err;
+    unsigned long long index;
+
+    hardware.schema_version = YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1;
+    hardware.backend = YVEX_BACKEND_KIND_CUDA;
+    hardware.admitted_fact_mask =
+        (1ull << YVEX_EXECUTION_HARDWARE_FACT_COUNT) - 1ull;
+    hardware.compute_major = 12;
+    hardware.compute_minor = 1;
+    hardware.sm_count = 48ull;
+    hardware.copy_engine_count = 2ull;
+    hardware.total_memory_bytes = 128ull * 1024ull * 1024ull * 1024ull;
+    hardware.usable_memory_bytes = 119ull * 1024ull * 1024ull * 1024ull;
+    hardware.sustainable_read_bytes_per_second = 200ull * 1000ull * 1000ull * 1000ull;
+    hardware.sustainable_copy_bytes_per_second = 180ull * 1000ull * 1000ull * 1000ull;
+    hardware.host_page_bytes = 4096ull;
+    hardware.device_page_bytes = 65536ull;
+    hardware.unified_addressing = 1;
+    hardware.coherent_host_memory = 1;
+    hardware.virtual_memory = 1;
+    hardware.graph_capture = 1;
+    hardware.native_architecture_code = 1;
+    memcpy(hardware.name, "gb10-roofline-fixture", sizeof("gb10-roofline-fixture"));
+    YVEX_TEST_ASSERT(yvex_execution_hardware_profile_seal(&hardware, &err) == YVEX_OK,
+                     "roofline fixture hardware should seal");
+    for (index = 0ull; index < YVEX_EXECUTION_ROOFLINE_PHASE_COUNT; ++index) {
+        measurements[index].phase = (yvex_execution_roofline_phase)index;
+        measurements[index].active_weight_bytes = (index + 1ull) * 100000000ull;
+        measurements[index].state_bytes = 1000000ull;
+        measurements[index].activation_bytes = 2000000ull;
+        measurements[index].temporary_bytes = 3000000ull;
+        measurements[index].h2d_bytes = 4096ull;
+        measurements[index].d2h_bytes = 64ull;
+        measurements[index].d2d_bytes = 8192ull;
+        measurements[index].kernel_count = 10ull + index;
+        measurements[index].synchronization_count = index;
+        measurements[index].occupancy_parts_per_million = 500000ull;
+        measurements[index].measured_duration_ns = (index + 1ull) * 1000000ull;
+        measurements[index].work_units = 1ull;
+        measurements[index].committed_tokens = index ? 1ull : 0ull;
+    }
+    execution_test_identity(identity, '9');
+    request.schema_version = YVEX_EXECUTION_PHASE_ROOFLINE_SCHEMA_V1;
+    request.hardware = &hardware;
+    request.artifact_identity = identity;
+    request.execution_profile_identity = identity;
+    request.kernel_bundle_identity = identity;
+    request.workload_profile_identity = identity;
+    request.measurements = measurements;
+    request.measurement_count = YVEX_EXECUTION_ROOFLINE_PHASE_COUNT;
+    YVEX_TEST_ASSERT(yvex_execution_roofline_ledger_build(&request, &ledger, &err) == YVEX_OK &&
+                         ledger.phase_count == YVEX_EXECUTION_ROOFLINE_PHASE_COUNT &&
+                         ledger.phases[YVEX_EXECUTION_ROOFLINE_BATCHED_DECODE]
+                                 .optimization_priority == 1ull &&
+                         ledger.phases[YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER]
+                                 .optimization_priority ==
+                             YVEX_EXECUTION_ROOFLINE_PHASE_COUNT &&
+                         ledger.phases[YVEX_EXECUTION_ROOFLINE_DECODE_LAYER]
+                                 .minimum_memory_time_ns > 0ull,
+                     "phase ledger should derive rooflines and measured optimization priority");
+    YVEX_TEST_ASSERT(yvex_execution_roofline_ledger_build(&request, &repeated, &err) == YVEX_OK &&
+                         strcmp(ledger.identity, repeated.identity) == 0,
+                     "equal causal measurements should produce one stable ledger identity");
+    measurements[1].phase = YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER;
+    YVEX_TEST_ASSERT(yvex_execution_roofline_ledger_build(&request, &repeated, &err) ==
+                         YVEX_ERR_INVALID_ARG,
+                     "a duplicated phase must not choose an optimization sequence");
     return 0;
 }
 
@@ -155,7 +480,9 @@ static int execution_test_device_view(void)
 
 int yvex_test_runtime_execution(void)
 {
+    if (execution_test_planning() != 0) return 1;
     if (execution_test_profile() != 0) return 1;
+    if (execution_test_roofline() != 0) return 1;
     if (execution_test_shape() != 0) return 1;
     return execution_test_device_view();
 }

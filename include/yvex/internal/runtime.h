@@ -21,9 +21,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Copy one canonical SHA-256 identity into its fixed-width runtime field. */
-static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_CAP],
-                                              const char *source)
+static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_CAP], const char *source)
 {
     size_t length = source ? strnlen(source, YVEX_SHA256_HEX_CAP - 1u) : 0u;
     memset(destination, 0, YVEX_SHA256_HEX_CAP);
@@ -31,6 +29,8 @@ static inline void yvex_runtime_identity_copy(char destination[YVEX_SHA256_HEX_C
 }
 #define YVEX_RUNTIME_REASON_CAP 256u
 #define YVEX_RUNTIME_BINDING_SCHEMA_V7 7u
+#define YVEX_RUNTIME_BINDING_SCHEMA_V8 8u
+#define YVEX_RUNTIME_BINDING_SCHEMA_CURRENT YVEX_RUNTIME_BINDING_SCHEMA_V8
 #define YVEX_RUNTIME_BINDING_SUFFIX ".yvex-runtime-binding"
 typedef enum {
     YVEX_RUNTIME_BINDING_FAILURE_NONE = 0, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
@@ -52,8 +52,7 @@ typedef struct yvex_runtime_binding_failure {
     const char *reason;
 } yvex_runtime_binding_failure;
 #define YVEX_RUNTIME_MODEL_SCHEMA_V1 1u
-#define YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V1 1u
-#define YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V2 2u
+#define YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3 3u
 #define YVEX_RUNTIME_EXECUTION_DESCRIPTOR_SCHEMA_V2 2u
 typedef enum {
     YVEX_SEQUENCE_MIXER_SOFTMAX_ATTENTION = 0, YVEX_SEQUENCE_MIXER_RECURRENT_LINEAR,
@@ -146,9 +145,9 @@ typedef struct yvex_runtime_family_adapter {
     int (*mixer_capability)(yvex_sequence_mixer_semantics, yvex_runtime_mixer_capability *);
     const yvex_graph_family_api *(*graph)(void);
     int (*execution_capabilities)(yvex_runtime_capabilities *out);
-    int (*transformer_policy)(struct yvex_transformer_family_policy *out);
+    int (*transformer_policy)(const yvex_runtime_descriptor_summary *, struct yvex_transformer_family_policy *);
     int (*logits_policy)(struct yvex_logits_family_policy *out);
-    int (*speculation_policy)(struct yvex_speculation_family_policy *out);
+    int (*speculation_policy)(const yvex_runtime_descriptor_summary *, struct yvex_speculation_family_policy *);
 } yvex_runtime_family_adapter;
 typedef struct {
     const char *directory;
@@ -178,7 +177,8 @@ typedef struct yvex_runtime_binding_summary {
     char profile_identity[YVEX_SHA256_HEX_CAP], quant_execution_identity[YVEX_SHA256_HEX_CAP];
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char materialization_identity[YVEX_SHA256_HEX_CAP], logical_model_identity[YVEX_SHA256_HEX_CAP];
-    char runtime_numeric_identity[YVEX_SHA256_HEX_CAP], runtime_descriptor_identity[YVEX_SHA256_HEX_CAP];
+    char runtime_numeric_identity[YVEX_SHA256_HEX_CAP];
+    char runtime_descriptor_identity[YVEX_SHA256_HEX_CAP], model_execution_identity[YVEX_SHA256_HEX_CAP];
     char attention_plan_identity[YVEX_SHA256_HEX_CAP], moe_plan_identity[YVEX_SHA256_HEX_CAP];
     char draft_attention_plan_identity[YVEX_SHA256_HEX_CAP];
     char draft_moe_plan_identity[YVEX_SHA256_HEX_CAP];

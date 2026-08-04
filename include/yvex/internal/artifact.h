@@ -11,6 +11,7 @@
 #include <yvex/internal/core.h>
 #include <yvex/internal/gguf.h>
 #include <yvex/internal/gguf_writer.h>
+#include <yvex/internal/model.h>
 #include <yvex/model.h>
 #include <yvex/qtype.h>
 #include <yvex/registry.h>
@@ -458,6 +459,7 @@ typedef struct {
     unsigned long long missing_required_bindings, duplicate_bindings, unexpected_bindings;
     unsigned long long layer_count, draft_layer_count, routed_experts, experts_per_token;
     unsigned long long vocabulary_size;
+    yvex_model_execution_descriptor model_execution;
     int tokenizer_metadata_available, graph_execution_ready, generation_ready;
 } yvex_runtime_descriptor_summary;
 typedef struct yvex_runtime_descriptor yvex_runtime_descriptor;
@@ -471,6 +473,7 @@ typedef struct {
     unsigned long long runtime_sparse_topk_policy_count;
     unsigned long long layer_count, draft_layer_count;
     unsigned long long routed_experts, experts_per_token, vocabulary_size;
+    const yvex_model_execution_descriptor *model_execution;
 } yvex_runtime_descriptor_family_facts;
 const char *yvex_runtime_descriptor_failure_name(yvex_runtime_descriptor_failure_code code);
 int yvex_runtime_descriptor_build(yvex_runtime_descriptor **out,

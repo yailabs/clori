@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <build_commit.h>
 #include <yvex/internal/backend.h>
@@ -22,6 +23,416 @@ static int generation_context_refuse(yvex_error *err, yvex_status status,
 {
     yvex_error_set(err, status, "runtime.generation", reason);
     return status;
+}
+
+typedef struct {
+    yvex_execution_state_class_request classes[YVEX_MODEL_STATE_CLASS_COUNT];
+    unsigned long long candidate_bytes_per_token;
+} generation_capacity_geometry;
+
+static unsigned long long generation_capacity_gcd(unsigned long long left,
+                                                   unsigned long long right)
+{
+    while (right) {
+        unsigned long long remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    return left;
+}
+
+static int generation_capacity_lcm(unsigned long long left,
+                                   unsigned long long right,
+                                   unsigned long long *result)
+{
+    unsigned long long divisor;
+    if (!left || !right || !result) return 0;
+    divisor = generation_capacity_gcd(left, right);
+    return yvex_core_u64_mul(left / divisor, right, result);
+}
+
+static int generation_capacity_periodic_add(
+    yvex_execution_state_class_request *state, unsigned long long period,
+    unsigned long long bytes)
+{
+    unsigned long long common, existing, added;
+    if (!state || !period || !bytes) return 0;
+    if (!state->bytes_per_block) {
+        state->extent = YVEX_EXECUTION_STATE_EXTENT_CONTEXT;
+        state->logical_block_tokens = period;
+        state->bytes_per_block = bytes;
+        return 1;
+    }
+    if (state->extent != YVEX_EXECUTION_STATE_EXTENT_CONTEXT ||
+        !generation_capacity_lcm(state->logical_block_tokens, period, &common) ||
+        !yvex_core_u64_mul(state->bytes_per_block,
+                           common / state->logical_block_tokens, &existing) ||
+        !yvex_core_u64_mul(bytes, common / period, &added) ||
+        !yvex_core_u64_add(existing, added, &state->bytes_per_block)) return 0;
+    state->logical_block_tokens = common;
+    return 1;
+}
+
+static int generation_capacity_fixed_add(
+    yvex_execution_state_class_request *state, unsigned long long tokens,
+    unsigned long long bytes_per_token)
+{
+    if (!state || !tokens || !bytes_per_token) return 0;
+    if (!state->bytes_per_block) {
+        state->extent = YVEX_EXECUTION_STATE_EXTENT_FIXED;
+        state->logical_block_tokens = 1ull;
+        state->fixed_tokens_per_sequence = tokens;
+        state->bytes_per_block = bytes_per_token;
+        return 1;
+    }
+    return state->extent == YVEX_EXECUTION_STATE_EXTENT_FIXED &&
+           state->fixed_tokens_per_sequence == tokens &&
+           yvex_core_u64_add(state->bytes_per_block, bytes_per_token,
+                             &state->bytes_per_block);
+}
+
+static int generation_capacity_component_bytes(
+    const yvex_attention_state_component_recipe *component,
+    unsigned long long bank_count, unsigned long long *bytes)
+{
+    unsigned long long values;
+    if (!component || !bytes || !bank_count) return 0;
+    if (component->kind == YVEX_ATTENTION_STATE_COMPONENT_HISTORY) {
+        if (!yvex_core_u64_mul(component->value_width, sizeof(float), &values) ||
+            !yvex_core_u64_add(values, sizeof(unsigned long long), &values) ||
+            !yvex_core_u64_mul(values, bank_count, bytes)) return 0;
+        return 1;
+    }
+    if (!yvex_core_u64_add(component->rolling.kv_state_extent,
+                           component->rolling.score_state_extent, &values) ||
+        !yvex_core_u64_mul(values, sizeof(float), &values) ||
+        !yvex_core_u64_mul(values, bank_count, bytes)) return 0;
+    return 1;
+}
+
+static int generation_capacity_target_component(
+    generation_capacity_geometry *geometry,
+    const yvex_attention_layer_plan *layer,
+    const yvex_attention_state_component_recipe *component)
+{
+    yvex_model_state_class state_class;
+    unsigned long long bytes, candidate;
+    if (!generation_capacity_component_bytes(component, 2ull, &bytes) ||
+        !generation_capacity_component_bytes(component, 1ull, &candidate) ||
+        !yvex_core_u64_add(geometry->candidate_bytes_per_token, candidate,
+                           &geometry->candidate_bytes_per_token)) return 0;
+    switch (component->binding) {
+    case YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY:
+        if (component->capacity && component->binding ==
+                                       YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY) {
+            if (!yvex_core_u64_mul(bytes, 2ull, &bytes)) return 0;
+        }
+        return generation_capacity_fixed_add(
+            &geometry->classes[YVEX_MODEL_STATE_SWA_RING],
+            component->capacity, bytes);
+    case YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY:
+        state_class = layer->attention_class == YVEX_ATTENTION_CLASS_HCA
+                          ? YVEX_MODEL_STATE_HCA_HISTORY
+                          : YVEX_MODEL_STATE_COMPRESSED_HISTORY;
+        return generation_capacity_periodic_add(
+            &geometry->classes[state_class], layer->compression_ratio, bytes);
+    case YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY:
+        return generation_capacity_periodic_add(
+            &geometry->classes[YVEX_MODEL_STATE_INDEXER_HISTORY],
+            layer->compression_ratio, bytes);
+    case YVEX_ATTENTION_STATE_BINDING_MAIN_ROLLING:
+        return generation_capacity_fixed_add(
+            &geometry->classes[YVEX_MODEL_STATE_MAIN_ROLLING], 1ull, bytes);
+    case YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING:
+        return generation_capacity_fixed_add(
+            &geometry->classes[YVEX_MODEL_STATE_INDEXER_ROLLING], 1ull, bytes);
+    default: return 0;
+    }
+}
+
+static int generation_capacity_plan_accumulate(
+    generation_capacity_geometry *geometry,
+    const yvex_attention_plan *attention,
+    const yvex_graph_attention_capacity_plan *capacity, int draft)
+{
+    unsigned long long layer_index;
+    for (layer_index = 0ull; layer_index < yvex_attention_plan_layer_count(attention);
+         ++layer_index) {
+        const yvex_attention_layer_plan *layer =
+            yvex_attention_plan_layer_at(attention, layer_index);
+        const yvex_graph_attention_capacity_layer *capacity_layer =
+            yvex_graph_attention_capacity_plan_layer(capacity, layer_index);
+        unsigned int component_index;
+        if (!layer || !capacity_layer || !capacity_layer->selected) return 0;
+        for (component_index = 0u;
+             component_index < capacity_layer->recipe.component_count;
+             ++component_index) {
+            const yvex_attention_state_component_recipe *component =
+                &capacity_layer->recipe.components[component_index];
+            unsigned long long bytes;
+            if (!draft) {
+                if (!generation_capacity_target_component(
+                        geometry, layer, component)) return 0;
+                continue;
+            }
+            if (component->kind != YVEX_ATTENTION_STATE_COMPONENT_HISTORY ||
+                component->binding != YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY ||
+                !generation_capacity_component_bytes(component, 2ull, &bytes) ||
+                !yvex_core_u64_mul(bytes, 2ull, &bytes) ||
+                !generation_capacity_fixed_add(
+                    &geometry->classes[YVEX_MODEL_STATE_DRAFT_PERSISTENT],
+                    component->capacity, bytes)) return 0;
+        }
+    }
+    return 1;
+}
+
+static void generation_capacity_geometry_initialize(
+    generation_capacity_geometry *geometry,
+    const yvex_model_execution_descriptor *model)
+{
+    unsigned long long index;
+    memset(geometry, 0, sizeof(*geometry));
+    for (index = 0ull; index < YVEX_MODEL_STATE_CLASS_COUNT; ++index) {
+        yvex_execution_state_class_request *state = &geometry->classes[index];
+        if (!(model->persistent_state_class_mask &
+              YVEX_MODEL_STATE_CLASS_BIT(index))) continue;
+        state->state_class = (yvex_model_state_class)index;
+        state->alignment_bytes = 256ull;
+        state->kernel_tile_tokens = 1ull;
+        state->promotion_granularity_tokens = 1ull;
+        state->page_table_entry_bytes = 16ull;
+    }
+}
+
+static int generation_capacity_graph_geometry(
+    yvex_runtime_generation_context *context,
+    const yvex_model_execution_descriptor *model,
+    generation_capacity_geometry *geometry, yvex_error *err)
+{
+    const yvex_graph_family_api *graph = context->model_view->adapter->graph();
+    const yvex_attention_plan *plans[2] = {
+        context->model_view->attention, context->model_view->draft_attention};
+    unsigned long long plan_index;
+    generation_capacity_geometry_initialize(geometry, model);
+    for (plan_index = 0ull; plan_index < 2ull; ++plan_index) {
+        yvex_graph_attention_capacity_request request = {0};
+        yvex_graph_attention_capacity_plan *capacity = NULL;
+        int rc;
+        if (!plans[plan_index]) {
+            if (!plan_index ||
+                (model->persistent_state_class_mask &
+                 YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_DRAFT_PERSISTENT)))
+                return generation_context_refuse(
+                    err, YVEX_ERR_STATE,
+                    "model state geometry requires an unavailable attention plan");
+            continue;
+        }
+        request.scope = YVEX_ATTENTION_PROBE_SCOPE_FULL;
+        request.history_tokens = 0ull;
+        request.start_position = 0ull;
+        request.token_count = context->options.context_capacity;
+        request.execution_count = 1ull;
+        request.use_requested_position = 1;
+        rc = yvex_graph_attention_capacity_plan_build(
+            &capacity, graph, plans[plan_index], &request, err);
+        if (rc == YVEX_OK &&
+            !generation_capacity_plan_accumulate(
+                geometry, plans[plan_index], capacity, plan_index != 0ull))
+            rc = generation_context_refuse(
+                err, YVEX_ERR_BOUNDS,
+                "state-class geometry cannot represent the admitted graph plan");
+        yvex_graph_attention_capacity_plan_close(&capacity);
+        if (rc != YVEX_OK) return rc;
+    }
+    if (model->persistent_state_class_mask &
+        YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_RESIDUAL_MIXING)) {
+        unsigned long long bytes;
+        if (!yvex_core_u64_mul(model->residual_streams, model->hidden_width, &bytes) ||
+            !yvex_core_u64_mul(bytes, sizeof(float), &bytes) ||
+            !generation_capacity_fixed_add(
+                &geometry->classes[YVEX_MODEL_STATE_RESIDUAL_MIXING], 1ull, bytes))
+            return generation_context_refuse(
+                err, YVEX_ERR_BOUNDS,
+                "residual state geometry overflowed");
+    }
+    if (model->persistent_state_class_mask &
+        YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_CANDIDATE_DELTA)) {
+        yvex_execution_state_class_request *candidate =
+            &geometry->classes[YVEX_MODEL_STATE_CANDIDATE_DELTA];
+        candidate->extent = YVEX_EXECUTION_STATE_EXTENT_CANDIDATE;
+        candidate->logical_block_tokens = 1ull;
+        candidate->bytes_per_block = geometry->candidate_bytes_per_token;
+        candidate->promotion_granularity_tokens =
+            model->verification_width_maximum;
+    }
+    if (model->persistent_state_class_mask &
+        YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_PREFIX_CHECKPOINT)) {
+        yvex_execution_state_class_request *prefix =
+            &geometry->classes[YVEX_MODEL_STATE_PREFIX_CHECKPOINT];
+        prefix->extent = YVEX_EXECUTION_STATE_EXTENT_PREFIX_BUDGET;
+        prefix->logical_block_tokens = 1ull;
+        prefix->bytes_per_block = 16ull;
+        prefix->kernel_tile_tokens = model->verification_width_maximum;
+        prefix->shared = 1;
+        prefix->copy_on_write = 1;
+    }
+    return YVEX_OK;
+}
+
+static int generation_capacity_hardware(
+    yvex_runtime_generation_context *context, yvex_error *err)
+{
+    const yvex_runtime_session_view *view =
+        yvex_runtime_session_view_get(context->session);
+    yvex_backend_device_info device;
+    long pages, page_bytes;
+    unsigned long long total;
+    if (!view || !view->backend ||
+        yvex_backend_get_device_info(view->backend, &device, err) != YVEX_OK ||
+        (page_bytes = sysconf(_SC_PAGESIZE)) <= 0)
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "memory-admission hardware facts are unavailable");
+    if (device.kind == YVEX_BACKEND_KIND_CUDA) {
+        total = device.total_memory_bytes;
+    } else {
+        pages = sysconf(_SC_PHYS_PAGES);
+        if (pages <= 0 ||
+            !yvex_core_u64_mul((unsigned long long)pages,
+                               (unsigned long long)page_bytes, &total))
+            return generation_context_refuse(
+                err, YVEX_ERR_STATE,
+                "host memory extent is unavailable");
+    }
+    memset(&context->hardware_profile, 0, sizeof(context->hardware_profile));
+    context->hardware_profile.schema_version =
+        YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1;
+    context->hardware_profile.backend = device.kind;
+    context->hardware_profile.admitted_fact_mask =
+        YVEX_EXECUTION_HARDWARE_FACT_BIT(YVEX_EXECUTION_HARDWARE_FACT_MEMORY) |
+        YVEX_EXECUTION_HARDWARE_FACT_BIT(YVEX_EXECUTION_HARDWARE_FACT_PAGING);
+    context->hardware_profile.device_index = device.device_index;
+    context->hardware_profile.compute_major = device.compute_capability_major;
+    context->hardware_profile.compute_minor = device.compute_capability_minor;
+    context->hardware_profile.total_memory_bytes = total;
+    context->hardware_profile.usable_memory_bytes = total;
+    context->hardware_profile.host_page_bytes = (unsigned long long)page_bytes;
+    context->hardware_profile.device_page_bytes = (unsigned long long)page_bytes;
+    context->hardware_profile.unified_addressing = device.unified_addressing;
+    context->hardware_profile.coherent_host_memory = device.managed_memory;
+    if (device.kind == YVEX_BACKEND_KIND_CUDA)
+        (void)snprintf(context->hardware_profile.name,
+                       sizeof(context->hardware_profile.name),
+                       "cuda-memory-sm%d%d", device.compute_capability_major,
+                       device.compute_capability_minor);
+    else
+        yvex_core_text_copy(context->hardware_profile.name,
+                            sizeof(context->hardware_profile.name),
+                            "cpu-memory");
+    return yvex_execution_hardware_profile_seal(
+        &context->hardware_profile, err);
+}
+
+static int generation_capacity_workload(
+    yvex_runtime_generation_context *context, yvex_error *err)
+{
+    const yvex_model_execution_descriptor *model;
+    const yvex_runtime_descriptor_summary *runtime =
+        yvex_runtime_descriptor_summary_get(context->model_view->descriptor);
+    model = runtime && runtime->model_execution.schema_version
+                ? &runtime->model_execution
+                : NULL;
+    if (!model) return YVEX_OK;
+    memset(&context->workload_profile, 0, sizeof(context->workload_profile));
+    context->workload_profile.schema_version =
+        YVEX_EXECUTION_WORKLOAD_PROFILE_SCHEMA_V1;
+    context->workload_profile.kind =
+        YVEX_EXECUTION_WORKLOAD_INTERACTIVE_LATENCY;
+    context->workload_profile.minimum_session_context =
+        context->options.context_capacity;
+    context->workload_profile.requested_session_context =
+        context->options.context_capacity;
+    context->workload_profile.concurrent_sequences = 1ull;
+    context->workload_profile.logical_batch_tokens =
+        context->options.prefill_chunk_tokens;
+    context->workload_profile.prefill_chunk_tokens =
+        context->options.prefill_chunk_tokens;
+    context->workload_profile.attention_microbatch_rows =
+        context->options.prefill_chunk_tokens;
+    context->workload_profile.moe_row_tile =
+        context->options.prefill_chunk_tokens;
+    context->workload_profile.output_head_rows =
+        context->options.mode == YVEX_GENERATION_MODE_DSPARK
+            ? model->verification_width_maximum
+            : 1ull;
+    context->workload_profile.system_reserve_bytes =
+        YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE;
+    context->workload_profile.latency_priority = 1;
+    yvex_core_text_copy(context->workload_profile.name,
+                        sizeof(context->workload_profile.name),
+                        "interactive-latency");
+    return yvex_execution_workload_profile_seal(
+        &context->workload_profile, err);
+}
+
+static int generation_capacity_build(
+    yvex_runtime_generation_context *context, yvex_error *err)
+{
+    const yvex_runtime_descriptor_summary *runtime =
+        yvex_runtime_descriptor_summary_get(context->model_view->descriptor);
+    const yvex_model_execution_descriptor *model =
+        runtime && runtime->model_execution.schema_version
+            ? &runtime->model_execution
+            : NULL;
+    yvex_runtime_residency_summary residency;
+    generation_capacity_geometry geometry;
+    yvex_execution_state_class_request states[YVEX_MODEL_STATE_CLASS_COUNT];
+    yvex_execution_capacity_plan_request request = {0};
+    unsigned long long workspace, index, count = 0ull;
+    if (!model) return YVEX_OK;
+    if (context->options.context_capacity > model->maximum_context)
+        return generation_context_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "requested context exceeds the model-authored maximum");
+    if (generation_capacity_hardware(context, err) != YVEX_OK ||
+        generation_capacity_workload(context, err) != YVEX_OK ||
+        generation_capacity_graph_geometry(context, model, &geometry, err) != YVEX_OK ||
+        yvex_runtime_residency_snapshot(context->model_view->residency, &residency,
+                                        NULL, NULL, err) != YVEX_OK)
+        return yvex_error_code(err);
+    for (index = 0ull; index < YVEX_MODEL_STATE_CLASS_COUNT; ++index) {
+        if (!(model->persistent_state_class_mask &
+              YVEX_MODEL_STATE_CLASS_BIT(index))) continue;
+        if (!geometry.classes[index].bytes_per_block)
+            return generation_context_refuse(
+                err, YVEX_ERR_STATE,
+                "model-authored state class lacks physical geometry");
+        states[count++] = geometry.classes[index];
+    }
+    if (!yvex_core_u64_mul(context->options.prefill_chunk_tokens,
+                           model->hidden_width, &workspace) ||
+        !yvex_core_u64_mul(workspace, sizeof(float) * 8ull, &workspace) ||
+        !workspace)
+        return generation_context_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "execution workspace geometry overflowed");
+    request.schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
+    request.model = model;
+    request.hardware = &context->hardware_profile;
+    request.workload = &context->workload_profile;
+    request.model_bytes = residency.encoded_bytes;
+    request.state_classes = states;
+    request.state_class_count = count;
+    request.workspace_bytes = workspace;
+    request.scheduler_bytes = 1024ull * 1024ull;
+    request.graph_bytes = 1024ull * 1024ull;
+    if (!request.model_bytes)
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "resident model byte extent is unavailable for capacity admission");
+    return yvex_execution_capacity_plan_build(
+        &request, &context->capacity_plan, err);
 }
 
 static int generation_stops_open(yvex_runtime_generation_context *context,
@@ -328,6 +739,8 @@ int yvex_runtime_generation_context_open(
         yvex_tokenizer_vocab_size(context->tokenizer), err);
     if (rc != YVEX_OK) goto failure;
     rc = generation_execution_profile_build(context, err);
+    if (rc != YVEX_OK) goto failure;
+    rc = generation_capacity_build(context, err);
     if (rc != YVEX_OK) goto failure;
     rc = yvex_execution_shape_registry_open(
         &context->execution_shapes, 128ull, err);

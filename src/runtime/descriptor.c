@@ -402,6 +402,8 @@ static void runtime_compute_identity(yvex_runtime_descriptor *descriptor) {
     yvex_sha256_update_u64(&hash, descriptor->summary.payload_bytes);
     yvex_sha256_update_u64(&hash, descriptor->summary.layer_count);
     yvex_sha256_update_u64(&hash, descriptor->summary.draft_layer_count);
+    if (yvex_sha256_hex_valid(descriptor->summary.model_execution.identity))
+        yvex_sha256_update_text(&hash, descriptor->summary.model_execution.identity);
     for (i = 0ull; i < descriptor->count; ++i) {
         const yvex_runtime_tensor_binding *binding = &descriptor->bindings[i];
         yvex_sha256_update_text(&hash, binding->binding ? binding->binding->name : "");
@@ -544,6 +546,18 @@ int yvex_runtime_descriptor_build(
     if (!descriptor) return yvex_error_code(err);
     runtime_fill_common_summary(descriptor, admission, materialization);
     if (family) {
+        if (family->model_execution &&
+            (family->model_execution->schema_version !=
+                 YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+             !yvex_sha256_hex_valid(family->model_execution->identity) ||
+             strcmp(family->logical_model_identity,
+                    family->model_execution->logical_model_identity) != 0)) {
+            yvex_runtime_descriptor_close(descriptor);
+            return runtime_reject(
+                failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE, NULL,
+                YVEX_MATERIALIZATION_NO_INDEX, 1ull, 0ull, err, YVEX_ERR_FORMAT,
+                "model execution descriptor disagrees with family facts");
+        }
         yvex_runtime_identity_copy(descriptor->summary.logical_model_identity,
                                    family->logical_model_identity);
         yvex_runtime_identity_copy(descriptor->summary.runtime_numeric_identity,
@@ -560,6 +574,8 @@ int yvex_runtime_descriptor_build(
         descriptor->summary.routed_experts = family->routed_experts;
         descriptor->summary.experts_per_token = family->experts_per_token;
         descriptor->summary.vocabulary_size = family->vocabulary_size;
+        if (family->model_execution)
+            descriptor->summary.model_execution = *family->model_execution;
     }
     for (i = 0ull; i < count; ++i) {
         const yvex_materialized_tensor_binding *source =
@@ -630,7 +646,13 @@ int yvex_runtime_descriptor_import(
         !materialization->committed || summary->status != YVEX_RUNTIME_DESCRIPTOR_STATUS_READY ||
         binding_count != summary->tensor_count || binding_count != materialization->tensor_count ||
         strcmp(summary->artifact_identity, materialization->artifact_identity) != 0 ||
-        strcmp(summary->materialization_plan_identity, materialization->plan_identity) != 0)
+        strcmp(summary->materialization_plan_identity, materialization->plan_identity) != 0 ||
+        (summary->model_execution.schema_version &&
+         (summary->model_execution.schema_version !=
+              YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+          !yvex_sha256_hex_valid(summary->model_execution.identity) ||
+          strcmp(summary->logical_model_identity,
+                 summary->model_execution.logical_model_identity) != 0)))
         return runtime_reject(
             failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_INVALID_ARGUMENT, NULL,
             YVEX_MATERIALIZATION_NO_INDEX, summary ? summary->tensor_count : 0ull,

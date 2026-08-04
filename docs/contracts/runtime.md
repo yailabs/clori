@@ -33,6 +33,12 @@ qtype/backend prerequisites, compiled profile, and resource budgets before
 readiness. The runtime imports compiler facts; it does not reconstruct
 transformation or writer plans.
 
+Startup performs bounded binding admission before artifact open. When the
+binding's admitted resident payload exceeds either the caller's host budget or
+available memory after the mandatory 8 GiB reserve, opening refuses with the
+exact capacity component and byte extents. No artifact handle, materialization
+arena or model residency is created before that refusal.
+
 The model owns model-lifetime artifact/binding handles, encoded weights,
 backend resources, tokenizer plan, output-head residency, immutable execution
 descriptors, target and draft plans, and shared caches. A DSpark plan shares the
@@ -159,6 +165,12 @@ Forensic CUDA attention comparison may select the canonical-order numerical
 adapter rather than the production Q8-activation/F32 implementation. The
 adapter exists only to compare every intermediate against the independent
 reference contract; it cannot be selected by a production execution profile.
+
+Descriptor-bearing execution also consumes independently sealed hardware and
+workload profiles plus one capacity plan. Context limits, pooled state,
+candidate and prefix reserves, logical batching, physical row geometry,
+workspace and system reserve remain separately identified. Persistent-state
+page tokens are a per-state-class planning result, not a global runtime flag.
 
 Target prefill/decode, draft width five, verification widths two through six,
 correction, and reset select an execution shape before mutation. The key binds

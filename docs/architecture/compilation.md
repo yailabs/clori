@@ -11,6 +11,7 @@ artifact requirements are in the [Artifact and Admission Contract](../contracts/
 ```text
 verified source snapshot
   -> logical model and canonical tensor roles
+  -> sealed model-execution descriptor
   -> immutable transformation plan
   -> policy-selected physical variant
   -> deterministic transformation execution
@@ -50,6 +51,13 @@ Family owners interpret exact source facts into model topology and canonical
 roles. The transformation plan then binds every terminal output tensor to its
 ordered source contributions and typed operations. Plan construction is
 artifact-neutral and payload-free.
+
+The family projection also seals source-authored context, attention, MoE,
+output, DSpark and persistent-state geometry into one pointer-free
+model-execution descriptor. Common planning consumes that identity-bound
+projection instead of branching on a target name or repeating family
+constants. Synthetic descriptor tests vary its principal dimensions to keep
+the common path model-derived.
 
 Transformation execution reads only the ranges named by the sealed plan. It
 may select, concatenate, permute, aggregate, scale, convert, or quantize as
@@ -103,6 +111,13 @@ compatibility constraints. A compiled execution profile then binds that chain
 to the kernel bundle, hardware, context capacity, mode, workload, evidence
 profile, and portable or device-native adapter class. The warm runtime reopens
 and authenticates admitted facts rather than rebuilding compiler plans.
+
+Runtime binding v8 adds and authenticates the model-execution descriptor that
+v7 cannot represent. The retained v7 reference binding stays readable through
+a family-owned in-memory compatibility projection; descriptor-bearing output
+is written as v8 beside it. Physical Execution IR and compiled execution
+profiles remain schema v1 because this change does not alter their persisted
+facts.
 
 Artifact drift, binding drift, unsupported qtypes, missing roles, resource
 overflow, or incompatible runtime requirements refuse before model execution.

@@ -362,10 +362,13 @@ int yvex_runtime_logits_admit_shared_draft_plan(
 {
     const yvex_transformer_plan_summary *draft =
         yvex_transformer_plan_summary_get(draft_plan);
+    const yvex_runtime_descriptor_summary *runtime =
+        context && context->model_view
+            ? yvex_runtime_descriptor_summary_get(context->model_view->descriptor) : NULL;
     yvex_speculation_family_policy policy;
-    if (!context || !draft || !context->model_view || !context->model_view->adapter ||
+    if (!context || !draft || !runtime || !context->model_view || !context->model_view->adapter ||
         !context->model_view->adapter->speculation_policy ||
-        !context->model_view->adapter->speculation_policy(&policy) ||
+        !context->model_view->adapter->speculation_policy(runtime, &policy) ||
         policy.schema_version != YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 ||
         !policy.shares_output_head || draft->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
         draft->hidden_width != context->plan.summary.hidden_width ||

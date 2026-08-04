@@ -110,8 +110,10 @@ int yvex_runtime_generation_profile_transformer(
     COUNTER(YVEX_RUNTIME_PROFILE_DOWNLOADS, value->download_count);
     COUNTER(YVEX_RUNTIME_PROFILE_CACHE_HITS, value->cache_hits);
     COUNTER(YVEX_RUNTIME_PROFILE_CACHE_MISSES, value->cache_misses);
-    COUNTER(YVEX_RUNTIME_PROFILE_EXPERT_SUBVIEWS, value->routed_experts * 3ull);
-    COUNTER(YVEX_RUNTIME_PROFILE_ROW_EXPERT_PAIRS, value->routed_experts);
+    COUNTER(YVEX_RUNTIME_PROFILE_EXPERT_SUBVIEWS, value->expert_subviews_accessed);
+    COUNTER(YVEX_RUNTIME_PROFILE_ROW_EXPERT_PAIRS, value->row_expert_pairs);
+    COUNTER(YVEX_RUNTIME_PROFILE_UNIQUE_EXPERTS, value->unique_experts);
+    COUNTER(YVEX_RUNTIME_PROFILE_EXPERT_BYTES, value->expert_weight_bytes);
     COUNTER(YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
             value->full_array_host_scan_bytes);
     COUNTER(YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES, value->kernel_launches);
@@ -150,6 +152,11 @@ int yvex_runtime_generation_profile_decode(
     if (!value || !value->completed) return YVEX_OK;
     projected.completed = 1;
     projected.routed_experts = value->routed_experts;
+    projected.row_expert_pairs = value->row_expert_pairs;
+    projected.unique_experts = value->unique_experts;
+    projected.grouped_expert_operations = value->grouped_expert_operations;
+    projected.expert_subviews_accessed = value->expert_subviews_accessed;
+    projected.expert_weight_bytes = value->expert_weight_bytes;
     projected.h2d_bytes = value->h2d_bytes;
     projected.d2h_bytes = value->d2h_bytes;
     projected.d2d_bytes = value->d2d_bytes;

@@ -1,8 +1,6 @@
 /*
- * Persist and reopen the complete immutable input needed to construct a runtime model.
- *
- * Identities cover portable semantic fields; local file snapshots are leased after reopen. The
- * external binding transfers admitted immutable facts into runtime without becoming a cache.
+ * Persist portable runtime-model inputs; reopened local snapshots are leases, never identity or
+ * cache authority.
  */
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/core.h>
@@ -23,7 +21,8 @@
 #ifndef O_NOFOLLOW
 #define O_NOFOLLOW 0
 #endif
-#define BINDING_MAGIC "YVRBND7\0"
+#define BINDING_MAGIC_V7 "YVRBND7\0"
+#define BINDING_MAGIC_V8 "YVRBND8\0"
 #define BINDING_MAGIC_BYTES 8u
 #define BINDING_HEADER_BYTES (BINDING_MAGIC_BYTES + 16u + 64u)
 #define BINDING_MAX_BYTES (64u * 1024u * 1024u)
@@ -55,23 +54,15 @@ static const binding_parse_failure binding_parse_failures[] = {
      "runtime binding record allocation failed"},
 };
 static const yvex_runtime_binding_failure_code binding_file_codes[] = {
-    /* NONE, ARGUMENT */
+    /* Ordered by yvex_core_file_stage. */
     YVEX_RUNTIME_BINDING_FAILURE_FORMAT, YVEX_RUNTIME_BINDING_FAILURE_INVALID_ARGUMENT,
-    /* PATH, CREATE */
     YVEX_RUNTIME_BINDING_FAILURE_DIRECTORY, YVEX_RUNTIME_BINDING_FAILURE_CREATE,
-    /* WRITE, FILE_SYNC */
     YVEX_RUNTIME_BINDING_FAILURE_WRITE, YVEX_RUNTIME_BINDING_FAILURE_SYNC,
-    /* FILE_CLOSE, CONFLICT */
     YVEX_RUNTIME_BINDING_FAILURE_SYNC, YVEX_RUNTIME_BINDING_FAILURE_CONFLICT,
-    /* PUBLISH, DIRECTORY_SYNC */
     YVEX_RUNTIME_BINDING_FAILURE_PUBLISH, YVEX_RUNTIME_BINDING_FAILURE_SYNC,
-    /* OPEN, BOUNDS */
     YVEX_RUNTIME_BINDING_FAILURE_OPEN, YVEX_RUNTIME_BINDING_FAILURE_BOUNDS,
-    /* ALLOCATION, READ */
     YVEX_RUNTIME_BINDING_FAILURE_ALLOCATION, YVEX_RUNTIME_BINDING_FAILURE_TRUNCATED,
-    /* DRIFT, TEMPORARY_UNLINK */
     YVEX_RUNTIME_BINDING_FAILURE_TRUNCATED, YVEX_RUNTIME_BINDING_FAILURE_PUBLISH,
-    /* VALIDATE */
     YVEX_RUNTIME_BINDING_FAILURE_FORMAT,
 };
 struct yvex_runtime_binding {
@@ -181,6 +172,26 @@ static int cursor_text(binding_cursor *cursor, char *out, size_t capacity)
     cursor->offset += (size_t)length;
     return 1;
 }
+static int model_execution_write(binding_bytes *bytes,
+                                 const yvex_model_execution_descriptor *descriptor)
+{
+    unsigned char encoded[YVEX_MODEL_EXECUTION_WIRE_BYTES];
+    yvex_error err;
+    return yvex_model_execution_descriptor_encode(descriptor, encoded, &err) == YVEX_OK &&
+           bytes_put_u64(bytes, sizeof(encoded)) &&
+           yvex_core_bytes_append(bytes, encoded, sizeof(encoded));
+}
+static int model_execution_read(binding_cursor *cursor,
+                                yvex_model_execution_descriptor *descriptor)
+{
+    unsigned char encoded[YVEX_MODEL_EXECUTION_WIRE_BYTES];
+    unsigned long long byte_count;
+    yvex_error err;
+    return cursor_u64(cursor, &byte_count) && byte_count == sizeof(encoded) &&
+           cursor_take(cursor, encoded, sizeof(encoded)) &&
+           yvex_model_execution_descriptor_decode(
+               encoded, sizeof(encoded), descriptor, &err) == YVEX_OK;
+}
 typedef enum {
     BINDING_FIELD_UNSIGNED = 0,
     BINDING_FIELD_SIGNED,
@@ -287,12 +298,7 @@ static int fields_write(binding_bytes *bytes, const void *object,
     }
     return 1;
 }
-/*
- * Decode one field table into an already initialized typed object.
- *
- * Bounded cursor, writable object, and the matching field schema. Decoding neither follows
- * pointers nor validates cross-record identity.
- */
+/* Decode a bounded field table without following pointers or validating cross-record identity. */
 static int fields_read(binding_cursor *cursor, void *object,
                        const binding_field *fields, size_t field_count)
 {
@@ -628,11 +634,7 @@ int yvex_runtime_capabilities_contract_valid(const yvex_runtime_capabilities *fa
              facts->logits_hidden_contract_ready && facts->logits_partial_progress_ready)) &&
            !facts->generation_ready;
 }
-/*
- * Identify one pre-admission execution capability contract field-by-field.
- *
- * Hashes schema and ordered logical values without native padding.
- */
+/* Hash a pre-admission capability contract field-by-field without native padding. */
 int yvex_runtime_capabilities_identity(
     const yvex_runtime_capabilities *facts,
     char output[YVEX_SHA256_HEX_CAP])
@@ -828,11 +830,7 @@ static int read_attention_layer(binding_cursor *cursor, yvex_attention_layer_pla
            fields_read(cursor, &value->sparse_topk, topk_fields, FIELD_COUNT(topk_fields)) &&
            fields_read(cursor, value, layer_tail_fields, FIELD_COUNT(layer_tail_fields));
 }
-/*
- * Identify the first contradiction in one persisted physical-compatibility proof.
- *
- * Exact proof, admitted artifact facts, and current logical transform identity.
- */
+/* Identify the first contradiction in a persisted physical-compatibility proof. */
 static const char *physical_compatibility_mismatch(
     const yvex_artifact_physical_compatibility *proof,
     const yvex_complete_artifact_admission *admission,
@@ -911,12 +909,7 @@ static int binding_identity_chain_valid(
            strcmp(descriptor->runtime_numeric_identity,
                   attention->runtime_numeric_identity) == 0;
 }
-/*
- * Derive graph identities from the exact summaries persisted by a runtime binding.
- *
- * Malformed or incomplete identity inputs leave both outputs empty. Semantic and executable graph
- * identity policy belongs to runtime binding storage.
- */
+/* Derive semantic and executable graph identities from exact persisted summaries. */
 static int binding_graph_identities(
     const yvex_materialization_summary *materialization,
     const yvex_runtime_descriptor_summary *descriptor,
@@ -966,11 +959,7 @@ static int binding_graph_identities(
     yvex_runtime_identity_copy(executable, executable_value);
     return 1;
 }
-/*
- * Validate the sealed identity chain before external serialization starts.
- *
- * Returns a typed lifecycle, bounds, or identity refusal.
- */
+/* Validate the sealed identity chain before external serialization starts. */
 static int prepare_validate(const yvex_runtime_binding_prepare_request *request,
                             char semantic[YVEX_SHA256_HEX_CAP],
                             char executable[YVEX_SHA256_HEX_CAP],
@@ -1101,7 +1090,7 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
                               const char *semantic, const char *executable,
                               const char *moe_identity,
                               const char *draft_moe_identity,
-                              binding_bytes *body)
+                              unsigned int schema, binding_bytes *body)
 {
     yvex_materialization_summary canonical;
     const yvex_artifact_physical_compatibility *compatibility;
@@ -1115,7 +1104,9 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     char capability_identity[YVEX_SHA256_HEX_CAP];
     unsigned long long adapter_id, adapter_version, format_version;
     unsigned long long tensor_count, layer_count, draft_layer_count, i;
-    if (!body || !request) return 0;
+    if (!body || !request ||
+        (schema != YVEX_RUNTIME_BINDING_SCHEMA_V7 &&
+         schema != YVEX_RUNTIME_BINDING_SCHEMA_V8)) return 0;
     body->maximum = BINDING_MAX_BYTES;
     body->initial_capacity = 4096u;
     canonical = materialization_canonical(
@@ -1136,8 +1127,10 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     layer_count = attention->layer_count;
     draft_layer_count = draft_attention ? draft_attention->layer_count : 0ull;
     if (!yvex_runtime_capabilities_identity(capabilities, capability_identity) ||
-        !bytes_put_text(body, "yvex.runtime.binding.payload.v7") ||
-        !bytes_put_u64(body, YVEX_RUNTIME_BINDING_SCHEMA_V7) ||
+        !bytes_put_text(body, schema == YVEX_RUNTIME_BINDING_SCHEMA_V8
+                                  ? "yvex.runtime.binding.payload.v8"
+                                  : "yvex.runtime.binding.payload.v7") ||
+        !bytes_put_u64(body, schema) ||
         !bytes_put_u64(body, adapter_id) || !bytes_put_u64(body, adapter_version) ||
         !bytes_put_text(body, format) || !bytes_put_u64(body, format_version) ||
         !bytes_put_text(body, logical) || !bytes_put_text(body, semantic) ||
@@ -1160,6 +1153,8 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
                                      FIELD_COUNT(material_record_fields))) return 0;
     }
     if (!fields_write(body, descriptor, descriptor_fields, FIELD_COUNT(descriptor_fields)) ||
+        (schema == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
+         !model_execution_write(body, &descriptor->model_execution)) ||
         !bytes_put_u64(body, tensor_count)) return 0;
     for (i = 0ull; i < tensor_count; ++i) {
         const yvex_runtime_tensor_binding *record =
@@ -1187,32 +1182,40 @@ static int binding_body_write(const yvex_runtime_binding_prepare_request *reques
     }
     return 1;
 }
-static int binding_identity(const unsigned char *body, size_t body_bytes,
+static int binding_identity(unsigned int schema, const unsigned char *body, size_t body_bytes,
                             char output[YVEX_SHA256_HEX_CAP])
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.runtime.binding.v7") ||
-        !yvex_sha256_update_u64(&hash, YVEX_RUNTIME_BINDING_SCHEMA_V7) ||
+    if ((schema != YVEX_RUNTIME_BINDING_SCHEMA_V7 &&
+         schema != YVEX_RUNTIME_BINDING_SCHEMA_V8) ||
+        !yvex_sha256_update_text(&hash, schema == YVEX_RUNTIME_BINDING_SCHEMA_V8
+                                            ? "yvex.runtime.binding.v8"
+                                            : "yvex.runtime.binding.v7") ||
+        !yvex_sha256_update_u64(&hash, schema) ||
         !yvex_sha256_update(&hash, body, body_bytes) ||
         !yvex_sha256_final(&hash, digest)) return 0;
     yvex_sha256_hex(digest, output);
     return 1;
 }
-static int build_file(const binding_bytes *body, const char *identity, binding_bytes *file)
+static int build_file(const binding_bytes *body, const char *identity, unsigned int schema,
+                      binding_bytes *file)
 {
     if (!body || !identity || !file) return 0;
     file->maximum = BINDING_MAX_BYTES;
     file->initial_capacity = 4096u;
-    return yvex_core_bytes_append(file, BINDING_MAGIC, BINDING_MAGIC_BYTES) &&
-           bytes_put_u64(file, YVEX_RUNTIME_BINDING_SCHEMA_V7) &&
+    return yvex_core_bytes_append(file, schema == YVEX_RUNTIME_BINDING_SCHEMA_V8
+                                            ? BINDING_MAGIC_V8 : BINDING_MAGIC_V7,
+                                  BINDING_MAGIC_BYTES) &&
+           bytes_put_u64(file, schema) &&
            bytes_put_u64(file, (unsigned long long)body->count) &&
            yvex_core_bytes_append(file, identity, 64u) &&
            yvex_core_bytes_append(file, body->data, body->count);
 }
 static binding_parse_result parse_body(yvex_runtime_binding *binding,
-                                       const unsigned char *data, size_t count)
+                                       const unsigned char *data, size_t count,
+                                       unsigned int expected_schema)
 {
     binding_cursor cursor = {data, count, 0u};
     char domain[64], logical_transform[YVEX_SHA256_HEX_CAP];
@@ -1224,8 +1227,11 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
     unsigned long long material_count, runtime_count, layer_count, draft_present;
     unsigned long long draft_layer_count = 0ull, i;
     if (!cursor_text(&cursor, domain, sizeof(domain)) ||
-        strcmp(domain, "yvex.runtime.binding.payload.v7") != 0 ||
-        !cursor_u64(&cursor, &schema) || schema != YVEX_RUNTIME_BINDING_SCHEMA_V7 ||
+        !cursor_u64(&cursor, &schema) || schema != expected_schema ||
+        !((schema == YVEX_RUNTIME_BINDING_SCHEMA_V7 &&
+           strcmp(domain, "yvex.runtime.binding.payload.v7") == 0) ||
+          (schema == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
+           strcmp(domain, "yvex.runtime.binding.payload.v8") == 0)) ||
         !cursor_u64(&cursor, &family_id) || !family_id ||
         !cursor_u64(&cursor, &family_version) || !family_version ||
         !cursor_text(&cursor, format, sizeof(format)) || !format[0] ||
@@ -1266,6 +1272,8 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
             return BINDING_PARSE_FORMAT;
     if (!record_read(&cursor, &binding->descriptor, sizeof(binding->descriptor),
                      descriptor_fields, FIELD_COUNT(descriptor_fields)) ||
+        (schema == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
+         !model_execution_read(&cursor, &binding->descriptor.model_execution)) ||
         !cursor_u64(&cursor, &runtime_count) || runtime_count != material_count)
         return BINDING_PARSE_FORMAT;
     if (!record_count_fits(&cursor, runtime_count, sizeof(*binding->runtime)))
@@ -1330,11 +1338,7 @@ static binding_parse_result parse_body(yvex_runtime_binding *binding,
                                capability_identity);
     return cursor.offset == cursor.count ? BINDING_PARSE_OK : BINDING_PARSE_FORMAT;
 }
-/*
- * Validate parsed cross-record identities and canonical ordinals.
- *
- * Returns false on lifecycle, identity, count, or ordinal disagreement.
- */
+/* Validate parsed cross-record identities, lifecycle facts, counts, and canonical ordinals. */
 static int binding_validate(const yvex_runtime_binding *binding,
                             const char **field,
                             yvex_runtime_binding_failure_code *code)
@@ -1384,6 +1388,20 @@ static int binding_validate(const yvex_runtime_binding *binding,
         binding->materialization.committed_bindings != 0ull ||
         binding->materialization.aborted_bindings != 0ull ||
         binding->descriptor.status != YVEX_RUNTIME_DESCRIPTOR_STATUS_READY ||
+        (binding->summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
+         (binding->descriptor.model_execution.schema_version !=
+              YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1 ||
+          !yvex_sha256_hex_is_valid(binding->descriptor.model_execution.identity) ||
+          strcmp(binding->descriptor.logical_model_identity,
+                 binding->descriptor.model_execution.logical_model_identity) != 0 ||
+          binding->descriptor.layer_count !=
+              binding->descriptor.model_execution.layer_count ||
+          binding->descriptor.draft_layer_count !=
+              binding->descriptor.model_execution.draft_layer_count ||
+          binding->descriptor.vocabulary_size !=
+              binding->descriptor.model_execution.vocabulary_size)) ||
+        (binding->summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V7 &&
+         binding->descriptor.model_execution.schema_version != 0u) ||
         !binding_attention_ready(&binding->attention) ||
         binding->attention.tensor_scope != YVEX_TENSOR_SCOPE_MAIN_LAYER ||
         binding->attention.required_binding_count == 0ull ||
@@ -1467,6 +1485,9 @@ static void summary_finish(yvex_runtime_binding_summary *summary,
                                descriptor->runtime_numeric_identity);
     yvex_runtime_identity_copy(summary->runtime_descriptor_identity,
                                descriptor->runtime_descriptor_identity);
+    if (yvex_sha256_hex_is_valid(descriptor->model_execution.identity))
+        yvex_runtime_identity_copy(summary->model_execution_identity,
+                                   descriptor->model_execution.identity);
     yvex_runtime_identity_copy(summary->attention_plan_identity,
                                attention->attention_plan_identity);
     if (draft_attention)
@@ -1506,18 +1527,21 @@ static int binding_file_decode(yvex_runtime_binding **out,
                               file_count, YVEX_ERR_BOUNDS,
                               "runtime binding file size is outside its bound", err);
     header = (binding_cursor){file, file_count, 0u};
-    if (!cursor_take(&header, magic, sizeof(magic)) ||
-        memcmp(magic, BINDING_MAGIC, sizeof(magic)) != 0) {
+    if (!cursor_take(&header, magic, sizeof(magic))) {
         rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_IDENTITY,
                             "file-magic", path, 0ull, 1ull, 0ull,
                             YVEX_ERR_FORMAT,
                             "runtime binding file magic is invalid", err);
         goto done;
     }
-    if (!cursor_u64(&header, &schema) || schema != YVEX_RUNTIME_BINDING_SCHEMA_V7) {
+    if (!cursor_u64(&header, &schema) ||
+        !((schema == YVEX_RUNTIME_BINDING_SCHEMA_V7 &&
+           memcmp(magic, BINDING_MAGIC_V7, sizeof(magic)) == 0) ||
+          (schema == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
+           memcmp(magic, BINDING_MAGIC_V8, sizeof(magic)) == 0))) {
         rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_SCHEMA,
                             "schema-version", path, 0ull,
-                            YVEX_RUNTIME_BINDING_SCHEMA_V7, schema,
+                            YVEX_RUNTIME_BINDING_SCHEMA_CURRENT, schema,
                             YVEX_ERR_FORMAT,
                             "runtime binding schema is unsupported", err);
         goto done;
@@ -1545,7 +1569,8 @@ static int binding_file_decode(yvex_runtime_binding **out,
             err);
         goto done;
     }
-    if (!binding_identity(file + BINDING_HEADER_BYTES, (size_t)body_bytes,
+    if (!binding_identity((unsigned int)schema, file + BINDING_HEADER_BYTES,
+                          (size_t)body_bytes,
                           computed_identity) ||
         strcmp(stored_identity, computed_identity) != 0 ||
         (expected_identity && strcmp(expected_identity, computed_identity) != 0)) {
@@ -1578,7 +1603,7 @@ static int binding_file_decode(yvex_runtime_binding **out,
         goto done;
     }
     parse_result = parse_body(binding, file + BINDING_HEADER_BYTES,
-                              (size_t)body_bytes);
+                              (size_t)body_bytes, (unsigned int)schema);
     if (parse_result != BINDING_PARSE_OK) {
         parse_failure = &binding_parse_failures[parse_result];
         rc = binding_reject(failure, parse_failure->code, "canonical-body",
@@ -1735,6 +1760,7 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
     char final_name[96], final_path[YVEX_PATH_CAP];
     yvex_core_file_result file_result;
     binding_candidate_context candidate;
+    unsigned int schema;
     int rc;
     if (result) memset(result, 0, sizeof(*result));
     rc = prepare_validate(request, semantic, executable, moe_identity,
@@ -1746,14 +1772,18 @@ int yvex_runtime_binding_prepare(const yvex_runtime_binding_prepare_request *req
                                 "runtime binding result is required", err);
         return rc;
     }
+    schema = yvex_runtime_descriptor_summary_get(request->runtime_descriptor)
+                         ->model_execution.schema_version
+                 ? YVEX_RUNTIME_BINDING_SCHEMA_V8
+                 : YVEX_RUNTIME_BINDING_SCHEMA_V7;
     if (!binding_body_write(request, semantic, executable, moe_identity,
-                            draft_moe_identity, &body))
+                            draft_moe_identity, schema, &body))
         rc = binding_reject(
             failure, YVEX_RUNTIME_BINDING_FAILURE_ALLOCATION, "canonical-body",
             request->directory, 0ull, BINDING_MAX_BYTES, body.count, YVEX_ERR_NOMEM,
             "runtime binding canonical body exceeded its allocation budget", err);
-    if (rc != YVEX_OK || !binding_identity(body.data, body.count, identity) ||
-        !build_file(&body, identity, &file)) {
+    if (rc != YVEX_OK || !binding_identity(schema, body.data, body.count, identity) ||
+        !build_file(&body, identity, schema, &file)) {
         if (rc == YVEX_OK)
             rc = binding_reject(failure, YVEX_RUNTIME_BINDING_FAILURE_ALLOCATION,
                                 "file", request->directory, 0ull, BINDING_MAX_BYTES,

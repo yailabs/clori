@@ -250,6 +250,49 @@ static int decode_token_input(yvex_transformer_input **out,
         return yvex_error_code(err);
     return yvex_transformer_input_open_memory(out, &summary, &token_id, err);
 }
+
+static int decode_structure_valid(
+    const yvex_runtime_decode_context *context,
+    const yvex_transformer_plan_summary *plan,
+    const yvex_runtime_transformer_result *result)
+{
+    const yvex_runtime_session_view *session =
+        yvex_runtime_session_view_get(context->session);
+    const yvex_runtime_model_view *model = session
+        ? yvex_runtime_model_view_get(session->model) : NULL;
+    const yvex_runtime_descriptor_summary *runtime = model
+        ? yvex_runtime_descriptor_summary_get(model->descriptor) : NULL;
+    const yvex_model_execution_descriptor *execution = runtime &&
+            runtime->model_execution.schema_version ==
+                YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1
+        ? &runtime->model_execution : NULL;
+    unsigned long long attention_layers, router_layers, routed, shared;
+
+    if (!plan || !result || !runtime ||
+        result->layers_executed != plan->layer_count ||
+        !yvex_core_u64_add(result->swa_layers, result->csa_layers,
+                           &attention_layers) ||
+        !yvex_core_u64_add(attention_layers, result->hca_layers,
+                           &attention_layers) ||
+        attention_layers != plan->layer_count ||
+        !yvex_core_u64_add(result->hash_routers, result->learned_routers,
+                           &router_layers) ||
+        router_layers != plan->layer_count ||
+        !yvex_core_u64_mul(plan->layer_count, runtime->experts_per_token,
+                           &routed) ||
+        result->routed_experts != routed)
+        return 0;
+    if (!execution) return 1;
+    return result->swa_layers == execution->swa_layers &&
+           result->csa_layers == execution->csa_layers &&
+           result->hca_layers == execution->hca_layers &&
+           result->hash_routers == execution->hash_router_layer_count &&
+           result->learned_routers ==
+               execution->layer_count - execution->hash_router_layer_count &&
+           yvex_core_u64_mul(execution->layer_count,
+                             execution->shared_experts, &shared) &&
+           result->shared_experts == shared;
+}
 /*
  * Execute one step while the decode coordinator is exclusively held.
  *
@@ -314,10 +357,7 @@ static int decode_step_locked(
          after.next_position != expected_position + 1ull ||
          after.committed_sequence_length != expected_position + 1ull ||
          after.generation != before.generation + 1ull ||
-         transformer.layers_executed != 43ull || transformer.swa_layers != 2ull ||
-         transformer.csa_layers != 21ull || transformer.hca_layers != 20ull ||
-         transformer.hash_routers != 3ull || transformer.learned_routers != 40ull ||
-         transformer.routed_experts != 258ull || transformer.shared_experts != 43ull))
+         !decode_structure_valid(context, plan, &transformer)))
         rc = decode_refuse(err, YVEX_ERR_STATE,
                            "decode step structural or state invariants failed");
     if (rc == YVEX_OK) {
@@ -341,6 +381,11 @@ static int decode_step_locked(
         result->learned_routers = transformer.learned_routers;
         result->routed_experts = transformer.routed_experts;
         result->shared_experts = transformer.shared_experts;
+        result->row_expert_pairs = transformer.row_expert_pairs;
+        result->unique_experts = transformer.unique_experts;
+        result->grouped_expert_operations = transformer.grouped_expert_operations;
+        result->expert_subviews_accessed = transformer.expert_subviews_accessed;
+        result->expert_weight_bytes = transformer.expert_weight_bytes;
         result->h2d_bytes = transformer.h2d_bytes;
         result->d2h_bytes = transformer.d2h_bytes;
         result->kernel_launches = transformer.kernel_launches;
@@ -415,6 +460,11 @@ static void decode_accumulate(yvex_runtime_decode_result *result,
     result->learned_routers += step->learned_routers;
     result->routed_experts += step->routed_experts;
     result->shared_experts += step->shared_experts;
+    result->row_expert_pairs += step->row_expert_pairs;
+    result->unique_experts += step->unique_experts;
+    result->grouped_expert_operations += step->grouped_expert_operations;
+    result->expert_subviews_accessed += step->expert_subviews_accessed;
+    result->expert_weight_bytes += step->expert_weight_bytes;
     result->h2d_bytes += step->h2d_bytes;
     result->d2h_bytes += step->d2h_bytes;
     result->kernel_launches += step->kernel_launches;

@@ -106,6 +106,10 @@ static const runtime_refusal_spec runtime_refusals[] = {
     {YVEX_RUNTIME_MODEL_FAILURE_ADAPTER, YVEX_ERR_FORMAT, "family-adapter-id", "family adapter identity differs"},
     {YVEX_RUNTIME_MODEL_FAILURE_IDENTITY, YVEX_ERR_FORMAT, "logical-transform-identity",
      "runtime binding logical Transformation IR identity is stale"},
+    {YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_ERR_BOUNDS, "model-host-budget",
+     "configured model host budget is smaller than admitted resident weights"},
+    {YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION, YVEX_ERR_BOUNDS, "system-memory-capacity",
+     "available system memory cannot preserve the minimum reserve after model residency"},
     {YVEX_RUNTIME_MODEL_FAILURE_ARTIFACT, YVEX_ERR_FORMAT, "artifact-open", "artifact admission failed"},
     {YVEX_RUNTIME_MODEL_FAILURE_MATERIALIZATION, YVEX_ERR_FORMAT, "runtime-materialization",
      "runtime binding materialization could not be reopened"},
@@ -530,6 +534,71 @@ static int runtime_model_artifact_open(
     return rc;
 }
 
+static int runtime_model_available_memory(unsigned long long *bytes)
+{
+    const char *injected = getenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES");
+    char *tail = NULL;
+    char line[128];
+    FILE *meminfo;
+    unsigned long long value;
+    long pages, page_bytes;
+
+    if (!bytes) return 0;
+    if (injected) {
+        errno = 0;
+        value = strtoull(injected, &tail, 10);
+        if (errno || tail == injected || !tail || *tail != '\0') return 0;
+        *bytes = value;
+        return 1;
+    }
+    meminfo = fopen("/proc/meminfo", "r");
+    if (meminfo) {
+        while (fgets(line, sizeof(line), meminfo)) {
+            if (sscanf(line, "MemAvailable: %llu kB", &value) == 1) {
+                int closed = fclose(meminfo) == 0;
+                return closed && yvex_core_u64_mul(value, 1024ull, bytes);
+            }
+        }
+        (void)fclose(meminfo);
+    }
+#ifdef _SC_AVPHYS_PAGES
+    pages = sysconf(_SC_AVPHYS_PAGES);
+    page_bytes = sysconf(_SC_PAGESIZE);
+    if (pages <= 0 || page_bytes <= 0 ||
+        !yvex_core_u64_mul((unsigned long long)pages,
+                           (unsigned long long)page_bytes, bytes)) return 0;
+    return 1;
+#else
+    (void)pages;
+    (void)page_bytes;
+    return 0;
+#endif
+}
+
+static int runtime_model_memory_preflight(
+    const yvex_runtime_model_open_request *request,
+    const yvex_complete_artifact_admission *admission,
+    yvex_runtime_private_refusal_id *refusal,
+    unsigned long long *required, unsigned long long *available)
+{
+    if (!request || !admission || !refusal || !required || !available ||
+        !admission->payload_bytes) return YVEX_ERR_INVALID_ARG;
+    *required = 0ull;
+    *available = 0ull;
+    if (request->maximum_host_bytes &&
+        admission->payload_bytes > request->maximum_host_bytes) {
+        *refusal = YVEX_RUNTIME_REFUSE_OPEN_HOST_BUDGET;
+        *required = admission->payload_bytes;
+        *available = request->maximum_host_bytes;
+        return YVEX_ERR_BOUNDS;
+    }
+    *refusal = YVEX_RUNTIME_REFUSE_OPEN_SYSTEM_MEMORY;
+    if (!yvex_core_u64_add(admission->payload_bytes,
+                           YVEX_EXECUTION_MINIMUM_SYSTEM_RESERVE, required) ||
+        !runtime_model_available_memory(available)) return YVEX_ERR_STATE;
+    return *required <= *available ? YVEX_OK : YVEX_ERR_BOUNDS;
+}
+
 static int runtime_model_capabilities_bind(
     yvex_runtime_model *model, const yvex_runtime_binding_summary *binding,
     const yvex_attention_summary *attention,
@@ -658,19 +727,20 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     const yvex_attention_summary *draft_attention_summary;
     yvex_runtime_binding_failure binding_failure;
     yvex_materialization_options materialization_options;
+    yvex_runtime_private_refusal_id capacity_refusal = YVEX_RUNTIME_REFUSE_OPEN_SYSTEM_MEMORY;
     yvex_runtime_private_refusal_id residency_refusal;
-    unsigned long long total_started, phase_started;
+    unsigned long long total_started, phase_started, required_bytes = 0ull, available_bytes = 0ull;
     int rc;
     if (out) *out = NULL;
     if (failure) memset(failure, 0, sizeof(*failure));
     if (!out || !request || !request->artifact_path || !request->runtime_binding_path || !request->target_id)
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_MODEL_OPEN_REQUEST, 1ull, 0ull, err);
     adapter = yvex_runtime_family_adapter_find(request->target_id);
-    if (!adapter || adapter->schema_version != YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V2 ||
+    if (!adapter || adapter->schema_version != YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3 ||
         !adapter->adapter_id || !adapter->speculation_policy ||
         !adapter->graph || !yvex_sha256_hex_is_valid(adapter->logical_transform_identity))
         return yvex_runtime_private_refuse(failure, YVEX_RUNTIME_REFUSE_FAMILY_ADAPTER,
-                              YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V2, 0ull, err);
+                              YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3, 0ull, err);
     model = (yvex_runtime_model *)calloc(1u, sizeof(*model));
     if (!model)
         return yvex_runtime_private_refuse(
@@ -707,6 +777,12 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
         return runtime_model_open_fail(
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_LOGICAL_TRANSFORM, 1ull, 0ull, err,
             YVEX_ERR_FORMAT);
+    rc = runtime_model_memory_preflight(
+        request, &model->admission, &capacity_refusal, &required_bytes, &available_bytes);
+    if (rc != YVEX_OK)
+        return runtime_model_open_fail(
+            out, model, failure, capacity_refusal, required_bytes, available_bytes,
+            err, (yvex_status)rc);
     rc = runtime_model_artifact_open(model, request, &model->binding_summary, failure, err);
     if (rc != YVEX_OK)
         return runtime_model_open_fail(

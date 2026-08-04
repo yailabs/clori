@@ -76,9 +76,18 @@ static int transformer_test_family(void)
 {
     const yvex_runtime_family_adapter *adapter =
         yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
+    yvex_runtime_descriptor_summary runtime = {0};
     yvex_transformer_family_policy policy;
+    runtime.model_execution = (yvex_model_execution_descriptor){
+        .schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1,
+        .maximum_context = 1048576ull,
+        .hidden_width = 4096ull,
+        .residual_streams = 4ull,
+        .mhc_sinkhorn_iterations = 20ull,
+        .mhc_epsilon = 1e-6,
+        .normalization_epsilon = 1e-6};
     YVEX_TEST_ASSERT(adapter && adapter->transformer_policy &&
-                         adapter->transformer_policy(&policy),
+                         adapter->transformer_policy(&runtime, &policy),
                      "DeepSeek transformer policy is adapter-projected");
     YVEX_TEST_ASSERT(adapter->adapter_version == 7ull && policy.residual_streams == 4ull &&
                          policy.hidden_width == 4096ull && policy.expanded_width == 16384ull &&
@@ -87,6 +96,11 @@ static int transformer_test_family(void)
                          policy.attention_then_moe && policy.deferred_ffn_post &&
                          policy.final_norm_after_head,
                      "DeepSeek adapter fixes exact four-stream ordered backbone semantics");
+    memset(&runtime.model_execution, 0, sizeof(runtime.model_execution));
+    YVEX_TEST_ASSERT(adapter->transformer_policy(&runtime, &policy) &&
+                         policy.hidden_width == 4096ull &&
+                         policy.maximum_context == 1048576ull,
+                     "binding v7 retains its exact family-owned transformer projection");
     return 0;
 }
 

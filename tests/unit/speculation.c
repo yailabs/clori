@@ -395,6 +395,39 @@ static int test_commit_plan(void)
     return 0;
 }
 
+static int test_family_policy_compatibility(void)
+{
+    const yvex_runtime_family_adapter *adapter =
+        yvex_runtime_family_adapter_find("deepseek4-v4-flash-dspark");
+    yvex_runtime_descriptor_summary runtime = {0};
+    yvex_speculation_family_policy policy;
+
+    YVEX_TEST_ASSERT(adapter && adapter->speculation_policy &&
+                         adapter->speculation_policy(&runtime, &policy) &&
+                         policy.block_size == 5ull &&
+                         policy.target_feature_layer_count == 3ull &&
+                         policy.target_feature_layers[0] == 40ull &&
+                         policy.target_feature_layers[2] == 42ull,
+                     "binding v7 retains its exact family-owned DSpark projection");
+    runtime.model_execution.schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1;
+    runtime.model_execution.proposal_width = 4ull;
+    runtime.model_execution.draft_noise_token_id = 17ull;
+    runtime.model_execution.target_feature_count = 2ull;
+    runtime.model_execution.target_feature_layers[0] = 7ull;
+    runtime.model_execution.target_feature_layers[1] = 9ull;
+    runtime.model_execution.target_feature_width = 16ull;
+    runtime.model_execution.draft_layer_count = 2ull;
+    runtime.model_execution.markov_rank = 8ull;
+    YVEX_TEST_ASSERT(adapter->speculation_policy(&runtime, &policy) &&
+                         policy.block_size == 4ull && policy.noise_token_id == 17ull &&
+                         policy.target_feature_layer_count == 2ull &&
+                         policy.target_feature_layers[0] == 7ull &&
+                         policy.target_feature_layers[1] == 9ull &&
+                         policy.concatenated_feature_width == 32ull,
+                     "binding v8 DSpark policy consumes model-derived geometry");
+    return 0;
+}
+
 int yvex_test_runtime_speculation(void)
 {
     if (test_greedy_acceptance() != 0) return 1;
@@ -406,5 +439,6 @@ int yvex_test_runtime_speculation(void)
     if (test_stochastic_reference_matrix() != 0) return 1;
     if (test_refusals() != 0) return 1;
     if (test_candidate_extent() != 0) return 1;
-    return test_commit_plan();
+    if (test_commit_plan() != 0) return 1;
+    return test_family_policy_compatibility();
 }

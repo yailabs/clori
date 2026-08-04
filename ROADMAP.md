@@ -84,6 +84,7 @@ Detailed accepted and successor contracts for the current sequence are:
 - [DeepSeek V4 Flash DSpark Rebase](docs/milestones/deepseek-dspark-rebase.md)
 - [Verified Execution-Substrate Refoundation](docs/milestones/product-architecture.md)
 - [Repository Architecture Compression](docs/milestones/repository-compression.md)
+- [Model-Derived GB10 Execution](docs/milestones/gb10-optimization.md)
 
 The pre-implementation combined plans remain traceable without staying on the
 active path:
@@ -119,17 +120,6 @@ are implementation input, not live command or project authority.
 
 ## Open work
 
-### Repository architecture compression
-
-The verified substrate is behaviorally accepted, but its implementation still
-repeats source membership in build logic and retains ceremonial translation
-units, internal ABIs, symbols, targets, and model-registry projections created
-during successive delivery passes. The active boundary removes only duplicate
-authority and unjustified physical partitions. It preserves the public C API,
-protocol v6, artifact and binding identities, numerical execution, operator
-surface, and the three independent DeepSeek projections in model, graph, and
-CUDA backend ownership.
-
 ### GB10 runtime optimization
 
 The earlier performance delivery reduced cold startup and added internal
@@ -140,10 +130,16 @@ tokens/s, attention at 43.88% of measured warm execution, MoE at 19.29%, about
 4,511 kernel launches and 63 synchronizations per token. These are diagnostic
 baseline facts, not a release benchmark.
 
-The continuation may select expert placement, cache, grouped execution,
-fusion, prefetch, or graph capture only after the owning profile supports that
-choice. Correctness, identity, transactional KV, cancellation, and fail-closed
-CUDA behavior remain mandatory.
+The active implementation now derives execution geometry from one sealed model
+descriptor, admits binding v8 beside retained v7, separates hardware,
+workload, capacity and state-page facts, refuses insufficient model-residency
+memory before artifact open, and defines a phase roofline ledger. It has not
+yet admitted native SM121 kernels or the optimized serving after-state.
+
+The continuation selects expert placement, cache, grouped execution, fusion,
+prefetch, graph capture and kernel order only from measured phase economics.
+Correctness, identity, transactional KV, cancellation, and fail-closed CUDA
+behavior remain mandatory.
 
 ### Evaluation, benchmark, and release
 

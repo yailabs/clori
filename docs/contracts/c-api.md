@@ -152,11 +152,24 @@ The internal runtime is family-neutral. Its main objects are:
 | `yvex_runtime_execution_session` | mutable backend context, reusable workspace, committed target state, bounded speculative candidate state, cancellation and CUDA Graph registry |
 | execution descriptor | canonical pointer-free identity over phase, mode, scope, geometry, residency, workspace, state and device facts |
 
+Model-execution descriptor schema v1 is a non-installed fieldwise projection
+of source/family context, attention, MoE, output, DSpark and state facts.
+Runtime binding v8 persists and authenticates it; v7 remains readable for the
+retained reference binding. Hardware-profile, workload-profile, capacity-plan
+and phase-roofline schemas begin at v1 as internal contracts. The installed
+public API, local protocol v6, runtime event schema v3, generation ABI v4,
+Physical Execution IR v1 and compiled profile v1 are unchanged.
+
 The binding is generated transactionally outside the repository, named by its
 content identity and independently reopened. Runtime open validates it against
 the exact admitted artifact. Runtime execution does not read source headers or
 payloads and does not rebuild Transformation IR, quantization plans or GGUF
 writer plans.
+
+A descriptor-bearing binding is emitted as v8 beside existing v7 data. Old v7
+writers cannot represent model geometry; v7 readers reject v8 as expected.
+The rebuilt reader admits both versions and refuses malformed, truncated or
+identity-mismatched descriptor payloads.
 
 One runtime model performs one complete artifact hash and one GGUF directory
 admission. It then owns one anonymous host arena containing every encoded

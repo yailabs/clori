@@ -32,6 +32,7 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
 | Compilation and physical artifacts | [Compilation architecture](architecture/compilation.md) |
 | Runtime, execution, state, and resources | [Runtime architecture](architecture/runtime.md) |
 | GB10 execution objectives and measurement key | [GB10 target table](development/gb10-targets.md) |
+| Active GB10 implementation boundary | [Model-derived GB10 execution](milestones/gb10-optimization.md) |
 | Command and operation projections | [Command architecture](architecture/commands.md) |
 | Family integration | [Family integration contract](model-families/integration.md) |
 | DeepSeek-V4-Flash-DSpark facts | [DeepSeek record](model-families/deepseek-v4-flash.md) |
@@ -60,6 +61,7 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
   point-in-time evidence; the
   [code-commentary migration](audits/code-commentary-7c90ce1/README.md),
   [execution-substrate disposition](audits/execution-substrate-dd91fb/README.md),
+  [GB10 optimization baseline](audits/gb10-optimization-691814/README.md),
   [repository-compression disposition](audits/repository-compression-7226f7/README.md),
   operator-surface, and topology audits remain frozen beside the documentation
   baseline.
@@ -74,7 +76,9 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
   [DSpark rebase contract](milestones/deepseek-dspark-rebase.md) owns the
   source-to-speculative-text implementation boundary; and the
   [execution-substrate contract](milestones/product-architecture.md) records
-  the identity, state-promotion, shape and operational-surface boundary.
+  the identity, state-promotion, shape and operational-surface boundary; and
+  the [GB10 optimization contract](milestones/gb10-optimization.md) owns the
+  active model-derived execution boundary.
 
 ## Document classes
 

@@ -100,6 +100,9 @@ struct yvex_runtime_generation_context {
     yvex_runtime_generation_options options;
     yvex_runtime_generation_plan_summary plan;
     yvex_compiled_execution_profile execution_profile;
+    yvex_execution_hardware_profile hardware_profile;
+    yvex_execution_workload_profile workload_profile;
+    yvex_execution_capacity_plan capacity_plan;
     yvex_execution_shape_registry *execution_shapes;
     unsigned int *additional_stops;
     float *hidden, *logits_row, *anchor_probabilities;
@@ -158,6 +161,8 @@ typedef enum {
     YVEX_RUNTIME_REFUSE_OPEN_BINDING,
     YVEX_RUNTIME_REFUSE_OPEN_ADAPTER,
     YVEX_RUNTIME_REFUSE_OPEN_LOGICAL_TRANSFORM,
+    YVEX_RUNTIME_REFUSE_OPEN_HOST_BUDGET,
+    YVEX_RUNTIME_REFUSE_OPEN_SYSTEM_MEMORY,
     YVEX_RUNTIME_REFUSE_OPEN_ARTIFACT,
     YVEX_RUNTIME_REFUSE_OPEN_MATERIALIZATION,
     YVEX_RUNTIME_REFUSE_OPEN_IMPORT,

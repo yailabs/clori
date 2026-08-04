@@ -17,6 +17,9 @@ or release promotion.
 | Snapshot shape | 48 Safetensors shards; 72,317 indexed tensors |
 | Target topology | 43-layer hybrid SWA/CSA/HCA decoder with mHC and MoE |
 | Draft topology | five-position DSpark block conditioned by three target feature taps |
+| Model maximum context | 1,048,576 positions |
+| Hidden width / output vocabulary | 4,096 / 129,280 |
+| Routed experts / selected per row | 256 / 6 |
 
 The external acquisition record binds the exact revision, sidecars, tokenizer,
 index, every shard header and payload identity, and the ordered aggregate
@@ -81,6 +84,13 @@ incremental detokenization, and committed-token append semantics.
 The source declares a one-million-token context contract. Hosted context
 capacity is selected and admitted independently by the runtime; source
 capacity is not an automatic runtime configuration or performance claim.
+
+These facts are sealed once by the family projection into model-execution
+descriptor schema v1. The descriptor also carries RoPE/YaRN, attention-class,
+compression, indexer, mHC, FFN, output, proposal, feature-source, Markov,
+confidence, special-token and persistent-state geometry. Common runtime,
+server, protocol, CLI and generic backend code consume that descriptor rather
+than duplicate these values.
 
 The official prompt/output contract begins explicit thinking with the
 source-authored `<think>` token and terminates it with the corresponding

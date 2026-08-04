@@ -226,8 +226,8 @@ static int transformer_runtime_plan_facts(
     const yvex_attention_layer_plan *last;
     unsigned long long slot;
     memset(facts, 0, sizeof(*facts));
-    if (!view || !view->adapter || !view->adapter->transformer_policy ||
-        !view->adapter->transformer_policy(&facts->policy) || !runtime || !material ||
+    if (!view || !runtime || !view->adapter || !view->adapter->transformer_policy ||
+        !view->adapter->transformer_policy(runtime, &facts->policy) || !material ||
         !attention_summary || !attention_summary->layer_count)
         return transformer_runtime_refuse(
             err, YVEX_ERR_FORMAT, "transformer runtime plan facts are unavailable");
@@ -748,6 +748,11 @@ int yvex_runtime_transformer_execute_block(
         (layer->router_class == YVEX_MOE_ROUTER_LEARNED_HIDDEN_STATE);
     result->routed_experts = moe_result.row_expert_pairs;
     result->shared_experts = moe_result.shared_expert_operations;
+    result->row_expert_pairs = moe_result.row_expert_pairs;
+    result->unique_experts = moe_result.unique_experts;
+    result->grouped_expert_operations = moe_result.grouped_expert_operations;
+    result->expert_subviews_accessed = moe_result.expert_subviews_accessed;
+    result->expert_weight_bytes = moe_result.encoded_bytes_read;
     result->h2d_bytes = moe_result.h2d_bytes;
     result->d2h_bytes = moe_result.d2h_bytes;
     result->d2d_bytes = moe_result.d2d_bytes;
@@ -840,6 +845,11 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
     chunk->result->learned_routers += block.learned_routers;
     chunk->result->routed_experts += block.routed_experts;
     chunk->result->shared_experts += block.shared_experts;
+    chunk->result->row_expert_pairs += block.row_expert_pairs;
+    chunk->result->unique_experts += block.unique_experts;
+    chunk->result->grouped_expert_operations += block.grouped_expert_operations;
+    chunk->result->expert_subviews_accessed += block.expert_subviews_accessed;
+    chunk->result->expert_weight_bytes += block.expert_weight_bytes;
     chunk->result->h2d_bytes += block.h2d_bytes;
     chunk->result->d2h_bytes += block.d2h_bytes;
     chunk->result->d2d_bytes += block.d2d_bytes;

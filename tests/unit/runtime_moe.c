@@ -36,6 +36,13 @@ static int moe_test_family_plan(void)
     runtime.routed_experts = 256ull;
     runtime.experts_per_token = 6ull;
     runtime.vocabulary_size = 129280ull;
+    runtime.model_execution.schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1;
+    runtime.model_execution.hash_router_layer_count = 3ull;
+    runtime.model_execution.shared_experts = 1ull;
+    runtime.model_execution.routed_ffn_width = 2048ull;
+    runtime.model_execution.shared_ffn_width = 2048ull;
+    runtime.model_execution.routed_scaling_factor = 1.5;
+    runtime.model_execution.activation_limit = 10.0;
     attention.hidden_dimension = 4096ull;
     attention.residual_stream_count = 4ull;
     attention.residual_expanded_width = 16384ull;
@@ -62,6 +69,17 @@ static int moe_test_family_plan(void)
                 projected.expert_intermediate_width == 2048ull &&
                 projected.routed_scaling_factor == 1.5 && projected.activation_limit == 10.0,
             "projected layer preserves hash/learned schedule and expert geometry");
+    }
+    memset(&runtime.model_execution, 0, sizeof(runtime.model_execution));
+    attention.ordinal = attention.layer_index = 0ull;
+    {
+        yvex_moe_layer_plan legacy;
+        YVEX_TEST_ASSERT(
+            family->project_layer(0ull, &runtime, &attention, &legacy, &err) == YVEX_OK &&
+                legacy.router_class == YVEX_MOE_ROUTER_HASH_TOKEN_ID &&
+                legacy.shared_experts == 1ull &&
+                legacy.expert_intermediate_width == 2048ull,
+            "binding v7 retains its exact family-owned MoE projection");
     }
     return 0;
 }

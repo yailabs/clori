@@ -26,6 +26,9 @@ change. Git history preserves implementation chronology.
   completion, semantic watch/human trace, and clean Ctrl-C/Ctrl-D handling.
 - Source-authored explicit-reasoning controls and a typed reasoning stream that
   remains separate from final text and never infers hidden chain of thought.
+- A source-derived model-execution descriptor and identity-bound hardware,
+  workload, per-state capacity, page-geometry and phase-roofline contracts for
+  GB10 execution planning.
 
 ### Changed
 
@@ -60,6 +63,9 @@ change. Git history preserves implementation chronology.
 - Separated artifact capability from runtime-profile readiness in the local
   model registry, eliminating false metadata drift without changing artifact
   or binding identity.
+- Advanced runtime bindings to v8 when they carry sealed model geometry while
+  retaining v7 reference bindings, and made startup refuse insufficient model
+  residency memory before opening the complete artifact.
 
 ### Removed
 

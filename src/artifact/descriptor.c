@@ -90,6 +90,7 @@ static void runtime_descriptor_hash_topk(yvex_sha256 *hash,
  */
 static int runtime_descriptor_family_facts(
     const yvex_deepseek_v4_ir *ir, yvex_runtime_descriptor_family_facts *facts,
+    yvex_model_execution_descriptor *model_execution,
     char logical[YVEX_SHA256_HEX_CAP], char numeric[YVEX_SHA256_HEX_CAP],
     yvex_runtime_descriptor_failure *failure, yvex_error *err)
 {
@@ -141,12 +142,18 @@ static int runtime_descriptor_family_facts(
             YVEX_MATERIALIZATION_NO_INDEX, 1ull, 0ull,
             "DeepSeek runtime numeric identity failed", err, YVEX_ERR_STATE);
     yvex_sha256_hex(digest, numeric);
+    if (!api->ir.execution_descriptor ||
+        api->ir.execution_descriptor(ir, logical, model_execution, err) != YVEX_OK)
+        return runtime_descriptor_refuse(
+            failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE, NULL,
+            YVEX_MATERIALIZATION_NO_INDEX, 1ull, 0ull,
+            "DeepSeek model execution descriptor is incomplete", err, YVEX_ERR_FORMAT);
     *facts = (yvex_runtime_descriptor_family_facts){
         logical, numeric, model->hadamard_revision, model->runtime_numeric_schema_version,
         model->runtime_compute_policy_count, model->runtime_activation_policy_count,
         model->runtime_sparse_topk_policy_count, model->main_layer_count,
         model->auxiliary_layer_count, first->moe.routed_experts,
-        first->moe.experts_per_token, model->vocabulary_size};
+        first->moe.experts_per_token, model->vocabulary_size, model_execution};
     return YVEX_OK;
 }
 
@@ -171,6 +178,7 @@ int yvex_runtime_descriptor_build_deepseek(
     const yvex_model_family_api *api = yvex_model_register_deepseek_v4();
     const yvex_deepseek_gguf_map_summary *map_summary;
     yvex_runtime_descriptor_family_facts facts;
+    yvex_model_execution_descriptor model_execution;
     yvex_runtime_descriptor *descriptor = NULL;
     char logical[YVEX_SHA256_HEX_CAP], numeric[YVEX_SHA256_HEX_CAP];
     unsigned long long index;
@@ -189,7 +197,8 @@ int yvex_runtime_descriptor_build_deepseek(
             failure, YVEX_RUNTIME_DESCRIPTOR_FAILURE_ARCHITECTURE, NULL,
             YVEX_MATERIALIZATION_NO_INDEX, 1ull, 0ull,
             "DeepSeek GGUF map is incomplete", err, YVEX_ERR_FORMAT);
-    rc = runtime_descriptor_family_facts(ir, &facts, logical, numeric, failure, err);
+    rc = runtime_descriptor_family_facts(
+        ir, &facts, &model_execution, logical, numeric, failure, err);
     if (rc != YVEX_OK) return rc;
     rc = yvex_runtime_descriptor_build(&descriptor, admission, session, &facts, failure, err);
     if (rc != YVEX_OK) return rc;

@@ -13,6 +13,7 @@
 #include <yvex/internal/source.h>
 
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -204,6 +205,9 @@ static int test_arch_ir_golden_topology(void)
     const yvex_deepseek_v4_auxiliary_spec *draft_middle;
     const yvex_deepseek_v4_auxiliary_spec *draft_final;
     const yvex_runtime_family_adapter *adapter;
+    yvex_model_execution_descriptor execution;
+    yvex_error err;
+    int execution_rc;
     char logical_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
 
     arch_ir_verification_fixture(&source);
@@ -232,6 +236,44 @@ static int test_arch_ir_golden_topology(void)
         strcmp(logical_identity,
                YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY) != 0,
         "current DSpark identity cannot impersonate retained predecessor calibration");
+    execution_rc = yvex_model_register_deepseek_v4()->ir.execution_descriptor
+                       ? yvex_model_register_deepseek_v4()->ir.execution_descriptor(
+                             ir, logical_identity, &execution, &err)
+                       : YVEX_ERR_STATE;
+    if (execution_rc != YVEX_OK)
+        fprintf(stderr, "model execution projection: %s\n", yvex_error_message(&err));
+    YVEX_TEST_ASSERT(
+        execution_rc == YVEX_OK,
+        "family projection seals a source-derived execution descriptor");
+    YVEX_TEST_ASSERT(
+        execution.maximum_context == 1048576ull &&
+            execution.original_context == 65536ull &&
+            execution.rope_theta == 10000ull &&
+            execution.compressed_rope_theta == 160000ull &&
+            execution.layer_count == 43ull && execution.hidden_width == 4096ull &&
+            execution.vocabulary_size == 129280ull &&
+            execution.attention_heads == 64ull && execution.kv_heads == 1ull &&
+            execution.head_width == 512ull && execution.swa_layers == 2ull &&
+            execution.csa_layers == 21ull && execution.hca_layers == 20ull,
+        "family projection preserves exact model and attention geometry");
+    YVEX_TEST_ASSERT(
+        execution.routed_experts == 256ull && execution.experts_per_row == 6ull &&
+            execution.shared_experts == 1ull && execution.proposal_width == 5ull &&
+            execution.verification_width_maximum == 6ull &&
+            execution.target_feature_count == 3ull &&
+            execution.target_feature_layers[0] == 40ull &&
+            execution.target_feature_layers[1] == 41ull &&
+            execution.target_feature_layers[2] == 42ull &&
+            execution.markov_rank == 256ull && execution.residual_streams == 4ull &&
+            execution.mhc_sinkhorn_iterations == 20ull &&
+            execution.hash_router_layer_count == 3ull &&
+            execution.routed_scaling_factor == 1.5 && execution.activation_limit == 10.0,
+        "family projection preserves exact MoE and DSpark geometry");
+    YVEX_TEST_ASSERT(
+            yvex_sha256_hex_valid(execution.source_model_identity) &&
+            yvex_sha256_hex_valid(execution.attention_schedule_identity) &&
+            yvex_sha256_hex_valid(execution.persistent_state_identity),
+        "family projection seals independent source, schedule, and state identities");
     YVEX_TEST_ASSERT(
         model->dspark.present && model->dspark.schema_version == 1u &&
             model->dspark.block_size == 5u &&

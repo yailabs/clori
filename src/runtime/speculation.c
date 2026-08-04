@@ -642,7 +642,8 @@ int yvex_runtime_speculation_context_open(
         yvex_runtime_transformer_context_session(target_transformer) != session ||
         !context->model_view->adapter ||
         !context->model_view->adapter->speculation_policy ||
-        !context->model_view->adapter->speculation_policy(&context->policy) ||
+        !context->model_view->adapter->speculation_policy(
+            descriptor, &context->policy) ||
         context->policy.schema_version !=
             YVEX_SPECULATION_FAMILY_POLICY_SCHEMA_V1 ||
         !context->policy.target_verification_required ||

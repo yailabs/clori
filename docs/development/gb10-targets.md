@@ -37,6 +37,12 @@ unadmitted until one reproducible same-machine, same-checkpoint, comparable-
 precision external result exists; a headline from another model or physical
 variant is not substituted.
 
+An exact competitive hard gate is admitted after reference reproduction from
+either a same-checkpoint comparable lane or a measured phase roofline with an
+active-byte lower bound. This separates the physical closure threshold from
+engineering ambition. Existing YVEX and stretch targets are not lowered when
+comparability is absent.
+
 | Workload | Context / width | Current measured | Hard functional minimum | Competitive threshold | YVEX engineering target | Stretch target | Physical bound / governing evidence | Confidence |
 | --- | --- | ---: | ---: | --- | ---: | ---: | --- | --- |
 | target-only decode | short, width 1 | 0.432 token/s retained warm baseline | correct sequence; >0 | unadmitted | 20 token/s | 25 token/s | active bytes, 273 GB/s, launch and synchronization depth | low |
@@ -83,3 +89,10 @@ reference layouts and host feature materialization only through the existing
 typed execution profile. It must keep prefix promotion, shape admission,
 partial-turn semantics, protocol channels and one model/session authority
 unchanged.
+
+Kernel order follows the identity-bound phase roofline ledger. Attention, MoE
+and output-head work retain their technical dependencies, but profiling of
+prefill, decode, verification, drafting and concurrent serving selects the
+next causal bottleneck. Physical-variant exploration first uses role probes,
+representative layers, kernel microbenchmarks and bounded logit/acceptance
+checks; complete artifacts are emitted only for surviving candidates.

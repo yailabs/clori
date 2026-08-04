@@ -10,6 +10,7 @@
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/generation.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/runtime.h>
@@ -44,6 +45,12 @@ typedef struct {
     yvex_runtime_descriptor *descriptor;
     yvex_attention_plan *attention;
 } binding_fixture;
+
+static int runtime_model_open_fixture(
+    const binding_fixture *fixture,
+    const yvex_runtime_binding_prepare_result *prepared,
+    yvex_runtime_model **model, yvex_runtime_model_failure *failure,
+    yvex_error *err);
 
 typedef struct {
     pthread_mutex_t mutex;
@@ -1012,11 +1019,52 @@ static int fixture_attention_build(binding_fixture *fixture)
     return 1;
 }
 
-static int fixture_build(binding_fixture *fixture, const char *artifact_path)
+static int fixture_model_execution_build(
+    yvex_model_execution_descriptor *model, yvex_error *err)
+{
+    char logical[YVEX_SHA256_HEX_CAP], source[YVEX_SHA256_HEX_CAP];
+    char schedule[YVEX_SHA256_HEX_CAP], state[YVEX_SHA256_HEX_CAP];
+    yvex_model_execution_descriptor_request request = {0};
+
+    (void)snprintf(logical, sizeof(logical), "%064x", 31);
+    (void)snprintf(source, sizeof(source), "%064x", 32);
+    (void)snprintf(schedule, sizeof(schedule), "%064x", 33);
+    (void)snprintf(state, sizeof(state), "%064x", 34);
+    request.schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1;
+    request.logical_model_identity = logical;
+    request.source_model_identity = source;
+    request.attention_schedule_identity = schedule;
+    request.persistent_state_identity = state;
+    request.maximum_context = 4ull;
+    request.original_context = 4ull;
+    request.rope_scaling = YVEX_MODEL_ROPE_SCALING_NONE;
+    request.rope_theta = 10000ull;
+    request.rope_scaling_factor = 1ull;
+    request.layer_count = 1ull;
+    request.hidden_width = 4ull;
+    request.vocabulary_size = 4ull;
+    request.attention_heads = 1ull;
+    request.kv_heads = 1ull;
+    request.head_width = 4ull;
+    request.swa_layers = 1ull;
+    request.sliding_window = 4ull;
+    request.normalization_epsilon = 1e-6;
+    request.output_input_width = 4ull;
+    request.output_vocabulary_size = 4ull;
+    request.persistent_state_class_mask =
+        YVEX_MODEL_STATE_CLASS_BIT(YVEX_MODEL_STATE_SWA_RING);
+    request.eos_token_id = 1ull;
+    return yvex_model_execution_descriptor_seal(&request, model, err) == YVEX_OK;
+}
+
+static int fixture_build(binding_fixture *fixture, const char *artifact_path,
+                         int include_model_execution)
 {
     yvex_materialization_options options;
     yvex_materialization_projection projection;
     yvex_materialization_failure material_failure;
+    yvex_model_execution_descriptor model_execution;
+    yvex_runtime_descriptor_family_facts family = {0};
     yvex_runtime_descriptor_failure descriptor_failure;
     yvex_error err;
     int rc;
@@ -1049,10 +1097,24 @@ static int fixture_build(binding_fixture *fixture, const char *artifact_path)
     if (rc == YVEX_OK)
         rc = yvex_materialization_session_commit(
             fixture->materialization, &material_failure, &err);
+    if (rc == YVEX_OK && include_model_execution) {
+        if (!fixture_model_execution_build(&model_execution, &err))
+            rc = yvex_error_code(&err);
+        else {
+            family.logical_model_identity = model_execution.logical_model_identity;
+            family.runtime_numeric_identity = model_execution.source_model_identity;
+            family.runtime_hadamard_revision = "fixture-hadamard-v1";
+            family.runtime_numeric_schema_version = 1u;
+            family.runtime_compute_policy_count = 1ull;
+            family.layer_count = model_execution.layer_count;
+            family.vocabulary_size = model_execution.vocabulary_size;
+            family.model_execution = &model_execution;
+        }
+    }
     if (rc == YVEX_OK)
         rc = yvex_runtime_descriptor_build(
             &fixture->descriptor, &fixture->admission, fixture->materialization,
-            NULL, &descriptor_failure, &err);
+            include_model_execution ? &family : NULL, &descriptor_failure, &err);
     if (rc != YVEX_OK && fixture->materialization)
         fprintf(stderr, "runtime binding descriptor build failed: %s\n",
                 yvex_error_message(&err));
@@ -1417,6 +1479,84 @@ static int test_prepare_reopen_import(const binding_fixture *fixture, const char
     return 0;
 }
 
+static int test_model_execution_binding_v8(const char *root)
+{
+    binding_fixture fixture;
+    yvex_runtime_binding_prepare_request request;
+    yvex_runtime_binding_prepare_result prepared = {0};
+    yvex_runtime_binding_summary summary;
+    yvex_runtime_binding_failure failure;
+    yvex_runtime_binding *binding = NULL;
+    yvex_runtime_model *model = NULL;
+    yvex_runtime_execution_session *session = NULL;
+    yvex_runtime_generation_context *generation = NULL;
+    yvex_runtime_session_open_request session_request = {0};
+    yvex_runtime_generation_options generation_options = {0};
+    yvex_runtime_model_failure model_failure;
+    const yvex_runtime_descriptor_summary *descriptor;
+    char directory[YVEX_PATH_CAP], artifact_path[YVEX_PATH_CAP];
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(
+        variant_path(root, "model-v8", "runtime.gguf", directory, artifact_path) &&
+            copy_regular_file("tests/fixtures/gguf/valid-tokenizer-simple.gguf",
+                              artifact_path) &&
+            rewrite_attention_artifact_fixture(artifact_path),
+        "v8 runtime artifact fixture created");
+    YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 1),
+                     "v8 runtime binding fixture built");
+    descriptor = yvex_runtime_descriptor_summary_get(fixture.descriptor);
+    YVEX_TEST_ASSERT(descriptor &&
+                         descriptor->model_execution.schema_version ==
+                             YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1,
+                     "v8 fixture owns a sealed model execution descriptor");
+    YVEX_TEST_ASSERT(fixture_binding_request(&fixture, directory, &request) &&
+                         yvex_runtime_binding_prepare(
+                             &request, &prepared, &failure, &err) == YVEX_OK,
+                     "v8 runtime binding prepared");
+    YVEX_TEST_ASSERT(yvex_runtime_binding_open(
+                         &binding, prepared.path, &summary, NULL, &failure, &err) == YVEX_OK &&
+                         summary.schema_version == YVEX_RUNTIME_BINDING_SCHEMA_V8 &&
+                         strcmp(summary.model_execution_identity,
+                                descriptor->model_execution.identity) == 0,
+                     "v8 reader authenticates the model-derived execution record");
+    yvex_runtime_binding_close(binding);
+    YVEX_TEST_ASSERT(runtime_model_open_fixture(
+                         &fixture, &prepared, &model, &model_failure, &err) == YVEX_OK,
+                     "v8 runtime model imports model-derived execution geometry");
+    session_request.backend = YVEX_BACKEND_KIND_CPU;
+    YVEX_TEST_ASSERT(yvex_runtime_session_open(
+                         &session, model, &session_request,
+                         &model_failure, &err) == YVEX_OK,
+                     "v8 runtime session opens for capacity admission");
+    generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4;
+    generation_options.backend = YVEX_BACKEND_KIND_CPU;
+    generation_options.mode = YVEX_GENERATION_MODE_TARGET_ONLY;
+    generation_options.context_capacity = 5ull;
+    generation_options.prefill_chunk_tokens = 1ull;
+    generation_options.maximum_new_tokens = 1ull;
+    generation_options.maximum_output_bytes = 64ull;
+    generation_options.evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
+    generation_options.sampling_policy = (yvex_runtime_sampling_policy){
+        .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
+        .strategy = YVEX_SAMPLING_STRATEGY_GREEDY,
+        .temperature = 1.0,
+        .top_p = 1.0,
+        .typical_p = 1.0};
+    YVEX_TEST_ASSERT(yvex_runtime_generation_context_open(
+                         &generation, model, session, &generation_options,
+                         &err) == YVEX_ERR_BOUNDS && !generation,
+                     "model-authored context maximum refuses before state mutation");
+    YVEX_TEST_ASSERT(yvex_runtime_session_close(&session, &err) == YVEX_OK && !session,
+                     "v8 capacity session closes");
+    yvex_runtime_model_close(&model);
+    fixture_close(&fixture);
+    (void)unlink(prepared.path);
+    (void)unlink(artifact_path);
+    (void)rmdir(directory);
+    return 0;
+}
+
 static int test_corruption_refusals(const yvex_runtime_binding_prepare_result *prepared,
                                     const char *root)
 {
@@ -1721,6 +1861,7 @@ static int test_runtime_model_progress(
     yvex_runtime_model *model = NULL;
     yvex_runtime_model_summary summary;
     yvex_error err;
+    int capacity_rc;
 
     memset(&request, 0, sizeof(request));
     memset(&progress, 0, sizeof(progress));
@@ -1749,6 +1890,30 @@ static int test_runtime_model_progress(
                              YVEX_RUNTIME_LIFECYCLE_MATERIALIZATION_OPEN] >= 0.0,
                      "runtime model retains typed phase timing");
     yvex_runtime_model_close(&model);
+    memset(&progress, 0, sizeof(progress));
+    request.maximum_host_bytes = fixture->admission.payload_bytes - 1ull;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_model_open(&model, &request, &failure, &err) == YVEX_ERR_BOUNDS &&
+            !model && failure.code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION &&
+            strcmp(failure.field, "model-host-budget") == 0 &&
+            failure.expected == fixture->admission.payload_bytes &&
+            failure.actual == request.maximum_host_bytes &&
+            progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull,
+        "model open refuses a configured host budget before artifact mutation");
+    request.maximum_host_bytes = 0ull;
+    memset(&progress, 0, sizeof(progress));
+    YVEX_TEST_ASSERT(setenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES", "1", 1) == 0,
+                     "inject system memory capacity refusal");
+    capacity_rc = yvex_runtime_model_open(&model, &request, &failure, &err);
+    YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_RUNTIME_AVAILABLE_MEMORY_BYTES") == 0,
+                     "clear system memory capacity refusal");
+    YVEX_TEST_ASSERT(
+        capacity_rc == YVEX_ERR_BOUNDS &&
+            !model && failure.code == YVEX_RUNTIME_MODEL_FAILURE_ALLOCATION &&
+            strcmp(failure.field, "system-memory-capacity") == 0 &&
+            failure.expected > fixture->admission.payload_bytes && failure.actual == 1ull &&
+            progress.events[YVEX_RUNTIME_LIFECYCLE_ARTIFACT_OPEN] == 0ull,
+        "model open preserves the system reserve before artifact mutation");
     memset(&progress, 0, sizeof(progress));
     progress.cancel_hash = 1;
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_RUNTIME_MODEL_CLEANUP_FAILURE", "1", 1) == 0,
@@ -3120,13 +3285,15 @@ int yvex_test_runtime_binding(void)
                                            artifact_path) &&
                          rewrite_attention_artifact_fixture(artifact_path),
                      "runtime artifact fixture copied and bound to one attention tensor");
-    YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path), "runtime binding fixture built");
+    YVEX_TEST_ASSERT(fixture_build(&fixture, artifact_path, 0),
+                     "runtime binding fixture built");
     if (test_runtime_capability_contract() != 0) goto done;
     if (test_prepare_reopen_import(&fixture, root, &prepared, &binding) != 0) goto done;
     if (test_corruption_refusals(&prepared, root) != 0) goto done;
     if (test_canonical_refusals(&prepared, root) != 0) goto done;
     if (test_graph_identity_refusals(&prepared, root) != 0) goto done;
     if (test_artifact_copy_portability(&fixture, &prepared, root) != 0) goto done;
+    if (test_model_execution_binding_v8(root) != 0) goto done;
     if (test_runtime_family_neutrality() != 0) goto done;
     if (test_runtime_model_adapter_refusal(&fixture, &prepared) != 0) goto done;
     if (test_runtime_model_progress(&fixture, &prepared) != 0) goto done;

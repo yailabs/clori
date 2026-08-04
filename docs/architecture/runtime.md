@@ -173,6 +173,21 @@ mutation or refuses with the exact component, configured and required
 capacity, position, width, scope and identities. Target and draft work never
 overwrite one shared mutable capacity record.
 
+The model-execution descriptor, a separately sealed hardware profile and an
+operator-selected workload profile compile a typed capacity plan. Model,
+execution, session and request maxima; pooled state; candidate and prefix
+reserves; logical token batch; physical attention, MoE and output rows;
+workspace; and system reserve remain distinct facts. Page geometry is selected
+per state class from representation blocks, alignment, kernel tiles,
+page-table cost, fragmentation, copy-on-write and promotion granularity.
+
+A phase roofline ledger binds active weights, state, activations, temporaries,
+transfers, launches, synchronizations, occupancy, duration, work and committed
+tokens for prefill layer, decode layer, verification, drafting, output,
+promotion and batched decode. Measured bandwidth is mandatory before it can
+rank optimization priority. This ledger, rather than a fixed attention/MoE/
+output sequence, owns the causal priority decision.
+
 ## Memory and residency
 
 The process distinguishes file mapping, anonymous host residency, locked or
@@ -184,6 +199,12 @@ The current complete encoded payload is copied into a process-lifetime host
 arena. A bounded accelerator placement contains the admitted CUDA-resident
 resources. Status reports host and accelerator bytes separately. A placement
 counter is a memory fact, not by itself a causal performance diagnosis.
+
+Before opening the complete artifact, startup reads the bounded binding and
+admits its encoded payload against both the configured host budget and current
+system availability while preserving at least 8 GiB. Refusal reports the
+configured or available extent and required bytes before artifact or residency
+mutation. Process admission therefore does not depend on the Linux OOM killer.
 
 Mutable session resources remain isolated while immutable model caches may be
 shared. Allocation, transfer, synchronization, execution, and cleanup failures

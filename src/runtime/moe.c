@@ -888,9 +888,10 @@ int yvex_runtime_moe_execute_layer(yvex_runtime_moe_context *context,
     return runtime_moe_execute_layer_mode(context, layer_index, expanded_input, NULL, NULL, token_id,
                                           token_id_present, 1, result, err);
 }
-static void runtime_moe_batch_account(yvex_moe_row_batch_result *batch,
-                                      const yvex_moe_layer_result *row,
-                                      unsigned char seen[256])
+static int runtime_moe_batch_account(yvex_moe_row_batch_result *batch,
+                                     const yvex_moe_layer_result *row,
+                                     unsigned char *seen,
+                                     unsigned long long seen_count)
 {
     unsigned long long rank;
     batch->row_expert_pairs += row->router.selected_count;
@@ -911,11 +912,13 @@ static void runtime_moe_batch_account(yvex_moe_row_batch_result *batch,
     batch->synchronization_ns += row->synchronization_ns;
     for (rank = 0ull; rank < row->router.selected_count; ++rank) {
         unsigned long long expert = row->router.selected_experts[rank];
-        if (expert < 256ull && !seen[expert]) {
+        if (expert >= seen_count) return 0;
+        if (!seen[expert]) {
             seen[expert] = 1u;
             batch->unique_experts++;
         }
     }
+    return 1;
 }
 
 static int runtime_moe_batch_identity(const yvex_moe_plan_summary *plan,
@@ -961,7 +964,7 @@ int yvex_runtime_moe_execute_layer_rows(
         ? yvex_moe_plan_layer_at(context->plan, layer_index) : NULL;
     yvex_runtime_session_summary session;
     yvex_sha256 routing_hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES], seen[256] = {0};
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES], *seen = NULL;
     unsigned long long row, hidden_count, residual_count, combination_count;
     int rc = YVEX_OK, locked = 0;
     if (result) memset(result, 0, sizeof(*result));
@@ -986,7 +989,7 @@ int yvex_runtime_moe_execute_layer_rows(
         !output->combination_rows || output->combination_capacity < combination_count ||
         ((batch->device_rows == NULL) != (batch->device_outputs == NULL)) ||
         yvex_runtime_session_summary_copy(context->session, &session, err) != YVEX_OK ||
-        !session.busy)
+        !session.busy || !layer->routed_experts || layer->routed_experts > SIZE_MAX)
         return runtime_moe_refuse(err, YVEX_ERR_INVALID_ARG,
                                   "ordered MoE row batch or execution profile is invalid");
     if (pthread_mutex_lock(&context->mutex) != 0)
@@ -997,6 +1000,12 @@ int yvex_runtime_moe_execute_layer_rows(
         goto done;
     }
     context->busy = 1;
+    seen = yvex_core_calloc((size_t)layer->routed_experts, sizeof(*seen));
+    if (!seen) {
+        rc = runtime_moe_refuse(err, YVEX_ERR_NOMEM,
+                                "MoE batch expert-set allocation failed");
+        goto done;
+    }
     yvex_sha256_init(&routing_hash);
     (void)yvex_sha256_update_text(&routing_hash, "yvex.runtime.moe-row-routing.v1");
     for (row = 0ull; row < batch->row_count && rc == YVEX_OK; ++row) {
@@ -1032,7 +1041,12 @@ int yvex_runtime_moe_execute_layer_rows(
         memcpy(output->combination_rows + row * layer->residual_streams * layer->residual_streams,
                staged.combination,
                (size_t)layer->residual_streams * layer->residual_streams * sizeof(float));
-        runtime_moe_batch_account(result, &staged, seen);
+        if (!runtime_moe_batch_account(result, &staged, seen,
+                                       layer->routed_experts)) {
+            rc = runtime_moe_refuse(err, YVEX_ERR_STATE,
+                                    "MoE batch selected an expert outside its plan");
+            break;
+        }
         if (!yvex_sha256_update_text(&routing_hash, staged.routing_digest))
             rc = runtime_moe_refuse(err, YVEX_ERR_STATE,
                                     "ordered MoE routing identity update failed");
@@ -1056,6 +1070,7 @@ int yvex_runtime_moe_execute_layer_rows(
                                     "ordered MoE execution identity failed");
     }
 done:
+    yvex_core_free(seen);
     if (locked) {
         context->busy = 0;
         if (rc == YVEX_OK) context->execution_count++;

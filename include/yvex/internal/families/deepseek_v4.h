@@ -213,6 +213,7 @@ typedef struct {
     unsigned long long runtime_sparse_topk_policy_count;
     unsigned long long hidden_size, vocabulary_size, maximum_context, main_layer_count;
     unsigned long long auxiliary_layer_count, swa_layer_count, csa_layer_count, hca_layer_count;
+    unsigned long long source_snapshot_identity;
     unsigned long long hash_router_layer_count, learned_router_layer_count;
     unsigned long long source_header_scan_count, source_header_tensor_count;
     unsigned long long source_payload_bytes_read;
@@ -442,6 +443,8 @@ typedef struct {
                                 yvex_deepseek_v4_ir_failure *failure, yvex_error *err);
     void (*close)(yvex_deepseek_v4_ir *ir);
     const yvex_deepseek_v4_model_spec *(*model)(const yvex_deepseek_v4_ir *ir);
+    int (*execution_descriptor)(const yvex_deepseek_v4_ir *ir, const char *logical_model_identity,
+                                yvex_model_execution_descriptor *descriptor, yvex_error *err);
     unsigned long long (*layer_count)(const yvex_deepseek_v4_ir *ir);
     const yvex_deepseek_v4_layer_spec *(*layer_at)(const yvex_deepseek_v4_ir *ir,
                                                    unsigned long long index);

@@ -1099,8 +1099,8 @@ static int runtime_attention_phase_context_open(
         summary->selected_layer_count > (unsigned long long)(SIZE_MAX / sizeof(*context->pairs)))
         return runtime_refuse(err, YVEX_ERR_BOUNDS, "runtime.attention.phase",
                               "selected phase-equivalence recipes are unavailable");
-    context->pair_count = summary->selected_layer_count > 3ull
-                              ? 3ull : summary->selected_layer_count;
+    context->pair_count = summary->selected_layer_count > (unsigned long long)YVEX_ATTENTION_CLASS_HCA + 1ull
+                              ? (unsigned long long)YVEX_ATTENTION_CLASS_HCA + 1ull : summary->selected_layer_count;
     context->pairs = calloc((size_t)context->pair_count, sizeof(*context->pairs));
     if (!context->pairs)
         return runtime_refuse(err, YVEX_ERR_NOMEM, "runtime.attention.phase",
