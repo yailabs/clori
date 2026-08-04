@@ -205,11 +205,17 @@ counter is unavailable, never numeric zero.
 CUDA generation now builds this ledger for the phases it actually executes,
 independently of trace verbosity. Prefill, ordinary decode, output projection,
 DSpark draft/verification and accepted-state promotion contribute exact
-duration, work and committed-token facts. Active-byte, occupancy and batched
-decode facts remain unavailable until their numerical or scheduler owners can
-measure them; the resulting optimization priority is therefore explicitly
-provisional. The offline generation operator exposes the ledger in audit and
-JSON projections without adding it to protocol v6.
+duration, work and committed-token facts. Target-only prefill and decode add
+encoded embedding, attention and expert bytes, decoded final-stage bytes and
+kernel launches. Output projection adds encoded head bytes, kernel launches and
+exact projection synchronization count. Its row-level H2D/D2H counters remain
+available in the runtime profile, but phase movement stays unavailable until
+the CUDA producer also accounts its bounded status transfer. Draft and verify
+sweeps add their transformer and output-row launches. State, activation,
+temporary, occupancy, movement, DSpark active-byte and batched-decode facts
+remain unavailable; the resulting optimization priority is therefore
+explicitly provisional. The offline generation operator exposes the ledger in
+audit and JSON projections without adding it to protocol v6.
 
 ## Memory and residency
 

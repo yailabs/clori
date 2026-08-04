@@ -385,7 +385,10 @@ static int decode_step_locked(
         result->unique_experts = transformer.unique_experts;
         result->grouped_expert_operations = transformer.grouped_expert_operations;
         result->expert_subviews_accessed = transformer.expert_subviews_accessed;
+        result->embedding_weight_bytes = transformer.embedding_bytes;
+        result->attention_weight_bytes = transformer.attention_weight_bytes;
         result->expert_weight_bytes = transformer.expert_weight_bytes;
+        result->final_weight_bytes = transformer.final_weight_bytes;
         result->h2d_bytes = transformer.h2d_bytes;
         result->d2h_bytes = transformer.d2h_bytes;
         result->kernel_launches = transformer.kernel_launches;
@@ -464,7 +467,10 @@ static void decode_accumulate(yvex_runtime_decode_result *result,
     result->unique_experts += step->unique_experts;
     result->grouped_expert_operations += step->grouped_expert_operations;
     result->expert_subviews_accessed += step->expert_subviews_accessed;
+    result->embedding_weight_bytes += step->embedding_weight_bytes;
+    result->attention_weight_bytes += step->attention_weight_bytes;
     result->expert_weight_bytes += step->expert_weight_bytes;
+    result->final_weight_bytes += step->final_weight_bytes;
     result->h2d_bytes += step->h2d_bytes;
     result->d2h_bytes += step->d2h_bytes;
     result->kernel_launches += step->kernel_launches;

@@ -753,6 +753,8 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
         result->d2h_bytes = context->options.device_greedy_selection
                                 ? 0ull : logits_bytes;
         result->kernel_launches = launches;
+        result->device_synchronizations = 1ull + !source->device_values_available +
+                                          !context->options.device_greedy_selection;
     }
     return rc;
 }
@@ -986,6 +988,7 @@ int yvex_runtime_logits_additive_adjust(
     result->minimum_logit = minimum;
     result->maximum_logit = maximum;
     result->h2d_bytes = result->d2h_bytes = result->kernel_launches = 0ull;
+    result->device_synchronizations = 0ull;
     if (!yvex_core_u64_mul(plan->vocabulary_size, sizeof(float), &index) ||
         !yvex_core_u64_add(result->full_array_host_scan_bytes, index,
                            &result->full_array_host_scan_bytes))

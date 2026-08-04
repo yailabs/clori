@@ -173,6 +173,9 @@ slots while reporting measured, missing and rooflined masks, so absence is
 never projected as a zero measurement. This does not earn a schema bump: the
 contract is non-persisted, non-wire, rebuilt with every binary, and has no old
 binary reader. Duration and work remain mandatory for every admitted record.
+The graph execution owner also accumulates repeated phase deltas with checked
+arithmetic and refuses any availability change within one phase; generation
+does not keep a second accumulation policy.
 
 The internal generation result carries an optional phase ledger. This additive
 source ABI is rebuilt with every product binary, is not serialized as C object
@@ -180,6 +183,15 @@ memory, and is excluded from semantic generation identity. It therefore does
 not change generation ABI v4, protocol v6 or event schema v3. Result validation
 checks ledger identities and availability masks when present; old internal
 results with no ledger retain their zero-initialized meaning.
+
+CUDA producers currently expose exact active-weight and launch facts for
+target-only prefill and decode, exact active-weight, launch and synchronization
+facts for output projection, and exact launch facts for draft and verification
+sweeps. Output-head payload movement remains unavailable in
+the phase record because the lower CUDA owner does not yet include its bounded
+status transfer in the row counters. State, activation, temporary, occupancy
+and movement stay explicitly unavailable until their producing owners measure
+them; a partial record is not a complete roofline.
 
 The binding is generated transactionally outside the repository, named by its
 content identity and independently reopened. Runtime open validates it against

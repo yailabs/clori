@@ -156,7 +156,10 @@ int yvex_runtime_generation_profile_decode(
     projected.unique_experts = value->unique_experts;
     projected.grouped_expert_operations = value->grouped_expert_operations;
     projected.expert_subviews_accessed = value->expert_subviews_accessed;
+    projected.embedding_bytes = value->embedding_weight_bytes;
+    projected.attention_weight_bytes = value->attention_weight_bytes;
     projected.expert_weight_bytes = value->expert_weight_bytes;
+    projected.final_weight_bytes = value->final_weight_bytes;
     projected.h2d_bytes = value->h2d_bytes;
     projected.d2h_bytes = value->d2h_bytes;
     projected.d2d_bytes = value->d2d_bytes;

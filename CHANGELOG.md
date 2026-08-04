@@ -33,8 +33,11 @@ change. Git history preserves implementation chronology.
   streaming, D2D and coherent-host samples instead of treating peak hardware
   bandwidth as measured evidence.
 - An identity-bound phase roofline ledger on real CUDA generation. Audit and
-  JSON output distinguish measured duration/work from unavailable byte,
-  occupancy and batched-execution facts instead of projecting zeros.
+  JSON output distinguish measured facts from unavailable ones. Target-only
+  prefill/decode and output projection publish exact active-weight and launch
+  counts; output projection also publishes synchronization, and DSpark
+  draft/verification publish exact launch counts. Movement remains unavailable
+  until lower CUDA owners account bounded status traffic.
 
 ### Changed
 

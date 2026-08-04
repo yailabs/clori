@@ -120,6 +120,7 @@ typedef struct {
     float confidence_logits[YVEX_SPECULATION_MAX_BLOCK];
     unsigned long long target_rng_draw_count, draft_rng_draw_count;
     unsigned long long draft_ns, verification_ns, acceptance_ns;
+    unsigned long long draft_kernel_launches, verification_kernel_launches;
     yvex_speculation_acceptance_result acceptance;
     char draft_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char verification_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
@@ -220,7 +221,8 @@ typedef struct {
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long row_expert_pairs, unique_experts;
     unsigned long long grouped_expert_operations, expert_subviews_accessed;
-    unsigned long long expert_weight_bytes;
+    unsigned long long embedding_weight_bytes, attention_weight_bytes;
+    unsigned long long expert_weight_bytes, final_weight_bytes;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
@@ -247,7 +249,8 @@ typedef struct {
     unsigned long long hash_routers, learned_routers, routed_experts, shared_experts;
     unsigned long long row_expert_pairs, unique_experts;
     unsigned long long grouped_expert_operations, expert_subviews_accessed;
-    unsigned long long expert_weight_bytes;
+    unsigned long long embedding_weight_bytes, attention_weight_bytes;
+    unsigned long long expert_weight_bytes, final_weight_bytes;
     unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
     unsigned long long d2d_bytes, upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;

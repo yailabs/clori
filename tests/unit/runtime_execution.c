@@ -311,6 +311,40 @@ static int execution_test_roofline(void)
     yvex_error err;
     unsigned long long index;
 
+    measurements[0] = (yvex_execution_phase_measurement){
+        .phase = YVEX_EXECUTION_ROOFLINE_DECODE_LAYER,
+        .fact_mask =
+            YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT) |
+            YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS) |
+            YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_DURATION) |
+            YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_WORK) |
+            YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_COMMITTED_TOKENS),
+        .active_weight_bytes = 40ull,
+        .kernel_count = 3ull,
+        .measured_duration_ns = 20ull,
+        .work_units = 1ull,
+        .committed_tokens = 1ull};
+    index = 0ull;
+    YVEX_TEST_ASSERT(yvex_execution_phase_measurement_accumulate(
+                         measurements + 1, YVEX_EXECUTION_ROOFLINE_PHASE_COUNT - 1ull,
+                         &index, measurements, &err) == YVEX_OK && index == 1ull,
+                     "one causal phase delta should create its exact measurement");
+    YVEX_TEST_ASSERT(yvex_execution_phase_measurement_accumulate(
+                         measurements + 1, YVEX_EXECUTION_ROOFLINE_PHASE_COUNT - 1ull,
+                         &index, measurements, &err) == YVEX_OK && index == 1ull &&
+                         measurements[1].active_weight_bytes == 80ull &&
+                         measurements[1].kernel_count == 6ull &&
+                         measurements[1].measured_duration_ns == 40ull &&
+                         measurements[1].committed_tokens == 2ull,
+                     "equal-availability phase deltas should accumulate without losing facts");
+    measurements[0].fact_mask &=
+        ~YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS);
+    YVEX_TEST_ASSERT(yvex_execution_phase_measurement_accumulate(
+                         measurements + 1, YVEX_EXECUTION_ROOFLINE_PHASE_COUNT - 1ull,
+                         &index, measurements, &err) == YVEX_ERR_STATE && index == 1ull,
+                     "one phase must not silently change physical fact availability");
+    memset(measurements, 0, sizeof(measurements));
+
     hardware.schema_version = YVEX_EXECUTION_HARDWARE_PROFILE_SCHEMA_V1;
     hardware.backend = YVEX_BACKEND_KIND_CUDA;
     hardware.admitted_fact_mask =

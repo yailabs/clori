@@ -960,6 +960,62 @@ static int roofline_measurement_build(
     return 1;
 }
 
+int yvex_execution_phase_measurement_accumulate(
+    yvex_execution_phase_measurement *measurements,
+    unsigned long long measurement_capacity,
+    unsigned long long *measurement_count,
+    const yvex_execution_phase_measurement *delta, yvex_error *err)
+{
+    const unsigned long long required =
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_DURATION) |
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_WORK) |
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_COMMITTED_TOKENS);
+    yvex_execution_phase_measurement *measurement = NULL;
+    unsigned long long index;
+    if (!measurements || !measurement_count || !delta ||
+        !measurement_capacity || *measurement_count > measurement_capacity ||
+        delta->phase >= YVEX_EXECUTION_ROOFLINE_PHASE_COUNT ||
+        (delta->fact_mask & required) != required ||
+        (delta->fact_mask & ~YVEX_EXECUTION_PHASE_FACT_ALL) ||
+        !delta->measured_duration_ns || !delta->work_units)
+        return execution_refuse(err, YVEX_ERR_INVALID_ARG,
+                                "runtime.execution.roofline",
+                                "phase measurement delta is incomplete");
+    for (index = 0ull; index < *measurement_count; ++index)
+        if (measurements[index].phase == delta->phase)
+            measurement = &measurements[index];
+    if (!measurement) {
+        if (*measurement_count == measurement_capacity)
+            return execution_refuse(err, YVEX_ERR_BOUNDS,
+                                    "runtime.execution.roofline",
+                                    "phase measurement capacity is exhausted");
+        measurements[*measurement_count] = *delta;
+        (*measurement_count)++;
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (measurement->fact_mask != delta->fact_mask)
+        return execution_refuse(err, YVEX_ERR_STATE,
+                                "runtime.execution.roofline",
+                                "phase fact availability changed");
+#define ACCUMULATE(field_) \
+    capacity_add(&measurement->field_, delta->field_)
+    if (!ACCUMULATE(active_weight_bytes) || !ACCUMULATE(state_bytes) ||
+        !ACCUMULATE(activation_bytes) || !ACCUMULATE(temporary_bytes) ||
+        !ACCUMULATE(h2d_bytes) || !ACCUMULATE(d2h_bytes) ||
+        !ACCUMULATE(d2d_bytes) || !ACCUMULATE(kernel_count) ||
+        !ACCUMULATE(synchronization_count) ||
+        !ACCUMULATE(occupancy_parts_per_million) ||
+        !ACCUMULATE(measured_duration_ns) || !ACCUMULATE(work_units) ||
+        !ACCUMULATE(committed_tokens))
+        return execution_refuse(err, YVEX_ERR_BOUNDS,
+                                "runtime.execution.roofline",
+                                "phase measurement counters overflowed");
+#undef ACCUMULATE
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int roofline_ledger_identity(yvex_execution_roofline_ledger *ledger)
 {
     yvex_sha256 hash;

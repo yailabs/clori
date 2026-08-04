@@ -305,6 +305,14 @@ typedef struct {
     unsigned long long optimization_headroom_ns, optimization_priority;
 } yvex_execution_phase_roofline;
 
+/* Adds one borrowed delta to caller-owned phase storage with checked counters.
+ * Repeated deltas for a phase must expose exactly the same fact set. */
+int yvex_execution_phase_measurement_accumulate(
+    yvex_execution_phase_measurement *measurements,
+    unsigned long long measurement_capacity,
+    unsigned long long *measurement_count,
+    const yvex_execution_phase_measurement *delta, yvex_error *err);
+
 typedef struct {
     unsigned int schema_version;
     const yvex_execution_hardware_profile *hardware;

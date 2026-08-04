@@ -73,7 +73,7 @@ typedef struct {
     unsigned long long source_position, vocabulary_size, hidden_width;
     unsigned long long logits_count, finite_count;
     float minimum_logit, maximum_logit;
-    unsigned long long h2d_bytes, d2h_bytes, kernel_launches;
+    unsigned long long h2d_bytes, d2h_bytes, kernel_launches, device_synchronizations;
     unsigned long long full_array_host_scan_bytes;
     yvex_execution_device_view device_logits;
     char source_hidden_digest[YVEX_SHA256_HEX_CAP];

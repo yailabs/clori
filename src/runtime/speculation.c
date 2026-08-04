@@ -1008,6 +1008,9 @@ static int speculation_execute_draft(
     if (rc == YVEX_OK)
         rc = speculation_project_draft_base(
             context, &draft, rows, draft_count, err);
+    result->draft_kernel_launches = draft.kernel_launches;
+    for (index = 0ull; index < draft_count; ++index)
+        result->draft_kernel_launches += rows[index].kernel_launches;
     if (rc == YVEX_OK &&
         context->sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC)
         rc = yvex_runtime_sampling_transaction_begin(
@@ -1123,6 +1126,9 @@ static int speculation_verify_target(
             context->target_logits, &output_head, sources, context->base_logits,
             (request->candidate_count + 1ull) * context->vocabulary_size,
             logits, request->candidate_count + 1ull, &logits_execution, err);
+    result->verification_kernel_launches = target.kernel_launches;
+    for (row = 0ull; row <= request->candidate_count; ++row)
+        result->verification_kernel_launches += logits[row].kernel_launches;
     for (row = 0ull; rc == YVEX_OK && row <= request->candidate_count; ++row) {
         yvex_runtime_sampling_source sampling_source = {0};
         yvex_runtime_sampling_distribution_result distribution = {0};

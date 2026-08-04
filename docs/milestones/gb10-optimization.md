@@ -64,9 +64,14 @@ keeps the original zero-mask v1 writer representation readable.
 
 The production CUDA generation path now records partial phase evidence without
 depending on trace verbosity and exposes it through the finite offline
-generation operator. Duration, work and committed-token accounting is live;
-byte and occupancy facts remain unavailable, so current optimization ordering
-is provisional rather than a promoted kernel-priority decision.
+generation operator. Duration, work and committed-token accounting is live.
+Target-only prefill/decode and output projection now report exact active-weight
+and launch facts; output projection additionally reports its exact
+synchronization facts, while DSpark draft/verification report exact launches.
+State, activation, temporary, occupancy and movement remain unavailable; in
+particular output movement cannot be complete until its bounded CUDA status
+transfer is producer-accounted. Current optimization ordering is therefore
+provisional rather than a promoted kernel-priority decision.
 
 Physical-variant research uses a funnel: role-level numerical probes,
 representative-layer encoding, kernel microbenchmarks, bounded logit and DSpark

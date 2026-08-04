@@ -43,12 +43,11 @@ struct yvex_runtime_transformer_context {
     yvex_device_tensor *device_global[YVEX_TRANSFORMER_WEIGHT_COUNT];
     float *embedding, *expanded_a, *expanded_b, *candidate_hidden;
     float *moe_combined, *moe_post, *moe_combination, *moe_routed, *moe_shared;
-    unsigned long long token_capacity, host_bytes, execution_count;
+    unsigned long long token_capacity, host_bytes, final_weight_bytes, execution_count;
     char workspace_identity[YVEX_SHA256_HEX_CAP];
     pthread_mutex_t mutex;
     int mutex_ready, busy, invalidated;
 };
-
 static const yvex_attention_plan *transformer_runtime_attention(
     const yvex_runtime_model_view *view, yvex_tensor_scope scope)
 {
@@ -57,7 +56,6 @@ static const yvex_attention_plan *transformer_runtime_attention(
 }
 static int transformer_hash_values(yvex_sha256 *hash, const float *values,
                                    unsigned long long count);
-
 static int transformer_device_value_digest(
     const char *domain,
     const yvex_transformer_plan_summary *plan, unsigned long long layer,
@@ -89,12 +87,10 @@ typedef struct {
     yvex_runtime_transformer_result *result;
     char last_expanded_digest[YVEX_SHA256_HEX_CAP];
 } transformer_chunk_context;
-
 typedef struct {
     const float *values;
     unsigned long long token_count, hidden_width;
 } transformer_core_feature_view;
-
 static int transformer_runtime_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "runtime.transformer", reason);
@@ -315,7 +311,6 @@ static int transformer_runtime_decode(const yvex_materialized_tensor_binding *bi
     }
     return YVEX_OK;
 }
-
 static int transformer_runtime_globals(yvex_runtime_transformer_context *context,
                                        yvex_error *err)
 {
@@ -330,6 +325,8 @@ static int transformer_runtime_globals(yvex_runtime_transformer_context *context
             !yvex_core_u64_mul(count, sizeof(float), &decoded_bytes) ||
             !yvex_core_u64_add(total, binding->encoded_bytes, &total) ||
             !yvex_core_u64_add(total, decoded_bytes, &total) ||
+            !yvex_core_u64_add(context->final_weight_bytes, decoded_bytes,
+                               &context->final_weight_bytes) ||
             binding->encoded_bytes > SIZE_MAX || count > SIZE_MAX / sizeof(float))
             return transformer_runtime_refuse(err, YVEX_ERR_BOUNDS,
                                               "transformer global weight extent overflowed");
@@ -874,6 +871,8 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
     }
     rc = transformer_feature_capture(chunk, chunk->layer_ordinal - 1ull, err);
     if (rc != YVEX_OK) return rc;
+    if (chunk->layer_ordinal == s->layer_count)
+        chunk->result->final_weight_bytes += context->final_weight_bytes;
     if (chunk->layer_ordinal == s->layer_count && backend == YVEX_BACKEND_KIND_CUDA) {
         unsigned long long expanded_bytes = chunk->token_count * s->expanded_width * sizeof(float);
         unsigned long long hidden_bytes = chunk->token_count * s->hidden_width * sizeof(float);
@@ -1778,6 +1777,7 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
             result->swa_layers += attention_result.swa_layers_executed;
             result->csa_layers += attention_result.csa_layers_executed;
             result->hca_layers += attention_result.hca_layers_executed;
+            result->attention_weight_bytes += attention_result.payload_bytes_read;
             result->h2d_bytes += attention_result.h2d_bytes;
             result->d2h_bytes += attention_result.d2h_bytes;
             result->kernel_launches += attention_result.kernel_launches;
