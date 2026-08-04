@@ -38,8 +38,8 @@ change. Git history preserves implementation chronology.
   counts. Target-only transformer phases now publish exact H2D/D2H/D2D
   movement and synchronization, including feature and status transfers;
   output projection publishes its exact H2D/D2H movement and synchronization.
-  DSpark draft/verification publish exact launch counts, while their combined
-  transformer movement remains unavailable until both scopes are projected.
+  DSpark draft/verification now publish exact launch, H2D/D2H/D2D movement and
+  synchronization facts across their transformer and output-head work.
 
 ### Changed
 

@@ -214,8 +214,8 @@ bytes, kernel launches and exact projection synchronization count. Its phase
 movement is exact: a host-sourced hidden row contributes H2D, forensic full
 logits contribute D2H, and every production row includes the bounded CUDA
 status transfer. Greedy selection still performs no full-vocabulary D2H. Draft
-and verify sweeps add their transformer and output-row launches; their combined
-movement is not yet projected. State, activation, temporary, occupancy, DSpark
+and verify sweeps add exact transformer/output-row launches, H2D/D2H/D2D
+movement and synchronization. State, activation, temporary, occupancy, DSpark
 active-byte and batched-decode facts remain unavailable, so optimization
 priority stays provisional. The offline generation operator exposes the ledger
 in audit and JSON projections without adding it to protocol v6.

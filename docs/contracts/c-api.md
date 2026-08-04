@@ -189,9 +189,10 @@ target-only prefill and decode together with their exact H2D/D2H/D2D movement
 and synchronization facts. Output projection exposes exact active-weight,
 launch, movement and synchronization facts, including its bounded CUDA status
 transfer without treating that transfer as full-vocabulary D2H. Draft and
-verification sweeps expose exact launches, but their combined transformer
-movement remains unavailable. State, activation, temporary and occupancy stay
-explicitly unavailable; a partial record is not a complete roofline.
+verification sweeps expose exact launches, H2D/D2H/D2D movement and
+synchronization across transformer and output-head work. Their active weight,
+state, activation, temporary and occupancy stay explicitly unavailable; a
+partial record is not a complete roofline.
 
 The binding is generated transactionally outside the repository, named by its
 content identity and independently reopened. Runtime open validates it against

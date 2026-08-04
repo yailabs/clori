@@ -1,5 +1,4 @@
-/* Generation composes lower owners without taking over their state. Tokens become visible only
- * after state commit; later failures retain that published prefix across retry and cancellation. */
+/* Generation publishes tokens only after state commit; failures preserve that committed prefix. */
 #include "src/runtime/private.h"
 #include <pthread.h>
 #include <stdatomic.h>
@@ -1328,14 +1327,16 @@ static int generation_speculative_candidate_cycle(
     if (rc == YVEX_OK)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_DRAFT_SWEEP,
             cycle.draft_ns, cycle.draft_proposed_count, 0ull,
-            0ull, 0ull, 0ull, 0ull, cycle.draft_kernel_launches, 0ull,
-            YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS), err);
+            0ull, cycle.draft_h2d_bytes, cycle.draft_d2h_bytes, cycle.draft_d2d_bytes,
+            cycle.draft_kernel_launches, cycle.draft_synchronizations,
+            generation_transformer_phase_facts & ~(1ull << YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT), err);
     if (rc == YVEX_OK)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_VERIFY_SWEEP,
             cycle.verification_ns, cycle.candidate_count + 1ull,
             commit->completed ? commit->token_count : 0ull,
-            0ull, 0ull, 0ull, 0ull, cycle.verification_kernel_launches, 0ull,
-            YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS), err);
+            0ull, cycle.verification_h2d_bytes, cycle.verification_d2h_bytes, cycle.verification_d2d_bytes,
+            cycle.verification_kernel_launches, cycle.verification_synchronizations,
+            generation_transformer_phase_facts & ~(1ull << YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT), err);
     if (rc == YVEX_OK && commit->completed && commit->promotion_ns)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_STATE_PROMOTION,
             commit->promotion_ns, commit->verified_prefix_count, commit->token_count,

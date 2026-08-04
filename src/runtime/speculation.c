@@ -1,8 +1,5 @@
-/*
- * Speculative candidates remain untrusted until this owner compares them with complete target
- * distributions. The result describes only the prefix that a caller may commit; it never mutates
- * model, RNG, tokenizer, transcript, or session state.
- */
+/* Speculative candidates remain untrusted until target comparison; this owner returns only a
+ * committable prefix and never publishes model, RNG, tokenizer, transcript, or session state. */
 #include "src/runtime/private.h"
 
 #include <yvex/internal/decode.h>
@@ -97,10 +94,8 @@ static unsigned int speculation_sample(const float *target, const float *draft,
     for (index = 0ull; index < count; ++index)
         total += residual ? fmax((double)target[index] - draft[index], 0.0)
                           : (double)target[index];
-    /* DeepSpec falls back to the target distribution when float rounding
-     * collapses the residual mass. This preserves a valid correction draw
-     * instead of turning a numerically degenerate rejection into a runtime
-     * failure. */
+    /* A rounded-away residual falls back to target mass, preserving a valid correction draw
+     * instead of converting numerical degeneracy into runtime failure. */
     if (residual && total <= 1e-8) {
         residual = 0;
         total = 0.0;
@@ -145,9 +140,7 @@ static int speculation_acceptance_identity(
         !yvex_sha256_update_u64(&hash, result->rejection_index) ||
         !yvex_sha256_update_u64(&hash, result->correction_present) ||
         !yvex_sha256_update_u64(&hash, result->bonus_present)) return 0;
-    /* This identity follows the admitted result, not the diagnostic proposal.
-     * Rejected suffix tokens remain visible through the cycle evidence but
-     * cannot perturb identities attached to committed model state or text. */
+    /* Rejected suffixes remain cycle evidence but cannot alter committed state/text identity. */
     for (index = 0ull; index < result->committed_count; ++index)
         if (!yvex_sha256_update_u64(&hash, committed[index])) return 0;
     return speculation_hash_finish(&hash, output);
@@ -311,9 +304,8 @@ int yvex_speculation_candidate_extent(
             err, YVEX_ERR_INVALID_ARG,
             "speculative candidate extent requires bounded output and context");
 
-    /* A surviving block always adds one target bonus after the target-authored
-     * anchor. Reserve both positions before drafting so an all-accepted cycle
-     * cannot overrun the caller's token array or the session context. */
+    /* Reserve anchor and target bonus before drafting so full acceptance cannot overrun output
+     * or session context. */
     if (remaining_output_tokens <= 2ull || remaining_context_tokens <= 2ull) {
         yvex_error_clear(err);
         return YVEX_OK;
@@ -343,10 +335,8 @@ int yvex_speculation_commit_plan_build(
         terminal_index > output_count)
         return speculation_refuse(err, YVEX_ERR_INVALID_ARG,
                                   "speculative commit plan is malformed");
-    /* Every non-terminal token selected by target verification belongs to the
-     * same atomic result, including its correction or bonus. Keeping that last
-     * token outside the commit would advance stochastic RNG state past the
-     * durable model/token prefix when a later draft is cancelled. */
+    /* Correction or bonus shares the verified atomic result; excluding it would advance RNG
+     * beyond durable model/token state if the next draft were cancelled. */
     if (terminal_index < output_count) {
         if (!terminal_index)
             return speculation_refuse(
@@ -974,6 +964,30 @@ static unsigned int speculation_argmax(const float *values,
     return (unsigned int)selected;
 }
 
+static int speculation_phase_physical(
+    const yvex_runtime_transformer_result *transformer,
+    const yvex_runtime_logits_row_result *rows, unsigned long long row_count,
+    unsigned long long *h2d, unsigned long long *d2h, unsigned long long *d2d,
+    unsigned long long *kernels, unsigned long long *synchronizations, yvex_error *err)
+{
+    unsigned long long row;
+    *h2d = transformer->h2d_bytes;
+    *d2h = transformer->d2h_bytes;
+    *d2d = transformer->d2d_bytes;
+    *kernels = transformer->kernel_launches;
+    if (!yvex_core_u64_add(transformer->stream_synchronizations,
+                           transformer->device_synchronizations, synchronizations)) goto overflow;
+    for (row = 0ull; row < row_count; ++row)
+        if (!yvex_core_u64_add(*h2d, rows[row].h2d_bytes, h2d) ||
+            !yvex_core_u64_add(*d2h, rows[row].d2h_bytes, d2h) ||
+            !yvex_core_u64_add(*kernels, rows[row].kernel_launches, kernels) ||
+            !yvex_core_u64_add(*synchronizations, rows[row].device_synchronizations,
+                               synchronizations)) goto overflow;
+    return YVEX_OK;
+overflow:
+    return speculation_refuse(err, YVEX_ERR_BOUNDS, "DSpark physical accounting overflowed");
+}
+
 static int speculation_execute_draft(
     yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
@@ -1008,9 +1022,11 @@ static int speculation_execute_draft(
     if (rc == YVEX_OK)
         rc = speculation_project_draft_base(
             context, &draft, rows, draft_count, err);
-    result->draft_kernel_launches = draft.kernel_launches;
-    for (index = 0ull; index < draft_count; ++index)
-        result->draft_kernel_launches += rows[index].kernel_launches;
+    if (rc == YVEX_OK)
+        rc = speculation_phase_physical(
+            &draft, rows, draft_count, &result->draft_h2d_bytes,
+            &result->draft_d2h_bytes, &result->draft_d2d_bytes,
+            &result->draft_kernel_launches, &result->draft_synchronizations, err);
     if (rc == YVEX_OK &&
         context->sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC)
         rc = yvex_runtime_sampling_transaction_begin(
@@ -1126,9 +1142,12 @@ static int speculation_verify_target(
             context->target_logits, &output_head, sources, context->base_logits,
             (request->candidate_count + 1ull) * context->vocabulary_size,
             logits, request->candidate_count + 1ull, &logits_execution, err);
-    result->verification_kernel_launches = target.kernel_launches;
-    for (row = 0ull; row <= request->candidate_count; ++row)
-        result->verification_kernel_launches += logits[row].kernel_launches;
+    if (rc == YVEX_OK)
+        rc = speculation_phase_physical(
+            &target, logits, request->candidate_count + 1ull,
+            &result->verification_h2d_bytes, &result->verification_d2h_bytes,
+            &result->verification_d2d_bytes, &result->verification_kernel_launches,
+            &result->verification_synchronizations, err);
     for (row = 0ull; rc == YVEX_OK && row <= request->candidate_count; ++row) {
         yvex_runtime_sampling_source sampling_source = {0};
         yvex_runtime_sampling_distribution_result distribution = {0};

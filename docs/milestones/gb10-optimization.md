@@ -69,10 +69,11 @@ Target-only prefill/decode and output projection now report exact active-weight
 and launch facts. Target-only transformer phases additionally report exact
 H2D/D2H/D2D movement and synchronization, including selected feature and
 bounded status transfers. Output projection reports its exact synchronization
-and H2D/D2H facts. DSpark draft/verification report exact launches, but their
-combined transformer movement is not yet projected. State, activation,
-temporary and occupancy remain unavailable. Current optimization ordering is
-therefore provisional rather than a promoted kernel-priority decision.
+and H2D/D2H facts. DSpark draft/verification report exact launch,
+H2D/D2H/D2D movement and synchronization across their transformer and batched
+output-head work. Their active weights, state, activation, temporary and
+occupancy remain unavailable. Current optimization ordering is therefore
+provisional rather than a promoted kernel-priority decision.
 
 Physical-variant research uses a funnel: role-level numerical probes,
 representative-layer encoding, kernel microbenchmarks, bounded logit and DSpark
