@@ -10,6 +10,7 @@
 
 #include <yvex/internal/core.h>
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/families/minimax_h3.h>
 
 #include <limits.h>
 #include <stdint.h>
@@ -120,6 +121,10 @@ unsigned long long yvex_transform_hash_logical_key(
     hash = yvex_core_hash_mix_u64(hash, (unsigned long long)key->scope);
     hash = yvex_core_hash_mix_u64(hash, (unsigned long long)key->subsystem);
     hash = yvex_core_hash_mix_u64(hash, (unsigned long long)key->role);
+    hash = yvex_core_hash_mix_u64(hash, key->component_identity);
+    hash = yvex_core_hash_mix_u64(hash, key->semantic_role);
+    hash = yvex_core_hash_mix_u64(hash, key->phase_identity);
+    hash = yvex_core_hash_mix_u64(hash, key->lifetime_identity);
     hash = yvex_core_hash_mix_u64(hash, key->layer_index);
     hash = yvex_core_hash_mix_u64(hash, key->auxiliary_index);
     return yvex_core_hash_mix_u64(hash, key->group_index);
@@ -334,12 +339,19 @@ static int transform_source_dtype_matches(yvex_native_dtype source,
     }
 }
 
-static int transform_logical_key_valid(const yvex_transform_logical_key *key)
+static int transform_logical_key_valid(const yvex_transform_logical_key *key,
+                                       unsigned int schema_version)
 {
     if (!key || key->scope > YVEX_TRANSFORM_SCOPE_AUXILIARY ||
-        key->subsystem >= YVEX_TRANSFORM_SUBSYSTEM_COUNT ||
-        key->role <= YVEX_TENSOR_ROLE_UNKNOWN ||
-        key->role >= YVEX_TENSOR_ROLE_COUNT) return 0;
+        key->subsystem >= YVEX_TRANSFORM_SUBSYSTEM_COUNT) return 0;
+    if (schema_version == YVEX_TRANSFORM_IR_SCHEMA_VERSION) {
+        if (key->role <= YVEX_TENSOR_ROLE_UNKNOWN ||
+            key->role >= YVEX_TENSOR_ROLE_COUNT || key->component_identity ||
+            key->semantic_role || key->phase_identity || key->lifetime_identity) return 0;
+    } else if (schema_version == YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION) {
+        if (key->role >= YVEX_TENSOR_ROLE_COUNT || !key->component_identity ||
+            !key->semantic_role || !key->phase_identity || !key->lifetime_identity) return 0;
+    } else return 0;
     if (key->scope == YVEX_TRANSFORM_SCOPE_GLOBAL)
         return key->layer_index == YVEX_TRANSFORM_IR_NO_ID &&
                key->auxiliary_index == YVEX_TRANSFORM_IR_NO_ID;
@@ -351,12 +363,21 @@ static int transform_logical_key_valid(const yvex_transform_logical_key *key)
 }
 
 static int transform_source_scope_valid(
-    const yvex_transform_source_spec *source)
+    const yvex_transform_source_spec *source,
+    unsigned int schema_version)
 {
     if (!source || source->scope > YVEX_TRANSFORM_SCOPE_AUXILIARY ||
-        source->subsystem >= YVEX_TRANSFORM_SUBSYSTEM_COUNT ||
-        source->role_hint <= YVEX_TENSOR_ROLE_UNKNOWN ||
-        source->role_hint >= YVEX_TENSOR_ROLE_COUNT) return 0;
+        source->subsystem >= YVEX_TRANSFORM_SUBSYSTEM_COUNT) return 0;
+    if (schema_version == YVEX_TRANSFORM_IR_SCHEMA_VERSION) {
+        if (source->role_hint <= YVEX_TENSOR_ROLE_UNKNOWN ||
+            source->role_hint >= YVEX_TENSOR_ROLE_COUNT || source->component_identity ||
+            source->semantic_role || source->phase_identity || source->lifetime_identity ||
+            source->unresolved_requirement_identity) return 0;
+    } else if (schema_version == YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION) {
+        if (source->role_hint >= YVEX_TENSOR_ROLE_COUNT || !source->component_identity ||
+            !source->semantic_role || !source->phase_identity || !source->lifetime_identity)
+            return 0;
+    } else return 0;
     if (source->scope == YVEX_TRANSFORM_SCOPE_GLOBAL)
         return source->layer_index == YVEX_TRANSFORM_IR_NO_ID &&
                source->auxiliary_index == YVEX_TRANSFORM_IR_NO_ID;
@@ -382,16 +403,23 @@ int yvex_transform_builder_create(
     if (failure) memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
     if (!out || !header ||
-        header->schema_version != YVEX_TRANSFORM_IR_SCHEMA_VERSION ||
+        (header->schema_version != YVEX_TRANSFORM_IR_SCHEMA_VERSION &&
+         header->schema_version != YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION) ||
         !transform_identity_text_valid(header->logical_model_identity) ||
         !transform_identity_text_valid(header->required_payload_identity) ||
         !header->payload_trust_class || !header->payload_trust_class[0] ||
         header->source_snapshot_identity == 0u ||
         header->expected_source_count == 0u ||
-        header->expected_terminal_count == 0u) {
+        header->expected_terminal_count == 0u ||
+        (header->schema_version == YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION &&
+         (!transform_identity_text_valid(header->component_manifest_identity) ||
+          !transform_identity_text_valid(header->architecture_identity) ||
+          !transform_identity_text_valid(header->role_map_identity) ||
+          !transform_identity_text_valid(header->unresolved_requirements_identity)))) {
         return yvex_transform_fail(
             failure,
-            header && header->schema_version != YVEX_TRANSFORM_IR_SCHEMA_VERSION
+            header && header->schema_version != YVEX_TRANSFORM_IR_SCHEMA_VERSION &&
+                    header->schema_version != YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION
                 ? YVEX_TRANSFORM_FAILURE_SCHEMA_UNSUPPORTED
                 : YVEX_TRANSFORM_FAILURE_INVALID_ARGUMENT,
             YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
@@ -451,10 +479,29 @@ int yvex_transform_builder_create(
     yvex_core_text_copy(builder->payload_trust_class,
                         sizeof(builder->payload_trust_class),
                         header->payload_trust_class);
+    yvex_core_text_copy(builder->component_manifest_identity,
+                        sizeof(builder->component_manifest_identity),
+                        header->component_manifest_identity
+                            ? header->component_manifest_identity : "");
+    yvex_core_text_copy(builder->architecture_identity,
+                        sizeof(builder->architecture_identity),
+                        header->architecture_identity ? header->architecture_identity : "");
+    yvex_core_text_copy(builder->role_map_identity,
+                        sizeof(builder->role_map_identity),
+                        header->role_map_identity ? header->role_map_identity : "");
+    yvex_core_text_copy(builder->unresolved_requirements_identity,
+                        sizeof(builder->unresolved_requirements_identity),
+                        header->unresolved_requirements_identity
+                            ? header->unresolved_requirements_identity : "");
     builder->header.logical_model_identity = builder->logical_model_identity;
     builder->header.required_payload_identity =
         builder->required_payload_identity;
     builder->header.payload_trust_class = builder->payload_trust_class;
+    builder->header.component_manifest_identity = builder->component_manifest_identity;
+    builder->header.architecture_identity = builder->architecture_identity;
+    builder->header.role_map_identity = builder->role_map_identity;
+    builder->header.unresolved_requirements_identity =
+        builder->unresolved_requirements_identity;
     builder->owned_bytes = sizeof(*builder);
     builder->peak_bytes = sizeof(*builder);
     *out = builder;
@@ -496,7 +543,7 @@ int yvex_transform_builder_add_source(
         spec->value_dtype > YVEX_TRANSFORM_DTYPE_REAL ||
         !transform_source_dtype_matches(spec->source_dtype,
                                         spec->value_dtype) ||
-        !transform_source_scope_valid(spec) ||
+        !transform_source_scope_valid(spec, builder->header.schema_version) ||
         !transform_shape_valid(&spec->shape) ||
         spec->relative_end <= spec->relative_begin ||
         spec->required_uses == 0u) {
@@ -510,7 +557,8 @@ int yvex_transform_builder_add_source(
                    !transform_source_dtype_matches(spec->source_dtype,
                                                    spec->value_dtype)
                        ? YVEX_TRANSFORM_FAILURE_UNSUPPORTED_SOURCE_DTYPE
-                       : (spec && !transform_source_scope_valid(spec)
+                       : (spec && !transform_source_scope_valid(
+                                      spec, builder->header.schema_version)
                               ? YVEX_TRANSFORM_FAILURE_INVALID_LOGICAL_KEY
                               : YVEX_TRANSFORM_FAILURE_INVALID_ARGUMENT)),
             YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
@@ -553,6 +601,12 @@ int yvex_transform_builder_add_source(
     source->scope = spec->scope;
     source->subsystem = spec->subsystem;
     source->role_hint = spec->role_hint;
+    source->component_identity = spec->component_identity;
+    source->semantic_role = spec->semantic_role;
+    source->phase_identity = spec->phase_identity;
+    source->lifetime_identity = spec->lifetime_identity;
+    source->unresolved_requirement_identity =
+        spec->unresolved_requirement_identity;
     source->layer_index = spec->layer_index;
     source->auxiliary_index = spec->auxiliary_index;
     source->expert_index = spec->expert_index;
@@ -596,7 +650,8 @@ int yvex_transform_builder_declare_value(
         spec->dtype <= YVEX_TRANSFORM_DTYPE_UNKNOWN ||
         spec->dtype > YVEX_TRANSFORM_DTYPE_REAL ||
         (spec->kind == YVEX_TRANSFORM_VALUE_TERMINAL &&
-         (!transform_logical_key_valid(&spec->logical_key) ||
+         (!transform_logical_key_valid(&spec->logical_key,
+                                       builder->header.schema_version) ||
           spec->canonical_ordinal == YVEX_TRANSFORM_IR_NO_ID))) {
         if (builder) builder->state = YVEX_TRANSFORM_IR_STATE_FAILED;
         return yvex_transform_fail(
@@ -888,6 +943,10 @@ int yvex_transform_logical_key_equal(
 {
     return left && right && left->scope == right->scope &&
         left->subsystem == right->subsystem && left->role == right->role &&
+        left->component_identity == right->component_identity &&
+        left->semantic_role == right->semantic_role &&
+        left->phase_identity == right->phase_identity &&
+        left->lifetime_identity == right->lifetime_identity &&
         left->layer_index == right->layer_index &&
         left->auxiliary_index == right->auxiliary_index &&
         left->group_index == right->group_index;
@@ -1715,6 +1774,206 @@ const yvex_model_family_transform_api *yvex_model_deepseek_transform_api(void)
         yvex_transform_deepseek_architecture_identity,
         deepseek_transform_build
     };
+
+    return &api;
+}
+
+static yvex_transform_dtype minimax_transform_dtype(yvex_native_dtype dtype)
+{
+    if (dtype == YVEX_NATIVE_DTYPE_BF16) return YVEX_TRANSFORM_DTYPE_BF16;
+    if (dtype == YVEX_NATIVE_DTYPE_F32) return YVEX_TRANSFORM_DTYPE_F32;
+    return YVEX_TRANSFORM_DTYPE_UNKNOWN;
+}
+
+static yvex_transform_subsystem minimax_transform_subsystem(yvex_minimax_h3_role role)
+{
+    if ((role >= YVEX_MINIMAX_H3_ROLE_TEXT_ATTENTION_Q &&
+         role <= YVEX_MINIMAX_H3_ROLE_TEXT_QK_NORM) ||
+        role == YVEX_MINIMAX_H3_ROLE_VISION_ATTENTION ||
+        role == YVEX_MINIMAX_H3_ROLE_TOKEN_REFINER_ATTENTION ||
+        role == YVEX_MINIMAX_H3_ROLE_OMNI_ATTENTION ||
+        role == YVEX_MINIMAX_H3_ROLE_OMNI_QK_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_VIDEO_DECODER_ATTENTION ||
+        role == YVEX_MINIMAX_H3_ROLE_AUDIO_PRE_ATTENTION)
+        return YVEX_TRANSFORM_SUBSYSTEM_ATTENTION;
+    if (role == YVEX_MINIMAX_H3_ROLE_TEXT_RMS_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_VISION_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_TOKEN_REFINER_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_OMNI_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_FINAL_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_VIDEO_ENCODER_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_VIDEO_DECODER_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_AUDIO_PRE_NORM)
+        return YVEX_TRANSFORM_SUBSYSTEM_NORMALIZATION;
+    if (role == YVEX_MINIMAX_H3_ROLE_TEXT_OUTPUT_HEAD ||
+        role == YVEX_MINIMAX_H3_ROLE_FINAL_VIDEO ||
+        role == YVEX_MINIMAX_H3_ROLE_FINAL_AUDIO ||
+        role == YVEX_MINIMAX_H3_ROLE_VIDEO_OUTPUT ||
+        role == YVEX_MINIMAX_H3_ROLE_AUDIO_OUTPUT)
+        return YVEX_TRANSFORM_SUBSYSTEM_OUTPUT;
+    return YVEX_TRANSFORM_SUBSYSTEM_AUXILIARY;
+}
+
+static int minimax_transform_add(yvex_transform_builder *builder,
+                                 const yvex_minimax_h3_target *target,
+                                 unsigned long long index,
+                                 yvex_transform_failure *failure,
+                                 yvex_error *err)
+{
+    const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
+    const yvex_minimax_h3_summary *summary = family->summary(target);
+    const yvex_minimax_h3_tensor_role *role = family->role_at(target, index);
+    const yvex_minimax_h3_component *component;
+    yvex_transform_source_spec source = {0};
+    yvex_transform_value_spec terminal = {0};
+    yvex_transform_node_spec node = {0};
+    unsigned long long source_value, terminal_value, node_id, input;
+    unsigned int dimension;
+    int rc;
+
+    if (!summary || !role || role->transform != YVEX_MINIMAX_H3_TRANSFORM_IDENTITY)
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_UNSUPPORTED_OPERATION, index,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_MINIMAX_H3_TRANSFORM_IDENTITY,
+            role ? role->transform : ~0u, 0u, err, "minimax_h3_transform");
+    component = family->component_at(target, role->component);
+    if (!component) return YVEX_ERR_STATE;
+    source.source_name = role->source_name;
+    source.shard_name = role->shard_name;
+    source.source_tensor_index = index;
+    source.requirement_index = index;
+    source.source_snapshot_identity = summary->source_snapshot_key;
+    source.source_dtype = role->source_dtype;
+    source.value_dtype = minimax_transform_dtype(role->source_dtype);
+    source.shape.rank = role->rank;
+    for (dimension = 0u; dimension < role->rank; ++dimension)
+        source.shape.dims[dimension] = role->source_shape[dimension];
+    source.relative_begin = role->relative_begin;
+    source.relative_end = role->relative_end;
+    source.requirement_identity = yvex_transform_hash_string(role->destination_identity);
+    source.scope = role->layer_index == YVEX_MINIMAX_H3_NO_COORDINATE
+                       ? YVEX_TRANSFORM_SCOPE_GLOBAL : YVEX_TRANSFORM_SCOPE_MAIN_LAYER;
+    source.subsystem = minimax_transform_subsystem(role->role);
+    source.role_hint = YVEX_TENSOR_ROLE_UNKNOWN;
+    source.component_identity = yvex_transform_hash_string(component->identity);
+    source.semantic_role = role->role;
+    source.phase_identity = role->phase;
+    source.lifetime_identity = role->lifetime;
+    source.unresolved_requirement_identity = role->unresolved_requirement_identity;
+    source.layer_index = role->layer_index;
+    source.auxiliary_index = YVEX_TRANSFORM_IR_NO_ID;
+    source.expert_index = YVEX_TRANSFORM_IR_NO_ID;
+    source.required_uses = 1u;
+    rc = yvex_transform_builder_add_source(builder, &source, &source_value, failure, err);
+    if (rc != YVEX_OK) return rc;
+    terminal.kind = YVEX_TRANSFORM_VALUE_TERMINAL;
+    terminal.semantic_id = source.requirement_identity;
+    terminal.canonical_ordinal = index;
+    terminal.shape = source.shape;
+    terminal.dtype = source.value_dtype;
+    terminal.precision.flags = YVEX_TRANSFORM_PRECISION_EXACT;
+    terminal.precision.allowed_physical_classes =
+        source.value_dtype == YVEX_TRANSFORM_DTYPE_BF16
+            ? YVEX_TRANSFORM_PHYSICAL_BF16 : YVEX_TRANSFORM_PHYSICAL_F32;
+    terminal.logical_key.scope = source.scope;
+    terminal.logical_key.subsystem = source.subsystem;
+    terminal.logical_key.role = YVEX_TENSOR_ROLE_UNKNOWN;
+    terminal.logical_key.component_identity = source.component_identity;
+    terminal.logical_key.semantic_role = role->role;
+    terminal.logical_key.phase_identity = role->phase;
+    terminal.logical_key.lifetime_identity = role->lifetime;
+    terminal.logical_key.layer_index = role->layer_index;
+    terminal.logical_key.auxiliary_index = YVEX_TRANSFORM_IR_NO_ID;
+    terminal.logical_key.group_index = index;
+    rc = yvex_transform_builder_declare_value(
+        builder, &terminal, &terminal_value, failure, err);
+    if (rc != YVEX_OK) return rc;
+    input = source_value;
+    node.kind = YVEX_TRANSFORM_OP_IDENTITY;
+    node.output_value_id = terminal_value;
+    node.input_value_ids = &input;
+    node.input_count = 1u;
+    node.numeric = YVEX_TRANSFORM_NUMERIC_EXACT;
+    node.ordering = YVEX_TRANSFORM_ORDER_INPUT;
+    node.payload_execution_required = 1;
+    return yvex_transform_builder_add_node(builder, &node, &node_id, failure, err);
+}
+
+static int minimax_transform_build(yvex_transform_ir **out,
+                                   char derivation_identity[65],
+                                   const yvex_minimax_h3_target *target,
+                                   yvex_error *err)
+{
+    const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
+    const yvex_minimax_h3_summary *facts = family->summary(target);
+    yvex_transform_header header = {0};
+    yvex_transform_builder_options options = {0};
+    yvex_transform_builder *builder = NULL;
+    yvex_transform_failure failure;
+    const yvex_transform_ir_summary *summary;
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    int rc;
+
+    if (out) *out = NULL;
+    if (derivation_identity) derivation_identity[0] = '\0';
+    if (!out || !derivation_identity || !facts || !facts->source_verified ||
+        !facts->architecture_admitted || !facts->roles_complete) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax_h3_transform",
+                       "verified source, architecture, and complete roles are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    header.schema_version = YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION;
+    header.logical_model_identity = facts->target_identity;
+    header.source_snapshot_identity = facts->source_snapshot_key;
+    header.coverage_identity = yvex_transform_hash_string(facts->role_map_identity);
+    header.required_payload_identity = facts->source_acquisition_identity;
+    header.payload_trust_class = "complete-sha256-verified-source";
+    header.component_manifest_identity = facts->component_manifest_identity;
+    header.architecture_identity = facts->architecture_identity;
+    header.role_map_identity = facts->role_map_identity;
+    header.unresolved_requirements_identity = facts->unresolved_requirements_identity;
+    header.expected_source_count = facts->tensor_count;
+    header.expected_terminal_count = facts->tensor_count;
+    header.header_scan_count = facts->shard_count;
+    yvex_transform_budget_default(&options.budget);
+    rc = yvex_transform_builder_create(&builder, &header, &options, &failure, err);
+    for (index = 0u; rc == YVEX_OK && index < facts->tensor_count; ++index)
+        rc = minimax_transform_add(builder, target, index, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_transform_builder_seal(builder, out, &failure, err);
+    yvex_transform_builder_release(&builder);
+    summary = rc == YVEX_OK ? yvex_transform_ir_summary_get(*out) : NULL;
+    if (!summary || !summary->complete || summary->source_value_count != facts->tensor_count ||
+        summary->terminal_count != facts->tensor_count ||
+        summary->node_count != facts->tensor_count || summary->payload_bytes_read != 0u) {
+        yvex_transform_ir_release(out);
+        if (rc == YVEX_OK) {
+            yvex_error_set(err, YVEX_ERR_STATE, "minimax_h3_transform",
+                           "sealed Transformation IR coverage is incomplete");
+            rc = YVEX_ERR_STATE;
+        }
+        return rc;
+    }
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.target-derivation.v1") ||
+        !yvex_sha256_update_text(&hash, facts->target_identity) ||
+        !yvex_sha256_update_text(&hash, summary->transform_identity) ||
+        !yvex_sha256_final(&hash, digest)) {
+        yvex_transform_ir_release(out);
+        yvex_error_set(err, YVEX_ERR_STATE, "minimax_h3_transform",
+                       "target derivation identity construction failed");
+        return YVEX_ERR_STATE;
+    }
+    yvex_sha256_hex(digest, derivation_identity);
+    return YVEX_OK;
+}
+
+const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void)
+{
+    static const yvex_minimax_h3_transform_api api = {minimax_transform_build};
 
     return &api;
 }

@@ -10,6 +10,8 @@
 
 #include "src/cli/io/private.h"
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/compilation.h>
 
 #define TARGET_PTR(type_name, key_name, member, default_text) \
     {key_name, YVEX_CLI_FIELD_TEXT, offsetof(type_name, member), default_text}
@@ -573,6 +575,128 @@ static int model_target_render_deepseek_ir(
         fp, report, ir, model);
 }
 
+static int model_target_render_minimax(
+    FILE *fp,
+    yvex_model_target_render_mode mode,
+    const yvex_model_target_report *report)
+{
+    const yvex_minimax_h3_api *api = yvex_model_register_minimax_h3();
+    const yvex_minimax_h3_target *target =
+        (const yvex_minimax_h3_target *)report->family_architecture;
+    const yvex_minimax_h3_summary *summary = api->summary(target);
+    const yvex_minimax_h3_architecture *architecture = api->architecture(target);
+    const yvex_transform_ir_summary *transformation =
+        yvex_transform_ir_summary_get(
+            (const yvex_transform_ir *)report->family_transformation);
+    int rc = 0;
+
+    if (!summary || !architecture || !transformation) return 0;
+    if (mode == YVEX_MODEL_TARGET_OUTPUT_JSON) {
+        return yvex_cli_out_writef(
+            fp,
+            "{\"status\":\"%s\",\"target_id\":\"%s\",\"family\":\"minimax-h3\","
+            "\"repository\":\"%s\",\"revision\":\"%s\",\"subtree\":\"%s\","
+            "\"source_verified\":true,\"components\":%llu,\"weighted_components\":%llu,"
+            "\"shards\":%llu,\"tensors\":%llu,\"elements\":%llu,\"payload_bytes\":%llu,"
+            "\"source_snapshot_identity\":\"%s\",\"component_manifest_identity\":\"%s\","
+            "\"architecture_identity\":\"%s\",\"role_map_identity\":\"%s\","
+            "\"transformation_ir_identity\":\"%s\",\"derivation_identity\":\"%s\","
+            "\"payload_execution_bytes\":%llu,\"evidence_stage\":"
+            "\"source-verified-architecture-and-transformation-ir\","
+            "\"artifact\":\"not-produced\",\"runtime\":\"unsupported\","
+            "\"generation\":\"unsupported\",\"next\":\"%s\"}\n",
+            report->status, report->target_id, YVEX_MINIMAX_H3_REPOSITORY,
+            YVEX_MINIMAX_H3_REVISION, YVEX_MINIMAX_H3_SUBTREE,
+            summary->component_count, summary->weighted_component_count,
+            summary->shard_count, summary->tensor_count, summary->element_count,
+            summary->payload_bytes, summary->source_snapshot_identity,
+            summary->component_manifest_identity, summary->architecture_identity,
+            summary->role_map_identity, transformation->transform_identity,
+            report->family_derivation_identity, transformation->payload_bytes_read,
+            report->next_row);
+    }
+    if (mode == YVEX_MODEL_TARGET_OUTPUT_TABLE) {
+        rc |= yvex_cli_out_writef(
+            fp, "TARGET  STATUS  COMPONENTS  SHARDS  TENSORS  PAYLOAD  EXECUTION  NEXT\n");
+        rc |= yvex_cli_out_writef(
+            fp, "%s  %s  %llu  %llu  %llu  %llu  unsupported  %s\n",
+            report->target_id, report->status, summary->component_count,
+            summary->shard_count, summary->tensor_count, summary->payload_bytes,
+            report->next_row);
+        return rc < 0 ? rc : 0;
+    }
+    if (mode == YVEX_MODEL_TARGET_OUTPUT_AUDIT) {
+        unsigned long long index;
+
+        rc |= yvex_cli_out_writef(fp, "status: %s\n", report->status);
+        rc |= yvex_cli_out_writef(fp, "target_id: %s\nfamily: minimax-h3\n", report->target_id);
+        rc |= yvex_cli_out_writef(fp, "repository: %s\nrevision: %s\nsubtree: %s\n",
+                                  YVEX_MINIMAX_H3_REPOSITORY,
+                                  YVEX_MINIMAX_H3_REVISION,
+                                  YVEX_MINIMAX_H3_SUBTREE);
+        rc |= yvex_cli_out_writef(
+            fp, "source_verified: true\ncomponents: %llu\nweighted_components: %llu\n"
+                "shards: %llu\ntensors: %llu\nelements: %llu\npayload_bytes: %llu\n",
+            summary->component_count, summary->weighted_component_count,
+            summary->shard_count, summary->tensor_count, summary->element_count,
+            summary->payload_bytes);
+        for (index = 0u; index < summary->component_count; ++index) {
+            const yvex_minimax_h3_component *component = api->component_at(target, index);
+            if (component) {
+                rc |= yvex_cli_out_writef(
+                    fp, "component_%llu: id=%s weighted=%s shards=%llu tensors=%llu "
+                        "phase=%u release_after_phase=%s identity=%s\n",
+                    index, component->canonical_id, component->weighted ? "true" : "false",
+                    component->shard_count, component->tensor_count,
+                    (unsigned int)component->phase,
+                    component->release_after_phase ? "true" : "false",
+                    component->identity);
+            }
+        }
+        rc |= yvex_cli_out_writef(fp, "source_snapshot_identity: %s\n",
+                                  summary->source_snapshot_identity);
+        rc |= yvex_cli_out_writef(fp, "component_manifest_identity: %s\n",
+                                  summary->component_manifest_identity);
+        rc |= yvex_cli_out_writef(fp, "architecture_identity: %s\n",
+                                  summary->architecture_identity);
+        rc |= yvex_cli_out_writef(fp, "role_map_identity: %s\n",
+                                  summary->role_map_identity);
+        rc |= yvex_cli_out_writef(fp, "transformation_ir_identity: %s\n",
+                                  transformation->transform_identity);
+        rc |= yvex_cli_out_writef(fp, "derivation_identity: %s\n",
+                                  report->family_derivation_identity);
+        rc |= yvex_cli_out_writef(
+            fp, "unresolved_requirements_identity: %s\npayload_execution_bytes: %llu\n",
+            summary->unresolved_requirements_identity,
+            transformation->payload_bytes_read);
+        rc |= yvex_cli_out_writef(
+            fp, "unknowns: mm-rope,masks,conditioning-placement,latent-rng,solver,"
+                "timestep-schedule,iteration-count,update-equation,guidance,output-geometry,"
+                "codec-container,synchronization,adaln-cache-validity,quantization-validity\n");
+        rc |= yvex_cli_out_writef(
+            fp, "artifact_status: not-produced\nruntime_execution: unsupported\n"
+                "generation: unsupported\nbenchmark_status: not-measured\nnext: %s\nboundary: %s\n",
+            report->next_row, report->boundary);
+        return rc < 0 ? rc : 0;
+    }
+    rc |= yvex_cli_out_writef(fp, "minimax-h3: %s [%s]\n", report->target_id, report->status);
+    rc |= yvex_cli_out_writef(
+        fp, "source: %s@%s %s verified\ncoverage: components=%llu shards=%llu "
+            "tensors=%llu payload=%llu\n",
+        YVEX_MINIMAX_H3_REPOSITORY, YVEX_MINIMAX_H3_REVISION,
+        YVEX_MINIMAX_H3_SUBTREE, summary->component_count,
+        summary->shard_count, summary->tensor_count, summary->payload_bytes);
+    rc |= yvex_cli_out_writef(
+        fp, "identity: architecture=%s roles=%s transform=%s\n",
+        summary->architecture_identity, summary->role_map_identity,
+        transformation->transform_identity);
+    rc |= yvex_cli_out_writef(
+        fp, "stage: source/architecture/role-map/Transformation-IR; "
+            "artifact/runtime/generation unsupported\nnext: %s\n",
+        report->next_row);
+    return rc < 0 ? rc : 0;
+}
+
 int yvex_model_target_render(FILE *fp,
                              yvex_model_target_render_mode mode,
                              const yvex_model_target_report *report)
@@ -594,6 +718,9 @@ int yvex_model_target_render(FILE *fp,
         return model_target_render_deepseek_coverage(fp, mode, report);
     }
     if (report->family_architecture) {
+        if (report->family_architecture_kind ==
+            YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3)
+            return model_target_render_minimax(fp, mode, report);
         return model_target_render_deepseek_ir(fp, mode, report);
     }
     if (mode == YVEX_MODEL_TARGET_OUTPUT_TABLE && report->table_row_count > 0) {

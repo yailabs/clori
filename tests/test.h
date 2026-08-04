@@ -40,6 +40,7 @@ int yvex_test_materialization_runtime(void);
 int yvex_test_materialize_cpu(void);
 int yvex_test_materialize_gate(void);
 int yvex_test_memory_plan(void);
+int yvex_test_minimax_h3(void);
 int yvex_test_model_descriptor(void);
 int yvex_test_model_gate(void);
 int yvex_test_model_ref(void);

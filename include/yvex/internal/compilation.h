@@ -17,6 +17,7 @@ extern "C" {
 
 /* Ir. */
 #define YVEX_TRANSFORM_IR_SCHEMA_VERSION 1u
+#define YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION 2u
 #define YVEX_TRANSFORM_IR_IDENTITY_CAP 65u
 #define YVEX_TRANSFORM_IR_SOURCE_NAME_CAP 256u
 #define YVEX_TRANSFORM_IR_SHARD_NAME_CAP 128u
@@ -155,6 +156,10 @@ typedef struct {
     yvex_transform_scope scope;
     yvex_transform_subsystem subsystem;
     yvex_tensor_role role;
+    unsigned long long component_identity;
+    unsigned long long semantic_role;
+    unsigned long long phase_identity;
+    unsigned long long lifetime_identity;
     unsigned long long layer_index;
     unsigned long long auxiliary_index;
     unsigned long long group_index;
@@ -181,6 +186,11 @@ typedef struct {
     yvex_transform_scope scope;
     yvex_transform_subsystem subsystem;
     yvex_tensor_role role_hint;
+    unsigned long long component_identity;
+    unsigned long long semantic_role;
+    unsigned long long phase_identity;
+    unsigned long long lifetime_identity;
+    unsigned long long unresolved_requirement_identity;
     unsigned long long layer_index;
     unsigned long long auxiliary_index;
     unsigned long long expert_index;
@@ -228,6 +238,11 @@ typedef struct {
     yvex_transform_scope scope;
     yvex_transform_subsystem subsystem;
     yvex_tensor_role role_hint;
+    unsigned long long component_identity;
+    unsigned long long semantic_role;
+    unsigned long long phase_identity;
+    unsigned long long lifetime_identity;
+    unsigned long long unresolved_requirement_identity;
     unsigned long long layer_index;
     unsigned long long auxiliary_index;
     unsigned long long expert_index;
@@ -298,6 +313,10 @@ typedef struct {
     unsigned long long coverage_identity;
     const char *required_payload_identity;
     const char *payload_trust_class;
+    const char *component_manifest_identity;
+    const char *architecture_identity;
+    const char *role_map_identity;
+    const char *unresolved_requirements_identity;
     unsigned long long expected_source_count;
     unsigned long long expected_terminal_count;
     unsigned long long header_scan_count;
@@ -314,6 +333,10 @@ typedef struct {
     unsigned long long coverage_identity;
     char required_payload_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
     char payload_trust_class[40];
+    char component_manifest_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
+    char architecture_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
+    char role_map_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
+    char unresolved_requirements_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
     char transform_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
     unsigned long long source_value_count;
     unsigned long long intermediate_value_count;
@@ -490,6 +513,10 @@ struct yvex_transform_builder {
     char logical_model_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
     char required_payload_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
     char payload_trust_class[40];
+    char component_manifest_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
+    char architecture_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
+    char role_map_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
+    char unresolved_requirements_identity[YVEX_TRANSFORM_IR_IDENTITY_CAP];
     yvex_transform_source_value *sources;
     yvex_transform_value *values;
     yvex_transform_builder_node *nodes;

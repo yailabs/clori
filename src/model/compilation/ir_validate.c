@@ -1160,6 +1160,18 @@ int yvex_transform_ir_validate_and_seal(
     yvex_core_text_copy(ir->summary.payload_trust_class,
                         sizeof(ir->summary.payload_trust_class),
                         builder->payload_trust_class);
+    yvex_core_text_copy(ir->summary.component_manifest_identity,
+                        sizeof(ir->summary.component_manifest_identity),
+                        builder->component_manifest_identity);
+    yvex_core_text_copy(ir->summary.architecture_identity,
+                        sizeof(ir->summary.architecture_identity),
+                        builder->architecture_identity);
+    yvex_core_text_copy(ir->summary.role_map_identity,
+                        sizeof(ir->summary.role_map_identity),
+                        builder->role_map_identity);
+    yvex_core_text_copy(ir->summary.unresolved_requirements_identity,
+                        sizeof(ir->summary.unresolved_requirements_identity),
+                        builder->unresolved_requirements_identity);
     ir->summary.index_capacity = ir->source_index_capacity +
                                  ir->terminal_index_capacity;
     ir->summary.validation_steps = builder->value_count + builder->node_count +

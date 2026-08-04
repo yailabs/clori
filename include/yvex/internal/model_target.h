@@ -41,6 +41,11 @@ typedef enum {
     YVEX_MODEL_TARGET_COMMAND_INSPECT,
     YVEX_MODEL_TARGET_COMMAND_UNKNOWN
 } yvex_model_target_command_kind;
+typedef enum {
+    YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_NONE = 0,
+    YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK,
+    YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3
+} yvex_model_target_family_architecture_kind;
 typedef struct {
     char value[YVEX_MODEL_TARGET_TEXT_CAP];
 } yvex_model_target_text_value;
@@ -105,6 +110,9 @@ typedef struct yvex_model_target_report {
     yvex_model_target_table_row table_rows[YVEX_MODEL_TARGET_TABLE_ROW_CAP];
     unsigned long table_row_count;
     void *family_architecture;
+    yvex_model_target_family_architecture_kind family_architecture_kind;
+    void *family_transformation;
+    char family_derivation_identity[65];
     void *family_coverage;
     void *family_lowering;
     int exit_code;

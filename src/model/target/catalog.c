@@ -26,6 +26,8 @@ static const yvex_model_target_class_record catalog_model_target_classes[] = {
     {"source-model-candidate", "false", "unsupported", "unsupported",
      "backend-neutral model/source target candidate; backend pressure and runtime "
      "compatibility are reported separately"},
+    {"composite-source-model", "false", "unsupported", "unsupported",
+     "identity-bound multi-component source target with artifact-neutral transformation semantics"},
     {"full-runtime-model", "false", "planned", "planned",
      "complete tensor set required for transformer prefill, decode, logits, sampling, "
      "and generation after runtime support exists"},
@@ -79,6 +81,12 @@ static const yvex_model_target_record catalog_model_targets[] = {
      "pending source/config verification",
      "target profile only; no source download/runtime/generation", "unsupported",
      "unsupported", "false"},
+    {"minimax-h3-fl2va", "MiniMax-H3", "MiniMax-H3 Base FL2VA",
+     "composite-source-model", "official-immutable-fl2va-source",
+     "component-artifacts-not-produced", "source-to-transformation-ir",
+     "four-weighted-components", "hf/minimax/MiniMax-H3/immutable-revision",
+     "144051204180 bytes", "source and logical IR only; execution unsupported",
+     "unsupported", "unsupported", "false"},
 };
 
 int yvex_model_target_release_source_paths(
@@ -153,6 +161,7 @@ const char *yvex_model_target_family_key(const char *target_id)
         if (strcmp(record->family, "Gemma") == 0) return "gemma";
         if (strcmp(record->family, "DeepSeek") == 0) return "deepseek";
         if (strcmp(record->family, "GLM") == 0) return "glm";
+        if (strcmp(record->family, "MiniMax-H3") == 0) return "minimax-h3";
     }
     if (target_id && strncmp(target_id, "qwen", 4) == 0) return "qwen";
     if (target_id && strncmp(target_id, "gemma", 5) == 0) return "gemma";
@@ -165,6 +174,7 @@ int yvex_model_target_supported_source_target(const char *target_id)
            (yvex_source_is_release_target(target_id) ||
             strcmp(target_id, "qwen3-8b") == 0 ||
             strcmp(target_id, "gemma-4-12b-it") == 0 ||
+            strcmp(target_id, "minimax-h3-fl2va") == 0 ||
             strncmp(target_id, "qwen", 4) == 0 ||
             strncmp(target_id, "gemma", 5) == 0);
 }
