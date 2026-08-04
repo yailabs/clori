@@ -4,6 +4,7 @@
 #include <yvex/internal/sampling.h>
 
 #include <math.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,6 +49,42 @@ static yvex_runtime_sampling_policy sampling_policy(void)
         .seed_present = 1,
         .seed = 42ull};
     return policy;
+}
+
+static int sampling_greedy_rows(
+    yvex_backend *backend, const yvex_backend_sampling_operations *operations)
+{
+    const float values[] = {
+        -4.0f, 3.5f, 1.0f, 3.5f, -2.0f, 0.0f, 2.0f,
+         9.0f, 8.0f, 7.0f, 6.0f, 5.0f, 4.0f, 3.0f,
+        -1.0f, 0.0f, 2.0f, 1.0f, 2.0f, 2.0f, 0.0f};
+    yvex_backend_tensor_desc descriptor;
+    yvex_device_tensor *device = NULL;
+    yvex_backend_cuda_operation_facts facts;
+    unsigned long long ties[3] = {0ull};
+    unsigned int tokens[3] = {UINT_MAX, UINT_MAX, UINT_MAX};
+    float selected[3] = {0.0f};
+    yvex_error err;
+    sampling_tensor_desc(&descriptor, "sampling-greedy-rows", YVEX_DTYPE_F32,
+                         sizeof(values));
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &descriptor, &device, &err) == YVEX_OK &&
+            yvex_backend_tensor_write(
+                backend, device, values, sizeof(values), &err) == YVEX_OK &&
+            operations->select_greedy_rows(
+                backend, device, 3ull, 7ull, tokens, selected, ties, &facts, &err) == YVEX_OK,
+        "execute one CUDA argmax over three resident rows");
+    YVEX_TEST_ASSERT(
+        tokens[0] == 1u && selected[0] == 3.5f && ties[0] == 2ull &&
+            tokens[1] == 0u && selected[1] == 9.0f && ties[1] == 1ull &&
+            tokens[2] == 2u && selected[2] == 2.0f && ties[2] == 3ull &&
+            facts.kernel_launches == 1ull && facts.device_synchronizations == 1ull &&
+            facts.d2h_bytes == sizeof(int) + sizeof(tokens) + sizeof(selected) + sizeof(ties),
+        "batched CUDA argmax preserves lowest-token tie policy and aggregate physical facts");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &device, &err) == YVEX_OK,
+        "release CUDA greedy row fixture");
+    return 0;
 }
 
 static int sampling_full_vocabulary(
@@ -111,11 +148,14 @@ int yvex_cuda_test_sampling(void)
     if (rc != 0) return rc;
     operations = yvex_backend_sampling_operations_get(backend);
     YVEX_TEST_ASSERT(
-        operations && operations->workspace_required && operations->select_stochastic &&
+        operations && operations->workspace_required && operations->select_greedy_rows &&
+            operations->select_stochastic &&
             yvex_runtime_sampling_policy_seal(&policy, 4ull, &err) == YVEX_OK &&
             operations->workspace_required(4ull, &workspace_bytes, &err) == YVEX_OK &&
             workspace_bytes > sizeof(logits),
         "CUDA stochastic sampling admits sealed policy and derived workspace");
+    YVEX_TEST_ASSERT(sampling_greedy_rows(backend, operations) == 0,
+                     "CUDA sampling owns batched greedy selection");
     sampling_tensor_desc(&descriptor, "sampling-logits", YVEX_DTYPE_F32,
                          sizeof(logits));
     YVEX_TEST_ASSERT(

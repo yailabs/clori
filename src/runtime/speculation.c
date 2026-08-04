@@ -1088,14 +1088,16 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
     yvex_runtime_logits_source sources[YVEX_SPECULATION_MAX_BLOCK + 1u] = {{0}};
     yvex_runtime_logits_row_result logits[YVEX_SPECULATION_MAX_BLOCK + 1u] = {{0}};
     yvex_runtime_logits_result logits_execution = {0};
+    yvex_runtime_sampling_source sampling_sources[YVEX_SPECULATION_MAX_BLOCK + 1u] = {{0}};
+    yvex_runtime_sampling_result selections[YVEX_SPECULATION_MAX_BLOCK + 1u] = {{0}};
+    yvex_runtime_sampling_execution sampling_execution = {0};
     yvex_output_head_batch_request output_head = {0};
     unsigned int verification_tokens[YVEX_SPECULATION_MAX_BLOCK + 1u] = {0};
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long started, row;
     yvex_runtime_model_failure failure = {0};
-    int device_verification = context->verification_logits != NULL;
-    int acquired = 0, rc;
+    int device_verification = context->verification_logits != NULL, acquired = 0, rc;
     verification_tokens[0] = request->conditioning_token_id;
     memcpy(verification_tokens + 1u, result->candidate_token_ids,
            (size_t)request->candidate_count * sizeof(*verification_tokens));
@@ -1149,39 +1151,37 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
         rc = speculation_phase_physical(
             &target, &logits_execution,
             &result->verification_physical, err);
+    for (row = 0ull; rc == YVEX_OK && row <= request->candidate_count; ++row)
+        rc = yvex_runtime_sampling_source_from_logits(
+            device_verification ? context->verification_sampling : context->target_sampling,
+            &sampling_sources[row],
+            device_verification ? NULL : context->base_logits + row * context->vocabulary_size,
+            device_verification ? 0ull : context->vocabulary_size, &logits[row], err);
+    if (rc == YVEX_OK && device_verification)
+        rc = yvex_runtime_sampling_execute(
+            context->verification_sampling, sampling_sources, request->candidate_count + 1ull,
+            selections, YVEX_SPECULATION_MAX_BLOCK + 1ull, &sampling_execution, err);
     for (row = 0ull; rc == YVEX_OK && row <= request->candidate_count; ++row) {
-        yvex_runtime_sampling_source sampling_source = {0};
-        yvex_runtime_sampling_distribution_result distribution = {0};
-        yvex_runtime_sampling_result selected = {0};
-        if (device_verification)
-            rc = yvex_runtime_sampling_source_from_logits(
-                context->verification_sampling, &sampling_source, NULL, 0ull,
-                &logits[row], err);
-        else
-            rc = yvex_runtime_sampling_source_from_logits(
-                context->target_sampling, &sampling_source,
-                context->base_logits + row * context->vocabulary_size,
-                context->vocabulary_size, &logits[row], err);
-        if (rc == YVEX_OK && device_verification)
-            rc = yvex_runtime_sampling_select(
-                context->verification_sampling, &sampling_source, &selected, err);
-        else if (rc == YVEX_OK)
-            rc = yvex_runtime_sampling_distribution(
-                context->target_sampling, &sampling_source,
-                context->target_probabilities + row * context->vocabulary_size,
-                context->vocabulary_size, &distribution, err);
-        if (rc == YVEX_OK && device_verification) {
+        if (device_verification) {
             yvex_execution_memory_facts no_memory = {0};
-            context->target_token_ids[row] = selected.selected_token_id;
+            context->target_token_ids[row] = selections[row].selected_token_id;
             rc = speculation_physical_add(
                 &result->verification_physical, &no_memory, 0ull,
-                selected.d2h_bytes, 0ull, selected.kernel_launches,
-                selected.device_synchronizations, err);
+                selections[row].d2h_bytes, 0ull, selections[row].kernel_launches,
+                selections[row].device_synchronizations, err);
+        } else {
+            yvex_runtime_sampling_distribution_result distribution = {0};
+            rc = yvex_runtime_sampling_distribution(
+                context->target_sampling, &sampling_sources[row],
+                context->target_probabilities + row * context->vocabulary_size,
+                context->vocabulary_size, &distribution, err);
+            if (rc == YVEX_OK &&
+                !yvex_sha256_update_text(&hash, distribution.distribution_identity))
+                rc = speculation_refuse(err, YVEX_ERR_STATE,
+                                        "target verification identity update failed");
         }
-        if (rc == YVEX_OK &&
-            !yvex_sha256_update_text(
-                &hash, device_verification ? selected.selected_token_identity
-                                           : distribution.distribution_identity))
+        if (rc == YVEX_OK && device_verification &&
+            !yvex_sha256_update_text(&hash, selections[row].selected_token_identity))
             rc = speculation_refuse(err, YVEX_ERR_STATE,
                                     "target verification identity update failed");
     }

@@ -385,7 +385,8 @@ static int live_device_batch(live_logits *execution, yvex_runtime_model *model,
     const yvex_runtime_logits_plan_summary *plan;
     yvex_error cleanup;
     unsigned long long index, activation_elements, activation_bytes, hidden_elements;
-    unsigned long long hidden_bytes;
+    unsigned long long hidden_bytes, sampling_d2h = 0ull, sampling_kernels = 0ull;
+    unsigned long long sampling_synchronizations = 0ull;
     int rc, close_rc;
     memset(out, 0, sizeof(*out));
     rc = live_device_profile(execution, model, &profile, err);
@@ -460,12 +461,22 @@ static int live_device_batch(live_logits *execution, yvex_runtime_model *model,
     if (rc == YVEX_OK)
         rc = yvex_runtime_sampling_context_snapshot(
             sampling, &out->sampling.summary, err);
-    for (index = 0ull; rc == YVEX_OK && index < LIVE_LOGITS_ROWS; ++index)
+    for (index = 0ull; rc == YVEX_OK && index < LIVE_LOGITS_ROWS; ++index) {
+        sampling_d2h += out->sampling.rows[index].d2h_bytes;
+        sampling_kernels += out->sampling.rows[index].kernel_launches;
+        sampling_synchronizations += out->sampling.rows[index].device_synchronizations;
         if (!out->sampling.rows[index].device_selection ||
             out->sampling.rows[index].full_array_host_scan_bytes ||
             out->sampling.rows[index].selected_token_id !=
                 host_greedy->rows[index].selected_token_id)
             rc = YVEX_ERR_FORMAT;
+    }
+    if (rc == YVEX_OK &&
+        (sampling_kernels != 1ull || sampling_synchronizations != 1ull ||
+         sampling_d2h != sizeof(int) + LIVE_LOGITS_ROWS *
+                                    (sizeof(unsigned int) + sizeof(float) +
+                                     sizeof(unsigned long long))))
+        rc = YVEX_ERR_FORMAT;
     if (rc != YVEX_OK && !yvex_error_is_set(err))
         yvex_error_set(err, rc, "test.logits.device-batch",
                        "device-resident output batch invariants failed");

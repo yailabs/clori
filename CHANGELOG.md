@@ -62,7 +62,8 @@ change. Git history preserves implementation chronology.
   only after cancellation-safe validation, while audit/forensic and stochastic
   DSpark retain the complete-distribution host reference.
 - Production greedy DSpark verification now projects its complete target row
-  batch to CUDA-resident logits and transfers only bounded argmax facts. The
+  batch to CUDA-resident logits, selects every row through one width-N argmax
+  launch and one synchronization, and transfers only bounded aggregate facts. The
   portable host distribution remains the CPU, audit/forensic and stochastic
   oracle; draft feature/Markov execution is unchanged.
 - Compulsory memory accounting now has one transactional internal fact owner.

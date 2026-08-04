@@ -296,41 +296,6 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
     return 0;
 }
 
-static int quant_cuda_argmax(yvex_backend *backend)
-{
-    const float values[] = {-4.0f, 3.5f, 1.0f, 3.5f, -2.0f, 0.0f, 2.0f};
-    yvex_backend_tensor_desc descriptor = {0};
-    yvex_device_tensor *device = NULL;
-    yvex_error err;
-    yvex_backend_cuda_operation_facts facts;
-    unsigned long long ties = 0ull;
-    unsigned int token = UINT_MAX;
-    float selected = 0.0f;
-    int rc;
-    descriptor.name = "argmax_values";
-    descriptor.dtype = YVEX_DTYPE_F32;
-    descriptor.rank = 1u;
-    descriptor.dims[0] = sizeof(values) / sizeof(values[0]);
-    descriptor.bytes = sizeof(values);
-    YVEX_TEST_ASSERT(
-        yvex_backend_tensor_alloc(backend, &descriptor, &device, &err) == YVEX_OK &&
-            yvex_backend_tensor_write(backend, device, values, sizeof(values),
-                                      &err) == YVEX_OK,
-        "device argmax input is resident");
-    rc = yvex_backend_cuda_argmax_f32(
-        backend, device, descriptor.dims[0], &token, &selected, &ties,
-        &facts, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && token == 1u && selected == 3.5f &&
-                         ties == 2ull && facts.kernel_launches == 1ull &&
-                         facts.d2h_bytes == sizeof(int) + sizeof(unsigned int) +
-                                                sizeof(float) + sizeof(unsigned long long) &&
-                         facts.device_synchronizations == 1ull,
-                     "device argmax selects the lowest token across exact ties");
-    YVEX_TEST_ASSERT(yvex_backend_tensor_release(backend, &device, &err) == YVEX_OK,
-                     "device argmax releases its input");
-    return 0;
-}
-
 static int quant_cuda_tensor(yvex_backend *backend, const char *name,
                              unsigned int dtype, const void *source,
                              unsigned long long bytes,
@@ -609,8 +574,6 @@ int yvex_cuda_test_quant_qtype(void)
                      "Q2_K production Q8 activation matvec");
     YVEX_TEST_ASSERT(quant_cuda_q8_matvec(backend, YVEX_GGUF_QTYPE_IQ2_XXS) == 0,
                      "IQ2_XXS production Q8 activation matvec");
-    YVEX_TEST_ASSERT(quant_cuda_argmax(backend) == 0,
-                     "production device argmax");
     YVEX_TEST_ASSERT(quant_cuda_transformer_facts(backend) == 0,
                      "transformer envelope physical facts");
     yvex_backend_close(backend);

@@ -117,8 +117,10 @@ changes no persisted, wire or public C contract.
 Greedy DSpark target verification now consumes that resident result class.
 One speculation-owned verification context borrows the existing model,
 session, output-head residency and compiled profile; it projects all target
-rows together, performs CUDA argmax through the sampling owner and transfers
-only bounded selection/status facts. The accepted-prefix decision remains in
+rows together, performs one width-N CUDA argmax launch and synchronization
+through the sampling owner, and transfers only bounded aggregate
+selection/status facts. Physical accounting is attached once to the ordered
+batch rather than multiplied across logical rows. The accepted-prefix decision remains in
 the target-authoritative speculation transaction, so cancellation and failed
 verification cannot publish selected IDs or state. CPU, audit/forensic and
 stochastic DSpark retain the complete-distribution oracle. The drafter feature,

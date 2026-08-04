@@ -57,20 +57,23 @@ extern "C" __global__ void yvex_attention_bf16_round(
     values[index] = float_to_bf16_rne(value);
 }
 extern "C" __global__ void yvex_argmax_f32(
-    const float *values, unsigned long long count, unsigned int *selected_token,
-    float *selected_value, unsigned long long *tie_count, int *status)
+    const float *values, unsigned long long row_count, unsigned long long row_width,
+    unsigned int *selected_tokens, float *selected_values,
+    unsigned long long *tie_counts, int *status)
 {
     __shared__ float maxima[128];
     __shared__ unsigned long long indices[128], ties[128];
     unsigned int lane = threadIdx.x;
+    unsigned long long row = blockIdx.x;
     float best = -3.402823466e+38F;
     unsigned long long best_index = ~0ull, tied = 0ull;
-    if (!status || blockIdx.x || blockDim.x != 128u || !values || !count ||
-        !selected_token || !selected_value || !tie_count) {
-        if (status && !blockIdx.x && !lane) atomicCAS(status, 0, 2);
+    if (!status || row >= row_count || blockDim.x != 128u || !values || !row_width ||
+        !selected_tokens || !selected_values || !tie_counts) {
+        if (status && !lane) atomicCAS(status, 0, 2);
         return;
     }
-    for (unsigned long long index = lane; index < count; index += blockDim.x) {
+    values += row * row_width;
+    for (unsigned long long index = lane; index < row_width; index += blockDim.x) {
         float value = values[index];
         if (!isfinite(value)) atomicCAS(status, 0, 1);
         else if (value > best) best = value, best_index = index, tied = 1ull;
@@ -100,9 +103,9 @@ extern "C" __global__ void yvex_argmax_f32(
         __syncthreads();
     }
     if (!lane) {
-        *selected_token = (unsigned int)indices[0];
-        *selected_value = maxima[0];
-        *tie_count = ties[0];
+        selected_tokens[row] = (unsigned int)indices[0];
+        selected_values[row] = maxima[0];
+        tie_counts[row] = ties[0];
     }
 }
 

@@ -990,8 +990,10 @@ static int sampling_test_device_context(void)
             yvex_runtime_sampling_context_open(
                 &context, &plan, &policy, &options, &err) == YVEX_OK &&
             yvex_runtime_sampling_context_snapshot(context, &summary, &err) == YVEX_OK &&
-            summary.workspace_bytes == 0ull && summary.cold_workspace_allocations == 0ull,
-        "device sampling context allocates no complete-vocabulary host candidates");
+            summary.workspace_bytes == sizeof(unsigned int) + sizeof(float) +
+                                           sizeof(unsigned long long) &&
+            summary.cold_workspace_allocations == 3ull,
+        "device sampling owns only bounded reusable row-result storage");
     YVEX_TEST_ASSERT(
         yvex_runtime_sampling_source_from_logits(
             context, &source, logits, 4ull, &row, &err) == YVEX_OK &&

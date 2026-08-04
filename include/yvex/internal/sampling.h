@@ -113,6 +113,15 @@ typedef struct {
 typedef struct {
     int (*workspace_required)(unsigned long long vocabulary_size,
                               unsigned long long *bytes, yvex_error *err);
+    int (*select_greedy_rows)(yvex_backend *backend,
+                              const yvex_device_tensor *logits,
+                              unsigned long long row_count,
+                              unsigned long long row_width,
+                              unsigned int *selected_tokens,
+                              float *selected_values,
+                              unsigned long long *tie_counts,
+                              yvex_backend_cuda_operation_facts *facts,
+                              yvex_error *err);
     int (*select_stochastic)(yvex_backend *backend,
                              const yvex_device_tensor *logits,
                              unsigned long long vocabulary_size,

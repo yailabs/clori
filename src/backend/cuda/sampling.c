@@ -127,6 +127,105 @@ static int sampling_cuda_result_valid(
            statistics[YVEX_CUDA_SAMPLING_NORMALIZATION_ERROR] >= 0.0;
 }
 
+static int sampling_cuda_select_greedy_rows(
+    yvex_backend *backend, const yvex_device_tensor *logits,
+    unsigned long long row_count, unsigned long long row_width,
+    unsigned int *selected_tokens, float *selected_values,
+    unsigned long long *tie_counts, yvex_backend_cuda_operation_facts *facts,
+    yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_cuda_work work = {0};
+    CUdeviceptr tokens_device = 0ull, values_device = 0ull, ties_device = 0ull;
+    CUdeviceptr status_device = 0ull, input;
+    unsigned long long value_count, value_bytes, token_bytes, selected_bytes, tie_bytes;
+    unsigned long long temporary_bytes, row;
+    int status = 0, rc, cleanup_rc;
+    yvex_error cleanup;
+    if (facts) memset(facts, 0, sizeof(*facts));
+    if (!state || !selected_tokens || !selected_values || !tie_counts || !facts ||
+        !row_count || !row_width || row_count > UINT_MAX || row_width > UINT_MAX ||
+        !yvex_core_u64_mul(row_count, row_width, &value_count) ||
+        !yvex_core_u64_mul(value_count, sizeof(float), &value_bytes) ||
+        !yvex_core_u64_mul(row_count, sizeof(*selected_tokens), &token_bytes) ||
+        !yvex_core_u64_mul(row_count, sizeof(*selected_values), &selected_bytes) ||
+        !yvex_core_u64_mul(row_count, sizeof(*tie_counts), &tie_bytes) ||
+        !yvex_core_u64_add(token_bytes, selected_bytes, &temporary_bytes) ||
+        !yvex_core_u64_add(temporary_bytes, tie_bytes, &temporary_bytes) ||
+        !yvex_core_u64_add(temporary_bytes, sizeof(status), &temporary_bytes) ||
+        value_bytes > SIZE_MAX || token_bytes > SIZE_MAX || selected_bytes > SIZE_MAX ||
+        tie_bytes > SIZE_MAX || temporary_bytes > SIZE_MAX ||
+        !backend_tensor_owner_is(backend, logits) || logits->dtype != YVEX_DTYPE_F32 ||
+        !logits->is_written || logits->bytes < value_bytes)
+        return sampling_cuda_refuse(
+            err, YVEX_ERR_FORMAT,
+            "greedy CUDA row selection geometry or ownership is incompatible");
+    memset(selected_tokens, 0, (size_t)token_bytes);
+    memset(selected_values, 0, (size_t)selected_bytes);
+    memset(tie_counts, 0, (size_t)tie_bytes);
+    rc = yvex_cuda_require_capability(
+        backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, "cuda.sampling.greedy", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_set_current(backend, "cuda.sampling.greedy", err);
+    work.backend = backend;
+    work.state = state;
+    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+#define ALLOC(field_, bytes_, stage_)                                              \
+    if (rc == YVEX_OK)                                                            \
+        rc = yvex_cuda_work_allocate(&work, &(field_), (size_t)(bytes_), NULL, 1, \
+                                     (stage_), NULL, err)
+    ALLOC(tokens_device, token_bytes, "cuda.sampling.greedy.tokens");
+    ALLOC(values_device, selected_bytes, "cuda.sampling.greedy.values");
+    ALLOC(ties_device, tie_bytes, "cuda.sampling.greedy.ties");
+    ALLOC(status_device, sizeof(status), "cuda.sampling.greedy.status");
+#undef ALLOC
+    input = (CUdeviceptr)logits->data;
+    if (rc == YVEX_OK) {
+        void *params[] = {&input, &row_count, &row_width, &tokens_device,
+                          &values_device, &ties_device, &status_device};
+        rc = yvex_cuda_launch(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            state->argmax_f32_function, (unsigned int)row_count, 128u, 0u,
+            params, "cuda.sampling.greedy.launch", err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_synchronize(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            "cuda.sampling.greedy.sync", err);
+#define READ(target_, source_, bytes_, stage_)                                    \
+    if (rc == YVEX_OK)                                                            \
+        rc = sampling_cuda_download(state, (target_), (source_), (size_t)(bytes_), \
+                                    (stage_), err)
+    READ(&status, status_device, sizeof(status), "cuda.sampling.greedy.status");
+    READ(selected_tokens, tokens_device, token_bytes, "cuda.sampling.greedy.tokens");
+    READ(selected_values, values_device, selected_bytes, "cuda.sampling.greedy.values");
+    READ(tie_counts, ties_device, tie_bytes, "cuda.sampling.greedy.ties");
+#undef READ
+    for (row = 0ull; rc == YVEX_OK && row < row_count; ++row)
+        if (status || selected_tokens[row] >= row_width ||
+            !isfinite(selected_values[row]) || !tie_counts[row])
+            rc = sampling_cuda_refuse(
+                err, YVEX_ERR_FORMAT,
+                "greedy CUDA row selection produced invalid bounded facts");
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
+    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
+    if (rc == YVEX_OK) {
+        facts->d2h_bytes = temporary_bytes;
+        facts->kernel_launches = 1ull;
+        facts->download_count = 4ull;
+        facts->device_synchronizations = 1ull;
+        facts->activation_bytes = value_bytes;
+        facts->temporary_bytes = temporary_bytes;
+        facts->compulsory_memory_facts_available = 1;
+        yvex_error_clear(err);
+    }
+    return rc;
+}
+
 static int sampling_cuda_select_stochastic(
     yvex_backend *backend, const yvex_device_tensor *logits,
     unsigned long long vocabulary_size,
@@ -266,6 +365,7 @@ static int sampling_cuda_select_stochastic(
 
 static const yvex_backend_sampling_operations sampling_cuda_operations = {
     sampling_cuda_workspace_required,
+    sampling_cuda_select_greedy_rows,
     sampling_cuda_select_stochastic
 };
 
@@ -273,8 +373,8 @@ const yvex_backend_sampling_operations *yvex_backend_sampling_operations_get(
     const yvex_backend *backend)
 {
     const yvex_cuda_backend_state *state = yvex_cuda_state(backend);
-    return backend && yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA &&
-                   state && state->sample_stochastic_f32_function
+    return backend && yvex_backend_kind_of(backend) == YVEX_BACKEND_KIND_CUDA && state &&
+                   state->argmax_f32_function && state->sample_stochastic_f32_function
                ? &sampling_cuda_operations
                : NULL;
 }

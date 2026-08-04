@@ -95,7 +95,8 @@ remains only as a portable audit/reference oracle. Target-only production now
 selects stochastic tokens from resident CUDA logits with bounded result
 transfer; audit/forensic and stochastic DSpark still own explicit host sampling
 references. Production greedy DSpark verification now retains its width-N
-target logits on CUDA and transfers only bounded argmax facts.
+target logits on CUDA, selects the complete row directory with one argmax
+launch and synchronization, and transfers only bounded aggregate facts.
 Eager attention, reference layouts and host feature materialization may be
 replaced only through the existing typed execution profile. Compatible width-N
 CUDA output rows already share activation
