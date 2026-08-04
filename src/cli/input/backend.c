@@ -62,9 +62,16 @@ int yvex_cuda_info_args_parse(int argc, char **argv,
         out->help = 1;
         return YVEX_OK;
     }
-    if (argc != 2) {
+    if (argc == 4 && strcmp(argv[2], "bandwidth") == 0 &&
+        (strcmp(argv[3], "--help") == 0 || strcmp(argv[3], "-h") == 0)) {
+        out->help = 1;
+        return YVEX_OK;
+    }
+    if (argc == 3 && strcmp(argv[2], "bandwidth") == 0) {
+        out->request.kind = YVEX_BACKEND_REPORT_CUDA_BANDWIDTH;
+    } else if (argc != 2) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda-info",
-                       "usage: yvex cuda-info");
+                       "usage: yvex system cuda [bandwidth]");
         return YVEX_ERR_INVALID_ARG;
     }
     yvex_error_clear(err);

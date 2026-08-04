@@ -8,6 +8,7 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
+#include <yvex/internal/backend.h>
 #include <yvex/internal/decode.h>
 #include <yvex/internal/generation.h>
 #include <yvex/internal/graph.h>
@@ -101,6 +102,7 @@ struct yvex_runtime_generation_context {
     yvex_runtime_generation_plan_summary plan;
     yvex_compiled_execution_profile execution_profile;
     yvex_execution_hardware_profile hardware_profile;
+    yvex_backend_bandwidth_evidence bandwidth_evidence;
     yvex_execution_workload_profile workload_profile;
     yvex_execution_capacity_plan capacity_plan;
     yvex_execution_shape_registry *execution_shapes;

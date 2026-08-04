@@ -6240,9 +6240,9 @@
       "protocol_operation": "none",
       "renderer_id": "human",
       "result_schema": "human.v1",
-      "side_effects": "may initialize CUDA capability probe",
+      "side_effects": "may initialize CUDA capability probe; bandwidth runs a bounded measured fixture",
       "slash_projection": "none",
-      "summary": "Inspect CUDA capability.",
+      "summary": "Inspect CUDA capability or measure identity-bound memory bandwidth.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-advanced"
     },

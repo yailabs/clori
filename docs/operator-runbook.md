@@ -33,6 +33,21 @@ generation mode before selection. If the table is empty or every row says
 [registration procedure](#registering-an-existing-model). Backend selection is
 part of that profile and never falls back silently.
 
+Before admitting a GB10 performance result, inspect the compiled CUDA image and
+run the bounded bandwidth fixture:
+
+```sh
+./yvex system cuda
+./yvex system cuda bandwidth
+```
+
+The second command performs five timed samples over one 32 MiB working set and
+reports CUDA streaming traffic, asynchronous D2D copy and coherent host access
+separately. Its evidence identity binds every elapsed sample and the admitted
+kernel bundle. The result is a machine-state observation; it is not the 273 GB/s
+hardware specification and is not a benchmark claim when another workload is
+active.
+
 ## Verifying source payloads for compilation
 
 Source acquisition and source compilation are separate operations. After an

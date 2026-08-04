@@ -29,6 +29,9 @@ change. Git history preserves implementation chronology.
 - A source-derived model-execution descriptor and identity-bound hardware,
   workload, per-state capacity, page-geometry and phase-roofline contracts for
   GB10 execution planning.
+- An operator-reachable, identity-bound CUDA bandwidth fixture that records raw
+  streaming, D2D and coherent-host samples instead of treating peak hardware
+  bandwidth as measured evidence.
 
 ### Changed
 

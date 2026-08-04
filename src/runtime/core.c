@@ -1045,6 +1045,7 @@ int yvex_runtime_private_session_capabilities_bind(
     yvex_backend_capability_result encoded = {0};
     yvex_backend_cuda_graph_capability graph = {0};
     yvex_backend_device_info device = {0};
+    yvex_backend_bandwidth_evidence bandwidth = {0};
     yvex_runtime_residency_summary residency = {0};
     int implementation_ready, workspace_ready, graph_ready, rc;
     capabilities.attention_workspace_ready =
@@ -1078,6 +1079,18 @@ int yvex_runtime_private_session_capabilities_bind(
         session->summary.capabilities = capabilities;
         return YVEX_OK;
     }
+    rc = yvex_backend_bandwidth_probe(session->backend, &bandwidth, err);
+    if (rc != YVEX_OK)
+        return runtime_refuse_as(failure, YVEX_RUNTIME_REFUSE_DEVICE_CAPABILITY,
+                                 1ull, 0ull, (yvex_status)rc, err);
+    session->summary.sustainable_read_bytes_per_second =
+        bandwidth.sustainable_read_bytes_per_second;
+    session->summary.sustainable_copy_bytes_per_second =
+        bandwidth.sustainable_copy_bytes_per_second;
+    session->summary.sustainable_coherent_host_bytes_per_second =
+        bandwidth.sustainable_coherent_host_bytes_per_second;
+    yvex_runtime_identity_copy(session->summary.bandwidth_evidence_identity,
+                               bandwidth.identity);
     rc = session->model->view.residency
              ? yvex_runtime_residency_snapshot(session->model->view.residency, &residency,
                                                NULL, NULL, err) : YVEX_OK;

@@ -113,12 +113,41 @@ static int render_cuda_info(FILE *fp, const yvex_backend_report *report)
     return YVEX_OK;
 }
 
+static int render_cuda_bandwidth(FILE *fp, const yvex_backend_report *report)
+{
+    const yvex_backend_bandwidth_evidence *evidence = &report->bandwidth;
+    unsigned int index;
+    if (!report->available) return render_cuda_info(fp, report);
+    yvex_cli_out_writef(
+        fp,
+        "cuda_bandwidth_schema: %u\nworking_set_bytes: %llu\niterations: %llu\n"
+        "sample_count: %llu\nkernel_bundle_identity: %s\nevidence_identity: %s\n"
+        "sustainable_read_bytes_per_second: %llu\n"
+        "sustainable_copy_bytes_per_second: %llu\n"
+        "sustainable_coherent_host_bytes_per_second: %llu\nsamples:\n",
+        evidence->schema_version, evidence->working_set_bytes,
+        evidence->iterations, evidence->sample_count,
+        evidence->kernel_bundle_identity, evidence->identity,
+        evidence->sustainable_read_bytes_per_second,
+        evidence->sustainable_copy_bytes_per_second,
+        evidence->sustainable_coherent_host_bytes_per_second);
+    for (index = 0u; index < evidence->sample_count; ++index)
+        yvex_cli_out_writef(
+            fp, "  %u: stream_ns=%llu copy_ns=%llu coherent_host_ns=%llu\n",
+            index + 1u, evidence->stream_elapsed_ns[index],
+            evidence->copy_elapsed_ns[index],
+            evidence->coherent_host_elapsed_ns[index]);
+    yvex_cli_out_writef(fp, "status: cuda-bandwidth\n");
+    return YVEX_OK;
+}
+
 int yvex_backend_render(FILE *fp, const yvex_backend_report *report)
 {
     if (!fp || !report) return YVEX_ERR_INVALID_ARG;
+    if (report->kind == YVEX_BACKEND_REPORT_CUDA_BANDWIDTH)
+        return render_cuda_bandwidth(fp, report);
     return report->kind == YVEX_BACKEND_REPORT_CUDA_INFO
-               ? render_cuda_info(fp, report)
-               : render_capabilities(fp, report);
+               ? render_cuda_info(fp, report) : render_capabilities(fp, report);
 }
 
 int yvex_backend_render_help(FILE *fp)
@@ -132,6 +161,7 @@ int yvex_backend_render_help(FILE *fp)
 int yvex_cuda_info_render_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
-                        "usage: yvex system cuda\n\nReports CUDA driver, device, context, and bundle facts.\n");
+                        "usage: yvex system cuda [bandwidth]\n\n"
+                        "Reports CUDA facts or runs the bounded bandwidth fixture.\n");
     return YVEX_OK;
 }

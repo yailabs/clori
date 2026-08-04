@@ -12,6 +12,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#define CUDA_BANDWIDTH_WORKING_SET (32ull * 1024ull * 1024ull)
+#define CUDA_BANDWIDTH_ITERATIONS 8ull
+#define CUDA_BANDWIDTH_BLOCK 256u
 
 static int parse_device_index(const char *text, int *out, yvex_error *err)
 {
@@ -718,10 +723,309 @@ static int cuda_tensor_copy(yvex_backend *backend,
     return YVEX_OK;
 }
 
+static int cuda_bandwidth_rate(unsigned long long bytes,
+                               unsigned long long iterations,
+                               unsigned long long elapsed_ns,
+                               unsigned long long *rate)
+{
+    unsigned long long total;
+    return elapsed_ns && rate && yvex_core_u64_mul(bytes, iterations, &total) &&
+           yvex_core_u64_mul(total, 1000000000ull, &total)
+               ? (*rate = total / elapsed_ns) != 0ull
+               : 0;
+}
+
+static unsigned long long cuda_bandwidth_median(
+    const unsigned long long values[YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT])
+{
+    unsigned long long ordered[YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT];
+    unsigned int index, insert;
+    memcpy(ordered, values, sizeof(ordered));
+    for (index = 1u; index < YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT; ++index) {
+        unsigned long long value = ordered[index];
+        for (insert = index; insert && ordered[insert - 1u] > value; --insert)
+            ordered[insert] = ordered[insert - 1u];
+        ordered[insert] = value;
+    }
+    return ordered[YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT / 2u];
+}
+
+static int cuda_bandwidth_identity(yvex_backend_bandwidth_evidence *evidence)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned int index;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.cuda.bandwidth-evidence.v1") ||
+        !yvex_sha256_update_u64(&hash, evidence->schema_version) ||
+        !yvex_sha256_update_u64(&hash, evidence->working_set_bytes) ||
+        !yvex_sha256_update_u64(&hash, evidence->iterations) ||
+        !yvex_sha256_update_u64(&hash, evidence->sample_count) ||
+        !yvex_sha256_update_text(&hash, evidence->kernel_bundle_identity)) return 0;
+    for (index = 0u; index < YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT; ++index)
+        if (!yvex_sha256_update_u64(&hash, evidence->stream_elapsed_ns[index]) ||
+            !yvex_sha256_update_u64(&hash, evidence->copy_elapsed_ns[index]) ||
+            !yvex_sha256_update_u64(&hash,
+                                    evidence->coherent_host_elapsed_ns[index])) return 0;
+    if (!yvex_sha256_update_u64(&hash,
+                                evidence->sustainable_read_bytes_per_second) ||
+        !yvex_sha256_update_u64(&hash,
+                                evidence->sustainable_copy_bytes_per_second) ||
+        !yvex_sha256_update_u64(
+            &hash, evidence->sustainable_coherent_host_bytes_per_second) ||
+        !yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, evidence->identity);
+    return 1;
+}
+
+static int cuda_bandwidth_host_sample(
+    volatile unsigned long long *words, unsigned long long word_count,
+    unsigned long long iterations, unsigned long long *elapsed_ns,
+    yvex_error *err)
+{
+    static volatile unsigned long long retained;
+    struct timespec start, finish;
+    unsigned long long iteration, index, value = 0ull, seconds, nanoseconds;
+    if (clock_gettime(CLOCK_MONOTONIC, &start) != 0) {
+        yvex_error_set(err, YVEX_ERR_IO, "cuda.bandwidth.host",
+                       "monotonic host timing is unavailable");
+        return YVEX_ERR_IO;
+    }
+    for (iteration = 0ull; iteration < iterations; ++iteration)
+        for (index = 0ull; index < word_count; ++index)
+            value += words[index];
+    if (clock_gettime(CLOCK_MONOTONIC, &finish) != 0 ||
+        finish.tv_sec < start.tv_sec) {
+        yvex_error_set(err, YVEX_ERR_IO, "cuda.bandwidth.host",
+                       "coherent host timing failed");
+        return YVEX_ERR_IO;
+    }
+    seconds = (unsigned long long)(finish.tv_sec - start.tv_sec);
+    nanoseconds = finish.tv_nsec >= start.tv_nsec
+                      ? (unsigned long long)(finish.tv_nsec - start.tv_nsec)
+                      : 1000000000ull - (unsigned long long)(start.tv_nsec - finish.tv_nsec);
+    if (finish.tv_nsec < start.tv_nsec && seconds) --seconds;
+    if (!yvex_core_u64_mul(seconds, 1000000000ull, elapsed_ns) ||
+        !yvex_core_u64_add(*elapsed_ns, nanoseconds, elapsed_ns) || !*elapsed_ns) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.bandwidth.host",
+                       "coherent host timing extent overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    retained ^= value;
+    return YVEX_OK;
+}
+
+static int cuda_bandwidth_device_samples(
+    yvex_backend *backend, yvex_device_tensor *managed,
+    yvex_device_tensor *copy, yvex_device_tensor *status,
+    yvex_backend_bandwidth_evidence *evidence, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    CUdeviceptr values = yvex_cuda_tensor_ptr(managed);
+    CUdeviceptr destination = yvex_cuda_tensor_ptr(copy);
+    CUdeviceptr device_status = yvex_cuda_tensor_ptr(status);
+    CUstream stream = yvex_cuda_launch_stream(backend);
+    unsigned long long elements = managed->bytes / sizeof(float), iteration;
+    unsigned int grid = (unsigned int)((elements + CUDA_BANDWIDTH_BLOCK - 1ull) /
+                                       CUDA_BANDWIDTH_BLOCK);
+    unsigned int sample;
+    int rc = YVEX_OK;
+    void *params[] = {&values, &elements, &device_status};
+    if (!state || !state->driver.cuMemcpyDtoDAsync_v2 ||
+        yvex_cuda_capture_active(backend)) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.bandwidth.device",
+                       "CUDA event, asynchronous copy, and eager execution are required");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                          state->attention_bf16_round_function, grid,
+                          CUDA_BANDWIDTH_BLOCK, 0u, params,
+                          "cuda.bandwidth.warmup", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(&state->driver,
+                              state->driver.cuMemcpyDtoDAsync_v2(
+                                  destination, values, (size_t)managed->bytes, stream),
+                              "cuda.bandwidth.warmup.copy", err);
+    if (rc == YVEX_OK) rc = yvex_backend_sync(backend, err);
+    for (sample = 0u; rc == YVEX_OK && sample < evidence->sample_count; ++sample) {
+        rc = yvex_cuda_timing(backend, stream, YVEX_CUDA_TIMING_BEGIN, NULL,
+                              "cuda.bandwidth.stream.begin", err);
+        for (iteration = 0ull; rc == YVEX_OK && iteration < evidence->iterations;
+             ++iteration)
+            rc = yvex_cuda_launch(
+                backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                state->attention_bf16_round_function, grid, CUDA_BANDWIDTH_BLOCK,
+                0u, params, "cuda.bandwidth.stream", err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_timing(
+                backend, stream, YVEX_CUDA_TIMING_FINISH,
+                &evidence->stream_elapsed_ns[sample],
+                "cuda.bandwidth.stream.finish", err);
+        else
+            (void)yvex_cuda_timing(backend, stream, YVEX_CUDA_TIMING_DISCARD,
+                                   NULL, NULL, NULL);
+    }
+    for (sample = 0u; rc == YVEX_OK && sample < evidence->sample_count; ++sample) {
+        rc = yvex_cuda_timing(backend, stream, YVEX_CUDA_TIMING_BEGIN, NULL,
+                              "cuda.bandwidth.copy.begin", err);
+        for (iteration = 0ull; rc == YVEX_OK && iteration < evidence->iterations;
+             ++iteration)
+            rc = yvex_cuda_status(
+                &state->driver,
+                state->driver.cuMemcpyDtoDAsync_v2(
+                    destination, values, (size_t)evidence->working_set_bytes, stream),
+                "cuda.bandwidth.copy", err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_timing(
+                backend, stream, YVEX_CUDA_TIMING_FINISH,
+                &evidence->copy_elapsed_ns[sample],
+                "cuda.bandwidth.copy.finish", err);
+        else
+            (void)yvex_cuda_timing(backend, stream, YVEX_CUDA_TIMING_DISCARD,
+                                   NULL, NULL, NULL);
+    }
+    return rc;
+}
+
+static int cuda_bandwidth_probe(yvex_backend *backend,
+                                yvex_backend_bandwidth_evidence *out,
+                                yvex_error *err)
+{
+    yvex_backend *owner = backend && backend->resource_owner
+                              ? backend->resource_owner : backend;
+    yvex_cuda_backend_state *state = yvex_cuda_state(owner);
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *managed = NULL, *copy = NULL, *status = NULL;
+    unsigned char *host = NULL;
+    yvex_backend_bandwidth_evidence evidence = {0};
+    yvex_error primary, cleanup, release_error;
+    unsigned long long median, word_count;
+    unsigned int sample;
+    int rc, cleanup_rc;
+    if (!state || !out || owner->kind != YVEX_BACKEND_KIND_CUDA) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.bandwidth",
+                       "one CUDA resource owner and evidence output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (state->bandwidth_ready) {
+        *out = state->bandwidth_evidence;
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (state->bandwidth_active) {
+        yvex_error_set(err, YVEX_ERR_STATE, "cuda.bandwidth",
+                       "bandwidth measurement is already active");
+        return YVEX_ERR_STATE;
+    }
+    state->bandwidth_active = 1;
+    evidence.schema_version = YVEX_BACKEND_BANDWIDTH_SCHEMA_V1;
+    evidence.working_set_bytes = CUDA_BANDWIDTH_WORKING_SET;
+    evidence.iterations = CUDA_BANDWIDTH_ITERATIONS;
+    evidence.sample_count = YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT;
+    yvex_core_text_copy(evidence.kernel_bundle_identity,
+                        sizeof(evidence.kernel_bundle_identity),
+                        state->kernel_bundle_identity);
+    descriptor.name = "bandwidth-managed";
+    descriptor.dtype = YVEX_DTYPE_I8;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = descriptor.bytes = evidence.working_set_bytes;
+    rc = cuda_resident_alloc(owner, &descriptor, &managed, &host, err);
+    descriptor.name = "bandwidth-copy";
+    if (rc == YVEX_OK) rc = yvex_backend_tensor_alloc(owner, &descriptor, &copy, err);
+    descriptor.name = "bandwidth-status";
+    descriptor.dtype = YVEX_DTYPE_I32;
+    descriptor.dims[0] = 1ull;
+    descriptor.bytes = sizeof(int);
+    if (rc == YVEX_OK) rc = yvex_backend_tensor_alloc(owner, &descriptor, &status, err);
+    if (rc == YVEX_OK) {
+        memset(host, 0, (size_t)evidence.working_set_bytes);
+        word_count = evidence.working_set_bytes / sizeof(unsigned long long);
+        rc = cuda_bandwidth_host_sample(
+            (volatile unsigned long long *)host, word_count, 1ull, &median, err);
+    }
+    if (rc == YVEX_OK)
+        rc = cuda_bandwidth_device_samples(
+            owner, managed, copy, status, &evidence, err);
+    if (rc == YVEX_OK)
+        rc = cuda_bandwidth_host_sample(
+            (volatile unsigned long long *)host, word_count, 1ull, &median, err);
+    for (sample = 0u; rc == YVEX_OK && sample < evidence.sample_count; ++sample)
+        rc = cuda_bandwidth_host_sample(
+            (volatile unsigned long long *)host, word_count, evidence.iterations,
+            &evidence.coherent_host_elapsed_ns[sample], err);
+    if (rc == YVEX_OK) {
+        median = cuda_bandwidth_median(evidence.stream_elapsed_ns);
+        rc = cuda_bandwidth_rate(2ull * evidence.working_set_bytes,
+                                 evidence.iterations, median,
+                                 &evidence.sustainable_read_bytes_per_second)
+                 ? YVEX_OK : YVEX_ERR_BOUNDS;
+    }
+    if (rc == YVEX_OK) {
+        median = cuda_bandwidth_median(evidence.copy_elapsed_ns);
+        rc = cuda_bandwidth_rate(evidence.working_set_bytes,
+                                 evidence.iterations, median,
+                                 &evidence.sustainable_copy_bytes_per_second)
+                 ? YVEX_OK : YVEX_ERR_BOUNDS;
+    }
+    if (rc == YVEX_OK) {
+        median = cuda_bandwidth_median(evidence.coherent_host_elapsed_ns);
+        rc = cuda_bandwidth_rate(
+                 evidence.working_set_bytes, evidence.iterations, median,
+                 &evidence.sustainable_coherent_host_bytes_per_second) &&
+                     yvex_sha256_hex_valid(evidence.kernel_bundle_identity) &&
+                     cuda_bandwidth_identity(&evidence)
+                 ? YVEX_OK : YVEX_ERR_BOUNDS;
+    }
+    if (rc != YVEX_OK && err && !yvex_error_is_set(err))
+        yvex_error_set(err, rc, "cuda.bandwidth",
+                       "bandwidth evidence could not be derived");
+    primary = err ? *err : (yvex_error){0};
+    yvex_error_clear(&cleanup);
+    cleanup_rc = YVEX_OK;
+    if (status) {
+        int release_rc = yvex_backend_tensor_release(owner, &status, &release_error);
+        if (release_rc != YVEX_OK && cleanup_rc == YVEX_OK) {
+            cleanup_rc = release_rc;
+            cleanup = release_error;
+        }
+    }
+    if (copy) {
+        int release_rc = yvex_backend_tensor_release(owner, &copy, &release_error);
+        if (release_rc != YVEX_OK && cleanup_rc == YVEX_OK) {
+            cleanup_rc = release_rc;
+            cleanup = release_error;
+        }
+    }
+    if (managed) {
+        int release_rc = yvex_backend_tensor_release(owner, &managed, &release_error);
+        if (release_rc != YVEX_OK && cleanup_rc == YVEX_OK) {
+            cleanup_rc = release_rc;
+            cleanup = release_error;
+        }
+    }
+    if (cleanup_rc != YVEX_OK) {
+        atomic_store_explicit(&owner->status, YVEX_BACKEND_STATUS_FAILED,
+                              memory_order_release);
+        rc = cleanup_rc;
+        primary = cleanup;
+    }
+    state->bandwidth_active = 0;
+    if (rc == YVEX_OK) {
+        state->bandwidth_evidence = evidence;
+        state->bandwidth_ready = 1;
+        *out = evidence;
+        yvex_error_clear(err);
+    } else if (err) {
+        *err = primary;
+    }
+    return rc;
+}
+
 static const yvex_backend_vtable cuda_vtable = {
     cuda_close,
     cuda_memory_stats,
     cuda_device_info,
+    cuda_bandwidth_probe,
     cuda_tensor_alloc,
     cuda_resident_alloc,
     cuda_tensor_free,

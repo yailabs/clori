@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <yvex/api.h>
+#include <yvex/internal/backend.h>
 
 #include "tests/test.h"
 
@@ -26,6 +27,7 @@ static int test_open_and_unsupported(void)
 {
     yvex_backend *backend = NULL;
     yvex_backend_options options;
+    yvex_backend_bandwidth_evidence bandwidth;
     yvex_error err;
     int rc;
 
@@ -36,6 +38,9 @@ static int test_open_and_unsupported(void)
     YVEX_TEST_ASSERT_STREQ(yvex_backend_kind_name(YVEX_BACKEND_KIND_CPU), "cpu", "cpu kind name");
     YVEX_TEST_ASSERT_STREQ(yvex_backend_status_name(YVEX_BACKEND_STATUS_READY), "ready", "ready name");
     YVEX_TEST_ASSERT(yvex_backend_sync(backend, &err) == YVEX_OK, "cpu sync no-op");
+    YVEX_TEST_ASSERT(yvex_backend_bandwidth_probe(backend, &bandwidth, &err) ==
+                         YVEX_ERR_UNSUPPORTED && !bandwidth.schema_version,
+                     "CPU refuses CUDA bandwidth evidence without partial facts");
     yvex_backend_close(backend);
 
     memset(&options, 0, sizeof(options));

@@ -33,6 +33,14 @@ contains "$OUT_DIR/cuda_info.out" "cuda: available"
 contains "$OUT_DIR/cuda_info.out" "kernel_bundle: admitted"
 contains "$OUT_DIR/cuda_info.out" "status: cuda-info"
 
+"$YVEX_BIN" system cuda bandwidth >"$OUT_DIR/bandwidth.out" 2>"$OUT_DIR/bandwidth.err"
+rc=$?
+[ "$rc" -eq 0 ] || fail "cuda bandwidth exit code was $rc"
+contains "$OUT_DIR/bandwidth.out" "sample_count: 5"
+contains "$OUT_DIR/bandwidth.out" "sustainable_read_bytes_per_second:"
+contains "$OUT_DIR/bandwidth.out" "sustainable_coherent_host_bytes_per_second:"
+contains "$OUT_DIR/bandwidth.out" "status: cuda-bandwidth"
+
 "$YVEX_BIN" inspect backend cuda >"$OUT_DIR/backend.out" 2>"$OUT_DIR/backend.err"
 rc=$?
 [ "$rc" -eq 0 ] || fail "backend cuda exit code was $rc"

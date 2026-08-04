@@ -304,6 +304,7 @@ int yvex_cuda_test_info(void)
     yvex_backend_tensor_desc descriptor;
     yvex_device_tensor *resident = NULL;
     yvex_backend_cuda_attention_graph_summary kernel_summary = {0};
+    yvex_backend_bandwidth_evidence bandwidth = {0}, repeated = {0};
     const char *required_native = getenv("YVEX_REQUIRE_NATIVE_CUDA_TEST");
     yvex_error err;
     static const char *attention_symbols[] = {
@@ -352,6 +353,21 @@ int yvex_cuda_test_info(void)
                 kernel_summary.kernel_bundle_architecture,
                 kernel_summary.cuda_build_identity);
     }
+    YVEX_TEST_ASSERT(yvex_backend_bandwidth_probe(backend, &bandwidth, &err) == YVEX_OK &&
+                         bandwidth.schema_version ==
+                             YVEX_BACKEND_BANDWIDTH_SCHEMA_V1 &&
+                         bandwidth.sample_count == YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT &&
+                         bandwidth.working_set_bytes > 0ull && bandwidth.iterations > 0ull &&
+                         bandwidth.sustainable_read_bytes_per_second > 0ull &&
+                         bandwidth.sustainable_copy_bytes_per_second > 0ull &&
+                         bandwidth.sustainable_coherent_host_bytes_per_second > 0ull &&
+                         yvex_sha256_hex_valid(bandwidth.identity) &&
+                         strcmp(bandwidth.kernel_bundle_identity,
+                                kernel_summary.cuda_build_identity) == 0,
+                     "measure identity-bound CUDA bandwidth evidence");
+    YVEX_TEST_ASSERT(yvex_backend_bandwidth_probe(backend, &repeated, &err) == YVEX_OK &&
+                         memcmp(&bandwidth, &repeated, sizeof(bandwidth)) == 0,
+                     "CUDA backend reuses one immutable bandwidth measurement");
 
     memset(&descriptor, 0, sizeof(descriptor));
     descriptor.name = "cuda-addressable-host-fixture";

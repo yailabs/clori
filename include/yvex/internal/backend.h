@@ -80,14 +80,11 @@ typedef struct { yvex_backend_cancelled_fn requested; void *context; } yvex_back
 typedef struct { float *data; unsigned long long capacity; } yvex_backend_float_span;
 typedef struct { unsigned long long *data, capacity; } yvex_backend_u64_span;
 typedef struct {
-    int present;
+    int present, overlap;
     unsigned long long next_token_position, ratio, head_dimension, state_width, state_slots;
     unsigned long long cursor, previous_fill, current_fill;
-    const float *kv_state;
-    unsigned long long kv_state_capacity;
-    const float *score_state;
-    unsigned long long score_state_capacity;
-    int overlap;
+    const float *kv_state, *score_state;
+    unsigned long long kv_state_capacity, score_state_capacity;
 } yvex_backend_attention_rolling;
 typedef struct {
     unsigned int schema;
@@ -130,9 +127,8 @@ typedef struct {
     unsigned long long topk_count, valid_candidate_count;
     unsigned long long host_bytes, peak_host_bytes, device_bytes, peak_device_bytes;
     unsigned long long kernel_launches, h2d_bytes, d2h_bytes;
-    unsigned long long device_execution_elapsed_ns;
-    unsigned long long host_workspace_capacity, host_workspace_used, host_workspace_peak;
-    unsigned long long host_workspace_allocation_count;
+    unsigned long long device_execution_elapsed_ns, host_workspace_capacity;
+    unsigned long long host_workspace_used, host_workspace_peak, host_workspace_allocation_count;
     int host_workspace_reused;
 } yvex_backend_attention_output;
 typedef enum {
@@ -153,6 +149,18 @@ typedef struct {
     const char *stage;
     unsigned long long expected, actual;
 } yvex_backend_attention_failure;
+#define YVEX_BACKEND_BANDWIDTH_SCHEMA_V1 1u
+#define YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT 5u
+typedef struct {
+    unsigned int schema_version;
+    unsigned long long working_set_bytes, iterations, sample_count;
+    unsigned long long stream_elapsed_ns[YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT];
+    unsigned long long copy_elapsed_ns[YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT];
+    unsigned long long coherent_host_elapsed_ns[YVEX_BACKEND_BANDWIDTH_SAMPLE_COUNT];
+    unsigned long long sustainable_read_bytes_per_second, sustainable_copy_bytes_per_second;
+    unsigned long long sustainable_coherent_host_bytes_per_second;
+    char kernel_bundle_identity[YVEX_SHA256_HEX_BYTES], identity[YVEX_SHA256_HEX_BYTES];
+} yvex_backend_bandwidth_evidence;
 int yvex_backend_attention_execute(yvex_backend *backend, const yvex_backend_attention_job *job,
                                    yvex_backend_attention_output *output,
                                    yvex_backend_attention_failure *failure, yvex_error *err);
@@ -160,6 +168,8 @@ typedef struct yvex_backend_vtable {
     int (*close)(yvex_backend *backend, yvex_error *err);
     int (*memory_stats)(const yvex_backend *backend, yvex_backend_memory_stats *out, yvex_error *err);
     int (*device_info)(const yvex_backend *backend, yvex_backend_device_info *out, yvex_error *err);
+    int (*bandwidth_probe)(yvex_backend *backend, yvex_backend_bandwidth_evidence *out,
+                           yvex_error *err);
     int (*tensor_alloc)(yvex_backend *backend, const yvex_backend_tensor_desc *desc,
                         yvex_device_tensor **out, yvex_error *err);
     int (*resident_alloc)(yvex_backend *backend, const yvex_backend_tensor_desc *desc,
@@ -221,20 +231,12 @@ struct yvex_backend {
     yvex_backend_state_resolve_fn state_residency_resolve;
     unsigned long long state_residency_generation;
     const yvex_device_tensor *workspace_device_tensor;
-    unsigned long long workspace_device_address;
-    unsigned long long workspace_bytes;
-    unsigned long long workspace_cursor;
-    unsigned long long workspace_peak;
-    unsigned long long workspace_generation;
+    unsigned long long workspace_device_address, workspace_bytes, workspace_cursor;
+    unsigned long long workspace_peak, workspace_generation;
     unsigned char *host_workspace_base;
-    unsigned long long host_workspace_bytes;
-    unsigned long long host_workspace_cursor;
-    unsigned long long host_workspace_peak;
-    unsigned long long host_workspace_generation;
-    unsigned long long host_workspace_allocation_count;
-    int host_workspace_owned;
-    int host_workspace_pinned;
-    int shared_owner_registered;
+    unsigned long long host_workspace_bytes, host_workspace_cursor, host_workspace_peak;
+    unsigned long long host_workspace_generation, host_workspace_allocation_count;
+    int host_workspace_owned, host_workspace_pinned, shared_owner_registered;
 };
 #define YVEX_BACKEND_LIFECYCLE_CLOSING (1ull << 63)
 #define YVEX_BACKEND_LIFECYCLE_CHILD_MASK (YVEX_BACKEND_LIFECYCLE_CLOSING - 1ull)
@@ -322,6 +324,9 @@ static inline int backend_tensor_owner_is(const yvex_backend *backend,
 int yvex_backend_tensor_f32_subview(
     const yvex_device_tensor *source, unsigned long long offset,
     unsigned long long count, yvex_device_tensor *view);
+int yvex_backend_bandwidth_probe(yvex_backend *backend,
+                                 yvex_backend_bandwidth_evidence *out,
+                                 yvex_error *err);
 /* Rewind a serialized device workspace while preserving its stable address and peak. */
 static inline void backend_workspace_reset(yvex_backend *backend)
 {
@@ -489,8 +494,7 @@ typedef struct {
     unsigned long long launch_count, replay_count, synchronize_count, invalidation_count;
     unsigned long long capture_elapsed_ns, instantiate_elapsed_ns, last_update_elapsed_ns;
     unsigned long long last_replay_elapsed_ns, last_device_elapsed_ns;
-    char launch_graph_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
-    char graph_exec_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
+    char launch_graph_identity[YVEX_SHA256_HEX_BYTES], graph_exec_identity[YVEX_SHA256_HEX_BYTES];
 } yvex_backend_cuda_graph_info;
 /* Session-selected CUDA attention execution over the graph lifecycle above. */
 #define YVEX_BACKEND_CUDA_ATTENTION_GRAPH_SCHEMA 1u
@@ -520,11 +524,9 @@ typedef struct {
     unsigned long long invalidation_count;
     int driver_version;
     char compatibility_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
-    char capture_bucket[YVEX_BACKEND_CUDA_CAPTURE_BUCKET_CAP];
-    char kernel_bundle_architecture[16];
+    char capture_bucket[YVEX_BACKEND_CUDA_CAPTURE_BUCKET_CAP], kernel_bundle_architecture[16];
     char cuda_build_identity[YVEX_SHA256_HEX_BYTES];
-    char launch_graph_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
-    char graph_exec_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
+    char launch_graph_identity[YVEX_SHA256_HEX_BYTES], graph_exec_identity[YVEX_SHA256_HEX_BYTES];
 } yvex_backend_cuda_attention_graph_summary;
 typedef struct {
     unsigned int schema;
@@ -558,7 +560,8 @@ int yvex_backend_cuda_attention_graph_registry_apply(
 /* Immutable backend reports. */
 typedef enum {
     YVEX_BACKEND_REPORT_CAPABILITIES = 0,
-    YVEX_BACKEND_REPORT_CUDA_INFO
+    YVEX_BACKEND_REPORT_CUDA_INFO,
+    YVEX_BACKEND_REPORT_CUDA_BANDWIDTH
 } yvex_backend_report_kind;
 typedef enum {
     YVEX_BACKEND_BUNDLE_NOT_APPLICABLE = 0,
@@ -574,19 +577,16 @@ typedef struct {
     yvex_backend_report_kind kind;
     yvex_backend_kind backend_kind;
     yvex_backend_status backend_status;
-    int exit_code;
-    int available;
-    int has_device_info;
+    int exit_code, available, has_device_info;
     yvex_backend_device_info device_info;
-    char device_name[128];
+    char device_name[128], reason[256];
     yvex_backend_memory_stats memory;
     int capabilities[YVEX_BACKEND_CAP_OP_ATTENTION + 1];
     yvex_backend_capability_result variants[YVEX_BACKEND_VARIANT_COUNT];
-    unsigned int variant_count;
-    int context_available;
+    unsigned int variant_count, context_available;
     yvex_backend_bundle_admission bundle_admission;
     yvex_backend_capability_reason bundle_reason;
-    char reason[256];
+    yvex_backend_bandwidth_evidence bandwidth;
 } yvex_backend_report;
 typedef struct {
     const char *kind, *status, *reason, *next_row;

@@ -229,6 +229,8 @@ typedef struct {
     int kernel_bundle_native;
     char kernel_bundle_identity[YVEX_SHA256_HEX_BYTES];
     char kernel_bundle_architecture[16];
+    yvex_backend_bandwidth_evidence bandwidth_evidence;
+    int bandwidth_ready, bandwidth_active;
     char attention_compatibility_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
     char attention_capture_bucket[YVEX_BACKEND_CUDA_CAPTURE_BUCKET_CAP];
     const yvex_backend *context_owner;

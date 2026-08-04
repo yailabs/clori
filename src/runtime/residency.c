@@ -975,6 +975,7 @@ int yvex_runtime_residency_cuda_session_attach(
     yvex_backend_options options;
     yvex_backend *candidate_backend = NULL, *session_backend = NULL;
     yvex_device_tensor *candidate_weights = NULL;
+    yvex_backend_bandwidth_evidence bandwidth = {0};
     unsigned long long candidate_address = 0ull;
     yvex_error primary, cleanup;
     int rc, cleanup_rc;
@@ -1064,6 +1065,9 @@ int yvex_runtime_residency_cuda_session_attach(
         residency->summary.cuda_ready = 1;
         *uploaded = 1;
     }
+    rc = yvex_backend_bandwidth_probe(
+        residency->cuda_backend, &bandwidth, err);
+    if (rc != YVEX_OK) goto done;
     rc = yvex_backend_open_shared_cuda(
         &session_backend, residency->cuda_backend, maximum_device_bytes, err);
     if (rc == YVEX_OK)

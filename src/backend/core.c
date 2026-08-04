@@ -388,6 +388,27 @@ int yvex_backend_get_device_info(const yvex_backend *backend,
     return backend->vtable->device_info(backend, out, err);
 }
 
+int yvex_backend_bandwidth_probe(yvex_backend *backend,
+                                 yvex_backend_bandwidth_evidence *out,
+                                 yvex_error *err)
+{
+    int rc;
+    if (out) memset(out, 0, sizeof(*out));
+    if (!backend || !out) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "backend.bandwidth",
+                       "backend and bandwidth output are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = backend_dispatch_admit(backend, "backend.bandwidth", err);
+    if (rc != YVEX_OK) return rc;
+    if (!backend->vtable || !backend->vtable->bandwidth_probe) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "backend.bandwidth",
+                       "backend does not provide measured bandwidth evidence");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    return backend->vtable->bandwidth_probe(backend, out, err);
+}
+
 int yvex_backend_tensor_alloc(yvex_backend *backend,
                               const yvex_backend_tensor_desc *desc,
                               yvex_device_tensor **out,
@@ -1776,9 +1797,9 @@ int yvex_backend_tensor_f32_subview(
 /*
  * Build immutable backend reports from canonical capability and device facts.
  *
- * One backend open produces one immutable report; report construction does not execute kernels and
- * never infers support from context availability. Backend reports do not promote backend runtime
- * readiness.
+ * One backend open produces one immutable report. Capability and device reports are observational;
+ * only the explicit bandwidth report executes its bounded measurement fixture. Reports never infer
+ * support from context availability or promote backend runtime readiness.
  */
 const char *yvex_backend_bundle_admission_name(
     yvex_backend_bundle_admission admission)
@@ -1826,7 +1847,10 @@ int yvex_backend_report_build(const yvex_backend_report_request *request,
     unsigned int i;
     int rc;
 
-    if (!request || !report) {
+    if (!request || !report ||
+        request->kind > YVEX_BACKEND_REPORT_CUDA_BANDWIDTH ||
+        (request->kind == YVEX_BACKEND_REPORT_CUDA_BANDWIDTH &&
+         request->backend_kind != YVEX_BACKEND_KIND_CUDA)) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, "yvex_backend_report_build",
                        "request and report are required");
         return YVEX_ERR_INVALID_ARG;
@@ -1882,6 +1906,13 @@ int yvex_backend_report_build(const yvex_backend_report_request *request,
         }
         backend_report_set_cuda_admission(
             report, &report->variants[YVEX_BACKEND_VARIANT_EMBED_F32_TO_F32]);
+        if (request->kind == YVEX_BACKEND_REPORT_CUDA_BANDWIDTH) {
+            rc = yvex_backend_bandwidth_probe(backend, &report->bandwidth, err);
+            if (rc != YVEX_OK) {
+                yvex_backend_close(backend);
+                return rc;
+            }
+        }
     }
     yvex_backend_close(backend);
     yvex_error_clear(err);

@@ -289,6 +289,7 @@ static int generation_capacity_hardware(
     yvex_backend_cuda_attention_graph_summary cuda = {0};
     long pages, page_bytes;
     unsigned long long total;
+    int rc;
     if (!view || !view->backend ||
         yvex_backend_get_device_info(view->backend, &device, err) != YVEX_OK ||
         (page_bytes = sysconf(_SC_PAGESIZE)) <= 0)
@@ -330,6 +331,16 @@ static int generation_capacity_hardware(
             return generation_context_refuse(
                 err, YVEX_ERR_STATE,
                 "kernel-bundle hardware facts are unavailable");
+        rc = yvex_backend_bandwidth_probe(
+            view->backend, &context->bandwidth_evidence, err);
+        if (rc != YVEX_OK) return rc;
+        context->hardware_profile.sustainable_read_bytes_per_second =
+            context->bandwidth_evidence.sustainable_read_bytes_per_second;
+        context->hardware_profile.sustainable_copy_bytes_per_second =
+            context->bandwidth_evidence.sustainable_copy_bytes_per_second;
+        context->hardware_profile.admitted_fact_mask |=
+            YVEX_EXECUTION_HARDWARE_FACT_BIT(
+                YVEX_EXECUTION_HARDWARE_FACT_BANDWIDTH);
         context->hardware_profile.native_architecture_code =
             cuda.kernel_bundle_native;
         if (cuda.kernel_bundle_native)

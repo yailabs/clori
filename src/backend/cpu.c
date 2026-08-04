@@ -95,6 +95,7 @@ static const yvex_backend_vtable cpu_vtable = {
     NULL,
     cpu_memory_stats,
     cpu_device_info,
+    NULL,
     cpu_tensor_alloc,
     NULL,
     cpu_tensor_free,

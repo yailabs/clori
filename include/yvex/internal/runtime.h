@@ -376,10 +376,10 @@ typedef struct {
     unsigned long long workspace_capacity_failure_count;
     int host_workspace_owned, host_workspace_pinned;
     int device_index, compute_capability_major, compute_capability_minor;
-    unsigned long long total_device_bytes;
-    char device_name[128];
-    char residency_identity[YVEX_SHA256_HEX_CAP];
-    char workspace_identity[YVEX_SHA256_HEX_CAP];
+    unsigned long long total_device_bytes, sustainable_read_bytes_per_second, sustainable_copy_bytes_per_second;
+    unsigned long long sustainable_coherent_host_bytes_per_second;
+    char device_name[128], bandwidth_evidence_identity[YVEX_SHA256_HEX_CAP];
+    char residency_identity[YVEX_SHA256_HEX_CAP], workspace_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_session_summary;
 typedef struct {
     const yvex_runtime_model *model;
