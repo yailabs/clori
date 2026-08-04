@@ -1,12 +1,34 @@
 # MiniMax-H3 FL2VA Research Record
 
-Status: source-profiled research target; not an admitted executable family
+Status: source-profiled implementation target; logical architecture and
+Transformation IR are admitted offline, and authorized exact source-payload
+acquisition is in progress; not an executable family
 
-This record owns current YVEX facts for MiniMax-H3 Base FL2VA. It does not add
-a model target, artifact format, runtime adapter, backend operation, hosted
-path, or release obligation. The frozen quantitative evidence is the
+This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now has a
+non-runtime model target, one bounded family owner, a composite logical
+component manifest, a seven-edge phase DAG through transactional media
+publication, an exact tensor-role classifier, and component-aware
+artifact-neutral Transformation IR schema v2. It does not add an artifact
+format, runtime adapter, backend operation, hosted path, or release
+obligation. The frozen quantitative evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
+
+## Implementation branch lifecycle
+
+| Fact | Value |
+| --- | --- |
+| Implementation branch | `feature/minimax-h3` |
+| Branch status | open |
+| Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
+| Current wave | `R010.MINIMAX.H3.FL2VA.IR.0` |
+| Current boundary | offline composite architecture and component-aware Transformation IR implemented; authorized live acquisition and exact-source admission are in progress |
+| Next expected boundary | complete live 29-shard/3,240-tensor reconciliation, then component physical variants and artifact emission |
+
+The branch preserves the accepted intake history and remains open across all
+later source, artifact, graph, backend, residency, latent, VAE, media, and
+end-to-end waves. A wave closes only its internal boundary; it does not close
+or rename the branch.
 
 ## Target and source identity
 
@@ -19,7 +41,7 @@ promotion rules remain in the [family integration contract](integration.md).
 | Source-tree identity | `91972f8e4e6562562456c339b43eed1fba5f7b9d7fb13987f495b416a5109b5e` |
 | External evidence identity | `1e7db0167eafc1e43ecaad37897198cd54f838398907b686211886dbc288b662` |
 | Model-index SHA-256 | `d1113e0f123c69f79cd0de35ca1771606ebc3ec924270d257b771f96f584aa6b` |
-| Evidence stage | source profiled and tensor headers reconciled |
+| Evidence stage | source profiled; logical architecture and Transformation IR verified with offline fixtures; complete local payload acquisition in progress and not yet trusted |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -117,14 +139,19 @@ layers, text width 5,120, 24 video latent channels, 32 audio latent channels,
 video patch `[1, 2, 2]`, and an inverse-frequency tensor length of 16. Timestep
 features are width 256, projected through 5,376 to 2,688. Each block’s AdaLN
 projection has 96,768 outputs; the final AdaLN has 10,752 outputs.
+The audio patch projection consumes one 32-channel latent step without temporal
+aggregation.
 
 The visual VAE declares 24 latent channels, RGB input/output, spatial factor
 16, temporal factor 4, a causal encoder and noncausal decoder, 3D convolution,
-and a 36-layer, 32-head RMS-normalized ViT decoder. Its standalone wrapper
-declares tile size 256, minimum overlap 64, clip length 17, and token drop 3.
+six encoder stages from base width 128 with channel multipliers
+`[1, 2, 2, 4, 4, 8]`, and a 36-layer, 32-head RMS-normalized ViT decoder with
+head width 64. Its standalone wrapper declares encoder, decoder, and parallel
+tiling, tile size 256, minimum overlap 64, clip length 17, and token drop 3.
 
 The audio VAE declares 32 latent channels, stereo output, and 32,000 Hz sample
-rate. Encoder rates `[2, 4, 4, 5, 5]` and decoder rates
+rate. Its encoder width is 64, decoder width is 1,024, and intermediate latent
+projection width is 2,048. Encoder rates `[2, 4, 4, 5, 5]` and decoder rates
 `[5, 5, 2, 2, 2, 2, 2]` both multiply to 800.
 
 ### Mechanically derived facts
@@ -194,7 +221,10 @@ prompt + optional conditioning media
 
 This is a latent-iteration DAG. It does not use autoregressive prefill/decode,
 KV-cache, logits, token sampling, or accepted-token terminology for the DiT
-loop.
+loop. The production logical target now binds seven typed phase edges from
+preparation through media publication; the final RGB-frame and stereo-sample
+edges both have output-transaction lifetime. This is output-contract evidence,
+not a media serializer or runtime transaction implementation.
 
 | Edge | Shape/dtype evidence | Owner and lifetime | Placement/serialization | Failure rule |
 | --- | --- | --- | --- | --- |
@@ -268,23 +298,23 @@ acceptable generation speed, 768p practicality, or any 2K path.
 | Alternative | Identity/artifact and reuse | Runtime/residency/output | Disposition |
 | --- | --- | --- | --- |
 | A. Existing target plus several artifacts and one program | preserves individual artifacts but the existing target/Physical Execution IR is decoder- and single-model-shaped; phase identity would be implicit | cannot represent component release, latent request state, or synchronized media output without hidden conventions | reject |
-| B. Composite model target with component manifest | binds source derivation, exact component artifacts, roles, phase DAG, residency plan, and output contract while allowing encoder/VAE reuse | one common runtime owns request/session and transitions; graph owns the typed program; backend admits each operation | **conditionally-adopt** |
+| B. Composite logical model target with component manifest | binds source derivation, roles, phase DAG, lifetime, and output domain while preserving later independent component artifacts | one common runtime remains the future owner of request/session transitions; graph and backend remain unimplemented | **adopt for the logical boundary only** |
 | C. Monolithic GGUF | one byte identity but destroys natural component lifetimes, selective reuse, and staged residency; no evidence supports one GGUF schema for media/codecs | forces 144 GB source payload into one artificial lifecycle and couples unrelated failures | reject |
 | D. Generic execution package above artifacts | could generalize to image/audio/video and encoder-decoder models | useful only after the concrete composite target proves which package invariants are common; premature now | defer |
 | E. No integration until every numeric primitive exists | avoids early runtime work but also blocks safe source/IR admission that does not consume numeric execution | missing numeric prerequisites have explicit later consumers and need not block identity/IR work | reject as the immediate strategy |
 
-Alternative B is conditional on a typed component manifest and phase-DAG
-contract being proven by the next source/IR slice. It is not a composite
-artifact: each physical artifact retains its own identity, admission,
-materialization, and failure. The composite target binds them without
-promoting any one artifact to runtime readiness.
+Alternative B is now admitted only as a typed logical component manifest and
+phase/lifetime DAG. It is not a composite artifact: no physical component
+artifact exists, and later artifacts retain independent identity, admission,
+materialization, and failure. The logical target creates no runtime readiness.
 
 The decision preserves one common YVEX runtime, no family runtime hierarchy,
 backend ownership of allocation/transfer/execution/cleanup, graph ownership of
 executable semantics, artifact identity separate from runtime readiness, and
-no promotion from metadata. It deliberately does not implement a component
-manifest, execution package, Physical Execution IR extension, residency
-transition, media session, artifact format, or backend operation in this wave.
+no promotion from metadata. This wave implements the component manifest and
+artifact-neutral Transformation IR only; it deliberately does not implement
+an execution package, composite artifact, Physical Execution IR, residency
+transition, media session, artifact format, or backend operation.
 
 ## Selected first executable slice
 
@@ -297,7 +327,7 @@ Scores are 0–5 with 5 favorable. Full scoring is frozen in the audit metrics.
 | One Omni-Transformer block | 35 | high generic value, but exact mask/MM-RoPE/AdaLN semantics must be admitted first |
 | Full source-to-architecture/Transformation IR without numeric execution | 40 | selected; closes identity, role, component, and phase ownership before numeric abstraction |
 
-The selected next wave is `R010.MINIMAX.H3.FL2VA.IR.0`.
+The active internal boundary is `R010.MINIMAX.H3.FL2VA.IR.0`.
 
 Its required after-state is one production-admitted, artifact-neutral
 MiniMax-H3 FL2VA source-to-Transformation-IR path. It must:
@@ -318,6 +348,18 @@ MiniMax-H3 FL2VA source-to-Transformation-IR path. It must:
 - stop before artifact emission, materialization, Physical Execution IR,
   runtime sessions, backend execution, or media output.
 
+The code and offline fixture portions of that after-state are present. The
+operator authorization gate is scoped explicitly to the acquisition process,
+which is serially streaming the exact 144,051,204,180-byte source allowlist to
+immutable-revision storage. Partial files are resumable operational state, not
+published source trust. The live source-to-IR claim remains unestablished until
+all files pass final size and digest verification and canonical admission.
+The acquisition and production provenance owners independently bind non-LFS
+metadata to authoritative Git blob OIDs and LFS payloads to their authoritative
+SHA-256 identities. A replay over the accepted 3,240-row header inventory maps
+every tensor once with zero classifier refusals; it remains comparison evidence,
+not a substitute for live payload admission.
+
 Dependencies are the canonical source inventory/payload APIs, model-family
 registration, Transformation IR, documentation ownership, and the exact
 external intake identities. Acceptance requires deterministic IR identity,
@@ -332,28 +374,33 @@ generation quality, and performance remain explicit non-claims of that slice.
 
 ## Progression and non-claims
 
-`progression_decision: proceed`
+`progression_decision: repair_same_boundary`
 
-`downstream_safe: true`
+`downstream_safe: false`
 
-The downstream consumer is `R010.MINIMAX.H3.FL2VA.IR.0`. It consumes source,
-role, component, and identity facts only; it does not consume the unknown
-solver or numerical paths. There are no intake gate blockers or boundary
-incompletenesses. Deferred depth consists of the exact scheduler and MM-RoPE
-numeric contract, component execution, artifact formats, residency, media
-transaction, evaluation, and benchmark, each owned by a later executable
-consumer. No external blocker prevents the selected IR slice. License review
-remains an external authorization prerequisite for any use that requires an
-eligibility conclusion.
+The downstream consumer is the next MiniMax-H3 wave on `feature/minimax-h3`.
+There is no current external blocker. Boundary incompleteness is the in-progress
+canonical payload acquisition, live digest admission, exact live role-map
+reconciliation, live IR identity, and positive operator execution over that
+source. Offline component,
+architecture, classifier, Transformation IR, refusal, determinism, and
+truthfulness tests do not promote those live facts. Deferred depth consists of
+the exact scheduler and MM-RoPE numeric contract, component artifacts and
+execution, residency, media transaction, evaluation, and benchmark, each
+owned by a later executable consumer. License review remains an external
+authorization prerequisite for any use that requires an eligibility
+conclusion.
 
-This intake does not prove:
+This implementation boundary does not prove:
 
-- MiniMax-H3 execution in YVEX or artifact emission;
-- complete composite-artifact or execution-package support;
-- simultaneous or staged runtime residency;
-- audio or video generation, synchronized media output, or hosted serving;
+- MiniMax-H3 numerical execution or component artifact emission;
+- complete composite-artifact support or Physical Execution IR;
+- GB10 backend support or simultaneous/staged runtime residency;
+- Omni-Transformer, solver, timestep, or MM-RoPE numerical correctness;
+- Visual VAE or Audio VAE execution;
+- audio/video synchronization, playable media output, or hosted serving;
 - Diffusers, SGLang, or vLLM parity;
-- model quality, generation speed, 768p practicality, or 2K generation;
+- model quality, generation speed, practical 768p, or 2K generation;
 - Ref2VA, H3-Context-IR, H3-Regenerate-2K, or the complete hosted system;
 - commercial or redistribution eligibility;
 - evaluation, benchmark, release support, or a second complete family vertical.
