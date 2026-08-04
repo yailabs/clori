@@ -1131,6 +1131,27 @@ def hash_existing(path: pathlib.Path, expected_maximum: int) -> tuple[Any, int]:
     return digest, size
 
 
+def git_blob_oid(path: pathlib.Path, expected_size: int) -> str:
+    digest = hashlib.sha1()
+    digest.update(f"blob {expected_size}\0".encode("ascii"))
+    size = 0
+    try:
+        with path.open("rb") as stream:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > expected_size:
+                    fail(f"{path.name}: existing file exceeds immutable tree size")
+                digest.update(chunk)
+    except OSError as exc:
+        fail(f"cannot verify Git source identity for {path.name!r}: {exc}")
+    if size != expected_size:
+        fail(f"{path.name}: source size mismatch while verifying Git identity")
+    return digest.hexdigest()
+
+
 def expected_content_sha256(row: dict[str, Any]) -> str:
     oid = row.get("lfs_oid", "")
     if not oid:
@@ -1192,6 +1213,12 @@ def acquire_one(
         fail(f"{path}: source size mismatch")
     if expected_sha256 and actual_sha256 != expected_sha256:
         fail(f"{path}: source SHA-256 mismatch")
+    if not expected_sha256:
+        expected_git_oid = row["oid"]
+        if not re.fullmatch(r"[0-9a-f]{40}", expected_git_oid):
+            fail(f"{path}: unsupported Git blob identity")
+        if git_blob_oid(target, expected_size) != expected_git_oid:
+            fail(f"{path}: acquired Git blob identity mismatch")
     component = (
         acquisition_component(REQUIRED_SUBDIR, path)
         if path.startswith(f"{REQUIRED_SUBDIR}/")

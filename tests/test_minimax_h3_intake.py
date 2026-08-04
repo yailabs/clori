@@ -43,6 +43,10 @@ def safetensors_bytes(header: dict[str, object]) -> bytes:
     return struct.pack("<Q", len(encoded)) + encoded + bytes([0xA5]) * payload_end
 
 
+def git_blob_oid(data: bytes) -> str:
+    return hashlib.sha1(f"blob {len(data)}\0".encode("ascii") + data).hexdigest()
+
+
 def write_fixture(root: pathlib.Path, mutation: str = "valid") -> None:
     files: dict[str, bytes] = {
         "FL2VA/model_index.json": json_bytes(
@@ -112,7 +116,7 @@ def write_fixture(root: pathlib.Path, mutation: str = "valid") -> None:
         while str(parent) != ".":
             directories.add(str(parent))
             parent = parent.parent
-        tree.append({"type": "file", "oid": "blob-" + relative, "size": len(data), "path": relative})
+        tree.append({"type": "file", "oid": git_blob_oid(data), "size": len(data), "path": relative})
     for directory in directories:
         tree.append({"type": "directory", "oid": "tree-" + directory, "size": 0, "path": directory})
     (root / "repository.json").write_bytes(
@@ -258,6 +262,20 @@ def test_authorized_acquisition(temporary: pathlib.Path) -> None:
                 "acquired digest record differs")
     result = invoke_acquisition(fixture, output, authorized=True, check=True)
     require(result.returncode == 0, result.stderr)
+
+    wrong_oid_fixture = temporary / "wrong-oid-fixture"
+    write_fixture(wrong_oid_fixture)
+    tree_path = wrong_oid_fixture / "tree.json"
+    tree = json.loads(tree_path.read_text(encoding="utf-8"))
+    for row in tree:
+        if row["path"] == "FL2VA/model_index.json":
+            row["oid"] = "0" * 40
+    tree_path.write_bytes(json_bytes(tree))
+    result = invoke_acquisition(
+        wrong_oid_fixture, temporary / "wrong-oid-output", authorized=True
+    )
+    require(result.returncode == 2 and "Git blob identity mismatch" in result.stderr,
+            "acquisition accepted metadata outside its authoritative Git identity")
 
     acquired.write_bytes(acquired.read_bytes() + b"x")
     result = invoke_acquisition(fixture, output, authorized=True, check=True)

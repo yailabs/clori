@@ -1448,15 +1448,22 @@ static int source_acquisition_hash_file(
     const yvex_source_acquisition_file *file,
     unsigned long long *bytes_read,
     char digest_hex[65],
+    char git_blob_hex[41],
     int *symlink_refused)
 {
     unsigned char buffer[1024u * 1024u];
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned char git_digest[20];
+    static const char hex[] = "0123456789abcdef";
     yvex_sha256 hash;
+    source_sha1 git_hash;
     struct stat before;
     struct stat after;
+    char git_header[64];
     unsigned long long total = 0u;
     int fd = source_acquisition_open_relative(root_fd, file->path, symlink_refused);
+    int git_header_length;
+    unsigned int index;
     ssize_t count;
 
     if (fd < 0) return 0;
@@ -1465,13 +1472,22 @@ static int source_acquisition_hash_file(
         close(fd);
         return 0;
     }
+    git_header_length = snprintf(git_header, sizeof(git_header), "blob %llu", file->expected_size);
+    if (git_header_length < 0 || (size_t)git_header_length + 1u > sizeof(git_header)) {
+        close(fd);
+        return 0;
+    }
     yvex_sha256_init(&hash);
+    source_sha1_init(&git_hash);
+    source_sha1_update(&git_hash, (const unsigned char *)git_header,
+                       (size_t)git_header_length + 1u);
     while ((count = read(fd, buffer, sizeof(buffer))) > 0) {
         if (!yvex_sha256_update(&hash, buffer, (size_t)count) ||
             !yvex_core_u64_add(total, (unsigned long long)count, &total)) {
             close(fd);
             return 0;
         }
+        source_sha1_update(&git_hash, buffer, (size_t)count);
     }
     if (count < 0 || fstat(fd, &after) != 0 || before.st_dev != after.st_dev ||
         before.st_ino != after.st_ino || before.st_size != after.st_size ||
@@ -1482,8 +1498,29 @@ static int source_acquisition_hash_file(
     }
     close(fd);
     yvex_sha256_hex(digest, digest_hex);
+    source_sha1_final(&git_hash, git_digest);
+    for (index = 0u; index < sizeof(git_digest); ++index) {
+        git_blob_hex[index * 2u] = hex[git_digest[index] >> 4u];
+        git_blob_hex[index * 2u + 1u] = hex[git_digest[index] & 0x0fu];
+    }
+    git_blob_hex[40] = '\0';
     *bytes_read = total;
     return 1;
+}
+
+static int source_acquisition_expected_identity_matches(
+    const yvex_source_acquisition_file *file,
+    const char git_blob_hex[41])
+{
+    const char *lfs_oid;
+
+    if (!file || !git_blob_hex) return 0;
+    if (!file->expected_sha256[0])
+        return !file->lfs_oid[0] && strlen(file->git_oid) == 40u &&
+               strcmp(file->git_oid, git_blob_hex) == 0;
+    lfs_oid = file->lfs_oid;
+    if (strncmp(lfs_oid, "sha256:", 7u) == 0) lfs_oid += 7u;
+    return strcmp(lfs_oid, file->expected_sha256) == 0;
 }
 
 static int source_acquisition_identity(const yvex_source_acquisition *acquisition,
@@ -1547,9 +1584,10 @@ static int source_acquisition_verify_files(
         const yvex_source_acquisition_file *file = &acquisition->files[index];
         unsigned long long bytes = 0u;
         char digest[65];
+        char git_blob[41];
         int symlink_refused = 0;
 
-        if (!source_acquisition_hash_file(root_fd, file, &bytes, digest,
+        if (!source_acquisition_hash_file(root_fd, file, &bytes, digest, git_blob,
                                           &symlink_refused)) {
             close(root_fd);
             return source_acquisition_refuse(
@@ -1568,6 +1606,13 @@ static int source_acquisition_verify_files(
                 failure, YVEX_SOURCE_ACQUISITION_FAILURE_DIGEST, index,
                 file->path, YVEX_ERR_FORMAT, err,
                 "source file digest mismatch");
+        }
+        if (!source_acquisition_expected_identity_matches(file, git_blob)) {
+            close(root_fd);
+            return source_acquisition_refuse(
+                failure, YVEX_SOURCE_ACQUISITION_FAILURE_DIGEST, index,
+                file->path, YVEX_ERR_FORMAT, err,
+                "source bytes differ from their authoritative Git or LFS identity");
         }
         if (!yvex_core_u64_add(acquisition->facts.payload_bytes_read, bytes,
                                &acquisition->facts.payload_bytes_read)) {

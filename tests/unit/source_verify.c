@@ -545,13 +545,15 @@ static int source_acquisition_digest(const char *text, char output[65])
 
 static int source_acquisition_fixture_write(const char *root,
                                             const char *relative_path,
-                                            const char *payload)
+                                            const char *payload,
+                                            const char *git_oid_override)
 {
     static const char repository[] = "Example/Tiny";
     static const char revision[] = "0123456789abcdef0123456789abcdef01234567";
     char payload_path[512];
     char manifest_path[512];
     char actual_sha[65];
+    char git_oid[41];
     char identity[65];
     char json[4096];
     yvex_sha256 hash;
@@ -560,6 +562,18 @@ static int source_acquisition_fixture_write(const char *root,
     int n;
 
     if (!source_acquisition_digest(payload, actual_sha)) return 0;
+    memset(git_oid, '0', sizeof(git_oid) - 1u);
+    git_oid[sizeof(git_oid) - 1u] = '\0';
+    if (strcmp(relative_path, "FL2VA/config.json") == 0) {
+        n = snprintf(payload_path, sizeof(payload_path), "%s/FL2VA/config.json", root);
+        if (n < 0 || (size_t)n >= sizeof(payload_path) ||
+            !source_verify_write_text(payload_path, payload) ||
+            yvex_source_git_blob_oid_file(payload_path, git_oid, NULL) != YVEX_OK) return 0;
+    }
+    if (git_oid_override) {
+        if (strlen(git_oid_override) != 40u) return 0;
+        memcpy(git_oid, git_oid_override, sizeof(git_oid));
+    }
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, YVEX_SOURCE_ACQUISITION_SCHEMA) ||
         !yvex_sha256_update_text(&hash, repository) ||
@@ -568,9 +582,9 @@ static int source_acquisition_fixture_write(const char *root,
         !yvex_sha256_update_u64(&hash, 1u) ||
         !yvex_sha256_update_text(&hash, relative_path) ||
         !yvex_sha256_update_u64(&hash, size) ||
-        !yvex_sha256_update_text(&hash, actual_sha) ||
-        !yvex_sha256_update_text(&hash, actual_sha) ||
         !yvex_sha256_update_text(&hash, "") ||
+        !yvex_sha256_update_text(&hash, actual_sha) ||
+        !yvex_sha256_update_text(&hash, git_oid) ||
         !yvex_sha256_update_text(&hash, "") ||
         !yvex_sha256_update_text(&hash, "") ||
         !yvex_sha256_update_text(&hash, "metadata") ||
@@ -586,20 +600,17 @@ static int source_acquisition_fixture_write(const char *root,
         "\"source_bytes\":%zu,\"files\":[{\"path\":\"%s\","
         "\"component\":\"pipeline\",\"classification\":\"metadata\","
         "\"expected_size\":%zu,\"actual_size\":%zu,"
-        "\"expected_sha256\":\"%s\",\"actual_sha256\":\"%s\","
-        "\"git_oid\":\"\",\"lfs_oid\":\"\",\"xet_hash\":\"\","
+        "\"expected_sha256\":\"\",\"actual_sha256\":\"%s\","
+        "\"git_oid\":\"%s\",\"lfs_oid\":\"\",\"xet_hash\":\"\","
         "\"verified\":true}]}",
         YVEX_SOURCE_ACQUISITION_SCHEMA, repository, revision, identity,
-        size, size, relative_path, size, size, actual_sha, actual_sha);
+        size, size, relative_path, size, size, actual_sha, git_oid);
     if (n < 0 || (size_t)n >= sizeof(json)) return 0;
     n = snprintf(manifest_path, sizeof(manifest_path), "%s/%s", root,
                  YVEX_SOURCE_ACQUISITION_MANIFEST);
     if (n < 0 || (size_t)n >= sizeof(manifest_path) ||
         !source_verify_write_text(manifest_path, json)) return 0;
-    if (strcmp(relative_path, "FL2VA/config.json") != 0) return 1;
-    n = snprintf(payload_path, sizeof(payload_path), "%s/FL2VA/config.json", root);
-    return n >= 0 && (size_t)n < sizeof(payload_path) &&
-           source_verify_write_text(payload_path, payload);
+    return 1;
 }
 
 static int source_verify_acquisition(void)
@@ -621,7 +632,7 @@ static int source_verify_acquisition(void)
     snprintf(path, sizeof(path), "%s/FL2VA", root);
     YVEX_TEST_ASSERT(source_verify_make_dir(path), "create acquisition subtree");
     YVEX_TEST_ASSERT(source_acquisition_fixture_write(
-                         root, "FL2VA/config.json", payload),
+                         root, "FL2VA/config.json", payload, NULL),
                      "write canonical acquisition fixture");
     yvex_source_acquisition_options_default(&options);
     options.source_root = root;
@@ -660,6 +671,16 @@ static int source_verify_acquisition(void)
                      "source admission rejects same-sized digest corruption");
     YVEX_TEST_ASSERT(source_verify_write_text(path, payload),
                      "restore acquisition payload");
+    YVEX_TEST_ASSERT(source_acquisition_fixture_write(
+                         root, "FL2VA/config.json", payload,
+                         "0000000000000000000000000000000000000000") &&
+                         yvex_source_acquisition_open(
+                             &acquisition, &options, &failure, &err) != YVEX_OK &&
+                         failure.code == YVEX_SOURCE_ACQUISITION_FAILURE_DIGEST,
+                     "source admission rejects bytes outside their Git identity");
+    YVEX_TEST_ASSERT(source_acquisition_fixture_write(
+                         root, "FL2VA/config.json", payload, NULL),
+                     "restore authoritative acquisition identity");
     YVEX_TEST_ASSERT(unlink(path) == 0 && symlink("/dev/null", path) == 0 &&
                          yvex_source_acquisition_open(
                              &acquisition, &options, &failure, &err) != YVEX_OK &&
@@ -667,7 +688,7 @@ static int source_verify_acquisition(void)
                      "source admission rejects a symlinked file");
     YVEX_TEST_ASSERT(unlink(path) == 0 && source_verify_write_text(path, payload) &&
                          source_acquisition_fixture_write(
-                             root, "../outside.json", payload) &&
+                             root, "../outside.json", payload, NULL) &&
                          yvex_source_acquisition_open(
                              &acquisition, &options, &failure, &err) != YVEX_OK &&
                          failure.code == YVEX_SOURCE_ACQUISITION_FAILURE_MANIFEST_FORMAT,
