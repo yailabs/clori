@@ -1826,7 +1826,7 @@ int yvex_runtime_speculation_commit_prefix(
     promotion_started = yvex_core_monotonic_ns();
     rc = yvex_runtime_session_select_attention_prefix(
         context->session, YVEX_TENSOR_SCOPE_GLOBAL, base_count,
-        (unsigned long long)extension_required, err);
+        (unsigned long long)extension_required, &result->promotion_physical, err);
     result->promotion_ns = yvex_core_monotonic_ns() - promotion_started;
     if (rc == YVEX_OK)
         result->promoted_target_token_count = base_count;

@@ -194,6 +194,14 @@ synchronization across transformer and output-head work. Their active weight,
 state, activation, temporary and occupancy stay explicitly unavailable; a
 partial record is not a complete roofline.
 
+Accepted-prefix selection returns a v1 in-process physical-facts record. It
+derives CUDA H2D and synchronization deltas from the session-owned state
+residency counters and states the zero D2H, D2D and kernel facts explicitly.
+This changed one internal source signature rebuilt with the product; it did not
+change the state-provider ABI, generation ABI, protocol or persisted state.
+Repeated phase occupancy, once supplied, is a checked work-unit-weighted mean;
+failed accumulation leaves the prior measurement unchanged.
+
 The binding is generated transactionally outside the repository, named by its
 content identity and independently reopened. Runtime open validates it against
 the exact admitted artifact. Runtime execution does not read source headers or

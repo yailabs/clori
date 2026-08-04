@@ -147,6 +147,7 @@ typedef struct {
     unsigned long long verified_prefix_count, promoted_target_token_count;
     unsigned long long target_extension_count, replayed_target_token_count;
     unsigned long long promotion_ns, target_extension_ns;
+    yvex_runtime_state_promotion_facts promotion_physical;
     yvex_runtime_transformer_result target_result;
     char cycle_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char target_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];

@@ -75,6 +75,13 @@ output-head work. Their active weights, state, activation, temporary and
 occupancy remain unavailable. Current optimization ordering is therefore
 provisional rather than a promoted kernel-priority decision.
 
+Accepted-prefix promotion now contributes its exact state-residency H2D,
+synchronization and zero kernel/D2H/D2D facts. These counters are deltas around
+the serialized session mutation, not estimates from configured capacity.
+Compulsory state-copy and temporary bytes are still unavailable, so promotion
+does not yet earn a complete memory roofline. Repeated occupancy evidence is a
+work-unit-weighted mean with transactional overflow refusal.
+
 Physical-variant research uses a funnel: role-level numerical probes,
 representative-layer encoding, kernel microbenchmarks, bounded logit and DSpark
 acceptance checks, then complete emission only for surviving candidates. A

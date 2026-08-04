@@ -245,6 +245,14 @@ typedef struct {
     void (*cancel)(void *context);
 } yvex_runtime_commit_participant;
 
+#define YVEX_RUNTIME_STATE_PROMOTION_FACTS_SCHEMA_V1 1u
+typedef struct {
+    unsigned int schema_version;
+    int available;
+    unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
+    unsigned long long kernel_count, synchronization_count;
+} yvex_runtime_state_promotion_facts;
+
 int yvex_runtime_session_prepare_persistent_state(
     struct yvex_runtime_execution_session *session,
     const yvex_graph_attention_capacity_plan *capacity,
@@ -278,7 +286,7 @@ int yvex_runtime_session_begin(
 int yvex_runtime_session_select_attention_prefix(
     struct yvex_runtime_execution_session *session, yvex_tensor_scope scope,
     unsigned long long prefix_count, unsigned long long extension_count,
-    yvex_error *err);
+    yvex_runtime_state_promotion_facts *facts, yvex_error *err);
 int yvex_runtime_session_finish(
     struct yvex_runtime_execution_session *session, int status,
     yvex_error *err);

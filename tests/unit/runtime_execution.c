@@ -337,6 +337,31 @@ static int execution_test_roofline(void)
                          measurements[1].measured_duration_ns == 40ull &&
                          measurements[1].committed_tokens == 2ull,
                      "equal-availability phase deltas should accumulate without losing facts");
+    measurements[0].fact_mask |=
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_OCCUPANCY);
+    measurements[0].occupancy_parts_per_million = 250000ull;
+    measurements[0].work_units = 1ull;
+    measurements[1] = measurements[0];
+    measurements[1].occupancy_parts_per_million = 750000ull;
+    measurements[1].work_units = 3ull;
+    index = 1ull;
+    YVEX_TEST_ASSERT(yvex_execution_phase_measurement_accumulate(
+                         measurements + 1, YVEX_EXECUTION_ROOFLINE_PHASE_COUNT - 1ull,
+                         &index, measurements, &err) == YVEX_OK &&
+                         measurements[1].occupancy_parts_per_million == 625000ull &&
+                         measurements[1].work_units == 4ull,
+                     "phase occupancy should remain a work-weighted mean across deltas");
+    measurements[0].occupancy_parts_per_million = 1000001ull;
+    YVEX_TEST_ASSERT(yvex_execution_phase_measurement_accumulate(
+                         measurements + 1, YVEX_EXECUTION_ROOFLINE_PHASE_COUNT - 1ull,
+                         &index, measurements, &err) == YVEX_ERR_INVALID_ARG &&
+                         measurements[1].occupancy_parts_per_million == 625000ull,
+                     "invalid occupancy should refuse without mutating accumulated evidence");
+    measurements[0].occupancy_parts_per_million = 0ull;
+    measurements[0].fact_mask &=
+        ~YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_OCCUPANCY);
+    measurements[1] = measurements[0];
+    index = 1ull;
     measurements[0].fact_mask &=
         ~YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS);
     YVEX_TEST_ASSERT(yvex_execution_phase_measurement_accumulate(

@@ -970,13 +970,19 @@ int yvex_execution_phase_measurement_accumulate(
         YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_DURATION) |
         YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_WORK) |
         YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_COMMITTED_TOKENS);
+    const unsigned long long occupancy =
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_OCCUPANCY);
     yvex_execution_phase_measurement *measurement = NULL;
+    yvex_execution_phase_measurement candidate;
     unsigned long long index;
     if (!measurements || !measurement_count || !delta ||
         !measurement_capacity || *measurement_count > measurement_capacity ||
         delta->phase >= YVEX_EXECUTION_ROOFLINE_PHASE_COUNT ||
         (delta->fact_mask & required) != required ||
         (delta->fact_mask & ~YVEX_EXECUTION_PHASE_FACT_ALL) ||
+        ((delta->fact_mask & occupancy) &&
+         delta->occupancy_parts_per_million > 1000000ull) ||
+        (!(delta->fact_mask & occupancy) && delta->occupancy_parts_per_million) ||
         !delta->measured_duration_ns || !delta->work_units)
         return execution_refuse(err, YVEX_ERR_INVALID_ARG,
                                 "runtime.execution.roofline",
@@ -998,20 +1004,35 @@ int yvex_execution_phase_measurement_accumulate(
         return execution_refuse(err, YVEX_ERR_STATE,
                                 "runtime.execution.roofline",
                                 "phase fact availability changed");
+    candidate = *measurement;
+    if (delta->fact_mask & occupancy) {
+        unsigned long long previous, incoming, total, work;
+        if (!yvex_core_u64_mul(measurement->occupancy_parts_per_million,
+                               measurement->work_units, &previous) ||
+            !yvex_core_u64_mul(delta->occupancy_parts_per_million,
+                               delta->work_units, &incoming) ||
+            !yvex_core_u64_add(previous, incoming, &total) ||
+            !yvex_core_u64_add(measurement->work_units, delta->work_units,
+                               &work))
+            return execution_refuse(err, YVEX_ERR_BOUNDS,
+                                    "runtime.execution.roofline",
+                                    "phase occupancy accumulation overflowed");
+        candidate.occupancy_parts_per_million = total / work;
+    }
 #define ACCUMULATE(field_) \
-    capacity_add(&measurement->field_, delta->field_)
+    capacity_add(&candidate.field_, delta->field_)
     if (!ACCUMULATE(active_weight_bytes) || !ACCUMULATE(state_bytes) ||
         !ACCUMULATE(activation_bytes) || !ACCUMULATE(temporary_bytes) ||
         !ACCUMULATE(h2d_bytes) || !ACCUMULATE(d2h_bytes) ||
         !ACCUMULATE(d2d_bytes) || !ACCUMULATE(kernel_count) ||
         !ACCUMULATE(synchronization_count) ||
-        !ACCUMULATE(occupancy_parts_per_million) ||
         !ACCUMULATE(measured_duration_ns) || !ACCUMULATE(work_units) ||
         !ACCUMULATE(committed_tokens))
         return execution_refuse(err, YVEX_ERR_BOUNDS,
                                 "runtime.execution.roofline",
                                 "phase measurement counters overflowed");
 #undef ACCUMULATE
+    *measurement = candidate;
     yvex_error_clear(err);
     return YVEX_OK;
 }

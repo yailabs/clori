@@ -17,8 +17,8 @@ typedef struct {
     yvex_token_sequence_transaction *sequence;
 } generation_terminal_publication;
 static int generation_refuse(yvex_error *err, yvex_status status, const char *reason);
-static int generation_token_classify(
-    const yvex_runtime_generation_context *context, unsigned int token,
+static int generation_token_classify(const yvex_runtime_generation_context *context,
+    unsigned int token,
     yvex_tokenizer_token_classification *classification,
     int *additional_stop, yvex_error *err);
 static int generation_publication_prepare(void *opaque, yvex_error *err)
@@ -65,8 +65,8 @@ static void generation_terminal_cancel(void *opaque)
     generation_terminal_publication *publication = opaque;
     yvex_token_sequence_transaction_abort(&publication->sequence);
 }
-static int generation_terminal_sequence_commit(
-    yvex_runtime_generation_context *context, unsigned int token_id,
+static int generation_terminal_sequence_commit(yvex_runtime_generation_context *context,
+    unsigned int token_id,
     yvex_runtime_speculation_context *pending_speculation,
     unsigned long long *ordinal, yvex_error *err)
 {
@@ -180,10 +180,8 @@ static const unsigned long long generation_transformer_phase_facts =
     (1ull << YVEX_EXECUTION_PHASE_FACT_KERNELS) | (1ull << YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS);
 static int generation_phase_time(
     yvex_runtime_generation_context *context, yvex_execution_roofline_phase phase,
-    unsigned long long duration,
-    unsigned long long work, unsigned long long committed,
-    unsigned long long active_weight, unsigned long long h2d,
-    unsigned long long d2h, unsigned long long d2d,
+    unsigned long long duration, unsigned long long work, unsigned long long committed,
+    unsigned long long active_weight, unsigned long long h2d, unsigned long long d2h, unsigned long long d2d,
     unsigned long long kernels, unsigned long long synchronizations,
     unsigned long long fact_mask, yvex_error *err)
 {
@@ -195,8 +193,7 @@ static int generation_phase_time(
             YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_COMMITTED_TOKENS),
         .active_weight_bytes = active_weight, .h2d_bytes = h2d,
         .d2h_bytes = d2h, .d2d_bytes = d2d, .kernel_count = kernels,
-        .synchronization_count = synchronizations,
-        .measured_duration_ns = duration, .work_units = work,
+        .synchronization_count = synchronizations, .measured_duration_ns = duration, .work_units = work,
         .committed_tokens = committed};
     if (!duration || !work) return YVEX_OK;
     return yvex_execution_phase_measurement_accumulate(
@@ -215,8 +212,7 @@ static int generation_state_summary(const yvex_runtime_execution_session *sessio
                                  "persistent generation state is unavailable");
     return YVEX_OK;
 }
-static int generation_enter(yvex_runtime_generation_context *context,
-                            yvex_error *err)
+static int generation_enter(yvex_runtime_generation_context *context, yvex_error *err)
 {
     unsigned int expected = 0u;
     if (context && atomic_compare_exchange_strong_explicit(
@@ -233,8 +229,7 @@ static int generation_enter(yvex_runtime_generation_context *context,
                                  : "generation context is already in use");
 }
 /* Release exclusive admission and wake the close owner after accounting; context stays owned. */
-static void generation_leave(yvex_runtime_generation_context *context,
-                             int rc, int executed)
+static void generation_leave(yvex_runtime_generation_context *context, int rc, int executed)
 {
     unsigned int observed;
     if (!context) return;
@@ -306,8 +301,7 @@ int yvex_runtime_generation_context_summary_copy(
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-static int generation_cancelled(
-    const yvex_runtime_generation_context *context, yvex_error *err)
+static int generation_cancelled(const yvex_runtime_generation_context *context, yvex_error *err)
 {
     if (context->options.cancel_requested &&
         context->options.cancel_requested(context->options.cancel_context))
@@ -1340,7 +1334,13 @@ static int generation_speculative_candidate_cycle(
     if (rc == YVEX_OK && commit->completed && commit->promotion_ns)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_STATE_PROMOTION,
             commit->promotion_ns, commit->verified_prefix_count, commit->token_count,
-            0ull, 0ull, 0ull, 0ull, 0ull, 0ull, 0ull, err);
+            0ull, commit->promotion_physical.h2d_bytes, commit->promotion_physical.d2h_bytes,
+            commit->promotion_physical.d2d_bytes, commit->promotion_physical.kernel_count,
+            commit->promotion_physical.synchronization_count,
+            commit->promotion_physical.available
+                ? generation_transformer_phase_facts &
+                      ~YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT)
+                : 0ull, err);
     return rc;
 }
 static int generation_run_dspark(

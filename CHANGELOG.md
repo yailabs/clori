@@ -40,6 +40,9 @@ change. Git history preserves implementation chronology.
   output projection publishes its exact H2D/D2H movement and synchronization.
   DSpark draft/verification now publish exact launch, H2D/D2H/D2D movement and
   synchronization facts across their transformer and output-head work.
+  Accepted-prefix promotion publishes exact state-residency H2D,
+  synchronization and zero kernel/D2H/D2D facts; repeated occupancy samples
+  use a checked work-weighted mean instead of additive accumulation.
 
 ### Changed
 

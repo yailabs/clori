@@ -584,17 +584,20 @@ int yvex_runtime_session_begin(yvex_runtime_execution_session *session,
 int yvex_runtime_session_select_attention_prefix(
     yvex_runtime_execution_session *session, yvex_tensor_scope scope,
     unsigned long long prefix_count, unsigned long long extension_count,
-    yvex_error *err)
+    yvex_runtime_state_promotion_facts *facts, yvex_error *err)
 {
     yvex_attention_state_provider *provider;
     yvex_runtime_state_residency *residency;
+    yvex_runtime_state_residency_summary before = {0}, after = {0};
     yvex_graph_attention_state_summary summary;
     yvex_attention_failure failure = {0};
     unsigned long long layer;
     int ready, rc;
+    if (facts) memset(facts, 0, sizeof(*facts));
     if (!session ||
         (scope != YVEX_TENSOR_SCOPE_GLOBAL &&
          scope != YVEX_TENSOR_SCOPE_DRAFT) ||
+        !facts ||
         !session->lifecycle_mutex_ready ||
         pthread_mutex_lock(&session->lifecycle_mutex) != 0) {
         yvex_error_set(err, YVEX_ERR_STATE, "runtime.session.prefix",
@@ -619,8 +622,13 @@ int yvex_runtime_session_select_attention_prefix(
                        "the active session has no prefix-addressable state owner");
         return YVEX_ERR_STATE;
     }
-    rc = provider->select_prefix(provider->context, prefix_count,
-                                 extension_count, &failure, err);
+    if (residency)
+        rc = yvex_runtime_state_residency_summary_copy(residency, &before, err);
+    else
+        rc = YVEX_OK;
+    if (rc == YVEX_OK)
+        rc = provider->select_prefix(provider->context, prefix_count,
+                                     extension_count, &failure, err);
     if (rc == YVEX_OK)
         rc = provider->summary(provider->context, &summary, err);
     for (layer = 0ull; rc == YVEX_OK && residency &&
@@ -630,6 +638,23 @@ int yvex_runtime_session_select_attention_prefix(
         if (view)
             rc = yvex_runtime_state_residency_stage(
                 residency, provider, layer, err);
+    }
+    if (rc == YVEX_OK && residency)
+        rc = yvex_runtime_state_residency_summary_copy(residency, &after, err);
+    if (rc == YVEX_OK &&
+        (after.upload_bytes < before.upload_bytes ||
+         after.upload_count < before.upload_count)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "runtime.session.prefix",
+                       "persistent state promotion counters regressed");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK) {
+        facts->schema_version = YVEX_RUNTIME_STATE_PROMOTION_FACTS_SCHEMA_V1;
+        facts->available = 1;
+        facts->h2d_bytes = after.upload_bytes - before.upload_bytes;
+        facts->synchronization_count = after.cuda_ready
+                                           ? after.upload_count - before.upload_count
+                                           : 0ull;
     }
     (void)pthread_mutex_unlock(&session->lifecycle_mutex);
     return rc;

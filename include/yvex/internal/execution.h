@@ -291,6 +291,7 @@ typedef struct {
     unsigned long long active_weight_bytes, state_bytes, activation_bytes;
     unsigned long long temporary_bytes, h2d_bytes, d2h_bytes, d2d_bytes;
     unsigned long long kernel_count, synchronization_count;
+    /* Repeated deltas publish the work-unit-weighted mean occupancy. */
     unsigned long long occupancy_parts_per_million;
     unsigned long long measured_duration_ns, work_units, committed_tokens;
 } yvex_execution_phase_measurement;

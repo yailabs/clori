@@ -218,7 +218,15 @@ and verify sweeps add exact transformer/output-row launches, H2D/D2H/D2D
 movement and synchronization. State, activation, temporary, occupancy, DSpark
 active-byte and batched-decode facts remain unavailable, so optimization
 priority stays provisional. The offline generation operator exposes the ledger
-in audit and JSON projections without adding it to protocol v6.
+in audit and JSON projections without adding it to protocol v6 or making trace
+verbosity a numerical dependency.
+
+Prefix selection also snapshots state-residency counters around its serialized
+mutation. Promotion therefore reports exact H2D and one synchronization per
+successful CUDA state upload, with zero D2H, D2D and kernel launches. Its
+state-copy and temporary bytes remain unavailable until their owners can report
+compulsory traffic rather than allocation capacity. Repeated occupancy is
+aggregated as a checked work-unit-weighted mean, never as an additive counter.
 
 ## Memory and residency
 
