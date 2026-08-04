@@ -276,8 +276,8 @@ to [`ROADMAP.md`](../../ROADMAP.md).
 This target does not claim:
 
 - public or remote serving, authentication, TLS, or compatibility APIs
-- complete CUDA stochastic sampling, tokenizer execution, or fused stochastic
-  logits/sampling execution
+- device-resident DSpark acceptance/correction, fused output-head sampling, or
+  full-model qualification of target-only CUDA stochastic sampling
 - evaluation or release-path full-model benchmark results
 - a selected release artifact or release readiness
 

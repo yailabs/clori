@@ -94,9 +94,37 @@ typedef struct {
 
 typedef struct {
     unsigned long long maximum_vocabulary_size, maximum_rows, maximum_host_bytes;
+    int device_selection;
     int (*cancel_requested)(void *context);
     void *cancel_context;
 } yvex_runtime_sampling_options;
+
+typedef struct {
+    int completed, numeric_fallback_used;
+    unsigned int selected_token_id;
+    unsigned long long candidates_after_top_k, candidates_after_min_p;
+    unsigned long long candidates_after_typical_p, candidates_after_top_p;
+    float selected_logit, maximum_logit;
+    double selected_probability, min_p_threshold, entropy;
+    double typical_retained_mass, top_p_retained_mass, normalization_error;
+} yvex_backend_sampling_result;
+
+/* Device sampling owns full-row numerical selection; runtime retains transactional RNG publish. */
+typedef struct {
+    int (*workspace_required)(unsigned long long vocabulary_size,
+                              unsigned long long *bytes, yvex_error *err);
+    int (*select_stochastic)(yvex_backend *backend,
+                             const yvex_device_tensor *logits,
+                             unsigned long long vocabulary_size,
+                             const yvex_runtime_sampling_policy *policy,
+                             unsigned int random_value,
+                             yvex_backend_sampling_result *result,
+                             yvex_backend_cuda_operation_facts *facts,
+                             yvex_error *err);
+} yvex_backend_sampling_operations;
+
+const yvex_backend_sampling_operations *yvex_backend_sampling_operations_get(
+    const yvex_backend *backend);
 
 typedef struct {
     unsigned int schema_version;

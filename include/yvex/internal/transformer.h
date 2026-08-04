@@ -169,7 +169,7 @@ typedef enum {
 } yvex_runtime_transformer_phase;
 typedef struct {
     unsigned long long maximum_host_bytes, maximum_device_bytes, context_capacity;
-    unsigned long long workspace_token_capacity;
+    unsigned long long workspace_token_capacity, minimum_device_workspace_bytes;
     yvex_tensor_scope tensor_scope;
     int (*cancel_requested)(void *context);
     void *cancel_context;

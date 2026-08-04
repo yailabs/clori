@@ -263,8 +263,9 @@ int yvex_runtime_logits_context_open(
     if (out) *out = NULL;
     if (!out || !model || !session || !transformer_plan || !options ||
         !options->maximum_rows ||
+        (options->device_selection != 0 && options->device_selection != 1) ||
         options->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
-        (options->device_greedy_selection &&
+        (options->device_selection &&
          (!options->execution_profile ||
           options->execution_profile->backend != YVEX_BACKEND_KIND_CUDA ||
           !yvex_sha256_hex_valid(options->execution_profile->identity))))
@@ -760,19 +761,19 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
             context->plan.summary.row_count, context->plan.summary.row_width,
             context->plan.summary.row_bytes, 1ull, device_hidden,
             context->device_logits, &facts, err);
-    if (rc == YVEX_OK && !context->options.device_greedy_selection)
+    if (rc == YVEX_OK && !context->options.device_selection)
         rc = yvex_backend_tensor_read(context->session_view->backend,
                                       context->device_logits,
                                       context->candidate, logits_bytes, err);
     if (rc == YVEX_OK) {
         result->h2d_bytes = source->device_values_available ? 0ull : hidden_bytes;
         result->d2h_bytes = facts.d2h_bytes +
-                            (context->options.device_greedy_selection ? 0ull : logits_bytes);
+                            (context->options.device_selection ? 0ull : logits_bytes);
         result->d2d_bytes = facts.d2d_bytes;
         result->kernel_launches = facts.kernel_launches;
         result->device_synchronizations = facts.device_synchronizations +
                                           !source->device_values_available +
-                                          !context->options.device_greedy_selection;
+                                          !context->options.device_selection;
         rc = yvex_execution_memory_facts_add(
             &result->memory, facts.active_weight_bytes, facts.state_bytes,
             facts.activation_bytes, facts.temporary_bytes,
@@ -866,7 +867,7 @@ static int logits_row_finish(yvex_runtime_logits_context *context,
                                context->plan.summary.output_head_plan_identity);
     yvex_runtime_identity_copy(result->output_head_residency_identity,
                                residency.output_head_residency_identity);
-    if (context->options.device_greedy_selection) {
+    if (context->options.device_selection) {
         result->device_values_available = 1;
         if (logits_device_view_build(context, &residency,
                                      &result->device_logits, err) != YVEX_OK)
@@ -1201,7 +1202,7 @@ int yvex_runtime_logits_project(
     if (result) memset(result, 0, sizeof(*result));
     if (rc != YVEX_OK) return rc;
     if (!result ||
-        (!context->options.device_greedy_selection &&
+        (!context->options.device_selection &&
          (!logits || logits_capacity < context->plan.summary.vocabulary_size)) ||
         backend != yvex_backend_kind_of(context->session_view->backend))
         rc = logits_refuse(err, YVEX_ERR_INVALID_ARG,
@@ -1222,11 +1223,11 @@ int yvex_runtime_logits_project(
     if (rc == YVEX_OK)
         rc = logits_row_finish(context, source, backend, context->candidate,
                                result, err);
-    if (rc == YVEX_OK && !context->options.device_greedy_selection &&
+    if (rc == YVEX_OK && !context->options.device_selection &&
         yvex_core_u64_mul(context->plan.summary.vocabulary_size, sizeof(float),
                           &output_bytes))
         memcpy(logits, context->candidate, (size_t)output_bytes);
-    else if (rc == YVEX_OK && !context->options.device_greedy_selection)
+    else if (rc == YVEX_OK && !context->options.device_selection)
         rc = logits_refuse(err, YVEX_ERR_BOUNDS,
                            "logits publication extent overflowed");
     logits_leave(context, rc == YVEX_OK);
@@ -1452,7 +1453,7 @@ int yvex_runtime_logits_execute_rows(
     int grouped;
     int rc = YVEX_OK;
     if (result) memset(result, 0, sizeof(*result));
-    if (!context || !request || !sources || context->options.device_greedy_selection ||
+    if (!context || !request || !sources || context->options.device_selection ||
         !rows || row_capacity < request->row_count || !result ||
         request->row_count > SIZE_MAX / sizeof(*rows) ||
         !yvex_core_u64_mul(request->row_count, context->plan.summary.vocabulary_size,

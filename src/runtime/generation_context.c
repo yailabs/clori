@@ -26,6 +26,30 @@ static int generation_context_refuse(yvex_error *err, yvex_status status,
     return status;
 }
 
+static int generation_device_stochastic(
+    const yvex_runtime_generation_context *context,
+    const yvex_backend *backend)
+{
+    return context && context->options.backend == YVEX_BACKEND_KIND_CUDA &&
+           context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
+           context->options.evidence_profile == YVEX_EXECUTION_EVIDENCE_PRODUCTION &&
+           context->options.sampling_policy.strategy ==
+               YVEX_SAMPLING_STRATEGY_STOCHASTIC &&
+           yvex_backend_sampling_operations_get(backend) != NULL;
+}
+
+static int generation_device_selection(
+    const yvex_runtime_generation_context *context,
+    const yvex_backend *backend)
+{
+    return context && context->options.backend == YVEX_BACKEND_KIND_CUDA &&
+           context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
+           context->options.evidence_profile == YVEX_EXECUTION_EVIDENCE_PRODUCTION &&
+           (context->options.sampling_policy.strategy ==
+                YVEX_SAMPLING_STRATEGY_GREEDY ||
+            generation_device_stochastic(context, backend));
+}
+
 typedef struct {
     yvex_execution_state_class_request classes[YVEX_MODEL_STATE_CLASS_COUNT];
     unsigned long long candidate_bytes_per_token;
@@ -419,7 +443,8 @@ static int generation_capacity_build(
     generation_capacity_geometry geometry;
     yvex_execution_state_class_request states[YVEX_MODEL_STATE_CLASS_COUNT];
     yvex_execution_capacity_plan_request request = {0};
-    unsigned long long workspace, index, count = 0ull;
+    const yvex_backend_sampling_operations *sampling_operations;
+    unsigned long long workspace, sampling_workspace = 0ull, index, count = 0ull;
     if (generation_capacity_hardware(context, err) != YVEX_OK) return yvex_error_code(err);
     if (!model) return YVEX_OK;
     if (generation_capacity_workload(context, err) != YVEX_OK) return yvex_error_code(err);
@@ -447,6 +472,17 @@ static int generation_capacity_build(
         return generation_context_refuse(
             err, YVEX_ERR_BOUNDS,
             "execution workspace geometry overflowed");
+    sampling_operations = yvex_backend_sampling_operations_get(
+        yvex_runtime_session_view_get(context->session)->backend);
+    if (generation_device_stochastic(
+            context, yvex_runtime_session_view_get(context->session)->backend) &&
+        (!sampling_operations || !sampling_operations->workspace_required ||
+         sampling_operations->workspace_required(
+             model->vocabulary_size, &sampling_workspace, err) != YVEX_OK))
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "device stochastic workspace geometry is unavailable");
+    if (sampling_workspace > workspace) workspace = sampling_workspace;
     request.schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
     request.model = model;
     request.hardware = &context->hardware_profile;
@@ -558,7 +594,8 @@ static int generation_execution_profile_build(
     request.evidence = context->options.evidence_profile;
     request.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
     request.host_stochastic_reference =
-        context->options.sampling_policy.strategy != YVEX_SAMPLING_STRATEGY_GREEDY;
+        context->options.sampling_policy.strategy != YVEX_SAMPLING_STRATEGY_GREEDY &&
+        !generation_device_stochastic(context, session_view->backend);
     request.token_local_moe_reference =
         context->options.backend != YVEX_BACKEND_KIND_CUDA ||
         context->options.evidence_profile != YVEX_EXECUTION_EVIDENCE_PRODUCTION ||
@@ -662,12 +699,32 @@ static int generation_execution_owners_open(
     yvex_runtime_logits_options logits = {0};
     yvex_runtime_sampling_options sampling = {0};
     yvex_runtime_speculation_options speculation = {0};
+    const yvex_runtime_session_view *session_view =
+        yvex_runtime_session_view_get(context->session);
+    const yvex_backend_sampling_operations *sampling_operations =
+        session_view
+            ? yvex_backend_sampling_operations_get(session_view->backend)
+            : NULL;
+    unsigned long long sampling_workspace = 0ull;
+    int device_selection = session_view &&
+        generation_device_selection(context, session_view->backend);
     int rc;
+
+    if (generation_device_stochastic(
+            context, session_view ? session_view->backend : NULL) &&
+        (!sampling_operations || !sampling_operations->workspace_required ||
+         sampling_operations->workspace_required(
+             yvex_tokenizer_vocab_size(context->tokenizer),
+             &sampling_workspace, err) != YVEX_OK))
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "device stochastic workspace cannot be admitted");
 
     transformer.maximum_host_bytes = options->maximum_host_bytes;
     transformer.maximum_device_bytes = options->maximum_device_bytes;
     transformer.context_capacity = options->context_capacity;
     transformer.workspace_token_capacity = options->prefill_chunk_tokens;
+    transformer.minimum_device_workspace_bytes = sampling_workspace;
     if (options->mode == YVEX_GENERATION_MODE_DSPARK &&
         transformer.workspace_token_capacity < YVEX_SPECULATION_MAX_BLOCK + 2ull)
         transformer.workspace_token_capacity = YVEX_SPECULATION_MAX_BLOCK + 2ull;
@@ -675,11 +732,7 @@ static int generation_execution_owners_open(
     transformer.cancel_context = options->cancel_context;
     transformer.evidence_level =
         runtime_attention_evidence(options->evidence_profile);
-    transformer.device_hidden_output =
-        options->backend == YVEX_BACKEND_KIND_CUDA &&
-        options->mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
-        options->sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY &&
-        options->evidence_profile == YVEX_EXECUTION_EVIDENCE_PRODUCTION;
+    transformer.device_hidden_output = device_selection;
     transformer.execution_profile = &context->execution_profile;
     transformer.shape_registry = context->execution_shapes;
     rc = yvex_runtime_transformer_context_open(
@@ -690,7 +743,7 @@ static int generation_execution_owners_open(
     logits.maximum_host_bytes = options->maximum_host_bytes;
     logits.maximum_device_bytes = options->maximum_device_bytes;
     logits.evidence_profile = options->evidence_profile;
-    logits.device_greedy_selection = transformer.device_hidden_output;
+    logits.device_selection = transformer.device_hidden_output;
     logits.execution_profile = &context->execution_profile;
     logits.cancel_requested = options->cancel_requested;
     logits.cancel_context = options->cancel_context;
@@ -709,6 +762,7 @@ static int generation_execution_owners_open(
     sampling.maximum_vocabulary_size = (*logits_plan)->vocabulary_size;
     sampling.maximum_rows = logits.maximum_rows;
     sampling.maximum_host_bytes = options->maximum_host_bytes;
+    sampling.device_selection = device_selection;
     sampling.cancel_requested = options->cancel_requested;
     sampling.cancel_context = options->cancel_context;
     rc = yvex_runtime_sampling_context_open(

@@ -963,6 +963,48 @@ static int sampling_test_partial_logits_prefix(void)
     return 0;
 }
 
+static int sampling_test_device_context(void)
+{
+    const float logits[4] = {0.0f, 1.0f, 2.0f, 3.0f};
+    yvex_runtime_logits_plan_summary plan;
+    yvex_runtime_logits_row_result row;
+    yvex_runtime_sampling_policy policy = sampling_test_neutral_stochastic();
+    yvex_runtime_sampling_options options = {
+        .maximum_vocabulary_size = 4ull, .maximum_rows = 1ull,
+        .device_selection = 1};
+    yvex_runtime_sampling_context *context = NULL;
+    yvex_runtime_sampling_context_summary summary;
+    yvex_runtime_sampling_source source;
+    yvex_runtime_sampling_result result;
+    yvex_error err;
+    sampling_test_plan(&plan, 4ull);
+    options.device_selection = 2;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_context_open(
+            &context, &plan, &policy, &options, &err) == YVEX_ERR_INVALID_ARG && !context,
+        "device sampling refuses a non-boolean selection contract");
+    options.device_selection = 1;
+    YVEX_TEST_ASSERT(
+        sampling_test_row(&plan, logits, 4ull, 1ull, &row) &&
+            yvex_runtime_sampling_policy_seal(&policy, 4ull, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_open(
+                &context, &plan, &policy, &options, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_snapshot(context, &summary, &err) == YVEX_OK &&
+            summary.workspace_bytes == 0ull && summary.cold_workspace_allocations == 0ull,
+        "device sampling context allocates no complete-vocabulary host candidates");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_source_from_logits(
+            context, &source, logits, 4ull, &row, &err) == YVEX_OK &&
+            yvex_runtime_sampling_select(context, &source, &result, &err) ==
+                YVEX_ERR_FORMAT &&
+            !result.completed,
+        "device sampling context refuses host-authoritative source substitution");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_context_close(&context, &err) == YVEX_OK && !context,
+        "device sampling context closes without host candidate ownership");
+    return 0;
+}
+
 int yvex_test_runtime_sampling(void)
 {
     if (sampling_test_policy()) return 1;
@@ -977,5 +1019,6 @@ int yvex_test_runtime_sampling(void)
     if (sampling_test_close_entry_race()) return 1;
     if (sampling_test_partial()) return 1;
     if (sampling_test_partial_logits_prefix()) return 1;
+    if (sampling_test_device_context()) return 1;
     return 0;
 }

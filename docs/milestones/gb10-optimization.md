@@ -137,6 +137,17 @@ the portable audit/reference oracle. The internal source ABI rebuilds
 atomically; no persisted, wire, public C, execution-profile, or state-layout
 schema changes.
 
+Target-only production stochastic sampling now keeps the complete vocabulary
+row on CUDA. Runtime stages exactly one PCG transition, the backend applies the
+sealed temperature/top-k/min-p/typical-p/top-p order and categorical draw, and
+runtime publishes the RNG state only after bounded device facts survive
+cancellation and validation. The correctness-first kernel downloads 100 bytes
+of token, survivor, probability and status facts rather than the vocabulary.
+Audit/forensic profiles and DSpark retain the host distribution oracle. The
+existing compiled-profile reference flag and internal device-view contracts
+already represent this cutover, so no persisted, wire, public C, execution-
+profile or state-layout version changes.
+
 Accepted-prefix promotion now contributes its exact state-residency H2D,
 synchronization and zero kernel/D2H/D2D facts. These counters are deltas around
 the serialized session mutation, not estimates from configured capacity.
@@ -173,7 +184,8 @@ coexistence, typed capacity/page planning, pre-materialization memory refusal,
 the availability-aware production phase ledger, and identity-bound native
 SM121 CUBIN admission.
 It does not yet establish Tensor Core execution, specialized attention,
-GB10-competitive grouped MoE or zero per-layer MoE synchronization, device
-stochastic sampling, device-resident DSpark, paged state allocation, prefix
+GB10-competitive grouped MoE or zero per-layer MoE synchronization, full-model
+live qualification of target-only device stochastic sampling, device-resident
+DSpark stochastic acceptance/correction, paged state allocation, prefix
 persistence, continuous batching, competitive throughput, evaluation,
 benchmark qualification, release qualification, or Hugging Face publication.

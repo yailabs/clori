@@ -1120,7 +1120,7 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
     yvex_runtime_session_summary session;
     yvex_attention_failure attention_failure;
     yvex_runtime_execution_mode mode;
-    unsigned long long final, workspace_tokens, workspace_start;
+    unsigned long long final, workspace_tokens, workspace_start, workspace_bytes;
     int rc;
     if (request->phase != YVEX_TRANSFORMER_PHASE_PREFILL &&
         request->phase != YVEX_TRANSFORMER_PHASE_DECODE)
@@ -1158,21 +1158,20 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
         return transformer_runtime_refuse(err, YVEX_ERR_STATE,
                                           "transformer state position/capacity is incompatible");
     if (request->backend == YVEX_BACKEND_KIND_CPU) return YVEX_OK;
+    workspace_bytes = context->moe_workspace_bytes;
+    if (workspace_bytes < context->options.minimum_device_workspace_bytes)
+        workspace_bytes = context->options.minimum_device_workspace_bytes;
     rc = yvex_runtime_session_summary_copy(context->session, &session, err);
     if (rc != YVEX_OK) return rc;
-    /* Prefix selection deliberately keeps the verification transaction open
-     * while one target-authored correction extends it. Replanning the CUDA
-     * workspace at that point would require idle state and would discard the
-     * very candidate prefix being extended. The verification workspace is
-     * already the wider admitted shape, so the one-row extension may reuse it
-     * only under the exact prefix-extension contract. */
+    /* Replanning while correction extends verification would discard the open candidate;
+     * reuse is therefore confined to the already wider admitted workspace. */
     if (state->extension_ready) {
         if (!state->transaction_active || !state->prefix_selected ||
             context->options.tensor_scope != YVEX_TENSOR_SCOPE_GLOBAL ||
             input->token_count != 1ull || request->chunk_tokens != 1ull ||
             request->retain_prefix_checkpoints || !session.busy ||
             !session.host_workspace_owned || !session.host_workspace_pinned ||
-            session.device_workspace_bytes < context->moe_workspace_bytes ||
+            session.device_workspace_bytes < workspace_bytes ||
             !yvex_sha256_hex_valid(session.workspace_identity))
             return transformer_runtime_refuse(
                 err, YVEX_ERR_STATE,
@@ -1194,8 +1193,7 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_prepare_attention_workspace(
             context->session, mode, YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
-            YVEX_ATTENTION_EVIDENCE_NONE, capacity, context->moe_workspace_bytes,
-            &failure, err);
+            YVEX_ATTENTION_EVIDENCE_NONE, capacity, workspace_bytes, &failure, err);
     capacity_summary = yvex_graph_attention_capacity_plan_summary(capacity);
     if (rc == YVEX_OK && mode == YVEX_RUNTIME_MODE_FULL)
         rc = yvex_backend_cuda_attention_configure(

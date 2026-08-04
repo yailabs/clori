@@ -37,6 +37,8 @@ int main(void)
         run_cuda_test("parity", yvex_cuda_test_parity) != 0) return 1;
     if (cuda_test_selected(filter, "quant_qtype") &&
         run_cuda_test("quant_qtype", yvex_cuda_test_quant_qtype) != 0) return 1;
+    if (cuda_test_selected(filter, "sampling") &&
+        run_cuda_test("sampling", yvex_cuda_test_sampling) != 0) return 1;
     if (cuda_test_selected(filter, "materialize_cuda") &&
         run_cuda_test("materialize_cuda", yvex_cuda_test_materialize_cuda) != 0) return 1;
     return 0;

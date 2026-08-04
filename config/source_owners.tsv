@@ -58,6 +58,7 @@ src/backend/cuda/moe_kernels.cu	backend.cuda	backend.cuda.moe_kernels	backend	pr
 src/backend/cuda/ops.c	backend.cuda	backend.cuda.ops	backend	private	reusable-algorithm	backend,graph	implementation	none
 src/backend/cuda/private.h	backend.cuda	backend.cuda.private	backend	private	platform-interface	backend,graph	interface	none
 src/backend/cuda/qtype.c	backend.cuda	backend.cuda.qtype	backend	private	reusable-algorithm	backend,graph	implementation	none
+src/backend/cuda/sampling.c	backend.cuda	backend.cuda.sampling	backend	private	backend-implementation	runtime,generation	implementation	none
 src/cli/commands/accounts.c	cli.commands	cli.commands.accounts	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/artifact.c	cli.commands	cli.commands.artifact	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/backend.c	cli.commands	cli.commands.backend	generic	private	reusable-algorithm	cli	implementation	none

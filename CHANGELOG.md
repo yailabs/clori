@@ -54,6 +54,10 @@ change. Git history preserves implementation chronology.
   one width-N backend transaction, and derives workspace from admitted layer
   qtypes and row capacity. The token-local CPU/CUDA implementation remains the
   explicit portable audit/reference oracle.
+- Target-only production stochastic sampling now filters and selects directly
+  from resident CUDA logits. The host publishes the deterministic PCG advance
+  only after cancellation-safe validation, while audit/forensic and DSpark
+  retain the complete-distribution host reference.
 - Compulsory memory accounting now has one transactional internal fact owner.
   CUDA embedding, attention, MoE and final projection contribute measured or
   explicitly missing operations through transformer and decode aggregation;

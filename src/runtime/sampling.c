@@ -7,7 +7,6 @@
 #include <yvex/internal/sampling.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/core.h>
-
 #include <float.h>
 #include <limits.h>
 #include <math.h>
@@ -15,23 +14,19 @@
 #include <stdint.h>
 #include <stdatomic.h>
 #include <string.h>
-
 #define SAMPLING_PCG_MULTIPLIER UINT64_C(6364136223846793005)
 #define SAMPLING_PCG_INCREMENT UINT64_C(1442695040888963407)
 #define SAMPLING_LIFECYCLE_ACTIVE 1u
 #define SAMPLING_LIFECYCLE_CLOSING 2u
 #define SAMPLING_LIFECYCLE_CLOSED 6u
-
 typedef struct {
     unsigned int token_id;
     float logit;
     double probability, deviation;
 } sampling_candidate;
-
 typedef struct {
     double sum, correction;
 } sampling_compensated_sum;
-
 struct yvex_runtime_sampling_context {
     yvex_runtime_logits_plan_summary logits_plan;
     yvex_runtime_sampling_policy policy;
@@ -46,7 +41,6 @@ struct yvex_runtime_sampling_context {
     yvex_runtime_sampling_context_summary summary;
     int drain_mutex_ready, drain_condition_ready;
 };
-
 struct yvex_runtime_sampling_transaction {
     yvex_runtime_sampling_context *context;
     uint64_t initial_state, next_state;
@@ -54,35 +48,30 @@ struct yvex_runtime_sampling_transaction {
     char prepared_identity[YVEX_SHA256_HEX_CAP];
     int active, commit_prepared;
 };
-
 static int sampling_enter(yvex_runtime_sampling_context *context,
                           yvex_error *err);
 static int sampling_transaction_enter(yvex_runtime_sampling_context *context,
                                       yvex_error *err);
 static void sampling_leave(yvex_runtime_sampling_context *context, int rc,
                            unsigned long long completed);
-
 static int sampling_refuse(yvex_error *err, yvex_status status,
                            const char *message)
 {
     yvex_error_set(err, status, "runtime.sampling", message);
     return status;
 }
-
 static int sampling_hash_f32(yvex_sha256 *hash, float value)
 {
     uint32_t bits;
     memcpy(&bits, &value, sizeof(bits));
     return yvex_sha256_update_u64(hash, bits);
 }
-
 static int sampling_hash_f64(yvex_sha256 *hash, double value)
 {
     uint64_t bits;
     memcpy(&bits, &value, sizeof(bits));
     return yvex_sha256_update_u64(hash, bits);
 }
-
 static int sampling_hash_finish(yvex_sha256 *hash,
                                 char output[YVEX_SHA256_HEX_CAP])
 {
@@ -91,7 +80,6 @@ static int sampling_hash_finish(yvex_sha256 *hash,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-
 static int sampling_policy_identity(
     const yvex_runtime_sampling_policy *policy,
     char output[YVEX_SHA256_HEX_CAP])
@@ -115,12 +103,7 @@ static int sampling_policy_identity(
         !sampling_hash_finish(&hash, output)) return 0;
     return 1;
 }
-
-/*
- * Validate and seal one explicit immutable policy for an exact vocabulary.
- *
- * Fills version and identity fields.
- */
+/* Seal one immutable policy for the exact admitted vocabulary. */
 int yvex_runtime_sampling_policy_seal(
     yvex_runtime_sampling_policy *policy, unsigned long long vocabulary_size,
     yvex_error *err)
@@ -158,7 +141,6 @@ int yvex_runtime_sampling_policy_seal(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static uint32_t sampling_pcg_next(uint64_t *state, uint64_t increment)
 {
     uint64_t old = *state;
@@ -167,7 +149,6 @@ static uint32_t sampling_pcg_next(uint64_t *state, uint64_t increment)
     *state = old * SAMPLING_PCG_MULTIPLIER + increment;
     return (shifted >> rotation) | (shifted << ((0u - rotation) & 31u));
 }
-
 static void sampling_pcg_seed(uint64_t seed, uint64_t *state, uint64_t *increment)
 {
     *state = 0ull;
@@ -176,7 +157,6 @@ static void sampling_pcg_seed(uint64_t seed, uint64_t *state, uint64_t *incremen
     *state += seed;
     (void)sampling_pcg_next(state, *increment);
 }
-
 static int sampling_rng_identity(const yvex_runtime_sampling_context *context,
                                  uint64_t state, unsigned long long draws,
                                  char output[YVEX_SHA256_HEX_CAP])
@@ -193,7 +173,6 @@ static int sampling_rng_identity(const yvex_runtime_sampling_context *context,
            yvex_sha256_update_u64(&hash, draws) &&
            sampling_hash_finish(&hash, output);
 }
-
 /* Open one fixed-workspace sampling context without model/session ownership. */
 int yvex_runtime_sampling_context_open(
     yvex_runtime_sampling_context **out,
@@ -203,17 +182,21 @@ int yvex_runtime_sampling_context_open(
 {
     yvex_runtime_sampling_context *context = NULL;
     yvex_runtime_sampling_policy canonical;
-    unsigned long long one_bytes, workspace_bytes, owned_bytes;
+    unsigned long long one_bytes = 0ull, workspace_bytes = 0ull, owned_bytes;
     if (out) *out = NULL;
+    if (options && options->device_selection != 0 && options->device_selection != 1)
+        return sampling_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "sampling device-selection contract is not boolean");
     if (!out || !logits_plan || !policy || !options ||
         !logits_plan->vocabulary_size ||
         logits_plan->vocabulary_size != logits_plan->row_count ||
         !yvex_sha256_hex_valid(logits_plan->output_head_plan_identity) ||
         options->maximum_vocabulary_size < logits_plan->vocabulary_size ||
         !options->maximum_rows ||
-        !yvex_core_u64_mul(logits_plan->vocabulary_size,
-                           sizeof(sampling_candidate), &one_bytes) ||
-        !yvex_core_u64_mul(one_bytes, 2ull, &workspace_bytes) ||
+        (!options->device_selection &&
+         (!yvex_core_u64_mul(logits_plan->vocabulary_size,
+                             sizeof(sampling_candidate), &one_bytes) ||
+          !yvex_core_u64_mul(one_bytes, 2ull, &workspace_bytes))) ||
         !yvex_core_u64_add(workspace_bytes, sizeof(*context), &owned_bytes) ||
         workspace_bytes > SIZE_MAX ||
         (options->maximum_host_bytes &&
@@ -230,9 +213,14 @@ int yvex_runtime_sampling_context_open(
     context = (yvex_runtime_sampling_context *)yvex_core_calloc(1u, sizeof(*context));
     if (!context) return sampling_refuse(err, YVEX_ERR_NOMEM,
                                          "sampling context allocation failed");
-    context->candidates = (sampling_candidate *)yvex_core_malloc((size_t)one_bytes);
-    context->scratch = (sampling_candidate *)yvex_core_malloc((size_t)one_bytes);
-    if (!context->candidates || !context->scratch) {
+    if (!options->device_selection) {
+        context->candidates =
+            (sampling_candidate *)yvex_core_malloc((size_t)one_bytes);
+        context->scratch =
+            (sampling_candidate *)yvex_core_malloc((size_t)one_bytes);
+    }
+    if (!options->device_selection &&
+        (!context->candidates || !context->scratch)) {
         yvex_core_free(context->scratch);
         yvex_core_free(context->candidates);
         yvex_core_free(context);
@@ -268,7 +256,8 @@ int yvex_runtime_sampling_context_open(
     context->summary.maximum_rows = options->maximum_rows;
     context->summary.workspace_bytes = workspace_bytes;
     context->summary.workspace_generation = 1ull;
-    context->summary.cold_workspace_allocations = 2ull;
+    context->summary.cold_workspace_allocations =
+        options->device_selection ? 0ull : 2ull;
     yvex_runtime_identity_copy(context->summary.output_head_plan_identity,
                                logits_plan->output_head_plan_identity);
     yvex_runtime_identity_copy(context->summary.policy_identity,
@@ -287,7 +276,6 @@ int yvex_runtime_sampling_context_open(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int sampling_source_identity(yvex_runtime_sampling_source *source)
 {
     yvex_sha256 hash;
@@ -319,13 +307,7 @@ static int sampling_source_identity(yvex_runtime_sampling_source *source)
            yvex_sha256_update_text(&hash, source->backend_execution_identity) &&
            sampling_hash_finish(&hash, source->source_identity);
 }
-
-/*
- * Admit one exact immutable logits publication into the sampling boundary.
- *
- * Publishes one borrowed identity-bound source without taking ownership. Logits-owner validation,
- * extent, or identity mismatch publishes no source.
- */
+/* Borrow one immutable logits publication only after owner validation. */
 int yvex_runtime_sampling_source_from_logits(
     const yvex_runtime_sampling_context *context,
     yvex_runtime_sampling_source *source, const float *logits,
@@ -374,12 +356,7 @@ int yvex_runtime_sampling_source_from_logits(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
-/*
- * Revalidate one borrowed source immediately before candidate construction.
- *
- * Stale identity, extent, or non-finite values refuse.
- */
+/* Revalidate borrowed logits immediately before candidate construction. */
 static int sampling_source_validate(
     const yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source, yvex_error *err)
@@ -394,6 +371,7 @@ static int sampling_source_validate(
         source->source_phase > YVEX_LOGITS_SOURCE_DRAFT ||
         source->vocabulary_size != context->logits_plan.vocabulary_size ||
         source->host_values_available == source->device_values_available ||
+        source->device_values_available != context->options.device_selection ||
         strcmp(source->output_head_plan_identity,
                context->logits_plan.output_head_plan_identity) != 0 ||
         !yvex_sha256_hex_valid(source->logits_row_identity) ||
@@ -426,14 +404,18 @@ static int sampling_source_validate(
         if (strcmp(raw_digest, source->raw_logits_digest) != 0)
             return sampling_refuse(err, YVEX_ERR_FORMAT,
                                    "sampling source logits were mutated after sealing");
-    } else if (context->policy.strategy != YVEX_SAMPLING_STRATEGY_GREEDY ||
-               source->device_logits.kind != YVEX_EXECUTION_DEVICE_LOGITS ||
+    } else if (source->device_logits.kind != YVEX_EXECUTION_DEVICE_LOGITS ||
                source->device_logits.rows != 1ull ||
                source->device_logits.columns != source->vocabulary_size ||
                yvex_execution_device_view_validate(&source->device_logits, err) !=
                    YVEX_OK) {
         return sampling_refuse(err, YVEX_ERR_UNSUPPORTED,
-                               "device logits require admitted greedy sampling");
+                               "device logits require an admitted sampling view");
+    } else if (context->policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC &&
+               !yvex_backend_sampling_operations_get(
+                   source->device_logits.backend)) {
+        return sampling_refuse(err, YVEX_ERR_UNSUPPORTED,
+                               "device stochastic sampling is unavailable");
     }
     canonical = *source;
     canonical.source_identity[0] = '\0';
@@ -443,7 +425,6 @@ static int sampling_source_validate(
                                "sampling source identity is not canonical");
     return YVEX_OK;
 }
-
 static int sampling_probability_compare(const void *left, const void *right)
 {
     const sampling_candidate *a = (const sampling_candidate *)left;
@@ -452,7 +433,6 @@ static int sampling_probability_compare(const void *left, const void *right)
     if (a->probability < b->probability) return 1;
     return a->token_id < b->token_id ? -1 : a->token_id > b->token_id;
 }
-
 static int sampling_typical_compare(const void *left, const void *right)
 {
     const sampling_candidate *a = (const sampling_candidate *)left;
@@ -461,14 +441,12 @@ static int sampling_typical_compare(const void *left, const void *right)
     if (a->deviation > b->deviation) return 1;
     return sampling_probability_compare(left, right);
 }
-
 static int sampling_token_compare(const void *left, const void *right)
 {
     const sampling_candidate *a = (const sampling_candidate *)left;
     const sampling_candidate *b = (const sampling_candidate *)right;
     return a->token_id < b->token_id ? -1 : a->token_id > b->token_id;
 }
-
 static void sampling_stable_sort(
     yvex_runtime_sampling_context *context, unsigned long long count,
     int (*compare)(const void *, const void *))
@@ -505,7 +483,6 @@ static void sampling_stable_sort(
         memcpy(context->candidates, source,
                (size_t)count * sizeof(*context->candidates));
 }
-
 static void sampling_compensated_add(sampling_compensated_sum *total,
                                      double value)
 {
@@ -516,13 +493,11 @@ static void sampling_compensated_add(sampling_compensated_sum *total,
         total->correction += (value - next) + total->sum;
     total->sum = next;
 }
-
 static double sampling_normalization_tolerance(unsigned long long count)
 {
     double depth = count > 1ull ? ceil(log2((double)count)) : 0.0;
     return 8.0 * DBL_EPSILON * (3.0 + depth);
 }
-
 static int sampling_normalize(sampling_candidate *candidates,
                               unsigned long long count,
                               double *normalization_error, yvex_error *err)
@@ -560,7 +535,6 @@ static int sampling_normalize(sampling_candidate *candidates,
         *normalization_error = observed;
     return YVEX_OK;
 }
-
 static int sampling_softmax(yvex_runtime_sampling_context *context,
                             const yvex_runtime_sampling_source *source,
                             yvex_runtime_sampling_result *result,
@@ -593,7 +567,6 @@ static int sampling_softmax(yvex_runtime_sampling_context *context,
     return sampling_normalize(context->candidates, *count,
                               &result->normalization_error, err);
 }
-
 static int sampling_filter_top_k(yvex_runtime_sampling_context *context,
                                  unsigned long long *count,
                                  yvex_runtime_sampling_result *result,
@@ -610,7 +583,6 @@ static int sampling_filter_top_k(yvex_runtime_sampling_context *context,
     result->candidates_after_top_k = *count;
     return YVEX_OK;
 }
-
 static int sampling_filter_min_p(yvex_runtime_sampling_context *context,
                                  unsigned long long *count,
                                  yvex_runtime_sampling_result *result,
@@ -638,7 +610,6 @@ static int sampling_filter_min_p(yvex_runtime_sampling_context *context,
     result->candidates_after_min_p = *count;
     return YVEX_OK;
 }
-
 static int sampling_filter_typical(yvex_runtime_sampling_context *context,
                                    unsigned long long *count,
                                    yvex_runtime_sampling_result *result,
@@ -683,7 +654,6 @@ static int sampling_filter_typical(yvex_runtime_sampling_context *context,
     result->candidates_after_typical_p = *count;
     return YVEX_OK;
 }
-
 static int sampling_filter_top_p(yvex_runtime_sampling_context *context,
                                  unsigned long long *count,
                                  yvex_runtime_sampling_result *result,
@@ -712,7 +682,6 @@ static int sampling_filter_top_p(yvex_runtime_sampling_context *context,
     result->candidates_after_top_p = *count;
     return YVEX_OK;
 }
-
 static int sampling_candidate_identity(
     const yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -732,7 +701,6 @@ static int sampling_candidate_identity(
         if (!yvex_sha256_update_u64(&hash, candidates[index].token_id)) return 0;
     return sampling_hash_finish(&hash, output);
 }
-
 static int sampling_device_candidate_identity(
     const yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -750,7 +718,29 @@ static int sampling_device_candidate_identity(
                &hash, YVEX_SAMPLING_GREEDY_LOWEST_TOKEN_ID) &&
            sampling_hash_finish(&hash, output);
 }
-
+static int sampling_device_stochastic_candidate_identity(
+    const yvex_runtime_sampling_context *context,
+    const yvex_runtime_sampling_source *source,
+    const yvex_runtime_sampling_result *result,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    yvex_sha256_init(&hash);
+    return context && source && result &&
+           yvex_sha256_update_text(
+               &hash, "yvex.runtime.sampling.device-stochastic-candidates.v1") &&
+           yvex_sha256_update_text(&hash, source->source_identity) &&
+           yvex_sha256_update_text(&hash, context->policy.policy_identity) &&
+           yvex_sha256_update_u64(&hash, result->candidates_after_top_k) &&
+           yvex_sha256_update_u64(&hash, result->candidates_after_min_p) &&
+           yvex_sha256_update_u64(&hash, result->candidates_after_typical_p) &&
+           yvex_sha256_update_u64(&hash, result->candidates_after_top_p) &&
+           sampling_hash_f64(&hash, result->min_p_threshold) &&
+           sampling_hash_f64(&hash, result->entropy) &&
+           sampling_hash_f64(&hash, result->typical_retained_mass) &&
+           sampling_hash_f64(&hash, result->top_p_retained_mass) &&
+           sampling_hash_finish(&hash, output);
+}
 static int sampling_selected_identity(
     const yvex_runtime_sampling_result *result,
     char output[YVEX_SHA256_HEX_CAP])
@@ -769,12 +759,7 @@ static int sampling_selected_identity(
            yvex_sha256_update_text(&hash, result->rng_state_after_identity) &&
            sampling_hash_finish(&hash, output);
 }
-
-/*
- * Derive one complete per-row sampling execution identity.
- *
- * Writes only the output identity.
- */
+/* Bind every authoritative per-row execution fact. */
 static int sampling_execution_identity(
     const yvex_runtime_sampling_result *result,
     char output[YVEX_SHA256_HEX_CAP])
@@ -829,7 +814,6 @@ static int sampling_execution_identity(
            yvex_sha256_update_text(&hash, result->selected_token_identity) &&
            sampling_hash_finish(&hash, output);
 }
-
 static int sampling_enter(yvex_runtime_sampling_context *context, yvex_error *err)
 {
     unsigned int expected = 0u;
@@ -846,7 +830,6 @@ static int sampling_enter(yvex_runtime_sampling_context *context, yvex_error *er
                                ? "sampling context is closing"
                                : "sampling context is already in use");
 }
-
 /* A pending RNG transaction must remain resolvable while close drains it. */
 static int sampling_transaction_enter(yvex_runtime_sampling_context *context,
                                       yvex_error *err)
@@ -871,7 +854,6 @@ static int sampling_transaction_enter(yvex_runtime_sampling_context *context,
     return sampling_refuse(err, YVEX_ERR_STATE,
                            "sampling transaction owner is already in use");
 }
-
 static void sampling_leave(yvex_runtime_sampling_context *context, int rc,
                            unsigned long long completed)
 {
@@ -899,12 +881,7 @@ static void sampling_leave(yvex_runtime_sampling_context *context, int rc,
                                     ~SAMPLING_LIFECYCLE_ACTIVE,
                                     memory_order_release);
 }
-
-/*
- * Finish field-wise identities before any selected-token publication.
- *
- * Canonical identity mismatch refuses. Caller publication and RNG commit follow success.
- */
+/* Finish canonical identities before caller publication and RNG commit. */
 static int sampling_result_finish(
     const yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -933,12 +910,7 @@ static int sampling_result_finish(
                                "sampling result identities are not canonical");
     return YVEX_OK;
 }
-
-/*
- * Execute the complete-vocabulary deterministic maximum path.
- *
- * Identity derivation refuses.
- */
+/* Complete-vocabulary greedy remains the host reference path. */
 static int sampling_select_greedy(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -983,7 +955,6 @@ static int sampling_select_greedy(
                                result->rng_state_before_identity);
     return YVEX_OK;
 }
-
 static int sampling_select_device_greedy(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -1028,7 +999,81 @@ static int sampling_select_device_greedy(
                                result->rng_state_before_identity);
     return YVEX_OK;
 }
-
+static int sampling_select_device_stochastic(
+    yvex_runtime_sampling_context *context,
+    const yvex_runtime_sampling_source *source,
+    yvex_runtime_sampling_result *result, uint64_t *committed_state,
+    yvex_error *err)
+{
+    const yvex_backend_sampling_operations *operations =
+        yvex_backend_sampling_operations_get(source->device_logits.backend);
+    yvex_backend_sampling_result selected;
+    yvex_backend_cuda_operation_facts facts;
+    yvex_device_tensor view;
+    uint64_t next_state = context->rng_state;
+    uint32_t random_value;
+    int rc;
+    if (!operations || !operations->select_stochastic ||
+        !yvex_backend_tensor_f32_subview(
+            source->device_logits.tensor,
+            source->device_logits.element_offset,
+            source->vocabulary_size, &view))
+        return sampling_refuse(
+            err, YVEX_ERR_UNSUPPORTED,
+            "device stochastic sampling operation is unavailable");
+    if (!sampling_rng_identity(context, context->rng_state,
+                               context->successful_draws,
+                               result->rng_state_before_identity))
+        return sampling_refuse(err, YVEX_ERR_STATE,
+                               "device stochastic RNG identity failed");
+    if (context->options.cancel_requested &&
+        context->options.cancel_requested(context->options.cancel_context))
+        return sampling_refuse(
+            err, YVEX_ERR_CANCELLED,
+            "device stochastic sampling was cancelled before launch");
+    random_value = sampling_pcg_next(&next_state, context->rng_increment);
+    rc = operations->select_stochastic(
+        source->device_logits.backend, &view, source->vocabulary_size,
+        &context->policy, random_value, &selected, &facts, err);
+    if (rc != YVEX_OK) return rc;
+    if (context->options.cancel_requested &&
+        context->options.cancel_requested(context->options.cancel_context))
+        return sampling_refuse(
+            err, YVEX_ERR_CANCELLED,
+            "device stochastic sampling was cancelled before RNG publication");
+    result->device_selection = 1;
+    result->numeric_fallback_used = selected.numeric_fallback_used;
+    result->selected_token_id = selected.selected_token_id;
+    result->selected_logit = selected.selected_logit;
+    result->maximum_logit = selected.maximum_logit;
+    result->selected_probability = selected.selected_probability;
+    result->selected_log_probability = log(selected.selected_probability);
+    result->candidates_after_top_k = selected.candidates_after_top_k;
+    result->candidates_after_min_p = selected.candidates_after_min_p;
+    result->candidates_after_typical_p = selected.candidates_after_typical_p;
+    result->candidates_after_top_p = result->final_candidate_count =
+        selected.candidates_after_top_p;
+    result->effective_top_k = context->policy.top_k;
+    result->min_p_threshold = selected.min_p_threshold;
+    result->entropy = selected.entropy;
+    result->typical_retained_mass = selected.typical_retained_mass;
+    result->top_p_retained_mass = selected.top_p_retained_mass;
+    result->normalization_error = selected.normalization_error;
+    result->d2h_bytes = facts.d2h_bytes;
+    result->kernel_launches = facts.kernel_launches;
+    result->device_synchronizations = facts.device_synchronizations;
+    result->rng_draw_count = 1ull;
+    if (!sampling_device_stochastic_candidate_identity(
+            context, source, result, result->candidate_set_identity) ||
+        !sampling_rng_identity(context, next_state,
+                               context->successful_draws + 1ull,
+                               result->rng_state_after_identity))
+        return sampling_refuse(
+            err, YVEX_ERR_STATE,
+            "device stochastic candidate or RNG identity failed");
+    *committed_state = next_state;
+    return YVEX_OK;
+}
 static int sampling_remove_zero_mass(
     yvex_runtime_sampling_context *context, unsigned long long *count,
     yvex_runtime_sampling_result *result, yvex_error *err)
@@ -1049,7 +1094,6 @@ static int sampling_remove_zero_mass(
     *count = write;
     return YVEX_OK;
 }
-
 static int sampling_prepare_stochastic_distribution(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -1068,7 +1112,6 @@ static int sampling_prepare_stochastic_distribution(
     result->final_candidate_count = *count;
     return YVEX_OK;
 }
-
 static int sampling_select_stochastic(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -1124,7 +1167,6 @@ static int sampling_select_stochastic(
     *committed_state = next_state;
     return YVEX_OK;
 }
-
 static int sampling_select_owned(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -1169,6 +1211,9 @@ static int sampling_select_owned(
         else if (rc == YVEX_OK &&
                  context->policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY)
             rc = sampling_select_greedy(context, source, &staged, err);
+        else if (rc == YVEX_OK && source->device_values_available)
+            rc = sampling_select_device_stochastic(
+                context, source, &staged, &committed_state, err);
         else if (rc == YVEX_OK)
             rc = sampling_select_stochastic(context, source, &staged,
                                             &committed_state, err);
@@ -1188,12 +1233,7 @@ static int sampling_select_owned(
     }
     return rc;
 }
-
-/*
- * Select one token transactionally from one exact complete logits source.
- *
- * One-shot wrapper over the same owned mechanism used by ordered execution.
- */
+/* Select one token through the same transaction used by ordered execution. */
 int yvex_runtime_sampling_select(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -1206,7 +1246,6 @@ int yvex_runtime_sampling_select(
     sampling_leave(context, rc, rc == YVEX_OK ? 1ull : 0ull);
     return rc;
 }
-
 static int sampling_distribution_identity(
     const yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source, const float *probabilities,
@@ -1225,7 +1264,6 @@ static int sampling_distribution_identity(
         if (!sampling_hash_f32(&hash, probabilities[index])) return 0;
     return sampling_hash_finish(&hash, output);
 }
-
 int yvex_runtime_sampling_distribution(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *source,
@@ -1246,6 +1284,10 @@ int yvex_runtime_sampling_distribution(
            (size_t)context->logits_plan.vocabulary_size * sizeof(*probabilities));
     memset(&staged, 0, sizeof(staged));
     rc = sampling_source_validate(context, source, err);
+    if (rc == YVEX_OK && !source->host_values_available)
+        rc = sampling_refuse(
+            err, YVEX_ERR_UNSUPPORTED,
+            "complete probability materialization is a host reference operation");
     if (rc == YVEX_OK && context->options.cancel_requested &&
         context->options.cancel_requested(context->options.cancel_context))
         rc = sampling_refuse(err, YVEX_ERR_CANCELLED,
@@ -1291,7 +1333,6 @@ int yvex_runtime_sampling_distribution(
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-
 static int sampling_uniform_identity(
     const yvex_runtime_sampling_uniform_result *result,
     const double *values, char output[YVEX_SHA256_HEX_CAP])
@@ -1309,7 +1350,6 @@ static int sampling_uniform_identity(
         if (!sampling_hash_f64(&hash, values[index])) return 0;
     return sampling_hash_finish(&hash, output);
 }
-
 int yvex_runtime_sampling_transaction_begin(
     yvex_runtime_sampling_context *context,
     yvex_runtime_sampling_transaction **transaction, yvex_error *err)
@@ -1344,7 +1384,6 @@ int yvex_runtime_sampling_transaction_begin(
     sampling_leave(context, rc, 0ull);
     return rc;
 }
-
 int yvex_runtime_sampling_transaction_uniforms(
     yvex_runtime_sampling_transaction *transaction, double *values,
     unsigned long long value_count,
@@ -1402,7 +1441,6 @@ int yvex_runtime_sampling_transaction_uniforms(
     }
     return rc;
 }
-
 int yvex_runtime_sampling_transaction_prepare_commit(
     yvex_runtime_sampling_transaction *transaction, yvex_error *err)
 {
@@ -1434,7 +1472,6 @@ int yvex_runtime_sampling_transaction_prepare_commit(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static void sampling_transaction_resolve_prepared(
     yvex_runtime_sampling_transaction **transaction, int publish)
 {
@@ -1459,19 +1496,16 @@ static void sampling_transaction_resolve_prepared(
     *transaction = NULL;
     sampling_leave(context, YVEX_OK, 0ull);
 }
-
 void yvex_runtime_sampling_transaction_publish_commit(
     yvex_runtime_sampling_transaction **transaction)
 {
     sampling_transaction_resolve_prepared(transaction, 1);
 }
-
 static void sampling_transaction_cancel_commit(
     yvex_runtime_sampling_transaction **transaction)
 {
     sampling_transaction_resolve_prepared(transaction, 0);
 }
-
 static int sampling_transaction_finish(
     yvex_runtime_sampling_transaction **transaction, int commit,
     yvex_error *err)
@@ -1515,7 +1549,6 @@ static int sampling_transaction_finish(
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-
 int yvex_runtime_sampling_transaction_abort(
     yvex_runtime_sampling_transaction **transaction, yvex_error *err)
 {
@@ -1526,12 +1559,7 @@ int yvex_runtime_sampling_transaction_abort(
     }
     return sampling_transaction_finish(transaction, 0, err);
 }
-
-/*
- * Validate structural relations among all authoritative result evidence.
- *
- * Identity validation remains separate and follows this bounded structural check.
- */
+/* Validate bounded structural relations before identity recomputation. */
 static int sampling_result_structure_valid(
     const yvex_runtime_sampling_result *result)
 {
@@ -1569,8 +1597,7 @@ static int sampling_result_structure_valid(
         (result->numeric_fallback_used != 0 &&
          result->numeric_fallback_used != 1) ||
         (result->device_selection &&
-         (result->strategy != YVEX_SAMPLING_STRATEGY_GREEDY ||
-          result->full_array_host_scan_bytes || !result->kernel_launches)) ||
+         (result->full_array_host_scan_bytes || !result->kernel_launches)) ||
         (!result->device_selection && result->d2h_bytes))
         return 0;
     tolerance = sampling_normalization_tolerance(result->vocabulary_size);
@@ -1605,13 +1632,7 @@ static int sampling_result_structure_valid(
            (result->effective_typical_p != 1.0 || result->typical_retained_mass == 0.0) &&
            (result->effective_top_p != 1.0 || result->top_p_retained_mass == 0.0);
 }
-
-/*
- * Validate every authoritative field plus selected-token and execution identities after
- * publication.
- *
- * Malformed fields or identity mutation refuses.
- */
+/* Recompute selected-token and execution identities after publication. */
 int yvex_runtime_sampling_result_validate(
     const yvex_runtime_sampling_result *result, yvex_error *err)
 {
@@ -1631,7 +1652,6 @@ int yvex_runtime_sampling_result_validate(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int sampling_execution_finish(
     yvex_runtime_sampling_execution *execution,
     const yvex_runtime_sampling_result *results, yvex_error *err)
@@ -1672,12 +1692,7 @@ static int sampling_execution_finish(
     execution->partial = !execution->completed && execution->completed_samples != 0ull;
     return YVEX_OK;
 }
-
-/*
- * Sample ordered rows with row-atomic publication and transactional RNG progress.
- *
- * Reports exact partial progress; the failing row and its RNG transition remain absent.
- */
+/* Ordered sampling publishes rows and RNG transitions atomically. */
 int yvex_runtime_sampling_execute(
     yvex_runtime_sampling_context *context,
     const yvex_runtime_sampling_source *sources, unsigned long long source_count,
@@ -1731,12 +1746,7 @@ leave:
     sampling_leave(context, rc, execution->completed_samples);
     return rc;
 }
-
-/*
- * Inspect stable workspace, policy, counters, and current RNG authority.
- *
- * Lock or identity derivation refusal clears output.
- */
+/* Snapshot stable workspace, counters, policy, and RNG authority. */
 int yvex_runtime_sampling_context_snapshot(
     const yvex_runtime_sampling_context *context,
     yvex_runtime_sampling_context_summary *summary, yvex_error *err)
@@ -1765,13 +1775,7 @@ int yvex_runtime_sampling_context_snapshot(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
-/*
- * Release fixed sampling workspace without touching borrowed logits or runtime state.
- *
- * Idempotent after successful close; callers must stop initiating operations before transferring
- * the unique close ownership.
- */
+/* Close is idempotent; unique close ownership drains active sampling transactions. */
 int yvex_runtime_sampling_context_close(
     yvex_runtime_sampling_context **context, yvex_error *err)
 {
@@ -1831,7 +1835,6 @@ int yvex_runtime_sampling_context_close(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 /* Publish sampling readiness only after real-logits selection completes. */
 static void sampling_operator_publish(
     yvex_sampling_operator_result *result,
@@ -1859,13 +1862,7 @@ static void sampling_operator_publish(
     result->sampling_ready = 1;
     result->persistent_state_unchanged = 1;
 }
-
-/*
- * Execute the admitted logits workflow and sample every completed real row.
- *
- * Retains bounded logits and sampling evidence while never appending selected tokens. Preserves
- * typed logits/sampling partial progress and any retained runtime cleanup lease.
- */
+/* Execute admitted logits rows without appending selected tokens to model state. */
 int yvex_runtime_sampling_operator_execute(
     const yvex_sampling_operator_request *request,
     yvex_sampling_operator_result *result,
@@ -1978,7 +1975,6 @@ finish:
     }
     return rc;
 }
-
 void yvex_runtime_sampling_operator_result_release(
     yvex_sampling_operator_result *result)
 {

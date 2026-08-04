@@ -90,6 +90,7 @@ int yvex_cuda_test_materialize_cuda(void);
 int yvex_cuda_test_ops(void);
 int yvex_cuda_test_parity(void);
 int yvex_cuda_test_quant_qtype(void);
+int yvex_cuda_test_sampling(void);
 int yvex_cuda_test_tensor(void);
 
 #define YVEX_TEST_FAIL(msg) \
