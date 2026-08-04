@@ -360,6 +360,8 @@ static int execution_test_roofline(void)
     request.measurement_count = YVEX_EXECUTION_ROOFLINE_PHASE_COUNT;
     YVEX_TEST_ASSERT(yvex_execution_roofline_ledger_build(&request, &ledger, &err) == YVEX_OK &&
                          ledger.phase_count == YVEX_EXECUTION_ROOFLINE_PHASE_COUNT &&
+                         ledger.measured_phase_count == YVEX_EXECUTION_ROOFLINE_PHASE_COUNT &&
+                         !ledger.priority_provisional &&
                          ledger.phases[YVEX_EXECUTION_ROOFLINE_BATCHED_DECODE]
                                  .optimization_priority == 1ull &&
                          ledger.phases[YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER]
@@ -375,6 +377,37 @@ static int execution_test_roofline(void)
     YVEX_TEST_ASSERT(yvex_execution_roofline_ledger_build(&request, &repeated, &err) ==
                          YVEX_ERR_INVALID_ARG,
                      "a duplicated phase must not choose an optimization sequence");
+    memset(measurements, 0, sizeof(measurements));
+    measurements[0].phase = YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER;
+    measurements[0].fact_mask =
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS) |
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_DURATION) |
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_WORK);
+    measurements[0].kernel_count = 12ull;
+    measurements[0].measured_duration_ns = 3000000ull;
+    measurements[0].work_units = 43ull;
+    measurements[1].phase = YVEX_EXECUTION_ROOFLINE_OUTPUT_HEAD;
+    measurements[1].active_weight_bytes = 200000000ull;
+    measurements[1].state_bytes = 0ull;
+    measurements[1].activation_bytes = 4096ull;
+    measurements[1].temporary_bytes = 8192ull;
+    measurements[1].d2d_bytes = 4096ull;
+    measurements[1].kernel_count = 4ull;
+    measurements[1].measured_duration_ns = 2000000ull;
+    measurements[1].work_units = 1ull;
+    request.measurement_count = 2ull;
+    YVEX_TEST_ASSERT(yvex_execution_roofline_ledger_build(&request, &ledger, &err) == YVEX_OK &&
+                         ledger.phase_count == YVEX_EXECUTION_ROOFLINE_PHASE_COUNT &&
+                         ledger.measured_phase_count == 2ull && ledger.priority_provisional &&
+                         ledger.measured_phase_mask ==
+                             ((1ull << YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER) |
+                              (1ull << YVEX_EXECUTION_ROOFLINE_OUTPUT_HEAD)) &&
+                         !ledger.phases[YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER]
+                              .roofline_available &&
+                         ledger.phases[YVEX_EXECUTION_ROOFLINE_OUTPUT_HEAD]
+                              .roofline_available &&
+                         !ledger.phases[YVEX_EXECUTION_ROOFLINE_BATCHED_DECODE].available,
+                     "partial phase evidence should retain explicit unavailable facts and phases");
     return 0;
 }
 

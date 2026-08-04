@@ -893,12 +893,45 @@ static int roofline_measurement_build(
     const yvex_execution_phase_measurement *measurement,
     yvex_execution_phase_roofline *phase)
 {
-    unsigned long long device_ns, transfer_ns;
+    const unsigned long long active_mask =
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT) |
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_STATE) |
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVATION) |
+        YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_TEMPORARY);
+    unsigned long long device_ns, transfer_ns, mask;
     if (!measurement || measurement->phase >= YVEX_EXECUTION_ROOFLINE_PHASE_COUNT ||
+        (measurement->fact_mask & ~YVEX_EXECUTION_PHASE_FACT_ALL)) return 0;
+    mask = measurement->fact_mask ? measurement->fact_mask : YVEX_EXECUTION_PHASE_FACT_ALL;
+    if (!(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_DURATION)) ||
+        !(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_WORK)) ||
         !measurement->measured_duration_ns || !measurement->work_units ||
-        measurement->occupancy_parts_per_million > 1000000ull) return 0;
+        ((mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_OCCUPANCY)) &&
+         measurement->occupancy_parts_per_million > 1000000ull) ||
+        (!(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT)) &&
+         measurement->active_weight_bytes) ||
+        (!(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_STATE)) &&
+         measurement->state_bytes) ||
+        (!(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVATION)) &&
+         measurement->activation_bytes) ||
+        (!(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_TEMPORARY)) &&
+         measurement->temporary_bytes) ||
+        (!(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_MOVEMENT)) &&
+         (measurement->h2d_bytes || measurement->d2h_bytes || measurement->d2d_bytes)) ||
+        (!(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS)) &&
+         measurement->kernel_count) ||
+        (!(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS)) &&
+         measurement->synchronization_count) ||
+        (!(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_OCCUPANCY)) &&
+         measurement->occupancy_parts_per_million) ||
+        (!(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_COMMITTED_TOKENS)) &&
+         measurement->committed_tokens)) return 0;
     memset(phase, 0, sizeof(*phase));
     phase->measurement = *measurement;
+    phase->measurement.fact_mask = mask;
+    phase->available = 1;
+    phase->missing_fact_mask = YVEX_EXECUTION_PHASE_FACT_ALL & ~mask;
+    if ((mask & active_mask) != active_mask ||
+        !(mask & YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_MOVEMENT))) return 1;
     if (!capacity_add(&phase->active_device_bytes, measurement->active_weight_bytes) ||
         !capacity_add(&phase->active_device_bytes, measurement->state_bytes) ||
         !capacity_add(&phase->active_device_bytes, measurement->activation_bytes) ||
@@ -920,6 +953,10 @@ static int roofline_measurement_build(
                        &phase->roofline_utilization_parts_per_million)) return 0;
     if (phase->roofline_utilization_parts_per_million > 1000000ull)
         phase->roofline_utilization_parts_per_million = 1000000ull;
+    phase->roofline_available = 1;
+    if (measurement->measured_duration_ns > phase->minimum_memory_time_ns)
+        phase->optimization_headroom_ns =
+            measurement->measured_duration_ns - phase->minimum_memory_time_ns;
     return 1;
 }
 
@@ -933,11 +970,16 @@ static int roofline_ledger_identity(yvex_execution_roofline_ledger *ledger)
         !yvex_sha256_update_text(&hash, ledger->artifact_identity) ||
         !yvex_sha256_update_text(&hash, ledger->execution_profile_identity) ||
         !yvex_sha256_update_text(&hash, ledger->kernel_bundle_identity) ||
-        !yvex_sha256_update_text(&hash, ledger->workload_profile_identity)) return 0;
+        !yvex_sha256_update_text(&hash, ledger->workload_profile_identity) ||
+        !yvex_sha256_update_u64(&hash, ledger->measured_phase_mask) ||
+        !yvex_sha256_update_u64(&hash, ledger->rooflined_phase_mask) ||
+        !yvex_sha256_update_u64(&hash, (unsigned long long)ledger->priority_provisional)) return 0;
     for (index = 0ull; index < ledger->phase_count; ++index) {
         const yvex_execution_phase_roofline *phase = &ledger->phases[index];
         const yvex_execution_phase_measurement *value = &phase->measurement;
-        if (!yvex_sha256_update_u64(&hash, value->phase) ||
+        if (!yvex_sha256_update_u64(&hash, (unsigned long long)phase->available) ||
+            !yvex_sha256_update_u64(&hash, value->phase) ||
+            !yvex_sha256_update_u64(&hash, value->fact_mask) ||
             !yvex_sha256_update_u64(&hash, value->active_weight_bytes) ||
             !yvex_sha256_update_u64(&hash, value->state_bytes) ||
             !yvex_sha256_update_u64(&hash, value->activation_bytes) ||
@@ -952,6 +994,7 @@ static int roofline_ledger_identity(yvex_execution_roofline_ledger *ledger)
             !yvex_sha256_update_u64(&hash, value->work_units) ||
             !yvex_sha256_update_u64(&hash, value->committed_tokens) ||
             !yvex_sha256_update_u64(&hash, phase->minimum_memory_time_ns) ||
+            !yvex_sha256_update_u64(&hash, phase->optimization_headroom_ns) ||
             !yvex_sha256_update_u64(&hash, phase->optimization_priority)) return 0;
     }
     return execution_hash_finish(&hash, ledger->identity);
@@ -971,10 +1014,11 @@ int yvex_execution_roofline_ledger_build(
         !yvex_sha256_hex_valid(request->hardware->identity) || !request->measurements ||
         !(request->hardware->admitted_fact_mask &
           YVEX_EXECUTION_HARDWARE_FACT_BIT(YVEX_EXECUTION_HARDWARE_FACT_BANDWIDTH)) ||
-        request->measurement_count != YVEX_EXECUTION_ROOFLINE_PHASE_COUNT)
+        !request->measurement_count ||
+        request->measurement_count > YVEX_EXECUTION_ROOFLINE_PHASE_COUNT)
         return execution_refuse(err, YVEX_ERR_INVALID_ARG,
                                 "runtime.execution.roofline",
-                                "one measured record per causal phase is required");
+                                "one or more unique causal phase measurements are required");
     identities[0] = request->artifact_identity;
     identities[1] = request->execution_profile_identity;
     identities[2] = request->kernel_bundle_identity;
@@ -997,24 +1041,47 @@ int yvex_execution_roofline_ledger_build(
         seen |= 1ull << phase;
         if (!capacity_add(&ledger->measured_duration_ns,
                           request->measurements[index].measured_duration_ns) ||
-            !capacity_add(&ledger->committed_tokens,
-                          request->measurements[index].committed_tokens))
+            ((ledger->phases[phase].measurement.fact_mask &
+              YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_COMMITTED_TOKENS)) &&
+             !capacity_add(&ledger->committed_tokens,
+                           request->measurements[index].committed_tokens)))
             return execution_refuse(err, YVEX_ERR_BOUNDS,
                                     "runtime.execution.roofline",
                                     "roofline ledger totals overflowed");
     }
-    for (index = 0ull; index < request->measurement_count; ++index) {
+    for (index = 0ull; index < YVEX_EXECUTION_ROOFLINE_PHASE_COUNT; ++index) {
         unsigned long long priority = 1ull;
-        for (other = 0ull; other < request->measurement_count; ++other)
-            if (ledger->phases[other].measurement.measured_duration_ns >
-                    ledger->phases[index].measurement.measured_duration_ns ||
-                (ledger->phases[other].measurement.measured_duration_ns ==
-                     ledger->phases[index].measurement.measured_duration_ns &&
-                 other < index)) ++priority;
+        unsigned long long score;
+        if (!ledger->phases[index].available) continue;
+        score = ledger->phases[index].roofline_available
+                    ? ledger->phases[index].optimization_headroom_ns
+                    : ledger->phases[index].measurement.measured_duration_ns;
+        for (other = 0ull; other < YVEX_EXECUTION_ROOFLINE_PHASE_COUNT; ++other) {
+            unsigned long long other_score;
+            if (!ledger->phases[other].available) continue;
+            other_score = ledger->phases[other].roofline_available
+                              ? ledger->phases[other].optimization_headroom_ns
+                              : ledger->phases[other].measurement.measured_duration_ns;
+            if (other_score > score || (other_score == score && other < index)) ++priority;
+        }
         ledger->phases[index].optimization_priority = priority;
     }
     ledger->schema_version = YVEX_EXECUTION_PHASE_ROOFLINE_SCHEMA_V1;
-    ledger->phase_count = request->measurement_count;
+    ledger->phase_count = YVEX_EXECUTION_ROOFLINE_PHASE_COUNT;
+    ledger->measured_phase_count = request->measurement_count;
+    ledger->measured_phase_mask = seen;
+    ledger->missing_phase_mask =
+        ((1ull << YVEX_EXECUTION_ROOFLINE_PHASE_COUNT) - 1ull) & ~seen;
+    for (index = 0ull; index < YVEX_EXECUTION_ROOFLINE_PHASE_COUNT; ++index) {
+        if (!ledger->phases[index].available) {
+            ledger->phases[index].measurement.phase = (yvex_execution_roofline_phase)index;
+            ledger->phases[index].missing_fact_mask = YVEX_EXECUTION_PHASE_FACT_ALL;
+        } else if (ledger->phases[index].roofline_available) {
+            ledger->rooflined_phase_mask |= 1ull << index;
+        }
+    }
+    ledger->priority_provisional =
+        ledger->rooflined_phase_mask != ledger->measured_phase_mask;
     yvex_core_text_copy(ledger->hardware_profile_identity,
                         sizeof(ledger->hardware_profile_identity), request->hardware->identity);
     yvex_core_text_copy(ledger->artifact_identity,

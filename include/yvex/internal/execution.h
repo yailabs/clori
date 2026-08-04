@@ -265,8 +265,29 @@ typedef enum {
     YVEX_EXECUTION_ROOFLINE_PHASE_COUNT
 } yvex_execution_roofline_phase;
 
+typedef enum {
+    YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT = 0,
+    YVEX_EXECUTION_PHASE_FACT_STATE,
+    YVEX_EXECUTION_PHASE_FACT_ACTIVATION,
+    YVEX_EXECUTION_PHASE_FACT_TEMPORARY,
+    YVEX_EXECUTION_PHASE_FACT_MOVEMENT,
+    YVEX_EXECUTION_PHASE_FACT_KERNELS,
+    YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS,
+    YVEX_EXECUTION_PHASE_FACT_OCCUPANCY,
+    YVEX_EXECUTION_PHASE_FACT_DURATION,
+    YVEX_EXECUTION_PHASE_FACT_WORK,
+    YVEX_EXECUTION_PHASE_FACT_COMMITTED_TOKENS,
+    YVEX_EXECUTION_PHASE_FACT_COUNT
+} yvex_execution_phase_fact;
+
+#define YVEX_EXECUTION_PHASE_FACT_BIT(fact) (1ull << (unsigned int)(fact))
+#define YVEX_EXECUTION_PHASE_FACT_ALL \
+    ((1ull << YVEX_EXECUTION_PHASE_FACT_COUNT) - 1ull)
+
 typedef struct {
     yvex_execution_roofline_phase phase;
+    /* Zero is the original v1 representation and means that every fact is available. */
+    unsigned long long fact_mask;
     unsigned long long active_weight_bytes, state_bytes, activation_bytes;
     unsigned long long temporary_bytes, h2d_bytes, d2h_bytes, d2d_bytes;
     unsigned long long kernel_count, synchronization_count;
@@ -276,10 +297,12 @@ typedef struct {
 
 typedef struct {
     yvex_execution_phase_measurement measurement;
+    int available, roofline_available;
+    unsigned long long missing_fact_mask;
     unsigned long long active_device_bytes, transfer_bytes;
     unsigned long long minimum_memory_time_ns, measured_bytes_per_second;
     unsigned long long roofline_utilization_parts_per_million;
-    unsigned long long optimization_priority;
+    unsigned long long optimization_headroom_ns, optimization_priority;
 } yvex_execution_phase_roofline;
 
 typedef struct {
@@ -293,7 +316,10 @@ typedef struct {
 
 typedef struct {
     unsigned int schema_version;
-    unsigned long long phase_count, measured_duration_ns, committed_tokens;
+    unsigned long long phase_count, measured_phase_count;
+    unsigned long long measured_phase_mask, missing_phase_mask, rooflined_phase_mask;
+    unsigned long long measured_duration_ns, committed_tokens;
+    int priority_provisional;
     yvex_execution_phase_roofline phases[YVEX_EXECUTION_ROOFLINE_PHASE_COUNT];
     char hardware_profile_identity[YVEX_SHA256_HEX_CAP];
     char artifact_identity[YVEX_SHA256_HEX_CAP];

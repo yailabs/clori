@@ -196,6 +196,12 @@ promotion and batched decode. Measured bandwidth is mandatory before it can
 rank optimization priority. This ledger, rather than a fixed attention/MoE/
 output sequence, owns the causal priority decision.
 
+The ledger admits partial causal evidence without inventing facts. It keeps a
+stable slot for every phase, reports phase and fact availability separately,
+and marks its priority provisional whenever a measured phase lacks the active
+byte or movement facts needed for a memory lower bound. A missing phase or
+counter is unavailable, never numeric zero.
+
 ## Memory and residency
 
 The process distinguishes file mapping, anonymous host residency, locked or

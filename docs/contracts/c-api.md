@@ -166,6 +166,14 @@ and phase-roofline schemas begin at v1 as internal contracts. The installed
 public API, local protocol v6, runtime event schema v3, generation ABI v4,
 Physical Execution IR v1 and compiled profile v1 are unchanged.
 
+Phase-roofline v1 accepts both its original complete record and an additive
+availability mask. A zero mask retains the original all-facts meaning; new
+writers mark measured facts explicitly. The ledger retains all seven phase
+slots while reporting measured, missing and rooflined masks, so absence is
+never projected as a zero measurement. This does not earn a schema bump: the
+contract is non-persisted, non-wire, rebuilt with every binary, and has no old
+binary reader. Duration and work remain mandatory for every admitted record.
+
 The binding is generated transactionally outside the repository, named by its
 content identity and independently reopened. Runtime open validates it against
 the exact admitted artifact. Runtime execution does not read source headers or

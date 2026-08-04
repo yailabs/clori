@@ -56,6 +56,12 @@ launches, synchronizations, occupancy, duration, work and committed tokens.
 Measured memory lower bounds and remaining headroom decide optimization order.
 Attention, MoE and output-head dependencies do not prescribe that order.
 
+The v1 ledger accepts partial measurements with explicit fact masks. It keeps
+all causal phase slots, exposes missing phases and facts, and marks rankings
+provisional until active-byte and movement evidence can establish a roofline.
+The additive internal change does not bump a persisted or wire contract and
+keeps the original zero-mask v1 writer representation readable.
+
 Physical-variant research uses a funnel: role-level numerical probes,
 representative-layer encoding, kernel microbenchmarks, bounded logit and DSpark
 acceptance checks, then complete emission only for surviving candidates. A
