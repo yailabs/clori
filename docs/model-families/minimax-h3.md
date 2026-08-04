@@ -56,8 +56,11 @@ operator authorization question outside this engineering intake.
 
 ## Component inventory
 
-The exact file lists, largest tensors, inputs, outputs, lifetimes, reference
-owners, and blockers are in the audit’s [`components.tsv`](../audits/minimax-h3-fl2va-b8b09e3/components.tsv).
+The audit’s [`components.tsv`](../audits/minimax-h3-fl2va-b8b09e3/components.tsv)
+retains bounded file counts, inputs, outputs, lifetimes, reference owners, and
+blockers. Exact metadata and shard file lists plus the ten largest tensors per
+weighted component remain in the external `component-summary.json`, whose
+SHA-256 is frozen by the audit.
 
 | Component | Declared class | Shards | Tensors | Elements | Tensor payload bytes | Source dtype | Initial `t2va` role |
 | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
