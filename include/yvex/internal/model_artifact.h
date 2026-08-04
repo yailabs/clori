@@ -74,11 +74,6 @@ struct yvex_model_registry {
     unsigned long long cap;
 };
 
-/* Binding publication. */
-int yvex_model_registry_write_json_file(const yvex_model_registry *registry,
-                                        const char *path,
-                                        yvex_error *err);
-
 #ifdef __cplusplus
 }
 #endif

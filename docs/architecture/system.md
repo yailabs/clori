@@ -105,8 +105,11 @@ family-neutral; a concrete family hierarchy beneath the runtime namespace or a
 fourth family projection is forbidden.
 
 The exact source-file ownership manifest is
-[`config/source_owners.tsv`](../../config/source_owners.tsv). Contributor-facing
-layout rules are in [Source and Module Ownership](../development/source-ownership.md).
+[`config/source_owners.tsv`](../../config/source_owners.tsv). It is also the
+sole handwritten production build-membership list; a checked deterministic
+projection supplies Make product classes. Contributor-facing layout and build
+ownership rules are in
+[Source and Module Ownership](../development/source-ownership.md).
 
 ## Application surfaces
 

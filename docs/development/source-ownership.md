@@ -13,8 +13,10 @@ not a capability claim.
 Current core areas:
 
 ```text
+config/source_owners.tsv canonical production ownership and source membership
 config/operator/         canonical versioned command/operation registry source
-tools/                   bounded build-time registry generator and validators
+tools/                   bounded build-time projection generators and validators
+build/generated/sources.mk deterministic source/build projection, never tracked
 build/generated/operator generated immutable descriptor data, never tracked or installed
 src/cli/io/client.c      runtime-client lane, REPL, protocol projections
 src/daemon/              long-lived runtime-host entrypoint
@@ -24,7 +26,7 @@ src/cli/                 unified runtime-client and offline command lanes, rende
 src/source/              source manifests, provenance, inventory, payload trust/streaming
 src/model/target/        generic target catalogs, gates and qtype reports
 src/model/families/      family architecture, coverage and lowering recipes
-src/model/artifacts/     model registry, reference, gate and write ownership
+src/model/artifacts/     model registry serialization, references and gates
 src/model/               core model tables and artifact-neutral compilation
 src/gguf/                GGUF parser plus target ABI/writer/roundtrip owners
 src/artifact/            artifact IO, identity, integrity, descriptor gates
@@ -55,6 +57,12 @@ domain algorithms. No writer owns command output.
 
 ## Owner Rules
 
+- `config/source_owners.tsv` is the sole handwritten production membership
+  authority. Its deterministic generator validates exact `src/` and `include/`
+  parity and projects product/toolchain classes under `BUILD_DIR` for Make.
+- The root Makefile composes products and supported validation entrypoints from
+  that projection. It does not repeat individual production paths or use
+  source wildcards.
 - The operator-registry source owns operation IDs and projection metadata only.
 - Its build-time generator owns strict validation and deterministic immutable C
   data emission; generated data owns no behavior.
@@ -153,7 +161,7 @@ domain algorithms. No writer owns command output.
 | `src/gguf/core.c` | file-backed GGUF v3 decoding, canonical container/metadata admission, and owned metadata/tensor view |
 | `src/gguf/qtype.c` | pinned qtype registry and row-aware tensor storage |
 | `src/gguf/layout_integrity.c` | bounded range arithmetic, canonical ordered layout, padding/span/tail/drift admission, and typed structural facts |
-| `src/gguf/reader.c` | reader policy, resource defaults, and typed failure ABI |
+| `src/gguf/core.c` | file-backed reader lifecycle, policy defaults, typed failure ABI, decoding, metadata admission, and owned container view |
 | `src/gguf/writer.c` | transactional GGUF v3 writer planning and emission |
 | `src/artifact/roundtrip_gate.c` | writer-reader equivalence boundary |
 | `src/model/target/tensor_naming.c` | emitted GGUF tensor names and layout projection |
@@ -201,7 +209,7 @@ forbidden.
 | `src/model/target/tensor_collection.c` | release-target collection projection from canonical coverage; Qwen/Gemma evidence remains separate |
 | `src/model/target/missing_role.c` | release-target missing-role projection from canonical coverage |
 | `src/model/target/mapping_gate.c` | operational projection of the canonical mapping plan and payload-streaming handoff |
-| `src/model/target/model_class_profile.c` | strict source-verification coordination and report ownership for the canonical release target; Qwen/Gemma lexical evidence remains separate |
+| `src/model/target/report.c` | strict source-verification coordination and typed report projection for the canonical release target; Qwen/Gemma lexical evidence remains separate |
 | `src/cli/render/model_target.c` | presentation of typed IR facts without architecture decisions |
 
 ## Graph and backend ownership map
@@ -215,7 +223,7 @@ forbidden.
 | `src/graph/families/deepseek_v4.c` | DeepSeek schedule, recurrence and CPU/CUDA operation composition |
 | `src/backend/cuda/families/deepseek_v4.c` | irreducible fused CUDA lowering for the DeepSeek graph recipe; no runtime or model authority |
 | `src/backend/core.c` | backend lifecycle, tensor binding and canonical qtype compute projection |
-| `src/backend/report.c` | typed device, context, bundle, exact-variant, and memory reports |
+| `src/backend/core.c` | backend lifecycle, tensor binding, canonical qtype compute projection, and typed device/context/bundle/memory reports |
 | `src/backend/cuda/capability.c` | atomic generated-bundle admission, exact CUDA capability, launch/sync demotion, and cleanup failure |
 | `src/backend/cuda/graph.c` | CUDA launch-graph registry, capture, instantiate, replay, update, invalidation, and release |
 | `src/backend/cuda/ops.c` | validated host launch binding for admitted exact variants |

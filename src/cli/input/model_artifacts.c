@@ -840,7 +840,7 @@ static int fullmodel_options_begin(int arg_count, char **args,
     options->command = YVEX_FULLMODEL_COMMAND_REPORT;
 
     if (arg_count >= 3 && (strcmp(args[2], "--help") == 0 || strcmp(args[2], "-h") == 0)) {
-        yvex_model_artifacts_surface_fullmodel_help(stdout);
+        yvex_fullmodel_help(stdout);
         return 1;
     }
     if (arg_count < 3) {

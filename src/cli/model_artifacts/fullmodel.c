@@ -1445,7 +1445,7 @@ static int fullmodel_surface_render_audit(fullmodel_surface_view *view)
     return 0;
 }
 
-int yvex_model_artifacts_surface_fullmodel_command(int arg_count, char **args)
+int yvex_fullmodel_command(int arg_count, char **args)
 {
     yvex_cli_fullmodel_options options;
     fullmodel_surface_state state;

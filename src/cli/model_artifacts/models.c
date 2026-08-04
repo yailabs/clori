@@ -102,7 +102,7 @@ static const yvex_cli_field_spec registry_inspect_fields[] = {
     REGISTRY_FIELD("artifact_class", YVEX_CLI_FIELD_TEXT, artifact_class, ""),
     REGISTRY_FIELD("qprofile", YVEX_CLI_FIELD_TEXT, qprofile, ""),
     REGISTRY_FIELD("calibration", YVEX_CLI_FIELD_TEXT, calibration, ""),
-    REGISTRY_FIELD("support_level", YVEX_CLI_FIELD_TEXT, support_level, ""),
+    REGISTRY_FIELD("artifact_support_level", YVEX_CLI_FIELD_TEXT, support_level, ""),
     REGISTRY_FIELD("registered_file_size", YVEX_CLI_FIELD_U64, file_size, NULL),
     REGISTRY_FIELD("registered_sha256", YVEX_CLI_FIELD_TEXT, sha256, "absent"),
     REGISTRY_FIELD("registered_format", YVEX_CLI_FIELD_TEXT, format, ""),
@@ -124,7 +124,7 @@ static const yvex_cli_field_spec registry_inspect_fields[] = {
                    selected_embedding_output_count, NULL),
     REGISTRY_FIELD("selected_embedding_slice_bytes", YVEX_CLI_FIELD_U64,
                    selected_embedding_slice_bytes, NULL),
-    REGISTRY_FIELD("execution_ready", YVEX_CLI_FIELD_BOOL, execution_ready, NULL),
+    REGISTRY_FIELD("artifact_execution_ready", YVEX_CLI_FIELD_BOOL, execution_ready, NULL),
     REGISTRY_FIELD("runtime_binding", YVEX_CLI_FIELD_TEXT, runtime_binding, ""),
     REGISTRY_FIELD("runtime_target", YVEX_CLI_FIELD_TEXT, runtime_target, ""),
     REGISTRY_FIELD("runtime_backend", YVEX_CLI_FIELD_TEXT, runtime_backend, ""),
@@ -142,7 +142,7 @@ static const yvex_model_registry_entry empty_registry_entry = {
 };
 
 static const models_verify_pair verify_audit_pairs[] = {
-    {"support_level", YVEX_CLI_FIELD_TEXT,
+    {"artifact_support_level", YVEX_CLI_FIELD_TEXT,
      offsetof(yvex_model_registry_entry, support_level)},
     {"architecture", YVEX_CLI_FIELD_TEXT,
      offsetof(yvex_model_registry_entry, architecture)},
@@ -815,16 +815,16 @@ static int command_models_inspect(int arg_count, char **args)
                entry->primary_tensor_name ? entry->primary_tensor_name : "",
                entry->primary_tensor_dtype ? entry->primary_tensor_dtype : "",
                entry->primary_tensor_dims ? entry->primary_tensor_dims : "");
-        yvex_cli_out_writef(stdout, "state: %s execution_ready=%s\n",
+        yvex_cli_out_writef(stdout, "artifact: support=%s execution=%s\n",
                entry->support_level ? entry->support_level : "",
-               entry->execution_ready ? "true" : "false");
+               entry->execution_ready ? "ready" : "not-established-by-inspection");
         if (startup_ready)
             yvex_cli_out_writef(
-                stdout, "startup: ready backend=%s mode=%s context=%llu\n",
+                stdout, "runtime profile: ready binding=available backend=%s mode=%s context=%llu\n",
                 entry->runtime_backend, entry->runtime_mode,
                 entry->runtime_context);
         else
-            yvex_cli_out_writef(stdout, "startup: unavailable (%s)\n",
+            yvex_cli_out_writef(stdout, "runtime profile: unavailable (%s)\n",
                                 yvex_error_message(&startup_error));
         yvex_cli_out_writef(stdout, "status: models-inspect\n");
         yvex_model_registry_close(registry);
@@ -834,6 +834,14 @@ static int command_models_inspect(int arg_count, char **args)
     (void)yvex_cli_out_fields(stdout, entry, registry_inspect_fields,
                               sizeof(registry_inspect_fields) /
                                   sizeof(registry_inspect_fields[0]));
+    {
+        yvex_error startup_error;
+        yvex_error_clear(&startup_error);
+        yvex_cli_out_writef(
+            stdout, "startup_profile_status: %s\n",
+            yvex_model_registry_startup_validate(entry, &startup_error) == YVEX_OK
+                ? "ready" : "unavailable");
+    }
     rc = yvex_model_context_open(entry->path, &ctx, &err);
     if (rc == YVEX_OK) {
         header = yvex_gguf_header_view(ctx.gguf);
@@ -878,7 +886,7 @@ static int command_models(int arg_count, char **args)
     unsigned long i;
 
     if (arg_count >= 3 && (strcmp(args[2], "--help") == 0 || strcmp(args[2], "-h") == 0)) {
-        yvex_model_artifacts_surface_models_help(stdout);
+        yvex_models_help(stdout);
         return 0;
     }
     if (arg_count < 3) {
@@ -896,12 +904,12 @@ static int command_models(int arg_count, char **args)
     return 2;
 }
 
-int yvex_model_artifacts_surface_models_command(int arg_count, char **args)
+int yvex_models_command(int arg_count, char **args)
 {
     return command_models(arg_count, args);
 }
 
-void yvex_model_artifacts_surface_models_help(FILE *fp)
+void yvex_models_help(FILE *fp)
 {
     yvex_cli_out_lines(fp, models_help_lines,
                        sizeof(models_help_lines) / sizeof(models_help_lines[0]));

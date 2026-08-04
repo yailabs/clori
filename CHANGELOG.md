@@ -57,6 +57,9 @@ change. Git history preserves implementation chronology.
 - Separated physical execution decisions and evidence depth from artifact
   identity, promoted verified speculative state without accepted-token replay,
   and made CUDA capacity admission execution-shape specific.
+- Separated artifact capability from runtime-profile readiness in the local
+  model registry, eliminating false metadata drift without changing artifact
+  or binding identity.
 
 ### Removed
 

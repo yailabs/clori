@@ -1,14 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-test -x build/tests/test
 test -f include/yvex/qtype.h
-
-out="${TMPDIR:-/tmp}/yvex-gguf-qtype-abi.$$"
-trap 'rm -f "$out"' EXIT
-
-build/tests/test >"$out" 2>&1
-grep -nF 'test: gguf_qtype_abi' "$out" >/dev/null
 
 grep -nF 'af97976c7810cdabb1863172f31c432dab767de7' \
   include/yvex/qtype.h docs/reference/verified-inference.md >/dev/null

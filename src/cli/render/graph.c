@@ -12,7 +12,6 @@
 #include <yvex/internal/decode.h>
 #include <yvex/internal/generation.h>
 #include <yvex/internal/logits.h>
-#include <yvex/internal/profile.h>
 #include <yvex/internal/sampling.h>
 static const char *const literal_lines_0[] = {
     "usage: yvex execute attention prepare --target TARGET",

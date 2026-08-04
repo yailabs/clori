@@ -46,8 +46,15 @@ The directory is the namespace. Before adding or moving production code:
    the admission rules in `AGENTS.md`;
 3. obtain explicit authorization where required;
 4. update `config/source_owners.tsv` in the same patch;
-5. preserve source-relative object and archive identities; and
-6. run ownership, repository-layout, source-layout, and architecture guards.
+5. regenerate the deterministic build projection with
+   `make generate-source-manifest`;
+6. preserve source-relative object and archive identities; and
+7. run ownership, repository-layout, source-layout, and architecture guards.
+
+The owner manifest is the sole handwritten production membership list. The
+root Makefile consumes its generated projection; do not add a parallel source
+list or a wildcard that silently admits unowned files. Validate the projection
+with `make check-source-manifest`.
 
 Prefer extending a strong existing owner over introducing a phase-shaped file,
 forwarding header, compatibility shell, or duplicate registry.

@@ -257,7 +257,7 @@ static int parse_context_options(int arg_count,
     options->output_mode = YVEX_MODELS_OUTPUT_NORMAL;
 
     if (arg_count >= 3 && (strcmp(args[2], "--help") == 0 || strcmp(args[2], "-h") == 0)) {
-        yvex_model_artifacts_surface_context_help(stdout);
+        yvex_context_help(stdout);
         return 1;
     }
     if (arg_count < 3 || strcmp(args[2], "report") != 0) {
@@ -307,7 +307,7 @@ static int parse_context_options(int arg_count,
         } else if (strcmp(flag, "--audit") == 0) {
             options->output_mode = YVEX_MODELS_OUTPUT_AUDIT;
         } else if (strcmp(flag, "--help") == 0 || strcmp(flag, "-h") == 0) {
-            yvex_model_artifacts_surface_context_help(stdout);
+            yvex_context_help(stdout);
             return 1;
         } else {
             yvex_cli_out_writef(stderr, "yvex: unknown context option: %s\n", flag);
@@ -712,7 +712,7 @@ static int context_print_report(const yvex_cli_context_options *options,
     return 0;
 }
 
-int yvex_model_artifacts_surface_context_command(int arg_count, char **args)
+int yvex_context_command(int arg_count, char **args)
 {
     yvex_cli_context_options options;
     yvex_model_ref_options ref_options;
@@ -814,7 +814,7 @@ int yvex_model_artifacts_surface_context_command(int arg_count, char **args)
     return rc;
 }
 
-void yvex_model_artifacts_surface_context_help(FILE *fp)
+void yvex_context_help(FILE *fp)
 {
     yvex_cli_out_writef(fp,
         "usage: yvex inspect context report --model FILE_OR_ALIAS [--family auto|deepseek|glm|qwen] [--backend cpu|"

@@ -23,7 +23,6 @@
 #       YVEX_RUNTIME_BINDING=/absolute/file.yvex-runtime-binding
 #   make test-runtime-deepseek-logits-live \
 #       YVEX_RUNTIME_BINDING=/absolute/file.yvex-runtime-binding
-#   make test-runtime-benchmark-chart
 #   make test-runtime-benchmark-chart-live YVEX_RUNTIME_BENCHMARK_DIR=/absolute/path \
 #       YVEX_RUNTIME_BINDING=/absolute/file.yvex-runtime-binding
 #   make update-runtime-benchmark-charts YVEX_RUNTIME_BENCHMARK_DIR=/absolute/empty/path \
@@ -41,14 +40,15 @@
 
 .DEFAULT_GOAL := all
 
-.PHONY: all info lib client daemon package cli server generate-operator-registry \
+.PHONY: all info lib client daemon package generate-source-manifest \
+	check-source-manifest generate-operator-registry \
 	generate-command-migration \
 	check-operator-registry test-operator-registry cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
 	test-cuda-no-nvcc smoke-cuda check-cuda test test-core test-cli test-materialize \
 	test-runtime-descriptor test-runtime-binding test-runtime-model-session \
 	test-runtime-residency test-runtime-phases test-runtime-envelope \
 	test-runtime-operator test-runtime-digests test-runtime-family-neutrality \
-	test-runtime-state test-runtime-prefill test-runtime-profile test-runtime-benchmark test-runtime-benchmark-chart \
+	test-runtime-state test-runtime-prefill test-runtime-profile test-runtime-benchmark \
 	test-runtime-moe test-runtime-transformer test-runtime-decode test-runtime-logits \
 	test-runtime-sampling test-runtime-speculation test-runtime-generation \
 	test-runtime-tokenizer \
@@ -68,10 +68,9 @@
 	test-physical-variant-plan-deepseek-live test-quant-iq2-xxs-deepseek-live \
 	test-artifact-emit-deepseek-variant-live test-materialize-deepseek-variant-live \
 	test-runtime-deepseek-variant-generation-live \
-	test-protocol test-runtime-host test-runtime-sessions test-runtime-turns \
-	test-runtime-telemetry test-runtime-streaming test-client test-repl \
-	test-openai test-openai-sdk test-openai-agent test-openai-bet-tennis test-openai-live \
-	test-cli-cutover test-packaging test-product-topology test-runtime-client-refoundation-live \
+	test-protocol test-runtime-host test-runtime-streaming test-repl \
+	test-openai test-openai-sdk test-openai-bet-tennis test-openai-live \
+	test-packaging test-product-topology test-runtime-client-refoundation-live \
 	test-artifact-writer test-artifact-writer-fault test-artifact-live-plan \
 	test-artifact-live-structure test-artifact-live test-transform-ir-live-plan \
 	test-source-payload-live-plan test-source-payload-live test-gguf-artifact-abi \
@@ -125,6 +124,9 @@ OBJ_DIR ?= $(BUILD_DIR)/obj
 LIB_DIR ?= $(BUILD_DIR)/lib
 TEST_DIR ?= $(BUILD_DIR)/tests
 BUILD_COMMIT_HEADER := $(BUILD_DIR)/generated/build_commit.h
+SOURCE_OWNER_MANIFEST := config/source_owners.tsv
+SOURCE_MANIFEST_GENERATOR := tools/generate_source_manifest.py
+SOURCE_MANIFEST_MK := $(BUILD_DIR)/generated/sources.mk
 OPERATOR_REGISTRY_SOURCE := config/operator/registry.json
 OPERATOR_REGISTRY_GENERATOR := tools/generate_operator_registry.py
 OPERATOR_REGISTRY_DIR := $(BUILD_DIR)/generated/operator
@@ -155,6 +157,10 @@ LIBYVEX ?= $(LIB_DIR)/libyvex.a
 YVEX_BIN ?= ./yvex
 YVEXD_BIN ?= ./yvexd
 
+ifneq ($(strip $(MAKECMDGOALS)),clean)
+include $(SOURCE_MANIFEST_MK)
+endif
+
 # Attention wrappers own a collision-free temporary root and delete only that
 # root after validating its canonical parent and generated basename.
 define ATTENTION_OWNED_TMP_BEGIN
@@ -181,148 +187,6 @@ trap 'exit 130' INT; \
 trap 'exit 143' TERM;
 endef
 
-CLI_COMMAND_SRCS := src/cli/commands/graph.c \
-	src/cli/commands/model_artifacts.c \
-	src/cli/commands/model_target.c \
-	$(sort $(filter-out src/cli/commands/graph.c src/cli/commands/model_artifacts.c src/cli/commands/model_target.c,$(wildcard src/cli/commands/*.c)))
-CLI_INPUT_SRCS := src/cli/input/graph.c \
-	src/cli/input/model_artifacts.c \
-	src/cli/input/model_target.c \
-	$(sort $(filter-out src/cli/input/graph.c src/cli/input/model_artifacts.c src/cli/input/model_target.c,$(wildcard src/cli/input/*.c)))
-CLI_RENDER_SRCS := src/cli/render/graph.c \
-	src/cli/render/model_artifacts.c \
-	src/cli/render/model_target.c \
-	$(sort $(filter-out src/cli/render/graph.c src/cli/render/model_artifacts.c src/cli/render/model_target.c,$(wildcard src/cli/render/*.c)))
-CLI_MODEL_ARTIFACT_SRCS := $(sort $(wildcard src/cli/model_artifacts/*.c))
-CLI_IO_SRCS := $(sort $(filter-out src/cli/io/client.c,$(wildcard src/cli/io/*.c)))
-
-CORE_SRCS := \
-	src/core/status.c \
-	src/core/fs.c \
-	src/core/sha256.c \
-	src/core/shard_index.c \
-	src/provider/core.c \
-	src/accounts/provider.c \
-	src/artifact/core.c \
-	src/artifact/descriptor.c \
-	src/artifact/identity.c \
-	src/artifact/integrity.c \
-	src/artifact/materialize.c \
-	src/artifact/roundtrip_gate.c \
-	src/backend/core.c \
-	src/backend/cpu.c \
-	src/backend/report.c \
-	src/runtime/graph.c \
-	src/runtime/benchmark.c \
-	src/runtime/binding.c \
-	src/runtime/decode.c \
-	src/runtime/generation.c \
-	src/runtime/generation_context.c \
-	src/runtime/generation_result.c \
-	src/graph/execution.c \
-	src/runtime/speculation.c \
-	src/runtime/logits.c \
-	src/runtime/sampling.c \
-	src/runtime/session.c \
-	src/runtime/moe.c \
-	src/runtime/moe_input.c \
-	src/runtime/prefill.c \
-	src/runtime/transformer.c \
-	src/runtime/transformer_input.c \
-	src/runtime/residency.c \
-	src/graph/state_recipe.c \
-	src/graph/state.c \
-	src/graph/candidate.c \
-	src/gguf/core.c \
-	src/gguf/conversion.c \
-	src/gguf/imatrix.c \
-	src/gguf/quant_job.c \
-	src/gguf/quant_policy.c \
-	src/gguf/tools.c \
-	src/gguf/descriptor.c \
-	src/gguf/file_sink.c \
-	src/gguf/layout_integrity.c \
-	src/gguf/qtype.c \
-	src/gguf/reader.c \
-	src/gguf/tokenizer_metadata.c \
-	src/gguf/writer.c \
-	src/gguf/quant_registry.c \
-	src/gguf/variant.c \
-	src/gguf/quant_scalar.c \
-	src/gguf/quant_block.c \
-	src/gguf/quant_compute.c \
-	src/gguf/quant_plan.c \
-	src/gguf/quant_sink.c \
-	src/gguf/quant_execute.c \
-	src/graph/attention.c \
-	src/graph/moe.c \
-	src/graph/numeric.c \
-	src/graph/transformer.c \
-	src/graph/families/deepseek_v4.c \
-	src/graph/core.c \
-	src/graph/plan.c \
-	src/graph/memory_plan.c \
-	src/io/writer.c \
-	src/model/core.c \
-	src/model/families/deepseek_v4.c \
-	src/model/compilation/ir.c \
-	src/model/compilation/ir_identity.c \
-	src/model/compilation/ir_validate.c \
-	src/model/compilation/binding.c \
-	src/runtime/descriptor.c \
-	src/model/artifacts/gate.c \
-	src/model/artifacts/ref.c \
-	src/model/artifacts/registry.c \
-	src/model/artifacts/write.c \
-	src/model/target/mapping_gate.c \
-	src/model/target/missing_role.c \
-	src/model/target/model_class_profile.c \
-	src/model/target/candidates.c \
-	src/model/target/catalog.c \
-	src/model/target/decision.c \
-	src/model/target/report.c \
-	src/model/target/sidecar_write.c \
-	src/model/target/output_head_map.c \
-	src/model/target/qtype_policy.c \
-	src/model/target/qtype_role_support.c \
-	src/model/target/tensor_collection.c \
-	src/model/target/tensor_naming.c \
-	src/model/target/tokenizer_map.c \
-	src/runtime/core.c \
-	src/source/native_weights.c \
-	src/source/safetensors_header.c \
-	src/source/inventory.c \
-	src/core/json.c \
-	src/source/manifest.c \
-	src/source/payload.c \
-	src/source/payload_identity.c \
-	src/source/payload_plan.c \
-	src/source/payload_stream.c \
-	src/source/provenance.c \
-	src/source/report.c \
-	src/source/scan.c \
-	src/source/verify.c \
-	src/source/write.c \
-	src/tokenizer/decode.c \
-	src/tokenizer/execution.c \
-	src/tokenizer/provider.c \
-	src/tokenizer/token_input.c \
-	src/tokenizer/unicode.c \
-	src/tokenizer/core.c \
-	src/server/core.c \
-	src/server/protocol.c \
-	src/server/session.c \
-	src/server/telemetry.c
-
-YVEX_SRCS := \
-	src/cli/main.c \
-	src/cli/io/client.c \
-	$(CLI_COMMAND_SRCS) \
-	$(CLI_INPUT_SRCS) \
-	$(CLI_MODEL_ARTIFACT_SRCS) \
-	$(CLI_RENDER_SRCS) \
-	$(CLI_IO_SRCS)
-
 YVEX_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(YVEX_SRCS)) $(OPERATOR_REGISTRY_OBJ)
 CLIENT_LANE_OBJ := $(OBJ_DIR)/src/cli/io/client.o
 CLIENT_PROTOCOL_OBJS := \
@@ -332,29 +196,8 @@ CLIENT_PROTOCOL_OBJS := \
 	$(OBJ_DIR)/src/provider/core.o \
 	$(OBJ_DIR)/src/server/protocol.o \
 	$(OBJ_DIR)/src/server/telemetry.o
-DAEMON_OBJ := $(OBJ_DIR)/src/daemon/yvexd.o
-OPENAI_ADAPTER_SRCS := \
-	src/server/openai/core.c \
-	src/server/openai/http.c \
-	src/server/openai/json.c \
-	src/server/openai/render.c \
-	src/server/openai/state.c
+DAEMON_OBJ := $(patsubst %.c,$(OBJ_DIR)/%.o,$(DAEMON_SRCS))
 OPENAI_ADAPTER_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(OPENAI_ADAPTER_SRCS))
-
-CUDA_SRCS := \
-	src/backend/cuda/backend.c \
-	src/backend/cuda/capability.c \
-	src/backend/cuda/graph.c \
-	src/backend/cuda/tensor.c \
-	src/backend/cuda/ops.c \
-	src/backend/cuda/info.c \
-	src/backend/cuda/moe.c \
-	src/backend/cuda/qtype.c \
-	src/backend/cuda/families/deepseek_v4.c \
-	src/backend/cuda/errors.c
-
-CUDA_CU_SRCS := \
-	src/backend/cuda/kernels.cu
 
 CUDA_ARCH_FLAG := $(if $(filter auto,$(YVEX_CUDA_ARCH)),,-arch=$(YVEX_CUDA_ARCH))
 CUDA_PTX := $(patsubst %.cu,$(OBJ_DIR)/%.ptx,$(CUDA_CU_SRCS))
@@ -403,9 +246,7 @@ OPENAI_ADAPTER_HOST := $(TEST_DIR)/openai_adapter
 OFFICIAL_GGUF_CHECKER := $(TEST_DIR)/ggml_gguf_check
 CUDA_TEST_RUNNER := $(TEST_DIR)/test_cuda
 
-TEST_UNIT_SRCS := $(sort $(filter-out tests/unit/quant_runner.c tests/unit/artifact_writer_runner.c,$(wildcard tests/unit/*.c)))
 TEST_UNIT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(TEST_UNIT_SRCS))
-TEST_REFERENCE_SRCS := $(sort $(wildcard tests/reference/*.c))
 TEST_REFERENCE_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(TEST_REFERENCE_SRCS))
 TEST_MAIN_OBJ := $(OBJ_DIR)/tests/test.o
 
@@ -423,7 +264,6 @@ QUANT_TEST_UNIT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(QUANT_TEST_UNIT_SRCS))
 QUANT_TEST_RUNNER_OBJ := $(OBJ_DIR)/tests/unit/quant_runner.o
 ARTIFACT_TEST_RUNNER_OBJ := $(OBJ_DIR)/tests/unit/artifact_writer_runner.o
 
-CUDA_TEST_UNIT_SRCS := $(sort $(wildcard tests/unit/cuda/*.c))
 CUDA_TEST_UNIT_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CUDA_TEST_UNIT_SRCS))
 CUDA_TEST_MAIN_OBJ := $(OBJ_DIR)/tests/test_cuda.o
 
@@ -472,7 +312,21 @@ info:
 	@echo "generation: implemented behind the admitted local runtime host"
 	@echo "release: blocked"
 
-all: generate-operator-registry lib client daemon
+all: generate-source-manifest generate-operator-registry lib client daemon
+
+generate-source-manifest: $(SOURCE_MANIFEST_MK)
+
+check-source-manifest: $(SOURCE_MANIFEST_MK)
+	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) \
+		--output $(SOURCE_MANIFEST_MK) --check
+	@set -eu; \
+	. tests/support/cleanup.sh; \
+	first=$$(mktemp "$${TMPDIR:-/tmp}/yvex-sources.XXXXXX"); \
+	second=$$(mktemp "$${TMPDIR:-/tmp}/yvex-sources.XXXXXX"); \
+	trap 'yvex_test_cleanup "$$first" "$$second"' EXIT HUP INT TERM; \
+	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) --output "$$first"; \
+	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) --output "$$second"; \
+	cmp "$$first" "$$second"
 
 generate-operator-registry: $(OPERATOR_REGISTRY_HEADER) $(OPERATOR_REGISTRY_C) \
 	$(OPERATOR_REGISTRY_IDENTITY)
@@ -500,10 +354,6 @@ lib: $(LIBYVEX)
 client: generate-operator-registry $(YVEX_BIN)
 
 daemon: $(YVEXD_BIN)
-
-server: $(YVEXD_BIN)
-
-cli: $(YVEX_BIN)
 
 package: client daemon config/package_manifest.tsv NOTICE.md
 	@set -eu; \
@@ -543,7 +393,7 @@ cuda-info: $(YVEX_BIN)
 cuda-kernels: $(CUDA_PTX_INC)
 	@echo "yvex cuda kernels: built from $(CUDA_CU_SRCS)"
 
-cuda: cuda-kernels lib cli server $(CUDA_TEST_RUNNER)
+cuda: cuda-kernels lib client daemon $(CUDA_TEST_RUNNER)
 	@echo "yvex cuda build: dynamic CUDA Driver API path plus CUDA kernel PTX"
 
 test-cuda: cuda
@@ -581,8 +431,6 @@ test-openai-sdk: test-openai
 		YVEX_OPENAI_HOST=$(OPENAI_FAKE_HOST) \
 		sh tests/integration/openai_sdk.sh
 
-test-openai-agent: test-openai-sdk
-
 test-openai-bet-tennis: test-openai
 	YVEX_OPENAI_ADAPTER=$(OPENAI_ADAPTER_HOST) \
 		YVEX_OPENAI_HOST=$(OPENAI_FAKE_HOST) \
@@ -592,7 +440,10 @@ test-openai-live: daemon
 	YVEX_BIN=$(YVEX_BIN) YVEXD_BIN=$(YVEXD_BIN) \
 		sh tests/live/openai.sh
 
-test-cli: test-cli-cutover
+test-cli: client daemon $(CLI_TEST) $(CLIENT_CUTOVER_TEST)
+	YVEX_BIN='$(YVEX_BIN)' YVEXD_BIN='$(YVEXD_BIN)' sh $(CLI_TEST)
+	YVEX_BIN='$(YVEX_BIN)' YVEX_CLIENT_LANE_OBJ='$(CLIENT_LANE_OBJ)' \
+		sh $(CLIENT_CUTOVER_TEST)
 
 test-materialize: $(TEST_RUNNER)
 	$(TEST_RUNNER)
@@ -663,11 +514,6 @@ test-runtime-tokenizer: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_tokenizer $(TEST_RUNNER)
 
 test-runtime-benchmark: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_benchmark $(TEST_RUNNER)
-
-# The benchmark owner generates and authenticates the bounded SVG chart as part
-# of its transactional evidence lifecycle.
-test-runtime-benchmark-chart: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_benchmark $(TEST_RUNNER)
 
 # This target retains identity-bound target-scale benchmark evidence in one
@@ -789,22 +635,9 @@ test-protocol: $(TEST_RUNNER)
 test-runtime-host: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=server $(TEST_RUNNER)
 
-test-runtime-sessions: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=server $(TEST_RUNNER)
-
-test-runtime-turns: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=runtime_generation $(TEST_RUNNER)
-
-test-runtime-telemetry: $(TEST_RUNNER)
-	YVEX_TEST_FILTER=server $(TEST_RUNNER)
-
 test-runtime-streaming: $(TEST_RUNNER)
 	YVEX_TEST_FILTER=protocol $(TEST_RUNNER)
 	YVEX_TEST_FILTER=runtime_generation $(TEST_RUNNER)
-
-test-client test-cli-cutover: client $(CLIENT_CUTOVER_TEST)
-	YVEX_BIN='$(YVEX_BIN)' YVEX_CLIENT_LANE_OBJ='$(CLIENT_LANE_OBJ)' \
-		sh $(CLIENT_CUTOVER_TEST)
 
 test-repl: client $(OPENAI_FAKE_HOST) $(REPL_PTY_TEST)
 	YVEX_BIN='$(YVEX_BIN)' YVEX_TEST_HOST='$(OPENAI_FAKE_HOST)' \
@@ -1468,12 +1301,15 @@ test-source-payload-live: $(SOURCE_PAYLOAD_LIVE_RUNNER)
 test: test-core test-cli
 
 test-gguf-artifact-abi: $(TEST_RUNNER) tests/test_gguf_artifact_abi.sh
+	YVEX_TEST_FILTER=gguf_artifact_abi $(TEST_RUNNER)
 	sh tests/test_gguf_artifact_abi.sh
 
 test-gguf-layout-integrity: $(TEST_RUNNER) tests/test_gguf_layout_integrity.sh
+	YVEX_TEST_FILTER=gguf_layout_integrity $(TEST_RUNNER)
 	sh tests/test_gguf_layout_integrity.sh
 
 test-gguf-qtype-abi: $(TEST_RUNNER) tests/test_gguf_qtype_abi.sh
+	YVEX_TEST_FILTER=gguf_qtype_abi $(TEST_RUNNER)
 	sh tests/test_gguf_qtype_abi.sh
 
 test-layout: $(LIBYVEX) $(YVEX_BIN) $(TEST_REFERENCE_OBJS) tests/test_source_layout.sh
@@ -1509,7 +1345,7 @@ test-architecture-boundaries: $(LIBYVEX) $(YVEX_BIN) $(YVEXD_BIN) $(TEST_REFEREN
 
 smoke: test-cli
 
-check: check-docs check-guardrails lib cli server test test-cuda-no-nvcc test-gguf-artifact-abi test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural test-project-control test-docs-surface test-documentation-architecture test-surface test-source-ownership test-repository-layout test-architecture-boundaries smoke
+check: check-docs check-guardrails lib client daemon test test-cuda-no-nvcc test-gguf-artifact-abi test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural test-project-control test-docs-surface test-documentation-architecture test-surface test-source-ownership test-repository-layout test-architecture-boundaries smoke
 	@echo "yvex check: ok"
 
 $(LIBYVEX): $(CORE_OBJS)
@@ -1520,6 +1356,10 @@ $(LIBYVEX): $(CORE_OBJS)
 $(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+$(SOURCE_MANIFEST_MK): $(SOURCE_OWNER_MANIFEST) $(SOURCE_MANIFEST_GENERATOR)
+	@mkdir -p $(@D)
+	python3 $(SOURCE_MANIFEST_GENERATOR) --manifest $(SOURCE_OWNER_MANIFEST) --output $@
 
 $(OPERATOR_REGISTRY_HEADER) $(OPERATOR_REGISTRY_C) $(OPERATOR_REGISTRY_IDENTITY) &: \
 		$(OPERATOR_REGISTRY_SOURCE) $(OPERATOR_REGISTRY_GENERATOR)
@@ -1673,7 +1513,7 @@ $(CUDA_TEST_RUNNER): $(CUDA_TEST_MAIN_OBJ) $(CUDA_TEST_UNIT_OBJS) $(LIBYVEX) tes
 check-docs: test-documentation-architecture test-project-control test-docs-surface
 	@echo "yvex documentation: ok"
 
-check-guardrails: $(LIBYVEX) $(YVEX_BIN) $(TEST_REFERENCE_OBJS)
+check-guardrails: check-source-manifest $(LIBYVEX) $(YVEX_BIN) $(TEST_REFERENCE_OBJS)
 	@sh tests/test_source_ownership.sh
 	@sh tests/test_repository_layout.sh
 	@YVEX_LIB="$(LIBYVEX)" YVEX_BIN="$(YVEX_BIN)" \
@@ -1761,4 +1601,6 @@ clean:
 	elif [ -e "$$build_dir" ]; then \
 		printf 'clean: refusing non-directory BUILD_DIR: %s\n' "$$build_dir" >&2; exit 1; \
 	fi; \
-	rm -f -- ./yvex ./yvexd ./yvex-openai ./yvex-dev ./*.o
+	if test "$$build_dir" = build; then \
+		rm -f -- ./yvex ./yvexd ./yvex-openai ./yvex-dev ./*.o; \
+	fi

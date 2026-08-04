@@ -1,14 +1,15 @@
 /*
  * Coordinate model-target report routing and shared bounded evidence probes.
  *
- * The coordinator routes typed requests to specialized model-target modules; it does not render,
- * open operator streams, or contain report-specific static catalogs. Model-target reports are
- * report-only facts. This coordinator does not implement quantization, artifact emission, runtime
- * execution, generation, eval, benchmark, throughput, or release readiness.
+ * The coordinator routes typed requests and owns report-only candidate, selection, and class
+ * projections that have no independent consumer. It does not render or open operator streams.
+ * Reports do not implement quantization, artifact emission, runtime execution, generation,
+ * evaluation, benchmark, throughput, or release readiness.
  */
 #include <yvex/internal/model_target.h>
 
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/source.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -269,22 +270,30 @@ void yvex_model_target_report_project_rows(
         case YVEX_MODEL_TARGET_ROW_LITERAL:
             ok = yvex_model_target_report_add_row(report, "%s", rows[row].format);
             break;
-        case YVEX_MODEL_TARGET_ROW_STRING:
-            ok = yvex_model_target_report_add_row(
-                report, rows[row].format, *(const char *const *)value);
+        case YVEX_MODEL_TARGET_ROW_STRING: {
+            const char *text = NULL;
+            memcpy(&text, value, sizeof(text));
+            ok = yvex_model_target_report_add_row(report, rows[row].format, text);
             break;
-        case YVEX_MODEL_TARGET_ROW_ULONG:
-            ok = yvex_model_target_report_add_row(
-                report, rows[row].format, *(const unsigned long *)value);
+        }
+        case YVEX_MODEL_TARGET_ROW_ULONG: {
+            unsigned long number = 0ul;
+            memcpy(&number, value, sizeof(number));
+            ok = yvex_model_target_report_add_row(report, rows[row].format, number);
             break;
-        case YVEX_MODEL_TARGET_ROW_U64:
-            ok = yvex_model_target_report_add_row(
-                report, rows[row].format, *(const unsigned long long *)value);
+        }
+        case YVEX_MODEL_TARGET_ROW_U64: {
+            unsigned long long number = 0ull;
+            memcpy(&number, value, sizeof(number));
+            ok = yvex_model_target_report_add_row(report, rows[row].format, number);
             break;
-        case YVEX_MODEL_TARGET_ROW_INT:
-            ok = yvex_model_target_report_add_row(report, rows[row].format,
-                                                  *(const int *)value);
+        }
+        case YVEX_MODEL_TARGET_ROW_INT: {
+            int number = 0;
+            memcpy(&number, value, sizeof(number));
+            ok = yvex_model_target_report_add_row(report, rows[row].format, number);
             break;
+        }
         default:
             return;
         }
@@ -645,6 +654,1163 @@ void yvex_model_target_report_add_output_contract(yvex_model_target_report *repo
         sizeof(output_contract_tail) / sizeof(output_contract_tail[0]));
 }
 
+/*
+ * Project immutable release-candidate facts into bounded reports.
+ *
+ * Candidate reports remain blocked/report-only until promoted by separate implementation proof
+ * rows. Candidate reporting does not create runtime capability, quantization, artifact emission,
+ * generation, benchmark, or release readiness.
+ */
+typedef struct {
+    const char *id;
+    const char *class_name;
+    const char *stage;
+    const char *eligibility;
+    const char *status;
+    const char *reason;
+    const char *next;
+} candidate_fact;
+
+static const candidate_fact candidate_facts[] = {
+    {"deepseek4-v4-flash-dspark-selected-embed", "selected-runtime-slice",
+     "selected-slice", "selected-slice-only", "ineligible-selected-slice",
+     "selected-runtime-slice missing full model tensor coverage",
+     "V010.GRAPH.DEEPSEEK.TRANSFORMER.0"},
+    {"deepseek4-v4-flash-dspark-selected-embed-rmsnorm", "selected-runtime-slice",
+     "diagnostic-runtime", "selected-slice-only", "ineligible-selected-slice",
+     "selected-runtime-slice missing MoE router/expert tensor coverage",
+     "V010.GRAPH.DEEPSEEK.TRANSFORMER.0"},
+    {"glm-5.2-official-safetensors", "huge-source-pressure", "report-only",
+     "source-only", "ineligible-source-only", "source-only target",
+     "POST010.GLM.RUNTIME.0"},
+    {"qwen3-8b", "source-model-candidate", "source-target-profiled",
+     "planned-portability-only", "ineligible-source-model-candidate",
+     "source model candidate requires tensor role mapping",
+     "V010.MODEL.ARCH.IR.0"},
+    {"gemma-4-12b-it", "source-model-candidate", "source-target-profiled",
+     "planned-dense-pressure-only", "ineligible-source-model-candidate",
+     "source model candidate requires tensor role mapping",
+     "V010.MODEL.ARCH.IR.0"},
+    {"tests/fixtures/gguf/valid-tokenizer-simple.gguf", "fixture-artifact",
+     "fixture", "fixture-only", "ineligible-fixture-only", "fixture only",
+     "V010.GGUF.ARTIFACT.ABI.1"},
+};
+
+static const char *const dense_help_rows[] = {
+    "The dense-candidate report preserves Qwen and Gemma engineering evidence "
+    "without offering an alternate v0.1.0 release target.",
+    "does not download weights, emit artifacts, materialize tensors, execute "
+    "graph/runtime paths, generate, evaluate, benchmark, or mark a release ready"
+};
+
+static const char *const qwen_help_rows[] = {
+    "The Qwen/Metal pressure report records a planned reduced-scale Apple Silicon / "
+    "Metal lane for future full-runtime work.",
+    "does not download weights, implement Metal, emit Qwen artifacts, materialize "
+    "tensors, execute graph/runtime paths, generate, evaluate, benchmark, or mark "
+    "a release ready"
+};
+
+static const char *const candidate_help_rows[] = {
+    "The candidate report shows the selected DeepSeek release source and keeps other "
+    "families or selected slices as non-release engineering evidence.",
+    "target selection does not select a ready model"
+};
+
+static const char *const candidate_common_middle[] = {
+    "release: v0.1.0",
+    "selected: none"
+};
+
+static const char *const candidate_common_suffix[] = {
+    "next: V010.MODEL.ARCH.IR.0",
+    "boundary: report-only; generation unsupported; benchmark not measured"
+};
+
+static const char *const release_candidate_prefix[] = {
+    "report: model-target candidate",
+    "status: selected-mapping-specified",
+    "release: v0.1.0"
+};
+
+static const char *const release_candidate_suffix[] = {
+    "top_blocker: source payload trust",
+    "next: V010.SOURCE.PAYLOAD.STREAM.0",
+    "boundary: target selected; artifact/runtime/generation unsupported; "
+    "benchmark not measured"
+};
+
+static const char *const qwen_report_prefix_rows[] = {
+    "report: model-target qwen-metal",
+    "status: pressure-target-only",
+    "release: v0.1.0",
+    "lane: qwen-metal / apple-silicon-metal"
+};
+
+static const char *const qwen_report_suffix_rows[] = {
+    "candidate: source-target-profiled pressure-target-only",
+    "source_target: profiled",
+    "source: missing",
+    "backend: metal unsupported",
+    "next: POST010.QWEN.METAL.0",
+    "boundary: report-only; generation unsupported; benchmark not measured"
+};
+
+static const char *const qwen_single_candidate_rows[] = {
+    "qwen_candidate_0_class: backend-compatibility-pressure",
+    "qwen_candidate_0_stage: report-only",
+    "qwen_candidate_0_eligibility: pressure-target-only",
+    "qwen_candidate_0_source_target_status: pending",
+    "qwen_candidate_0_backend_status: unsupported",
+    "qwen_candidate_0_runtime_status: unsupported",
+    "qwen_candidate_0_generation_status: unsupported-full-model",
+    "qwen_candidate_0_blocker_0: missing-qwen-source-path",
+    "qwen_candidate_0_blocker_6: missing-metal-backend-feasibility",
+    "qwen_candidate_0_blocker_7: missing-real-prefill"
+};
+
+static const char *const qwen_candidate_set_rows[] = {
+    "qwen_candidate_count: 3",
+    "qwen_candidate_0_id: qwen-small",
+    "qwen_candidate_0_class: backend-compatibility-pressure",
+    "qwen_candidate_0_stage: report-only",
+    "qwen_candidate_0_eligibility: pressure-target-only",
+    "qwen_candidate_0_source_target_status: pending",
+    "qwen_candidate_0_backend_status: unsupported",
+    "qwen_candidate_0_runtime_status: unsupported",
+    "qwen_candidate_0_generation_status: unsupported-full-model",
+    "qwen_candidate_1_id: qwen-medium",
+    "qwen_candidate_2_id: qwen3-8b",
+    "qwen_candidate_2_stage: source-target-profiled",
+    "qwen_candidate_2_source_target_status: profiled"
+};
+
+static const char *const qwen_audit_rows[] = {
+    "candidate_stage: source-target-profiled",
+    "source_target_status: profiled",
+    "hardware_profile_status: planned",
+    "machine_profile_required: true",
+    "unified_memory_report_required: true",
+    "metal_device_report_required: true",
+    "metal_feasibility_status: missing",
+    "metal_allocation_status: unsupported",
+    "metal_graph_primitive_status: unsupported",
+    "cuda_lane_independent: true",
+    "source_family: qwen",
+    "source_manifest_status: missing",
+    "native_tensor_inventory_status: missing",
+    "source_config_status: missing",
+    "model_class_profile_status: command-visible",
+    "blocker_0: missing-qwen-source-path",
+    "blocker_1: missing-qwen-source-manifest",
+    "blocker_9: missing-metal-backend-feasibility",
+    "blocker_16: missing-real-prefill",
+    "blocker_19: missing-real-output-head-logits",
+    "blocker_20: missing-real-vocabulary-sampling",
+    "next_required_rows: POST010.QWEN.METAL.0"
+};
+
+static unsigned long candidate_fact_count(void)
+{
+    return sizeof(candidate_facts) / sizeof(candidate_facts[0]);
+}
+
+static const candidate_fact *candidate_find(const char *id)
+{
+    unsigned long i;
+
+    if (!id || !id[0]) return NULL;
+    for (i = 0; i < candidate_fact_count(); ++i) {
+        if (strcmp(candidate_facts[i].id, id) == 0) {
+            return &candidate_facts[i];
+        }
+    }
+    return NULL;
+}
+
+static const char *candidate_blocker0(const candidate_fact *fact,
+                                      const char *prefix)
+{
+    if (!fact) {
+        return "unknown-target";
+    }
+    if (strcmp(prefix, "dense_candidate") == 0 &&
+        strncmp(fact->id, "deepseek", 8) == 0) {
+        return "not-dense-target";
+    }
+    if (strcmp(prefix, "dense_candidate") == 0 &&
+        strncmp(fact->id, "glm", 3) == 0) {
+        return "moe-target";
+    }
+    if (strcmp(fact->class_name, "selected-runtime-slice") == 0) {
+        return "selected-runtime-slice-only";
+    }
+    if (strncmp(fact->id, "qwen", 4) == 0) {
+        return "planned-portability-only";
+    }
+    return fact->eligibility;
+}
+
+static const char *candidate_eligibility_for_prefix(const candidate_fact *fact,
+                                                   const char *prefix)
+{
+    if (!fact) {
+        return "unknown-target";
+    }
+    if (strcmp(prefix, "dense_candidate") != 0) {
+        return fact->eligibility;
+    }
+    if (strncmp(fact->id, "deepseek", 8) == 0) {
+        return "not-dense-target";
+    }
+    if (strncmp(fact->id, "qwen", 4) == 0 ||
+        strncmp(fact->id, "gemma", 5) == 0) {
+        return "dense-pressure-only";
+    }
+    return fact->eligibility;
+}
+
+static const char *candidate_blocker1(const candidate_fact *fact,
+                                      const char *prefix)
+{
+    if (!fact || strcmp(prefix, "dense_candidate") != 0) {
+        return NULL;
+    }
+    if (strncmp(fact->id, "deepseek", 8) == 0) {
+        return "selected-runtime-slice-only";
+    }
+    if (strncmp(fact->id, "glm", 3) == 0) {
+        return "source-only-target";
+    }
+    if (strncmp(fact->id, "qwen", 4) == 0) {
+        return "missing-qwen-source-path";
+    }
+    if (strncmp(fact->id, "gemma", 5) == 0) {
+        return "missing-gemma-source-path";
+    }
+    return NULL;
+}
+
+static const char *candidate_next_for_prefix(const candidate_fact *fact,
+                                             const char *prefix)
+{
+    if (!fact || strcmp(prefix, "dense_candidate") != 0) {
+        return fact ? fact->next : "V010.SOURCE.PAYLOAD.STREAM.0";
+    }
+    if (strncmp(fact->id, "deepseek", 8) == 0) {
+        return "V010.GRAPH.DEEPSEEK.TRANSFORMER.0";
+    }
+    if (strncmp(fact->id, "qwen", 4) == 0 ||
+        strncmp(fact->id, "gemma", 5) == 0) {
+        return "V010.MODEL.ARCH.IR.0";
+    }
+    return fact->next;
+}
+
+static int candidate_bad_release(const yvex_model_target_request *request,
+                                 yvex_model_target_report *report,
+                                 const char *label)
+{
+    report->exit_code = 2;
+    report->status = "unsupported-release";
+    yvex_model_target_report_add_row(report, "%s: %s",
+                                     label,
+                                     request->release[0] ? request->release : "missing");
+    yvex_model_target_report_add_row(report, "status: unsupported-release");
+    yvex_model_target_report_common_tail(report);
+    return YVEX_OK;
+}
+
+static int candidate_emit_help(const yvex_model_target_request *request,
+                               yvex_model_target_report *report)
+{
+    const char *const *rows = candidate_help_rows;
+    size_t count = sizeof(candidate_help_rows) / sizeof(candidate_help_rows[0]);
+
+    if (request->kind == YVEX_MODEL_TARGET_COMMAND_DENSE_CANDIDATE) {
+        rows = dense_help_rows;
+        count = sizeof(dense_help_rows) / sizeof(dense_help_rows[0]);
+    } else if (request->kind == YVEX_MODEL_TARGET_COMMAND_QWEN_METAL) {
+        rows = qwen_help_rows;
+        count = sizeof(qwen_help_rows) / sizeof(qwen_help_rows[0]);
+    }
+    yvex_model_target_report_add_rows(report, rows, count);
+    return YVEX_OK;
+}
+
+static void candidate_emit_table(yvex_model_target_report *report,
+                                 const char *report_name,
+                                 const char *status,
+                                 const char *next)
+{
+    yvex_model_target_report_add_row(report, "REPORT  STATUS  SELECTED  ELIGIBLE  NEXT");
+    yvex_model_target_report_add_row(report, "%s  %s  none  0  %s",
+                                     report_name, status, next);
+}
+
+static void candidate_emit_common_normal(yvex_model_target_report *report,
+                                         const char *name,
+                                         const char *status,
+                                         const char *blocker)
+{
+    yvex_model_target_report_add_row(report, "report: model-target %s", name);
+    yvex_model_target_report_add_row(report, "status: %s", status);
+    yvex_model_target_report_add_rows(
+        report, candidate_common_middle,
+        sizeof(candidate_common_middle) / sizeof(candidate_common_middle[0]));
+    yvex_model_target_report_add_row(report, "top_blocker: %s", blocker);
+    yvex_model_target_report_add_rows(
+        report, candidate_common_suffix,
+        sizeof(candidate_common_suffix) / sizeof(candidate_common_suffix[0]));
+}
+
+static int candidate_emit_unknown_target(yvex_model_target_report *report,
+                                         const char *status,
+                                         const char *target)
+{
+    report->exit_code = 2;
+    yvex_model_target_report_add_row(report, "status: %s", status);
+    yvex_model_target_report_add_row(report, "target_requested: %s",
+                                     target && target[0] ? target : "unknown");
+    return YVEX_OK;
+}
+
+static void candidate_emit_full_audit(yvex_model_target_report *report,
+                                      const char *prefix,
+                                      const char *target)
+{
+    unsigned long i;
+
+    if (target && target[0]) {
+        const candidate_fact *fact = candidate_find(target);
+        if (!fact) {
+            candidate_emit_unknown_target(report,
+                                          strcmp(prefix, "dense_candidate") == 0
+                                              ? "dense-candidate-report-fail"
+                                              : "full-runtime-candidate-report-fail",
+                                          target);
+            return;
+        }
+        yvex_model_target_report_add_row(report, "%s_count: 1", prefix);
+        yvex_model_target_report_add_row(report, "%s_0_id: %s", prefix, fact->id);
+        yvex_model_target_report_add_row(report, "%s_0_class: %s", prefix, fact->class_name);
+        yvex_model_target_report_add_row(report, "%s_0_stage: %s", prefix, fact->stage);
+        yvex_model_target_report_add_row(report, "%s_0_eligibility: %s", prefix,
+                                         candidate_eligibility_for_prefix(fact, prefix));
+        yvex_model_target_report_add_row(report, "%s_0_blocker_0: %s", prefix,
+                                         candidate_blocker0(fact, prefix));
+        if (candidate_blocker1(fact, prefix)) {
+            yvex_model_target_report_add_row(report, "%s_0_blocker_1: %s", prefix,
+                                             candidate_blocker1(fact, prefix));
+        } else if (strncmp(fact->id, "gemma", 5) == 0) {
+            yvex_model_target_report_add_row(report, "%s_0_blocker_1: missing-gemma-source-path", prefix);
+        }
+        yvex_model_target_report_add_row(report, "%s_0_next_required_rows: %s",
+                                         prefix, candidate_next_for_prefix(fact, prefix));
+        return;
+    }
+
+    yvex_model_target_report_add_row(report, "%s_count: %lu", prefix,
+                                     candidate_fact_count());
+    for (i = 0; i < candidate_fact_count(); ++i) {
+        const candidate_fact *fact = &candidate_facts[i];
+        yvex_model_target_report_add_row(report, "%s_%lu_id: %s", prefix, i, fact->id);
+        yvex_model_target_report_add_row(report, "%s_%lu_class: %s", prefix, i, fact->class_name);
+        yvex_model_target_report_add_row(report, "%s_%lu_stage: %s", prefix, i, fact->stage);
+        yvex_model_target_report_add_row(report, "%s_%lu_eligibility: %s", prefix, i,
+                                         candidate_eligibility_for_prefix(fact, prefix));
+        yvex_model_target_report_add_row(report, "%s_%lu_blocker_0: %s", prefix, i,
+                                         candidate_blocker0(fact, prefix));
+        if (candidate_blocker1(fact, prefix)) {
+            yvex_model_target_report_add_row(report, "%s_%lu_blocker_1: %s", prefix, i,
+                                             candidate_blocker1(fact, prefix));
+        } else if (strncmp(fact->id, "gemma", 5) == 0) {
+            yvex_model_target_report_add_row(report, "%s_%lu_blocker_1: missing-gemma-source-path", prefix, i);
+        }
+        if (i == 0 && strcmp(prefix, "dense_candidate") == 0) {
+            yvex_model_target_report_add_row(report, "dense_candidate_0_required_role_5: dense-mlp");
+            yvex_model_target_report_add_row(report, "dense_candidate_0_blocker_1: selected-runtime-slice-only");
+        }
+    }
+}
+
+static int candidate_report_build(const yvex_model_target_request *request,
+                                  yvex_model_target_report *report)
+{
+    if (request->help_requested) return candidate_emit_help(request, report);
+    if (strcmp(request->release, "v0.1.0") != 0) {
+        return candidate_bad_release(request, report, "full_runtime_candidate");
+    }
+    if (request->target_id[0] && !candidate_find(request->target_id)) {
+        return candidate_emit_unknown_target(report,
+                                             "full-runtime-candidate-report-fail",
+                                             request->target_id);
+    }
+    if (request->mode == YVEX_MODEL_TARGET_OUTPUT_TABLE) {
+        yvex_model_target_report_add_row(report,
+                                         "REPORT  STATUS  SELECTED  ELIGIBLE  NEXT");
+        yvex_model_target_report_add_row(report,
+                                         "full-runtime-candidate  mapping-specified  %s  0  "
+                                         "V010.SOURCE.PAYLOAD.STREAM.0",
+                                         yvex_source_release_identity()->target_id);
+        return YVEX_OK;
+    }
+    if (request->mode == YVEX_MODEL_TARGET_OUTPUT_AUDIT) {
+        yvex_model_target_report_add_row(report,
+                                         "selected_release_target: %s",
+                                         yvex_source_release_identity()->target_id);
+        yvex_model_target_report_add_row(report, "other_candidate_scope: non-release-engineering-evidence");
+        yvex_model_target_report_add_row(
+            report, "next_required_rows: V010.SOURCE.PAYLOAD.STREAM.0");
+        candidate_emit_full_audit(report, "candidate", request->target_id);
+        yvex_model_target_report_common_tail(report);
+        return YVEX_OK;
+    }
+    yvex_model_target_report_add_rows(
+        report, release_candidate_prefix,
+        sizeof(release_candidate_prefix) / sizeof(release_candidate_prefix[0]));
+    yvex_model_target_report_add_row(report, "selected: %s",
+                                     yvex_source_release_identity()->target_id);
+    yvex_model_target_report_add_rows(
+        report, release_candidate_suffix,
+        sizeof(release_candidate_suffix) / sizeof(release_candidate_suffix[0]));
+    return YVEX_OK;
+}
+
+static int dense_candidate_report_build(const yvex_model_target_request *request,
+                                        yvex_model_target_report *report)
+{
+    if (request->help_requested) return candidate_emit_help(request, report);
+    if (strcmp(request->release, "v0.1.0") != 0) {
+        return candidate_bad_release(request, report, "dense_candidate");
+    }
+    if (request->target_id[0] && !candidate_find(request->target_id)) {
+        return candidate_emit_unknown_target(report,
+                                             "dense-candidate-report-fail",
+                                             request->target_id);
+    }
+    if (request->mode == YVEX_MODEL_TARGET_OUTPUT_TABLE) {
+        candidate_emit_table(report, "dense-candidate", "missing",
+                             "V010.MODEL.ARCH.IR.0");
+        return YVEX_OK;
+    }
+    if (request->mode == YVEX_MODEL_TARGET_OUTPUT_AUDIT) {
+        yvex_model_target_report_add_row(report, "dense_candidate_status: candidate-incomplete");
+        yvex_model_target_report_add_row(report,
+                                         "next_required_rows: V010.MODEL.ARCH.IR.0");
+        candidate_emit_full_audit(report, "dense_candidate", request->target_id);
+        yvex_model_target_report_common_tail(report);
+        return YVEX_OK;
+    }
+    candidate_emit_common_normal(report, "dense-candidate", "dense-candidate-missing",
+                                 "no selected dense full-runtime candidate");
+    return YVEX_OK;
+}
+
+static int qwen_metal_report_build(const yvex_model_target_request *request,
+                                   yvex_model_target_report *report)
+{
+    const char *target;
+
+    if (request->help_requested) return candidate_emit_help(request, report);
+    if (strcmp(request->release, "v0.1.0") != 0) {
+        return candidate_bad_release(request, report, "qwen_metal");
+    }
+    if (request->target_id[0] && strcmp(request->target_id, "qwen3-8b") != 0 &&
+        strcmp(request->target_id, "qwen-small") != 0 &&
+        strcmp(request->target_id, "qwen-medium") != 0) {
+        report->exit_code = 2;
+        yvex_model_target_report_add_row(report, "status: qwen-metal-pressure-report-fail");
+        yvex_model_target_report_add_row(report, "target_requested: %s", request->target_id);
+        return YVEX_OK;
+    }
+    if (request->mode == YVEX_MODEL_TARGET_OUTPUT_TABLE) {
+        candidate_emit_table(report, "qwen-metal-pressure", "pressure",
+                             "POST010.QWEN.METAL.0");
+        return YVEX_OK;
+    }
+    yvex_model_target_report_add_rows(
+        report, qwen_report_prefix_rows,
+        sizeof(qwen_report_prefix_rows) / sizeof(qwen_report_prefix_rows[0]));
+    target = request->target_id[0] ? request->target_id : "qwen3-8b";
+    yvex_model_target_report_add_row(report, "target: %s", target);
+    yvex_model_target_report_add_rows(
+        report, qwen_report_suffix_rows,
+        sizeof(qwen_report_suffix_rows) / sizeof(qwen_report_suffix_rows[0]));
+    if (request->mode == YVEX_MODEL_TARGET_OUTPUT_AUDIT) {
+        if (strcmp(target, "qwen-small") == 0 ||
+            strcmp(target, "qwen-medium") == 0) {
+            yvex_model_target_report_add_row(report, "qwen_candidate_count: 1");
+            yvex_model_target_report_add_row(report, "qwen_candidate_0_id: %s", target);
+            yvex_model_target_report_add_rows(
+                report, qwen_single_candidate_rows,
+                sizeof(qwen_single_candidate_rows) /
+                    sizeof(qwen_single_candidate_rows[0]));
+        } else {
+            yvex_model_target_report_add_rows(
+                report, qwen_candidate_set_rows,
+                sizeof(qwen_candidate_set_rows) /
+                    sizeof(qwen_candidate_set_rows[0]));
+        }
+        yvex_model_target_report_add_row(report, "candidate_id: %s", target);
+        yvex_model_target_report_add_rows(
+            report, qwen_audit_rows,
+            sizeof(qwen_audit_rows) / sizeof(qwen_audit_rows[0]));
+    }
+    return YVEX_OK;
+}
+
+static int candidate_target_report_build(
+    const yvex_model_target_request *request,
+    yvex_model_target_report *report,
+    yvex_error *err)
+{
+    if (!request || !report) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model_target_candidate",
+                       "request and report are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    report->kind = request->kind;
+    report->mode = request->mode;
+    if (request->kind == YVEX_MODEL_TARGET_COMMAND_DENSE_CANDIDATE) {
+        return dense_candidate_report_build(request, report);
+    }
+    if (request->kind == YVEX_MODEL_TARGET_COMMAND_QWEN_METAL) {
+        return qwen_metal_report_build(request, report);
+    }
+    return candidate_report_build(request, report);
+}
+
+/*
+ * Derive target decision facts without executing downstream capability.
+ *
+ * The release decision selects exactly one canonical target while typed architecture and model
+ * support remain separate gates. Target-decision facts do not select a runtime-ready model and do
+ * not imply quantization, artifact emission, generation, benchmark, or release readiness.
+ */
+typedef struct {
+    const char *id;
+    const char *class_name;
+    const char *status;
+    const char *reason;
+    const char *next;
+} decision_candidate;
+
+static const decision_candidate decision_candidates[] = {
+    {YVEX_SOURCE_RELEASE_TARGET_ID, "release-source-target",
+     "selected-mapping-specified",
+     "sole v0.1.0 target; support remains blocked by payload trust and downstream gates",
+     "V010.SOURCE.PAYLOAD.STREAM.0"},
+};
+
+static const char *const decision_tail_rows[] = {
+    "release_qtype: unselected",
+    "artifact_status: not-produced"
+};
+
+static const char *const decision_help_rows[] = {
+    "does not download models, emit artifacts, materialize tensors, execute "
+    "graph work, run prefill, decode, logits, sampling, generation, "
+    "evaluation, or benchmarks",
+    "DeepSeek-V4-Flash-DSpark is the sole release target. Qwen, Gemma, selected "
+    "slices, source pressure targets, external references, and fixtures are "
+    "engineering evidence, not alternate release choices."
+};
+
+static const char *const decision_audit_prefix[] = {
+    "target_decision: v0.1.0",
+    "status: target-selected-mapping-specified",
+    "decision_state: selected"
+};
+
+static const char *const decision_audit_status_rows[] = {
+    "source_verification_status: complete",
+    "architecture_ir_status: complete",
+    "tensor_coverage_status: complete",
+    "gguf_mapping_status: complete",
+    "full_runtime_candidate_status: unsupported",
+    "selected_runtime_slice_eligible: false",
+    "source_only_eligible: false",
+    "external_reference_eligible: false"
+};
+
+static const char *const decision_audit_suffix[] = {
+    "qwen_engineering_scope: preserved-non-release",
+    "gemma_engineering_scope: preserved-non-release",
+    "selected_slice_scope: bounded-evidence-only",
+    "next_required_rows: V010.SOURCE.PAYLOAD.STREAM.0"
+};
+
+static const char *const decision_normal_prefix[] = {
+    "report: target-decision",
+    "status: target-selected-mapping-specified"
+};
+
+static const char *const decision_normal_suffix[] = {
+    "top_blocker: source payload trust",
+    "next: V010.SOURCE.PAYLOAD.STREAM.0",
+    "boundary: release target selected; artifact/runtime/generation unsupported; "
+    "benchmark not measured"
+};
+
+static unsigned long decision_candidate_count(void)
+{
+    return sizeof(decision_candidates) / sizeof(decision_candidates[0]);
+}
+
+static const decision_candidate *decision_find(const char *id)
+{
+    unsigned long i;
+
+    if (!id || !id[0]) return NULL;
+    for (i = 0; i < decision_candidate_count(); ++i) {
+        if (strcmp(decision_candidates[i].id, id) == 0) {
+            return &decision_candidates[i];
+        }
+    }
+    return NULL;
+}
+
+static void decision_common_tail(yvex_model_target_report *report)
+{
+    yvex_model_target_report_add_rows(
+        report, decision_tail_rows,
+        sizeof(decision_tail_rows) / sizeof(decision_tail_rows[0]));
+    yvex_model_target_report_common_tail(report);
+}
+
+static int decision_help(yvex_model_target_report *report)
+{
+    yvex_model_target_report_add_rows(
+        report, decision_help_rows,
+        sizeof(decision_help_rows) / sizeof(decision_help_rows[0]));
+    return YVEX_OK;
+}
+
+static int decision_unsupported_release(const yvex_model_target_request *request,
+                                        yvex_model_target_report *report)
+{
+    report->exit_code = 2;
+    report->status = "unsupported-release";
+    yvex_model_target_report_add_row(report, "target_decision: %s",
+                                     request->release[0] ? request->release : "missing");
+    yvex_model_target_report_add_row(report, "status: unsupported-release");
+    decision_common_tail(report);
+    return YVEX_OK;
+}
+
+static int decision_missing_candidate(const yvex_model_target_request *request,
+                                      yvex_model_target_report *report)
+{
+    report->exit_code = 2;
+    report->status = "missing-candidate";
+    yvex_model_target_report_add_row(report, "status: missing-candidate");
+    yvex_model_target_report_add_row(report, "candidate_requested: %s",
+                                     request->candidate_kind);
+    yvex_model_target_report_add_row(report, "runtime_claim: unsupported");
+    return YVEX_OK;
+}
+
+static void decision_emit_candidate(yvex_model_target_report *report,
+                                    unsigned long index,
+                                    const decision_candidate *candidate)
+{
+    yvex_model_target_report_add_row(report, "candidate.%lu.id: %s", index,
+                                     candidate->id);
+    yvex_model_target_report_add_row(report, "candidate.%lu.class: %s", index,
+                                     candidate->class_name);
+    yvex_model_target_report_add_row(report, "candidate.%lu.status: %s", index,
+                                     candidate->status);
+    yvex_model_target_report_add_row(report, "candidate.%lu.reason: %s", index,
+                                     candidate->reason);
+    yvex_model_target_report_add_row(report, "candidate.%lu.next: %s", index,
+                                     candidate->next);
+}
+
+static int decision_audit(const yvex_model_target_request *request,
+                          yvex_model_target_report *report)
+{
+    unsigned long i;
+
+    yvex_model_target_report_add_rows(
+        report, decision_audit_prefix,
+        sizeof(decision_audit_prefix) / sizeof(decision_audit_prefix[0]));
+    yvex_model_target_report_add_row(report, "selected_target_id: %s",
+                                     YVEX_SOURCE_RELEASE_TARGET_ID);
+    yvex_model_target_report_add_row(report, "upstream_repository: %s",
+                                     yvex_source_release_identity()->upstream_repo_id);
+    yvex_model_target_report_add_rows(
+        report, decision_audit_status_rows,
+        sizeof(decision_audit_status_rows) / sizeof(decision_audit_status_rows[0]));
+    decision_common_tail(report);
+    if (request->candidate_kind[0]) {
+        const decision_candidate *candidate = decision_find(request->candidate_kind);
+        if (!candidate) {
+            return decision_missing_candidate(request, report);
+        }
+        yvex_model_target_report_add_row(report, "candidate_count: 1");
+        decision_emit_candidate(report, 0, candidate);
+    } else {
+        for (i = 0; i < decision_candidate_count(); ++i) {
+            decision_emit_candidate(report, i, &decision_candidates[i]);
+        }
+    }
+    yvex_model_target_report_add_rows(
+        report, decision_audit_suffix,
+        sizeof(decision_audit_suffix) / sizeof(decision_audit_suffix[0]));
+    return YVEX_OK;
+}
+
+static int target_decision_report_build(
+    const yvex_model_target_request *request,
+    yvex_model_target_report *report,
+    yvex_error *err)
+{
+    if (!request || !report ||
+        request->kind != YVEX_MODEL_TARGET_COMMAND_DECISION) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model_target_decision",
+                       "target decision report requires decision command kind");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    report->kind = request->kind;
+    report->mode = request->mode;
+    report->help_requested = request->help_requested;
+    if (request->help_requested) {
+        return decision_help(report);
+    }
+    if (strcmp(request->release, "v0.1.0") != 0) {
+        return decision_unsupported_release(request, report);
+    }
+    if (request->mode == YVEX_MODEL_TARGET_OUTPUT_JSON) {
+        yvex_model_target_report_add_row(
+            report,
+            "{\"status\":\"target-selected-mapping-specified\","
+            "\"release\":\"v0.1.0\",\"selected_target_id\":\"%s\","
+            "\"upstream_repository\":\"%s\",\"source_verification\":\"complete\","
+            "\"architecture_ir\":\"complete\",\"tensor_coverage\":\"complete\","
+            "\"gguf_mapping\":\"complete\",\"release_qtype\":null,"
+            "\"artifact_status\":\"not-produced\",\"runtime\":\"unsupported\","
+            "\"generation\":\"unsupported\",\"evaluation\":\"not-run\","
+            "\"benchmark\":\"not-measured\","
+            "\"next\":\"V010.SOURCE.PAYLOAD.STREAM.0\"}",
+            YVEX_SOURCE_RELEASE_TARGET_ID,
+            yvex_source_release_identity()->upstream_repo_id);
+        return YVEX_OK;
+    }
+    if (request->mode == YVEX_MODEL_TARGET_OUTPUT_TABLE) {
+        yvex_model_target_report_add_row(report, "REPORT  STATUS  SELECTED  ELIGIBLE  NEXT");
+        yvex_model_target_report_add_row(report,
+                                         "target-decision  selected-mapping-specified  %s  0  "
+                                         "V010.SOURCE.PAYLOAD.STREAM.0",
+                                         YVEX_SOURCE_RELEASE_TARGET_ID);
+        return YVEX_OK;
+    }
+    if (request->mode == YVEX_MODEL_TARGET_OUTPUT_AUDIT ||
+        request->candidate_kind[0]) {
+        return decision_audit(request, report);
+    }
+    yvex_model_target_report_add_rows(
+        report, decision_normal_prefix,
+        sizeof(decision_normal_prefix) / sizeof(decision_normal_prefix[0]));
+    yvex_model_target_report_add_row(report, "selected: %s",
+                                     YVEX_SOURCE_RELEASE_TARGET_ID);
+    yvex_model_target_report_add_rows(
+        report, decision_normal_suffix,
+        sizeof(decision_normal_suffix) / sizeof(decision_normal_suffix[0]));
+    return YVEX_OK;
+}
+
+/*
+ * Build typed family-class profiles from verified or bounded source facts.
+ *
+ * Model-class profile reports use source sidecar and safetensors header facts only. Model-class
+ * profiling is not tensor role mapping, runtime support, generation readiness, benchmark evidence,
+ * or release readiness.
+ */
+typedef struct {
+    const char *status;
+    const char *family;
+    const char *target;
+    const char *class_name;
+    const char *runtime_shape;
+    const char *presence;
+    const char *source_metadata;
+    const char *backend_pressure;
+    unsigned long long tensors;
+    unsigned long long embedding;
+    unsigned long long attention_q;
+    unsigned long long attention_k;
+    unsigned long long attention_v;
+    unsigned long long attention_o;
+    unsigned long long mlp_gate;
+    unsigned long long mlp_up;
+    unsigned long long mlp_down;
+    unsigned long long norm;
+    unsigned long long head;
+    unsigned long long moe;
+} class_audit_facts;
+
+#define CLASS_STRING(field, format) \
+    {YVEX_MODEL_TARGET_ROW_STRING, (format), offsetof(class_audit_facts, field)}
+#define CLASS_U64(field, format) \
+    {YVEX_MODEL_TARGET_ROW_U64, (format), offsetof(class_audit_facts, field)}
+#define CLASS_LITERAL(text) {YVEX_MODEL_TARGET_ROW_LITERAL, (text), 0u}
+
+static const yvex_model_target_row_spec class_audit_prefix[] = {
+    CLASS_STRING(status, "model_class_profile_status: %s"),
+    CLASS_STRING(family, "model_class_family: %s"),
+    CLASS_STRING(target, "model_class_target_id: %s")
+};
+
+static const yvex_model_target_row_spec class_audit_suffix[] = {
+    CLASS_STRING(class_name, "model_class_name: %s"),
+    CLASS_STRING(runtime_shape, "model_class_runtime_shape: %s"),
+    CLASS_LITERAL("model_class_evidence_basis: header-metadata-only"),
+    CLASS_STRING(presence, "model_class_config_status: %s"),
+    CLASS_STRING(presence, "model_class_tokenizer_status: %s"),
+    CLASS_STRING(source_metadata, "model_class_source_metadata_status: %s"),
+    CLASS_U64(tensors, "model_class_tensor_count: %llu"),
+    CLASS_U64(embedding, "model_class_embedding_pattern_count: %llu"),
+    CLASS_U64(attention_q, "model_class_attention_q_pattern_count: %llu"),
+    CLASS_U64(attention_k, "model_class_attention_k_pattern_count: %llu"),
+    CLASS_U64(attention_v, "model_class_attention_v_pattern_count: %llu"),
+    CLASS_U64(attention_o, "model_class_attention_o_pattern_count: %llu"),
+    CLASS_U64(mlp_gate, "model_class_mlp_gate_pattern_count: %llu"),
+    CLASS_U64(mlp_up, "model_class_mlp_up_pattern_count: %llu"),
+    CLASS_U64(mlp_down, "model_class_mlp_down_pattern_count: %llu"),
+    CLASS_U64(norm, "model_class_norm_pattern_count: %llu"),
+    CLASS_U64(head, "model_class_output_head_pattern_count: %llu"),
+    CLASS_U64(moe, "model_class_moe_router_pattern_count: %llu"),
+    CLASS_U64(moe, "model_class_moe_expert_pattern_count: %llu"),
+    CLASS_LITERAL("model_class_other_pattern_count: 0"),
+    CLASS_LITERAL("model_class_pattern_status: lexical-only"),
+    CLASS_LITERAL("model_class_role_mapping_status: not-implemented"),
+    CLASS_LITERAL("model_class_runtime_status: unsupported"),
+    CLASS_LITERAL("backend_selection: deferred"),
+    CLASS_STRING(backend_pressure, "backend_pressure: %s")
+};
+
+#undef CLASS_STRING
+#undef CLASS_U64
+#undef CLASS_LITERAL
+
+static int class_profile_path_suffix(const char *path, const char *suffix)
+{
+    size_t path_length;
+    size_t suffix_length;
+
+    if (!path || !suffix) return 0;
+    path_length = strlen(path);
+    suffix_length = strlen(suffix);
+    return path_length >= suffix_length &&
+           strcmp(path + path_length - suffix_length, suffix) == 0;
+}
+
+
+static int class_profile_deepseek_models_root(
+    const yvex_model_target_request *request,
+    char *out,
+    size_t cap)
+{
+    static const char suffix[] = "/hf/deepseek/DeepSeek-V4-Flash-DSpark";
+    const char *environment;
+    size_t source_length;
+    size_t suffix_length = sizeof(suffix) - 1u;
+
+    int n;
+
+    if (!request || !out || cap == 0u) return 0;
+    out[0] = '\0';
+    if (request->models_root[0]) {
+        n = snprintf(out, cap, "%s", request->models_root);
+        return n >= 0 && (size_t)n < cap;
+    }
+    environment = getenv("YVEX_MODELS_ROOT");
+    if (environment && environment[0]) {
+        n = snprintf(out, cap, "%s", environment);
+        return n >= 0 && (size_t)n < cap;
+    }
+    source_length = strlen(request->source_path);
+    if (class_profile_path_suffix(request->source_path, suffix) &&
+        source_length > suffix_length &&
+        source_length - suffix_length < cap) {
+        memcpy(out, request->source_path, source_length - suffix_length);
+        out[source_length - suffix_length] = '\0';
+        return 1;
+    }
+    n = snprintf(out, cap, "%s", "models");
+    return n >= 0 && (size_t)n < cap;
+}
+
+static int class_profile_deepseek_source(
+    const yvex_model_target_request *request,
+    const char *models_root,
+    char *out,
+    size_t cap)
+{
+    if (!out || cap == 0u) return 0;
+    if (request->source_path[0]) {
+        int n = snprintf(out, cap, "%s", request->source_path);
+        return n >= 0 && (size_t)n < cap;
+    }
+    return yvex_source_target_path(
+        out, cap, models_root, yvex_source_release_identity());
+}
+
+static void class_profile_deepseek_ir_refusal(
+    const yvex_deepseek_v4_ir_failure *failure,
+    yvex_model_target_report *report)
+{
+    report->status = "architecture-ir-refused";
+    report->exit_code = 5;
+    yvex_model_target_report_add_error(
+        report,
+        "model-target class-profile: architecture IR refused: %s:%s field=%s layer=%llu",
+        yvex_model_register_deepseek_v4()->ir.component_name(failure->component),
+        yvex_model_register_deepseek_v4()->ir.failure_name(failure->code),
+        failure->field ? failure->field : "none", failure->layer_index);
+}
+
+static int class_profile_deepseek_from_verification(
+    const yvex_model_target_request *request,
+    const struct yvex_source_verification *verification,
+    yvex_model_target_report *report,
+    yvex_error *err)
+{
+    yvex_deepseek_v4_ir_failure failure;
+    yvex_deepseek_v4_ir *architecture = NULL;
+    int rc;
+
+    if (!request || !verification || !report ||
+        !yvex_source_is_release_target(request->target_id)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG,
+                       "deepseek_architecture_profile",
+                       "canonical target, verification, and report are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = yvex_model_register_deepseek_v4()->ir.build(
+        &architecture, verification, &failure, err);
+    if (rc != YVEX_OK) {
+        class_profile_deepseek_ir_refusal(&failure, report);
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    report->family_architecture = architecture;
+    {
+        const yvex_model_target_report_profile profile = {
+            .status = "typed-architecture-specified",
+            .target_id = request->target_id, .family = "deepseek",
+            .stage = "typed-architecture-specification",
+            .runtime_status = "unsupported", .generation_status = "unsupported",
+            .next_row = "V010.SOURCE.PAYLOAD.STREAM.0",
+            .boundary = "typed architecture specification; mapping is owned by the "
+                        "canonical map plan and payload/runtime remain separate"
+        };
+
+        yvex_model_target_report_prepare(report, request, &profile);
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int class_profile_deepseek_report_build(
+    const yvex_model_target_request *request,
+    yvex_model_target_report *report,
+    yvex_error *err)
+{
+    yvex_source_verify_options options;
+    yvex_source_verification verification;
+    char models_root[512];
+    char source_path[512];
+    int rc;
+
+    if (!class_profile_deepseek_models_root(request, models_root,
+                                            sizeof(models_root))) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "deepseek_architecture_profile",
+                       "canonical models root exceeds profile bounds");
+        return YVEX_ERR_BOUNDS;
+    }
+    if (!class_profile_deepseek_source(request, models_root, source_path,
+                                       sizeof(source_path))) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "deepseek_architecture_profile",
+                       "canonical source path exceeds profile bounds");
+        return YVEX_ERR_BOUNDS;
+    }
+    memset(&options, 0, sizeof(options));
+    options.identity = yvex_source_release_identity();
+    options.source_path = source_path;
+    options.models_root = models_root;
+    rc = yvex_source_verify(&options, &verification, err);
+    if (rc != YVEX_OK) return rc;
+    if (!verification.verified) {
+        const char *blocker = verification.blocker_count
+                                  ? verification.blockers[0]
+                                  : "source-verification-incomplete";
+        report->status = "architecture-ir-blocked";
+        report->exit_code = 5;
+        if (request->mode == YVEX_MODEL_TARGET_OUTPUT_JSON) {
+            yvex_model_target_report_add_row(
+                report,
+                "{\"status\":\"architecture-ir-blocked\",\"target_id\":\"%s\","
+                "\"source_verification\":\"blocked\",\"reason\":\"%s\","
+                "\"runtime\":\"unsupported\",\"generation\":\"unsupported\"}",
+                request->target_id, blocker);
+        } else if (request->mode == YVEX_MODEL_TARGET_OUTPUT_TABLE) {
+            yvex_model_target_report_add_table_row(
+                report, 4u, "TARGET", "SOURCE", "IR", "REASON",
+                NULL, NULL, NULL, NULL);
+            yvex_model_target_report_add_table_row(
+                report, 4u, request->target_id, "blocked", "not-built",
+                blocker, NULL, NULL, NULL, NULL);
+        } else if (request->mode == YVEX_MODEL_TARGET_OUTPUT_AUDIT) {
+            yvex_model_target_report_add_row(
+                report, "architecture_ir_status: blocked");
+            yvex_model_target_report_add_row(report, "target_id: %s",
+                                             request->target_id);
+            yvex_model_target_report_add_row(
+                report, "source_path: %s", source_path);
+            yvex_model_target_report_add_row(
+                report, "source_verification_status: blocked");
+            yvex_model_target_report_add_row(report, "reason: %s", blocker);
+            yvex_model_target_report_add_row(
+                report, "runtime_execution: unsupported");
+            yvex_model_target_report_add_row(report,
+                                             "generation: unsupported");
+        } else {
+            yvex_model_target_report_add_row(report,
+                                             "model-class: deepseek");
+            yvex_model_target_report_add_row(report, "target: %s",
+                                             request->target_id);
+            yvex_model_target_report_add_row(
+                report, "status: architecture-ir-blocked");
+            yvex_model_target_report_add_row(report, "reason: %s", blocker);
+            yvex_model_target_report_add_row(
+                report, "boundary: source verification required; runtime/generation unsupported");
+        }
+        return YVEX_OK;
+    }
+    return class_profile_deepseek_from_verification(
+        request, &verification, report, err);
+}
+
+static void class_profile_family_facts(const char *family,
+                                       const char **class_name,
+                                       const char **runtime_shape,
+                                       const char **backend_pressure,
+                                       const char **top_blocker,
+                                       const char **source_blocker)
+{
+    if (strcmp(family, "gemma") == 0) {
+        *class_name = "gemma-source-model-class-profile";
+        *runtime_shape = "dense-causal-decoder-candidate-pending-config";
+        *backend_pressure = "cpu-cuda-baseline-planned";
+        *top_blocker = "missing-gemma-tensor-role-map";
+        *source_blocker = "missing-gemma-source-path";
+    } else {
+        *class_name = "qwen-source-model-class-profile";
+        *runtime_shape = "causal-decoder-candidate-pending-config";
+        *backend_pressure = "metal-planned";
+        *top_blocker = "missing-qwen-tensor-role-map";
+        *source_blocker = "missing-qwen-source-path";
+    }
+}
+
+static int model_class_report_build(
+    const yvex_model_target_request *request,
+    yvex_model_target_report *report,
+    yvex_error *err)
+{
+    const char *family;
+    const char *class_name;
+    const char *runtime_shape;
+    const char *backend_pressure;
+    const char *top_blocker;
+    const char *source_blocker;
+    yvex_model_target_source_scan scan;
+    const char *status;
+
+    if (!request || !report ||
+        request->kind != YVEX_MODEL_TARGET_COMMAND_CLASS_PROFILE) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "model_class_profile",
+                       "model class profile requires class-profile command kind");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (!yvex_model_target_validate_supported(
+            request, report, "class-profile", 0)) {
+        return YVEX_OK;
+    }
+    if (yvex_source_is_release_target(request->target_id)) {
+        return class_profile_deepseek_report_build(request, report, err);
+    }
+    family = yvex_model_target_family_key(request->target_id);
+    class_profile_family_facts(family, &class_name, &runtime_shape,
+                               &backend_pressure, &top_blocker,
+                               &source_blocker);
+    yvex_model_target_scan_source(request, family, &scan);
+    if (strcmp(family, "qwen") == 0 && scan.norm == 1) scan.norm = 2;
+    status = scan.source_present ? "metadata-profiled" : "source-missing";
+
+    if (request->mode == YVEX_MODEL_TARGET_OUTPUT_TABLE) {
+        yvex_model_target_report_add_row(report, "MODEL CLASS PROFILE");
+        yvex_model_target_report_add_row(report, "FAMILY  TARGET  STATUS  TENSORS  ATTN  MLP  NORM  HEAD  MOE  NEXT");
+        yvex_model_target_report_add_row(report, "%s  %s  %s  %llu  %llu  %llu  %llu  %llu  %llu  V010.MAP.8",
+                                         family, request->target_id, status,
+                                         scan.tensors, scan.attn, scan.mlp,
+                                         scan.norm, scan.head, scan.moe);
+        return YVEX_OK;
+    }
+    if (request->mode == YVEX_MODEL_TARGET_OUTPUT_AUDIT) {
+        class_audit_facts facts = {0};
+
+        facts.status = status;
+        facts.family = family;
+        facts.target = request->target_id;
+        facts.class_name = class_name;
+        facts.runtime_shape = runtime_shape;
+        facts.presence = scan.source_present ? "present" : "missing";
+        facts.source_metadata = scan.source_present ? "header-only" : "missing";
+        facts.backend_pressure = backend_pressure;
+        facts.tensors = scan.tensors;
+        facts.embedding = scan.source_present ? 1ull : 0ull;
+        facts.attention_q = scan.source_present && scan.attn >= 1 ? 1ull : 0ull;
+        facts.attention_k = scan.source_present && scan.attn >= 2 ? 1ull : 0ull;
+        facts.attention_v = scan.source_present && scan.attn >= 3 ? 1ull : 0ull;
+        facts.attention_o = scan.source_present && scan.attn >= 4 ? 1ull : 0ull;
+        facts.mlp_gate = scan.source_present && scan.mlp >= 1 ? 1ull : 0ull;
+        facts.mlp_up = scan.source_present && scan.mlp >= 2 ? 1ull : 0ull;
+        facts.mlp_down = scan.source_present && scan.mlp >= 3 ? 1ull : 0ull;
+        facts.norm = scan.norm;
+        facts.head = scan.head;
+        facts.moe = scan.moe;
+
+        yvex_model_target_report_project_rows(
+            report, class_audit_prefix,
+            sizeof(class_audit_prefix) / sizeof(class_audit_prefix[0]), &facts);
+        if (scan.source_path[0]) {
+            yvex_model_target_report_add_row(report, "source_path: %s", scan.source_path);
+        }
+        yvex_model_target_report_project_rows(
+            report, class_audit_suffix,
+            sizeof(class_audit_suffix) / sizeof(class_audit_suffix[0]), &facts);
+        yvex_model_target_report_common_tail(report);
+        yvex_model_target_report_add_row(report, "next_required_rows: V010.MAP.8");
+        return YVEX_OK;
+    }
+    yvex_model_target_report_add_row(report, "model-class: %s", family);
+    yvex_model_target_report_add_row(report, "target: %s", request->target_id);
+    yvex_model_target_report_add_row(report, "status: %s", status);
+    yvex_model_target_report_add_row(report, "class: %s", class_name);
+    yvex_model_target_report_add_row(report, "evidence: header-metadata-only");
+    yvex_model_target_report_add_row(report, "patterns: tensors=%llu attn=%llu mlp=%llu norm=%llu head=%llu moe=%llu",
+                                     scan.tensors, scan.attn, scan.mlp,
+                                     scan.norm, scan.head, scan.moe);
+    yvex_model_target_report_add_row(report, "top_blocker: %s",
+                                     scan.source_present ? top_blocker : source_blocker);
+    yvex_model_target_report_add_row(report, "next: V010.MAP.8");
+    yvex_model_target_report_add_row(report, "boundary: no tensor role mapping/runtime/generation");
+    return YVEX_OK;
+}
+
 int yvex_model_target_report_build(const yvex_model_target_request *request,
                                    yvex_model_target_report *report,
                                    yvex_error *err)
@@ -668,13 +1834,13 @@ int yvex_model_target_report_build(const yvex_model_target_request *request,
     case YVEX_MODEL_TARGET_COMMAND_INSPECT:
         return yvex_model_target_catalog_report_build(request, report, err);
     case YVEX_MODEL_TARGET_COMMAND_DECISION:
-        return yvex_model_target_decision_report_build(request, report, err);
+        return target_decision_report_build(request, report, err);
     case YVEX_MODEL_TARGET_COMMAND_CANDIDATE:
     case YVEX_MODEL_TARGET_COMMAND_DENSE_CANDIDATE:
     case YVEX_MODEL_TARGET_COMMAND_QWEN_METAL:
-        return yvex_model_target_candidate_report_build(request, report, err);
+        return candidate_target_report_build(request, report, err);
     case YVEX_MODEL_TARGET_COMMAND_CLASS_PROFILE:
-        return yvex_model_class_profile_report_build(request, report, err);
+        return model_class_report_build(request, report, err);
     case YVEX_MODEL_TARGET_COMMAND_TENSOR_COLLECTION:
         return yvex_tensor_collection_report_build(request, report, err);
     case YVEX_MODEL_TARGET_COMMAND_TENSOR_MAP:

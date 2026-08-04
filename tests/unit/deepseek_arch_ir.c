@@ -762,7 +762,7 @@ static int test_arch_ir_report_consumer_and_family_preservation(void)
     arch_ir_copy(request.target_id, sizeof(request.target_id), "qwen3-8b");
     arch_ir_copy(request.models_root, sizeof(request.models_root),
                  "build/tests/missing-arch-ir-qwen");
-    YVEX_TEST_ASSERT(yvex_model_class_profile_report_build(
+    YVEX_TEST_ASSERT(yvex_model_target_report_build(
                          &request, &report, &err) == YVEX_OK &&
                      report_has(&report, "qwen-source-model-class-profile"),
                      "Qwen evidence path remains intact");
@@ -776,7 +776,7 @@ static int test_arch_ir_report_consumer_and_family_preservation(void)
                  "gemma-4-12b-it");
     arch_ir_copy(request.models_root, sizeof(request.models_root),
                  "build/tests/missing-arch-ir-gemma");
-    YVEX_TEST_ASSERT(yvex_model_class_profile_report_build(
+    YVEX_TEST_ASSERT(yvex_model_target_report_build(
                          &request, &report, &err) == YVEX_OK &&
                      report_has(&report, "gemma-source-model-class-profile"),
                      "Gemma evidence path remains intact");

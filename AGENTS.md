@@ -120,6 +120,13 @@ visibility is `public` or `private`. An owner may have one `interface` and one
 partitions. Exceptions are forbidden unless explicitly authorized and given a
 stable identifier.
 
+The same manifest is the only handwritten production source-membership list.
+`tools/generate_source_manifest.py` validates exact filesystem parity and
+projects deterministic product, toolchain, and test build classes beneath the
+selected `BUILD_DIR`; the generated Make fragment is never tracked or edited.
+The root Makefile composes products from those classes and may not repeat a
+per-file production inventory or admit sources through wildcards.
+
 Before adding or moving production code:
 
 1. identify the canonical owner and consumers;

@@ -1007,6 +1007,7 @@ class Audit:
             "physical_lines",
             "code_lines",
             "executable_lines",
+            "semantic_owners",
         ):
             if int(metrics[key]) > limits[key]:
                 errors.append(f"{key} exceeds policy: {metrics[key]} > {limits[key]}")
@@ -1014,6 +1015,7 @@ class Audit:
         tier_counts = Counter(self.header_tier(path) or "invalid" for path in self.headers)
         for tier, limit_key in (
             ("public", "public_headers"),
+            ("internal", "internal_headers"),
             ("source", "source_headers"),
         ):
             if tier_counts[tier] > limits[limit_key]:
@@ -1140,7 +1142,6 @@ class Audit:
         for variable in self.policy["archive"]["source_variables"]:
             values = [value for value in self.make_variable(variable) if value.startswith("src/")]
             declared.extend(values)
-        declared.append("src/daemon/yvexd.c")
         duplicates = sorted(name for name, count in Counter(declared).items() if count > 1)
         if duplicates:
             errors.append(f"duplicate Makefile source entries: {duplicates}")

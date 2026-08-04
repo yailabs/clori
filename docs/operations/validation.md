@@ -33,6 +33,7 @@ Boundary:
 ```sh
 make
 make smoke
+make check-source-manifest
 ```
 
 ## Focused Documentation Check

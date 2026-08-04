@@ -3,7 +3,7 @@
  * Deterministic fixture identities are never interpreted as measured runtime evidence. Focused
  * software tests exercise the internal profiling ABI only.
  */
-#include <yvex/internal/profile.h>
+#include <yvex/internal/generation.h>
 #include <limits.h>
 #include <string.h>
 #include "tests/test.h"

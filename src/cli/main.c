@@ -13,6 +13,7 @@
 #include <operator/registry.h>
 #include "src/cli/input/private.h"
 #include "src/cli/io/private.h"
+#include "src/cli/model_artifacts/private.h"
 #include "src/cli/private.h"
 
 #include <yvex/core.h>

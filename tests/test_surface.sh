@@ -55,12 +55,14 @@ for surface in backend graph model_artifacts model_target source; do
   }
 done
 
-for writer in out json; do
-  test -f "src/cli/io/$writer.c" || {
-    echo "surface: missing CLI byte writer: $writer" >&2
-    exit 1
-  }
-done
+test -f src/cli/io/out.c || {
+  echo "surface: missing canonical CLI byte writer" >&2
+  exit 1
+}
+grep -q '^void yvex_cli_json_begin' src/cli/io/out.c || {
+  echo "surface: CLI byte writer lost JSON projection" >&2
+  exit 1
+}
 
 if grep -RInE '(^|[^a-zA-Z_])(printf|fprintf|vprintf|vfprintf|puts|fputs|putchar|perror)[[:space:]]*\(' \
     src/cli/commands src/cli/input; then
@@ -79,4 +81,4 @@ if find . -maxdepth 1 -type f \( -name 'yvex_*.c' -o -name 'yvex_*_private.h' \)
   exit 1
 fi
 
-echo "surface topology: ok typed-command-input-render triples=5 writers=2"
+echo "surface topology: ok typed-command-input-render triples=5 writers=1"

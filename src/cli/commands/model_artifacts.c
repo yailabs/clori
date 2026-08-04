@@ -57,56 +57,6 @@ static int download_paths_prepare(const yvex_cli_models_download_options *option
     yvex_account_provider provider_kind, const download_identity *identity,
     yvex_error *err, int create_paths);
 
-int yvex_models_command(int arg_count, char **args)
-{
-    return yvex_model_artifacts_surface_models_command(arg_count, args);
-}
-
-void yvex_models_help(FILE *fp)
-{
-    yvex_model_artifacts_surface_models_help(fp);
-}
-
-int yvex_fullmodel_command(int arg_count, char **args)
-{
-    return yvex_model_artifacts_surface_fullmodel_command(arg_count, args);
-}
-
-void yvex_fullmodel_help(FILE *fp)
-{
-    yvex_model_artifacts_surface_fullmodel_help(fp);
-}
-
-int yvex_context_command(int arg_count, char **args)
-{
-    return yvex_model_artifacts_surface_context_command(arg_count, args);
-}
-
-void yvex_context_help(FILE *fp)
-{
-    yvex_model_artifacts_surface_context_help(fp);
-}
-
-int yvex_moe_command(int arg_count, char **args)
-{
-    return yvex_model_artifacts_surface_moe_command(arg_count, args);
-}
-
-void yvex_moe_help(FILE *fp)
-{
-    yvex_model_artifacts_surface_moe_help(fp);
-}
-
-int yvex_tensor_collection_command(int arg_count, char **args)
-{
-    return yvex_model_artifacts_surface_tensor_collection_command(arg_count, args);
-}
-
-void yvex_tensor_collection_help(FILE *fp)
-{
-    yvex_model_artifacts_surface_tensor_collection_help(fp);
-}
-
 static int model_download_read_receipt_status(const char *path, char *status, size_t status_cap)
 {
     char buf[8192];
@@ -230,7 +180,7 @@ static int command_models_download_status(int arg_count, char **args)
     rc = model_download_resolve_for_control(arg_count, args, 4, &options, &report,
                                             &operator_paths, &provider_kind, &err);
     if (rc == 1) {
-        yvex_model_artifacts_surface_models_help(stdout);
+        yvex_models_help(stdout);
         return 0;
     }
     if (rc != YVEX_OK) return rc == 2 ? 2 : print_yvex_error(&err, exit_for_status(rc));
@@ -1051,7 +1001,7 @@ static int command_models_download_execute(int arg_count, char **args, int start
 
     rc = parse_models_download_options_from(arg_count, args, start_index, &options);
     if (rc == 1) {
-        yvex_model_artifacts_surface_models_help(stdout);
+        yvex_models_help(stdout);
         return 0;
     }
     if (rc != 0) return rc;

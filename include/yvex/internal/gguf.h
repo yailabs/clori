@@ -67,16 +67,6 @@ static inline int32_t gguf_i32_from_u32(uint32_t value)
                                         : -1 - (int32_t)(UINT32_MAX - value);
 }
 
-/* Private parser failure. */
-void yvex_gguf_parse_result_reset(yvex_gguf_parse_result *result);
-int yvex_gguf_reader_fail(yvex_gguf_parse_result *result,
-                          yvex_gguf_parse_code code,
-                          yvex_gguf_parse_section section,
-                          unsigned long long byte_offset,
-                          unsigned long long record_index,
-                          yvex_error *err,
-                          const char *where,
-                          const char *reason);
 /* Map. */
 #define YVEX_GGUF_MAPPING_REFERENCE_COMMIT \
     "e920c523e3b8a0163fe498af5bf90df35ff51d25"

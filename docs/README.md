@@ -60,6 +60,7 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
   point-in-time evidence; the
   [code-commentary migration](audits/code-commentary-7c90ce1/README.md),
   [execution-substrate disposition](audits/execution-substrate-dd91fb/README.md),
+  [repository-compression disposition](audits/repository-compression-7226f7/README.md),
   operator-surface, and topology audits remain frozen beside the documentation
   baseline.
 - [Migrations](migrations/documentation-architecture-v1.md) map superseded

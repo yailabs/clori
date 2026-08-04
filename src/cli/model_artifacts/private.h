@@ -24,6 +24,17 @@
 #include <yvex/source.h>
 #include <yvex/tokenizer.h>
 
+int yvex_context_command(int arg_count, char **args);
+void yvex_context_help(FILE *fp);
+int yvex_fullmodel_command(int arg_count, char **args);
+void yvex_fullmodel_help(FILE *fp);
+int yvex_models_command(int arg_count, char **args);
+void yvex_models_help(FILE *fp);
+int yvex_moe_command(int arg_count, char **args);
+void yvex_moe_help(FILE *fp);
+int yvex_tensor_collection_command(int arg_count, char **args);
+void yvex_tensor_collection_help(FILE *fp);
+
 int parse_models_download_options_from(int arg_count,
                                        char **args,
                                        int start_index,
@@ -239,17 +250,6 @@ int yvex_models_artifacts_surface_command(int arg_count, char **args);
 int yvex_models_download_surface_command(int arg_count, char **args);
 int yvex_models_prepare_surface_command(int arg_count, char **args);
 int yvex_models_check_surface_command(int arg_count, char **args);
-int yvex_model_artifacts_surface_models_command(int arg_count, char **args);
-void yvex_model_artifacts_surface_models_help(FILE *fp);
-int yvex_model_artifacts_surface_fullmodel_command(int arg_count, char **args);
-void yvex_model_artifacts_surface_fullmodel_help(FILE *fp);
-int yvex_model_artifacts_surface_context_command(int arg_count, char **args);
-void yvex_model_artifacts_surface_context_help(FILE *fp);
-int yvex_model_artifacts_surface_moe_command(int arg_count, char **args);
-void yvex_model_artifacts_surface_moe_help(FILE *fp);
-int yvex_model_artifacts_surface_tensor_collection_command(int arg_count, char **args);
-void yvex_model_artifacts_surface_tensor_collection_help(FILE *fp);
-
 long long model_download_json_i64_field(const char *text, const char *key);
 int model_download_identity_paths(const char *target,
                                   const char *family,

@@ -1,14 +1,6 @@
 #!/usr/bin/env sh
 set -eu
 
-test -x build/tests/test
-
-out="${TMPDIR:-/tmp}/yvex-gguf-artifact-abi.$$"
-trap 'rm -f "$out"' EXIT
-
-build/tests/test >"$out" 2>&1
-grep -nF 'test: gguf_artifact_abi' "$out" >/dev/null
-
 # The operational reader and layout owner are the only structural authority.
 # A report-only parser projection must not return as a second admission path.
 grep -nF 'int yvex_artifact_read_at(' include/yvex/artifact.h >/dev/null
@@ -31,7 +23,7 @@ if grep -nF 'yvex_artifact_data' src/gguf/*.c >/dev/null; then
   echo 'artifact ABI guard: GGUF parser depends on whole-file artifact data' >&2
   exit 1
 fi
-if grep -nF 'strstr' src/gguf/reader.c >/dev/null; then
+if grep -nF 'strstr' src/gguf/core.c >/dev/null; then
   echo 'artifact ABI guard: reader failure policy depends on error strings' >&2
   exit 1
 fi

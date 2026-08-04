@@ -21,6 +21,7 @@ docs/audits/operator-surface-ec7dcc/project-control-input.md	audit	frozen	contri
 docs/audits/operator-surface-ec7dcc/registry-input.md	audit	frozen	contributors	frozen	operator_audit_registry_input
 docs/audits/operator-surface-ec7dcc/target-taxonomy.md	audit	frozen	contributors	frozen	operator_audit_target_taxonomy
 docs/audits/operator-surface-ec7dcc/workflows.md	audit	frozen	contributors	frozen	operator_audit_workflows
+docs/audits/repository-compression-7226f7/README.md	audit	frozen	contributors	frozen	repository_compression_disposition_audit
 docs/audits/topology-closure.md	audit	frozen	contributors	frozen	topology_closure_audit
 docs/contracts/artifacts.md	contract	canonical	contributors-operators	living	artifact_admission_contract
 docs/contracts/c-api.md	contract	canonical	integrators-contributors	living	c_api_and_internal_abi_reference

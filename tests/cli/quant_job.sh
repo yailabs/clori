@@ -20,9 +20,7 @@ fail() {
 yvex_test_cleanup "$OUT_DIR"
 mkdir -p "$OUT_DIR/native"
 
-printf '{}\n' > "$OUT_DIR/source-manifest.json"
 printf 'fake-template\n' > "$OUT_DIR/template.gguf"
-printf '{}\n' > "$OUT_DIR/policy.json"
 printf '#!/bin/sh\nexit 0\n' > "$OUT_DIR/tool"
 chmod +x "$OUT_DIR/tool"
 
@@ -31,10 +29,8 @@ chmod +x "$OUT_DIR/tool"
   --arch deepseek4 \
   --tool external \
   --tool-path "$OUT_DIR/tool" \
-  --source-manifest "$OUT_DIR/source-manifest.json" \
   --native-source "$OUT_DIR/native" \
   --template "$OUT_DIR/template.gguf" \
-  --quant-policy "$OUT_DIR/policy.json" \
   --out-gguf "$OUT_DIR/out.gguf" \
   --log "$OUT_DIR/job.log" \
   --status ready \

@@ -23,6 +23,8 @@ fi
 if make -s BUILD_DIR=/ clean >/dev/null 2>&1; then
     fail "clean target accepts the filesystem root"
 fi
+rg -q 'if test "\$\$build_dir" = build; then' Makefile ||
+    fail "external BUILD_DIR cleanup may remove repository-root executables"
 clean_probe=$(mktemp -d /tmp/yvex-clean-guard.XXXXXX)
 clean_external=$(mktemp -d /tmp/clean-guard-external.XXXXXX)
 ln -s "$clean_external" "$clean_probe/build"
@@ -71,6 +73,30 @@ rg -q 'YVEX_BUILD_SOURCE_ROOT' src/cli/commands/graph.c ||
 if rg -n 'git[[:space:]]+(status|diff|rev-parse)' src/runtime src/cli/commands/graph.c; then
     fail "runtime benchmark provenance must not inspect the repository at execution time"
 fi
+
+# Production membership is handwritten once in the ownership manifest. Make
+# consumes only the deterministic projection, so a new file cannot bypass
+# ownership admission through a wildcard or a second source list.
+rg -q '^SOURCE_OWNER_MANIFEST := config/source_owners.tsv$' Makefile ||
+    fail "canonical production source manifest is not configured"
+rg -q '^SOURCE_MANIFEST_GENERATOR := tools/generate_source_manifest.py$' Makefile ||
+    fail "source build projection has no canonical generator"
+rg -q '^include \$\(SOURCE_MANIFEST_MK\)$' Makefile ||
+    fail "Make does not consume the generated source projection"
+if rg -n '\$\(wildcard[[:space:]]+(src|include)/|^[A-Z0-9_]+[[:space:]]*[:?+]?=[[:space:]]*(src|include)/.*[.](c|cu|h)\b' Makefile; then
+    fail "Makefile repeats or wildcard-admits production membership"
+fi
+make -s check-source-manifest >/dev/null ||
+    fail "generated source projection is stale or nondeterministic"
+
+for obsolete_target in cli server test-client test-cli-cutover \
+                       test-openai-agent test-runtime-benchmark-chart \
+                       test-runtime-sessions test-runtime-turns \
+                       test-runtime-telemetry; do
+    if rg -q "^${obsolete_target}:" Makefile; then
+        fail "historical Make target returned: ${obsolete_target}"
+    fi
+done
 
 provenance_root=$(mktemp -d /tmp/yvex-build-provenance.XXXXXX)
 provenance_header="$provenance_root/generated/build_commit.h"

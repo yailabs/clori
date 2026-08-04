@@ -18,6 +18,83 @@
 #define YVEX_GGUF_MAX_KEY_LEN 65535ull
 #define YVEX_GGUF_MAX_TENSOR_NAME_LEN 64ull
 
+/*
+ * Define bounded reader policy and typed projection of structural parse failures.
+ *
+ * Parse classification is carried by typed facts and never reconstructed from human-readable error
+ * strings. Structural reader acceptance is not complete artifact integrity, writer roundtrip,
+ * materialization, or runtime support.
+ */
+void yvex_gguf_reader_options_default(yvex_gguf_reader_options *options) {
+    if (!options)
+        return;
+    options->max_metadata_entries = 1048576ull;
+    options->max_tensor_entries = 1048576ull;
+    options->max_array_entries = 16777216ull;
+    options->max_total_array_entries = 33554432ull;
+    options->max_string_bytes = 67108864ull;
+    options->max_total_string_bytes = 1073741824ull;
+    options->max_owned_bytes = 2147483648ull;
+    options->max_structural_bytes = 2147483648ull;
+    options->max_array_depth = 16u;
+}
+
+static void gguf_parse_result_reset(yvex_gguf_parse_result *result) {
+    if (!result)
+        return;
+    result->code = YVEX_GGUF_PARSE_OK;
+    result->section = YVEX_GGUF_PARSE_SECTION_NONE;
+    result->byte_offset = 0ull;
+    result->record_index = ULLONG_MAX;
+    result->reason = "GGUF structural reader accepted input";
+}
+
+static int parse_code_error(yvex_gguf_parse_code code) {
+    switch (code) {
+    case YVEX_GGUF_PARSE_OK:
+        return YVEX_OK;
+    case YVEX_GGUF_PARSE_INVALID_ARGUMENT:
+        return YVEX_ERR_INVALID_ARG;
+    case YVEX_GGUF_PARSE_FILE_UNREADABLE:
+        return YVEX_ERR_IO;
+    case YVEX_GGUF_PARSE_SHORT_READ:
+        return YVEX_ERR_BOUNDS;
+    case YVEX_GGUF_PARSE_UNSUPPORTED_VERSION:
+    case YVEX_GGUF_PARSE_UNSUPPORTED_METADATA_TYPE:
+    case YVEX_GGUF_PARSE_REFUSED_QTYPE:
+        return YVEX_ERR_UNSUPPORTED;
+    case YVEX_GGUF_PARSE_RESOURCE_LIMIT:
+    case YVEX_GGUF_PARSE_OFFSET_OVERFLOW:
+    case YVEX_GGUF_PARSE_INCOMPLETE_DIRECTORY:
+    case YVEX_GGUF_PARSE_ELEMENT_COUNT_OVERFLOW:
+    case YVEX_GGUF_PARSE_ROW_COUNT_OVERFLOW:
+    case YVEX_GGUF_PARSE_ROW_BYTE_OVERFLOW:
+    case YVEX_GGUF_PARSE_TOTAL_BYTE_OVERFLOW:
+        return YVEX_ERR_BOUNDS;
+    case YVEX_GGUF_PARSE_ALLOCATION_FAILURE:
+        return YVEX_ERR_NOMEM;
+    default:
+        return YVEX_ERR_FORMAT;
+    }
+}
+
+static int gguf_reader_fail(yvex_gguf_parse_result *result, yvex_gguf_parse_code code,
+                          yvex_gguf_parse_section section, unsigned long long byte_offset,
+                          unsigned long long record_index, yvex_error *err, const char *where,
+                          const char *reason) {
+    int rc = parse_code_error(code);
+    if (result) {
+        result->code = code;
+        result->section = section;
+        result->byte_offset = byte_offset;
+        result->record_index = record_index;
+        result->reason = reason ? reason : "GGUF structural reader refused input";
+    }
+    yvex_error_set(err, rc, where ? where : "yvex_gguf_open_ex",
+                   reason ? reason : "GGUF structural reader refused input");
+    return rc;
+}
+
 static const char *const value_type_names[] = {
     "uint8", "int8", "uint16", "int16", "uint32", "int32", "float32",
     "bool", "string", "array", "uint64", "int64", "float64", "invalid",
@@ -215,7 +292,7 @@ struct yvex_gguf {
 
 static int cursor_fail(yvex_file_cursor *cur, yvex_gguf_parse_code code,
                        yvex_gguf_parse_section section, const char *where, const char *reason) {
-    return yvex_gguf_reader_fail(cur ? cur->result : NULL, code, section, cur ? cur->offset : 0ull,
+    return gguf_reader_fail(cur ? cur->result : NULL, code, section, cur ? cur->offset : 0ull,
                                  cur ? cur->record_index : ULLONG_MAX, cur ? cur->err : NULL, where,
                                  reason);
 }
@@ -1095,15 +1172,15 @@ int yvex_gguf_open_ex(yvex_gguf **out, const yvex_artifact *artifact,
 
     if (!result)
         result = &local_result;
-    yvex_gguf_parse_result_reset(result);
+    gguf_parse_result_reset(result);
     if (!out) {
-        return yvex_gguf_reader_fail(result, YVEX_GGUF_PARSE_INVALID_ARGUMENT,
+        return gguf_reader_fail(result, YVEX_GGUF_PARSE_INVALID_ARGUMENT,
                                      YVEX_GGUF_PARSE_SECTION_NONE, 0ull, ULLONG_MAX, err,
                                      "yvex_gguf_open_ex", "GGUF output pointer is required");
     }
     *out = NULL;
     if (!artifact) {
-        return yvex_gguf_reader_fail(result, YVEX_GGUF_PARSE_INVALID_ARGUMENT,
+        return gguf_reader_fail(result, YVEX_GGUF_PARSE_INVALID_ARGUMENT,
                                      YVEX_GGUF_PARSE_SECTION_FILE, 0ull, ULLONG_MAX, err,
                                      "yvex_gguf_open_ex", "artifact handle is required");
     }
@@ -1114,14 +1191,14 @@ int yvex_gguf_open_ex(yvex_gguf **out, const yvex_artifact *artifact,
         effective.max_string_bytes == 0ull || effective.max_total_string_bytes == 0ull ||
         effective.max_owned_bytes == 0ull || effective.max_structural_bytes == 0ull ||
         effective.max_array_depth == 0u) {
-        return yvex_gguf_reader_fail(result, YVEX_GGUF_PARSE_INVALID_ARGUMENT,
+        return gguf_reader_fail(result, YVEX_GGUF_PARSE_INVALID_ARGUMENT,
                                      YVEX_GGUF_PARSE_SECTION_RESOURCE, 0ull, ULLONG_MAX, err,
                                      "yvex_gguf_open_ex", "GGUF reader limits must be nonzero");
     }
 
     gguf = (yvex_gguf *)calloc(1, sizeof(*gguf));
     if (!gguf) {
-        return yvex_gguf_reader_fail(result, YVEX_GGUF_PARSE_ALLOCATION_FAILURE,
+        return gguf_reader_fail(result, YVEX_GGUF_PARSE_ALLOCATION_FAILURE,
                                      YVEX_GGUF_PARSE_SECTION_RESOURCE, 0ull, ULLONG_MAX, err,
                                      "yvex_gguf_open_ex", "failed to allocate GGUF view");
     }
@@ -1130,7 +1207,7 @@ int yvex_gguf_open_ex(yvex_gguf **out, const yvex_artifact *artifact,
     gguf->stats.owned_bytes = (unsigned long long)sizeof(*gguf);
     if (gguf->stats.owned_bytes > effective.max_owned_bytes) {
         yvex_gguf_close(gguf);
-        return yvex_gguf_reader_fail(result, YVEX_GGUF_PARSE_RESOURCE_LIMIT,
+        return gguf_reader_fail(result, YVEX_GGUF_PARSE_RESOURCE_LIMIT,
                                      YVEX_GGUF_PARSE_SECTION_RESOURCE, 0ull, ULLONG_MAX, err,
                                      "yvex_gguf_open_ex", "GGUF view exceeds owned-memory budget");
     }

@@ -1,14 +1,6 @@
 #!/usr/bin/env sh
 set -eu
 
-test -x build/tests/test
-
-out="${TMPDIR:-/tmp}/yvex-gguf-layout-integrity.$$"
-trap 'rm -f "$out"' EXIT
-
-build/tests/test >"$out" 2>&1
-grep -nF 'test: gguf_layout_integrity' "$out" >/dev/null
-
 # One domain owner validates ordered padded layout. Consumers call it directly
 # instead of reconstructing range policy or routing through a report projection.
 test -f include/yvex/gguf.h

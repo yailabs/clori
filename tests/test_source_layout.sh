@@ -28,7 +28,7 @@ src/graph/attention.c
 src/graph/numeric.c
 src/graph/families/deepseek_v4.c
 src/backend/cuda/families/deepseek_v4.c
-src/gguf/reader.c
+src/gguf/core.c
 src/gguf/writer.c
 src/artifact/materialize.c
 src/runtime/core.c

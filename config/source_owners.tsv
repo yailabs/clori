@@ -18,7 +18,6 @@ include/yvex/internal/logits.h	runtime	runtime.logits	generic	private	internal-a
 include/yvex/internal/sampling.h	runtime	runtime.sampling	generic	private	internal-abi	runtime,cli,tests	interface	none
 include/yvex/internal/graph.h	graph	graph.internal	generic	private	internal-abi	runtime,backend,cli	interface	none
 include/yvex/internal/moe.h	graph	graph.moe	generic	private	internal-abi	graph,runtime,backend,cli,tests	interface	none
-include/yvex/internal/profile.h	runtime	runtime.profile	generic	private	internal-abi	runtime,backend,cli,tests	interface	none
 include/yvex/internal/gguf.h	gguf	gguf.internal	generic	private	internal-abi	artifact,model,quant	interface	none
 include/yvex/internal/gguf_writer.h	gguf	gguf.writer	generic	private	internal-abi	artifact,quant	interface	none
 include/yvex/internal/io.h	io	io.internal	generic	private	internal-abi	repository	interface	none
@@ -57,8 +56,6 @@ src/backend/cuda/kernels.cu	backend.cuda	backend.cuda.kernels	backend	private	ba
 src/backend/cuda/ops.c	backend.cuda	backend.cuda.ops	backend	private	reusable-algorithm	backend,graph	implementation	none
 src/backend/cuda/private.h	backend.cuda	backend.cuda.private	backend	private	platform-interface	backend,graph	interface	none
 src/backend/cuda/qtype.c	backend.cuda	backend.cuda.qtype	backend	private	reusable-algorithm	backend,graph	implementation	none
-src/backend/cuda/tensor.c	backend.cuda	backend.cuda.tensor	backend	private	reusable-algorithm	backend,graph	implementation	none
-src/backend/report.c	backend	backend.report	generic	private	typed-projection	graph,runtime	implementation	none
 src/cli/commands/accounts.c	cli.commands	cli.commands.accounts	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/artifact.c	cli.commands	cli.commands.artifact	generic	private	reusable-algorithm	cli	implementation	none
 src/cli/commands/backend.c	cli.commands	cli.commands.backend	generic	private	reusable-algorithm	cli	implementation	none
@@ -77,7 +74,6 @@ src/cli/input/model_target.c	cli.input	cli.input.model_target	generic	private	re
 src/cli/input/operator.c	cli.input	cli.input.operator	generic	private	reusable-algorithm	cli.entrypoint+cli.io	implementation	none
 src/cli/input/private.h	cli.input	cli.input.private	generic	private	private-interface	cli.commands	interface	none
 src/cli/input/source.c	cli.input	cli.input.source	generic	private	reusable-algorithm	cli.commands	implementation	none
-src/cli/io/json.c	cli.io	cli.io.json	generic	private	bounded-parser	cli,render	implementation	none
 src/cli/io/out.c	cli.io	cli.io.out	generic	private	reusable-algorithm	cli,render	implementation	none
 src/cli/io/private.h	cli.io	cli.io.private	generic	private	private-interface	cli,render	interface	none
 src/cli/main.c	client	client.yvex	entrypoint	private	entrypoint	operator	entrypoint	none
@@ -122,7 +118,6 @@ src/gguf/quant_registry.c	gguf	gguf.quant_registry	generic	private	reusable-algo
 src/gguf/variant.c	gguf	gguf.physical_variant	generic	private	file-serialization	quant_plan,quant_execute,gguf_writer,operator	implementation	none
 src/gguf/quant_scalar.c	gguf	gguf.quant_scalar	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
 src/gguf/quant_sink.c	gguf	gguf.quant_sink	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
-src/gguf/reader.c	gguf	gguf.reader	generic	private	bounded-parser	artifact,model,quant	implementation	none
 src/gguf/tokenizer_metadata.c	gguf	gguf.tokenizer_metadata	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
 src/gguf/tools.c	gguf	gguf.tools	generic	private	reusable-algorithm	artifact,model,quant	implementation	none
 src/gguf/writer.c	gguf	gguf.writer	generic	private	transactional-io	artifact,model,quant	implementation	none
@@ -141,8 +136,7 @@ src/graph/state_recipe.c	graph	graph.state_recipe	generic	private	immutable-plan
 src/io/writer.c	io	io.writer	generic	private	transactional-io	repository	implementation	none
 src/model/artifacts/gate.c	model.artifacts	model.artifacts.gate	generic	private	reusable-algorithm	cli,artifact	implementation	none
 src/model/artifacts/ref.c	model.artifacts	model.artifacts.ref	generic	private	reusable-algorithm	cli,artifact	implementation	none
-src/model/artifacts/registry.c	model.artifacts	model.artifacts.registry	generic	private	resource-lifecycle	cli,artifact	implementation	none
-src/model/artifacts/write.c	model.artifacts	model.artifacts.write	generic	private	transactional-io	cli,artifact	implementation	none
+src/model/artifacts/registry.c	model.artifacts	model.artifacts.registry	generic	private	file-serialization	cli,artifact	implementation	none
 src/model/compilation/binding.c	model.compilation	model.compilation.binding	generic	private	resource-lifecycle	model.family,quant	implementation	none
 src/model/compilation/ir.c	model.compilation	model.compilation.ir	generic	private	reusable-algorithm	model.family,quant	implementation	none
 src/model/compilation/ir_identity.c	model.compilation	model.compilation.ir_identity	generic	private	canonical-identity	model.family,quant	implementation	none
@@ -172,15 +166,11 @@ src/runtime/transformer_input.c	runtime	runtime.transformer_input	generic	privat
 src/runtime/residency.c	runtime	runtime.residency	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
 include/yvex/internal/graph_state.h	graph	graph.state	generic	private	resource-lifecycle	graph,runtime,tests	interface	none
 src/graph/state.c	graph	graph.state	generic	private	resource-lifecycle	graph,runtime,tests	implementation	none
-src/model/target/candidates.c	model.target	model.target.candidates	generic	private	reusable-algorithm	model,cli	implementation	none
 src/model/target/catalog.c	model.target	model.target.catalog	generic	private	reusable-algorithm	model,cli	implementation	none
-src/model/target/decision.c	model.target	model.target.decision	generic	private	reusable-algorithm	model,cli	implementation	none
 src/model/target/mapping_gate.c	model.target	model.target.mapping_gate	generic	private	reusable-algorithm	model,cli	implementation	none
 src/model/target/missing_role.c	model.target	model.target.missing_role	generic	private	reusable-algorithm	model,cli	implementation	none
-src/model/target/model_class_profile.c	model.target	model.target.model_class_profile	generic	private	reusable-algorithm	model,cli	implementation	none
 src/model/target/output_head_map.c	model.target	model.target.output_head_map	generic	private	reusable-algorithm	model,cli	implementation	none
 src/model/target/qtype_policy.c	model.target	model.target.qtype_policy	generic	private	reusable-algorithm	model,cli	implementation	none
-src/model/target/qtype_role_support.c	model.target	model.target.qtype_role_support	generic	private	reusable-algorithm	model,cli	implementation	none
 src/model/target/report.c	model.target	model.target.report	generic	private	typed-projection	model,cli	implementation	none
 src/model/target/sidecar_write.c	model.target	model.target.sidecar_write	generic	private	file-serialization	model,cli	implementation	none
 src/model/target/tensor_collection.c	model.target	model.target.tensor_collection	generic	private	reusable-algorithm	model,cli	implementation	none
@@ -201,7 +191,6 @@ src/server/session.c	server	server.session	generic	private	resource-lifecycle	se
 src/server/telemetry.c	server	server.telemetry	generic	private	resource-lifecycle	server.core,server.session	implementation	none
 src/source/inventory.c	source	source.inventory	generic	private	reusable-algorithm	model,compilation	implementation	none
 src/core/json.c	core	core.json	generic	private	bounded-parser	source,gguf	implementation	none
-src/source/manifest.c	source	source.manifest	generic	private	reusable-algorithm	model,compilation	implementation	none
 src/source/native_weights.c	source	source.native_weights	generic	private	reusable-algorithm	model,compilation	implementation	none
 src/source/payload.c	source	source.payload	generic	private	resource-lifecycle	model,compilation	implementation	none
 src/source/payload_identity.c	source	source.payload_identity	generic	private	canonical-identity	model,compilation	implementation	none

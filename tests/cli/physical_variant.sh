@@ -41,16 +41,16 @@ grep '^deepseek-v4-flash-dspark-bootstrap-q2-v1$' "$OUT_DIR/list.out" >/dev/null
 grep '^schema_version: 2$' "$OUT_DIR/show.out" >/dev/null || fail "schema v2 missing"
 grep '^imatrix_rules: 3$' "$OUT_DIR/show.out" >/dev/null || fail "imatrix rules missing"
 
-"$YVEX_BIN" quant --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" ||
+"$YVEX_BIN" compile quant --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" ||
     fail "quant help failed"
 grep 'yvex compile quant plan' "$OUT_DIR/help.out" >/dev/null || fail "plan grammar missing"
-grep 'Materialization never chooses qtypes' "$OUT_DIR/help.out" >/dev/null ||
-    fail "ownership boundary missing"
+grep 'Plan an identity-bound physical variant' "$OUT_DIR/help.out" >/dev/null ||
+    fail "plan summary missing"
 
 expect_rc 1 "$YVEX_BIN" compile quant preset show no-such-preset \
     > "$OUT_DIR/unknown.out" 2> "$OUT_DIR/unknown.err"
 expect_rc 2 "$YVEX_BIN" compile quant plan --target deepseek4-v4-flash-dspark \
     > "$OUT_DIR/incomplete.out" 2> "$OUT_DIR/incomplete.err"
-expect_rc 2 "$YVEX_BIN" quant nope > "$OUT_DIR/bad-action.out" 2> "$OUT_DIR/bad-action.err"
+expect_rc 2 "$YVEX_BIN" compile quant nope > "$OUT_DIR/bad-action.out" 2> "$OUT_DIR/bad-action.err"
 
 printf 'physical variant cli: ok\n'

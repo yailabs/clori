@@ -467,27 +467,6 @@ int yvex_cuda_temporary_free(yvex_backend *backend,
                              const char *where,
                              yvex_error *err);
 int yvex_cuda_deferred_release_drain(yvex_backend *backend, yvex_error *err);
-int yvex_cuda_tensor_alloc(yvex_backend *backend,
-                           const yvex_backend_tensor_desc *desc,
-                           yvex_device_tensor **out,
-                           yvex_error *err);
-int yvex_cuda_tensor_free(yvex_backend *backend,
-                          yvex_device_tensor *tensor,
-                          yvex_error *err);
-int yvex_cuda_tensor_write(yvex_backend *backend,
-                           yvex_device_tensor *tensor,
-                           const void *src,
-                           unsigned long long len,
-                           yvex_error *err);
-int yvex_cuda_tensor_read(yvex_backend *backend,
-                          const yvex_device_tensor *tensor,
-                          void *dst,
-                          unsigned long long len,
-                          yvex_error *err);
-int yvex_cuda_tensor_copy(yvex_backend *backend,
-                          yvex_device_tensor *dst,
-                          const yvex_device_tensor *src,
-                          yvex_error *err);
 int yvex_cuda_op_embed(yvex_backend *backend,
                        const yvex_device_tensor *embedding,
                        const unsigned int *token_ids,

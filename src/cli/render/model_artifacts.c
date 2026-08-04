@@ -1554,7 +1554,7 @@ int print_fullmodel_parse_failure_report(const yvex_cli_fullmodel_options *optio
                                    artifact_bytes, rc, 1u);
 }
 
-void yvex_model_artifacts_surface_fullmodel_help(FILE *fp)
+void yvex_fullmodel_help(FILE *fp)
 {
     yvex_cli_out_lines(fp, fullmodel_usage_lines,
                        sizeof(fullmodel_usage_lines) / sizeof(fullmodel_usage_lines[0]));

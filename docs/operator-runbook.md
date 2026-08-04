@@ -365,7 +365,7 @@ once with the advanced registry operation and absolute paths:
   --backend cuda \
   --generation-mode dspark \
   --context 4096 \
-  --support-level runtime-profile-configured
+  --support-level selected-tensor-materialized
 ```
 
 This operation reads the GGUF, records its identity and metadata, checks that
@@ -373,6 +373,11 @@ the startup profile is structurally complete, and stores it in the user-local
 registry. It does not establish runtime admission; `yvexd` authenticates
 the artifact and binding again when it opens the model. Normal subsequent use
 contains no paths or environment variables:
+
+`--support-level` records only the artifact inspection/materialization stage.
+The binding, target, backend, mode, and context fields separately own startup
+profile readiness; the selected profile and the model live in `yvexd` remain
+separate states.
 
 ```sh
 ./yvex model list

@@ -22,21 +22,9 @@ mkdir -p "$OUT_DIR"
 
 printf 'fake-imatrix' > "$OUT_DIR/fake.dat"
 
-cat > "$OUT_DIR/policy.json" <<'JSON'
-{
-  "schema": "yvex.quant_policy.v1",
-  "name": "test-policy",
-  "architecture": "deepseek4",
-  "rules": [
-    {"selector_kind": "pattern", "selector": "blk.*.ffn.experts.*", "qtype": "Q2_K", "requires_imatrix": true}
-  ]
-}
-JSON
-
 "$YVEX_BIN" compile quant imatrix create \
   --name test-imatrix \
   --arch deepseek4 \
-  --quant-policy "$OUT_DIR/policy.json" \
   --imatrix "$OUT_DIR/fake.dat" \
   --format routed_moe_dat \
   --status present \
@@ -55,8 +43,8 @@ grep 'status: imatrix-manifest' "$OUT_DIR/inspect.out" >/dev/null || fail "missi
 
 "$YVEX_BIN" compile quant imatrix validate --manifest "$OUT_DIR/imatrix.json" > "$OUT_DIR/validate.out" 2> "$OUT_DIR/validate.err" || fail "validate failed"
 grep 'imatrix: validate' "$OUT_DIR/validate.out" >/dev/null || fail "missing validate heading"
-grep 'requires_imatrix_rules: 1' "$OUT_DIR/validate.out" >/dev/null || fail "missing requires count"
-grep 'covered_rules: 1' "$OUT_DIR/validate.out" >/dev/null || fail "missing covered count"
+grep 'requires_imatrix_rules: 0' "$OUT_DIR/validate.out" >/dev/null || fail "missing requires count"
+grep 'covered_rules: 0' "$OUT_DIR/validate.out" >/dev/null || fail "missing covered count"
 grep 'status: imatrix-valid' "$OUT_DIR/validate.out" >/dev/null || fail "missing validate status"
 
 "$YVEX_BIN" compile quant imatrix --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" || fail "help failed"

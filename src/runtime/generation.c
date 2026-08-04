@@ -8,7 +8,7 @@
  * all observe the same prefix.
  */
 #include "src/runtime/private.h"
-#include <yvex/internal/profile.h>
+#include <yvex/internal/generation.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>

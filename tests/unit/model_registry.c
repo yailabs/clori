@@ -230,6 +230,12 @@ static int test_registry_lifecycle(void)
     fill_entry(&entry, absolute_model, absolute_binding);
     YVEX_TEST_ASSERT(yvex_model_registry_startup_validate(&entry, &err) == YVEX_OK,
                      "complete startup profile validates");
+    entry.support_level = "runtime-profile-configured";
+    YVEX_TEST_ASSERT(yvex_model_registry_add(registry, &entry, &err) == YVEX_ERR_INVALID_ARG,
+                     "startup profile cannot masquerade as artifact support");
+    YVEX_TEST_ASSERT(yvex_model_registry_count(registry) == 0,
+                     "invalid support level leaves registry unchanged");
+    fill_entry(&entry, absolute_model, absolute_binding);
     rc = yvex_model_registry_add(registry, &entry, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "add entry");
     YVEX_TEST_ASSERT(yvex_model_registry_count(registry) == 1, "count after add");

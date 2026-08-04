@@ -290,18 +290,6 @@ void yvex_model_target_report_add_output_contract(yvex_model_target_report *repo
                                                   const char *report_name,
                                                   const char *mode);
 
-/* Candidate targets. */
-int yvex_model_target_candidate_report_build(
-    const yvex_model_target_request *request,
-    yvex_model_target_report *report,
-    yvex_error *err);
-
-/* Target selection decisions. */
-int yvex_model_target_decision_report_build(
-    const yvex_model_target_request *request,
-    yvex_model_target_report *report,
-    yvex_error *err);
-
 /* Role-mapping admission. */
 int yvex_mapping_gate_report_build(
     const yvex_model_target_request *request,
@@ -310,13 +298,6 @@ int yvex_mapping_gate_report_build(
 
 /* Missing-role diagnostics. */
 int yvex_missing_role_report_build(
-    const yvex_model_target_request *request,
-    yvex_model_target_report *report,
-    yvex_error *err);
-
-/* Model-class profiles. */
-struct yvex_source_verification;
-int yvex_model_class_profile_report_build(
     const yvex_model_target_request *request,
     yvex_model_target_report *report,
     yvex_error *err);

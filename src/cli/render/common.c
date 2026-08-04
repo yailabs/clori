@@ -414,6 +414,10 @@ void print_model_registry_entry_audit(const yvex_model_registry_entry *entry) {
                         entry->artifact_class ? entry->artifact_class : "");
     yvex_cli_out_writef(stdout, "qprofile: %s\n", entry->qprofile ? entry->qprofile : "");
     yvex_cli_out_writef(stdout, "calibration: %s\n", entry->calibration ? entry->calibration : "");
+    yvex_cli_out_writef(stdout, "artifact_support_level: %s\n",
+                        entry->support_level ? entry->support_level : "");
+    yvex_cli_out_writef(stdout, "artifact_execution_ready: %s\n",
+                        entry->execution_ready ? "true" : "false");
     yvex_cli_out_writef(stdout, "registered_file_size: %llu\n", entry->file_size);
     yvex_cli_out_writef(stdout, "registered_sha256: %s\n",
                         entry->sha256 && entry->sha256[0] ? entry->sha256 : "absent");
@@ -430,6 +434,8 @@ void print_model_registry_entry_audit(const yvex_model_registry_entry *entry) {
                         entry->runtime_target ? entry->runtime_target : "");
     yvex_cli_out_writef(stdout, "runtime_backend: %s\n",
                         entry->runtime_backend ? entry->runtime_backend : "");
+    yvex_cli_out_writef(stdout, "runtime_mode: %s\n",
+                        entry->runtime_mode ? entry->runtime_mode : "");
     yvex_cli_out_writef(stdout, "runtime_context: %llu\n", entry->runtime_context);
     {
         yvex_error err;
