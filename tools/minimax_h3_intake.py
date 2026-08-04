@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Acquire bounded, identity-bound MiniMax-H3 FL2VA source evidence."""
+"""Acquire bounded MiniMax-H3 FL2VA evidence or the authorized immutable source."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import os
 import pathlib
 import re
 import shutil
+import stat
 import struct
 import sys
 import tempfile
@@ -25,6 +26,9 @@ from typing import Any
 
 TOOL_SCHEMA = "yvex.minimax-h3.intake.v1"
 TOOL_VERSION = 1
+ACQUISITION_SCHEMA = "yvex.source-acquisition.v1"
+ACQUISITION_MANIFEST = "yvex-source-acquisition.json"
+AUTHORIZATION_ENV = "YVEX_MINIMAX_H3_LOCAL_RESEARCH_AUTHORIZED"
 REQUIRED_SUBDIR = "FL2VA"
 MAX_API_BYTES = 16 * 1024 * 1024
 MAX_TREE_PAGES = 128
@@ -77,6 +81,30 @@ def pretty_json(value: Any) -> bytes:
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def identity_text(digest: Any, value: str) -> None:
+    encoded = value.encode("utf-8")
+    digest.update(struct.pack("<Q", len(encoded)))
+    digest.update(encoded)
+
+
+def acquisition_identity(repo: str, revision: str, subdir: str, files: list[dict[str, Any]]) -> str:
+    digest = hashlib.sha256()
+    for value in (ACQUISITION_SCHEMA, repo, revision, subdir):
+        identity_text(digest, value)
+    digest.update(struct.pack("<Q", len(files)))
+    for row in files:
+        identity_text(digest, row["path"])
+        digest.update(struct.pack("<Q", row["expected_size"]))
+        identity_text(digest, row["expected_sha256"])
+        identity_text(digest, row["actual_sha256"])
+        identity_text(digest, row["git_oid"])
+        identity_text(digest, row["lfs_oid"])
+        identity_text(digest, row["xet_hash"])
+        identity_text(digest, row["classification"])
+        identity_text(digest, row["component"])
+    return digest.hexdigest()
 
 
 def require_mapping(value: Any, where: str) -> dict[str, Any]:
@@ -158,6 +186,18 @@ class Provider:
     def file_range(
         self, repo: str, revision: str, path: str, start: int, end: int, category: str
     ) -> bytes:
+        raise NotImplementedError
+
+    def stream_file(
+        self,
+        repo: str,
+        revision: str,
+        path: str,
+        offset: int,
+        stream: Any,
+        digest: Any,
+        expected_size: int,
+    ) -> int:
         raise NotImplementedError
 
     def record(self, category: str, source: str, requested_range: str, data: bytes) -> None:
@@ -286,6 +326,58 @@ class NetworkProvider(Provider):
             fail(f"{path}: short response for {requested}")
         return data
 
+    def stream_file(
+        self,
+        repo: str,
+        revision: str,
+        path: str,
+        offset: int,
+        stream: Any,
+        digest: Any,
+        expected_size: int,
+    ) -> int:
+        if offset < 0 or offset > expected_size:
+            fail(f"{path}: invalid resume offset")
+        if offset == expected_size:
+            return 0
+        url = self.resolve_url(repo, revision, path)
+        headers = {"User-Agent": "yvex-minimax-h3-intake/1"}
+        if offset:
+            headers["Range"] = f"bytes={offset}-{expected_size - 1}"
+        request = urllib.request.Request(url, headers=headers)
+        if self.token:
+            request.add_unredirected_header("Authorization", f"Bearer {self.token}")
+        transferred = 0
+        try:
+            with self.opener.open(request, timeout=120) as response:
+                final_host = urllib.parse.urlsplit(response.geturl()).hostname
+                if not allowed_delivery_host(final_host):
+                    fail(f"source-payload: response arrived from an unrecognized host for {path}")
+                if offset:
+                    expected_range = f"bytes {offset}-{expected_size - 1}/{expected_size}"
+                    if response.status != 206 or response.headers.get("Content-Range") != expected_range:
+                        fail(f"{path}: server refused exact resume range")
+                elif response.status not in {200, 206}:
+                    fail(f"{path}: unexpected source response status {response.status}")
+                length = response.headers.get("Content-Length")
+                remaining = expected_size - offset
+                if length is not None and int(length) != remaining:
+                    fail(f"{path}: response length does not match immutable tree size")
+                while transferred < remaining:
+                    chunk = response.read(min(1024 * 1024, remaining - transferred))
+                    if not chunk:
+                        fail(f"{path}: short source payload response")
+                    stream.write(chunk)
+                    digest.update(chunk)
+                    transferred += len(chunk)
+                if response.read(1):
+                    fail(f"{path}: source payload exceeds immutable tree size")
+        except IntakeError:
+            raise
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            fail(f"source-payload: acquisition failed for {safe_url_identity(url)}: {exc}")
+        return transferred
+
 
 class FixtureProvider(Provider):
     def __init__(self, root: pathlib.Path) -> None:
@@ -355,6 +447,36 @@ class FixtureProvider(Provider):
             fail(f"{path}: short fixture response for {requested}")
         self.record(category, f"fixture:{path}", requested, data)
         return data
+
+    def stream_file(
+        self,
+        repo: str,
+        revision: str,
+        path: str,
+        offset: int,
+        stream: Any,
+        digest: Any,
+        expected_size: int,
+    ) -> int:
+        source = self.source_path(path)
+        try:
+            if source.stat().st_size != expected_size:
+                fail(f"{path}: fixture size does not match immutable tree size")
+            if offset == expected_size:
+                return 0
+            with source.open("rb") as input_stream:
+                input_stream.seek(offset)
+                transferred = 0
+                while True:
+                    chunk = input_stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    stream.write(chunk)
+                    digest.update(chunk)
+                    transferred += len(chunk)
+        except OSError as exc:
+            fail(f"source-payload: cannot read fixture file {path!r}: {exc}")
+        return transferred
 
 
 def parse_link_header(value: str) -> list[tuple[str, dict[str, str]]]:
@@ -429,6 +551,11 @@ def component_for(subdir: str, path: str) -> str:
     if len(relative.parts) < 2:
         fail(f"{path}: safetensors file has no component owner")
     return relative.parts[0]
+
+
+def acquisition_component(subdir: str, path: str) -> str:
+    relative = pathlib.PurePosixPath(path).relative_to(subdir)
+    return relative.parts[0] if len(relative.parts) > 1 else "pipeline"
 
 
 def is_license(path: str) -> bool:
@@ -922,6 +1049,232 @@ def compare_products(output: pathlib.Path, staging: pathlib.Path) -> None:
             fail(f"check failed: stale output {relative}")
 
 
+def acquisition_paths(tree: list[dict[str, Any]], subdir: str) -> list[dict[str, Any]]:
+    admitted: list[dict[str, Any]] = []
+    for row in tree:
+        if row["type"] != "file":
+            continue
+        path = row["path"]
+        if path.startswith(f"{subdir}/") or path in {"LICENSE", "docs/QA-about-License.md"}:
+            admitted.append(row)
+    admitted.sort(key=lambda row: row["path"])
+    if not admitted or not any(row["path"].endswith(".safetensors") for row in admitted):
+        fail("authorized acquisition has no FL2VA safetensors payloads")
+    return admitted
+
+
+def ensure_directory_chain(root: pathlib.Path, relative_parent: pathlib.PurePosixPath) -> None:
+    current = root
+    if current.exists():
+        mode = os.lstat(current).st_mode
+        if not stat.S_ISDIR(mode) or stat.S_ISLNK(mode):
+            fail(f"source destination is not a real directory: {current}")
+    else:
+        current.mkdir()
+    for part in relative_parent.parts:
+        if part in {"", ".", ".."}:
+            fail(f"unsafe source destination component {part!r}")
+        current = current / part
+        if current.exists():
+            mode = os.lstat(current).st_mode
+            if not stat.S_ISDIR(mode) or stat.S_ISLNK(mode):
+                fail(f"source destination component is not a real directory: {part!r}")
+        else:
+            current.mkdir()
+
+
+def ensure_absolute_directory_chain(path: pathlib.Path) -> None:
+    if not path.is_absolute() or path == pathlib.Path("/"):
+        fail("source destination must be an absolute bounded directory")
+    current = pathlib.Path(path.anchor)
+    for part in path.parts[1:]:
+        if part in {"", ".", ".."}:
+            fail(f"unsafe source destination component {part!r}")
+        current /= part
+        if current.exists():
+            mode = os.lstat(current).st_mode
+            if not stat.S_ISDIR(mode) or stat.S_ISLNK(mode):
+                fail(f"source destination component is not a real directory: {part!r}")
+        else:
+            current.mkdir()
+
+
+def safe_destination(root: pathlib.Path, source_path: str) -> pathlib.Path:
+    relative = pathlib.PurePosixPath(source_path)
+    if relative.is_absolute() or not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        fail(f"unsafe acquired source path {source_path!r}")
+    ensure_directory_chain(root, relative.parent)
+    target = root.joinpath(*relative.parts)
+    if target.parent.resolve() != root.joinpath(*relative.parent.parts).resolve():
+        fail(f"acquired source path escapes destination: {source_path!r}")
+    return target
+
+
+def hash_existing(path: pathlib.Path, expected_maximum: int) -> tuple[Any, int]:
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        mode = os.lstat(path).st_mode
+        if not stat.S_ISREG(mode) or stat.S_ISLNK(mode):
+            fail(f"refused non-regular partial or source file {path.name!r}")
+        with path.open("rb") as stream:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > expected_maximum:
+                    fail(f"{path.name}: existing file exceeds immutable tree size")
+                digest.update(chunk)
+    except OSError as exc:
+        fail(f"cannot verify existing source file {path.name!r}: {exc}")
+    return digest, size
+
+
+def expected_content_sha256(row: dict[str, Any]) -> str:
+    oid = row.get("lfs_oid", "")
+    if not oid:
+        return ""
+    if oid.startswith("sha256:"):
+        oid = oid[7:]
+    if not re.fullmatch(r"[0-9a-f]{64}", oid):
+        fail(f"{row['path']}: unsupported LFS content identity")
+    return oid
+
+
+def acquire_one(
+    provider: Provider,
+    repo: str,
+    revision: str,
+    row: dict[str, Any],
+    output: pathlib.Path,
+    check: bool,
+) -> tuple[dict[str, Any], int]:
+    path = row["path"]
+    target = safe_destination(output, path)
+    expected_size = row["size"]
+    expected_sha256 = expected_content_sha256(row)
+    partial = target.with_name(f"{target.name}.part")
+    transferred = 0
+    if check:
+        if partial.exists():
+            fail(f"check failed: incomplete partial file {path}.part")
+        if not target.exists():
+            fail(f"check failed: missing acquired source {path}")
+        digest, size = hash_existing(target, expected_size)
+    elif target.exists():
+        if partial.exists():
+            fail(f"{path}: final and partial files both exist")
+        digest, size = hash_existing(target, expected_size)
+    else:
+        if partial.exists():
+            digest, size = hash_existing(partial, expected_size)
+        else:
+            digest, size = hashlib.sha256(), 0
+        try:
+            with partial.open("ab") as stream:
+                transferred = provider.stream_file(
+                    repo, revision, path, size, stream, digest, expected_size
+                )
+                stream.flush()
+                os.fsync(stream.fileno())
+        except OSError as exc:
+            fail(f"{path}: cannot publish partial source bytes: {exc}")
+        size += transferred
+        if size != expected_size:
+            fail(f"{path}: acquired size does not match immutable tree")
+        actual = digest.hexdigest()
+        if expected_sha256 and actual != expected_sha256:
+            fail(f"{path}: acquired SHA-256 does not match LFS identity")
+        os.replace(partial, target)
+    actual_sha256 = digest.hexdigest()
+    if size != expected_size:
+        fail(f"{path}: source size mismatch")
+    if expected_sha256 and actual_sha256 != expected_sha256:
+        fail(f"{path}: source SHA-256 mismatch")
+    component = (
+        acquisition_component(REQUIRED_SUBDIR, path)
+        if path.startswith(f"{REQUIRED_SUBDIR}/")
+        else "license"
+    )
+    return (
+        {
+            "actual_sha256": actual_sha256,
+            "actual_size": size,
+            "classification": "shard" if path.endswith(".safetensors") else "metadata",
+            "component": component,
+            "expected_sha256": expected_sha256,
+            "expected_size": expected_size,
+            "git_oid": row["oid"],
+            "lfs_oid": row["lfs_oid"],
+            "path": path,
+            "verified": True,
+            "xet_hash": row["xet_hash"],
+        },
+        transferred,
+    )
+
+
+def acquire_source(args: argparse.Namespace) -> None:
+    if os.environ.get(AUTHORIZATION_ENV) != "1":
+        fail(f"authorized acquisition requires {AUTHORIZATION_ENV}=1")
+    repo = parse_repo(args.repo)
+    if args.subdir != REQUIRED_SUBDIR:
+        fail(f"subdirectory must be exactly {REQUIRED_SUBDIR!r}")
+    if not COMMIT_RE.fullmatch(args.revision.lower()):
+        fail("authorized acquisition requires an explicit immutable full revision")
+    output = args.output
+    ensure_absolute_directory_chain(output)
+    provider: Provider = (
+        FixtureProvider(args.fixture_dir) if args.fixture_dir is not None else NetworkProvider(os.environ.get("HF_TOKEN"))
+    )
+    repository = provider.repository(repo, args.revision)
+    revision = require_text(repository.get("sha"), "repository.sha").lower()
+    if revision != args.revision.lower():
+        fail("authorized acquisition revision did not resolve exactly")
+    tree = normalize_tree(provider.tree(repo, revision))
+    rows = acquisition_paths(tree, args.subdir)
+    files: list[dict[str, Any]] = []
+    transferred = 0
+    for row in rows:
+        record, byte_count = acquire_one(provider, repo, revision, row, output, args.check)
+        files.append(record)
+        transferred += byte_count
+        print(
+            f"source acquisition file: {record['path']} bytes={record['actual_size']} "
+            f"transferred={byte_count}",
+            flush=True,
+        )
+    source_identity = acquisition_identity(repo, revision, args.subdir, files)
+    manifest = {
+        "acquisition_complete": True,
+        "acquisition_identity": source_identity,
+        "admitted_subtree": args.subdir,
+        "authorization_gate": AUTHORIZATION_ENV,
+        "files": files,
+        "metadata_bytes": sum(row["actual_size"] for row in files if row["classification"] == "metadata"),
+        "repository": repo,
+        "revision": revision,
+        "schema": ACQUISITION_SCHEMA,
+        "shard_bytes": sum(row["actual_size"] for row in files if row["classification"] == "shard"),
+        "shards": sum(row["classification"] == "shard" for row in files),
+        "source_bytes": sum(row["actual_size"] for row in files),
+    }
+    encoded = pretty_json(manifest)
+    manifest_path = output / ACQUISITION_MANIFEST
+    if args.check:
+        if not manifest_path.is_file() or manifest_path.read_bytes() != encoded:
+            fail(f"check failed: stale output {ACQUISITION_MANIFEST}")
+    else:
+        temporary = output / f".{ACQUISITION_MANIFEST}.tmp"
+        temporary.write_bytes(encoded)
+        os.replace(temporary, manifest_path)
+    print(
+        f"source acquisition: files={len(files)} shards={manifest['shards']} "
+        f"bytes={manifest['source_bytes']} transferred={transferred} identity={source_identity}"
+    )
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True, help="Hugging Face repository ID or HTTPS URL")
@@ -929,11 +1282,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--subdir", required=True, help="must be FL2VA")
     parser.add_argument("--output", required=True, type=pathlib.Path, help="external evidence directory")
     parser.add_argument("--check", action="store_true", help="verify byte-identical existing products")
+    parser.add_argument(
+        "--acquire",
+        action="store_true",
+        help="acquire and verify the complete authorized FL2VA source allowlist",
+    )
     parser.add_argument("--fixture-dir", type=pathlib.Path, help="use a local offline fixture")
     return parser.parse_args(argv)
 
 
 def run(args: argparse.Namespace) -> None:
+    if args.acquire:
+        acquire_source(args)
+        return
     output = args.output.resolve()
     if output == pathlib.Path("/"):
         fail("output must not be the filesystem root")

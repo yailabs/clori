@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import copy
 import csv
+import hashlib
 import json
+import os
 import pathlib
 import shutil
 import struct
@@ -145,6 +147,40 @@ def invoke(
     return subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
 
 
+def invoke_acquisition(
+    fixture: pathlib.Path,
+    output: pathlib.Path,
+    *,
+    authorized: bool,
+    check: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    command = [
+        "python3",
+        str(TOOL),
+        "--repo",
+        "MiniMaxAI/MiniMax-H3",
+        "--revision",
+        REVISION,
+        "--subdir",
+        "FL2VA",
+        "--output",
+        str(output),
+        "--fixture-dir",
+        str(fixture),
+        "--acquire",
+    ]
+    if check:
+        command.append("--check")
+    environment = os.environ.copy()
+    if authorized:
+        environment["YVEX_MINIMAX_H3_LOCAL_RESEARCH_AUTHORIZED"] = "1"
+    else:
+        environment.pop("YVEX_MINIMAX_H3_LOCAL_RESEARCH_AUTHORIZED", None)
+    return subprocess.run(
+        command, cwd=ROOT, text=True, capture_output=True, check=False, env=environment
+    )
+
+
 def file_snapshot(root: pathlib.Path) -> dict[str, bytes]:
     return {
         str(path.relative_to(root)): path.read_bytes()
@@ -193,6 +229,42 @@ def test_refusal(temporary: pathlib.Path, mutation: str, expected: str) -> None:
     require(expected in result.stderr, f"{mutation} missing refusal {expected!r}: {result.stderr}")
 
 
+def test_authorized_acquisition(temporary: pathlib.Path) -> None:
+    fixture = temporary / "acquisition-fixture"
+    write_fixture(fixture)
+    output = temporary / "acquired"
+    result = invoke_acquisition(fixture, output, authorized=False)
+    require(result.returncode == 2, "source acquisition ignored the authorization gate")
+    require("LOCAL_RESEARCH_AUTHORIZED=1" in result.stderr, "authorization refusal is missing")
+
+    source = fixture / "files" / "FL2VA" / "text_encoder" / "model-00001-of-00002.safetensors"
+    partial = output / "FL2VA" / "text_encoder" / f"{source.name}.part"
+    partial.parent.mkdir(parents=True)
+    partial.write_bytes(source.read_bytes()[:11])
+    result = invoke_acquisition(fixture, output, authorized=True)
+    require(result.returncode == 0, result.stderr)
+    require(not partial.exists(), "resumed partial file was not published atomically")
+    acquired = output / "FL2VA" / "text_encoder" / source.name
+    require(acquired.read_bytes() == source.read_bytes(), "resumed source differs from fixture")
+    require(not (output / "Ref2VA").exists(), "excluded Ref2VA subtree was acquired")
+    manifest = json.loads((output / "yvex-source-acquisition.json").read_text(encoding="utf-8"))
+    require(manifest["acquisition_complete"], "acquisition manifest is not complete")
+    require(manifest["shards"] == 2, "acquisition shard count is wrong")
+    require(manifest["repository"] == "MiniMaxAI/MiniMax-H3", "repository identity changed")
+    for row in manifest["files"]:
+        path = output / row["path"]
+        require(path.stat().st_size == row["actual_size"], "acquired size record differs")
+        require(hashlib.sha256(path.read_bytes()).hexdigest() == row["actual_sha256"],
+                "acquired digest record differs")
+    result = invoke_acquisition(fixture, output, authorized=True, check=True)
+    require(result.returncode == 0, result.stderr)
+
+    acquired.write_bytes(acquired.read_bytes() + b"x")
+    result = invoke_acquisition(fixture, output, authorized=True, check=True)
+    require(result.returncode == 2 and "exceeds immutable tree size" in result.stderr,
+            "acquisition check accepted a corrupt source file")
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="yvex-minimax-intake-") as directory:
         temporary = pathlib.Path(directory)
@@ -207,6 +279,7 @@ def main() -> None:
         }
         for mutation, expected in cases.items():
             test_refusal(temporary, mutation, expected)
+        test_authorized_acquisition(temporary)
         fixture = temporary / "url-refusal"
         write_fixture(fixture)
         result = invoke(fixture, temporary / "url-output", repo="http://huggingface.co/MiniMaxAI/MiniMax-H3")
