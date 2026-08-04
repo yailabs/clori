@@ -48,6 +48,7 @@ docs/milestones/command-architecture.md	milestone	canonical	contributors	accepte
 docs/milestones/deepseek-dspark-rebase.md	milestone	canonical	contributors	accepted	deepseek_dspark_rebase_boundary
 docs/milestones/documentation-architecture.md	milestone	canonical	contributors	accepted	documentation_architecture_boundary
 docs/milestones/product-architecture.md	milestone	canonical	contributors	accepted	execution_substrate_refoundation_boundary
+docs/milestones/repository-compression.md	milestone	canonical	contributors	accepted	repository_architecture_compression_boundary
 docs/milestones/runtime-console-repl.md	milestone	canonical	contributors	accepted	runtime_console_boundary
 docs/model-families/deepseek-v4-flash.md	family	canonical	operators-contributors	living	deepseek_v4_flash_facts
 docs/model-families/gemma.md	family	canonical	contributors	living	gemma_facts

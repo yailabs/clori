@@ -67,12 +67,13 @@ run, or a self-authored report cannot promote a capability by itself.
 | 5 | `V010.OPERATOR.REPL.CONSOLE.0` | `complete` | A mature daemon-backed linear console consumes the canonical operation authority and renders truthful status, progress, metrics, watch, trace, and cancellation; explicit reasoning remains conditional on an admitted typed channel. | `V010.REPO.CODE.COMMENTARY.0` |
 | 6 | `V010.REBASE.DEEPSEEK.DSPARK.0` | `complete` | The sole DeepSeek vertical is rebound to the exact DSpark source and reaches target-verified speculative text through the hosted product path. | `V010.OPERATOR.REPL.CONSOLE.0` |
 | 7 | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` | `complete` | Identity-bound execution profiles, Physical Execution IR, prefix-addressable candidate state, shape-safe CUDA admission, exact partial turns, typed device views, and operational projections form one verified execution substrate. | `V010.REBASE.DEEPSEEK.DSPARK.0` |
-| 8 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `active` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` |
-| 9 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
-| 10 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
-| 11 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
+| 8 | `V010.REPO.ARCHITECTURE.COMPRESSION.0` | `active` | One source-membership authority and fewer ceremonial owners, internal ABIs, symbols, build declarations, targets, and duplicate registry facts preserve the accepted execution behavior in a directly navigable repository. | `V010.PRODUCT.ARCHITECTURE.REFOUNDATION.0` |
+| 9 | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` | `blocked` | Measured warm-runtime work addresses the proven attention, MoE, launch, synchronization, movement, and batching owners without creating another execution path. | `V010.REPO.ARCHITECTURE.COMPRESSION.0` |
+| 10 | `V010.EVAL.DEEPSEEK.0` | `blocked` | Repeatable behavior, quality, tokenizer, regression, long-context, and refusal evaluation runs over the accepted hosted path. | `V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0` |
+| 11 | `V010.BENCH.DEEPSEEK.0` | `not-measured` | Reproducible full-model latency, throughput, memory, reliability, and workload evidence is bound to exact source, artifact, runtime, and machine identities. | `V010.EVAL.DEEPSEEK.0` |
+| 12 | `V010.RELEASE.0` | `blocked` | All v0.1.0 software, conformance, runtime, evaluation, benchmark, packaging, operator, claim, and tag gates close together. | `V010.BENCH.DEEPSEEK.0` |
 
-Active Next: V010.RUNTIME.DEEPSEEK.GB10.OPTIMIZATION.0
+Active Next: V010.REPO.ARCHITECTURE.COMPRESSION.0
 
 Detailed accepted and successor contracts for the current sequence are:
 
@@ -82,6 +83,7 @@ Detailed accepted and successor contracts for the current sequence are:
 - [Mature Runtime Console and Interactive REPL](docs/milestones/runtime-console-repl.md)
 - [DeepSeek V4 Flash DSpark Rebase](docs/milestones/deepseek-dspark-rebase.md)
 - [Verified Execution-Substrate Refoundation](docs/milestones/product-architecture.md)
+- [Repository Architecture Compression](docs/milestones/repository-compression.md)
 
 The pre-implementation combined plans remain traceable without staying on the
 active path:
@@ -116,6 +118,17 @@ Its tables describe baseline `ec7dccede90c1a1efa87b4c2519c25b30d5e1733` and
 are implementation input, not live command or project authority.
 
 ## Open work
+
+### Repository architecture compression
+
+The verified substrate is behaviorally accepted, but its implementation still
+repeats source membership in build logic and retains ceremonial translation
+units, internal ABIs, symbols, targets, and model-registry projections created
+during successive delivery passes. The active boundary removes only duplicate
+authority and unjustified physical partitions. It preserves the public C API,
+protocol v6, artifact and binding identities, numerical execution, operator
+surface, and the three independent DeepSeek projections in model, graph, and
+CUDA backend ownership.
 
 ### GB10 runtime optimization
 
