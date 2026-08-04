@@ -131,12 +131,20 @@ static int test_architecture(void)
                      "encoder signature retains exact source geometry");
     YVEX_TEST_ASSERT(first.omni.blocks == 50u && first.omni.width == 5376u &&
                          first.omni.video_channels == 24u &&
-                         first.omni.audio_channels == 32u,
+                         first.omni.audio_channels == 32u &&
+                         first.omni.audio_patch_steps == 1u &&
+                         first.omni.audio_patch_channels == 32u,
                      "Omni signature retains exact source geometry");
     YVEX_TEST_ASSERT(first.video_vae.spatial_ratio == 16u &&
                          first.video_vae.temporal_ratio == 4u &&
+                         first.video_vae.base_channels == 128u &&
+                         first.video_vae.stage_count == 6u &&
+                         first.video_vae.channel_multipliers[5] == 8u &&
+                         first.video_vae.conv3d && first.video_vae.encoder_tiling &&
                          first.audio_vae.decoder_rate_product == 800u &&
-                         first.audio_vae.latent_steps_per_second == 40u,
+                         first.audio_vae.latent_steps_per_second == 40u &&
+                         first.audio_vae.encoder_rates[4] == 5u &&
+                         first.audio_vae.decoder_rates[6] == 2u,
                      "VAE signatures retain exact source geometry");
     return 0;
 }

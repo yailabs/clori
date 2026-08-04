@@ -700,9 +700,13 @@ static int architecture_build(yvex_minimax_h3_target *target,
         64u, 5120u, 25600u, 64u, 8u, 128u, 151936u, 5000000u,
         24u, 20u, 20u, 27u, 1152u, 4304u, 16u, 2u, 16u, 16u, 2u,
         8u, 16u, 24u, 5120u, 50u, 5376u, 14336u, 56u, 128u, 2u,
-        5120u, 24u, 32u, 1u, 2u, 2u, 256u, 5376u, 2688u, 96768u,
-        10752u, 96u, 32u, 24u, 3u, 16u, 4u, 36u, 32u, 256u, 64u,
-        17u, 3u, 32u, 2u, 32000u, 800u, 800u, 40u, 1580u, 1660u
+        5120u, 24u, 32u, 1u, 2u, 2u, 1u, 32u, 256u, 5376u, 2688u, 96768u,
+        10752u, 96u, 32u, 24u, 3u, 128u, 6u, 1u, 2u, 2u, 4u, 4u, 8u,
+        2u, 2u, 2u, 2u, 1u, 1u, 1u, 2u, 2u, 2u, 2u, 1u,
+        1u, 2u, 2u, 1u, 1u, 1u, 16u, 4u, 2u, 36u, 32u, 64u,
+        3u, 4u, 100u, 256u, 64u, 17u, 3u, 1u, 1u, 1u, 1u, 1u, 1u, 0u,
+        32u, 2u, 32000u, 64u, 1024u, 2048u, 5u, 2u, 4u, 4u, 5u, 5u,
+        7u, 5u, 5u, 2u, 2u, 2u, 2u, 2u, 800u, 800u, 40u, 1u, 1580u, 1660u
     };
     size_t index;
 
@@ -714,13 +718,53 @@ static int architecture_build(yvex_minimax_h3_target *target,
     };
     architecture->omni = (yvex_minimax_h3_omni_signature){
         50u, 5376u, 14336u, 56u, 128u, 2u, 5120u, 24u, 32u,
-        {1u, 2u, 2u}, 256u, 5376u, 2688u, 96768u, 10752u, 96u, 32u, 1
+        {1u, 2u, 2u}, 1u, 32u, 256u, 5376u, 2688u, 96768u, 10752u, 96u, 32u, 1
     };
     architecture->video_vae = (yvex_minimax_h3_video_vae_signature){
-        24u, 3u, 16u, 4u, 36u, 32u, 256u, 64u, 17u, 3u, 1, 0
+        .latent_channels = 24u,
+        .media_channels = 3u,
+        .base_channels = 128u,
+        .stage_count = 6u,
+        .channel_multipliers = {1u, 2u, 2u, 4u, 4u, 8u},
+        .spatial_down = {2u, 2u, 2u, 2u, 1u, 1u},
+        .spatial_up = {1u, 2u, 2u, 2u, 2u, 1u},
+        .temporal_down = {1u, 2u, 2u, 1u, 1u, 1u},
+        .spatial_ratio = 16u,
+        .temporal_ratio = 4u,
+        .residual_blocks = 2u,
+        .decoder_blocks = 36u,
+        .decoder_heads = 32u,
+        .decoder_head_dimension = 64u,
+        .decoder_rope_ratio_numerator = 3u,
+        .decoder_rope_ratio_denominator = 4u,
+        .decoder_rope_theta = 100u,
+        .tile_size = 256u,
+        .tile_overlap = 64u,
+        .clip_length = 17u,
+        .token_drop = 3u,
+        .conv3d = 1,
+        .isolated_temporal_group_norm = 1,
+        .encoder_tiling = 1,
+        .decoder_tiling = 1,
+        .parallel_tiling = 1,
+        .causal_encoder = 1,
+        .causal_decoder = 0
     };
     architecture->audio_vae = (yvex_minimax_h3_audio_vae_signature){
-        32u, 2u, 32000u, 800u, 800u, 40u
+        .latent_channels = 32u,
+        .output_channels = 2u,
+        .sample_rate = 32000u,
+        .encoder_width = 64u,
+        .decoder_width = 1024u,
+        .latent_projection_width = 2048u,
+        .encoder_stage_count = 5u,
+        .encoder_rates = {2u, 4u, 4u, 5u, 5u},
+        .decoder_stage_count = 7u,
+        .decoder_rates = {5u, 5u, 2u, 2u, 2u, 2u, 2u},
+        .encoder_rate_product = 800u,
+        .decoder_rate_product = 800u,
+        .latent_steps_per_second = 40u,
+        .attention_projection = 1
     };
     architecture->bf16_tensors = 1580u;
     architecture->f32_tensors = 1660u;

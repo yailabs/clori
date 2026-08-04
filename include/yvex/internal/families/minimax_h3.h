@@ -231,6 +231,8 @@ typedef struct {
     unsigned long long video_channels;
     unsigned long long audio_channels;
     unsigned long long video_patch[3];
+    unsigned long long audio_patch_steps;
+    unsigned long long audio_patch_channels;
     unsigned long long timestep_input;
     unsigned long long timestep_hidden;
     unsigned long long timestep_output;
@@ -244,14 +246,30 @@ typedef struct {
 typedef struct {
     unsigned long long latent_channels;
     unsigned long long media_channels;
+    unsigned long long base_channels;
+    unsigned long long stage_count;
+    unsigned long long channel_multipliers[6];
+    unsigned long long spatial_down[6];
+    unsigned long long spatial_up[6];
+    unsigned long long temporal_down[6];
     unsigned long long spatial_ratio;
     unsigned long long temporal_ratio;
+    unsigned long long residual_blocks;
     unsigned long long decoder_blocks;
     unsigned long long decoder_heads;
+    unsigned long long decoder_head_dimension;
+    unsigned long long decoder_rope_ratio_numerator;
+    unsigned long long decoder_rope_ratio_denominator;
+    unsigned long long decoder_rope_theta;
     unsigned long long tile_size;
     unsigned long long tile_overlap;
     unsigned long long clip_length;
     unsigned long long token_drop;
+    int conv3d;
+    int isolated_temporal_group_norm;
+    int encoder_tiling;
+    int decoder_tiling;
+    int parallel_tiling;
     int causal_encoder;
     int causal_decoder;
 } yvex_minimax_h3_video_vae_signature;
@@ -260,9 +278,17 @@ typedef struct {
     unsigned long long latent_channels;
     unsigned long long output_channels;
     unsigned long long sample_rate;
+    unsigned long long encoder_width;
+    unsigned long long decoder_width;
+    unsigned long long latent_projection_width;
+    unsigned long long encoder_stage_count;
+    unsigned long long encoder_rates[5];
+    unsigned long long decoder_stage_count;
+    unsigned long long decoder_rates[7];
     unsigned long long encoder_rate_product;
     unsigned long long decoder_rate_product;
     unsigned long long latent_steps_per_second;
+    int attention_projection;
 } yvex_minimax_h3_audio_vae_signature;
 
 typedef struct {
