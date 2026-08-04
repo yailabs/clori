@@ -247,5 +247,8 @@ same hosted path exposed to the operator.
   generation; optimization, evaluation, benchmark, and release remain open.
 - [Qwen](qwen.md) has source/header and candidate-role evidence only.
 - [Gemma](gemma.md) has source/header and candidate-role evidence only.
+- [MiniMax-H3 FL2VA](minimax-h3.md) is a source-profiled research target with
+  reconciled tensor headers and an integration decision; it is not an admitted
+  executable family.
 
 No second complete family is currently admitted.
