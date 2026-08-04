@@ -53,6 +53,25 @@ static const char *const component_names[] = {
     "transformer", "video_vae", "audio_vae", "latent_controller"
 };
 
+static const yvex_minimax_h3_phase_edge phase_edges[] = {
+    {YVEX_MINIMAX_H3_PHASE_PREPARE, YVEX_MINIMAX_H3_PHASE_CONDITION,
+     YVEX_MINIMAX_H3_DATA_TOKEN_IDS | YVEX_MINIMAX_H3_DATA_MEDIA_GRID,
+     YVEX_MINIMAX_H3_LIFETIME_PHASE},
+    {YVEX_MINIMAX_H3_PHASE_CONDITION, YVEX_MINIMAX_H3_PHASE_LATENT_INITIALIZE,
+     YVEX_MINIMAX_H3_DATA_CONDITIONING, YVEX_MINIMAX_H3_LIFETIME_REQUEST_IMMUTABLE},
+    {YVEX_MINIMAX_H3_PHASE_LATENT_INITIALIZE, YVEX_MINIMAX_H3_PHASE_LATENT_ITERATE,
+     YVEX_MINIMAX_H3_DATA_VIDEO_LATENT | YVEX_MINIMAX_H3_DATA_AUDIO_LATENT,
+     YVEX_MINIMAX_H3_LIFETIME_REQUEST_MUTABLE},
+    {YVEX_MINIMAX_H3_PHASE_LATENT_ITERATE, YVEX_MINIMAX_H3_PHASE_VIDEO_DECODE,
+     YVEX_MINIMAX_H3_DATA_VIDEO_LATENT, YVEX_MINIMAX_H3_LIFETIME_REQUEST_IMMUTABLE},
+    {YVEX_MINIMAX_H3_PHASE_LATENT_ITERATE, YVEX_MINIMAX_H3_PHASE_AUDIO_DECODE,
+     YVEX_MINIMAX_H3_DATA_AUDIO_LATENT, YVEX_MINIMAX_H3_LIFETIME_REQUEST_IMMUTABLE},
+    {YVEX_MINIMAX_H3_PHASE_VIDEO_DECODE, YVEX_MINIMAX_H3_PHASE_MEDIA_PUBLISH,
+     YVEX_MINIMAX_H3_DATA_RGB_FRAMES, YVEX_MINIMAX_H3_LIFETIME_OUTPUT_TRANSACTION},
+    {YVEX_MINIMAX_H3_PHASE_AUDIO_DECODE, YVEX_MINIMAX_H3_PHASE_MEDIA_PUBLISH,
+     YVEX_MINIMAX_H3_DATA_STEREO_SAMPLES, YVEX_MINIMAX_H3_LIFETIME_OUTPUT_TRANSACTION}
+};
+
 static const char *const role_names[] = {
     "invalid", "text-embedding", "text-output-head", "text-attention-q",
     "text-attention-k", "text-attention-v", "text-attention-out", "text-qk-norm",
@@ -465,6 +484,81 @@ static int component_graph_validate(
     return YVEX_OK;
 }
 
+static int phase_graph_validate(
+    const yvex_minimax_h3_phase_edge *edges, size_t edge_count,
+    yvex_minimax_h3_failure *failure, yvex_error *err)
+{
+    unsigned int publication_inputs = 0u;
+    size_t index;
+
+    if (!edges || edge_count != YVEX_MINIMAX_H3_PHASE_EDGES) {
+        return family_refuse(failure, YVEX_MINIMAX_H3_FAILURE_COMPONENT_COVERAGE,
+                             YVEX_MINIMAX_H3_COMPONENT_COUNT, 0, edge_count, NULL,
+                             YVEX_ERR_FORMAT, err, "exactly seven phase edges are required");
+    }
+    for (index = 0u; index < edge_count; ++index) {
+        const yvex_minimax_h3_phase_edge *edge = &edges[index];
+        size_t prior;
+
+        if (edge->source_phase < YVEX_MINIMAX_H3_PHASE_PREPARE ||
+            edge->source_phase > YVEX_MINIMAX_H3_PHASE_MEDIA_PUBLISH ||
+            edge->destination_phase < YVEX_MINIMAX_H3_PHASE_PREPARE ||
+            edge->destination_phase > YVEX_MINIMAX_H3_PHASE_MEDIA_PUBLISH ||
+            edge->source_phase >= edge->destination_phase || !edge->data_classes ||
+            edge->lifetime < YVEX_MINIMAX_H3_LIFETIME_METADATA ||
+            edge->lifetime > YVEX_MINIMAX_H3_LIFETIME_OUTPUT_TRANSACTION) {
+            return family_refuse(failure, YVEX_MINIMAX_H3_FAILURE_PHASE_ORDER,
+                                 YVEX_MINIMAX_H3_COMPONENT_COUNT, 0, index, NULL,
+                                 YVEX_ERR_FORMAT, err,
+                                 "phase edge endpoint, order, data, or lifetime is invalid");
+        }
+        for (prior = 0u; prior < index; ++prior) {
+            if (edges[prior].source_phase == edge->source_phase &&
+                edges[prior].destination_phase == edge->destination_phase &&
+                edges[prior].data_classes == edge->data_classes) {
+                return family_refuse(failure, YVEX_MINIMAX_H3_FAILURE_COMPONENT_COVERAGE,
+                                     YVEX_MINIMAX_H3_COMPONENT_COUNT, 0, index, NULL,
+                                     YVEX_ERR_FORMAT, err, "phase edge is duplicated");
+            }
+        }
+        if (edge->destination_phase == YVEX_MINIMAX_H3_PHASE_MEDIA_PUBLISH) {
+            if (edge->lifetime != YVEX_MINIMAX_H3_LIFETIME_OUTPUT_TRANSACTION) {
+                return family_refuse(failure, YVEX_MINIMAX_H3_FAILURE_PHASE_ORDER,
+                                     YVEX_MINIMAX_H3_COMPONENT_COUNT, 0, index, NULL,
+                                     YVEX_ERR_FORMAT, err,
+                                     "publication inputs must belong to the output transaction");
+            }
+            publication_inputs |= edge->data_classes;
+        }
+    }
+    if ((publication_inputs & (YVEX_MINIMAX_H3_DATA_RGB_FRAMES |
+                               YVEX_MINIMAX_H3_DATA_STEREO_SAMPLES)) !=
+        (YVEX_MINIMAX_H3_DATA_RGB_FRAMES | YVEX_MINIMAX_H3_DATA_STEREO_SAMPLES)) {
+        return family_refuse(failure, YVEX_MINIMAX_H3_FAILURE_COMPONENT_COVERAGE,
+                             YVEX_MINIMAX_H3_COMPONENT_COUNT, 0, edge_count, NULL,
+                             YVEX_ERR_FORMAT, err,
+                             "media publication requires both video frames and stereo samples");
+    }
+    return YVEX_OK;
+}
+
+static int phase_graph_identity(char output[65])
+{
+    yvex_sha256 hash;
+    size_t index;
+
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.phase-dag.v1") ||
+        !yvex_sha256_update_u64(&hash, YVEX_MINIMAX_H3_PHASE_EDGES)) return 0;
+    for (index = 0u; index < YVEX_MINIMAX_H3_PHASE_EDGES; ++index) {
+        if (!identity_u32(&hash, phase_edges[index].source_phase) ||
+            !identity_u32(&hash, phase_edges[index].destination_phase) ||
+            !identity_u32(&hash, phase_edges[index].data_classes) ||
+            !identity_u32(&hash, phase_edges[index].lifetime)) return 0;
+    }
+    return identity_finish(&hash, output);
+}
+
 static int components_validate(yvex_minimax_h3_target *target,
                                yvex_minimax_h3_failure *failure,
                                yvex_error *err)
@@ -535,6 +629,12 @@ static int components_validate(yvex_minimax_h3_target *target,
                   YVEX_MINIMAX_H3_PHASE_LATENT_INITIALIZE,
                   YVEX_MINIMAX_H3_LIFETIME_REQUEST_MUTABLE, 0u, 0u, 0u, 0u, 0u);
 
+    target->summary.output_classes = YVEX_MINIMAX_H3_DATA_SYNCHRONIZED_MEDIA;
+    if (phase_graph_validate(phase_edges, YVEX_MINIMAX_H3_PHASE_EDGES,
+                             failure, err) != YVEX_OK ||
+        !phase_graph_identity(target->summary.phase_dag_identity))
+        goto identity_failure;
+    target->summary.phase_edge_count = YVEX_MINIMAX_H3_PHASE_EDGES;
     yvex_sha256_init(&hash);
     if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.component-manifest.v1"))
         goto identity_failure;
@@ -554,11 +654,12 @@ static int components_validate(yvex_minimax_h3_target *target,
     if (component_graph_validate(
             target->components, YVEX_MINIMAX_H3_COMPONENT_COUNT,
             failure, err) != YVEX_OK) return yvex_error_code(err);
-    if (!identity_finish(&hash, target->summary.component_manifest_identity))
+    if (!yvex_sha256_update_text(&hash, target->summary.phase_dag_identity) ||
+        !identity_u32(&hash, target->summary.output_classes) ||
+        !identity_finish(&hash, target->summary.component_manifest_identity))
         goto identity_failure;
     target->summary.component_count = YVEX_MINIMAX_H3_LOGICAL_COMPONENTS;
     target->summary.weighted_component_count = YVEX_MINIMAX_H3_WEIGHTED_COMPONENTS;
-    target->summary.output_classes = YVEX_MINIMAX_H3_DATA_SYNCHRONIZED_MEDIA;
     return YVEX_OK;
 
 identity_failure:
@@ -1215,13 +1316,8 @@ static int target_open(yvex_minimax_h3_target **out,
         identity_key(target->summary.source_snapshot_identity);
     rc = unresolved_requirements_build(target, failure, err);
     if (rc != YVEX_OK) goto fail;
-    rc = components_canonical(
-        target->components, target->summary.component_manifest_identity,
-        failure, err);
+    rc = components_validate(target, failure, err);
     if (rc != YVEX_OK) goto fail;
-    target->summary.component_count = YVEX_MINIMAX_H3_LOGICAL_COMPONENTS;
-    target->summary.weighted_component_count = YVEX_MINIMAX_H3_WEIGHTED_COMPONENTS;
-    target->summary.output_classes = YVEX_MINIMAX_H3_DATA_SYNCHRONIZED_MEDIA;
     rc = architecture_canonical(&target->architecture, failure, err);
     if (rc != YVEX_OK) goto fail;
     yvex_core_text_copy(target->summary.architecture_identity,
@@ -1259,6 +1355,11 @@ static const yvex_minimax_h3_component *target_component_at(
                ? &target->components[index] : NULL;
 }
 
+static const yvex_minimax_h3_phase_edge *target_phase_edge_at(unsigned long long index)
+{
+    return index < YVEX_MINIMAX_H3_PHASE_EDGES ? &phase_edges[index] : NULL;
+}
+
 static const yvex_minimax_h3_tensor_role *target_role_at(
     const yvex_minimax_h3_target *target, unsigned long long index)
 {
@@ -1269,9 +1370,9 @@ const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_api api = {
         target_open, target_close, target_summary, target_architecture,
-        target_component_at, target_role_at,
+        target_component_at, target_phase_edge_at, target_role_at,
         family_failure_name, family_role_name, family_component_name,
-        components_canonical, component_graph_validate,
+        components_canonical, component_graph_validate, phase_graph_validate,
         architecture_canonical, tensor_classify
     };
 

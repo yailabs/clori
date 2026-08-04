@@ -597,8 +597,10 @@ static int model_target_render_minimax(
             "{\"status\":\"%s\",\"target_id\":\"%s\",\"family\":\"minimax-h3\","
             "\"repository\":\"%s\",\"revision\":\"%s\",\"subtree\":\"%s\","
             "\"source_verified\":true,\"components\":%llu,\"weighted_components\":%llu,"
+            "\"phase_edges\":%llu,"
             "\"shards\":%llu,\"tensors\":%llu,\"elements\":%llu,\"payload_bytes\":%llu,"
             "\"source_snapshot_identity\":\"%s\",\"component_manifest_identity\":\"%s\","
+            "\"phase_dag_identity\":\"%s\","
             "\"architecture_identity\":\"%s\",\"role_map_identity\":\"%s\","
             "\"transformation_ir_identity\":\"%s\",\"derivation_identity\":\"%s\","
             "\"payload_execution_bytes\":%llu,\"evidence_stage\":"
@@ -608,9 +610,11 @@ static int model_target_render_minimax(
             report->status, report->target_id, YVEX_MINIMAX_H3_REPOSITORY,
             YVEX_MINIMAX_H3_REVISION, YVEX_MINIMAX_H3_SUBTREE,
             summary->component_count, summary->weighted_component_count,
+            summary->phase_edge_count,
             summary->shard_count, summary->tensor_count, summary->element_count,
             summary->payload_bytes, summary->source_snapshot_identity,
-            summary->component_manifest_identity, summary->architecture_identity,
+            summary->component_manifest_identity, summary->phase_dag_identity,
+            summary->architecture_identity,
             summary->role_map_identity, transformation->transform_identity,
             report->family_derivation_identity, transformation->payload_bytes_read,
             report->next_row);
@@ -653,10 +657,22 @@ static int model_target_render_minimax(
                     component->identity);
             }
         }
+        for (index = 0u; index < summary->phase_edge_count; ++index) {
+            const yvex_minimax_h3_phase_edge *edge = api->phase_edge_at(index);
+            if (edge) {
+                rc |= yvex_cli_out_writef(
+                    fp, "phase_edge_%llu: from=%u to=%u data=%u lifetime=%u\n",
+                    index, (unsigned int)edge->source_phase,
+                    (unsigned int)edge->destination_phase, edge->data_classes,
+                    (unsigned int)edge->lifetime);
+            }
+        }
         rc |= yvex_cli_out_writef(fp, "source_snapshot_identity: %s\n",
                                   summary->source_snapshot_identity);
         rc |= yvex_cli_out_writef(fp, "component_manifest_identity: %s\n",
                                   summary->component_manifest_identity);
+        rc |= yvex_cli_out_writef(fp, "phase_dag_identity: %s\n",
+                                  summary->phase_dag_identity);
         rc |= yvex_cli_out_writef(fp, "architecture_identity: %s\n",
                                   summary->architecture_identity);
         rc |= yvex_cli_out_writef(fp, "role_map_identity: %s\n",
@@ -687,8 +703,9 @@ static int model_target_render_minimax(
         YVEX_MINIMAX_H3_SUBTREE, summary->component_count,
         summary->shard_count, summary->tensor_count, summary->payload_bytes);
     rc |= yvex_cli_out_writef(
-        fp, "identity: architecture=%s roles=%s transform=%s\n",
-        summary->architecture_identity, summary->role_map_identity,
+        fp, "identity: architecture=%s phases=%s roles=%s transform=%s\n",
+        summary->architecture_identity, summary->phase_dag_identity,
+        summary->role_map_identity,
         transformation->transform_identity);
     rc |= yvex_cli_out_writef(
         fp, "stage: source/architecture/role-map/Transformation-IR; "

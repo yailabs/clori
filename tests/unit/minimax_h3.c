@@ -21,6 +21,7 @@ static int test_components(void)
     char second_identity[65];
     unsigned int index;
     unsigned int weighted = 0u;
+    yvex_minimax_h3_phase_edge edges[YVEX_MINIMAX_H3_PHASE_EDGES];
 
     YVEX_TEST_ASSERT(yvex_model_register_minimax_h3()->components_canonical(
                          first, first_identity, &failure, &err) == YVEX_OK,
@@ -39,6 +40,32 @@ static int test_components(void)
     }
     YVEX_TEST_ASSERT(weighted == YVEX_MINIMAX_H3_WEIGHTED_COMPONENTS,
                      "exactly four components own weights");
+    for (index = 0u; index < YVEX_MINIMAX_H3_PHASE_EDGES; ++index) {
+        const yvex_minimax_h3_phase_edge *edge =
+            yvex_model_register_minimax_h3()->phase_edge_at(index);
+        YVEX_TEST_ASSERT(edge != NULL, "every canonical phase edge is present");
+        edges[index] = *edge;
+    }
+    YVEX_TEST_ASSERT(yvex_model_register_minimax_h3()->phase_graph_validate(
+                         edges, YVEX_MINIMAX_H3_PHASE_EDGES,
+                         &failure, &err) == YVEX_OK,
+                     "canonical phase DAG reaches media publication");
+    YVEX_TEST_ASSERT(yvex_model_register_minimax_h3()->phase_graph_validate(
+                         edges, YVEX_MINIMAX_H3_PHASE_EDGES - 1u,
+                         &failure, &err) != YVEX_OK,
+                     "incomplete phase DAG is refused");
+    edges[0].destination_phase = YVEX_MINIMAX_H3_PHASE_PREPARE;
+    YVEX_TEST_ASSERT(yvex_model_register_minimax_h3()->phase_graph_validate(
+                         edges, YVEX_MINIMAX_H3_PHASE_EDGES,
+                         &failure, &err) != YVEX_OK &&
+                         failure.code == YVEX_MINIMAX_H3_FAILURE_PHASE_ORDER,
+                     "cyclic or reversed phase edge is refused");
+    edges[0] = *yvex_model_register_minimax_h3()->phase_edge_at(0u);
+    edges[6] = edges[5];
+    YVEX_TEST_ASSERT(yvex_model_register_minimax_h3()->phase_graph_validate(
+                         edges, YVEX_MINIMAX_H3_PHASE_EDGES,
+                         &failure, &err) != YVEX_OK,
+                     "duplicate phase edge and missing audio publication are refused");
     YVEX_TEST_ASSERT(yvex_model_register_minimax_h3()->component_graph_validate(
                          first, YVEX_MINIMAX_H3_COMPONENT_COUNT,
                          &failure, &err) == YVEX_OK,

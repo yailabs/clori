@@ -25,6 +25,7 @@ typedef struct yvex_transform_ir yvex_transform_ir;
     "d1113e0f123c69f79cd0de35ca1771606ebc3ec924270d257b771f96f584aa6b"
 #define YVEX_MINIMAX_H3_LOGICAL_COMPONENTS 8ull
 #define YVEX_MINIMAX_H3_WEIGHTED_COMPONENTS 4ull
+#define YVEX_MINIMAX_H3_PHASE_EDGES 7ull
 #define YVEX_MINIMAX_H3_SOURCE_FILES 83ull
 #define YVEX_MINIMAX_H3_SHARDS 29ull
 #define YVEX_MINIMAX_H3_TENSORS 3240ull
@@ -192,6 +193,13 @@ typedef struct {
 } yvex_minimax_h3_component;
 
 typedef struct {
+    yvex_minimax_h3_phase source_phase;
+    yvex_minimax_h3_phase destination_phase;
+    unsigned int data_classes;
+    yvex_minimax_h3_lifetime lifetime;
+} yvex_minimax_h3_phase_edge;
+
+typedef struct {
     unsigned long long text_layers;
     unsigned long long text_width;
     unsigned long long text_ffn_width;
@@ -294,6 +302,7 @@ typedef struct {
     char source_acquisition_identity[65];
     char source_snapshot_identity[65];
     char component_manifest_identity[65];
+    char phase_dag_identity[65];
     char architecture_identity[65];
     char role_map_identity[65];
     char target_identity[65];
@@ -301,6 +310,7 @@ typedef struct {
     unsigned long long source_snapshot_key;
     unsigned long long component_count;
     unsigned long long weighted_component_count;
+    unsigned long long phase_edge_count;
     unsigned long long source_file_count;
     unsigned long long shard_count;
     unsigned long long tensor_count;
@@ -329,6 +339,7 @@ typedef struct {
         const yvex_minimax_h3_target *target);
     const yvex_minimax_h3_component *(*component_at)(
         const yvex_minimax_h3_target *target, unsigned long long index);
+    const yvex_minimax_h3_phase_edge *(*phase_edge_at)(unsigned long long index);
     const yvex_minimax_h3_tensor_role *(*role_at)(
         const yvex_minimax_h3_target *target, unsigned long long index);
     const char *(*failure_name)(yvex_minimax_h3_failure_code code);
@@ -340,6 +351,9 @@ typedef struct {
         yvex_error *err);
     int (*component_graph_validate)(
         const yvex_minimax_h3_component *components, size_t component_count,
+        yvex_minimax_h3_failure *failure, yvex_error *err);
+    int (*phase_graph_validate)(
+        const yvex_minimax_h3_phase_edge *edges, size_t edge_count,
         yvex_minimax_h3_failure *failure, yvex_error *err);
     int (*architecture_canonical)(
         yvex_minimax_h3_architecture *architecture,
