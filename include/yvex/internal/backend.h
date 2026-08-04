@@ -1,7 +1,5 @@
-/*
- * Backend implementations share lifecycle, capability, tensor, and report types through this
- * non-installed ABI. Model topology and family policy never cross this boundary.
- */
+/* Backend implementations share lifecycle, capability, tensor, and report types here;
+ * model topology and family policy remain outside this non-installed ABI. */
 #ifndef INCLUDE_YVEX_INTERNAL_BACKEND_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_BACKEND_H_INCLUDED
 #include <limits.h>
@@ -510,6 +508,7 @@ int yvex_backend_attention_workspace_required_from_recipe(
 typedef struct {
     unsigned int schema;
     int configured;
+    int kernel_bundle_native;
     yvex_backend_cuda_attention_mode selected_mode;
     unsigned long long graph_count, piece_count;
     unsigned long long capture_count, instantiate_count, replay_count;
@@ -522,6 +521,7 @@ typedef struct {
     int driver_version;
     char compatibility_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
     char capture_bucket[YVEX_BACKEND_CUDA_CAPTURE_BUCKET_CAP];
+    char kernel_bundle_architecture[16];
     char cuda_build_identity[YVEX_SHA256_HEX_BYTES];
     char launch_graph_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];
     char graph_exec_identity[YVEX_BACKEND_CUDA_GRAPH_IDENTITY_CAP];

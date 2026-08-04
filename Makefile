@@ -44,6 +44,7 @@
 	check-source-manifest generate-operator-registry \
 	generate-command-migration \
 	check-operator-registry test-operator-registry cuda-info cuda-kernels cuda test-cuda test-cuda-graph \
+	test-cuda-native-sm121 \
 	test-cuda-no-nvcc smoke-cuda check-cuda test test-core test-cli test-materialize \
 	test-runtime-descriptor test-runtime-binding test-runtime-model-session \
 	test-runtime-residency test-runtime-phases test-runtime-envelope \
@@ -82,6 +83,7 @@
 CC ?= cc
 AR ?= ar
 NVCC ?= nvcc
+CUOBJDUMP ?= $(CUDA_HOME)/bin/cuobjdump
 CUDA_HOME ?= /usr/local/cuda
 NVCCFLAGS ?= -O3
 CUDA_LDFLAGS ?=
@@ -202,6 +204,9 @@ OPENAI_ADAPTER_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(OPENAI_ADAPTER_SRCS))
 CUDA_ARCH_FLAG := $(if $(filter auto,$(YVEX_CUDA_ARCH)),,-arch=$(YVEX_CUDA_ARCH))
 CUDA_PTX := $(patsubst %.cu,$(OBJ_DIR)/%.ptx,$(CUDA_CU_SRCS))
 CUDA_PTX_INC := $(OBJ_DIR)/generated/cuda_kernels_ptx.inc
+CUDA_NATIVE_ARCH := $(filter sm_%,$(YVEX_CUDA_ARCH))
+CUDA_CUBIN := $(if $(CUDA_NATIVE_ARCH),$(patsubst %.cu,$(OBJ_DIR)/%.cubin,$(CUDA_CU_SRCS)))
+CUDA_CUBIN_INC := $(OBJ_DIR)/generated/cuda_kernels_cubin.inc
 
 CORE_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CORE_SRCS))
 CUDA_OBJS := $(patsubst %.c,$(OBJ_DIR)/%.o,$(CUDA_SRCS))
@@ -211,6 +216,10 @@ ifeq ($(NVCC_AVAILABLE),yes)
 CPPFLAGS += -DYVEX_HAVE_CUDA_KERNEL_PTX=1
 $(OBJ_DIR)/src/backend/cuda/capability.o: CPPFLAGS += -I$(OBJ_DIR)/generated
 $(OBJ_DIR)/src/backend/cuda/capability.o: $(CUDA_PTX_INC)
+ifneq ($(CUDA_NATIVE_ARCH),)
+CPPFLAGS += -DYVEX_HAVE_CUDA_KERNEL_CUBIN=1
+$(OBJ_DIR)/src/backend/cuda/capability.o: $(CUDA_CUBIN_INC)
+endif
 endif
 
 $(OBJ_DIR)/src/cli/commands/graph.o: CPPFLAGS += -D_XOPEN_SOURCE=700 -I$(BUILD_DIR)/generated
@@ -390,11 +399,11 @@ cuda-info: $(YVEX_BIN)
 	@echo "YVEX_CUDA_ARCH: $(YVEX_CUDA_ARCH)"
 	$(YVEX_BIN) system cuda
 
-cuda-kernels: $(CUDA_PTX_INC)
-	@echo "yvex cuda kernels: built from $(CUDA_CU_SRCS)"
+cuda-kernels: $(CUDA_PTX_INC) $(if $(CUDA_NATIVE_ARCH),$(CUDA_CUBIN_INC))
+	@echo "yvex cuda kernels: built from $(CUDA_CU_SRCS) arch=$(YVEX_CUDA_ARCH)"
 
 cuda: cuda-kernels lib client daemon $(CUDA_TEST_RUNNER)
-	@echo "yvex cuda build: dynamic CUDA Driver API path plus CUDA kernel PTX"
+	@echo "yvex cuda build: dynamic Driver API plus admitted PTX/native kernel image"
 
 test-cuda: cuda
 	$(YVEX_BIN) system cuda >/dev/null
@@ -402,6 +411,12 @@ test-cuda: cuda
 
 test-cuda-graph: cuda
 	YVEX_CUDA_TEST_FILTER=graph $(CUDA_TEST_RUNNER)
+
+test-cuda-native-sm121:
+	$(MAKE) BUILD_DIR=build/sm121 YVEX_CUDA_ARCH=sm_121 \
+		build/sm121/tests/test_cuda
+	YVEX_REQUIRE_NATIVE_CUDA_TEST=sm_121 YVEX_CUDA_TEST_FILTER=info \
+		build/sm121/tests/test_cuda
 
 smoke-cuda: cuda $(YVEX_BIN)
 	YVEX_BIN=$(YVEX_BIN) sh tests/cli/cuda.sh
@@ -1404,12 +1419,30 @@ $(OBJ_DIR)/%.ptx: %.cu include/yvex/qtype.h
 	@mkdir -p $(@D)
 	$(NVCC) $(CPPFLAGS) $(NVCCFLAGS) $(CUDA_ARCH_FLAG) -ptx $< -o $@
 
+$(OBJ_DIR)/%.cubin: %.cu include/yvex/qtype.h
+	@mkdir -p $(@D)
+	$(NVCC) $(CPPFLAGS) $(NVCCFLAGS) $(CUDA_ARCH_FLAG) -cubin $< -o $@
+	@$(CUOBJDUMP) --list-elf $@ | grep -F '$(CUDA_NATIVE_ARCH)' >/dev/null || { \
+		echo "native CUDA image does not contain $(CUDA_NATIVE_ARCH): $@" >&2; exit 1; }
+	@$(CUOBJDUMP) --dump-sass $@ | grep -F 'Function :' >/dev/null || { \
+		echo "native CUDA image contains no SASS functions: $@" >&2; exit 1; }
+
 $(CUDA_PTX_INC): $(CUDA_PTX)
 	@mkdir -p $(@D)
 	@{ \
 		printf 'static const unsigned char cuda_kernels_ptx[] = {\n'; \
 		{ cat $(CUDA_PTX); printf '\0'; } | xxd -i; \
 		printf '};\n'; \
+	} > $@
+
+$(CUDA_CUBIN_INC): $(CUDA_CUBIN)
+	@mkdir -p $(@D)
+	@{ \
+		printf 'static const unsigned char cuda_kernels_cubin[] = {\n'; \
+		{ cat $(CUDA_CUBIN); } | xxd -i; \
+		printf '};\n'; \
+		printf 'static const char cuda_kernels_cubin_arch[] = "%s";\n' \
+			'$(CUDA_NATIVE_ARCH)'; \
 	} > $@
 
 $(YVEX_BIN): $(YVEX_OBJS) $(LIBYVEX)

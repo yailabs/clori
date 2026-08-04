@@ -80,8 +80,9 @@ scheduler before a concrete external consumer may justify a new ABI.
 
 The currently admitted code establishes model-derived geometry, v7/v8 binding
 coexistence, typed capacity/page planning, pre-materialization memory refusal,
-and the phase-ledger contract. It does not yet establish native SM121 kernels,
-Tensor Core execution, optimized attention, width-N production MoE, device
+the phase-ledger contract, and identity-bound native SM121 CUBIN admission.
+It does not yet establish Tensor Core execution, specialized attention,
+width-N production MoE, device
 stochastic sampling, device-resident DSpark, paged state allocation, prefix
 persistence, continuous batching, competitive throughput, evaluation,
 benchmark qualification, release qualification, or Hugging Face publication.

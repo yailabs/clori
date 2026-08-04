@@ -1710,11 +1710,14 @@ int yvex_backend_cuda_attention_graph_summary_get(
     memset(out, 0, sizeof(*out));
     out->schema = YVEX_BACKEND_CUDA_ATTENTION_GRAPH_SCHEMA;
     out->configured = state->attention_graph_configured;
+    out->kernel_bundle_native = state->kernel_bundle_native;
     out->selected_mode = state->attention_mode;
     out->driver_version = state->driver_version;
     memcpy(out->compatibility_identity, state->attention_compatibility_identity,
            sizeof(out->compatibility_identity));
     memcpy(out->capture_bucket, state->attention_capture_bucket, sizeof(out->capture_bucket));
+    memcpy(out->kernel_bundle_architecture, state->kernel_bundle_architecture,
+           sizeof(out->kernel_bundle_architecture));
     memcpy(out->cuda_build_identity, state->kernel_bundle_identity,
            sizeof(out->cuda_build_identity));
     yvex_sha256_init(&launch_hash);

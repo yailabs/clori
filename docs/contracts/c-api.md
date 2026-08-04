@@ -138,6 +138,12 @@ The generated CUDA bundle, Driver API module/function resolution and CUDA Graph
 objects are repository-internal backend contracts. They are not installed C
 ABI and they do not imply a model-generation path.
 
+Kernel-bundle identity v2 binds the selected image class, target architecture
+and exact bytes. An `sm_121` build embeds both portable PTX and native CUBIN;
+capability 12.1 selects the CUBIN, while other devices retain an explicit PTX
+class. The existing non-installed CUDA summary carries the selected image
+class, architecture and identity. It does not add installed API.
+
 ## Common Internal Runtime
 
 The common runtime model and execution session are deliberately non-installed

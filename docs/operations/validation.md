@@ -112,7 +112,12 @@ Boundary:
 
 ```sh
 make check-cuda
+make test-cuda-native-sm121
 ```
+
+The native target builds in `build/sm121`, verifies the CUBIN contains an
+`sm_121` ELF image and SASS functions, opens it on the real device, and refuses
+success if the backend selected PTX instead.
 
 ## Artifact Guardrail
 

@@ -66,6 +66,8 @@ change. Git history preserves implementation chronology.
 - Advanced runtime bindings to v8 when they carry sealed model geometry while
   retaining v7 reference bindings, and made startup refuse insufficient model
   residency memory before opening the complete artifact.
+- Made explicit SM121 builds admit an identity-bound native CUBIN on GB10 while
+  retaining portable PTX as a separately identified fallback class.
 
 ### Removed
 

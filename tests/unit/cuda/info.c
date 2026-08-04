@@ -303,6 +303,8 @@ int yvex_cuda_test_info(void)
     yvex_backend_device_info info;
     yvex_backend_tensor_desc descriptor;
     yvex_device_tensor *resident = NULL;
+    yvex_backend_cuda_attention_graph_summary kernel_summary = {0};
+    const char *required_native = getenv("YVEX_REQUIRE_NATIVE_CUDA_TEST");
     yvex_error err;
     static const char *attention_symbols[] = {
         "yvex_attention_bf16_round",
@@ -335,6 +337,21 @@ int yvex_cuda_test_info(void)
     YVEX_TEST_ASSERT(info.compute_capability_major >= 1, "compute capability major");
     YVEX_TEST_ASSERT(info.global_memory_bytes > 0, "global memory nonzero");
     YVEX_TEST_ASSERT(info.total_memory_bytes > 0, "total memory nonzero");
+    YVEX_TEST_ASSERT(yvex_backend_cuda_attention_graph_summary_get(
+                         backend, &kernel_summary, &err) == YVEX_OK &&
+                         kernel_summary.kernel_bundle_architecture[0] &&
+                         yvex_sha256_hex_valid(kernel_summary.cuda_build_identity),
+                     "query admitted CUDA kernel image identity");
+    if (required_native && required_native[0]) {
+        YVEX_TEST_ASSERT(kernel_summary.kernel_bundle_native,
+                         "native CUDA validation refuses a PTX-only bundle");
+        YVEX_TEST_ASSERT(strcmp(kernel_summary.kernel_bundle_architecture,
+                                required_native) == 0,
+                         "native CUDA image targets the required architecture");
+        fprintf(stderr, "native CUDA kernel bundle: architecture=%s identity=%s\n",
+                kernel_summary.kernel_bundle_architecture,
+                kernel_summary.cuda_build_identity);
+    }
 
     memset(&descriptor, 0, sizeof(descriptor));
     descriptor.name = "cuda-addressable-host-fixture";

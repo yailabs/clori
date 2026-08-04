@@ -198,6 +198,7 @@ static const char *catalog_models_root(const yvex_model_target_request *request,
 static void catalog_absolute_path(char *out, size_t cap, const char *path)
 {
     char cwd[512];
+    size_t used;
 
     if (!out || cap == 0u) return;
     out[0] = '\0';
@@ -210,7 +211,12 @@ static void catalog_absolute_path(char *out, size_t cap, const char *path)
         yvex_core_text_copy(out, cap, path);
         return;
     }
-    (void)snprintf(out, cap, "%s/%s", cwd, path);
+    yvex_core_text_copy(out, cap, cwd);
+    used = strlen(out);
+    if (used + 1u >= cap) return;
+    out[used++] = '/';
+    out[used] = '\0';
+    yvex_core_text_copy(out + used, cap - used, path);
 }
 
 static const char *catalog_source_leaf(const yvex_model_target_record *record)

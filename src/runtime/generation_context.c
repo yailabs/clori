@@ -286,6 +286,7 @@ static int generation_capacity_hardware(
     const yvex_runtime_session_view *view =
         yvex_runtime_session_view_get(context->session);
     yvex_backend_device_info device;
+    yvex_backend_cuda_attention_graph_summary cuda = {0};
     long pages, page_bytes;
     unsigned long long total;
     if (!view || !view->backend ||
@@ -321,15 +322,28 @@ static int generation_capacity_hardware(
     context->hardware_profile.device_page_bytes = (unsigned long long)page_bytes;
     context->hardware_profile.unified_addressing = device.unified_addressing;
     context->hardware_profile.coherent_host_memory = device.managed_memory;
-    if (device.kind == YVEX_BACKEND_KIND_CUDA)
+    if (device.kind == YVEX_BACKEND_KIND_CUDA) {
+        if (yvex_backend_cuda_attention_graph_summary_get(
+                view->backend, &cuda, err) != YVEX_OK ||
+            !cuda.kernel_bundle_architecture[0] ||
+            !yvex_sha256_hex_valid(cuda.cuda_build_identity))
+            return generation_context_refuse(
+                err, YVEX_ERR_STATE,
+                "kernel-bundle hardware facts are unavailable");
+        context->hardware_profile.native_architecture_code =
+            cuda.kernel_bundle_native;
+        if (cuda.kernel_bundle_native)
+            context->hardware_profile.admitted_fact_mask |=
+                YVEX_EXECUTION_HARDWARE_FACT_BIT(
+                    YVEX_EXECUTION_HARDWARE_FACT_NATIVE_CODE);
         (void)snprintf(context->hardware_profile.name,
                        sizeof(context->hardware_profile.name),
-                       "cuda-memory-sm%d%d", device.compute_capability_major,
-                       device.compute_capability_minor);
-    else
+                       "cuda-%s", cuda.kernel_bundle_architecture);
+    } else {
         yvex_core_text_copy(context->hardware_profile.name,
                             sizeof(context->hardware_profile.name),
                             "cpu-memory");
+    }
     return yvex_execution_hardware_profile_seal(
         &context->hardware_profile, err);
 }

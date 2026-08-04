@@ -120,6 +120,14 @@ attention and host feature projection remain explicitly named portable
 reference adapters. Unsupported CUDA operations fail closed; no requested
 CUDA execution silently falls back to CPU.
 
+The CUDA kernel owner emits portable PTX and, for an explicit `sm_121` build,
+an independently identified native CUBIN. Module admission selects the native
+image only when the runtime device is capability 12.1 and includes image class,
+architecture and bytes in kernel-bundle identity v2. A competitive native gate
+refuses PTX-only selection. Binary inspection proves 29 SASS functions in the
+current bundle; it finds no MMA instructions, so this establishes native code
+but makes no Tensor Core claim.
+
 ## Persistent state
 
 Persistent state includes committed position and family-correct attention/KV

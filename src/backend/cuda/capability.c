@@ -7,10 +7,14 @@
  */
 #include "src/backend/cuda/private.h"
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef YVEX_HAVE_CUDA_KERNEL_PTX
 #include <cuda_kernels_ptx.inc>
+#endif
+#ifdef YVEX_HAVE_CUDA_KERNEL_CUBIN
+#include <cuda_kernels_cubin.inc>
 #endif
 typedef struct {
     const char *symbol;
@@ -100,18 +104,63 @@ static void cuda_bundle_clear_handles(yvex_cuda_backend_state *state)
         *cuda_function_slot(state, cuda_kernel_bindings[index].state_offset) = NULL;
     }
     state->module_loaded = 0;
+    state->kernel_bundle_native = 0;
     state->kernel_bundle_identity[0] = '\0';
+    state->kernel_bundle_architecture[0] = '\0';
 }
 #ifdef YVEX_HAVE_CUDA_KERNEL_PTX
 
-static int cuda_bundle_identity(char output[YVEX_SHA256_HEX_BYTES])
+typedef struct {
+    const unsigned char *bytes;
+    size_t byte_count;
+    const char *architecture;
+    int native;
+} cuda_bundle_image;
+
+static int cuda_bundle_select_image(const yvex_backend *backend,
+                                    cuda_bundle_image *image,
+                                    yvex_error *err)
+{
+    const char *forced = getenv("YVEX_TEST_CUDA_BUNDLE_IMAGE");
+    char device_architecture[16];
+    if (!backend || !image) return YVEX_ERR_INVALID_ARG;
+    memset(image, 0, sizeof(*image));
+    (void)snprintf(device_architecture, sizeof(device_architecture), "sm_%d%d",
+                   backend->device_info.compute_capability_major,
+                   backend->device_info.compute_capability_minor);
+#ifdef YVEX_HAVE_CUDA_KERNEL_CUBIN
+    if ((!forced || strcmp(forced, "ptx") != 0) &&
+        strcmp(device_architecture, cuda_kernels_cubin_arch) == 0) {
+        image->bytes = cuda_kernels_cubin;
+        image->byte_count = sizeof(cuda_kernels_cubin);
+        image->architecture = cuda_kernels_cubin_arch;
+        image->native = 1;
+        return YVEX_OK;
+    }
+#endif
+    if (forced && strcmp(forced, "native") == 0) {
+        yvex_error_setf(err, YVEX_ERR_UNSUPPORTED, "cuda.kernels.image",
+                        "native CUDA image is unavailable for %s", device_architecture);
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    image->bytes = cuda_kernels_ptx;
+    image->byte_count = strlen((const char *)cuda_kernels_ptx);
+    image->architecture = "ptx";
+    return YVEX_OK;
+}
+
+static int cuda_bundle_identity(const cuda_bundle_image *image,
+                                char output[YVEX_SHA256_HEX_BYTES])
 {
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    if (!image || !image->bytes || !image->byte_count || !image->architecture)
+        return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.cuda.kernel-bundle.v1") ||
-        !yvex_sha256_update(&hash, cuda_kernels_ptx,
-                            strlen((const char *)cuda_kernels_ptx)) ||
+    if (!yvex_sha256_update_text(&hash, "yvex.cuda.kernel-bundle.v2") ||
+        !yvex_sha256_update_text(&hash, image->native ? "native" : "ptx") ||
+        !yvex_sha256_update_text(&hash, image->architecture) ||
+        !yvex_sha256_update(&hash, image->bytes, image->byte_count) ||
         !yvex_sha256_final(&hash, digest))
         return 0;
     yvex_sha256_hex(digest, output);
@@ -251,6 +300,7 @@ int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err)
     {
         CUmodule module = NULL;
         CUfunction functions[CUDA_KERNEL_BINDING_COUNT];
+        cuda_bundle_image image;
         const char *injected = getenv("YVEX_TEST_CUDA_BUNDLE_FAILURE");
         size_t index;
         int rc;
@@ -261,6 +311,13 @@ int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err)
             state->kernel_bundle_reason = YVEX_BACKEND_CAPABILITY_REASON_CONTEXT_UNAVAILABLE;
             return rc;
         }
+        rc = cuda_bundle_select_image(backend, &image, err);
+        if (rc != YVEX_OK) {
+            state->kernel_bundle_state = YVEX_CUDA_KERNEL_BUNDLE_REJECTED;
+            state->kernel_bundle_reason =
+                YVEX_BACKEND_CAPABILITY_REASON_KERNEL_BUNDLE_REJECTED;
+            return rc;
+        }
         if (injected && strcmp(injected, "module") == 0) {
             yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.kernels.load",
                            "injected CUDA module admission failure");
@@ -268,7 +325,7 @@ int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err)
         } else {
             rc = yvex_cuda_status(&state->driver,
                                   state->driver.cuModuleLoadData(
-                                      &module, cuda_kernels_ptx),
+                                      &module, image.bytes),
                                   "cuda.kernels.load", err);
         }
         if (rc != YVEX_OK) {
@@ -295,7 +352,11 @@ int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err)
         state->kernel_bundle_state = YVEX_CUDA_KERNEL_BUNDLE_ADMITTED;
         state->kernel_bundle_reason = YVEX_BACKEND_CAPABILITY_REASON_NONE;
         state->kernel_bundle_failure_variant = YVEX_BACKEND_VARIANT_COUNT;
-        if (!cuda_bundle_identity(state->kernel_bundle_identity)) {
+        state->kernel_bundle_native = image.native;
+        yvex_core_text_copy(state->kernel_bundle_architecture,
+                            sizeof(state->kernel_bundle_architecture),
+                            image.architecture);
+        if (!cuda_bundle_identity(&image, state->kernel_bundle_identity)) {
             state->kernel_bundle_state = YVEX_CUDA_KERNEL_BUNDLE_REJECTED;
             state->kernel_bundle_reason =
                 YVEX_BACKEND_CAPABILITY_REASON_KERNEL_BUNDLE_REJECTED;
