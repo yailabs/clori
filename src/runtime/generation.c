@@ -175,8 +175,7 @@ static int generation_refuse(yvex_error *err, yvex_status status, const char *re
     return status;
 }
 static const unsigned long long generation_transformer_phase_facts =
-    (1ull << YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT) | (1ull << YVEX_EXECUTION_PHASE_FACT_MOVEMENT) |
-    (1ull << YVEX_EXECUTION_PHASE_FACT_KERNELS) |
+    (1ull << YVEX_EXECUTION_PHASE_FACT_MOVEMENT) | (1ull << YVEX_EXECUTION_PHASE_FACT_KERNELS) |
     (1ull << YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS);
 static int generation_phase_time(
     yvex_runtime_generation_context *context, yvex_execution_roofline_phase phase,
@@ -1312,30 +1311,36 @@ static int generation_speculative_candidate_cycle(
     }
     if (rc == YVEX_OK)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_DRAFT_SWEEP,
-            cycle.draft_ns, cycle.draft_proposed_count, 0ull, NULL,
-            cycle.draft_h2d_bytes, cycle.draft_d2h_bytes, cycle.draft_d2d_bytes,
-            cycle.draft_kernel_launches, cycle.draft_synchronizations,
-            generation_transformer_phase_facts & ~(1ull << YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT), err);
+            cycle.draft_ns, cycle.draft_proposed_count, 0ull,
+            cycle.draft_physical.memory.complete ? &cycle.draft_physical.memory : NULL,
+            cycle.draft_physical.h2d_bytes, cycle.draft_physical.d2h_bytes,
+            cycle.draft_physical.d2d_bytes, cycle.draft_physical.kernel_count,
+            cycle.draft_physical.synchronization_count, generation_transformer_phase_facts |
+                (cycle.draft_physical.memory.complete ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull), err);
     if (rc == YVEX_OK)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_VERIFY_SWEEP,
             cycle.verification_ns, cycle.candidate_count + 1ull, commit->completed ? commit->token_count : 0ull,
-            NULL, cycle.verification_h2d_bytes,
-            cycle.verification_d2h_bytes, cycle.verification_d2d_bytes,
-            cycle.verification_kernel_launches, cycle.verification_synchronizations,
-            generation_transformer_phase_facts & ~(1ull << YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT), err);
+            cycle.verification_physical.memory.complete ? &cycle.verification_physical.memory : NULL,
+            cycle.verification_physical.h2d_bytes, cycle.verification_physical.d2h_bytes,
+            cycle.verification_physical.d2d_bytes,
+            cycle.verification_physical.kernel_count,
+            cycle.verification_physical.synchronization_count,
+            generation_transformer_phase_facts |
+                (cycle.verification_physical.memory.complete
+                     ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull), err);
     if (rc == YVEX_OK && commit->completed && commit->promotion_ns)
         rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_STATE_PROMOTION,
             commit->promotion_ns, commit->verified_prefix_count, commit->token_count,
-            commit->promotion_physical.memory.complete
-                ? &commit->promotion_physical.memory : NULL,
-            commit->promotion_physical.h2d_bytes,
-            commit->promotion_physical.d2h_bytes,
-            commit->promotion_physical.d2d_bytes, commit->promotion_physical.kernel_count,
-            commit->promotion_physical.synchronization_count,
+            commit->promotion_physical.physical.memory.complete
+                ? &commit->promotion_physical.physical.memory : NULL,
+            commit->promotion_physical.physical.h2d_bytes,
+            commit->promotion_physical.physical.d2h_bytes,
+            commit->promotion_physical.physical.d2d_bytes,
+            commit->promotion_physical.physical.kernel_count,
+            commit->promotion_physical.physical.synchronization_count,
             commit->promotion_physical.available
-                ? (generation_transformer_phase_facts &
-                      ~YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_ACTIVE_WEIGHT)) |
-                      (commit->promotion_physical.memory.complete
+                ? generation_transformer_phase_facts |
+                      (commit->promotion_physical.physical.memory.complete
                            ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull)
                 : 0ull, err);
     return rc;

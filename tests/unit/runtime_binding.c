@@ -2586,12 +2586,12 @@ static int test_runtime_injected_state_provider(
                              &promotion, &err) == YVEX_OK &&
                          promotion.schema_version ==
                              YVEX_RUNTIME_STATE_PROMOTION_FACTS_SCHEMA_V1 &&
-                         promotion.available && promotion.memory.complete &&
-                         promotion.memory.measured_operations == 1ull &&
-                         !promotion.memory.active_weight_bytes &&
-                         !promotion.memory.state_bytes &&
-                         !promotion.memory.activation_bytes &&
-                         !promotion.memory.temporary_bytes &&
+                         promotion.available && promotion.physical.memory.complete &&
+                         promotion.physical.memory.measured_operations == 1ull &&
+                         !promotion.physical.memory.active_weight_bytes &&
+                         !promotion.physical.memory.state_bytes &&
+                         !promotion.physical.memory.activation_bytes &&
+                         !promotion.physical.memory.temporary_bytes &&
                          yvex_runtime_session_finish(session, YVEX_OK, &err) == YVEX_OK &&
                          control.commits == 1u && control.active->summary.commit_count == 1ull,
                      "CPU prefix promotion reports complete zero device spans and commits");

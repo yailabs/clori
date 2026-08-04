@@ -652,12 +652,12 @@ int yvex_runtime_session_select_attention_prefix(
     if (rc == YVEX_OK) {
         candidate.schema_version = YVEX_RUNTIME_STATE_PROMOTION_FACTS_SCHEMA_V1;
         candidate.available = 1;
-        candidate.h2d_bytes = after.upload_bytes - before.upload_bytes;
-        candidate.synchronization_count = after.cuda_ready
-                                                ? after.upload_count - before.upload_count
-                                                : 0ull;
+        candidate.physical.h2d_bytes = after.upload_bytes - before.upload_bytes;
+        candidate.physical.synchronization_count =
+            after.cuda_ready ? after.upload_count - before.upload_count : 0ull;
         rc = yvex_execution_memory_facts_add(
-            &candidate.memory, 0ull, candidate.h2d_bytes, 0ull, 0ull, 1ull, 0ull, err);
+            &candidate.physical.memory, 0ull, candidate.physical.h2d_bytes,
+            0ull, 0ull, 1ull, 0ull, err);
         if (rc == YVEX_OK) *facts = candidate;
     }
     (void)pthread_mutex_unlock(&session->lifecycle_mutex);

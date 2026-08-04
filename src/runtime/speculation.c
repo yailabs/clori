@@ -207,8 +207,7 @@ static int speculation_validate(const yvex_speculation_acceptance_request *reque
     return YVEX_OK;
 }
 
-int yvex_speculation_accept(
-    const yvex_speculation_acceptance_request *request,
+int yvex_speculation_accept(const yvex_speculation_acceptance_request *request,
     unsigned int *committed_token_ids, unsigned long long committed_capacity,
     yvex_speculation_acceptance_result *result, yvex_error *err)
 {
@@ -288,8 +287,7 @@ int yvex_speculation_accept(
     return YVEX_OK;
 }
 
-int yvex_speculation_candidate_extent(
-    unsigned long long policy_block_size,
+int yvex_speculation_candidate_extent(unsigned long long policy_block_size,
     unsigned long long remaining_output_tokens,
     unsigned long long remaining_context_tokens,
     unsigned long long *candidate_count, yvex_error *err)
@@ -320,8 +318,7 @@ int yvex_speculation_candidate_extent(
     return YVEX_OK;
 }
 
-int yvex_speculation_commit_plan_build(
-    const yvex_speculation_acceptance_result *acceptance,
+int yvex_speculation_commit_plan_build(const yvex_speculation_acceptance_result *acceptance,
     unsigned long long terminal_index,
     yvex_speculation_commit_plan *plan, yvex_error *err)
 {
@@ -353,8 +350,7 @@ int yvex_speculation_commit_plan_build(
     return YVEX_OK;
 }
 
-static int speculation_draft_sampling_policy(
-    const yvex_runtime_sampling_policy *target_policy,
+static int speculation_draft_sampling_policy(const yvex_runtime_sampling_policy *target_policy,
     unsigned long long vocabulary_size,
     yvex_runtime_sampling_policy *draft_policy, yvex_error *err)
 {
@@ -384,8 +380,7 @@ static int speculation_draft_sampling_policy(
         draft_policy->seed = seed;
     }
     draft_policy->policy_identity[0] = '\0';
-    return yvex_runtime_sampling_policy_seal(
-        draft_policy, vocabulary_size, err);
+    return yvex_runtime_sampling_policy_seal(draft_policy, vocabulary_size, err);
 }
 
 static int speculation_values_digest(const char *domain, const float *values,
@@ -762,8 +757,7 @@ static int speculation_project_target_features(
     return YVEX_OK;
 }
 
-static int speculation_weight_matvec(
-    yvex_runtime_speculation_context *context,
+static int speculation_weight_matvec(yvex_runtime_speculation_context *context,
     const speculation_weight *weight, const float *input, float *output,
     yvex_error *err)
 {
@@ -787,8 +781,7 @@ static int speculation_weight_matvec(
     return YVEX_OK;
 }
 
-static int speculation_transformer_execute(
-    yvex_runtime_speculation_context *context,
+static int speculation_transformer_execute(yvex_runtime_speculation_context *context,
     yvex_runtime_transformer_context *transformer,
     const unsigned int *token_ids, unsigned long long token_count,
     unsigned long long position, int candidate_block_visible,
@@ -846,8 +839,8 @@ static int speculation_transformer_execute(
     output.features = features;
     output.feature_capacity = feature_count;
     if (rc == YVEX_OK)
-        rc = yvex_runtime_transformer_execute(
-            transformer, input, &request, &output, result, err);
+        rc = yvex_runtime_transformer_execute(transformer, input, &request,
+                                              &output, result, err);
     yvex_transformer_input_close(&input);
     if (rc == YVEX_OK && disposition == YVEX_ATTENTION_TRANSACTION_ABORT &&
         (result->position_before != position ||
@@ -859,8 +852,7 @@ static int speculation_transformer_execute(
     return rc;
 }
 
-static int speculation_project_draft_base(
-    yvex_runtime_speculation_context *context,
+static int speculation_project_draft_base(yvex_runtime_speculation_context *context,
     const yvex_runtime_transformer_result *draft,
     yvex_runtime_logits_row_result *rows, unsigned long long count,
     yvex_error *err)
@@ -964,32 +956,47 @@ static unsigned int speculation_argmax(const float *values,
     return (unsigned int)selected;
 }
 
-static int speculation_phase_physical(
-    const yvex_runtime_transformer_result *transformer,
+static int speculation_phase_physical(const yvex_runtime_transformer_result *transformer,
     const yvex_runtime_logits_row_result *rows, unsigned long long row_count,
-    unsigned long long *h2d, unsigned long long *d2h, unsigned long long *d2d,
-    unsigned long long *kernels, unsigned long long *synchronizations, yvex_error *err)
+    yvex_execution_physical_facts *facts, yvex_error *err)
 {
+    yvex_execution_physical_facts candidate = {0};
     unsigned long long row;
-    *h2d = transformer->h2d_bytes;
-    *d2h = transformer->d2h_bytes;
-    *d2d = transformer->d2d_bytes;
-    *kernels = transformer->kernel_launches;
+    int rc;
+    if (!transformer || !rows || !row_count || !facts)
+        return speculation_refuse(err, YVEX_ERR_INVALID_ARG,
+                                  "DSpark physical accounting requires complete owners");
+    candidate.h2d_bytes = transformer->h2d_bytes;
+    candidate.d2h_bytes = transformer->d2h_bytes;
+    candidate.d2d_bytes = transformer->d2d_bytes;
+    candidate.kernel_count = transformer->kernel_launches;
     if (!yvex_core_u64_add(transformer->stream_synchronizations,
-                           transformer->device_synchronizations, synchronizations)) goto overflow;
-    for (row = 0ull; row < row_count; ++row)
-        if (!yvex_core_u64_add(*h2d, rows[row].h2d_bytes, h2d) ||
-            !yvex_core_u64_add(*d2h, rows[row].d2h_bytes, d2h) ||
-            !yvex_core_u64_add(*kernels, rows[row].kernel_launches, kernels) ||
-            !yvex_core_u64_add(*synchronizations, rows[row].device_synchronizations,
-                               synchronizations)) goto overflow;
+                           transformer->device_synchronizations,
+                           &candidate.synchronization_count)) goto overflow;
+    rc = yvex_execution_memory_facts_merge(&candidate.memory, &transformer->memory, err);
+    for (row = 0ull; rc == YVEX_OK && row < row_count; ++row) {
+        rc = yvex_execution_memory_facts_merge(&candidate.memory, &rows[row].memory, err);
+        if (rc == YVEX_OK &&
+            (!yvex_core_u64_add(candidate.h2d_bytes, rows[row].h2d_bytes,
+                               &candidate.h2d_bytes) ||
+            !yvex_core_u64_add(candidate.d2h_bytes, rows[row].d2h_bytes,
+                               &candidate.d2h_bytes) ||
+            !yvex_core_u64_add(candidate.d2d_bytes, rows[row].d2d_bytes,
+                               &candidate.d2d_bytes) ||
+            !yvex_core_u64_add(candidate.kernel_count, rows[row].kernel_launches,
+                               &candidate.kernel_count) ||
+            !yvex_core_u64_add(candidate.synchronization_count,
+                               rows[row].device_synchronizations,
+                               &candidate.synchronization_count))) goto overflow;
+    }
+    if (rc != YVEX_OK) return rc;
+    *facts = candidate;
     return YVEX_OK;
 overflow:
     return speculation_refuse(err, YVEX_ERR_BOUNDS, "DSpark physical accounting overflowed");
 }
 
-static int speculation_execute_draft(
-    yvex_runtime_speculation_context *context,
+static int speculation_execute_draft(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result, yvex_error *err)
 {
@@ -1020,13 +1027,10 @@ static int speculation_execute_draft(
         YVEX_ATTENTION_TRANSACTION_ABORT, NULL, 0ull,
         context->draft_hidden, context->draft_pre_normalized, NULL, &draft, err);
     if (rc == YVEX_OK)
-        rc = speculation_project_draft_base(
-            context, &draft, rows, draft_count, err);
+        rc = speculation_project_draft_base(context, &draft, rows, draft_count, err);
     if (rc == YVEX_OK)
-        rc = speculation_phase_physical(
-            &draft, rows, draft_count, &result->draft_h2d_bytes,
-            &result->draft_d2h_bytes, &result->draft_d2d_bytes,
-            &result->draft_kernel_launches, &result->draft_synchronizations, err);
+        rc = speculation_phase_physical(&draft, rows, draft_count,
+                                        &result->draft_physical, err);
     if (rc == YVEX_OK &&
         context->sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC)
         rc = yvex_runtime_sampling_transaction_begin(
@@ -1084,8 +1088,7 @@ static int speculation_execute_draft(
     return rc;
 }
 
-static int speculation_verify_target(
-    yvex_runtime_speculation_context *context,
+static int speculation_verify_target(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result, yvex_error *err)
 {
@@ -1145,9 +1148,7 @@ static int speculation_verify_target(
     if (rc == YVEX_OK)
         rc = speculation_phase_physical(
             &target, logits, request->candidate_count + 1ull,
-            &result->verification_h2d_bytes, &result->verification_d2h_bytes,
-            &result->verification_d2d_bytes, &result->verification_kernel_launches,
-            &result->verification_synchronizations, err);
+            &result->verification_physical, err);
     for (row = 0ull; rc == YVEX_OK && row <= request->candidate_count; ++row) {
         yvex_runtime_sampling_source sampling_source = {0};
         yvex_runtime_sampling_distribution_result distribution = {0};
@@ -1177,14 +1178,12 @@ static int speculation_verify_target(
         context->verification_staged = 1;
     }
     if (acquired && rc != YVEX_OK)
-        rc = yvex_runtime_session_finish_scope(
-            context->session, YVEX_TENSOR_SCOPE_GLOBAL,
-            YVEX_ATTENTION_TRANSACTION_ABORT, rc, err);
+        rc = yvex_runtime_session_finish_scope(context->session,
+            YVEX_TENSOR_SCOPE_GLOBAL, YVEX_ATTENTION_TRANSACTION_ABORT, rc, err);
     return rc;
 }
 
-static int speculation_target_draws(
-    yvex_runtime_speculation_context *context,
+static int speculation_target_draws(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result,
     double uniforms[YVEX_SPECULATION_MAX_BLOCK], double *correction,
@@ -1219,8 +1218,7 @@ static int speculation_target_draws(
     return rc;
 }
 
-static int speculation_accept_cycle(
-    yvex_runtime_speculation_context *context,
+static int speculation_accept_cycle(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result, yvex_error *err)
 {
@@ -1267,8 +1265,7 @@ static int speculation_accept_cycle(
     return rc;
 }
 
-static int speculation_cycle_identity(
-    const yvex_runtime_speculation_context *context,
+static int speculation_cycle_identity(const yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result)
 {
@@ -1288,8 +1285,7 @@ static int speculation_cycle_identity(
            speculation_hash_finish(&hash, result->cycle_identity);
 }
 
-int yvex_runtime_speculation_cycle(
-    yvex_runtime_speculation_context *context,
+int yvex_runtime_speculation_cycle(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result, yvex_error *err)
 {
@@ -1603,8 +1599,7 @@ int yvex_runtime_speculation_prefill(
     return YVEX_OK;
 }
 
-static int speculation_commit_identity(
-    const yvex_runtime_speculation_context *context,
+static int speculation_commit_identity(const yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_commit_result *result,
     char output[YVEX_SPECULATION_IDENTITY_CAP])
 {
@@ -1691,8 +1686,7 @@ static int speculation_commit_target_step(
     return YVEX_OK;
 }
 
-static int speculation_promoted_target_result(
-    yvex_runtime_speculation_context *context,
+static int speculation_promoted_target_result(yvex_runtime_speculation_context *context,
     unsigned long long committed_count,
     const yvex_runtime_transformer_result *extension,
     yvex_runtime_transformer_result *target, yvex_error *err)

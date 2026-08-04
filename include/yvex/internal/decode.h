@@ -120,10 +120,7 @@ typedef struct {
     float confidence_logits[YVEX_SPECULATION_MAX_BLOCK];
     unsigned long long target_rng_draw_count, draft_rng_draw_count;
     unsigned long long draft_ns, verification_ns, acceptance_ns;
-    unsigned long long draft_kernel_launches, verification_kernel_launches;
-    unsigned long long draft_h2d_bytes, draft_d2h_bytes, draft_d2d_bytes;
-    unsigned long long verification_h2d_bytes, verification_d2h_bytes, verification_d2d_bytes;
-    unsigned long long draft_synchronizations, verification_synchronizations;
+    yvex_execution_physical_facts draft_physical, verification_physical;
     yvex_speculation_acceptance_result acceptance;
     char draft_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char verification_execution_identity[YVEX_SPECULATION_IDENTITY_CAP];

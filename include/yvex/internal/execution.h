@@ -304,6 +304,12 @@ int yvex_execution_memory_facts_merge(
     yvex_execution_memory_facts *facts,
     const yvex_execution_memory_facts *delta, yvex_error *err);
 
+typedef struct {
+    yvex_execution_memory_facts memory;
+    unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
+    unsigned long long kernel_count, synchronization_count;
+} yvex_execution_physical_facts;
+
 /* Memory facts count compulsory device spans once, not capacity or observed DRAM transactions. */
 typedef struct {
     yvex_execution_roofline_phase phase;

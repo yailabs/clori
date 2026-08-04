@@ -79,11 +79,12 @@ transformer phases additionally report exact
 H2D/D2H/D2D movement and synchronization, including selected feature and
 bounded status transfers. Output projection now consumes the same canonical
 memory representation rather than maintaining a parallel report truth. DSpark
-draft/verification report exact launch,
-H2D/D2H/D2D movement and synchronization across their transformer and batched
-output-head work. Their active weights, state, activation, temporary and
-occupancy remain unavailable. Current optimization ordering is therefore
-provisional rather than a promoted kernel-priority decision.
+draft/verification transactionally merge the same transformer and batched
+output-head memory facts with exact launch, H2D/D2H/D2D and synchronization
+counters. Host feature projection, Markov, sampling and acceptance remain
+outside the device-byte lower bound; their elapsed cost remains inside the
+phase duration. Occupancy remains unavailable, so optimization ordering is
+still provisional rather than a promoted kernel-priority decision.
 
 Accepted-prefix promotion now contributes its exact state-residency H2D,
 synchronization and zero kernel/D2H/D2D facts. These counters are deltas around
