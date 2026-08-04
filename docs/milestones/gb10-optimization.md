@@ -114,6 +114,17 @@ The host result class and its full-array evidence remain the explicit
 reference path. This uses the existing internal logits/device-view schemas and
 changes no persisted, wire or public C contract.
 
+Greedy DSpark target verification now consumes that resident result class.
+One speculation-owned verification context borrows the existing model,
+session, output-head residency and compiled profile; it projects all target
+rows together, performs CUDA argmax through the sampling owner and transfers
+only bounded selection/status facts. The accepted-prefix decision remains in
+the target-authoritative speculation transaction, so cancellation and failed
+verification cannot publish selected IDs or state. CPU, audit/forensic and
+stochastic DSpark retain the complete-distribution oracle. The drafter feature,
+Markov and confidence path remains host materialized and is still optimization
+debt. No persisted, wire, public C or profile schema needed a version change.
+
 CUDA attention graph replay now separates mutable state preparation from the
 captured kernel topology. The graph-stream preamble refreshes the current state
 bank before capture and every warm replay; promotion generation is therefore
@@ -194,10 +205,12 @@ The currently admitted code establishes model-derived geometry, v7/v8 binding
 coexistence, typed capacity/page planning, pre-materialization memory refusal,
 the availability-aware production phase ledger, and identity-bound native
 SM121 CUBIN admission. It also establishes identity-bound width-N CUDA logits
-publication without full-vocabulary host materialization.
+publication and greedy DSpark target selection without full-vocabulary host
+materialization.
 It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE or zero per-layer MoE synchronization, full-model
-live qualification of target-only device stochastic sampling, device-resident
-DSpark stochastic acceptance/correction, paged state allocation, prefix
+live qualification of target-only device stochastic sampling or greedy DSpark
+verification, device-resident draft/Markov or stochastic DSpark
+acceptance/correction, paged state allocation, prefix
 persistence, continuous batching, competitive throughput, evaluation,
 benchmark qualification, release qualification, or Hugging Face publication.

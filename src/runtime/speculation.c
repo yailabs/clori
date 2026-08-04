@@ -1,39 +1,31 @@
 /* Speculative candidates remain untrusted until target comparison; this owner returns only a
  * committable prefix and never publishes model, RNG, tokenizer, transcript, or session state. */
 #include "src/runtime/private.h"
-
 #include <yvex/internal/decode.h>
-
 #include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/logits.h>
 #include <yvex/internal/quant_numeric.h>
 #include <yvex/internal/runtime.h>
 #include <yvex/internal/sampling.h>
 #include <yvex/internal/transformer.h>
-
 typedef struct {
     const yvex_materialized_tensor_binding *binding;
     const unsigned char *encoded;
     unsigned long long encoded_bytes, row_bytes;
 } speculation_weight;
-
 struct yvex_runtime_speculation_context {
     yvex_runtime_model *model;
     yvex_runtime_execution_session *session;
     const yvex_runtime_model_view *model_view;
-    yvex_runtime_transformer_context *target_transformer;
-    yvex_runtime_transformer_context *draft_transformer;
-    yvex_runtime_logits_context *target_logits;
-    yvex_runtime_sampling_context *target_sampling;
-    yvex_runtime_sampling_context *draft_sampling;
-    yvex_runtime_sampling_transaction *target_rng;
-    yvex_runtime_sampling_transaction *draft_rng;
+    yvex_runtime_transformer_context *target_transformer, *draft_transformer;
+    yvex_runtime_logits_context *target_logits, *verification_logits;
+    yvex_runtime_sampling_context *target_sampling, *draft_sampling, *verification_sampling;
+    yvex_runtime_sampling_transaction *target_rng, *draft_rng;
     yvex_runtime_sampling_policy sampling_policy;
     yvex_runtime_speculation_options options;
     yvex_speculation_family_policy policy;
@@ -47,7 +39,8 @@ struct yvex_runtime_speculation_context {
     unsigned long long vocabulary_size, hidden_width, workspace_bytes;
     unsigned long long pending_position, pending_committed_count;
     unsigned long long pending_verified_prefix_count;
-    unsigned int pending_tokens[YVEX_SPECULATION_MAX_BLOCK + 2u];
+    unsigned int pending_tokens[YVEX_SPECULATION_MAX_BLOCK + 2u],
+        target_token_ids[YVEX_SPECULATION_MAX_BLOCK + 1u];
     yvex_runtime_transformer_result pending_verification_target;
     char pending_source_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char pending_sampling_identity[YVEX_SPECULATION_IDENTITY_CAP];
@@ -55,15 +48,12 @@ struct yvex_runtime_speculation_context {
     const yvex_runtime_commit_participant *publication;
     int publication_prepared, cycle_pending, verification_staged;
 };
-
 static void speculation_pending_clear(yvex_runtime_speculation_context *context);
-
 static int speculation_refuse(yvex_error *err, yvex_status status, const char *reason)
 {
     yvex_error_set(err, status, "runtime.speculation", reason);
     return status;
 }
-
 static int speculation_hash_finish(
     yvex_sha256 *hash, char output[YVEX_SPECULATION_IDENTITY_CAP])
 {
@@ -72,7 +62,6 @@ static int speculation_hash_finish(
     yvex_sha256_hex(digest, output);
     return 1;
 }
-
 static int speculation_probability_row(const float *row, unsigned long long count)
 {
     double sum = 0.0;
@@ -84,7 +73,6 @@ static int speculation_probability_row(const float *row, unsigned long long coun
     }
     return fabs(sum - 1.0) <= 1e-5;
 }
-
 static unsigned int speculation_sample(const float *target, const float *draft,
                                        unsigned long long count, double uniform,
                                        int residual)
@@ -111,7 +99,6 @@ static unsigned int speculation_sample(const float *target, const float *draft,
     }
     return UINT32_MAX;
 }
-
 static int speculation_policy_identity(const yvex_speculation_acceptance_request *request,
                                        char output[YVEX_SPECULATION_IDENTITY_CAP])
 {
@@ -124,7 +111,6 @@ static int speculation_policy_identity(const yvex_speculation_acceptance_request
            yvex_sha256_update_u64(&hash, request->vocabulary_size) &&
            speculation_hash_finish(&hash, output);
 }
-
 static int speculation_acceptance_identity(
     const unsigned int *committed, const yvex_speculation_acceptance_result *result,
     char output[YVEX_SPECULATION_IDENTITY_CAP])
@@ -145,7 +131,6 @@ static int speculation_acceptance_identity(
         if (!yvex_sha256_update_u64(&hash, committed[index])) return 0;
     return speculation_hash_finish(&hash, output);
 }
-
 static int speculation_validate(const yvex_speculation_acceptance_request *request,
                                 unsigned long long committed_capacity,
                                 yvex_error *err)
@@ -206,7 +191,6 @@ static int speculation_validate(const yvex_speculation_acceptance_request *reque
                                   "target bonus distribution is malformed");
     return YVEX_OK;
 }
-
 int yvex_speculation_accept(const yvex_speculation_acceptance_request *request,
     unsigned int *committed_token_ids, unsigned long long committed_capacity,
     yvex_speculation_acceptance_result *result, yvex_error *err)
@@ -286,14 +270,12 @@ int yvex_speculation_accept(const yvex_speculation_acceptance_request *request,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_speculation_candidate_extent(unsigned long long policy_block_size,
     unsigned long long remaining_output_tokens,
     unsigned long long remaining_context_tokens,
     unsigned long long *candidate_count, yvex_error *err)
 {
     unsigned long long output_limit, context_limit, admitted;
-
     if (candidate_count) *candidate_count = 0ull;
     if (!candidate_count || !policy_block_size ||
         policy_block_size > YVEX_SPECULATION_MAX_BLOCK ||
@@ -301,7 +283,6 @@ int yvex_speculation_candidate_extent(unsigned long long policy_block_size,
         return speculation_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "speculative candidate extent requires bounded output and context");
-
     /* Reserve anchor and target bonus before drafting so full acceptance cannot overrun output
      * or session context. */
     if (remaining_output_tokens <= 2ull || remaining_context_tokens <= 2ull) {
@@ -317,7 +298,6 @@ int yvex_speculation_candidate_extent(unsigned long long policy_block_size,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_speculation_commit_plan_build(const yvex_speculation_acceptance_result *acceptance,
     unsigned long long terminal_index,
     yvex_speculation_commit_plan *plan, yvex_error *err)
@@ -349,7 +329,6 @@ int yvex_speculation_commit_plan_build(const yvex_speculation_acceptance_result 
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int speculation_draft_sampling_policy(const yvex_runtime_sampling_policy *target_policy,
     unsigned long long vocabulary_size,
     yvex_runtime_sampling_policy *draft_policy, yvex_error *err)
@@ -358,7 +337,6 @@ static int speculation_draft_sampling_policy(const yvex_runtime_sampling_policy 
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned int index;
     unsigned long long seed = 0ull;
-
     if (draft_policy) memset(draft_policy, 0, sizeof(*draft_policy));
     if (!target_policy || !draft_policy || !vocabulary_size ||
         !yvex_sha256_hex_valid(target_policy->policy_identity))
@@ -382,7 +360,6 @@ static int speculation_draft_sampling_policy(const yvex_runtime_sampling_policy 
     draft_policy->policy_identity[0] = '\0';
     return yvex_runtime_sampling_policy_seal(draft_policy, vocabulary_size, err);
 }
-
 static int speculation_values_digest(const char *domain, const float *values,
                                      unsigned long long count,
                                      char output[YVEX_SPECULATION_IDENTITY_CAP])
@@ -403,7 +380,6 @@ static int speculation_values_digest(const char *domain, const float *values,
     yvex_sha256_hex(digest, output);
     return 1;
 }
-
 static int speculation_weight_bind(yvex_runtime_speculation_context *context,
                                    yvex_tensor_role role,
                                    speculation_weight *out, yvex_error *err)
@@ -438,7 +414,6 @@ static int speculation_weight_bind(yvex_runtime_speculation_context *context,
     out->row_bytes = bytes / match->binding->row_count;
     return YVEX_OK;
 }
-
 static int speculation_weight_decode_row(const speculation_weight *weight,
                                          unsigned long long row, float *values,
                                          unsigned long long capacity,
@@ -472,7 +447,6 @@ static int speculation_weight_decode_row(const speculation_weight *weight,
     }
     return YVEX_OK;
 }
-
 static int speculation_context_geometry(yvex_runtime_speculation_context *context,
                                         yvex_error *err)
 {
@@ -496,13 +470,12 @@ static int speculation_context_geometry(yvex_runtime_speculation_context *contex
                                   "DSpark runtime weight geometry is inconsistent");
     return YVEX_OK;
 }
-
 static int speculation_context_buffers(yvex_runtime_speculation_context *context,
                                        yvex_error *err)
 {
     unsigned long long block = context->policy.block_size;
     unsigned long long hidden_rows, target_hidden_rows, feature_rows;
-    unsigned long long draft_rows, target_rows, probabilities;
+    unsigned long long draft_rows, logits_rows, target_probability_rows, probabilities;
     unsigned long long markov_values, total = 0ull;
 #define SPEC_ADD(count_) \
     do { \
@@ -517,9 +490,10 @@ static int speculation_context_buffers(yvex_runtime_speculation_context *context
                            context->policy.concatenated_feature_width,
                            &feature_rows) ||
         !yvex_core_u64_mul(block, context->vocabulary_size, &draft_rows) ||
-        !yvex_core_u64_mul(block + 1ull, context->vocabulary_size,
-                           &target_rows) ||
-        !yvex_core_u64_add(draft_rows, target_rows, &probabilities) ||
+        !yvex_core_u64_mul(block + 1ull, context->vocabulary_size, &logits_rows) ||
+        !yvex_core_u64_mul(context->verification_logits ? 0ull : block + 1ull,
+                           context->vocabulary_size, &target_probability_rows) ||
+        !yvex_core_u64_add(draft_rows, target_probability_rows, &probabilities) ||
         !yvex_core_u64_mul(block, context->policy.markov_rank,
                            &markov_values))
         goto overflow;
@@ -529,7 +503,7 @@ static int speculation_context_buffers(yvex_runtime_speculation_context *context
     SPEC_ADD(hidden_rows);
     SPEC_ADD(hidden_rows);
     SPEC_ADD(target_hidden_rows);
-    SPEC_ADD(target_rows);
+    SPEC_ADD(logits_rows);
     SPEC_ADD(context->vocabulary_size);
     SPEC_ADD(context->vocabulary_size);
     SPEC_ADD(probabilities);
@@ -550,14 +524,15 @@ static int speculation_context_buffers(yvex_runtime_speculation_context *context
         (size_t)target_hidden_rows, sizeof(float));
     /* Draft and verification are disjoint phases, so one (block + 1)-row output-head arena serves
      * both without defining width-N as repeated one-row projections. */
-    context->base_logits = yvex_core_calloc((size_t)target_rows, sizeof(float));
+    context->base_logits = yvex_core_calloc((size_t)logits_rows, sizeof(float));
     context->adjusted_logits = yvex_core_calloc(
         (size_t)context->vocabulary_size, sizeof(float));
     context->markov_bias = yvex_core_calloc(
         (size_t)context->vocabulary_size, sizeof(float));
     context->draft_probabilities = yvex_core_calloc((size_t)probabilities,
                                                     sizeof(float));
-    context->target_probabilities = context->draft_probabilities + draft_rows;
+    context->target_probabilities = target_probability_rows
+        ? context->draft_probabilities + draft_rows : NULL;
     context->markov_embedding_values = yvex_core_calloc(
         (size_t)markov_values, sizeof(float));
     context->draft_input_ids = yvex_core_calloc((size_t)block,
@@ -580,7 +555,6 @@ overflow:
                               "DSpark runtime workspace extent overflowed");
 #undef SPEC_ADD
 }
-
 int yvex_runtime_speculation_context_open(
     yvex_runtime_speculation_context **out, yvex_runtime_model *model,
     yvex_runtime_execution_session *session,
@@ -592,6 +566,7 @@ int yvex_runtime_speculation_context_open(
 {
     yvex_runtime_speculation_context *context = NULL;
     yvex_runtime_transformer_options transformer_options = {0};
+    yvex_runtime_logits_options logits_options = {0};
     yvex_runtime_sampling_options sampling_options = {0};
     yvex_runtime_sampling_policy draft_policy = {0};
     const yvex_transformer_plan_summary *target_plan;
@@ -608,9 +583,8 @@ int yvex_runtime_speculation_context_open(
         return speculation_refuse(err, YVEX_ERR_INVALID_ARG,
                                   "complete DSpark runtime owners are required");
     context = yvex_core_calloc(1u, sizeof(*context));
-    if (!context)
-        return speculation_refuse(err, YVEX_ERR_NOMEM,
-                                  "DSpark context allocation failed");
+    if (!context) return speculation_refuse(
+        err, YVEX_ERR_NOMEM, "DSpark context allocation failed");
     context->model = model;
     context->session = session;
     context->model_view = yvex_runtime_model_view_get(model);
@@ -662,10 +636,8 @@ int yvex_runtime_speculation_context_open(
     context->hidden_width = target_plan->hidden_width;
     transformer_options.maximum_host_bytes = options->maximum_host_bytes;
     transformer_options.maximum_device_bytes = options->maximum_device_bytes;
-    /* The five draft queries attend one another, so a shortened backbone pass
-     * would change even the first proposal. Reserve ephemeral lookahead beyond
-     * the target-visible context; accepted target state remains bounded by the
-     * caller's original context_capacity. */
+    /* Draft queries attend one another, so reserve ephemeral lookahead beyond target-visible
+     * context; accepted target state remains bounded by the caller's capacity. */
     transformer_options.context_capacity = draft_context_capacity;
     transformer_options.workspace_token_capacity = context->policy.block_size + 2ull;
     transformer_options.tensor_scope = YVEX_TENSOR_SCOPE_DRAFT;
@@ -694,6 +666,29 @@ int yvex_runtime_speculation_context_open(
             &context->draft_sampling,
             yvex_runtime_logits_plan_summary_get(target_logits), &draft_policy,
             &sampling_options, err);
+    if (rc == YVEX_OK && options->backend == YVEX_BACKEND_KIND_CUDA &&
+        options->execution_profile->evidence == YVEX_EXECUTION_EVIDENCE_PRODUCTION &&
+        sampling_policy->strategy == YVEX_SAMPLING_STRATEGY_GREEDY) {
+        logits_options.maximum_rows = context->policy.block_size + 1ull;
+        logits_options.maximum_host_bytes = options->maximum_host_bytes;
+        logits_options.maximum_device_bytes = options->maximum_device_bytes;
+        logits_options.evidence_profile = options->execution_profile->evidence;
+        logits_options.device_selection = 1;
+        logits_options.execution_profile = options->execution_profile;
+        logits_options.cancel_requested = options->cancel_requested;
+        logits_options.cancel_context = options->cancel_context;
+        rc = yvex_runtime_logits_context_open(
+            &context->verification_logits, model, session,
+            yvex_runtime_transformer_context_plan(target_transformer),
+            &logits_options, err);
+        sampling_options.maximum_rows = context->policy.block_size + 1ull;
+        sampling_options.device_selection = 1;
+        if (rc == YVEX_OK)
+            rc = yvex_runtime_sampling_context_open(
+                &context->verification_sampling,
+                yvex_runtime_logits_plan_summary_get(context->verification_logits),
+                sampling_policy, &sampling_options, err);
+    }
 #define BIND(role_, member_) \
     if (rc == YVEX_OK) rc = speculation_weight_bind(context, (role_), \
                                                      &context->member_, err)
@@ -713,13 +708,11 @@ int yvex_runtime_speculation_context_open(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 const yvex_speculation_family_policy *yvex_runtime_speculation_policy_get(
     const yvex_runtime_speculation_context *context)
 {
     return context ? &context->policy : NULL;
 }
-
 static int speculation_project_target_features(
     yvex_runtime_speculation_context *context, const float *features,
     unsigned long long token_count, yvex_error *err)
@@ -756,7 +749,6 @@ static int speculation_project_target_features(
     }
     return YVEX_OK;
 }
-
 static int speculation_weight_matvec(yvex_runtime_speculation_context *context,
     const speculation_weight *weight, const float *input, float *output,
     yvex_error *err)
@@ -780,7 +772,6 @@ static int speculation_weight_matvec(yvex_runtime_speculation_context *context,
     }
     return YVEX_OK;
 }
-
 static int speculation_transformer_execute(yvex_runtime_speculation_context *context,
     yvex_runtime_transformer_context *transformer,
     const unsigned int *token_ids, unsigned long long token_count,
@@ -851,7 +842,6 @@ static int speculation_transformer_execute(yvex_runtime_speculation_context *con
             "speculative transformer candidate state escaped abort");
     return rc;
 }
-
 static int speculation_project_draft_base(yvex_runtime_speculation_context *context,
     const yvex_runtime_transformer_result *draft,
     yvex_runtime_logits_row_result *rows, unsigned long long count,
@@ -882,10 +872,8 @@ static int speculation_project_draft_base(yvex_runtime_speculation_context *cont
         context->target_logits, &request, sources, context->base_logits,
         count * context->vocabulary_size, rows, count, execution, err);
 }
-
 static unsigned int speculation_argmax(const float *values,
                                        unsigned long long count);
-
 static int speculation_draft_one(
     yvex_runtime_speculation_context *context, unsigned long long ordinal,
     unsigned int previous_token,
@@ -946,7 +934,6 @@ static int speculation_draft_one(
     if (rc == YVEX_OK) *selected = token;
     return rc;
 }
-
 static unsigned int speculation_argmax(const float *values,
                                        unsigned long long count)
 {
@@ -955,7 +942,6 @@ static unsigned int speculation_argmax(const float *values,
         if (values[index] > values[selected]) selected = index;
     return (unsigned int)selected;
 }
-
 static int speculation_physical_add(yvex_execution_physical_facts *facts,
     const yvex_execution_memory_facts *memory, unsigned long long h2d, unsigned long long d2h,
     unsigned long long d2d, unsigned long long kernels, unsigned long long synchronizations,
@@ -972,7 +958,6 @@ static int speculation_physical_add(yvex_execution_physical_facts *facts,
         return speculation_refuse(err, YVEX_ERR_BOUNDS, "DSpark physical accounting overflowed");
     return YVEX_OK;
 }
-
 static int speculation_phase_physical(const yvex_runtime_transformer_result *transformer,
     const yvex_runtime_logits_result *execution,
     yvex_execution_physical_facts *facts, yvex_error *err)
@@ -1000,7 +985,6 @@ static int speculation_phase_physical(const yvex_runtime_transformer_result *tra
     *facts = candidate;
     return YVEX_OK;
 }
-
 static int speculation_execute_draft(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result, yvex_error *err)
@@ -1094,11 +1078,12 @@ static int speculation_execute_draft(yvex_runtime_speculation_context *context,
         yvex_sha256_hex(digest, result->draft_execution_identity);
     return rc;
 }
-
 static int speculation_verify_target(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result, yvex_error *err)
 {
+    yvex_runtime_logits_context *logits_owner = context->verification_logits
+        ? context->verification_logits : context->target_logits;
     yvex_runtime_transformer_result target = {0};
     yvex_runtime_logits_source sources[YVEX_SPECULATION_MAX_BLOCK + 1u] = {{0}};
     yvex_runtime_logits_row_result logits[YVEX_SPECULATION_MAX_BLOCK + 1u] = {{0}};
@@ -1109,6 +1094,7 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long started, row;
     yvex_runtime_model_failure failure = {0};
+    int device_verification = context->verification_logits != NULL;
     int acquired = 0, rc;
     verification_tokens[0] = request->conditioning_token_id;
     memcpy(verification_tokens + 1u, result->candidate_token_ids,
@@ -1129,28 +1115,35 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
             context->target_hidden, NULL, context->target_features, &target, err);
     yvex_sha256_init(&hash);
     if (rc == YVEX_OK &&
-        (!yvex_sha256_update_text(&hash, "yvex.runtime.speculation.verify.v1") ||
+        (!yvex_sha256_update_text(
+             &hash, device_verification
+                        ? "yvex.runtime.speculation.verify.device-greedy.v1"
+                        : "yvex.runtime.speculation.verify.v1") ||
          !yvex_sha256_update_text(&hash, context->pending_source_identity) ||
          !yvex_sha256_update_text(&hash, target.execution_identity)))
         rc = speculation_refuse(err, YVEX_ERR_STATE,
                                 "target verification identity initialization failed");
     for (row = 0ull; rc == YVEX_OK && row <= request->candidate_count; ++row)
         rc = yvex_runtime_logits_source_from_transformer(
-            context->target_logits, &sources[row], &target, context->target_hidden,
+            logits_owner, &sources[row], &target, context->target_hidden,
             (request->candidate_count + 1ull) * context->hidden_width, row, err);
     output_head.schema_version = YVEX_OUTPUT_HEAD_BATCH_SCHEMA_V1;
     output_head.row_count = request->candidate_count + 1ull;
     output_head.output_vocabulary = context->vocabulary_size;
     output_head.backend = context->options.backend;
-    output_head.result_class = YVEX_OUTPUT_HEAD_RESULT_HOST_LOGITS;
+    output_head.result_class = device_verification ? YVEX_OUTPUT_HEAD_RESULT_DEVICE_LOGITS
+                                                   : YVEX_OUTPUT_HEAD_RESULT_HOST_LOGITS;
     output_head.selection_policy = YVEX_OUTPUT_HEAD_SELECTION_RAW;
     output_head.evidence_profile = context->options.execution_profile->evidence;
-    output_head.execution_class = YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
+    output_head.execution_class = device_verification ? YVEX_EXECUTION_CLASS_DEVICE_NATIVE
+                                                      : YVEX_EXECUTION_CLASS_PORTABLE_REFERENCE;
     output_head.execution_profile_identity = context->options.execution_profile->identity;
     if (rc == YVEX_OK)
         rc = yvex_runtime_logits_execute_rows(
-            context->target_logits, &output_head, sources, context->base_logits,
-            (request->candidate_count + 1ull) * context->vocabulary_size,
+            logits_owner, &output_head, sources,
+            device_verification ? NULL : context->base_logits,
+            device_verification ? 0ull
+                                : (request->candidate_count + 1ull) * context->vocabulary_size,
             logits, request->candidate_count + 1ull, &logits_execution, err);
     if (rc == YVEX_OK)
         rc = speculation_phase_physical(
@@ -1159,20 +1152,38 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
     for (row = 0ull; rc == YVEX_OK && row <= request->candidate_count; ++row) {
         yvex_runtime_sampling_source sampling_source = {0};
         yvex_runtime_sampling_distribution_result distribution = {0};
-        if (rc == YVEX_OK)
+        yvex_runtime_sampling_result selected = {0};
+        if (device_verification)
+            rc = yvex_runtime_sampling_source_from_logits(
+                context->verification_sampling, &sampling_source, NULL, 0ull,
+                &logits[row], err);
+        else
             rc = yvex_runtime_sampling_source_from_logits(
                 context->target_sampling, &sampling_source,
                 context->base_logits + row * context->vocabulary_size,
                 context->vocabulary_size, &logits[row], err);
-        if (rc == YVEX_OK)
+        if (rc == YVEX_OK && device_verification)
+            rc = yvex_runtime_sampling_select(
+                context->verification_sampling, &sampling_source, &selected, err);
+        else if (rc == YVEX_OK)
             rc = yvex_runtime_sampling_distribution(
                 context->target_sampling, &sampling_source,
                 context->target_probabilities + row * context->vocabulary_size,
                 context->vocabulary_size, &distribution, err);
+        if (rc == YVEX_OK && device_verification) {
+            yvex_execution_memory_facts no_memory = {0};
+            context->target_token_ids[row] = selected.selected_token_id;
+            rc = speculation_physical_add(
+                &result->verification_physical, &no_memory, 0ull,
+                selected.d2h_bytes, 0ull, selected.kernel_launches,
+                selected.device_synchronizations, err);
+        }
         if (rc == YVEX_OK &&
-            !yvex_sha256_update_text(&hash, distribution.distribution_identity))
+            !yvex_sha256_update_text(
+                &hash, device_verification ? selected.selected_token_identity
+                                           : distribution.distribution_identity))
             rc = speculation_refuse(err, YVEX_ERR_STATE,
-                                    "target distribution identity update failed");
+                                    "target verification identity update failed");
     }
     result->verification_ns = yvex_core_monotonic_ns() - started;
     if (rc == YVEX_OK && !yvex_sha256_final(&hash, digest))
@@ -1189,7 +1200,6 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
             YVEX_TENSOR_SCOPE_GLOBAL, YVEX_ATTENTION_TRANSACTION_ABORT, rc, err);
     return rc;
 }
-
 static int speculation_target_draws(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result,
@@ -1224,7 +1234,6 @@ static int speculation_target_draws(yvex_runtime_speculation_context *context,
     if (rc == YVEX_OK) result->target_rng_draw_count += draw_result.draw_count;
     return rc;
 }
-
 static int speculation_accept_cycle(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result, yvex_error *err)
@@ -1248,10 +1257,14 @@ static int speculation_accept_cycle(yvex_runtime_speculation_context *context,
     acceptance.target_probabilities = context->target_probabilities;
     acceptance.acceptance_uniforms = uniforms;
     if (acceptance.kind == YVEX_SPECULATION_ACCEPT_GREEDY) {
-        for (index = 0ull; index <= request->candidate_count; ++index)
-            target_tokens[index] = speculation_argmax(
-                context->target_probabilities + index * context->vocabulary_size,
-                context->vocabulary_size);
+        if (context->verification_logits)
+            memcpy(target_tokens, context->target_token_ids,
+                   (size_t)(request->candidate_count + 1ull) * sizeof(*target_tokens));
+        else
+            for (index = 0ull; index <= request->candidate_count; ++index)
+                target_tokens[index] = speculation_argmax(
+                    context->target_probabilities + index * context->vocabulary_size,
+                    context->vocabulary_size);
         acceptance.target_token_ids = target_tokens;
     } else {
         rc = speculation_target_draws(
@@ -1271,7 +1284,6 @@ static int speculation_accept_cycle(yvex_runtime_speculation_context *context,
     }
     return rc;
 }
-
 static int speculation_cycle_identity(const yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result)
@@ -1291,7 +1303,6 @@ static int speculation_cycle_identity(const yvex_runtime_speculation_context *co
                                    result->acceptance.acceptance_identity) &&
            speculation_hash_finish(&hash, result->cycle_identity);
 }
-
 int yvex_runtime_speculation_cycle(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result, yvex_error *err)
@@ -1373,7 +1384,6 @@ int yvex_runtime_speculation_cycle(yvex_runtime_speculation_context *context,
     speculation_pending_clear(context);
     return rc;
 }
-
 int yvex_runtime_speculation_target_step(
     yvex_runtime_speculation_context *context, unsigned long long position,
     const float *target_probabilities, unsigned long long probability_capacity,
@@ -1448,7 +1458,6 @@ int yvex_runtime_speculation_target_step(
     (void)yvex_runtime_sampling_transaction_abort(&context->target_rng, NULL);
     return rc;
 }
-
 static void speculation_pending_clear(yvex_runtime_speculation_context *context)
 {
     if (!context) return;
@@ -1464,7 +1473,6 @@ static void speculation_pending_clear(yvex_runtime_speculation_context *context)
     context->pending_cycle_identity[0] = '\0';
     context->verification_staged = 0;
 }
-
 static int speculation_rng_prepare(void *opaque, yvex_error *err) {
     yvex_runtime_speculation_context *context = opaque;
     int rc = YVEX_OK;
@@ -1484,7 +1492,6 @@ static int speculation_rng_prepare(void *opaque, yvex_error *err) {
     }
     return rc;
 }
-
 static void speculation_rng_publish(void *opaque) {
     yvex_runtime_speculation_context *context = opaque;
     yvex_runtime_sampling_transaction_publish_commit(&context->target_rng);
@@ -1495,7 +1502,6 @@ static void speculation_rng_publish(void *opaque) {
     context->publication_prepared = 0;
     speculation_pending_clear(context);
 }
-
 static void speculation_rng_cancel(void *opaque) {
     yvex_runtime_speculation_context *context = opaque;
     (void)yvex_runtime_sampling_transaction_abort(&context->target_rng, NULL);
@@ -1506,7 +1512,6 @@ static void speculation_rng_cancel(void *opaque) {
     context->publication_prepared = 0;
     speculation_pending_clear(context);
 }
-
 static int speculation_stage_tokens(
     yvex_runtime_speculation_context *context, const unsigned int *token_ids,
     unsigned long long token_start, unsigned long long token_count,
@@ -1529,7 +1534,6 @@ static int speculation_stage_tokens(
             context->feature_projected, token_count, draft, err);
     return rc;
 }
-
 int yvex_runtime_speculation_prefill(
     yvex_runtime_speculation_context *context, const unsigned int *token_ids,
     unsigned long long token_start, unsigned long long token_count,
@@ -1605,7 +1609,6 @@ int yvex_runtime_speculation_prefill(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int speculation_commit_identity(const yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_commit_result *result,
     char output[YVEX_SPECULATION_IDENTITY_CAP])
@@ -1625,7 +1628,6 @@ static int speculation_commit_identity(const yvex_runtime_speculation_context *c
            yvex_sha256_update_u64(&hash, result->token_count) &&
            speculation_hash_finish(&hash, output);
 }
-
 /*
  * A short output or context tail may leave no room for a draft block.  The
  * target-authored anchor still has to advance target and draft state together;
@@ -1644,7 +1646,6 @@ static int speculation_commit_target_step(
     yvex_runtime_model_failure failure = {0};
     unsigned long long started = yvex_core_monotonic_ns();
     int acquired = 0, rc;
-
     rc = yvex_runtime_session_begin(context->session, &failure, err);
     acquired = rc == YVEX_OK;
     if (rc == YVEX_OK)
@@ -1692,7 +1693,6 @@ static int speculation_commit_target_step(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int speculation_promoted_target_result(yvex_runtime_speculation_context *context,
     unsigned long long committed_count,
     const yvex_runtime_transformer_result *extension,
@@ -1768,7 +1768,6 @@ static int speculation_promoted_target_result(yvex_runtime_speculation_context *
     target->completed = 1;
     return YVEX_OK;
 }
-
 int yvex_runtime_speculation_commit_prefix(
     yvex_runtime_speculation_context *context,
     unsigned long long committed_count, float *final_hidden,
@@ -1895,7 +1894,6 @@ int yvex_runtime_speculation_commit_prefix(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_runtime_speculation_cycle_abort(
     yvex_runtime_speculation_context *context, yvex_error *err)
 {
@@ -1926,7 +1924,6 @@ int yvex_runtime_speculation_cycle_abort(
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-
 int yvex_runtime_speculation_finish_terminal(
     yvex_runtime_speculation_context *context,
     const yvex_runtime_commit_participant *publication, yvex_error *err)
@@ -1961,7 +1958,6 @@ int yvex_runtime_speculation_finish_terminal(
     }
     return rc;
 }
-
 int yvex_runtime_speculation_context_close(
     yvex_runtime_speculation_context **context, yvex_error *err)
 {
@@ -1974,7 +1970,11 @@ int yvex_runtime_speculation_context_close(
         rc = yvex_runtime_speculation_cycle_abort(*context, err);
         if (rc != YVEX_OK) return rc;
     }
-    if ((*context)->draft_sampling)
+    if ((*context)->verification_sampling)
+        rc = yvex_runtime_sampling_context_close(&(*context)->verification_sampling, err);
+    if (rc == YVEX_OK && (*context)->verification_logits)
+        rc = yvex_runtime_logits_context_close(&(*context)->verification_logits, err);
+    if (rc == YVEX_OK && (*context)->draft_sampling)
         rc = yvex_runtime_sampling_context_close(&(*context)->draft_sampling, err);
     if (rc == YVEX_OK && (*context)->draft_transformer)
         rc = yvex_runtime_transformer_context_close(

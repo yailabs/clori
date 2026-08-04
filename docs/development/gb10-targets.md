@@ -93,14 +93,17 @@ MoE path by removing its final per-layer synchronization and selecting
 GB10-specific expert layouts/kernels from causal evidence. The token-local path
 remains only as a portable audit/reference oracle. Target-only production now
 selects stochastic tokens from resident CUDA logits with bounded result
-transfer; audit/forensic and DSpark still own explicit host sampling references.
+transfer; audit/forensic and stochastic DSpark still own explicit host sampling
+references. Production greedy DSpark verification now retains its width-N
+target logits on CUDA and transfers only bounded argmax facts.
 Eager attention, reference layouts and host feature materialization may be
 replaced only through the existing typed execution profile. Compatible width-N
 CUDA output rows already share activation
 preparation and one encoded-head execution; incompatible and reference
 directories retain an explicit row-local fallback. Batched device selection
-now consumes ordered resident logits views with no vocabulary D2H; DSpark
-distribution and acceptance still require their separate device cutover. The
+now consumes ordered resident logits views with no vocabulary D2H; greedy
+DSpark target verification consumes the same result class, while draft/Markov
+and stochastic distribution/acceptance still require their device cutover. The
 wave must keep prefix promotion, shape
 admission, partial-turn semantics, protocol channels and one model/session
 authority unchanged.

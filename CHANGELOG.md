@@ -59,8 +59,12 @@ change. Git history preserves implementation chronology.
   explicit portable audit/reference oracle.
 - Target-only production stochastic sampling now filters and selects directly
   from resident CUDA logits. The host publishes the deterministic PCG advance
-  only after cancellation-safe validation, while audit/forensic and DSpark
-  retain the complete-distribution host reference.
+  only after cancellation-safe validation, while audit/forensic and stochastic
+  DSpark retain the complete-distribution host reference.
+- Production greedy DSpark verification now projects its complete target row
+  batch to CUDA-resident logits and transfers only bounded argmax facts. The
+  portable host distribution remains the CPU, audit/forensic and stochastic
+  oracle; draft feature/Markov execution is unchanged.
 - Compulsory memory accounting now has one transactional internal fact owner.
   CUDA embedding, attention, MoE and final projection contribute measured or
   explicitly missing operations through transformer and decode aggregation;
