@@ -226,7 +226,7 @@ class NetworkProvider(Provider):
         quoted_repo = urllib.parse.quote(repo, safe="/")
         url = (
             f"https://huggingface.co/api/models/{quoted_repo}/tree/{revision}"
-            "?recursive=true&expand=true"
+            "?recursive=true"
         )
         result: list[dict[str, Any]] = []
         seen: set[str] = set()
