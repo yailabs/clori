@@ -58,6 +58,10 @@ change. Git history preserves implementation chronology.
 
 ### Changed
 
+- CUDA kernel admission now binds and atomically owns multiple independently
+  compiled manifest-owned PTX/native modules under kernel-bundle identity v3;
+  the routed/shared MoE kernel family no longer shares one monolithic CUDA
+  translation unit with general device kernels.
 - CUDA attention graphs now refresh mutable state-bank inputs before capture
   and replay, allowing allocation-stable graphs to survive committed-state
   promotion without restoring stale state or recapturing each turn.

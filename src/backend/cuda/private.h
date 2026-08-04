@@ -65,7 +65,9 @@ typedef struct {
 #define YVEX_CUDA_ERROR_OUT_OF_MEMORY 2
 #define YVEX_CUDA_ERROR_NOT_INITIALIZED 3
 #define YVEX_CUDA_ERROR_NO_DEVICE 100
+#define YVEX_CUDA_ERROR_NOT_FOUND 500
 #define YVEX_CUDA_ERROR_NOT_SUPPORTED 801
+#define YVEX_CUDA_KERNEL_MODULE_MAX 8u
 #define YVEX_CUDA_CTX_MAP_HOST 0x08u
 #define YVEX_CUDA_MEM_ATTACH_GLOBAL 0x01u
 #define YVEX_CUDA_MEMHOSTREGISTER_DEVICEMAP 0x02u
@@ -171,7 +173,8 @@ typedef struct {
     CUdevice device;
     int device_index;
     int driver_version;
-    CUmodule module;
+    CUmodule modules[YVEX_CUDA_KERNEL_MODULE_MAX];
+    unsigned int module_count;
     CUfunction embed_function;
     CUfunction embed_f16_function;
     CUfunction rms_norm_f32_function;
@@ -201,7 +204,6 @@ typedef struct {
     CUfunction moe_accumulate_function;
     CUfunction mlp_function;
     CUfunction attention_function;
-    int module_loaded;
     yvex_cuda_kernel_bundle_state kernel_bundle_state;
     yvex_backend_capability_reason kernel_bundle_reason;
     yvex_backend_operation_variant kernel_bundle_failure_variant;

@@ -26,6 +26,13 @@ compiled profiles remain schema v1, generation remains ABI v4, and the public C
 API remains unchanged. A future protocol or public API revision requires a
 concrete product consumer and its own matrix row.
 
+An implementation-discovered identity change is admitted beside that frozen
+entry audit:
+
+| Contract | Current | Admitted | New fact | Incompatibility | Old behavior | Rule | Tests |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Kernel-bundle identity | v2 | v3 | ordered set of independently compiled modules | semantic identity derivation only; no wire or persisted layout | v2 hashes one image and cannot identify the module set | full rebuild admits all manifest-owned modules atomically; model artifacts do not migrate | PTX/native admission, missing-symbol rollback, checked unload retry, identity mutation |
+
 ## Planning authority
 
 Verified checkpoint and family facts seal one immutable model-execution
@@ -111,6 +118,14 @@ on the explicit eager reference until the target/draft arena is graph-stable.
 Shape reconfiguration within one graph mode and profile identity retains
 compatible cached executables; a mode or identity change still invalidates
 them.
+
+The CUDA kernel bundle now admits an ordered set of independently compiled
+manifest-owned modules. General kernels and the MoE kernel family share one
+toolchain-only qtype primitive interface, while module loading, required-symbol
+resolution, rollback and checked unload remain atomic at the aggregate bundle
+boundary. This earns kernel-bundle identity v3; it changes neither a persisted
+model contract nor public API and creates the compilation boundary needed for
+real width-N MoE without exceeding translation-unit policy.
 
 Accepted-prefix promotion now contributes its exact state-residency H2D,
 synchronization and zero kernel/D2H/D2D facts. These counters are deltas around

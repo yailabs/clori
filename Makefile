@@ -1430,17 +1430,35 @@ $(OBJ_DIR)/%.cubin: %.cu include/yvex/qtype.h
 $(CUDA_PTX_INC): $(CUDA_PTX)
 	@mkdir -p $(@D)
 	@{ \
-		printf 'static const unsigned char cuda_kernels_ptx[] = {\n'; \
-		{ cat $(CUDA_PTX); printf '\0'; } | xxd -i; \
-		printf '};\n'; \
+		index=0; names=''; \
+		for image in $(CUDA_PTX); do \
+			name="cuda_kernel_ptx_$${index}"; names="$$names $$name"; \
+			printf 'static const unsigned char %s[] = {\n' "$$name"; \
+			{ cat "$$image"; printf '\0'; } | xxd -i; \
+			printf '};\n'; index=$$((index + 1)); \
+		done; \
+		printf 'static const unsigned char *const cuda_kernel_ptx_images[] = {\n'; \
+		for name in $$names; do printf '    %s,\n' "$$name"; done; \
+		printf '};\nstatic const unsigned long long cuda_kernel_ptx_image_bytes[] = {\n'; \
+		for name in $$names; do printf '    sizeof(%s) - 1u,\n' "$$name"; done; \
+		printf '};\n#define CUDA_KERNEL_PTX_IMAGE_COUNT %s\n' "$$index"; \
 	} > $@
 
 $(CUDA_CUBIN_INC): $(CUDA_CUBIN)
 	@mkdir -p $(@D)
 	@{ \
-		printf 'static const unsigned char cuda_kernels_cubin[] = {\n'; \
-		{ cat $(CUDA_CUBIN); } | xxd -i; \
-		printf '};\n'; \
+		index=0; names=''; \
+		for image in $(CUDA_CUBIN); do \
+			name="cuda_kernel_cubin_$${index}"; names="$$names $$name"; \
+			printf 'static const unsigned char %s[] = {\n' "$$name"; \
+			cat "$$image" | xxd -i; \
+			printf '};\n'; index=$$((index + 1)); \
+		done; \
+		printf 'static const unsigned char *const cuda_kernel_cubin_images[] = {\n'; \
+		for name in $$names; do printf '    %s,\n' "$$name"; done; \
+		printf '};\nstatic const unsigned long long cuda_kernel_cubin_image_bytes[] = {\n'; \
+		for name in $$names; do printf '    sizeof(%s),\n' "$$name"; done; \
+		printf '};\n#define CUDA_KERNEL_CUBIN_IMAGE_COUNT %s\n' "$$index"; \
 		printf 'static const char cuda_kernels_cubin_arch[] = "%s";\n' \
 			'$(CUDA_NATIVE_ARCH)'; \
 	} > $@

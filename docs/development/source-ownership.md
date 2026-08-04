@@ -227,7 +227,9 @@ forbidden.
 | `src/backend/cuda/capability.c` | atomic generated-bundle admission, exact CUDA capability, launch/sync demotion, and cleanup failure |
 | `src/backend/cuda/graph.c` | CUDA launch-graph registry, capture, instantiate, replay, update, invalidation, and release |
 | `src/backend/cuda/ops.c` | validated host launch binding for admitted exact variants |
-| `src/backend/cuda/kernels.cu` | canonical bounded device kernels; generated bundle remains build output |
+| `src/backend/cuda/kernels.cu` | canonical general device kernels; generated modules remain build output |
+| `src/backend/cuda/moe_kernels.cu` | independently compiled routed/shared MoE kernel family |
+| `src/backend/cuda/kernel_primitives.h` | toolchain-only qtype/device primitives shared by both CUDA kernel families |
 | `src/backend/cuda/qtype.c` | CUDA qtype capability/refusal facts |
 
 ## Client and engineering ownership map
