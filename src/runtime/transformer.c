@@ -1,7 +1,5 @@
-/*
- * Compose admitted embedding, attention, MoE, residual, and final-stage owners. One attention
- * transaction spans all admitted blocks and final hidden validation before committing state.
- */
+/* Compose admitted transformer owners; one transaction spans all blocks through final hidden
+ * validation before state publication. */
 #include <yvex/internal/transformer.h>
 #include <math.h>
 #include <pthread.h>
@@ -481,7 +479,6 @@ static int transformer_runtime_buffers(yvex_runtime_transformer_context *context
     context->host_bytes += bytes;
     return transformer_device_buffers(context, hidden, expanded, err);
 }
-
 static int transformer_encoded_subview(const yvex_device_tensor *source,
                                        unsigned long long bytes,
                                        yvex_device_tensor *view)
@@ -632,7 +629,6 @@ static int transformer_device_view(void *opaque, unsigned long long layer_ordina
     *output = &chunk->device_attention;
     return YVEX_OK;
 }
-
 /* DSpark captures source-selected HC means only, avoiding transfers on ordinary target layers. */
 static int transformer_feature_capture(transformer_chunk_context *chunk,
                                        unsigned long long completed_layer,
@@ -677,10 +673,8 @@ static int transformer_feature_capture(transformer_chunk_context *chunk,
     }
     return YVEX_OK;
 }
-/*
- * Complete one ordered block from staged attention, execute MoE/deferred mHC post, and publish
- * block evidence. The request coordinator retains attention and KV commit authority.
- */
+/* Complete one ordered block from staged attention through MoE/deferred mHC while the request
+ * coordinator retains attention and KV commit authority. */
 int yvex_runtime_transformer_execute_block(
     yvex_runtime_transformer_context *context, unsigned long long layer_ordinal,
     const unsigned int *token_ids, unsigned long long token_count,
@@ -958,7 +952,6 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
             context->candidate_hidden, err);
     return YVEX_OK;
 }
-
 static int transformer_state_summary(const yvex_runtime_transformer_context *context,
                                      yvex_graph_attention_state_summary *summary,
                                      yvex_error *err)
@@ -1030,7 +1023,6 @@ static int transformer_shape_admit(
     unsigned long long width = input->token_count < request->chunk_tokens
                                    ? input->token_count : request->chunk_tokens;
     int rc;
-
     if (!context->options.execution_profile && !context->options.shape_registry)
         return YVEX_OK;
     if (!context->options.execution_profile || !context->options.shape_registry ||
@@ -1114,7 +1106,6 @@ static int transformer_shape_admit(
     }
     return rc;
 }
-
 static int transformer_prepare(yvex_runtime_transformer_context *context,
                                const yvex_transformer_input_summary *input,
                                const yvex_runtime_transformer_request *request,
@@ -1122,9 +1113,11 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
                                yvex_error *err)
 {
     yvex_graph_attention_capacity_plan *capacity = NULL;
+    const yvex_graph_attention_capacity_summary *capacity_summary;
     yvex_runtime_model_failure failure;
     yvex_runtime_session_summary session;
     yvex_attention_failure attention_failure;
+    yvex_runtime_execution_mode mode;
     unsigned long long final, workspace_tokens, workspace_start;
     int rc;
     if (request->phase != YVEX_TRANSFORMER_PHASE_PREFILL &&
@@ -1190,14 +1183,25 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
     workspace_tokens = request->chunk_tokens < input->token_count
                            ? request->chunk_tokens : input->token_count;
     workspace_start = context->options.context_capacity - workspace_tokens;
+    mode = context->options.execution_profile &&
+                   !context->options.execution_profile->eager_attention_reference
+               ? YVEX_RUNTIME_MODE_FULL : YVEX_RUNTIME_MODE_EAGER;
     rc = transformer_capacity_build(&capacity, context->model_view,
                                     context->options.tensor_scope, workspace_start,
                                     workspace_tokens, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_prepare_attention_workspace(
-            context->session, YVEX_RUNTIME_MODE_EAGER, YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
+            context->session, mode, YVEX_RUNTIME_SCOPE_ATTENTION_ENVELOPE,
             YVEX_ATTENTION_EVIDENCE_NONE, capacity, YVEX_MOE_CUDA_WORKSPACE_BYTES,
             &failure, err);
+    capacity_summary = yvex_graph_attention_capacity_plan_summary(capacity);
+    if (rc == YVEX_OK && mode == YVEX_RUNTIME_MODE_FULL)
+        rc = yvex_backend_cuda_attention_configure(
+            context->session_view->backend, YVEX_BACKEND_CUDA_ATTENTION_FULL,
+            context->options.execution_profile->identity, "generation",
+            capacity_summary->components[YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY].maximum_capacity,
+            capacity_summary->components[YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY].maximum_capacity,
+            capacity_summary->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY].maximum_capacity, err);
     yvex_graph_attention_capacity_plan_close(&capacity);
     if (rc == YVEX_OK)
         rc = yvex_runtime_session_summary_copy(context->session, &session, err);
@@ -1356,7 +1360,6 @@ static int transformer_core_features_execute(
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
-
 int yvex_runtime_transformer_stage_core_features(
     yvex_runtime_transformer_context *context, unsigned long long token_start,
     const float *features, unsigned long long token_count,
@@ -1438,7 +1441,6 @@ const yvex_transformer_plan *yvex_runtime_transformer_context_plan(
 {
     return context ? context->plan : NULL;
 }
-
 const yvex_runtime_execution_session *yvex_runtime_transformer_context_session(
     const yvex_runtime_transformer_context *context)
 {
@@ -1625,10 +1627,8 @@ static int transformer_execution_finish(
     if (rc == YVEX_OK) result->completed = 1;
     return rc;
 }
-/*
- * Execute identity-bound tokens as deterministic, independently committed full-stack chunks and
- * publish normalized hidden rows only after each commit.
- */
+/* Execute identity-bound tokens as independently committed full-stack chunks; normalized hidden
+ * rows become visible only after commit. */
 int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
                                      const yvex_transformer_input *input,
                                      const yvex_runtime_transformer_request *request,

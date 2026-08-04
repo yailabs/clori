@@ -1681,11 +1681,7 @@ int yvex_backend_cuda_attention_configure(
     }
     if (state->attention_graph_configured &&
         (state->attention_mode != mode ||
-         strcmp(state->attention_compatibility_identity, compatibility_identity) != 0 ||
-         strcmp(state->attention_capture_bucket, capture_bucket) != 0 ||
-         state->attention_local_capacity != local_capacity ||
-         state->attention_compressed_capacity != compressed_capacity ||
-         state->attention_indexer_capacity != indexer_capacity)) {
+         strcmp(state->attention_compatibility_identity, compatibility_identity) != 0)) {
         unsigned long long affected;
         rc = yvex_backend_cuda_attention_graph_registry_apply(
             backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_INVALIDATE, &affected, err);

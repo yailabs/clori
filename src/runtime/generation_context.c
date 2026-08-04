@@ -510,6 +510,7 @@ static int generation_execution_profile_build(
     yvex_runtime_session_summary session;
     yvex_compiled_execution_profile_request request = {0};
     yvex_backend_cuda_attention_graph_summary cuda = {0};
+    yvex_backend_cuda_graph_capability graph = {0};
     const char *kernel_bundle = YVEX_BUILD_IDENTITY;
     char hardware[YVEX_EXECUTION_TEXT_CAP];
     int rc;
@@ -524,6 +525,10 @@ static int generation_execution_profile_build(
         if (rc != YVEX_OK || !yvex_sha256_hex_valid(cuda.cuda_build_identity))
             return generation_context_refuse(
                 err, YVEX_ERR_STATE, "CUDA kernel bundle identity is unavailable");
+        rc = yvex_backend_cuda_graph_query(session_view->backend, &graph, err);
+        if (rc != YVEX_OK)
+            return generation_context_refuse(
+                err, YVEX_ERR_STATE, "CUDA graph capability is unavailable");
         kernel_bundle = cuda.cuda_build_identity;
         (void)snprintf(hardware, sizeof(hardware), "portable-cuda-sm%d%d",
                        session.compute_capability_major,
@@ -554,7 +559,13 @@ static int generation_execution_profile_build(
     request.host_stochastic_reference =
         context->options.sampling_policy.strategy != YVEX_SAMPLING_STRATEGY_GREEDY;
     request.token_local_moe_reference = 1;
-    request.eager_attention_reference = 1;
+    request.eager_attention_reference =
+        context->options.backend != YVEX_BACKEND_KIND_CUDA ||
+        context->options.mode == YVEX_GENERATION_MODE_DSPARK ||
+        !binding->capabilities.cuda_full_graph_implemented ||
+        graph.state != YVEX_BACKEND_CUDA_GRAPH_OPEN ||
+        !graph.edge_inventory_available || !graph.async_memory_available ||
+        !graph.async_copy_available || !graph.pinned_host_memory_available;
     return yvex_compiled_execution_profile_seal(
         &request, &context->execution_profile, err);
 }

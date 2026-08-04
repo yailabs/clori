@@ -103,6 +103,15 @@ not a graph-key fact while allocation, workspace, capacity and execution shape
 remain compatibility facts. Live piecewise/full execution proves repeated
 state commits against the independent attention oracle without recapture.
 
+Target-only CUDA generation now cuts over from the eager reference to full
+attention graphs when the admitted binding and live Driver expose the complete
+graph capability. The existing compiled-profile schema already distinguishes
+eager-reference ownership, so no contract version changes. CPU and DSpark stay
+on the explicit eager reference until the target/draft arena is graph-stable.
+Shape reconfiguration within one graph mode and profile identity retains
+compatible cached executables; a mode or identity change still invalidates
+them.
+
 Accepted-prefix promotion now contributes its exact state-residency H2D,
 synchronization and zero kernel/D2H/D2D facts. These counters are deltas around
 the serialized session mutation, not estimates from configured capacity.

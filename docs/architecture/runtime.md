@@ -116,9 +116,12 @@ workspace values with explicit owner, identity, generation, extent, lifetime,
 synchronization and materialization policy. Production greedy selection uses a
 device argmax and transfers only the selected token and bounded status.
 Stochastic sampling, token-local MoE, incompatible-row output projection,
-eager production-generation attention and host feature projection remain
-explicitly named portable reference adapters. Unsupported CUDA operations fail
-closed; no requested CUDA execution silently falls back to CPU.
+DSpark generation attention and host feature projection remain explicitly
+named portable reference adapters. Target-only CUDA generation selects full
+graph execution only when the binding and live Driver capability both admit
+it; the compiled profile records whether eager attention remains. Unsupported
+CUDA operations fail closed; no requested CUDA execution silently falls back
+to CPU.
 
 The CUDA kernel owner emits portable PTX and, for an explicit `sm_121` build,
 an independently identified native CUBIN. Module admission selects the native
@@ -141,6 +144,13 @@ candidate state bank. Promotion may therefore preserve an admitted executable
 while reset, invalidation and resource teardown retain their explicit lifetime
 boundaries. A preamble failure refuses the launch without publishing state or
 discarding an otherwise valid executable.
+
+The backend registry may hold multiple shape keys beneath one compiled
+execution-profile identity. Changing capture bucket or admitted capacity within
+one mode selects another key without invalidating compatible executables;
+changing mode or upstream execution identity invalidates the old registry.
+This lets repeated target decode reuse one executable while prefill and other
+exact shapes remain separately keyed.
 
 An ordinary execution unit follows:
 

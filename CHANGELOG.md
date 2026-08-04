@@ -61,6 +61,10 @@ change. Git history preserves implementation chronology.
 - CUDA attention graphs now refresh mutable state-bank inputs before capture
   and replay, allowing allocation-stable graphs to survive committed-state
   promotion without restoring stale state or recapturing each turn.
+- Target-only CUDA generation now selects admitted full attention graphs through
+  the existing compiled-profile contract; CPU and DSpark retain explicit eager
+  reference execution, and compatible shape changes preserve cached graph
+  executables.
 - Consolidated the product topology to the public `yvex` command and the
   long-lived `yvexd` host; the OpenAI-compatible listener now runs inside the
   daemon.

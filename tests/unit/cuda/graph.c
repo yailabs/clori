@@ -965,6 +965,18 @@ static int test_attention_graph_configuration(yvex_backend *backend)
                      summary.update_count == 1ull && summary.update_pending_count == 0ull &&
                      summary.memcpy_node_count >= 2ull && summary.memset_node_count > 0ull,
                      "attention summary aggregates updated transfer-complete graph evidence");
+    rc = yvex_backend_cuda_attention_configure(
+        backend, YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE, "attention-config-piecewise-v1",
+        "decode-1", 8ull, 2ull, 2ull, &err);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_cuda_attention_graph_registry_count(backend, &count, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && count == 1ull,
+                     "shape reconfiguration retains compatible graph ownership");
+    rc = yvex_backend_cuda_attention_configure(
+        backend, YVEX_BACKEND_CUDA_ATTENTION_PIECEWISE, "attention-config-piecewise-v1",
+        "prefill-4", 4ull, 1ull, 1ull, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "returning to an admitted shape preserves its executable");
     rc = yvex_backend_cuda_attention_graph_registry_apply(
         backend, YVEX_BACKEND_CUDA_GRAPH_REGISTRY_UPDATE, &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && count == 1ull,
