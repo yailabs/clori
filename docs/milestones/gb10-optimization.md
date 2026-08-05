@@ -172,6 +172,15 @@ existing compiled-profile reference flag and internal device-view contracts
 already represent this cutover, so no persisted, wire, public C, execution-
 profile or state-layout version changes.
 
+Source-selected target features now collapse their mHC residual streams on
+CUDA before explicit host materialization. Production transfers one reduced
+hidden row plus bounded status instead of the complete expanded row, and the
+same operation publishes exact activation, temporary, launch, synchronization
+and movement facts. The CPU implementation remains the numerical oracle and
+full-evidence path. Feature projection and draft/Markov execution are still
+host-owned, so this does not claim a device-resident DSpark path and requires
+no persisted, wire, public C or profile-schema change.
+
 Accepted-prefix promotion now contributes its exact state-residency H2D,
 synchronization and zero kernel/D2H/D2D facts. These counters are deltas around
 the serialized session mutation, not estimates from configured capacity.
@@ -213,6 +222,6 @@ It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE or zero per-layer MoE synchronization, full-model
 live qualification of target-only device stochastic sampling or greedy DSpark
 verification, device-resident draft/Markov or stochastic DSpark
-acceptance/correction, paged state allocation, prefix
+acceptance/correction, host-free target-feature projection, paged state allocation, prefix
 persistence, continuous batching, competitive throughput, evaluation,
 benchmark qualification, release qualification, or Hugging Face publication.

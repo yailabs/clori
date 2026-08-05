@@ -1313,6 +1313,30 @@ extern "C" __global__ void yvex_deepseek_mhc_post(
     if (!isfinite(published)) atomicCAS(status, 0, 1);
     else output[index] = float_to_bf16_rne(published);
 }
+/* Reduce a row's residual streams before an explicit target-feature materialization. */
+extern "C" __global__ void yvex_transformer_feature_mean(
+    const float *expanded, unsigned long long token_count,
+    unsigned long long streams, unsigned long long width,
+    float *output, int *status)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
+        (unsigned long long)threadIdx.x;
+    unsigned long long count = token_count * width;
+    if (!status || *status || index >= count) return;
+    if (!expanded || !output || !token_count || !streams || !width) {
+        atomicCAS(status, 0, 2);
+        return;
+    }
+    unsigned long long token = index / width;
+    unsigned long long lane = index % width;
+    double sum = 0.0;
+    for (unsigned long long stream = 0ull; stream < streams; ++stream)
+        sum += (double)expanded[(token * streams + stream) * width + lane];
+    float value = (float)(sum / (double)streams);
+    if (!isfinite(value)) atomicCAS(status, 0, 1);
+    else output[index] = value;
+}
 /*
  * Collapse the final mHC streams and apply transformer-owned RMSNorm.
  *

@@ -194,6 +194,7 @@ typedef struct {
     CUfunction deepseek_activation_function;
     CUfunction deepseek_mhc_pre_function;
     CUfunction deepseek_mhc_post_function;
+    CUfunction transformer_feature_mean_function;
     CUfunction deepseek_transformer_final_function;
     CUfunction deepseek_rolling_function;
     CUfunction deepseek_topk_function;

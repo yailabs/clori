@@ -154,6 +154,12 @@ int yvex_backend_transformer_cuda_initial(
     unsigned long long residual_streams, yvex_device_tensor *embedding,
     yvex_device_tensor *expanded, yvex_backend_cuda_operation_facts *facts,
     yvex_error *err);
+int yvex_backend_transformer_cuda_feature_mean(
+    yvex_backend *backend, const yvex_device_tensor *expanded,
+    unsigned long long token_count, unsigned long long hidden_width,
+    unsigned long long residual_streams, yvex_device_tensor *device_output,
+    float *host_output, yvex_backend_cuda_operation_facts *facts,
+    yvex_error *err);
 int yvex_backend_transformer_cuda_final(
     yvex_backend *backend, const yvex_device_tensor *expanded,
     const yvex_device_tensor *function, const yvex_device_tensor *base,

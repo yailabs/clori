@@ -1764,6 +1764,95 @@ int yvex_backend_transformer_cuda_initial(
     return rc;
 }
 
+/*
+ * Collapse target-feature residual streams on CUDA and materialize only the reduced rows.
+ *
+ * The caller supplies reusable device and host storage. Completion, bounded status and the
+ * reduced copy become visible together; the expanded input never crosses the device boundary.
+ */
+int yvex_backend_transformer_cuda_feature_mean(
+    yvex_backend *backend, const yvex_device_tensor *expanded,
+    unsigned long long token_count, unsigned long long hidden_width,
+    unsigned long long residual_streams, yvex_device_tensor *device_output,
+    float *host_output, yvex_backend_cuda_operation_facts *facts,
+    yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_cuda_work work = {0};
+    CUdeviceptr status = 0ull, input_ptr, output_ptr;
+    unsigned long long input_count, output_count, activation_count;
+    size_t output_bytes, activation_bytes;
+    unsigned int grid;
+    int host_status = 0, rc, cleanup_rc;
+    yvex_error cleanup;
+    if (facts) memset(facts, 0, sizeof(*facts));
+    if (!state || !state->transformer_feature_mean_function || !facts || !host_output ||
+        !token_count || !hidden_width || !residual_streams ||
+        !yvex_core_u64_mul(token_count, hidden_width, &output_count) ||
+        !yvex_core_u64_mul(output_count, residual_streams, &input_count) ||
+        !yvex_core_u64_add(input_count, output_count, &activation_count) ||
+        !yvex_cuda_work_checked_bytes(output_count, sizeof(float), &output_bytes) ||
+        !yvex_cuda_work_checked_bytes(activation_count, sizeof(float), &activation_bytes) ||
+        output_count > UINT_MAX * (unsigned long long)CUDA_ATTENTION_BLOCK ||
+        !backend_tensor_f32_elements(expanded, input_count) ||
+        !backend_tensor_f32_elements(device_output, output_count))
+        return cuda_transformer_refuse(
+            err, YVEX_ERR_FORMAT, "cuda.transformer.feature-mean",
+            "CUDA transformer feature geometry is incompatible");
+    work.backend = backend;
+    work.state = state;
+    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+    rc = yvex_cuda_work_allocate(&work, &status, sizeof(int), NULL, 1,
+                                 "cuda.transformer.feature-mean.status", NULL, err);
+    input_ptr = (CUdeviceptr)expanded->data;
+    output_ptr = (CUdeviceptr)device_output->data;
+    grid = (unsigned int)((output_count + CUDA_ATTENTION_BLOCK - 1ull) /
+                          CUDA_ATTENTION_BLOCK);
+    if (rc == YVEX_OK) {
+        void *params[] = {&input_ptr, &token_count, &residual_streams,
+                          &hidden_width, &output_ptr, &status};
+        rc = yvex_cuda_launch(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            state->transformer_feature_mean_function, grid, CUDA_ATTENTION_BLOCK,
+            0u, params, "cuda.transformer.feature-mean", err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                                   "cuda.transformer.feature-mean.sync", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemcpyDtoH_v2(&host_status, status, sizeof(host_status)),
+            "cuda.transformer.feature-mean.status", err);
+    if (rc == YVEX_OK && host_status)
+        rc = cuda_transformer_refuse(
+            err, YVEX_ERR_FORMAT, "cuda.transformer.feature-mean",
+            "CUDA transformer feature reduction produced invalid numerics");
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemcpyDtoH_v2(host_output, output_ptr, output_bytes),
+            "cuda.transformer.feature-mean.output", err);
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
+    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
+    if (rc == YVEX_OK) {
+        device_output->is_written = 1;
+        facts->d2h_bytes = output_bytes + sizeof(host_status);
+        facts->kernel_launches = 1ull;
+        facts->download_count = 2ull;
+        facts->device_synchronizations = 1ull;
+        facts->activation_bytes = activation_bytes;
+        facts->temporary_bytes = sizeof(host_status);
+        facts->compulsory_memory_facts_available = 1;
+        yvex_error_clear(err);
+    }
+    return rc;
+}
+
 int yvex_backend_transformer_cuda_final(
     yvex_backend *backend, const yvex_device_tensor *expanded,
     const yvex_device_tensor *function, const yvex_device_tensor *base,

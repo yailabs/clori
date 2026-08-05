@@ -66,6 +66,11 @@ change. Git history preserves implementation chronology.
   launch and one synchronization, and transfers only bounded aggregate facts. The
   portable host distribution remains the CPU, audit/forensic and stochastic
   oracle; draft feature/Markov execution is unchanged.
+- Production CUDA target-feature capture now averages source-selected mHC
+  residual streams on device and materializes only the reduced hidden rows.
+  Independent CUDA tests prove exact finite reduction, physical-byte facts and
+  refusal before host publication; feature projection and draft/Markov remain
+  explicit host-side optimization debt.
 - Compulsory memory accounting now has one transactional internal fact owner.
   CUDA embedding, attention, MoE and final projection contribute measured or
   explicitly missing operations through transformer and decode aggregation;

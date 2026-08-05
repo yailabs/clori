@@ -628,39 +628,40 @@ static int transformer_device_view(void *opaque, unsigned long long layer_ordina
     *output = &chunk->device_attention;
     return YVEX_OK;
 }
-/* DSpark captures source-selected HC means only, avoiding transfers on ordinary target layers. */
 static int transformer_feature_capture(transformer_chunk_context *chunk,
-                                       unsigned long long completed_layer,
-                                       yvex_error *err)
+                                       unsigned long long completed_layer, yvex_error *err)
 {
-    const yvex_transformer_plan_summary *plan =
-        yvex_transformer_plan_summary_get(chunk->owner->plan);
+    const yvex_transformer_plan_summary *plan = yvex_transformer_plan_summary_get(chunk->owner->plan);
     unsigned long long feature_index, token, hidden, stream;
     float *destination;
     if (!chunk->request->feature_layer_count ||
         chunk->feature_next >= chunk->request->feature_layer_count ||
-        chunk->request->feature_layer_ordinals[chunk->feature_next] !=
-            completed_layer)
+        chunk->request->feature_layer_ordinals[chunk->feature_next] != completed_layer)
         return YVEX_OK;
     feature_index = chunk->feature_next++;
     if (chunk->backend == YVEX_BACKEND_KIND_CUDA &&
         chunk->owner->options.evidence_level != YVEX_ATTENTION_EVIDENCE_FULL) {
-        unsigned long long bytes =
-            chunk->token_count * plan->expanded_width * sizeof(float);
-        int rc = yvex_backend_tensor_read(
+        yvex_backend_cuda_operation_facts facts = {0};
+        int rc = yvex_backend_transformer_cuda_feature_mean(
             chunk->owner->session_view->backend, &chunk->device_current,
-            chunk->current, bytes, err);
+            chunk->token_count, plan->hidden_width, plan->residual_streams,
+            &chunk->device_hidden, chunk->owner->candidate_hidden, &facts, err);
         if (rc != YVEX_OK) return rc;
-        chunk->result->d2h_bytes += bytes;
-        chunk->result->download_count++;
-        chunk->result->device_synchronizations++;
+        rc = transformer_cuda_facts_add(chunk->result, &facts, 0ull, 0ull, 0ull, err);
+        if (rc != YVEX_OK) return rc;
+        for (token = 0ull; token < chunk->token_count; ++token) {
+            destination = chunk->output->features +
+                ((chunk->token_offset + token) * chunk->request->feature_layer_count +
+                 feature_index) * plan->hidden_width;
+            memcpy(destination, chunk->owner->candidate_hidden + token * plan->hidden_width,
+                   (size_t)plan->hidden_width * sizeof(float));
+        }
+        return YVEX_OK;
     }
     for (token = 0ull; token < chunk->token_count; ++token) {
         destination = chunk->output->features +
-                      ((chunk->token_offset + token) *
-                           chunk->request->feature_layer_count +
-                       feature_index) *
-                          plan->hidden_width;
+                      ((chunk->token_offset + token) * chunk->request->feature_layer_count +
+                       feature_index) * plan->hidden_width;
         for (hidden = 0ull; hidden < plan->hidden_width; ++hidden) {
             double sum = 0.0;
             for (stream = 0ull; stream < plan->residual_streams; ++stream)
