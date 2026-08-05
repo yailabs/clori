@@ -150,6 +150,7 @@ src/model/families/deepseek_v4.c	model.family	model.family.deepseek_v4	family	pr
 src/runtime/descriptor.c	runtime	runtime.descriptor	generic	private	resource-lifecycle	artifact,graph,runtime	implementation	none
 src/runtime/binding.c	runtime	runtime.binding	generic	private	file-serialization	artifact,graph,runtime,cli	implementation	none
 src/runtime/decode.c	runtime	runtime.decode	generic	private	transactional-execution	runtime,cli,tests	implementation	none
+src/runtime/acceptance.c	runtime	runtime.speculation_acceptance	generic	private	numerical-oracle	runtime,generation,tests	implementation	none
 src/runtime/generation.c	runtime	runtime.generation	generic	private	transactional-execution	runtime,cli,tests	implementation	none
 src/runtime/generation_context.c	runtime	runtime.generation_context	generic	private	resource-lifecycle	runtime,generation,tests	implementation	none
 src/runtime/generation_result.c	runtime	runtime.generation_result	generic	private	typed-report	runtime,cli,tests	implementation	none
