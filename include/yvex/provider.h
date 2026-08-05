@@ -11,7 +11,9 @@ extern "C" {
 #endif
 
 #define YVEX_PROVIDER_SCHEMA_V1 1u
+#define YVEX_PROVIDER_SCHEMA_V2 2u
 #define YVEX_PROVIDER_WIRE_SCHEMA_V1 1u
+#define YVEX_PROVIDER_WIRE_SCHEMA_V2 2u
 #define YVEX_PROVIDER_MODEL_CAP 128u
 #define YVEX_PROVIDER_ID_CAP 65u
 #define YVEX_PROVIDER_ADAPTER_CAP 32u
@@ -47,6 +49,7 @@ typedef struct {
 typedef struct {
     yvex_provider_role role;
     yvex_provider_span content;
+    yvex_provider_span reasoning_content;
     char tool_call_id[YVEX_PROVIDER_ID_CAP];
     const yvex_provider_tool_call *tool_calls;
     unsigned long long tool_call_count;
@@ -56,7 +59,7 @@ typedef struct {
     char name[YVEX_PROVIDER_TOOL_NAME_CAP];
     yvex_provider_span description;
     yvex_provider_span parameters_json;
-    int strict;
+    int description_present, strict, strict_present;
 } yvex_provider_function_tool;
 
 typedef enum {
@@ -102,9 +105,10 @@ typedef struct {
     unsigned long long stop_count;
     yvex_provider_tool_choice tool_choice;
     yvex_provider_response_format response_format;
+    yvex_reasoning_policy reasoning_policy;
     yvex_provider_sampling sampling;
     unsigned long long maximum_output_tokens;
-    int stream, include_usage;
+    int stream, include_usage, drop_thinking;
     char adapter[YVEX_PROVIDER_ADAPTER_CAP];
     char previous_response_id[YVEX_PROVIDER_ID_CAP];
     char external_correlation_id[YVEX_PROVIDER_ID_CAP];

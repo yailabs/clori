@@ -28,7 +28,8 @@ static int test_chat_admission(void)
 {
     static const char basic[] =
         "{\"model\":\"deepseek4-v4-flash-dspark\",\"messages\":[{"
-        "\"role\":\"user\",\"content\":\"Hello\"}],\"temperature\":0}";
+        "\"role\":\"user\",\"content\":\"Hello\"}],\"temperature\":0,"
+        "\"reasoning_effort\":\"max\"}";
     static const char json[] =
         "{\"model\":\"deepseek4-v4-flash-dspark\","
         "\"messages\":[{\"role\":\"system\",\"content\":\"Be exact.\"},"
@@ -49,6 +50,9 @@ static int test_chat_admission(void)
     if (rc != YVEX_OK)
         fprintf(stderr, "basic Chat admission: %s\n", yvex_error_message(&err));
     YVEX_TEST_ASSERT(rc == YVEX_OK, "basic Chat request must admit");
+    YVEX_TEST_ASSERT(admitted.provider->reasoning_policy ==
+                         YVEX_REASONING_MAXIMUM,
+                     "maximum source reasoning policy must remain typed");
     openai_admitted_request_clear(&admitted);
     rc = admit_fixture(json, OPENAI_ENDPOINT_CHAT, &admitted, &err);
 
@@ -95,6 +99,10 @@ static int test_request_refusals(void)
         "\"tools\":[{\"type\":\"function\",\"function\":{"
         "\"name\":\"f\",\"parameters\":{\"type\":\"object\"},"
         "\"strict\":true}}]}";
+    static const char bad_reasoning[] =
+        "{\"model\":\"deepseek4-v4-flash-dspark\","
+        "\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+        "\"reasoning_effort\":\"medium\"}";
     openai_admitted_request admitted = {0};
     yvex_error err;
 
@@ -115,6 +123,9 @@ static int test_request_refusals(void)
     YVEX_TEST_ASSERT(admit_fixture(strict_tool, OPENAI_ENDPOINT_CHAT,
                                    &admitted, &err) == YVEX_ERR_UNSUPPORTED,
                      "strict tool schemas must refuse without constrained decoding");
+    YVEX_TEST_ASSERT(admit_fixture(bad_reasoning, OPENAI_ENDPOINT_CHAT,
+                                   &admitted, &err) == YVEX_ERR_UNSUPPORTED,
+                     "non-source reasoning effort must refuse");
     return 0;
 }
 
@@ -189,12 +200,66 @@ static int test_rendering(void)
     fragment.provider_output_kind = YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT;
     YVEX_TEST_ASSERT(openai_json_stream_chunk(
         OPENAI_ENDPOINT_RESPONSES, "resp_test", "deepseek4-v4-flash-dspark", 7u,
-        &fragment, 0, &json, &count, &err) == YVEX_OK,
+        &fragment, 0u, 0, &json, &count, &err) == YVEX_OK,
         "Responses delta must render");
     YVEX_TEST_ASSERT(yvex_provider_json_value_validate(json, count, 1,
                                                         &err) == YVEX_OK,
                      "Responses delta must be valid JSON");
     free(json);
+    json = NULL;
+    {
+        openai_generation_result tools = {0};
+        yvex_client_message call_fragment = {0};
+        tools.reasoning = (unsigned char *)"why";
+        tools.reasoning_count = 3u;
+        tools.tool_call_count = 2u;
+        strcpy(tools.tool_calls[0].call_id, "call_a");
+        strcpy(tools.tool_calls[0].name, "lookup");
+        tools.tool_calls[0].arguments = (unsigned char *)"{\"x\":1}";
+        tools.tool_calls[0].arguments_count = 7u;
+        strcpy(tools.tool_calls[1].call_id, "call_b");
+        strcpy(tools.tool_calls[1].name, "lookup");
+        tools.tool_calls[1].arguments = (unsigned char *)"{\"x\":2}";
+        tools.tool_calls[1].arguments_count = 7u;
+        tools.finish = YVEX_PROVIDER_FINISH_TOOL_CALLS;
+        tools.complete = 1;
+        YVEX_TEST_ASSERT(
+            openai_json_result(OPENAI_ENDPOINT_CHAT, "chatcmpl_tools",
+                               "deepseek4-v4-flash-dspark", 7u, &tools,
+                               &json, &count, &err) == YVEX_OK &&
+                strstr((char *)json, "\"reasoning_content\":\"why\"") &&
+                strstr((char *)json, "\"id\":\"call_a\"") &&
+                strstr((char *)json, "\"id\":\"call_b\""),
+            "Chat result keeps reasoning and every tool call separate");
+        free(json);
+        json = NULL;
+        YVEX_TEST_ASSERT(
+            openai_json_result(OPENAI_ENDPOINT_RESPONSES, "resp_tools",
+                               "deepseek4-v4-flash-dspark", 7u, &tools,
+                               &json, &count, &err) == YVEX_OK &&
+                yvex_provider_json_value_validate(json, count, 1, &err) ==
+                    YVEX_OK &&
+                strstr((char *)json, "\"call_id\":\"call_a\"") &&
+                strstr((char *)json, "\"call_id\":\"call_b\""),
+            "Responses result emits one item per source tool call");
+        free(json);
+        json = NULL;
+        call_fragment.kind = YVEX_CLIENT_MESSAGE_FRAGMENT;
+        call_fragment.provider_output_kind =
+            YVEX_PROVIDER_OUTPUT_FUNCTION_CALL;
+        strcpy(call_fragment.tool_call_id, "call_b");
+        strcpy(call_fragment.tool_name, "lookup");
+        memcpy(call_fragment.bytes, "{\"x\":2}", 7u);
+        call_fragment.byte_count = 7u;
+        YVEX_TEST_ASSERT(
+            openai_json_stream_chunk(
+                OPENAI_ENDPOINT_CHAT, "chatcmpl_tools",
+                "deepseek4-v4-flash-dspark", 7u, &call_fragment, 1u, 0,
+                &json, &count, &err) == YVEX_OK &&
+                strstr((char *)json, "\"index\":1") != NULL,
+            "Chat SSE preserves the second tool-call index");
+        free(json);
+    }
     return 0;
 }
 

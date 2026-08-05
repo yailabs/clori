@@ -39,7 +39,7 @@ src/runtime/             family-neutral immutable model, sessions, execution and
 
 ```text
 registry JSON -> strict build validation -> immutable compiled descriptors -> yvex dispatch/help
-product argv -> protocol v6 -> yvexd worker/session -> typed events/results -> client render
+product argv -> protocol v7 -> yvexd worker/session -> typed events/results -> client render
 application -> OpenAI profile -> provider contract -> local protocol -> same yvexd worker/session
 engineering argv -> nested owner route -> report/domain -> engineering render -> cli/io
 

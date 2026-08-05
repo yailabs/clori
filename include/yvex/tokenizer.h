@@ -62,9 +62,12 @@ typedef struct {
 
 #define YVEX_TOKENIZER_PLAN_SCHEMA_V1 1u
 #define YVEX_TOKENIZER_PLAN_SCHEMA_V2 2u
+#define YVEX_TOKENIZER_PLAN_SCHEMA_V3 3u
 #define YVEX_TOKENIZER_EXECUTION_SCHEMA_V1 1u
 #define YVEX_TOKENIZER_DECODER_SCHEMA_V1 1u
 #define YVEX_TOKENIZER_APPEND_SCHEMA_V1 1u
+#define YVEX_TOKENIZER_PROVIDER_RESULT_SCHEMA_V1 1u
+#define YVEX_TOKENIZER_PROVIDER_RESULT_SCHEMA_V2 2u
 
 typedef enum {
     YVEX_TOKENIZER_MODEL_FIXTURE = 0,
@@ -82,6 +85,7 @@ typedef struct {
     unsigned long long vocabulary_size, base_vocabulary_size, merge_count;
     unsigned long long added_token_count, special_token_count, owned_bytes;
     unsigned int bos_token_id, eos_token_id, pad_token_id, unk_token_id;
+    unsigned int reasoning_start_token_id, reasoning_end_token_id;
     int bos_present, eos_present, pad_present, unk_present;
     int add_bos_token, add_eos_token, byte_fallback, sealed, runtime_bound;
     int explicit_reasoning_supported, maximum_reasoning_supported;
@@ -420,9 +424,12 @@ void yvex_rendered_prompt_free(yvex_rendered_prompt *prompt);
 typedef struct {
     unsigned int schema_version;
     yvex_provider_output_kind kind;
+    unsigned char *reasoning_content;
+    unsigned long long reasoning_content_count;
     unsigned char *content;
     unsigned long long content_count;
-    yvex_provider_tool_call tool_call;
+    yvex_provider_tool_call *tool_calls;
+    unsigned long long tool_call_count;
     char output_identity[YVEX_SHA256_HEX_CAP];
     int completed;
 } yvex_tokenizer_provider_result;

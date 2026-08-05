@@ -1,8 +1,8 @@
-# Local Protocol v6
+# Local Protocol v7
 
 Status: normative private protocol contract
 
-Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 6`.
+Schema/version: `YVEX_LOCAL_PROTOCOL_VERSION = 7`.
 
 Authority: `include/yvex/server.h` and `src/server/protocol.c`. This document
 explains the wire and lifecycle contract; code remains authoritative for exact
@@ -16,17 +16,18 @@ private UID-owned Unix-domain socket and is not a public network API.
 
 ## Framing and negotiation
 
-Every connection negotiates version 6 and exchanges bounded typed frames.
+Every connection negotiates version 7 and exchanges bounded typed frames.
 Lengths, enums, strings, arrays, message/tool fields, and correlations are
 validated before dispatch. Oversized, truncated, duplicate, unknown, or
 malformed fields refuse without entering the model worker.
 
-Version 5 is refused explicitly. There is no private pre-v0.1 compatibility
-decoder. Unknown operations and response kinds fail closed.
+Every earlier version, including v6, is refused explicitly. There is no private
+pre-v0.1 compatibility decoder. Unknown operations and response kinds fail
+closed.
 
 ## Operations
 
-Protocol v6 carries runtime start-state/status/stop, live model and memory
+Protocol v7 carries runtime start-state/status/stop, live model and memory
 facts, selected target-only or DSpark generation mode, session lifecycle,
 generation turns and cancellation, speculative lifecycle events, event
 subscriptions, and composed console status. Offline compile, artifact,
@@ -55,7 +56,8 @@ request/turn and does not infer identity from connection lifetime.
 Generation may return accepted, progress, committed fragments, and one terminal
 result. Fragment bytes carry explicit lengths and a typed stream channel:
 final text, explicit model-emitted reasoning when supported, tool call, tool
-result, or control/event.
+result, control/event, or error. Output kind and stream channel must agree;
+diagnostic text cannot reclassify a fragment.
 
 Native generation connections receive identity-sealed tokenizer and prefill
 events from the same telemetry authority as watch and trace. Prefill-start,
@@ -64,12 +66,15 @@ line without timing the asynchronous request locally. Provider/OpenAI requests
 retain their provider stream contract and do not receive these native console
 messages.
 
-The admitted DeepSeek DSpark tokenizer contract can classify source-authored
+The admitted DeepSeek DSpark tokenizer contract classifies source-authored
 explicit reasoning separately from final text when the request selects
-`enabled` or `maximum`. Delimiter bytes are consumed by that owner and never
-enter either projection. Disabled reasoning remains final-text only. Clients
-may not infer hidden reasoning, inspect arbitrary prose, or search output for
-delimiter-looking strings.
+`enabled` or `maximum`. The opening `<think>` token is part of the admitted
+generation prompt. Only the corresponding source-authored `</think>` token
+transitions the output stream to final text. Delimiter bytes are consumed by
+that owner and never enter either projection. An enabled stream that terminates
+without the transition fails as an incomplete grammar. Disabled reasoning is
+final-text only. Clients may not infer hidden reasoning, inspect arbitrary
+prose, or search output for delimiter-looking strings.
 
 DSpark proposal tokens are not stream fragments. Drafting, verification, and
 accepted-prefix events carry typed counters, but final text is emitted only
@@ -95,9 +100,10 @@ the server cannot own are explicitly unavailable.
 
 The terminal generation result carries exact prompt, reuse and new-prefill
 token counts; prefill time/rate; TTFT; generated-token count; generation/decode
-time/rate; inter-token facts where available; final position; stop or
-cancellation class; usage; state/turn identity; and publication timing where
-owned. A speculative result additionally carries draft cycles and forwards,
+time/rate; reasoning and final token counts and rates; time to first reasoning
+and final token; total completion time/rate; inter-token facts where available;
+final position; stop or cancellation class; usage; state/turn identity; and
+publication timing where owned. A speculative result additionally carries draft cycles and forwards,
 proposed and selected-verification tokens, target verifications, accepted,
 rejected and discarded drafts, correction/bonus tokens, maximum and mean
 accepted prefix, confidence facts, separate draft/verification/commit timing,
@@ -148,6 +154,6 @@ format.
 
 ## Non-claims
 
-Protocol v6 is not a public remote API, authentication protocol, TLS transport,
+Protocol v7 is not a public remote API, authentication protocol, TLS transport,
 stable cross-version SDK promise, distributed serving protocol, or model
 quality contract.

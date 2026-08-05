@@ -276,8 +276,8 @@ refusals or failures. None may become a successful target-only turn.
 
 ## Compatibility
 
-The runtime behavior is consumed through private local protocol v6 and the
-bounded OpenAI compatibility profile v1. Public C ABI and internal ABI follow
+The runtime behavior is consumed through private local protocol v7 and the
+bounded OpenAI compatibility profile v2. Public C ABI and internal ABI follow
 their header/version contracts. Pre-v0.1 private protocol versions may be
 refused rather than decoded compatibly.
 

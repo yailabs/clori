@@ -89,10 +89,12 @@ trace_pid=$!
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session new main >"$root/session.new"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session main \
-    --max-new-tokens 1 --strategy greedy Hi >"$root/turn1"
+    --max-new-tokens 1 --strategy greedy Hi \
+    >"$root/turn1" 2>"$root/turn1.metrics"
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session main \
-    --max-new-tokens 1 --strategy greedy 'How are you?' >"$root/turn2"
-grep -F '14 prompt · 6 reused' "$root/turn2" >/dev/null
+    --max-new-tokens 1 --strategy greedy 'How are you?' \
+    >"$root/turn2" 2>"$root/turn2.metrics"
+grep -F '14 prompt · 6 reused' "$root/turn2.metrics" >/dev/null
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session detach main >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show main >"$root/detached"
@@ -145,7 +147,8 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session reset main >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session show main >"$root/reset"
 grep -F 'position=0 turns=0' "$root/reset" >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session main \
-    --max-new-tokens 1 --strategy greedy Hi >"$root/turn1.after-reset"
+    --max-new-tokens 1 --strategy greedy Hi \
+    >"$root/turn1.after-reset" 2>"$root/turn1.after-reset.metrics"
 test "$(sed -n '1p' "$root/turn1")" = "$(sed -n '1p' "$root/turn1.after-reset")"
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --max-new-tokens 1 \
@@ -182,8 +185,8 @@ grep -F 'partial' "$root/cancel.session" >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" session reset cancel-live >/dev/null
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --session cancel-live \
     --max-new-tokens 1 --strategy greedy 'Continue after cancellation.' \
-    >"$root/cancel.retry"
-grep -F '1 generated' "$root/cancel.retry" >/dev/null
+    >"$root/cancel.retry" 2>"$root/cancel.retry.metrics"
+grep -F 'generation 1 tokens' "$root/cancel.retry.metrics" >/dev/null
 
 XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime status --json >"$root/status.final.json"
 grep -F '"model_open_count":1' "$root/status.final.json" >/dev/null

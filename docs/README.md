@@ -40,7 +40,7 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
 | Gemma facts | [Gemma record](model-families/gemma.md) |
 | Artifact admission | [Artifact contract](contracts/artifacts.md) |
 | Hosted runtime behavior | [Runtime contract](contracts/runtime.md) |
-| Private local protocol | [Local protocol v6](contracts/local-protocol.md) |
+| Private local protocol | [Local protocol v7](contracts/local-protocol.md) |
 | OpenAI-compatible HTTP | [Compatibility profile](openai-compatibility.md) |
 | Installed and internal C interfaces | [C API](contracts/c-api.md) |
 | Events and telemetry | [Events contract](contracts/events-telemetry.md) |

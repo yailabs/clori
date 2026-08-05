@@ -6,21 +6,11 @@
  */
 #define _POSIX_C_SOURCE 200809L
 #include "src/server/private.h"
-#include <errno.h>
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/time.h>
-#include <sys/un.h>
-#include <unistd.h>
-#define FRAME_HEADER_BYTES 12u
-#define FRAME_KIND_REQUEST 1u
-#define FRAME_KIND_MESSAGE 2u
 #define TLV_HEADER_BYTES 8u
 #define TLV_U64_BYTES 8u
 enum {
@@ -190,7 +180,17 @@ enum {
     TAG_PARTIAL_RNG_IDENTITY,
     TAG_PARTIAL_LEDGER_IDENTITY,
     TAG_PARTIAL_TEXT_IDENTITY,
-    TAG_CONSOLE_REASONING_POLICY
+    TAG_CONSOLE_REASONING_POLICY,
+    TAG_REASONING_TOKENS,
+    TAG_FINAL_TOKENS,
+    TAG_FIRST_REASONING_SECONDS,
+    TAG_FIRST_FINAL_SECONDS,
+    TAG_REASONING_SECONDS,
+    TAG_FINAL_SECONDS,
+    TAG_TOTAL_COMPLETION_SECONDS,
+    TAG_REASONING_RATE,
+    TAG_FINAL_RATE,
+    TAG_TOTAL_COMPLETION_RATE
 };
 typedef struct {
     unsigned char *data;
@@ -201,11 +201,8 @@ typedef struct {
     unsigned long long count, offset;
     uint64_t seen[4];
 } wire_reader;
-struct yvex_client {
-    int fd;
-};
 _Static_assert(sizeof(double) == 8u, "local protocol requires binary64 double");
-_Static_assert(TAG_CONSOLE_REASONING_POLICY < 256u,
+_Static_assert(TAG_TOTAL_COMPLETION_RATE < 256u,
                "known protocol tags must fit the duplicate-field set");
 
 static int protocol_refuse(yvex_error *err, yvex_status status,
@@ -318,7 +315,7 @@ static int reader_next(wire_reader *reader, unsigned int *tag,
     reader->offset += TLV_HEADER_BYTES;
     if (length > reader->count - reader->offset)
         return -1;
-    if (*tag < 192u) {
+    if (*tag < 256u) {
         word = *tag / 64u;
         bit = *tag % 64u;
         if (reader->seen[word] & (UINT64_C(1) << bit))
@@ -652,7 +649,18 @@ static int message_fields_valid(const yvex_client_message *message)
            ENUM_VALID(message->cancellation_class, YVEX_CLIENT_CANCELLATION_NONE,
                       YVEX_CLIENT_CANCELLATION_FAILED) &&
            ENUM_VALID(message->stream_channel, YVEX_CLIENT_STREAM_UNSPECIFIED,
-                      YVEX_CLIENT_STREAM_CONTROL_EVENT) &&
+                      YVEX_CLIENT_STREAM_ERROR) &&
+           (message->kind != YVEX_CLIENT_MESSAGE_ERROR ||
+            message->stream_channel == YVEX_CLIENT_STREAM_ERROR) &&
+           (message->kind != YVEX_CLIENT_MESSAGE_FRAGMENT ||
+            (message->stream_channel == YVEX_CLIENT_STREAM_FINAL_TEXT &&
+             message->provider_output_kind == YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT) ||
+            (message->stream_channel == YVEX_CLIENT_STREAM_EXPLICIT_REASONING &&
+             message->provider_output_kind == YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING) ||
+            (message->stream_channel == YVEX_CLIENT_STREAM_TOOL_CALL &&
+             message->provider_output_kind == YVEX_PROVIDER_OUTPUT_FUNCTION_CALL) ||
+            (message->stream_channel == YVEX_CLIENT_STREAM_ERROR &&
+             message->provider_output_kind == YVEX_PROVIDER_OUTPUT_ERROR)) &&
            ENUM_VALID(message->generation_mode, YVEX_SERVER_GENERATION_TARGET_ONLY,
                       YVEX_SERVER_GENERATION_DSPARK) &&
            ENUM_VALID(message->session_state, YVEX_SERVER_SESSION_CREATED,
@@ -705,8 +713,16 @@ static int message_fields_valid(const yvex_client_message *message)
            isfinite(message->queue_seconds) &&
            isfinite(message->prefill_seconds) &&
            isfinite(message->first_token_seconds) &&
+           isfinite(message->first_reasoning_seconds) &&
+           isfinite(message->first_final_seconds) &&
            isfinite(message->decode_seconds) && isfinite(message->prefill_rate) &&
            isfinite(message->decode_rate) &&
+           isfinite(message->reasoning_seconds) &&
+           isfinite(message->final_seconds) &&
+           isfinite(message->total_completion_seconds) &&
+           isfinite(message->reasoning_rate) &&
+           isfinite(message->final_rate) &&
+           isfinite(message->total_completion_rate) &&
            isfinite(message->publication_seconds) &&
            isfinite(message->draft_seconds) &&
            isfinite(message->verification_seconds) &&
@@ -835,6 +851,8 @@ static int protocol_message_core_write(wire_writer *writer,
         MESSAGE_U64(TAG_REUSED_TOKENS, message->reused_tokens) &&
         MESSAGE_U64(TAG_PREFILL_TOKENS, message->prefill_tokens) &&
         MESSAGE_U64(TAG_GENERATED_TOKENS, message->generated_tokens) &&
+        MESSAGE_U64(TAG_REASONING_TOKENS, message->reasoning_tokens) &&
+        MESSAGE_U64(TAG_FINAL_TOKENS, message->final_tokens) &&
         MESSAGE_U64(TAG_FINAL_POSITION, message->final_position) &&
         MESSAGE_U64(TAG_TURN_COUNT, message->turn_count) &&
         MESSAGE_U64(TAG_CONTEXT_USED, message->context_used) &&
@@ -863,9 +881,22 @@ static int protocol_message_core_write(wire_writer *writer,
         writer_double(writer, TAG_PREFILL_SECONDS, message->prefill_seconds) &&
         writer_double(writer, TAG_FIRST_TOKEN_SECONDS,
                       message->first_token_seconds) &&
+        writer_double(writer, TAG_FIRST_REASONING_SECONDS,
+                      message->first_reasoning_seconds) &&
+        writer_double(writer, TAG_FIRST_FINAL_SECONDS,
+                      message->first_final_seconds) &&
         writer_double(writer, TAG_DECODE_SECONDS, message->decode_seconds) &&
         writer_double(writer, TAG_PREFILL_RATE, message->prefill_rate) &&
         writer_double(writer, TAG_DECODE_RATE, message->decode_rate) &&
+        writer_double(writer, TAG_REASONING_SECONDS,
+                      message->reasoning_seconds) &&
+        writer_double(writer, TAG_FINAL_SECONDS, message->final_seconds) &&
+        writer_double(writer, TAG_TOTAL_COMPLETION_SECONDS,
+                      message->total_completion_seconds) &&
+        writer_double(writer, TAG_REASONING_RATE, message->reasoning_rate) &&
+        writer_double(writer, TAG_FINAL_RATE, message->final_rate) &&
+        writer_double(writer, TAG_TOTAL_COMPLETION_RATE,
+                      message->total_completion_rate) &&
         writer_double(writer, TAG_PUBLICATION_SECONDS,
                       message->publication_seconds) &&
         writer_double(writer, TAG_DRAFT_SECONDS, message->draft_seconds) &&
@@ -1122,12 +1153,59 @@ static int message_speculation_u64_field(yvex_client_message *candidate,
     return 1;
 }
 
+static int message_timing_field(yvex_client_message *candidate,
+                                unsigned int tag,
+                                const unsigned char *bytes,
+                                unsigned long long count)
+{
+    double *destination = NULL;
+
+    switch (tag) {
+    case TAG_QUEUE_SECONDS: destination = &candidate->queue_seconds; break;
+    case TAG_PREFILL_SECONDS: destination = &candidate->prefill_seconds; break;
+    case TAG_FIRST_TOKEN_SECONDS: destination = &candidate->first_token_seconds; break;
+    case TAG_FIRST_REASONING_SECONDS: destination = &candidate->first_reasoning_seconds; break;
+    case TAG_FIRST_FINAL_SECONDS: destination = &candidate->first_final_seconds; break;
+    case TAG_DECODE_SECONDS: destination = &candidate->decode_seconds; break;
+    case TAG_PREFILL_RATE: destination = &candidate->prefill_rate; break;
+    case TAG_DECODE_RATE: destination = &candidate->decode_rate; break;
+    case TAG_REASONING_SECONDS: destination = &candidate->reasoning_seconds; break;
+    case TAG_FINAL_SECONDS: destination = &candidate->final_seconds; break;
+    case TAG_TOTAL_COMPLETION_SECONDS: destination = &candidate->total_completion_seconds; break;
+    case TAG_REASONING_RATE: destination = &candidate->reasoning_rate; break;
+    case TAG_FINAL_RATE: destination = &candidate->final_rate; break;
+    case TAG_TOTAL_COMPLETION_RATE: destination = &candidate->total_completion_rate; break;
+    case TAG_PUBLICATION_SECONDS: destination = &candidate->publication_seconds; break;
+    case TAG_DRAFT_SECONDS: destination = &candidate->draft_seconds; break;
+    case TAG_VERIFICATION_SECONDS: destination = &candidate->verification_seconds; break;
+    case TAG_SPECULATIVE_COMMIT_SECONDS:
+        destination = &candidate->speculative_commit_seconds;
+        break;
+    case TAG_MEAN_ACCEPTED_PREFIX: destination = &candidate->mean_accepted_prefix; break;
+    case TAG_EFFECTIVE_COMMITTED_RATE:
+        destination = &candidate->effective_committed_rate;
+        break;
+    case TAG_CONFIDENCE_LOGIT_MINIMUM:
+        destination = &candidate->confidence_logit_minimum;
+        break;
+    case TAG_CONFIDENCE_LOGIT_MAXIMUM:
+        destination = &candidate->confidence_logit_maximum;
+        break;
+    case TAG_CONFIDENCE_LOGIT_MEAN: destination = &candidate->confidence_logit_mean; break;
+    default: return 0;
+    }
+    return reader_double(bytes, count, destination) ? 1 : -1;
+}
+
 static int message_base_field(yvex_client_message *candidate, unsigned int tag,
                               const unsigned char *bytes,
                               unsigned long long count, int *have_kind)
 {
     unsigned long long value = 0ull;
-    int valid = 1;
+    int valid = message_timing_field(candidate, tag, bytes, count);
+
+    if (valid) return valid;
+    valid = 1;
 #define BASE_U64(field) (reader_u64(bytes, count, &value) ? ((field) = value, 1) : 0)
     switch (tag) {
     case TAG_MESSAGE_KIND:
@@ -1164,6 +1242,8 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
     case TAG_REUSED_TOKENS: valid = BASE_U64(candidate->reused_tokens); break;
     case TAG_PREFILL_TOKENS: valid = BASE_U64(candidate->prefill_tokens); break;
     case TAG_GENERATED_TOKENS: valid = BASE_U64(candidate->generated_tokens); break;
+    case TAG_REASONING_TOKENS: valid = BASE_U64(candidate->reasoning_tokens); break;
+    case TAG_FINAL_TOKENS: valid = BASE_U64(candidate->final_tokens); break;
     case TAG_FINAL_POSITION: valid = BASE_U64(candidate->final_position); break;
     case TAG_TURN_COUNT: valid = BASE_U64(candidate->turn_count); break;
     case TAG_CONTEXT_USED: valid = BASE_U64(candidate->context_used); break;
@@ -1173,46 +1253,6 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
                 value <= YVEX_SERVER_GENERATION_DSPARK;
         if (valid)
             candidate->generation_mode = (yvex_server_generation_mode)value;
-        break;
-    case TAG_QUEUE_SECONDS: valid = reader_double(bytes, count, &candidate->queue_seconds); break;
-    case TAG_PREFILL_SECONDS: valid = reader_double(bytes, count, &candidate->prefill_seconds); break;
-    case TAG_FIRST_TOKEN_SECONDS:
-        valid = reader_double(bytes, count, &candidate->first_token_seconds);
-        break;
-    case TAG_DECODE_SECONDS: valid = reader_double(bytes, count, &candidate->decode_seconds); break;
-    case TAG_PREFILL_RATE: valid = reader_double(bytes, count, &candidate->prefill_rate); break;
-    case TAG_DECODE_RATE: valid = reader_double(bytes, count, &candidate->decode_rate); break;
-    case TAG_PUBLICATION_SECONDS:
-        valid = reader_double(bytes, count, &candidate->publication_seconds);
-        break;
-    case TAG_DRAFT_SECONDS:
-        valid = reader_double(bytes, count, &candidate->draft_seconds);
-        break;
-    case TAG_VERIFICATION_SECONDS:
-        valid = reader_double(bytes, count, &candidate->verification_seconds);
-        break;
-    case TAG_SPECULATIVE_COMMIT_SECONDS:
-        valid = reader_double(bytes, count,
-                              &candidate->speculative_commit_seconds);
-        break;
-    case TAG_MEAN_ACCEPTED_PREFIX:
-        valid = reader_double(bytes, count, &candidate->mean_accepted_prefix);
-        break;
-    case TAG_EFFECTIVE_COMMITTED_RATE:
-        valid = reader_double(bytes, count,
-                              &candidate->effective_committed_rate);
-        break;
-    case TAG_CONFIDENCE_LOGIT_MINIMUM:
-        valid = reader_double(bytes, count,
-                              &candidate->confidence_logit_minimum);
-        break;
-    case TAG_CONFIDENCE_LOGIT_MAXIMUM:
-        valid = reader_double(bytes, count,
-                              &candidate->confidence_logit_maximum);
-        break;
-    case TAG_CONFIDENCE_LOGIT_MEAN:
-        valid = reader_double(bytes, count,
-                              &candidate->confidence_logit_mean);
         break;
     case TAG_STOP_REASON:
         valid = reader_u64(bytes, count, &value) &&
@@ -1232,7 +1272,7 @@ static int message_base_field(yvex_client_message *candidate, unsigned int tag,
         break;
     case TAG_STREAM_CHANNEL:
         valid = reader_u64(bytes, count, &value) &&
-                value <= YVEX_CLIENT_STREAM_CONTROL_EVENT;
+                value <= YVEX_CLIENT_STREAM_ERROR;
         if (valid) candidate->stream_channel = (yvex_client_stream_channel)value;
         break;
     case TAG_MESSAGE_AVAILABILITY_FLAGS:
@@ -1722,272 +1762,4 @@ int yvex_protocol_message_decode(const unsigned char *input,
         if (field <= 0) valid = 0;
     }
     return message_publish(&candidate, next, valid, have_kind, message, err);
-}
-
-static int transfer_all(int fd, void *buffer, size_t count, int writing,
-                        yvex_error *err)
-{
-    unsigned char *bytes = buffer;
-    size_t offset = 0u;
-    while (offset < count) {
-        ssize_t moved = writing ? send(fd, bytes + offset, count - offset, MSG_NOSIGNAL)
-                                : recv(fd, bytes + offset, count - offset, 0);
-        if (moved < 0 && errno == EINTR)
-            continue;
-        if (moved < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-            return protocol_refuse(err, YVEX_ERR_TIMEOUT,
-                                   "local protocol operation timed out");
-        if (moved <= 0)
-            return protocol_refuse(err, YVEX_ERR_IO,
-                                   writing ? "local socket write failed"
-                                           : "local socket closed during frame read");
-        offset += (size_t)moved;
-    }
-    return YVEX_OK;
-}
-int yvex_client_timeout_set(yvex_client *client,
-                            unsigned long long milliseconds,
-                            yvex_error *err)
-{
-    struct timeval timeout;
-    if (!client || client->fd < 0 || milliseconds > 86400000u)
-        return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "connected client and bounded timeout are required");
-    timeout.tv_sec = (time_t)(milliseconds / 1000u);
-    timeout.tv_usec = (suseconds_t)((milliseconds % 1000u) * 1000u);
-    if (setsockopt(client->fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
-                   sizeof(timeout)) != 0 ||
-        setsockopt(client->fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
-                   sizeof(timeout)) != 0)
-        return protocol_refuse(err, YVEX_ERR_IO,
-                               "local protocol timeout configuration failed");
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
-static int frame_send(int fd, unsigned int kind, const unsigned char *payload,
-                      unsigned long long count, yvex_error *err)
-{
-    unsigned char header[FRAME_HEADER_BYTES] = {'Y', 'V', 'X', 'P'};
-    if (count > YVEX_SERVER_FRAME_MAX_BYTES)
-        return protocol_refuse(err, YVEX_ERR_BOUNDS,
-                               "local protocol frame exceeds maximum size");
-    put_u16(header + 4u, YVEX_LOCAL_PROTOCOL_VERSION);
-    put_u16(header + 6u, (uint16_t)kind);
-    put_u32(header + 8u, (uint32_t)count);
-    if (transfer_all(fd, header, sizeof(header), 1, err) != YVEX_OK)
-        return yvex_error_code(err);
-    return count ? transfer_all(fd, (void *)payload, (size_t)count, 1, err)
-                 : YVEX_OK;
-}
-static int frame_receive(int fd, unsigned int expected_kind,
-                         unsigned char **payload, unsigned long long *count,
-                         yvex_error *err)
-{
-    unsigned char header[FRAME_HEADER_BYTES], *bytes = NULL;
-    uint32_t length;
-    int rc;
-    *payload = NULL;
-    *count = 0u;
-    rc = transfer_all(fd, header, sizeof(header), 0, err);
-    if (rc != YVEX_OK) return rc;
-    length = get_u32(header + 8u);
-    if (memcmp(header, "YVXP", 4u) != 0 ||
-        get_u16(header + 6u) != expected_kind ||
-        length > YVEX_SERVER_FRAME_MAX_BYTES)
-        return protocol_refuse(err, YVEX_ERR_FORMAT,
-                               "local protocol frame header is invalid");
-    if (get_u16(header + 4u) != YVEX_LOCAL_PROTOCOL_VERSION)
-        return protocol_refuse(err, YVEX_ERR_FORMAT,
-                               "local protocol version is incompatible; version 6 is required");
-    if (length) {
-        bytes = malloc(length);
-        if (!bytes)
-            return protocol_refuse(err, YVEX_ERR_NOMEM,
-                                   "local protocol frame allocation failed");
-        rc = transfer_all(fd, bytes, length, 0, err);
-        if (rc != YVEX_OK) {
-            free(bytes);
-            return rc;
-        }
-    }
-    *payload = bytes;
-    *count = length;
-    return YVEX_OK;
-}
-
-int yvex_server_socket_path(char output[YVEX_SERVER_SOCKET_PATH_CAP],
-                            yvex_error *err)
-{
-    const char *runtime = getenv("XDG_RUNTIME_DIR");
-    int length;
-    if (!output)
-        return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "socket path output is required");
-    if (runtime && runtime[0] == '/')
-        length = snprintf(output, YVEX_SERVER_SOCKET_PATH_CAP,
-                          "%s/yvex/yvexd.sock", runtime);
-    else
-        length = snprintf(output, YVEX_SERVER_SOCKET_PATH_CAP,
-                          "/tmp/yvex-%lu/yvexd.sock", (unsigned long)getuid());
-    if (length < 0 || length >= (int)YVEX_SERVER_SOCKET_PATH_CAP)
-        return protocol_refuse(err, YVEX_ERR_BOUNDS,
-                               "canonical socket path exceeds its bound");
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-int yvex_client_connect(yvex_client **out, const char *socket_path,
-                        yvex_error *err)
-{
-    yvex_client_request handshake;
-    yvex_client_message response;
-    yvex_provider_sampling sampling;
-    yvex_client *client;
-    struct sockaddr_un address;
-    struct stat info;
-    char canonical[YVEX_SERVER_SOCKET_PATH_CAP];
-    const char *path = socket_path;
-    int fd;
-    if (out) *out = NULL;
-    if (!out)
-        return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "client output is required");
-    if (!path) {
-        if (yvex_server_socket_path(canonical, err) != YVEX_OK)
-            return yvex_error_code(err);
-        path = canonical;
-    }
-    if (strlen(path) >= sizeof(address.sun_path) || lstat(path, &info) != 0 ||
-        !S_ISSOCK(info.st_mode) || info.st_uid != getuid() ||
-        (info.st_mode & 0077u) != 0u)
-        return protocol_refuse(err, YVEX_ERR_IO,
-                               "local runtime socket is absent or not private to this user");
-    fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0)
-        return protocol_refuse(err, YVEX_ERR_IO,
-                               "local client socket creation failed");
-    memset(&address, 0, sizeof(address));
-    address.sun_family = AF_UNIX;
-    memcpy(address.sun_path, path, strlen(path) + 1u);
-    if (connect(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
-        (void)close(fd);
-        return protocol_refuse(err, YVEX_ERR_IO,
-                               "cannot connect to the local YVEX runtime");
-    }
-    client = calloc(1u, sizeof(*client));
-    if (!client) {
-        (void)close(fd);
-        return protocol_refuse(err, YVEX_ERR_NOMEM,
-                               "local client allocation failed");
-    }
-    client->fd = fd;
-    if (yvex_client_timeout_set(client, 30000u, err) != YVEX_OK) {
-        (void)close(client->fd);
-        free(client);
-        return yvex_error_code(err);
-    }
-    memset(&handshake, 0, sizeof(handshake));
-    yvex_provider_sampling_default(&sampling);
-    handshake.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
-    handshake.operation = YVEX_CLIENT_OP_HANDSHAKE;
-    handshake.temperature = sampling.temperature;
-    handshake.top_p = sampling.top_p;
-    handshake.typical_p = sampling.typical_p;
-    if (yvex_client_send(client, &handshake, err) != YVEX_OK ||
-        yvex_client_receive(client, &response, err) != YVEX_OK ||
-        response.kind != YVEX_CLIENT_MESSAGE_ACK ||
-        response.status != YVEX_OK || strcmp(response.reason, "protocol-v6") != 0) {
-        (void)close(client->fd);
-        memset(client, 0, sizeof(*client));
-        free(client);
-        if (yvex_error_code(err) == YVEX_OK)
-            yvex_error_set(err, YVEX_ERR_FORMAT, "server.protocol.handshake",
-                           "daemon did not admit local protocol version 6");
-        return yvex_error_code(err);
-    }
-    if (yvex_client_timeout_set(client, 0u, err) != YVEX_OK) {
-        (void)close(client->fd);
-        free(client);
-        return yvex_error_code(err);
-    }
-    *out = client;
-    yvex_error_clear(err);
-    return YVEX_OK;
-}
-
-int yvex_client_send(yvex_client *client, const yvex_client_request *request,
-                     yvex_error *err)
-{
-    unsigned char *payload;
-    unsigned long long capacity, count;
-    int rc;
-    if (!client || client->fd < 0 || !request)
-        return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "connected client and request are required");
-    capacity = request->provider_request ? YVEX_SERVER_FRAME_MAX_BYTES
-                                         : request->prompt_bytes + 512u;
-    if (capacity > YVEX_SERVER_FRAME_MAX_BYTES)
-        return protocol_refuse(err, YVEX_ERR_BOUNDS,
-                               "client request exceeds frame capacity");
-    payload = malloc((size_t)capacity);
-    if (!payload)
-        return protocol_refuse(err, YVEX_ERR_NOMEM,
-                               "client request frame allocation failed");
-    rc = yvex_protocol_request_encode(request, payload, capacity, &count, err);
-    if (rc == YVEX_OK)
-        rc = frame_send(client->fd, FRAME_KIND_REQUEST, payload, count, err);
-    free(payload);
-    return rc;
-}
-
-int yvex_client_receive(yvex_client *client, yvex_client_message *message,
-                        yvex_error *err)
-{
-    unsigned char *payload;
-    unsigned long long count;
-    int rc;
-    if (!client || client->fd < 0 || !message)
-        return protocol_refuse(err, YVEX_ERR_INVALID_ARG,
-                               "connected client and message output are required");
-    rc = frame_receive(client->fd, FRAME_KIND_MESSAGE, &payload, &count, err);
-    if (rc == YVEX_OK)
-        rc = yvex_protocol_message_decode(payload, count, message, err);
-    free(payload);
-    return rc;
-}
-void yvex_client_close(yvex_client **client)
-{
-    if (!client || !*client)
-        return;
-    if ((*client)->fd >= 0)
-        (void)close((*client)->fd);
-    memset(*client, 0, sizeof(**client));
-    free(*client);
-    *client = NULL;
-}
-int yvex_server_protocol_receive(int fd, yvex_client_request *request,
-                                 unsigned char **owned_prompt,
-                                 yvex_provider_request **owned_provider,
-                                 yvex_error *err)
-{
-    unsigned char *payload;
-    unsigned long long count;
-    int rc = frame_receive(fd, FRAME_KIND_REQUEST, &payload, &count, err);
-    if (rc == YVEX_OK)
-        rc = yvex_protocol_request_decode(payload, count, request,
-                                          owned_prompt, owned_provider, err);
-    free(payload);
-    return rc;
-}
-
-int yvex_server_protocol_send(int fd, const yvex_client_message *message,
-                              yvex_error *err)
-{
-    unsigned char payload[16384];
-    unsigned long long count;
-    int rc = yvex_protocol_message_encode(message, payload, sizeof(payload),
-                                          &count, err);
-    if (rc == YVEX_OK)
-        rc = frame_send(fd, FRAME_KIND_MESSAGE, payload, count, err);
-    return rc;
 }

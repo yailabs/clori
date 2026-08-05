@@ -93,12 +93,12 @@ static int test_all_operation_roundtrips(void)
         YVEX_TEST_ASSERT(
             yvex_protocol_request_encode(&source, frame, sizeof(frame), &count,
                                          &err) == YVEX_OK,
-            "all protocol-v6 operations encode");
+            "all protocol-v7 operations encode");
         YVEX_TEST_ASSERT(
             yvex_protocol_request_decode(frame, count, &decoded, &prompt,
                                          &provider, &err) == YVEX_OK &&
                 decoded.operation == (yvex_client_operation)value,
-            "all protocol-v6 operations decode");
+            "all protocol-v7 operations decode");
         free(prompt);
         prompt = NULL;
         yvex_provider_request_close(&provider);
@@ -108,7 +108,7 @@ static int test_all_operation_roundtrips(void)
 
 static int test_schema_refusals(void)
 {
-    unsigned char frame[2048], malformed[2048];
+    unsigned char frame[4096], malformed[4096];
     unsigned char *prompt = NULL;
     yvex_provider_request *provider = NULL;
     yvex_client_request request, decoded_request;
@@ -307,7 +307,7 @@ static int test_schema_refusals(void)
 static int test_message_roundtrip(void)
 {
     yvex_client_message source, decoded;
-    unsigned char frame[8192];
+    unsigned char frame[16384];
     unsigned long long count = 0u;
     yvex_error err;
     int rc;
@@ -383,12 +383,41 @@ static int test_message_roundtrip(void)
     source.kind = YVEX_CLIENT_MESSAGE_ERROR;
     source.status = YVEX_ERR_BOUNDS;
     source.failure_class = YVEX_CLIENT_FAILURE_QUEUE_FULL;
+    source.stream_channel = YVEX_CLIENT_STREAM_ERROR;
     rc = yvex_protocol_message_encode(&source, frame, sizeof(frame), &count, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "negative status encode");
     rc = yvex_protocol_message_decode(frame, count, &decoded, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && decoded.status == YVEX_ERR_BOUNDS &&
-                         decoded.failure_class == YVEX_CLIENT_FAILURE_QUEUE_FULL,
+                         decoded.failure_class == YVEX_CLIENT_FAILURE_QUEUE_FULL &&
+                         decoded.stream_channel == YVEX_CLIENT_STREAM_ERROR,
                      "negative status roundtrip");
+    source.stream_channel = YVEX_CLIENT_STREAM_UNSPECIFIED;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "error message without its typed stream channel refuses");
+    memset(&source, 0, sizeof(source));
+    source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
+    source.kind = YVEX_CLIENT_MESSAGE_FRAGMENT;
+    source.status = YVEX_OK;
+    source.provider_output_kind = YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING;
+    source.stream_channel = YVEX_CLIENT_STREAM_EXPLICIT_REASONING;
+    memcpy(source.bytes, "why", 3u);
+    source.byte_count = 3u;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_OK &&
+            yvex_protocol_message_decode(frame, count, &decoded, &err) ==
+                YVEX_OK &&
+            decoded.provider_output_kind ==
+                YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING &&
+            decoded.stream_channel == YVEX_CLIENT_STREAM_EXPLICIT_REASONING,
+        "explicit reasoning channel roundtrip");
+    source.stream_channel = YVEX_CLIENT_STREAM_FINAL_TEXT;
+    YVEX_TEST_ASSERT(
+        yvex_protocol_message_encode(&source, frame, sizeof(frame), &count,
+                                     &err) == YVEX_ERR_INVALID_ARG,
+        "mismatched typed output kind and stream channel refuses");
 
     memset(&source, 0, sizeof(source));
     source.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
@@ -400,6 +429,16 @@ static int test_message_roundtrip(void)
     source.kv_used_available = 1;
     source.publication_seconds = 0.125;
     source.publication_timing_available = 1;
+    source.reasoning_tokens = 7u;
+    source.final_tokens = 11u;
+    source.first_reasoning_seconds = 0.25;
+    source.first_final_seconds = 1.5;
+    source.reasoning_seconds = 1.25;
+    source.final_seconds = 2.75;
+    source.total_completion_seconds = 4.0;
+    source.reasoning_rate = 5.6;
+    source.final_rate = 4.0;
+    source.total_completion_rate = 4.5;
     source.generation_phase = YVEX_CLIENT_PHASE_COMPLETE;
     source.cancellation_class = YVEX_CLIENT_CANCELLATION_COMPLETED;
     source.stream_channel = YVEX_CLIENT_STREAM_CONTROL_EVENT;
@@ -488,6 +527,16 @@ static int test_message_roundtrip(void)
                          decoded.kv_used_available &&
                          decoded.publication_timing_available &&
                          decoded.publication_seconds == 0.125 &&
+                         decoded.reasoning_tokens == 7u &&
+                         decoded.final_tokens == 11u &&
+                         decoded.first_reasoning_seconds == 0.25 &&
+                         decoded.first_final_seconds == 1.5 &&
+                         decoded.reasoning_seconds == 1.25 &&
+                         decoded.final_seconds == 2.75 &&
+                         decoded.total_completion_seconds == 4.0 &&
+                         decoded.reasoning_rate == 5.6 &&
+                         decoded.final_rate == 4.0 &&
+                         decoded.total_completion_rate == 4.5 &&
                          decoded.generation_phase == YVEX_CLIENT_PHASE_COMPLETE &&
                          decoded.cancellation_class == YVEX_CLIENT_CANCELLATION_COMPLETED &&
                          decoded.stream_channel == YVEX_CLIENT_STREAM_CONTROL_EVENT &&
@@ -550,13 +599,13 @@ static int test_message_roundtrip(void)
 
 typedef struct {
     int listener;
-} v5_peer;
+} v6_peer;
 
-static void *v5_peer_main(void *opaque)
+static void *v6_peer_main(void *opaque)
 {
     static const unsigned char response[12] = {
-        'Y', 'V', 'X', 'P', 0u, 5u, 0u, 2u, 0u, 0u, 0u, 0u};
-    v5_peer *peer = opaque;
+        'Y', 'V', 'X', 'P', 0u, 6u, 0u, 2u, 0u, 0u, 0u, 0u};
+    v6_peer *peer = opaque;
     unsigned char header[12], discard[4096];
     unsigned int length;
     int client = accept(peer->listener, NULL, NULL);
@@ -579,34 +628,34 @@ static void *v5_peer_main(void *opaque)
     return NULL;
 }
 
-static int test_v5_frame_refusal(void)
+static int test_v6_frame_refusal(void)
 {
     struct sockaddr_un address;
     char path[sizeof(address.sun_path)];
     yvex_client *client = NULL;
     yvex_error err;
     pthread_t thread;
-    v5_peer peer;
+    v6_peer peer;
     int rc;
-    (void)snprintf(path, sizeof(path), "build/tests/protocol-v6-%lu.sock",
+    (void)snprintf(path, sizeof(path), "build/tests/protocol-v7-%lu.sock",
                    (unsigned long)getpid());
     (void)unlink(path);
     peer.listener = socket(AF_UNIX, SOCK_STREAM, 0);
-    YVEX_TEST_ASSERT(peer.listener >= 0, "v5 peer socket");
+    YVEX_TEST_ASSERT(peer.listener >= 0, "v6 peer socket");
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     memcpy(address.sun_path, path, strlen(path) + 1u);
     YVEX_TEST_ASSERT(bind(peer.listener, (struct sockaddr *)&address,
                           sizeof(address)) == 0 &&
                          chmod(path, 0600) == 0 && listen(peer.listener, 1) == 0,
-                     "v5 peer bind/listen");
-    YVEX_TEST_ASSERT(pthread_create(&thread, NULL, v5_peer_main, &peer) == 0,
-                     "v5 peer thread");
+                     "v6 peer bind/listen");
+    YVEX_TEST_ASSERT(pthread_create(&thread, NULL, v6_peer_main, &peer) == 0,
+                     "v6 peer thread");
     rc = yvex_client_connect(&client, path, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && client == NULL &&
-                         strstr(yvex_error_message(&err), "version 6") != NULL,
-                     "v5 frame explicitly refuses");
-    YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v5 peer join");
+                         strstr(yvex_error_message(&err), "version 7") != NULL,
+                     "v6 frame explicitly refuses");
+    YVEX_TEST_ASSERT(pthread_join(thread, NULL) == 0, "v6 peer join");
     (void)close(peer.listener);
     (void)unlink(path);
     return 0;
@@ -650,7 +699,7 @@ int yvex_test_protocol(void)
     if (test_all_operation_roundtrips() != 0) return 1;
     if (test_schema_refusals() != 0) return 1;
     if (test_message_roundtrip() != 0) return 1;
-    if (test_v5_frame_refusal() != 0) return 1;
+    if (test_v6_frame_refusal() != 0) return 1;
     if (test_bounded_parser_mutation() != 0) return 1;
     return 0;
 }

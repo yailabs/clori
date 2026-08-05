@@ -9,7 +9,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define YVEX_LOCAL_PROTOCOL_VERSION 6u
+#define YVEX_LOCAL_PROTOCOL_VERSION 7u
 #define YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1 1u
 #define YVEX_RUNTIME_EVENT_SCHEMA_VERSION 3u
 #define YVEX_RUNTIME_METRICS_SCHEMA_VERSION 3u
@@ -263,7 +263,8 @@ typedef enum {
     YVEX_CLIENT_STREAM_EXPLICIT_REASONING,
     YVEX_CLIENT_STREAM_TOOL_CALL,
     YVEX_CLIENT_STREAM_TOOL_RESULT,
-    YVEX_CLIENT_STREAM_CONTROL_EVENT
+    YVEX_CLIENT_STREAM_CONTROL_EVENT,
+    YVEX_CLIENT_STREAM_ERROR
 } yvex_client_stream_channel;
 
 /*
@@ -335,6 +336,7 @@ typedef struct {
     unsigned long long byte_count;
     unsigned long long prompt_tokens, reused_tokens, prefill_tokens;
     unsigned long long generated_tokens, final_position, turn_count;
+    unsigned long long reasoning_tokens, final_tokens;
     unsigned long long context_used, kv_used_bytes;
     yvex_server_generation_mode generation_mode;
     unsigned long long draft_cycle_count, draft_forward_count;
@@ -347,6 +349,9 @@ typedef struct {
     unsigned long long confidence_logit_count;
     double queue_seconds, prefill_seconds, first_token_seconds, decode_seconds;
     double prefill_rate, decode_rate, publication_seconds;
+    double first_reasoning_seconds, first_final_seconds;
+    double reasoning_seconds, final_seconds, total_completion_seconds;
+    double reasoning_rate, final_rate, total_completion_rate;
     double draft_seconds, verification_seconds, speculative_commit_seconds;
     double mean_accepted_prefix, effective_committed_rate;
     double confidence_logit_minimum, confidence_logit_maximum;

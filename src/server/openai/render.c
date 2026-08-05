@@ -162,11 +162,36 @@ static int render_chat_usage(render_builder *builder,
                              const openai_generation_result *result,
                              yvex_error *err)
 {
-    char values[256];
+    char values[384];
     int length = snprintf(values, sizeof(values),
         "\"usage\":{\"prompt_tokens\":%llu,\"completion_tokens\":%llu,"
-        "\"total_tokens\":%llu}", result->prompt_tokens,
-        result->completion_tokens, result->total_tokens);
+        "\"total_tokens\":%llu,\"completion_tokens_details\":{"
+        "\"reasoning_tokens\":%llu}}", result->prompt_tokens,
+        result->completion_tokens, result->total_tokens,
+        result->reasoning_tokens);
+    return length > 0 && (size_t)length < sizeof(values)
+               ? render_append(builder, values, (unsigned long long)length, err)
+               : YVEX_ERR_BOUNDS;
+}
+
+static int render_completion_metrics(render_builder *builder,
+                                     const openai_generation_result *result,
+                                     yvex_error *err)
+{
+    char values[768];
+    int length = snprintf(
+        values, sizeof(values),
+        "\"yvex_completion_metrics\":{\"reasoning_tokens\":%llu,"
+        "\"final_tokens\":%llu,\"reasoning_tokens_per_second\":%.9g,"
+        "\"final_tokens_per_second\":%.9g,\"total_tokens_per_second\":%.9g,"
+        "\"time_to_first_reasoning_token\":%.9g,"
+        "\"time_to_first_final_token\":%.9g,\"reasoning_seconds\":%.9g,"
+        "\"final_seconds\":%.9g,\"total_completion_seconds\":%.9g}",
+        result->reasoning_tokens, result->final_tokens,
+        result->reasoning_rate, result->final_rate,
+        result->total_completion_rate, result->first_reasoning_seconds,
+        result->first_final_seconds, result->reasoning_seconds,
+        result->final_seconds, result->total_completion_seconds);
     return length > 0 && (size_t)length < sizeof(values)
                ? render_append(builder, values, (unsigned long long)length, err)
                : YVEX_ERR_BOUNDS;
@@ -176,26 +201,40 @@ static int render_chat_message(render_builder *builder,
                                const openai_generation_result *result,
                                yvex_error *err)
 {
+    unsigned long long index;
     int rc = render_literal(builder, "{\"role\":\"assistant\",\"content\":", err);
     if (rc == YVEX_OK) {
-        if (result->has_tool_call && !result->text_count)
+        if (result->tool_call_count && !result->text_count)
             rc = render_literal(builder, "null", err);
         else
             rc = render_string(builder, result->text, result->text_count, err);
     }
-    if (rc == YVEX_OK && result->has_tool_call) {
-        rc = render_literal(builder, ",\"tool_calls\":[{\"id\":", err);
-        if (rc == YVEX_OK) rc = render_text(builder, result->tool_call_id, err);
+    if (rc == YVEX_OK) {
+        rc = render_literal(builder, ",\"reasoning_content\":", err);
+        if (rc == YVEX_OK)
+            rc = render_string(builder, result->reasoning,
+                               result->reasoning_count, err);
+    }
+    if (rc == YVEX_OK && result->tool_call_count)
+        rc = render_literal(builder, ",\"tool_calls\":[", err);
+    for (index = 0u; rc == YVEX_OK && index < result->tool_call_count;
+         ++index) {
+        const openai_generation_tool_call *call = &result->tool_calls[index];
+        if (index) rc = render_literal(builder, ",", err);
+        if (rc == YVEX_OK) rc = render_literal(builder, "{\"id\":", err);
+        if (rc == YVEX_OK) rc = render_text(builder, call->call_id, err);
         if (rc == YVEX_OK)
             rc = render_literal(builder,
                 ",\"type\":\"function\",\"function\":{\"name\":", err);
-        if (rc == YVEX_OK) rc = render_text(builder, result->tool_name, err);
+        if (rc == YVEX_OK) rc = render_text(builder, call->name, err);
         if (rc == YVEX_OK) rc = render_literal(builder, ",\"arguments\":", err);
         if (rc == YVEX_OK)
-            rc = render_string(builder, result->arguments,
-                               result->arguments_count, err);
-        if (rc == YVEX_OK) rc = render_literal(builder, "}}]", err);
+            rc = render_string(builder, call->arguments,
+                               call->arguments_count, err);
+        if (rc == YVEX_OK) rc = render_literal(builder, "}}", err);
     }
+    if (rc == YVEX_OK && result->tool_call_count)
+        rc = render_literal(builder, "]", err);
     return rc == YVEX_OK ? render_literal(builder, "}", err) : rc;
 }
 
@@ -218,6 +257,8 @@ static int render_chat_result(render_builder *builder, const char *id,
     if (rc == YVEX_OK) rc = render_text(builder, yvex_provider_finish_name(result->finish), err);
     if (rc == YVEX_OK) rc = render_literal(builder, "}],", err);
     if (rc == YVEX_OK) rc = render_chat_usage(builder, result, err);
+    if (rc == YVEX_OK) rc = render_literal(builder, ",", err);
+    if (rc == YVEX_OK) rc = render_completion_metrics(builder, result, err);
     return rc == YVEX_OK ? render_literal(builder, "}", err) : rc;
 }
 
@@ -227,6 +268,7 @@ static int render_responses_result(render_builder *builder, const char *id,
                                    yvex_error *err)
 {
     char prefix[384];
+    unsigned long long index, output_count = 0u;
     const char *status = result->finish == YVEX_PROVIDER_FINISH_LENGTH
                              ? "incomplete" : "completed";
     int length = snprintf(prefix, sizeof(prefix),
@@ -237,19 +279,7 @@ static int render_responses_result(render_builder *builder, const char *id,
                  : YVEX_ERR_BOUNDS;
     if (rc == YVEX_OK) rc = render_text(builder, model, err);
     if (rc == YVEX_OK) rc = render_literal(builder, ",\"output\":[", err);
-    if (rc == YVEX_OK && result->has_tool_call) {
-        rc = render_literal(builder, "{\"type\":\"function_call\",\"id\":", err);
-        if (rc == YVEX_OK) rc = render_text(builder, result->tool_call_id, err);
-        if (rc == YVEX_OK) rc = render_literal(builder, ",\"call_id\":", err);
-        if (rc == YVEX_OK) rc = render_text(builder, result->tool_call_id, err);
-        if (rc == YVEX_OK) rc = render_literal(builder, ",\"name\":", err);
-        if (rc == YVEX_OK) rc = render_text(builder, result->tool_name, err);
-        if (rc == YVEX_OK) rc = render_literal(builder, ",\"arguments\":", err);
-        if (rc == YVEX_OK)
-            rc = render_string(builder, result->arguments,
-                               result->arguments_count, err);
-        if (rc == YVEX_OK) rc = render_literal(builder, ",\"status\":\"completed\"}", err);
-    } else if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && (result->text_count || !result->tool_call_count)) {
         char message_id[YVEX_PROVIDER_ID_CAP];
         (void)snprintf(message_id, sizeof(message_id), "msg_%.48s", id);
         rc = render_literal(builder, "{\"type\":\"message\",\"id\":", err);
@@ -262,18 +292,46 @@ static int render_responses_result(render_builder *builder, const char *id,
             rc = render_string(builder, result->text, result->text_count, err);
         if (rc == YVEX_OK)
             rc = render_literal(builder, ",\"annotations\":[]}]}", err);
+        output_count = 1u;
     }
-    if (rc == YVEX_OK) rc = render_literal(builder, "],\"usage\":{", err);
+    for (index = 0u; rc == YVEX_OK && index < result->tool_call_count;
+         ++index) {
+        const openai_generation_tool_call *call = &result->tool_calls[index];
+        if (output_count++) rc = render_literal(builder, ",", err);
+        if (rc == YVEX_OK)
+            rc = render_literal(builder,
+                                "{\"type\":\"function_call\",\"id\":", err);
+        if (rc == YVEX_OK) rc = render_text(builder, call->call_id, err);
+        if (rc == YVEX_OK) rc = render_literal(builder, ",\"call_id\":", err);
+        if (rc == YVEX_OK) rc = render_text(builder, call->call_id, err);
+        if (rc == YVEX_OK) rc = render_literal(builder, ",\"name\":", err);
+        if (rc == YVEX_OK) rc = render_text(builder, call->name, err);
+        if (rc == YVEX_OK) rc = render_literal(builder, ",\"arguments\":", err);
+        if (rc == YVEX_OK)
+            rc = render_string(builder, call->arguments,
+                               call->arguments_count, err);
+        if (rc == YVEX_OK) rc = render_literal(builder, ",\"status\":\"completed\"}", err);
+    }
+    if (rc == YVEX_OK) {
+        rc = render_literal(builder, "],\"reasoning_content\":", err);
+        if (rc == YVEX_OK)
+            rc = render_string(builder, result->reasoning,
+                               result->reasoning_count, err);
+    }
+    if (rc == YVEX_OK) rc = render_literal(builder, ",\"usage\":{", err);
     if (rc == YVEX_OK) {
         char usage[256];
         length = snprintf(usage, sizeof(usage),
-            "\"input_tokens\":%llu,\"output_tokens\":%llu,\"total_tokens\":%llu}",
+            "\"input_tokens\":%llu,\"output_tokens\":%llu,\"total_tokens\":%llu,"
+            "\"output_tokens_details\":{\"reasoning_tokens\":%llu}}",
             result->prompt_tokens, result->completion_tokens,
-            result->total_tokens);
+            result->total_tokens, result->reasoning_tokens);
         rc = length > 0 && (size_t)length < sizeof(usage)
                  ? render_append(builder, usage, (unsigned long long)length, err)
                  : YVEX_ERR_BOUNDS;
     }
+    if (rc == YVEX_OK) rc = render_literal(builder, ",", err);
+    if (rc == YVEX_OK) rc = render_completion_metrics(builder, result, err);
     if (rc == YVEX_OK && result->finish == YVEX_PROVIDER_FINISH_LENGTH)
         rc = render_literal(builder,
             ",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}", err);
@@ -302,7 +360,8 @@ int openai_json_result(openai_endpoint endpoint, const char *id,
 
 static int render_chat_chunk(render_builder *builder, const char *id,
                              const char *model, unsigned long long created,
-                             const yvex_client_message *message, int initial,
+                             const yvex_client_message *message,
+                             unsigned long long tool_index, int initial,
                              yvex_error *err)
 {
     char prefix[320];
@@ -316,8 +375,24 @@ static int render_chat_chunk(render_builder *builder, const char *id,
     if (rc == YVEX_OK && initial)
         rc = render_literal(builder, "{\"role\":\"assistant\"}", err);
     else if (rc == YVEX_OK && message &&
+             message->provider_output_kind ==
+                 YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING) {
+        rc = render_literal(builder, "{\"reasoning_content\":", err);
+        if (rc == YVEX_OK)
+            rc = render_string(builder, message->bytes,
+                               message->byte_count, err);
+        if (rc == YVEX_OK) rc = render_literal(builder, "}", err);
+    }
+    else if (rc == YVEX_OK && message &&
              message->provider_output_kind == YVEX_PROVIDER_OUTPUT_FUNCTION_CALL) {
-        rc = render_literal(builder, "{\"tool_calls\":[{\"index\":0", err);
+        char index_text[64];
+        int index_count = snprintf(index_text, sizeof(index_text),
+                                   "{\"tool_calls\":[{\"index\":%llu",
+                                   tool_index);
+        rc = index_count > 0 && (size_t)index_count < sizeof(index_text)
+                 ? render_append(builder, index_text,
+                                 (unsigned long long)index_count, err)
+                 : YVEX_ERR_BOUNDS;
         if (message->tool_call_id[0]) {
             if (rc == YVEX_OK) rc = render_literal(builder, ",\"id\":", err);
             if (rc == YVEX_OK) rc = render_text(builder, message->tool_call_id, err);
@@ -400,7 +475,8 @@ static int render_response_chunk(render_builder *builder, const char *id,
 
 int openai_json_stream_chunk(openai_endpoint endpoint, const char *id,
                              const char *model, unsigned long long created,
-                             const yvex_client_message *message, int initial,
+                             const yvex_client_message *message,
+                             unsigned long long tool_index, int initial,
                              unsigned char **output, unsigned long long *count,
                              yvex_error *err)
 {
@@ -410,7 +486,7 @@ int openai_json_stream_chunk(openai_endpoint endpoint, const char *id,
     if (count) *count = 0u;
     rc = endpoint == OPENAI_ENDPOINT_CHAT
              ? render_chat_chunk(&builder, id, model, created, message,
-                                 initial, err)
+                                 tool_index, initial, err)
              : render_response_chunk(&builder, id, model, message,
                                      initial, err);
     if (rc != YVEX_OK) { free(builder.data); return rc; }
@@ -439,6 +515,8 @@ int openai_json_chat_usage_chunk(const char *id, const char *model,
     if (rc == YVEX_OK) rc = render_text(&builder, model, err);
     if (rc == YVEX_OK) rc = render_literal(&builder, ",\"choices\":[],", err);
     if (rc == YVEX_OK) rc = render_chat_usage(&builder, result, err);
+    if (rc == YVEX_OK) rc = render_literal(&builder, ",", err);
+    if (rc == YVEX_OK) rc = render_completion_metrics(&builder, result, err);
     if (rc == YVEX_OK) rc = render_literal(&builder, "}", err);
     if (rc != YVEX_OK) {
         free(builder.data);
@@ -453,6 +531,8 @@ static const char *response_event_name(openai_response_event_kind kind)
         "response.created",
         "response.output_item.added",
         "response.content_part.added",
+        "response.reasoning_content.delta",
+        "response.reasoning_content.done",
         "response.output_text.delta",
         "response.output_text.done",
         "response.content_part.done",
@@ -466,13 +546,26 @@ static const char *response_event_name(openai_response_event_kind kind)
     return kind <= OPENAI_RESPONSE_EVENT_FAILED ? names[kind] : NULL;
 }
 
+static const openai_generation_tool_call *response_tool_at(
+    const openai_generation_result *result, unsigned long long output_index)
+{
+    unsigned long long first_tool = result->text_count ? 1u : 0u;
+    if (output_index < first_tool ||
+        output_index - first_tool >= result->tool_call_count)
+        return NULL;
+    return &result->tool_calls[output_index - first_tool];
+}
+
 static void response_item_id(const char *response_id,
                              const openai_generation_result *result,
+                             unsigned long long output_index,
                              char output[YVEX_PROVIDER_ID_CAP])
 {
-    if (result->has_tool_call)
+    const openai_generation_tool_call *call =
+        response_tool_at(result, output_index);
+    if (call)
         (void)snprintf(output, YVEX_PROVIDER_ID_CAP, "%s",
-                       result->tool_call_id);
+                       call->call_id);
     else
         (void)snprintf(output, YVEX_PROVIDER_ID_CAP, "msg_%.48s",
                        response_id);
@@ -486,23 +579,26 @@ static void response_item_id(const char *response_id,
  */
 static int render_response_item(render_builder *builder, const char *id,
                                 const openai_generation_result *result,
-                                int completed, yvex_error *err)
+                                unsigned long long output_index, int completed,
+                                yvex_error *err)
 {
     char item_id[YVEX_PROVIDER_ID_CAP];
+    const openai_generation_tool_call *call =
+        response_tool_at(result, output_index);
     int rc;
-    response_item_id(id, result, item_id);
-    if (result->has_tool_call) {
+    response_item_id(id, result, output_index, item_id);
+    if (call) {
         rc = render_literal(builder, "{\"type\":\"function_call\",\"id\":", err);
         if (rc == YVEX_OK) rc = render_text(builder, item_id, err);
         if (rc == YVEX_OK) rc = render_literal(builder, ",\"call_id\":", err);
-        if (rc == YVEX_OK) rc = render_text(builder, result->tool_call_id, err);
+        if (rc == YVEX_OK) rc = render_text(builder, call->call_id, err);
         if (rc == YVEX_OK) rc = render_literal(builder, ",\"name\":", err);
-        if (rc == YVEX_OK) rc = render_text(builder, result->tool_name, err);
+        if (rc == YVEX_OK) rc = render_text(builder, call->name, err);
         if (rc == YVEX_OK) rc = render_literal(builder, ",\"arguments\":", err);
         if (rc == YVEX_OK)
             rc = completed
-                     ? render_string(builder, result->arguments,
-                                     result->arguments_count, err)
+                     ? render_string(builder, call->arguments,
+                                     call->arguments_count, err)
                      : render_literal(builder, "\"\"", err);
     } else {
         rc = render_literal(builder, "{\"type\":\"message\",\"id\":", err);
@@ -536,11 +632,14 @@ static int render_response_event_payload(
     render_builder *builder, openai_response_event_kind kind,
     const char *id, const char *model, unsigned long long created,
     const yvex_client_message *message,
-    const openai_generation_result *result, yvex_error *err)
+    const openai_generation_result *result, unsigned long long output_index,
+    yvex_error *err)
 {
     char item_id[YVEX_PROVIDER_ID_CAP];
+    const openai_generation_tool_call *call =
+        response_tool_at(result, output_index);
     int rc = YVEX_OK;
-    response_item_id(id, result, item_id);
+    response_item_id(id, result, output_index, item_id);
     if (kind == OPENAI_RESPONSE_EVENT_CREATED) {
         rc = render_literal(builder, ",\"response\":{\"id\":", err);
         if (rc == YVEX_OK) rc = render_text(builder, id, err);
@@ -553,19 +652,32 @@ static int render_response_event_payload(
             rc = render_literal(builder, ",\"output\":[]}", err);
     } else if (kind == OPENAI_RESPONSE_EVENT_OUTPUT_ITEM_ADDED ||
                kind == OPENAI_RESPONSE_EVENT_OUTPUT_ITEM_DONE) {
-        rc = render_literal(builder, ",\"output_index\":0,\"item\":", err);
+        char index_text[64];
+        int count = snprintf(index_text, sizeof(index_text),
+                             ",\"output_index\":%llu,\"item\":", output_index);
+        rc = count > 0 && (size_t)count < sizeof(index_text)
+                 ? render_append(builder, index_text,
+                                 (unsigned long long)count, err)
+                 : YVEX_ERR_BOUNDS;
         if (rc == YVEX_OK)
             rc = render_response_item(
-                builder, id, result,
+                builder, id, result, output_index,
                 kind == OPENAI_RESPONSE_EVENT_OUTPUT_ITEM_DONE, err);
     } else if (kind == OPENAI_RESPONSE_EVENT_CONTENT_PART_ADDED ||
                kind == OPENAI_RESPONSE_EVENT_CONTENT_PART_DONE) {
         rc = render_literal(builder, ",\"item_id\":", err);
         if (rc == YVEX_OK) rc = render_text(builder, item_id, err);
-        if (rc == YVEX_OK)
-            rc = render_literal(
-                builder, ",\"output_index\":0,\"content_index\":0,\"part\":{"
-                         "\"type\":\"output_text\",\"text\":", err);
+        if (rc == YVEX_OK) {
+            char index_text[96];
+            int count = snprintf(
+                index_text, sizeof(index_text),
+                ",\"output_index\":%llu,\"content_index\":0,\"part\":{"
+                "\"type\":\"output_text\",\"text\":", output_index);
+            rc = count > 0 && (size_t)count < sizeof(index_text)
+                     ? render_append(builder, index_text,
+                                     (unsigned long long)count, err)
+                     : YVEX_ERR_BOUNDS;
+        }
         if (rc == YVEX_OK)
             rc = kind == OPENAI_RESPONSE_EVENT_CONTENT_PART_DONE
                      ? render_string(builder, result->text,
@@ -573,13 +685,34 @@ static int render_response_event_payload(
                      : render_literal(builder, "\"\"", err);
         if (rc == YVEX_OK)
             rc = render_literal(builder, ",\"annotations\":[]}", err);
+    } else if (kind == OPENAI_RESPONSE_EVENT_REASONING_DELTA ||
+               kind == OPENAI_RESPONSE_EVENT_REASONING_DONE) {
+        rc = render_literal(builder, ",\"output_index\":0,", err);
+        if (rc == YVEX_OK)
+            rc = render_literal(
+                builder, kind == OPENAI_RESPONSE_EVENT_REASONING_DELTA
+                             ? "\"delta\":" : "\"reasoning_content\":",
+                err);
+        if (rc == YVEX_OK)
+            rc = kind == OPENAI_RESPONSE_EVENT_REASONING_DELTA
+                     ? render_string(builder, message->bytes,
+                                     message->byte_count, err)
+                     : render_string(builder, result->reasoning,
+                                     result->reasoning_count, err);
     } else if (kind == OPENAI_RESPONSE_EVENT_OUTPUT_TEXT_DELTA ||
                kind == OPENAI_RESPONSE_EVENT_OUTPUT_TEXT_DONE) {
         rc = render_literal(builder, ",\"item_id\":", err);
         if (rc == YVEX_OK) rc = render_text(builder, item_id, err);
-        if (rc == YVEX_OK)
-            rc = render_literal(builder,
-                ",\"output_index\":0,\"content_index\":0,", err);
+        if (rc == YVEX_OK) {
+            char index_text[80];
+            int count = snprintf(index_text, sizeof(index_text),
+                                 ",\"output_index\":%llu,"
+                                 "\"content_index\":0,", output_index);
+            rc = count > 0 && (size_t)count < sizeof(index_text)
+                     ? render_append(builder, index_text,
+                                     (unsigned long long)count, err)
+                     : YVEX_ERR_BOUNDS;
+        }
         if (rc == YVEX_OK)
             rc = render_literal(builder,
                 kind == OPENAI_RESPONSE_EVENT_OUTPUT_TEXT_DELTA
@@ -594,7 +727,15 @@ static int render_response_event_payload(
                kind == OPENAI_RESPONSE_EVENT_FUNCTION_ARGUMENTS_DONE) {
         rc = render_literal(builder, ",\"item_id\":", err);
         if (rc == YVEX_OK) rc = render_text(builder, item_id, err);
-        if (rc == YVEX_OK) rc = render_literal(builder, ",\"output_index\":0,", err);
+        if (rc == YVEX_OK) {
+            char index_text[48];
+            int count = snprintf(index_text, sizeof(index_text),
+                                 ",\"output_index\":%llu,", output_index);
+            rc = count > 0 && (size_t)count < sizeof(index_text)
+                     ? render_append(builder, index_text,
+                                     (unsigned long long)count, err)
+                     : YVEX_ERR_BOUNDS;
+        }
         if (rc == YVEX_OK)
             rc = render_literal(builder,
                 kind == OPENAI_RESPONSE_EVENT_FUNCTION_ARGUMENTS_DELTA
@@ -603,8 +744,10 @@ static int render_response_event_payload(
             rc = kind == OPENAI_RESPONSE_EVENT_FUNCTION_ARGUMENTS_DELTA
                      ? render_string(builder, message->bytes,
                                      message->byte_count, err)
-                     : render_string(builder, result->arguments,
-                                     result->arguments_count, err);
+                     : call
+                           ? render_string(builder, call->arguments,
+                                           call->arguments_count, err)
+                           : YVEX_ERR_STATE;
     } else if (kind == OPENAI_RESPONSE_EVENT_COMPLETED ||
                kind == OPENAI_RESPONSE_EVENT_INCOMPLETE) {
         rc = render_literal(builder, ",\"response\":", err);
@@ -632,6 +775,7 @@ int openai_json_response_event(openai_response_event_kind kind,
                                unsigned long long created,
                                const yvex_client_message *message,
                                const openai_generation_result *result,
+                               unsigned long long output_index,
                                unsigned long long sequence,
                                unsigned char **output,
                                unsigned long long *count, yvex_error *err)
@@ -651,7 +795,8 @@ int openai_json_response_event(openai_response_event_kind kind,
              : YVEX_ERR_BOUNDS;
     if (rc == YVEX_OK)
         rc = render_response_event_payload(&builder, kind, id, model,
-                                           created, message, result, err);
+                                           created, message, result,
+                                           output_index, err);
     if (rc == YVEX_OK) rc = render_literal(&builder, "}", err);
     if (rc != YVEX_OK) {
         free(builder.data);

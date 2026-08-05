@@ -166,8 +166,11 @@ of source/family context, attention, MoE, output, DSpark and state facts.
 Runtime binding v8 persists and authenticates it; v7 remains readable for the
 retained reference binding. Hardware-profile, workload-profile, capacity-plan
 and phase-roofline schemas begin at v1 as internal contracts. The installed
-public API, local protocol v6, runtime event schema v3, generation ABI v4,
-Physical Execution IR v1 and compiled profile v1 are unchanged.
+server construction entrypoints and public declaration count remain unchanged.
+The source-authored conversation boundary admits provider request/wire schema
+v2, tokenizer plan v3, tokenizer provider result v2, and local protocol v7.
+Runtime event schema v3, generation ABI v4, Physical Execution IR v1 and
+compiled profile v1 remain unchanged.
 
 Phase-roofline v1 accepts both its original complete record and an additive
 availability mask. A zero mask retains the original all-facts meaning; new
@@ -183,7 +186,7 @@ does not keep a second accumulation policy.
 The internal generation result carries an optional phase ledger. This additive
 source ABI is rebuilt with every product binary, is not serialized as C object
 memory, and is excluded from semantic generation identity. It therefore does
-not change generation ABI v4, protocol v6 or event schema v3. Result validation
+not change generation ABI v4, protocol v7 or event schema v3. Result validation
 checks ledger identities and availability masks when present; old internal
 results with no ledger retain their zero-initialized meaning.
 
@@ -488,32 +491,34 @@ Domain APIs retain semantic validation and lifecycle. Runtime-client adapter
 objects remain protocol-only, while finite offline adapters may consume the
 non-installed engine interfaces already documented here.
 
-## Application Provider And Local Protocol v6
+## Application Provider And Local Protocol v7
 
 `<yvex/provider.h>` is the installed transport-neutral application request and
-result ABI. A sealed request binds the model, ordered typed messages, explicit
-content extents, sampling policy, maximum output, bounded stop strings,
-response format, function definitions and choice, prior-response reference,
-adapter correlation, and request identity. Clone and wire-decode publish only a
-complete owned request graph. The provider owner neither parses HTTP nor
-renders model-family prompt syntax.
+result ABI. Provider schema v2 binds separate assistant reasoning content,
+reasoning policy, source-authored drop behavior, field-presence facts, and a
+bounded ordered tool-call set in addition to the v1 request facts. Provider wire
+v2 carries those fields. V1 remains readable and writable only with disabled
+reasoning, at most one assistant tool call, and its original field semantics.
+Clone and wire-decode publish only a complete owned request graph. The provider
+owner neither parses HTTP nor renders model-family prompt syntax.
 
-`<yvex/server.h>` protocol v6 carries the sealed provider request through the
+`<yvex/server.h>` protocol v7 carries the sealed provider request through the
 private Unix socket. Provider output messages distinguish assistant text,
-function calls, usage, terminal completion, and failure. Typed events bind the
-provider adapter, provider-request identity, and external correlation ID while
-excluding prompt and output content.
+explicit reasoning, function calls, usage, terminal completion, and failure.
+Typed events bind the provider adapter, provider-request identity, and external
+correlation ID while excluding prompt and output content.
 
-Protocol v6 carries selected generation mode, speculative lifecycle events,
+Protocol v7 carries selected generation mode, speculative lifecycle events,
 accepted-prefix facts, exact proposal/verification/commit accounting, turn
 timing and cancellation classes, an exact partial-turn schema, source-authored
-reasoning policy, and an explicit output channel for published fragments. It
+reasoning policy, typed reasoning/final/tool/error channels, and separate
+reasoning/final count, rate and first-token timing facts. It
 retains the typed `console.status` and the removal of former
 model/artifact facades introduced by the preceding protocol. Facts that are
 not authoritative, including selected client configuration, active
 micro-phase, or KV byte use when unavailable, have explicit availability bits
-and are never fabricated. Version 5 frames refuse during the handshake; there
-is no private pre-v0.1 compatibility decoder.
+and are never fabricated. Every non-v7 frame refuses during the handshake;
+there is no private pre-v0.1 compatibility decoder.
 
 Protocol error messages carry `yvex_client_failure_class`, so adapters map
 queue capacity, timeout, incompatible state and unsupported input without

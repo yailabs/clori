@@ -37,6 +37,7 @@ cli_runtime_lifecycle_pattern='yvex_runtime_(model_(open|close|summary_copy|view
 recursive_cleanup_pattern='(^|[;&|()[:space:]])(command[[:space:]]+)?r'\
 'm[[:space:]]+([^#;]*[[:space:]])?(-[[:alpha:]]*[rR][[:alpha:]]*|--recursive)([[:space:]]|$)'
 recursive_cleanup_call_pattern='(system|popen)[[:space:]]*\([^;]*(rm[[:space:]]+-[[:alpha:]]*[rR]|rm[[:space:]]+--recursive)'
+conversation_literal_pattern='(<think>|</think>|｜DSML｜|<tool_result>|<｜(User|Assistant|latest_reminder)｜>)'
 
 # Every expression used as a hard gate carries positive and negative probes.
 # This catches regex drift before a repository scan can produce false comfort.
@@ -73,6 +74,13 @@ printf '%s\n' 'yvex_runtime_model_open(&model, &request, &failure, &err);' |
 if printf '%s\n' 'yvex_graph_attention_operator_execute(&request, &result, &cleanup, &err);' |
     rg "$cli_runtime_lifecycle_pattern" >/dev/null; then
     fail "CLI lifecycle guard rejects the canonical production operator"
+fi
+printf '%s\n' '<think>' |
+    rg "$conversation_literal_pattern" >/dev/null ||
+    fail "conversation-literal guard misses a source-authored control token"
+if printf '%s\n' 'conversation->thinking_start' |
+    rg "$conversation_literal_pattern" >/dev/null; then
+    fail "conversation-literal guard rejects a typed family fact"
 fi
 printf '%s\n' '#include <yvex/internal/source_payload.h>' |
     rg "$runtime_planning_include_pattern" >/dev/null ||
@@ -154,6 +162,12 @@ while IFS= read -r source; do
 done <<EOF
 $expected_deepseek_family_sources
 EOF
+
+if find src include -type f \( -name '*.c' -o -name '*.h' -o -name '*.cu' \) \
+        ! -path 'src/model/families/*' -print0 |
+    xargs -0 rg -n "$conversation_literal_pattern"; then
+    fail "source-authored conversation literal escaped the model-family projection"
+fi
 
 family_neutral_sources=$(
     {

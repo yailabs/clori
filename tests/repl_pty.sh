@@ -50,6 +50,18 @@ while test "$attempt" -lt 100 && test ! -S "$socket"; do
 done
 test -S "$socket"
 
+# Noninteractive output is the exact concatenation of canonical typed payloads;
+# terminal separation and completion measurements belong on stderr.
+XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" run --reasoning high \
+    --max-new-tokens 3 --strategy greedy REASONING_STREAM \
+    >"$root/raw.out" 2>"$root/raw.err"
+printf 'I need to compare the constraints...\nThe valid result is 42.' \
+    >"$root/raw.expected"
+cmp "$root/raw.expected" "$root/raw.out"
+grep -F 'reasoning 2 tokens' "$root/raw.err" >/dev/null
+grep -F 'final 1 tokens' "$root/raw.err" >/dev/null
+! grep "$(printf '\033')" "$root/raw.out" >/dev/null
+
 mkfifo "$root/input"
 env -u NO_COLOR TERM=xterm-256color XDG_RUNTIME_DIR="$runtime" script -q -f -e \
     -c "$YVEX_BIN chat --session pty" "$root/typescript" \
@@ -147,7 +159,7 @@ clear=$(printf '\033[2J\033[H')
 redrawn=$(printf '\033[2J\033[H\r\033[2K\033[38;5;81myvex>\033[0m draft')
 sed "s/${esc}\\[[0-9;]*m//g" "$root/typescript" | tr -d '\r' \
     >"$root/typescript.plain"
-grep -F 'YVEX 0.1.0 · protocol 6' "$root/typescript.plain" >/dev/null
+grep -F 'YVEX 0.1.0 · protocol 7' "$root/typescript.plain" >/dev/null
 grep -F '  model      deepseek4-v4-flash-dspark' \
     "$root/typescript.plain" >/dev/null
 grep -F '  variant    dddddddddddd' "$root/typescript.plain" >/dev/null
@@ -311,6 +323,110 @@ test "$count" -eq 2
 grep -F "${esc}[?2004l" "$root/cancel.typescript" >/dev/null
 ! grep -F "${esc}[3" "$root/cancel.typescript" >/dev/null
 ! grep -F 'hello from yvex' "$root/cancel.typescript" >/dev/null
+
+# Cancellation after an explicit reasoning fragment never fabricates a final
+# channel, and leaves the terminal ready for the next request.
+mkfifo "$root/reasoning-cancel.input"
+NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
+    -c "$YVEX_BIN chat --session reasoning-cancellation" \
+    "$root/reasoning-cancel.typescript" \
+    <"$root/reasoning-cancel.input" >"$root/reasoning-cancel.stdout" \
+    2>"$root/reasoning-cancel.stderr" &
+repl_pid=$!
+exec 3>"$root/reasoning-cancel.input"
+attempt=0
+while test "$attempt" -lt 100; do
+    client_pid=$(find_repl_client || true)
+    test -n "$client_pid" && \
+        grep -F 'yvex> ' "$root/reasoning-cancel.typescript" \
+            >/dev/null 2>&1 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+printf '/think\n' >&3
+attempt=0
+while test "$attempt" -lt 100; do
+    grep -F 'enabled for the next turn' \
+        "$root/reasoning-cancel.typescript" >/dev/null 2>&1 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+printf 'WAIT_REASONING_CANCEL\n' >&3
+attempt=0
+while test "$attempt" -lt 100; do
+    grep -F 'reasoning before cancellation' \
+        "$root/reasoning-cancel.typescript" >/dev/null 2>&1 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+kill -INT "$client_pid"
+attempt=0
+while test "$attempt" -lt 100; do
+    grep -F 'cancelled' "$root/reasoning-cancel.typescript" \
+        >/dev/null 2>&1 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+kill -INT "$client_pid"
+exec 3>&-
+wait "$repl_pid"
+repl_pid=
+grep -F 'generation.cancel reasoning-cancellation' "$root/host.err" \
+    >/dev/null
+! grep -F 'The valid result is 42.' "$root/reasoning-cancel.typescript" \
+    >/dev/null
+
+# A failure after reasoning but before final content preserves the typed
+# reasoning fragment, ends its visual projection, and marks the turn partial.
+mkfifo "$root/reasoning-partial.input"
+NO_COLOR=1 XDG_RUNTIME_DIR="$runtime" script -q -f -e \
+    -c "$YVEX_BIN chat --session reasoning-partial" \
+    "$root/reasoning-partial.typescript" \
+    <"$root/reasoning-partial.input" >"$root/reasoning-partial.stdout" \
+    2>"$root/reasoning-partial.stderr" &
+repl_pid=$!
+exec 3>"$root/reasoning-partial.input"
+attempt=0
+while test "$attempt" -lt 100; do
+    test -f "$root/reasoning-partial.typescript" && \
+        grep -F 'yvex> ' "$root/reasoning-partial.typescript" \
+            >/dev/null 2>&1 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+printf '/think-max\n' >&3
+attempt=0
+while test "$attempt" -lt 100; do
+    grep -F 'maximum for the next turn' \
+        "$root/reasoning-partial.typescript" >/dev/null 2>&1 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+printf 'PARTIAL_REASONING\n' >&3
+attempt=0
+while test "$attempt" -lt 100; do
+    grep -F 'reset required (/reset)' "$root/reasoning-partial.typescript" \
+        >/dev/null 2>&1 && break
+    attempt=$((attempt + 1))
+    sleep 0.01
+done
+test "$attempt" -lt 100
+printf '\004' >&3
+exec 3>&-
+wait "$repl_pid"
+repl_pid=
+grep -F 'reasoning committed before failure' \
+    "$root/reasoning-partial.typescript" >/dev/null
+grep -F 'partial · 1 committed token · position 5 · reset required (/reset)' \
+    "$root/reasoning-partial.typescript" >/dev/null
+! grep -F 'The valid result is 42.' "$root/reasoning-partial.typescript" \
+    >/dev/null
 
 # Slash completion is projected from the canonical registry, not a second list.
 mkfifo "$root/completion.input"

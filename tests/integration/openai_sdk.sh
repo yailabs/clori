@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs pinned official SDKs against the production adapter and protocol-v6 fixture host.
+# Runs pinned official SDKs against the production adapter and protocol-v7 fixture host.
 set -eu
 
 YVEX_OPENAI_ADAPTER=${YVEX_OPENAI_ADAPTER:-build/tests/openai_adapter}

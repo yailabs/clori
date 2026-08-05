@@ -6,6 +6,8 @@
 #include "src/tokenizer/private.h"
 #include "tests/test.h"
 
+#include <yvex/internal/core.h>
+
 #include <pthread.h>
 #include <sched.h>
 #include <stdlib.h>
@@ -117,9 +119,42 @@ static void fixture_open(yvex_tokenizer *tokenizer, yvex_token_info tokens[4])
     tokenizer->plan.sealed = 1;
     tokenizer->plan.vocabulary_size = 4u;
     tokenizer->plan.prompt_policy = YVEX_TOKENIZER_PROMPT_DEEPSEEK_V4;
+    tokenizer->plan.schema_version = YVEX_TOKENIZER_PLAN_SCHEMA_V3;
     tokenizer->plan.explicit_reasoning_supported = 1;
     tokenizer->plan.maximum_reasoning_supported = 1;
+    tokenizer->plan.reasoning_start_token_id = 10u;
+    tokenizer->plan.reasoning_end_token_id = 11u;
+    tokenizer->conversation = yvex_model_conversation_protocol_at(0u);
     memcpy(tokenizer->plan.tokenizer_plan_identity, identity, sizeof(identity));
+}
+
+static yvex_provider_span text_span(const char *text)
+{
+    yvex_provider_span span = {
+        .bytes = (const unsigned char *)text,
+        .count = text ? (unsigned long long)strlen(text) : 0u};
+    return span;
+}
+
+static int prompt_digest(const yvex_rendered_prompt *prompt,
+                         char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_sha256_init(&hash);
+    if (!prompt || !prompt->text ||
+        !yvex_sha256_update(&hash, prompt->text, (size_t)prompt->len) ||
+        !yvex_sha256_final(&hash, digest))
+        return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
+}
+
+static int request_reseal(yvex_provider_request *request, yvex_error *err)
+{
+    request->sealed = 0;
+    request->request_identity[0] = '\0';
+    return yvex_provider_request_seal(request, err);
 }
 
 static int test_reasoning_channel(void)
@@ -151,6 +186,27 @@ static int test_reasoning_channel(void)
     memset(&capture, 0, sizeof(capture));
     YVEX_TEST_ASSERT(
         yvex_tokenizer_reasoning_stream_open(
+            &stream, &tokenizer, YVEX_REASONING_ENABLED,
+            reasoning_capture_sink, &capture, &err) == YVEX_OK &&
+            yvex_tokenizer_reasoning_stream_push(
+                stream, (const unsigned char *)"reason", 6u, &err) ==
+                YVEX_OK &&
+            yvex_tokenizer_reasoning_stream_push(
+                stream,
+                (const unsigned char *)tokenizer.conversation->thinking_end,
+                strlen(tokenizer.conversation->thinking_end), &err) == YVEX_OK &&
+            yvex_tokenizer_reasoning_stream_push(
+                stream, (const unsigned char *)"answer", 6u, &err) ==
+                YVEX_OK &&
+            yvex_tokenizer_reasoning_stream_finish(stream, &err) == YVEX_OK &&
+            capture.reasoning_count == 6u && capture.final_count == 6u &&
+            memcmp(capture.reasoning, "reason", 6u) == 0 &&
+            memcmp(capture.final, "answer", 6u) == 0,
+        "source delimiter changes the typed stream channel");
+    yvex_tokenizer_reasoning_stream_close(&stream);
+    memset(&capture, 0, sizeof(capture));
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_reasoning_stream_open(
             &stream, &tokenizer, YVEX_REASONING_DISABLED,
             reasoning_capture_sink, &capture, &err) == YVEX_OK &&
             yvex_tokenizer_reasoning_stream_push(
@@ -161,6 +217,214 @@ static int test_reasoning_channel(void)
             memcmp(capture.final, output, sizeof(output) - 1u) == 0,
         "disabled policy preserves canonical final bytes without inference");
     yvex_tokenizer_reasoning_stream_close(&stream);
+    memset(&capture, 0, sizeof(capture));
+    YVEX_TEST_ASSERT(
+        yvex_tokenizer_reasoning_stream_open(
+            &stream, &tokenizer, YVEX_REASONING_MAXIMUM,
+            reasoning_capture_sink, &capture, &err) == YVEX_OK &&
+            yvex_tokenizer_reasoning_stream_push(
+                stream, (const unsigned char *)"unfinished", 10u, &err) ==
+                YVEX_OK &&
+            yvex_tokenizer_reasoning_stream_finish(stream, &err) ==
+                YVEX_ERR_FORMAT &&
+            capture.reasoning_count == 10u && capture.final_count == 0u,
+        "incomplete source reasoning is retained but fails closed");
+    yvex_tokenizer_reasoning_stream_close(&stream);
+    return 0;
+}
+
+static int test_source_prompt_modes(void)
+{
+    static const char *const expected[] = {
+        "5ec6ff56a432b916c342465ba509744d13252c6c92ff10b28157b8213b4d4699",
+        "35670d0fcfe106b6b61e14f28fa5b7a787bf2d76ebf0c2664daa244fb4254a4b",
+        "f1d70259df3c292ccaeef08217cda85e4db5356393669056c44bfe8ef23e0ab5"};
+    const yvex_reasoning_policy policies[] = {
+        YVEX_REASONING_DISABLED, YVEX_REASONING_ENABLED,
+        YVEX_REASONING_MAXIMUM};
+    yvex_tokenizer tokenizer;
+    yvex_token_info tokens[4];
+    yvex_provider_message message = {0};
+    yvex_provider_request request;
+    yvex_rendered_prompt rendered = {0};
+    yvex_prompt_message native_messages[2] = {0};
+    yvex_prompt_options native_options = {
+        .add_bos = 1,
+        .drop_thinking = 1,
+        .mode = YVEX_PROMPT_MODE_THINKING,
+        .reasoning_policy = YVEX_REASONING_ENABLED};
+    yvex_error err;
+    unsigned int index;
+
+    fixture_open(&tokenizer, tokens);
+    YVEX_TEST_ASSERT(
+        strcmp(tokenizer.conversation->source_encoding_path,
+               "encoding/encoding_dsv4.py") == 0 &&
+            strcmp(tokenizer.conversation->source_encoding_identity,
+                   "bdbd57c132a1b3725042323d02b98b9d1df28e5f388f134399555d041f5055e0") == 0,
+        "conversation grammar is bound to the pinned source encoder");
+    message.role = YVEX_PROVIDER_ROLE_USER;
+    message.content = text_span("hello");
+    yvex_provider_request_default(&request);
+    strcpy(request.model, "deepseek4-v4-flash-dspark");
+    request.messages = &message;
+    request.message_count = 1u;
+    request.maximum_output_tokens = 16u;
+    for (index = 0u; index < 3u; ++index) {
+        char digest[YVEX_SHA256_HEX_CAP];
+        request.reasoning_policy = policies[index];
+        YVEX_TEST_ASSERT(
+            request_reseal(&request, &err) == YVEX_OK &&
+                yvex_tokenizer_provider_prompt(
+                    &tokenizer, &request, &rendered, &err) == YVEX_OK &&
+                prompt_digest(&rendered, digest) &&
+                strcmp(digest, expected[index]) == 0,
+            "chat, think-high, and think-max match pinned source bytes");
+        yvex_rendered_prompt_free(&rendered);
+    }
+    native_messages[0].role = YVEX_PROMPT_ROLE_USER;
+    native_messages[0].content = "quote the delimiter";
+    native_messages[1].role = YVEX_PROMPT_ROLE_ASSISTANT;
+    native_messages[1].content = "literal </think> remains final text";
+    YVEX_TEST_ASSERT(
+        yvex_prompt_render(&rendered, &tokenizer, native_messages, 2u,
+                           &native_options, &err) == YVEX_OK &&
+            strstr(rendered.text, "literal </think> remains final text") != NULL,
+        "ordinary assistant text is never inferred to be reasoning history");
+    yvex_rendered_prompt_free(&rendered);
+    return 0;
+}
+
+static int test_source_multiturn_and_tools(void)
+{
+    static const char expected_drop[] =
+        "da3f00952c8d0525107de63e954c5998c78159f60f57e6f924787242328ab87a";
+    static const char expected_keep[] =
+        "ce0042976a04b0a8b8a0c7f45014c4e65eb5d001e12c8f9258edc2b14bd23201";
+    static const char expected_tools[] =
+        "28fe1c75aa52d7e27eb7eed107131c508e668abda61bce93d9a33e5b225ce5e5";
+    static const unsigned char schema[] =
+        "{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"},"
+        "\"threshold\":{\"type\":\"number\",\"default\":1e20},"
+        "\"zero\":{\"type\":\"number\",\"default\":-0.0},"
+        "\"small\":{\"type\":\"number\",\"default\":1e-7}},"
+        "\"required\":[\"city\"]}";
+    yvex_tokenizer tokenizer;
+    yvex_token_info tokens[4];
+    yvex_provider_request request;
+    yvex_provider_message messages[6] = {0};
+    yvex_provider_function_tool tool = {0};
+    yvex_provider_tool_call calls[2] = {0};
+    yvex_rendered_prompt rendered = {0};
+    yvex_error err;
+    char digest[YVEX_SHA256_HEX_CAP];
+
+    fixture_open(&tokenizer, tokens);
+    messages[0].role = YVEX_PROVIDER_ROLE_USER;
+    messages[0].content = text_span("q1");
+    messages[1].role = YVEX_PROVIDER_ROLE_ASSISTANT;
+    messages[1].reasoning_content = text_span("r1");
+    messages[1].content = text_span("a1");
+    messages[2].role = YVEX_PROVIDER_ROLE_USER;
+    messages[2].content = text_span("q2");
+    yvex_provider_request_default(&request);
+    strcpy(request.model, "deepseek4-v4-flash-dspark");
+    request.messages = messages;
+    request.message_count = 3u;
+    request.maximum_output_tokens = 16u;
+    request.reasoning_policy = YVEX_REASONING_ENABLED;
+    YVEX_TEST_ASSERT(
+        request_reseal(&request, &err) == YVEX_OK &&
+            yvex_tokenizer_provider_prompt(
+                &tokenizer, &request, &rendered, &err) == YVEX_OK &&
+            prompt_digest(&rendered, digest) &&
+            strcmp(digest, expected_drop) == 0,
+        "ordinary multi-turn drops prior reasoning exactly like source");
+    yvex_rendered_prompt_free(&rendered);
+    request.drop_thinking = 0;
+    YVEX_TEST_ASSERT(
+        request_reseal(&request, &err) == YVEX_OK &&
+            yvex_tokenizer_provider_prompt(
+                &tokenizer, &request, &rendered, &err) == YVEX_OK &&
+            prompt_digest(&rendered, digest) &&
+            strcmp(digest, expected_keep) == 0,
+        "explicit retained-reasoning history matches source bytes");
+    yvex_rendered_prompt_free(&rendered);
+
+    memset(messages, 0, sizeof(messages));
+    messages[0].role = YVEX_PROVIDER_ROLE_SYSTEM;
+    messages[0].content = text_span("You are helpful.");
+    messages[1].role = YVEX_PROVIDER_ROLE_USER;
+    messages[1].content = text_span("q1");
+    messages[2].role = YVEX_PROVIDER_ROLE_ASSISTANT;
+    messages[2].reasoning_content = text_span("r1");
+    strcpy(calls[0].call_id, "call_b");
+    strcpy(calls[0].name, "weather");
+    calls[0].arguments_json = text_span(
+        "{\"city\":\"Rome\",\"threshold\":1e20,\"zero\":-0,"
+        "\"small\":1e-7,\"unit\":1.0}");
+    strcpy(calls[1].call_id, "call_a");
+    strcpy(calls[1].name, "weather");
+    calls[1].arguments_json = text_span("{\"city\":\"Milan\"}");
+    messages[2].tool_calls = calls;
+    messages[2].tool_call_count = 2u;
+    messages[3].role = YVEX_PROVIDER_ROLE_TOOL;
+    strcpy(messages[3].tool_call_id, "call_a");
+    messages[3].content = text_span("rain");
+    messages[4].role = YVEX_PROVIDER_ROLE_TOOL;
+    strcpy(messages[4].tool_call_id, "call_b");
+    messages[4].content = text_span("sunny");
+    messages[5].role = YVEX_PROVIDER_ROLE_USER;
+    messages[5].content = text_span("now");
+    strcpy(tool.name, "weather");
+    tool.description = text_span("Weather");
+    tool.description_present = 1;
+    tool.parameters_json = (yvex_provider_span){schema, sizeof(schema) - 1u};
+    request.messages = messages;
+    request.message_count = 6u;
+    request.tools = &tool;
+    request.tool_count = 1u;
+    request.drop_thinking = 1;
+    YVEX_TEST_ASSERT(
+        request_reseal(&request, &err) == YVEX_OK &&
+            yvex_tokenizer_provider_prompt(
+                &tokenizer, &request, &rendered, &err) == YVEX_OK &&
+            prompt_digest(&rendered, digest) &&
+            strcmp(digest, expected_tools) == 0,
+        "tool history, JSON numbers, and result order match source bytes");
+    yvex_rendered_prompt_free(&rendered);
+    return 0;
+}
+
+static int test_source_developer_boundary(void)
+{
+    static const char expected[] =
+        "2a30daa2e35c287d9956f1c1df4a2099e422d0afcb312cdcdf3ce6aaa057f0cb";
+    yvex_tokenizer tokenizer;
+    yvex_token_info tokens[4];
+    yvex_provider_message messages[2] = {0};
+    yvex_provider_request request;
+    yvex_rendered_prompt rendered = {0};
+    yvex_error err;
+    char digest[YVEX_SHA256_HEX_CAP];
+
+    fixture_open(&tokenizer, tokens);
+    messages[0].role = YVEX_PROVIDER_ROLE_DEVELOPER;
+    messages[0].content = text_span("rules");
+    messages[1].role = YVEX_PROVIDER_ROLE_USER;
+    messages[1].content = text_span("hello");
+    yvex_provider_request_default(&request);
+    strcpy(request.model, "deepseek4-v4-flash-dspark");
+    request.messages = messages;
+    request.message_count = 2u;
+    request.maximum_output_tokens = 16u;
+    YVEX_TEST_ASSERT(
+        request_reseal(&request, &err) == YVEX_OK &&
+            yvex_tokenizer_provider_prompt(
+                &tokenizer, &request, &rendered, &err) == YVEX_OK &&
+            prompt_digest(&rendered, digest) && strcmp(digest, expected) == 0,
+        "developer and user boundaries match the pinned source encoder");
+    yvex_rendered_prompt_free(&rendered);
     return 0;
 }
 
@@ -182,9 +446,10 @@ static int provider_fixture(yvex_provider_request *request,
     strcpy(tools[0].name, "get_match_context");
     tools[0].description = (yvex_provider_span){description,
                                                 sizeof(description) - 1u};
+    tools[0].description_present = 1;
     tools[0].parameters_json = (yvex_provider_span){schema,
                                                     sizeof(schema) - 1u};
-    request->schema_version = YVEX_PROVIDER_SCHEMA_V1;
+    request->schema_version = YVEX_PROVIDER_SCHEMA_V2;
     strcpy(request->model, "deepseek4-v4-flash-dspark");
     request->messages = messages;
     request->message_count = 1u;
@@ -195,6 +460,8 @@ static int provider_fixture(yvex_provider_request *request,
     request->sampling.top_p = 1.0;
     request->sampling.typical_p = 1.0;
     request->maximum_output_tokens = 16u;
+    request->reasoning_policy = YVEX_REASONING_DISABLED;
+    request->drop_thinking = 1;
     return yvex_provider_request_seal(request, err);
 }
 
@@ -231,14 +498,18 @@ static int test_provider_projection(void)
     YVEX_TEST_ASSERT(yvex_tokenizer_parse_provider_completion(
                          &tokenizer, &request, completion,
                          sizeof(completion) - 1u, &result, &err) == YVEX_OK &&
+                         result.schema_version ==
+                             YVEX_TOKENIZER_PROVIDER_RESULT_SCHEMA_V2 &&
                          result.kind == YVEX_PROVIDER_OUTPUT_FUNCTION_CALL,
                      "exact DSML completion becomes one typed function call");
-    YVEX_TEST_ASSERT_STREQ(result.tool_call.name, "get_match_context",
+    YVEX_TEST_ASSERT(result.tool_call_count == 1u,
+                     "one exact tool call is parsed");
+    YVEX_TEST_ASSERT_STREQ(result.tool_calls[0].name, "get_match_context",
                            "tool name remains exact");
-    YVEX_TEST_ASSERT(result.tool_call.call_id[0] &&
+    YVEX_TEST_ASSERT(result.tool_calls[0].call_id[0] &&
                          yvex_provider_json_value_validate(
-                             result.tool_call.arguments_json.bytes,
-                             result.tool_call.arguments_json.count, 1,
+                             result.tool_calls[0].arguments_json.bytes,
+                             result.tool_calls[0].arguments_json.count, 1,
                              &err) == YVEX_OK,
                      "tool arguments and call identity are valid");
     yvex_tokenizer_provider_result_clear(&result);
@@ -248,6 +519,115 @@ static int test_provider_projection(void)
                          result.kind == YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
                      "ordinary prose never becomes a tool call");
     yvex_tokenizer_provider_result_clear(&result);
+    request.reasoning_policy = YVEX_REASONING_ENABLED;
+    YVEX_TEST_ASSERT(request_reseal(&request, &err) == YVEX_OK,
+                     "thinking provider fixture reseals");
+    {
+        static const unsigned char thinking_completion[] =
+            "reason</think>answer";
+        static const unsigned char missing_delimiter[] = "reason only";
+        YVEX_TEST_ASSERT(
+            yvex_tokenizer_parse_provider_completion(
+                &tokenizer, &request, thinking_completion,
+                sizeof(thinking_completion) - 1u, &result, &err) == YVEX_OK &&
+                result.reasoning_content_count == 6u &&
+                memcmp(result.reasoning_content, "reason", 6u) == 0 &&
+                result.content_count == 6u &&
+                memcmp(result.content, "answer", 6u) == 0,
+            "source delimiter separates explicit reasoning and final content");
+        yvex_tokenizer_provider_result_clear(&result);
+        YVEX_TEST_ASSERT(
+            yvex_tokenizer_parse_provider_completion(
+                &tokenizer, &request, missing_delimiter,
+                sizeof(missing_delimiter) - 1u, &result, &err) ==
+                YVEX_ERR_FORMAT,
+            "thinking completion without source delimiter refuses");
+    }
+    {
+        static const unsigned char multiple_calls[] =
+            "r</think>\n\n<" TEST_DSML "tool_calls>\n"
+            "<" TEST_DSML "invoke name=\"get_match_context\">\n"
+            "<" TEST_DSML "parameter name=\"match_id\" string=\"true\">m1"
+            "</" TEST_DSML "parameter>\n"
+            "</" TEST_DSML "invoke>\n"
+            "<" TEST_DSML "invoke name=\"get_match_context\">\n"
+            "<" TEST_DSML "parameter name=\"match_id\" string=\"true\">m2"
+            "</" TEST_DSML "parameter>\n"
+            "</" TEST_DSML "invoke>\n"
+            "</" TEST_DSML "tool_calls>";
+        YVEX_TEST_ASSERT(
+            yvex_tokenizer_parse_provider_completion(
+                &tokenizer, &request, multiple_calls,
+                sizeof(multiple_calls) - 1u, &result, &err) == YVEX_OK &&
+                result.kind == YVEX_PROVIDER_OUTPUT_FUNCTION_CALL &&
+                result.reasoning_content_count == 1u &&
+                result.tool_call_count == 2u &&
+                strcmp(result.tool_calls[0].name, "get_match_context") == 0 &&
+                strcmp(result.tool_calls[1].name, "get_match_context") == 0 &&
+                strcmp(result.tool_calls[0].call_id,
+                       result.tool_calls[1].call_id) != 0,
+            "source grammar parses multiple grounded tool calls distinctly");
+        yvex_tokenizer_provider_result_clear(&result);
+    }
+    {
+        static const unsigned char joined_calls[] =
+            "r</think>\n\n<" TEST_DSML "tool_calls>\n"
+            "<" TEST_DSML "invoke name=\"get_match_context\">\n"
+            "<" TEST_DSML "parameter name=\"match_id\" string=\"true\">m1"
+            "</" TEST_DSML "parameter>\n"
+            "</" TEST_DSML "invoke>"
+            "<" TEST_DSML "invoke name=\"get_match_context\">\n"
+            "<" TEST_DSML "parameter name=\"match_id\" string=\"true\">m2"
+            "</" TEST_DSML "parameter>\n"
+            "</" TEST_DSML "invoke>\n"
+            "</" TEST_DSML "tool_calls>";
+        YVEX_TEST_ASSERT(
+            yvex_tokenizer_parse_provider_completion(
+                &tokenizer, &request, joined_calls,
+                sizeof(joined_calls) - 1u, &result, &err) == YVEX_ERR_FORMAT,
+            "source grammar requires a newline between tool invocations");
+    }
+    {
+        char many_parameters[16384];
+        size_t offset;
+        unsigned int index;
+        int written;
+
+        written = snprintf(
+            many_parameters, sizeof(many_parameters),
+            "r</think>\n\n<" TEST_DSML "tool_calls>\n"
+            "<" TEST_DSML "invoke name=\"get_match_context\">\n");
+        YVEX_TEST_ASSERT(written > 0, "many-parameter fixture prefix");
+        offset = (size_t)written;
+        for (index = 0u; index < 40u; ++index) {
+            written = snprintf(
+                many_parameters + offset, sizeof(many_parameters) - offset,
+                "<" TEST_DSML "parameter name=\"p%02u\" string=\"false\">%u"
+                "</" TEST_DSML "parameter>\n",
+                index, index);
+            YVEX_TEST_ASSERT(written > 0 &&
+                                 (size_t)written < sizeof(many_parameters) - offset,
+                             "many-parameter fixture body");
+            offset += (size_t)written;
+        }
+        written = snprintf(
+            many_parameters + offset, sizeof(many_parameters) - offset,
+            "</" TEST_DSML "invoke>\n</" TEST_DSML "tool_calls>");
+        YVEX_TEST_ASSERT(written > 0 &&
+                             (size_t)written < sizeof(many_parameters) - offset,
+                         "many-parameter fixture suffix");
+        offset += (size_t)written;
+        YVEX_TEST_ASSERT(
+            yvex_tokenizer_parse_provider_completion(
+                &tokenizer, &request, (const unsigned char *)many_parameters,
+                offset, &result, &err) == YVEX_OK &&
+                result.tool_call_count == 1u &&
+                result.tool_calls[0].arguments_json.count > 32u &&
+                strstr((const char *)result.tool_calls[0].arguments_json.bytes,
+                       "\"p39\": 39") != NULL,
+            "source parameters are bounded by bytes rather than tool count");
+        yvex_tokenizer_provider_result_clear(&result);
+    }
     return 0;
 }
 
@@ -512,6 +892,12 @@ static int test_candidate_transactions(void)
 int yvex_test_runtime_tokenizer(void)
 {
     if (test_reasoning_channel() != 0)
+        return 1;
+    if (test_source_prompt_modes() != 0)
+        return 1;
+    if (test_source_multiturn_and_tools() != 0)
+        return 1;
+    if (test_source_developer_boundary() != 0)
         return 1;
     if (test_provider_projection() != 0)
         return 1;

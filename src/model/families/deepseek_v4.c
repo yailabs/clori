@@ -8,6 +8,7 @@
 #include <yvex/internal/families/deepseek_v4.h>
 
 #include <yvex/internal/artifact.h>
+#include <yvex/internal/conversation.h>
 #include <yvex/internal/core.h>
 #include <yvex/internal/source.h>
 
@@ -46,6 +47,76 @@ static const char deepseek_v4_vllm_revision[] =
 static const char deepseek_v4_hadamard_revision[] =
     "Dao-AILab/fast-hadamard-transform:v1.1.0.post2:"
     "e7706faf8d1c3b9f241e36860640ad1dac644ede";
+static const char deepseek_v4_reasoning_max[] =
+    "Reasoning Effort: Absolute maximum with no shortcuts permitted.\n"
+    "You MUST be very thorough in your thinking and comprehensively decompose the problem to "
+    "resolve the root cause, rigorously stress-testing your logic against all potential paths, "
+    "edge cases, and adversarial scenarios.\n"
+    "Explicitly write out your entire deliberation process, documenting every intermediate step, "
+    "considered alternative, and rejected hypothesis to ensure absolutely no assumption is left "
+    "unchecked.\n\n";
+static const char deepseek_v4_tools_prefix[] =
+    "## Tools\n\n"
+    "You have access to a set of tools to help answer the user's question. You can invoke tools "
+    "by writing a \"<｜DSML｜tool_calls>\" block like the following:\n\n"
+    "<｜DSML｜tool_calls>\n"
+    "<｜DSML｜invoke name=\"$TOOL_NAME\">\n"
+    "<｜DSML｜parameter name=\"$PARAMETER_NAME\" string=\"true|false\">"
+    "$PARAMETER_VALUE</｜DSML｜parameter>\n"
+    "...\n"
+    "</｜DSML｜invoke>\n"
+    "<｜DSML｜invoke name=\"$TOOL_NAME2\">\n"
+    "...\n"
+    "</｜DSML｜invoke>\n"
+    "</｜DSML｜tool_calls>\n\n"
+    "String parameters should be specified as is and set `string=\"true\"`. For all other types "
+    "(numbers, booleans, arrays, objects), pass the value in JSON format and set "
+    "`string=\"false\"`.\n\n"
+    "If thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning "
+    "inside <think>...</think> BEFORE any tool calls or final response.\n\n"
+    "Otherwise, output directly after </think> with tool calls or final response.\n\n"
+    "### Available Tool Schemas\n\n";
+static const char deepseek_v4_tools_suffix[] =
+    "\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke "
+    "tool calls.\n";
+static const char deepseek_v4_response_format[] =
+    "## Response Format:\n\nYou MUST strictly adhere to the following schema to reply:\n";
+static const yvex_conversation_protocol deepseek_v4_conversation = {
+    .schema_version = YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1,
+    .family_adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
+    .family_adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
+    .architecture = "deepseek4",
+    .source_revision = YVEX_SOURCE_RELEASE_REVISION,
+    .source_encoding_path = "encoding/encoding_dsv4.py",
+    .source_encoding_identity =
+        "bdbd57c132a1b3725042323d02b98b9d1df28e5f388f134399555d041f5055e0",
+    .bos = "<｜begin▁of▁sentence｜>",
+    .eos = "<｜end▁of▁sentence｜>",
+    .user = "<｜User｜>", .assistant = "<｜Assistant｜>",
+    .latest_reminder = "<｜latest_reminder｜>",
+    .thinking_start = "<think>", .thinking_end = "</think>",
+    .tool_result_start = "<tool_result>", .tool_result_end = "</tool_result>",
+    .dsml = "｜DSML｜",
+    .tool_calls_start = "\n\n<｜DSML｜tool_calls>\n",
+    .tool_calls_end = "</｜DSML｜tool_calls>",
+    .tool_invoke_start = "<｜DSML｜invoke name=\"",
+    .tool_invoke_name_end = "\">\n",
+    .tool_invoke_end = "</｜DSML｜invoke>",
+    .tool_parameter_start = "<｜DSML｜parameter name=\"",
+    .tool_parameter_name_end = "\" string=\"",
+    .tool_parameter_kind_end = "\">",
+    .tool_parameter_end = "</｜DSML｜parameter>\n",
+    .reasoning_effort_max = deepseek_v4_reasoning_max,
+    .tools_prefix = deepseek_v4_tools_prefix, .tools_suffix = deepseek_v4_tools_suffix,
+    .response_format_prefix = deepseek_v4_response_format,
+    .drop_prior_reasoning_by_default = 1, .tools_preserve_reasoning = 1,
+    .tool_results_merge_into_user = 1};
+
+const yvex_conversation_protocol *
+yvex_model_conversation_protocol_at(unsigned long long index)
+{
+    return index == 0u ? &deepseek_v4_conversation : NULL;
+}
 
 /* Private lifecycle and diagnostic operations used before their definitions. */
 static void family_ir_close(yvex_deepseek_v4_ir *ir);

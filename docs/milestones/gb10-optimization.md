@@ -20,11 +20,14 @@ reader, writer, migration, and test consequences for every considered change.
 
 Runtime binding v8 is the first admitted persisted change. It authenticates the
 source-derived model-execution descriptor that v7 cannot carry. V7 remains
-readable as the retained reference profile; v8 is emitted beside it. The local
-protocol remains v6, runtime events remain schema v3, Physical Execution IR and
-compiled profiles remain schema v1, generation remains ABI v4, and the public C
-API remains unchanged. A future protocol or public API revision requires a
-concrete product consumer and its own matrix row.
+readable as the retained reference profile; v8 is emitted beside it. The
+source-authored conversation product path earns local protocol v7, provider
+request/wire v2, tokenizer plan v3, tokenizer provider result v2 and OpenAI
+compatibility profile v2. The installed server-construction API and public
+declaration count remain unchanged. Runtime events remain schema v3, Physical
+Execution IR and compiled profiles remain schema v1, and generation remains
+ABI v4. Every admitted change has a concrete fact and compatibility rule in the
+contract matrix; the size of this milestone alone earns no version bump.
 
 An implementation-discovered identity change is admitted beside that frozen
 entry audit:
@@ -40,6 +43,20 @@ entry audit:
 | Sampling-transaction internal ABI | v1 | v1 | the existing selection call accepts an optional staged RNG transaction; its test-only result validator is retired | in-process signature and private transaction layout only; result layout is unchanged | old callers select directly or obtain uniform values and select outside the sampling owner | complete rebuild; direct callers pass no transaction; outer transactions retain prepare/publish/abort authority; no persistence, wire, public API or profile migration | CPU/CUDA abort and exact retry, commit-only sample and RNG accounting, stale-base refusal, bounded device result |
 | DSpark target-anchor internal ABI | v1 | v1 | one typed sampling source and its staged selection replace mandatory complete-probability materialization | in-process helper and result-field naming only; no persisted, wire, state-layout or public incompatibility | old rebuilt callers materialize one complete probability row before target selection | complete rebuild; CPU and evidence-bearing paths use the host sampling oracle, production CUDA consumes resident logits; explicit full distributions remain forensic operations | runtime sampling/speculation/generation, CUDA bounded selection, full-array production guard, transaction abort and commit |
 | Stochastic-speculation internal ABI | v1 | v1 | resident draft/target row directories and bounded p/q acceptance facts | in-process operation table and helper signatures only; no persisted, wire or state-layout incompatibility | old objects are never mixed with rebuilt objects; the retained oracle expects host probability rows | complete rebuild; production CUDA uses the device operation, while CPU and audit/forensic profiles retain the oracle; no artifact, binding, protocol, event, profile or public API migration | every accepted prefix, residual and bonus agreement, workspace and malformed-token refusal, canonical identity reseal |
+
+The later source-authored conversation gate earned these product-boundary
+changes. Reader and writer behavior remain separate because compatibility in
+one direction does not imply compatibility in the other.
+
+| Contract | Current | Admitted | New unrepresentable fact | Incompatibility | Old reader | Old writer | Migration or side-by-side rule | Tests |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Conversation descriptor | absent | v1 | source prompt syntax, reasoning/tool grammar and drop-thinking policy | new internal semantic identity | no reader | no writer | seal the family descriptor from the pinned source and expose typed facts | source digest, prompt hashes, mutation, grammar |
+| Tokenizer plan | v2 | v3 | reasoning token IDs, source identity and conversation capabilities | in-process layout and semantic identity | rebuilt consumers do not mix v2 objects | cannot publish conversation facts | complete rebuild; family-owned retained-binding projection | seal, missing/mutated capability refusal |
+| Tokenizer provider result | v1 | v2 | separate reasoning, final and tool output | in-process result layout | rebuilt consumers do not mix v1 objects | cannot publish typed channels | complete rebuild; no persistence | exact grammar, arbitrary-text non-inference, incomplete refusal |
+| Provider request/wire | v1 | v2 | assistant reasoning, policy/drop facts, presence facts and ordered multiple tool calls | installed C layout, request identity and serialized bytes | old binary rejects or cannot represent v2; current reader admits both | v1 emits only disabled reasoning and one call | retain v1 within exact limits; new facts require v2 | v1/v2 clone, seal, roundtrip, truncation, malformed refusal |
+| Local protocol | v6 | v7 | typed error channel and separate reasoning/final metrics | private Unix framing and payload | every non-v7 peer fails handshake | v6 cannot carry the new terminal facts | atomic daemon/client cutover; no compatibility decoder | message/status roundtrip and non-v7 refusal |
+| OpenAI compatibility | v1 | v2 | reasoning policy, `reasoning_content`, reasoning SSE and multiple calls | documented HTTP JSON profile | v1 clients can consume shared additive fields | cannot express the new contract | v2 documents the YVEX-specific projections | Chat/Responses, SSE, tools, usage, cancellation |
+| Public server construction | v1 | v1 | none; no concrete scheduler-construction consumer exists | none | unchanged | unchanged | current entrypoints converge on new internals | declaration count and ABI guard |
 
 ## Planning authority
 
@@ -219,9 +236,9 @@ acceptance identity before state or RNG publication. Workspace capacity is
 derived from vocabulary and model-authored proposal width before execution;
 undersized capacity and malformed candidates refuse before a launch. CPU and
 audit/forensic execution retain the complete-distribution oracle. This changes
-only an internal operation table and helper signature; binding v8, protocol v6,
-events v3, compiled profile v1, generation ABI v4 and the public C API remain
-unchanged.
+only an internal operation table and helper signature; binding v8, protocol v7,
+events v3, compiled profile v1, generation ABI v4 and the server-construction
+API remain unchanged by this optimization.
 
 Production CUDA DSpark now selects each target-authored anchor directly from
 the resident output-head row. Greedy selection returns one bounded token/value
@@ -231,8 +248,8 @@ evidence-bearing profiles select through the same sampling owner over the host
 row, rather than reconstructing a second selection algorithm in speculation.
 The normal production profile refuses host-authored selection facts and records
 zero full-array host-scan bytes. This is an internal complete-rebuild ABI change
-only; binding v8, protocol v6, events v3, generation ABI v4 and the public C API
-remain unchanged.
+only; binding v8, protocol v7, events v3, generation ABI v4 and the
+server-construction API remain unchanged by this optimization.
 
 Source-selected target features now collapse their mHC residual streams on
 CUDA. Production CUDA execution publishes reduced rows only into the
@@ -290,6 +307,33 @@ publication, fairness and cleanup remain exact. The public server API is not
 versioned speculatively; its current entrypoints must converge on the admitted
 scheduler before a concrete external consumer may justify a new ABI.
 
+## Source-authored conversation protocol
+
+The DeepSeek model projection owns one immutable conversation descriptor bound
+to the pinned `encoding/encoding_dsv4.py` bytes (27,908 bytes, SHA-256
+`bdbd57c132a1b3725042323d02b98b9d1df28e5f388f134399555d041f5055e0`).
+It supplies prompt syntax, special-token IDs, exact thinking delimiters,
+effort-control text, tool grammar and the source `drop_thinking` rule. Common
+tokenizer, runtime, server and adapter owners consume typed facts; none
+hardcodes DeepSeek delimiters or special-token IDs.
+
+The admitted modes are chat/non-think, think-high and think-max. The operator
+surface exposes them as `/nothink`, `/think`, `/think-max` and as the equivalent
+non-interactive `--reasoning` policy. Only the exact model-emitted
+`<think>...</think>` grammar is classified. An incomplete or malformed grammar
+fails closed, arbitrary prose is never reclassified, and no hidden model state
+is exposed.
+
+Protocol v7 carries distinct reasoning, final, tool and error channels plus
+reasoning/final token counts, rates, first-token times and total completion
+time. The REPL renders explicit reasoning incrementally and distinctly; raw
+execution writes canonical channel payload bytes without terminal decoration.
+OpenAI compatibility profile v2 projects explicit model output through
+`reasoning_content` and never merges it into final content. Ordinary multi-turn
+prompt construction may drop prior reasoning exactly as the source encoder
+does, while tool-enabled continuity retains the source-required reasoning and
+tool sequence. These are explicit model outputs, not inferred chain of thought.
+
 ## Non-claims
 
 The currently admitted code establishes model-derived geometry, v7/v8 binding
@@ -301,6 +345,6 @@ full-vocabulary host materialization.
 It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE, zero per-layer attention synchronization,
 full-model live qualification of target-only or DSpark device sampling,
-source-authored reasoning-mode product reachability, paged state allocation,
+full-model live qualification of all reasoning modes, paged state allocation,
 prefix persistence, continuous batching, competitive throughput, evaluation,
 benchmark qualification, release qualification, or Hugging Face publication.

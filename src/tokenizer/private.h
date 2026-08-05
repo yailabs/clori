@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 #include <yvex/gguf.h>
+#include <yvex/internal/conversation.h>
 #include <yvex/tokenizer.h>
 
 typedef struct {
@@ -39,6 +40,7 @@ struct yvex_tokenizer {
     unsigned long long chat_template_len;
     int has_huggingface_json;
 
+    const yvex_conversation_protocol *conversation;
     yvex_tokenizer_plan_summary plan;
     tokenizer_vocab_slot *vocab_index;
     unsigned long long vocab_index_capacity;

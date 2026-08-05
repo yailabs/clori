@@ -12,7 +12,7 @@ them through one long-lived host with isolated sessions.
 The current complete vertical is DeepSeek-V4-Flash-DSpark on CPU and the
 admitted mixed NVIDIA GB10 CUDA path. One `yvexd` model owns target-only and
 target-verified speculative generation; `yvex` provides the public command
-surface; local applications may use the bounded `yvex.openai.compat.v1`
+surface; local applications may use the bounded `yvex.openai.compat.v2`
 HTTP/SSE profile in the same daemon. Performance optimization, evaluation,
 release benchmarking, and release qualification remain open.
 
@@ -131,7 +131,7 @@ three-terminal observation, sessions, shutdown, configuration, and recovery.
 | `yvexd` | One long-lived model, worker, queue, session/KV registry, private protocol, loopback OpenAI adapter, and telemetry authority |
 | `libyvex` | Reusable compilation, artifact, runtime, graph, backend, tokenizer, and generation implementation |
 
-Runtime-facing `yvex` operations always cross private local protocol v6. The
+Runtime-facing `yvex` operations always cross private local protocol v7. The
 finite offline lane may link engine owners but never hosts a persistent model.
 One compiled operation registry drives command paths, syntax, help, JSON
 discovery, completion, and slash schemas without becoming a domain-policy
@@ -145,7 +145,9 @@ Ctrl-L clears and redraws the active prompt without changing session state;
 Ctrl-D exits cleanly even when discarding an unfinished line. For the admitted
 DSpark prompt contract, `/think`, `/think-max`, and `/nothink` select only the
 model's explicitly emitted reasoning channel; YVEX never infers or exposes
-hidden reasoning.
+hidden reasoning. Noninteractive callers use
+`yvex run --reasoning none|high|max`; stdout remains byte-faithful while
+metrics are written separately.
 Live milestone and release-gate state remains only in
 [`ROADMAP.md`](ROADMAP.md).
 

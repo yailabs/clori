@@ -758,8 +758,9 @@ static int generation_turn(const char *session_name,
     yvex_cli_stream_renderer renderer;
     yvex_error err;
     yvex_cli_terminal_style style;
+    FILE *status_output = conversation ? stdout : stderr;
     int rc, started = 0, progress_active = 0, renderer_finished = 0;
-    yvex_cli_terminal_style_get(stdout, &style);
+    yvex_cli_terminal_style_get(status_output, &style);
     yvex_cli_stream_renderer_open(&renderer, stdout,
                                   conversation && isatty(fileno(stdout)));
     request_init(&request, YVEX_CLIENT_OP_GENERATION_TURN);
@@ -825,38 +826,50 @@ static int generation_turn(const char *session_name,
             started = 1;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_TURN_COMPLETE) {
             if (progress_active) fputs("\r\033[2K", stdout);
-            rc = yvex_cli_stream_renderer_finish(&renderer, 1);
+            rc = yvex_cli_stream_renderer_finish(&renderer, conversation);
             renderer_finished = 1;
             if (rc != YVEX_OK) {
                 yvex_error_set(&err, YVEX_ERR_IO, "client.turn.render",
                                "terminal stream finalization failed");
                 break;
             }
-            printf("%sprefill%s %llu new/%llu prompt/%llu reused · %.2f s · %.2f tok/s · "
-                   "%sgeneration%s %llu tokens · %.2f s · %.2f tok/s · TTFT %.2f s",
-                   style.accent, style.reset,
-                   message.prefill_tokens, message.prompt_tokens,
-                   message.reused_tokens, message.prefill_seconds,
-                   message.prefill_rate, style.success, style.reset, message.generated_tokens,
-                   message.decode_seconds, message.decode_rate,
-                   message.first_token_seconds);
+            fprintf(status_output,
+                    "%sprefill%s %llu new/%llu prompt/%llu reused · %.2f s · %.2f tok/s · "
+                    "%sgeneration%s %llu tokens · %.2f s · %.2f tok/s · TTFT %.2f s",
+                    style.accent, style.reset, message.prefill_tokens,
+                    message.prompt_tokens, message.reused_tokens,
+                    message.prefill_seconds, message.prefill_rate,
+                    style.success, style.reset, message.generated_tokens,
+                    message.decode_seconds, message.decode_rate,
+                    message.first_token_seconds);
             if (message.generation_mode == YVEX_SERVER_GENERATION_DSPARK)
-                printf(" · %sDSpark%s %llu proposed/%llu accepted/%llu rejected/%llu verified",
-                       style.accent, style.reset,
-                       message.proposed_tokens, message.accepted_draft_tokens,
-                       message.rejected_draft_tokens,
-                       message.target_verification_count);
+                fprintf(status_output,
+                        " · %sDSpark%s %llu proposed/%llu accepted/%llu rejected/%llu verified",
+                        style.accent, style.reset, message.proposed_tokens,
+                        message.accepted_draft_tokens,
+                        message.rejected_draft_tokens,
+                        message.target_verification_count);
             if (context_capacity)
-                printf(" · context %llu/%llu", message.context_used, context_capacity);
+                fprintf(status_output, " · context %llu/%llu",
+                        message.context_used, context_capacity);
             else
-                printf(" · context %llu", message.context_used);
-            printf(" · stop %s · %ssession %s%s\n",
-                   yvex_cli_out_stop_reason(message.stop_reason),
-                   style.dim, message.session_name, style.reset);
+                fprintf(status_output, " · context %llu", message.context_used);
+            fprintf(status_output, " · stop %s · %ssession %s%s\n",
+                    yvex_cli_out_stop_reason(message.stop_reason), style.dim,
+                    message.session_name, style.reset);
+            if (message.reasoning_tokens || message.first_reasoning_seconds > 0.0)
+                fprintf(status_output,
+                        "%sreasoning%s %llu tokens · %.2f s · %.2f tok/s · TTFR %.2f s · "
+                        "final %llu tokens · %.2f s · %.2f tok/s · TTFF %.2f s · total %.2f tok/s\n",
+                        style.dim, style.reset, message.reasoning_tokens,
+                        message.reasoning_seconds, message.reasoning_rate,
+                        message.first_reasoning_seconds, message.final_tokens,
+                        message.final_seconds, message.final_rate,
+                        message.first_final_seconds, message.total_completion_rate);
             break;
         } else if (message.kind == YVEX_CLIENT_MESSAGE_ERROR) {
             if (progress_active) fputs("\r\033[2K", stdout);
-            rc = yvex_cli_stream_renderer_finish(&renderer, 1);
+            rc = yvex_cli_stream_renderer_finish(&renderer, conversation);
             renderer_finished = 1;
             if (rc != YVEX_OK) {
                 yvex_error_set(&err, YVEX_ERR_IO, "client.turn.render",
@@ -864,14 +877,15 @@ static int generation_turn(const char *session_name,
                 break;
             }
             if (message.partial_turn.available)
-                printf("%spartial%s · %llu committed token%s · position %llu · %s\n",
-                       style.warning, style.reset,
-                       message.partial_turn.committed_token_count,
-                       message.partial_turn.committed_token_count == 1u ? "" : "s",
-                       message.partial_turn.final_committed_position,
-                       message.partial_turn.reset_required
-                           ? "reset required (/reset)"
-                           : "recovery unavailable");
+                fprintf(status_output,
+                        "%spartial%s · %llu committed token%s · position %llu · %s\n",
+                        style.warning, style.reset,
+                        message.partial_turn.committed_token_count,
+                        message.partial_turn.committed_token_count == 1u ? "" : "s",
+                        message.partial_turn.final_committed_position,
+                        message.partial_turn.reset_required
+                            ? "reset required (/reset)"
+                            : "recovery unavailable");
             yvex_error_set(&err, (yvex_status)message.status, "client.turn",
                            message.reason);
             rc = message.status;
@@ -879,7 +893,7 @@ static int generation_turn(const char *session_name,
         }
     }
     if (!renderer_finished && started)
-        (void)yvex_cli_stream_renderer_finish(&renderer, 1);
+        (void)yvex_cli_stream_renderer_finish(&renderer, conversation);
     yvex_client_close(&client);
     {
         int interrupted = turn_signals_close(&signals);
@@ -911,7 +925,6 @@ static int session_ensure(const char *name)
     if (rc == YVEX_OK && message.kind != YVEX_CLIENT_MESSAGE_ERROR) return 0;
     return administration(YVEX_CLIENT_OP_SESSION_NEW, name, -1);
 }
-
 static void repl_history_push(client_repl_history *history, const char *line)
 {
     char *copy;
@@ -928,7 +941,6 @@ static void repl_history_push(client_repl_history *history, const char *line)
     }
     history->entry[history->count++] = copy;
 }
-
 static void repl_history_close(client_repl_history *history)
 {
     size_t index;
@@ -1192,11 +1204,6 @@ static void repl_reasoning_policy(
                style.warning, style.reset);
         return;
     }
-    if (status.console.position && status.console.reasoning_policy != policy) {
-        printf("%sreasoning policy unchanged%s · use /reset before switching\n",
-               style.warning, style.reset);
-        return;
-    }
     options->reasoning_policy = policy;
     printf("%sreasoning%s · %s for the next turn\n", style.accent,
            style.reset, name);
@@ -1442,6 +1449,16 @@ static int run_command(int argc, char **argv)
             if (!strcmp(strategy, "greedy")) options.stochastic = 0;
             else if (!strcmp(strategy, "stochastic")) options.stochastic = 1;
             else return 2;
+        } else if (!strcmp(argument, "--reasoning") && index + 1 < argc) {
+            const char *reasoning = argv[++index];
+            if (!strcmp(reasoning, "none"))
+                options.reasoning_policy = YVEX_REASONING_DISABLED;
+            else if (!strcmp(reasoning, "high"))
+                options.reasoning_policy = YVEX_REASONING_ENABLED;
+            else if (!strcmp(reasoning, "max"))
+                options.reasoning_policy = YVEX_REASONING_MAXIMUM;
+            else
+                return 2;
         } else if (!strcmp(argument, "--seed") && index + 1 < argc) {
             if (!parse_u64(argv[++index], &options.seed, 1)) return 2;
             options.seed_present = 1;

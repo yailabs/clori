@@ -27,7 +27,7 @@ contains "$OUT_DIR/help.out" '[--openai on|off]'
 contains "$OUT_DIR/help.out" '[--generation-mode target-only|dspark]'
 contains "$OUT_DIR/help.out" 'loopback OpenAI listener'
 "$YVEXD_BIN" --version >"$OUT_DIR/version.out" 2>"$OUT_DIR/version.err"
-contains "$OUT_DIR/version.out" '0.1.0 protocol=6'
+contains "$OUT_DIR/version.out" '0.1.0 protocol=7'
 
 set +e
 "$YVEXD_BIN" >"$OUT_DIR/missing.out" 2>"$OUT_DIR/missing.err"

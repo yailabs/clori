@@ -1,6 +1,6 @@
 # YVEX Roadmap
 
-Date: 2026-07-31
+Date: 2026-08-05
 Status: living public project control
 Release target: v0.1.0
 
@@ -31,7 +31,7 @@ operations may link engine owners but never become another hosted runtime.
 
 The current implementation can compile admitted physical variants, open one
 complete model, generate streamed text, retain exact multi-turn sessions, and
-serve the bounded `yvex.openai.compat.v1` profile. This establishes executable
+serve the bounded `yvex.openai.compat.v2` profile. This establishes executable
 product capability, not model quality, release benchmark, or release
 qualification.
 
@@ -104,7 +104,7 @@ not a replacement historical ledger.
 | Source and compilation | The pinned 48-shard DSpark source, tokenizer, 72,317-tensor coverage, 1,409-terminal Transformation IR, bootstrap physical policy, qtypes, and deterministic GGUF emission have typed owners and identity-bound outputs. |
 | Artifact and admission | One complete DSpark bootstrap artifact contains the target and drafter; structural, payload, roundtrip, materialization, and one binding containing target/draft/verification plans are admitted outside Git. |
 | Runtime and generation | One authenticated model opens in `yvexd`; server-owned sessions retain exact target KV/token truth and bounded candidate state; target-only and target-verified DSpark text run on CPU and the admitted mixed CUDA/host path. |
-| Application serving | Local protocol v6 and YVEX OpenAI Compatibility Profile v1 share one runtime, worker, queue, session registry, and telemetry authority. |
+| Application serving | Local protocol v7 and YVEX OpenAI Compatibility Profile v2 share one runtime, worker, queue, session registry, and telemetry authority. |
 | Product surface | `yvex` and `yvexd` are the only product executables. The former developer and OpenAI gateway executables are retired. |
 | Command architecture | `yvex.operator.registry.v1` generates immutable descriptors compiled into `yvex`; canonical operation IDs drive the truthful command taxonomy, lane-safe dispatch, help, JSON discovery, completion, and slash-command schemas. |
 | Documentation architecture | Canonical doctrine, terminology, reference and implemented architecture, family records, contracts, operations, development policy, audits, migrations, and release surfaces have separate governed owners. |
@@ -188,14 +188,14 @@ Machine-readable readiness facts retained for claim guards:
 ```text
 canonical_operation_registry_ready=1
 generated_command_descriptors_ready=1
-protocol_v6_ready=1
+protocol_v7_ready=1
 mature_repl_console_ready=1
 deepseek_dspark_source_ready=1
 target_only_generation_ready=1
 dspark_verified_generation_ready=1
 semantic_watch_renderer_ready=1
 human_trace_renderer_ready=1
-explicit_reasoning_renderer_ready=0
+explicit_reasoning_renderer_ready=1
 model_behavior_evaluation_ready=0
 model_quality_evaluation_ready=0
 full_model_release_benchmark_ready=0

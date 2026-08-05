@@ -1,5 +1,5 @@
 /*
- * Provide deterministic status, session, text, JSON, and tool-call protocol-v6 facts. Never
+ * Provide deterministic status, session, text, JSON, and tool-call protocol-v7 facts. Never
  * enters production objects.
  */
 
@@ -37,6 +37,8 @@ static void message_base(yvex_client_message *message,
     message->schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     message->kind = kind;
     message->status = YVEX_OK;
+    if (kind == YVEX_CLIENT_MESSAGE_ERROR)
+        message->stream_channel = YVEX_CLIENT_STREAM_ERROR;
     message->request_number = request ? request->request_number : 0u;
     if (request) {
         strcpy(message->session_name, request->session_name);
@@ -54,7 +56,7 @@ static int send_ack(int fd, const yvex_client_request *request,
 {
     yvex_client_message message;
     message_base(&message, YVEX_CLIENT_MESSAGE_ACK, request);
-    strcpy(message.reason, "protocol-v6");
+    strcpy(message.reason, "protocol-v7");
     return yvex_server_protocol_send(fd, &message, err);
 }
 
@@ -215,6 +217,8 @@ static int send_fragment(int fd, const yvex_client_request *request,
     yvex_client_stream_channel channel =
         kind == YVEX_PROVIDER_OUTPUT_FUNCTION_CALL
             ? YVEX_CLIENT_STREAM_TOOL_CALL
+        : kind == YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING
+            ? YVEX_CLIENT_STREAM_EXPLICIT_REASONING
             : YVEX_CLIENT_STREAM_FINAL_TEXT;
     return send_fragment_bytes(fd, request, kind, channel,
                                (const unsigned char *)bytes, strlen(bytes),
@@ -263,19 +267,21 @@ static int send_native_reasoning(int fd, const yvex_client_request *request,
     return rc;
 }
 
-static int send_native_partial_fence(int fd,
-                                     const yvex_client_request *request,
-                                     yvex_error *err)
+static int send_native_partial(int fd, const yvex_client_request *request,
+                               yvex_provider_output_kind kind,
+                               const char *bytes, const char *reason,
+                               unsigned long long committed_tokens,
+                               unsigned long long final_position,
+                               yvex_error *err)
 {
     yvex_client_message message;
-    int rc = send_fragment(fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
-                           "```cuda\nint value = ", NULL, NULL, err);
+    int rc = send_fragment(fd, request, kind, bytes, NULL, NULL, err);
     if (rc != YVEX_OK) return rc;
     message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
     message.status = YVEX_ERR_BACKEND;
     message.failure_class = YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE;
     message.session_state = YVEX_SERVER_SESSION_PARTIAL;
-    strcpy(message.reason, "injected CUDA failure after committed output");
+    strcpy(message.reason, reason);
     message.partial_turn.schema_version = YVEX_CLIENT_PARTIAL_TURN_SCHEMA_V1;
     message.partial_turn.available = 1;
     message.partial_turn.committed_progress = 1;
@@ -284,10 +290,10 @@ static int send_native_partial_fence(int fd,
     message.partial_turn.failure_class = YVEX_CLIENT_FAILURE_RUNTIME_UNAVAILABLE;
     message.partial_turn.stop_reason = YVEX_CLIENT_STOP_MODEL_FAILURE;
     message.partial_turn.initial_position = 4u;
-    message.partial_turn.final_committed_position = 6u;
-    message.partial_turn.committed_token_count = 2u;
-    message.partial_turn.published_text_bytes = 20u;
-    message.partial_turn.target_state_generation = 2u;
+    message.partial_turn.final_committed_position = final_position;
+    message.partial_turn.committed_token_count = committed_tokens;
+    message.partial_turn.published_text_bytes = strlen(bytes);
+    message.partial_turn.target_state_generation = committed_tokens;
     message.partial_turn.rng_generation = 0u;
     message.partial_turn.token_ledger_generation = 2u;
     message.partial_turn.message_history_generation = 1u;
@@ -301,6 +307,27 @@ static int send_native_partial_fence(int fd,
     memset(message.partial_turn.published_text_identity, 'd', 64u);
     message.partial_turn.published_text_identity[64] = '\0';
     return yvex_server_protocol_send(fd, &message, err);
+}
+
+static int send_native_partial_fence(int fd,
+                                     const yvex_client_request *request,
+                                     yvex_error *err)
+{
+    return send_native_partial(
+        fd, request, YVEX_PROVIDER_OUTPUT_ASSISTANT_TEXT,
+        "```cuda\nint value = ",
+        "injected CUDA failure after committed output", 2u, 6u, err);
+}
+
+static int send_native_partial_reasoning(int fd,
+                                         const yvex_client_request *request,
+                                         yvex_error *err)
+{
+    return send_native_partial(
+        fd, request, YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING,
+        "reasoning committed before failure",
+        "injected failure between explicit reasoning and final output", 1u,
+        5u, err);
 }
 
 static int request_contains(const yvex_provider_request *request,
@@ -368,7 +395,7 @@ static int send_generation(int fd, const yvex_client_request *request,
     const yvex_provider_request *provider = request->provider_request;
     yvex_client_message message;
     unsigned long long index;
-    int has_tool_result = 0, rc;
+    int has_tool_result = 0, has_reasoning_history = 0, rc;
 
     if (request_contains(provider, "QUEUE_FULL")) {
         message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
@@ -393,9 +420,36 @@ static int send_generation(int fd, const yvex_client_request *request,
         (native_prompt_contains(request, "WAIT_PREFILL_CANCEL") ||
          native_prompt_contains(request, "WAIT_DECODE_CANCEL")))
         return send_native_cancellation(fd, request, err);
+    if (rc == YVEX_OK &&
+        native_prompt_contains(request, "WAIT_REASONING_CANCEL")) {
+        if (request->reasoning_policy == YVEX_REASONING_DISABLED) {
+            message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
+            message.status = YVEX_ERR_STATE;
+            strcpy(message.reason,
+                   "reasoning cancellation fixture requires an explicit policy");
+            return yvex_server_protocol_send(fd, &message, err);
+        }
+        rc = send_fragment(fd, request,
+                           YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING,
+                           "reasoning before cancellation", NULL, NULL, err);
+        if (rc == YVEX_OK) return send_native_cancellation(fd, request, err);
+    }
     if (rc == YVEX_OK && request_contains(provider, "DISCONNECT")) {
         struct pollfd listener = {.fd = listener_fd, .events = POLLIN};
         int ready;
+        if (request_contains(provider, "REASONING_DISCONNECT")) {
+            if (provider->reasoning_policy == YVEX_REASONING_DISABLED) {
+                message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
+                message.status = YVEX_ERR_STATE;
+                strcpy(message.reason,
+                       "reasoning disconnect fixture requires an explicit policy");
+                return yvex_server_protocol_send(fd, &message, err);
+            }
+            rc = send_fragment(fd, request,
+                               YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING,
+                               "reasoning before disconnect", NULL, NULL, err);
+            if (rc != YVEX_OK) return rc;
+        }
         do {
             ready = poll(&listener, 1u, 2000);
         } while (ready < 0 && errno == EINTR);
@@ -415,12 +469,32 @@ static int send_generation(int fd, const yvex_client_request *request,
         }
         return rc;
     }
-    for (index = 0u; provider && index < provider->message_count; ++index)
+    for (index = 0u; provider && index < provider->message_count; ++index) {
         if (provider->messages[index].role == YVEX_PROVIDER_ROLE_TOOL)
             has_tool_result = 1;
+        else if (provider->messages[index].role == YVEX_PROVIDER_ROLE_ASSISTANT &&
+                 provider->messages[index].reasoning_content.count)
+            has_reasoning_history = 1;
+    }
+    if (rc == YVEX_OK && provider &&
+        provider->reasoning_policy != YVEX_REASONING_DISABLED)
+        rc = send_fragment(fd, request,
+                           YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING,
+                           "explicit model reasoning", NULL, NULL, err);
     if (rc == YVEX_OK && !provider &&
         native_prompt_contains(request, "PARTIAL_FENCE"))
         return send_native_partial_fence(fd, request, err);
+    if (rc == YVEX_OK && !provider &&
+        native_prompt_contains(request, "PARTIAL_REASONING")) {
+        if (request->reasoning_policy == YVEX_REASONING_DISABLED) {
+            message_base(&message, YVEX_CLIENT_MESSAGE_ERROR, request);
+            message.status = YVEX_ERR_STATE;
+            strcpy(message.reason,
+                   "partial reasoning fixture requires an explicit policy");
+            return yvex_server_protocol_send(fd, &message, err);
+        }
+        return send_native_partial_reasoning(fd, request, err);
+    }
     if (rc == YVEX_OK && !provider &&
         native_prompt_contains(request, "MARKDOWN_STREAM")) {
         rc = send_native_markdown(fd, request, err);
@@ -439,11 +513,17 @@ static int send_generation(int fd, const yvex_client_request *request,
         rc = send_fragment(fd, request, YVEX_PROVIDER_OUTPUT_FUNCTION_CALL,
                            "{\"match_id\":\"m1\"}", "call_fixture_1",
                            provider->tools[0].name, err);
+        if (rc == YVEX_OK && request_contains(provider, "MULTI_TOOL"))
+            rc = send_fragment(fd, request,
+                               YVEX_PROVIDER_OUTPUT_FUNCTION_CALL,
+                               "{\"match_id\":\"m2\"}", "call_fixture_2",
+                               provider->tools[0].name, err);
         message.provider_finish = YVEX_PROVIDER_FINISH_TOOL_CALLS;
     } else if (rc == YVEX_OK) {
-        const char *text = has_tool_result
-                               ? "Match context accepted."
-                               : "hello from yvex";
+        const char *text = has_tool_result && has_reasoning_history
+                               ? "Reasoning continuity accepted."
+                           : has_tool_result ? "Match context accepted."
+                                             : "hello from yvex";
         if (request_contains(provider, "exactly these keys"))
             text = "{\"status\":\"ok\",\"operation_mode\":\"observe\","
                    "\"real_data\":false}";
@@ -484,6 +564,21 @@ static int send_generation(int fd, const yvex_client_request *request,
     message.completion_tokens = 3u;
     message.total_tokens = 8u;
     message.generated_tokens = 3u;
+    if ((provider ? provider->reasoning_policy : request->reasoning_policy) !=
+        YVEX_REASONING_DISABLED) {
+        message.reasoning_tokens = 2u;
+        message.final_tokens = 1u;
+        message.first_reasoning_seconds = 2.5;
+        message.first_final_seconds = 2.75;
+        message.reasoning_seconds = 0.25;
+        message.final_seconds = 0.25;
+        message.total_completion_seconds = 0.5;
+        message.reasoning_rate = 8.0;
+        message.final_rate = 4.0;
+        message.total_completion_rate = 6.0;
+    } else {
+        message.final_tokens = 3u;
+    }
     message.final_position = 8u;
     message.context_used = 8u;
     message.prefill_seconds = 2.0;

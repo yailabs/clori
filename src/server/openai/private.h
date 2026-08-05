@@ -11,7 +11,7 @@
 #include "src/server/private.h"
 #include <yvex/provider.h>
 #include <yvex/server.h>
-#define OPENAI_COMPAT_PROFILE "yvex.openai.compat.v1"
+#define OPENAI_COMPAT_PROFILE "yvex.openai.compat.v2"
 #define OPENAI_HTTP_BODY_MAX YVEX_PROVIDER_WIRE_MAX_BYTES
 #define OPENAI_HTTP_HEADER_MAX 32768u
 #define OPENAI_HTTP_HEADER_COUNT_MAX 64u
@@ -28,6 +28,8 @@ typedef enum {
     OPENAI_RESPONSE_EVENT_CREATED = 0,
     OPENAI_RESPONSE_EVENT_OUTPUT_ITEM_ADDED,
     OPENAI_RESPONSE_EVENT_CONTENT_PART_ADDED,
+    OPENAI_RESPONSE_EVENT_REASONING_DELTA,
+    OPENAI_RESPONSE_EVENT_REASONING_DONE,
     OPENAI_RESPONSE_EVENT_OUTPUT_TEXT_DELTA,
     OPENAI_RESPONSE_EVENT_OUTPUT_TEXT_DONE,
     OPENAI_RESPONSE_EVENT_CONTENT_PART_DONE,
@@ -45,29 +47,36 @@ typedef struct {
     unsigned long long body_count;
 } openai_http_request;
 typedef struct {
-    int fd;
-    int headers_sent;
-    int stream;
+    int fd, headers_sent, stream;
     openai_endpoint endpoint;
-    unsigned long long response_sequence;
-    int response_item_started;
+    unsigned long long response_sequence, response_item_mask;
 } openai_http_sink;
 typedef struct {
     yvex_provider_request *provider;
     openai_endpoint endpoint;
 } openai_admitted_request;
 typedef struct {
-    unsigned char *text, *arguments;
-    unsigned long long text_count, text_capacity;
+    unsigned char *arguments;
     unsigned long long arguments_count, arguments_capacity;
+    char call_id[YVEX_PROVIDER_ID_CAP];
+    char name[YVEX_PROVIDER_TOOL_NAME_CAP];
+} openai_generation_tool_call;
+typedef struct {
+    unsigned char *reasoning, *text;
+    unsigned long long reasoning_count, reasoning_capacity;
+    unsigned long long text_count, text_capacity;
+    openai_generation_tool_call tool_calls[YVEX_PROVIDER_MAX_TOOLS];
+    unsigned long long tool_call_count;
     unsigned long long prompt_tokens, completion_tokens, total_tokens;
+    unsigned long long reasoning_tokens, final_tokens;
+    double first_reasoning_seconds, first_final_seconds;
+    double reasoning_seconds, final_seconds, total_completion_seconds;
+    double reasoning_rate, final_rate, total_completion_rate;
     yvex_provider_finish_class finish;
-    char tool_call_id[YVEX_PROVIDER_ID_CAP];
-    char tool_name[YVEX_PROVIDER_TOOL_NAME_CAP];
     char session_name[YVEX_SERVER_SESSION_NAME_CAP];
     char turn_identity[YVEX_SHA256_HEX_CAP];
     yvex_client_failure_class failure_class;
-    int has_tool_call, complete;
+    int complete;
 } openai_generation_result;
 typedef struct {
     int occupied;
@@ -117,7 +126,8 @@ int openai_json_result(openai_endpoint endpoint, const char *id,
                        yvex_error *err);
 int openai_json_stream_chunk(openai_endpoint endpoint, const char *id,
                              const char *model, unsigned long long created,
-                             const yvex_client_message *message, int initial,
+                             const yvex_client_message *message,
+                             unsigned long long tool_index, int initial,
                              unsigned char **output, unsigned long long *count,
                              yvex_error *err);
 int openai_json_chat_usage_chunk(const char *id, const char *model,
@@ -130,6 +140,7 @@ int openai_json_response_event(openai_response_event_kind kind,
                                unsigned long long created,
                                const yvex_client_message *message,
                                const openai_generation_result *result,
+                               unsigned long long output_index,
                                unsigned long long sequence,
                                unsigned char **output,
                                unsigned long long *count, yvex_error *err);

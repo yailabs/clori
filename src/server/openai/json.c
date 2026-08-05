@@ -240,23 +240,25 @@ static int tool_calls(yvex_json *json, yvex_provider_message *message,
 {
     yvex_json_iter iter;
     yvex_json_item item;
-    yvex_provider_tool_call *call = NULL;
+    yvex_provider_tool_call *calls;
     unsigned long long count = 0u;
+    calls = calloc(YVEX_PROVIDER_MAX_TOOLS, sizeof(*calls));
+    if (!calls) return YVEX_ERR_NOMEM;
+    message->tool_calls = calls;
     if (!yvex_json_iter_begin(json, &iter, YVEX_JSON_COLLECTION_ARRAY))
         return YVEX_ERR_FORMAT;
     while ((item = yvex_json_array_value(&iter)) == YVEX_JSON_ITEM_READY) {
-        if (count++) return json_refuse(err, YVEX_ERR_UNSUPPORTED,
-                                        "parallel tool calls are unsupported");
-        call = calloc(1u, sizeof(*call));
-        if (!call) return YVEX_ERR_NOMEM;
-        message->tool_calls = call;
-        message->tool_call_count = 1u;
-        if (tool_call(json, call, err) != YVEX_OK) return yvex_error_code(err);
+        if (count >= YVEX_PROVIDER_MAX_TOOLS)
+            return json_refuse(err, YVEX_ERR_BOUNDS,
+                               "tool-call count exceeds provider capacity");
+        message->tool_call_count = ++count;
+        if (tool_call(json, &calls[count - 1u], err) != YVEX_OK)
+            return yvex_error_code(err);
     }
-    return item == YVEX_JSON_ITEM_END && !iter.trailing_separator && count == 1u
+    return item == YVEX_JSON_ITEM_END && !iter.trailing_separator && count
                ? YVEX_OK
                : json_refuse(err, YVEX_ERR_FORMAT,
-                             "one tool call is required");
+                             "at least one tool call is required");
 }
 
 static int role_parse(const char *role, yvex_provider_role *output)
@@ -299,6 +301,11 @@ static int message_parse(yvex_json *json, yvex_provider_message *message,
                 return yvex_error_code(err);
             }
             content_seen = 1;
+        } else if (strcmp(key, "reasoning_content") == 0) {
+            if (string_span(json, &message->reasoning_content,
+                            YVEX_PROVIDER_MAX_MESSAGE_BYTES, 1,
+                            err) != YVEX_OK)
+                return yvex_error_code(err);
         } else if (strcmp(key, "tool_call_id") == 0) {
             if (string_fixed(json, message->tool_call_id,
                              sizeof(message->tool_call_id), 0, err) != YVEX_OK)
@@ -315,7 +322,9 @@ static int message_parse(yvex_json *json, yvex_provider_message *message,
         }
     }
     if (item != YVEX_JSON_ITEM_END || iter.trailing_separator || !role_seen ||
-        !content_seen)
+        (!content_seen &&
+         !(message->role == YVEX_PROVIDER_ROLE_ASSISTANT &&
+           (message->reasoning_content.count || message->tool_call_count))))
         return json_refuse(err, YVEX_ERR_FORMAT,
                            "message role and content are required");
     return YVEX_OK;
@@ -370,6 +379,7 @@ static int function_definition(yvex_json *json,
             if (string_span(json, &tool->description,
                             YVEX_PROVIDER_MAX_MESSAGE_BYTES, 1, err) != YVEX_OK)
                 return yvex_error_code(err);
+            tool->description_present = 1;
         } else if (strcmp(key, "parameters") == 0) {
             if (raw_value(json, &tool->parameters_json,
                           YVEX_PROVIDER_MAX_TOOL_SCHEMA_BYTES, 1, err) != YVEX_OK)
@@ -381,6 +391,7 @@ static int function_definition(yvex_json *json,
             if (strict)
                 return json_refuse(err, YVEX_ERR_UNSUPPORTED,
                                    "strict function schemas require constrained decoding");
+            tool->strict_present = 1;
         } else {
             return json_refuse(err, YVEX_ERR_UNSUPPORTED,
                                "unsupported function definition field");
@@ -449,6 +460,7 @@ static int tools_parse(yvex_json *json, yvex_provider_request *request,
                 if (string_span(json, &tools[tool_index].description,
                                 YVEX_PROVIDER_MAX_MESSAGE_BYTES, 1, err) != YVEX_OK)
                     return yvex_error_code(err);
+                tools[tool_index].description_present = 1;
             } else if (responses_style && strcmp(key, "parameters") == 0) {
                 if (raw_value(json, &tools[tool_index].parameters_json,
                               YVEX_PROVIDER_MAX_TOOL_SCHEMA_BYTES, 1, err) != YVEX_OK)
@@ -461,6 +473,7 @@ static int tools_parse(yvex_json *json, yvex_provider_request *request,
                     return json_refuse(
                         err, YVEX_ERR_UNSUPPORTED,
                         "strict function schemas require constrained decoding");
+                tools[tool_index].strict_present = 1;
             } else {
                 return json_refuse(err, YVEX_ERR_UNSUPPORTED,
                                    "unsupported tool definition field");
@@ -658,6 +671,21 @@ static int common_field(const char *key, yvex_json *json,
     }
     if (strcmp(key, "stream") == 0)
         return yvex_json_bool(json, &request->stream) ? YVEX_OK : YVEX_ERR_FORMAT;
+    if (strcmp(key, "reasoning_effort") == 0) {
+        char effort[16];
+        if (string_fixed(json, effort, sizeof(effort), 0, err) != YVEX_OK)
+            return yvex_error_code(err);
+        if (strcmp(effort, "none") == 0)
+            request->reasoning_policy = YVEX_REASONING_DISABLED;
+        else if (strcmp(effort, "high") == 0)
+            request->reasoning_policy = YVEX_REASONING_ENABLED;
+        else if (strcmp(effort, "max") == 0)
+            request->reasoning_policy = YVEX_REASONING_MAXIMUM;
+        else
+            return json_refuse(err, YVEX_ERR_UNSUPPORTED,
+                               "reasoning_effort must be none, high, or max");
+        return YVEX_OK;
+    }
     if (strcmp(key, "stop") == 0) return stops_parse(json, request, err);
     if (strcmp(key, "tools") == 0)
         return tools_parse(json, request,
@@ -668,8 +696,7 @@ static int common_field(const char *key, yvex_json *json,
     if (strcmp(key, "parallel_tool_calls") == 0) {
         int parallel = 0;
         if (!yvex_json_bool(json, &parallel)) return YVEX_ERR_FORMAT;
-        if (parallel) return json_refuse(err, YVEX_ERR_UNSUPPORTED,
-                                         "parallel tool calls are unsupported");
+        request->tool_choice.parallel_calls = parallel;
         return YVEX_OK;
     }
     *handled = 0;

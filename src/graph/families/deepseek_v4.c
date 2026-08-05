@@ -1,4 +1,3 @@
-/* Compose admitted generic graph mechanisms without reading tensor payloads. */
 #include "src/graph/private.h"
 #include <yvex/internal/families/deepseek_v4.h>
 #include <yvex/internal/graph_state.h>
@@ -1820,7 +1819,6 @@ static const yvex_graph_family_api deepseek_graph_api = {
     .cpu_chunk_execute = graph_cpu_chunk_execute
 };
 const yvex_graph_family_api *yvex_graph_lower_deepseek_v4(void) { return &deepseek_graph_api; }
-/* Preserve the accepted v7 family projection while v8 consumes sealed source-derived facts. */
 static const yvex_model_execution_descriptor deepseek_legacy_execution = {
     .schema_version = YVEX_MODEL_EXECUTION_DESCRIPTOR_SCHEMA_V1, .maximum_context = 1048576ull,
     .hidden_width = 4096ull, .residual_streams = 4ull, .mhc_sinkhorn_iterations = 20ull,
@@ -1882,7 +1880,8 @@ static int deepseek_moe_layer(unsigned long long index, const yvex_runtime_descr
     return YVEX_OK;
 }
 static const yvex_moe_family_api deepseek_moe_api = {
-    .adapter_id = 0x44535634ull, .adapter_version = 7ull, .project_layer = deepseek_moe_layer};
+    .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID, .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
+    .project_layer = deepseek_moe_layer};
 const yvex_moe_family_api *yvex_graph_moe_family_at(unsigned long long index) {
     return index == 0ull ? &deepseek_moe_api : NULL;
 }
@@ -1987,7 +1986,8 @@ static int deepseek_speculation_policy(const yvex_runtime_descriptor_summary *ru
     return 1;
 }
 static const yvex_runtime_family_adapter deepseek_adapter = {
-    .schema_version = YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3, .adapter_id = 0x44535634ull, .adapter_version = 7ull,
+    .schema_version = YVEX_RUNTIME_FAMILY_ADAPTER_SCHEMA_V3, .adapter_id = YVEX_DEEPSEEK_V4_ADAPTER_ID,
+    .adapter_version = YVEX_DEEPSEEK_V4_ADAPTER_VERSION,
     .target_id = "deepseek4-v4-flash-dspark", .family_name = "deepseek-v4-flash-dspark",
     .operator_family_key = "deepseek", .operator_artifact_filename = YVEX_SELECTED_DEEPSEEK_ARTIFACT_FILENAME,
     .logical_transform_identity = YVEX_SELECTED_DEEPSEEK_TRANSFORM_IDENTITY,

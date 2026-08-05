@@ -170,5 +170,5 @@ XDG_RUNTIME_DIR="$runtime" "$YVEX_BIN" runtime stop >/dev/null
 wait "$daemon_pid"
 daemon_pid=
 grep -F '"kind":"runtime.shutdown.complete"' "$root/raw.jsonl" >/dev/null
-printf 'test: openai_live one_daemon_pid=%s model=%s profile=yvex.openai.compat.v1\n' \
+printf 'test: openai_live one_daemon_pid=%s model=%s profile=yvex.openai.compat.v2\n' \
     "$served_pid" "$model"

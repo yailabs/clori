@@ -1,9 +1,7 @@
 /*
- * Define the private contract composing DeepSeek architecture, lowering, and graph recipe.
- *
- * One family header exposes one identity-preserving registration boundary; family facts never
- * become an independent generic registry. A complete family recipe is not runtime-generation
- * admission.
+ * Private contract composing the bounded DeepSeek architecture, lowering, and graph recipe.
+ * Family facts remain one identity-preserving registration boundary, never a generic registry or
+ * runtime-generation admission claim.
  */
 #ifndef INCLUDE_YVEX_INTERNAL_FAMILIES_DEEPSEEK_V4_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_FAMILIES_DEEPSEEK_V4_H_INCLUDED
@@ -15,6 +13,8 @@
 #include <yvex/source.h>
 #include <yvex/internal/model.h>
 #define YVEX_DEEPSEEK_IDENTITY_CAP 65u
+#define YVEX_DEEPSEEK_V4_ADAPTER_ID 0x44535634ull
+#define YVEX_DEEPSEEK_V4_ADAPTER_VERSION 7ull
 typedef struct yvex_source_verification yvex_source_verification;
 typedef struct yvex_source_tensor_snapshot yvex_source_tensor_snapshot;
 typedef struct yvex_source_payload_plan yvex_source_payload_plan;

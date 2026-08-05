@@ -85,9 +85,12 @@ static int result_append(unsigned char **bytes, unsigned long long *count,
 
 static void result_clear(openai_generation_result *result)
 {
+    unsigned long long index;
     if (!result) return;
+    free(result->reasoning);
     free(result->text);
-    free(result->arguments);
+    for (index = 0u; index < result->tool_call_count; ++index)
+        free(result->tool_calls[index].arguments);
     memset(result, 0, sizeof(*result));
 }
 
@@ -157,7 +160,6 @@ static int context_combine(const yvex_provider_request *prior,
     if (!candidate.tool_count) {
         candidate.tools = prior->tools;
         candidate.tool_count = prior->tool_count;
-        candidate.tool_choice = prior->tool_choice;
     }
     candidate.sealed = 0;
     candidate.request_identity[0] = '\0';
@@ -178,7 +180,8 @@ static int context_complete(const yvex_provider_request *request,
 {
     yvex_provider_request candidate = *request;
     yvex_provider_message *messages;
-    yvex_provider_tool_call call = {0};
+    yvex_provider_tool_call calls[YVEX_PROVIDER_MAX_TOOLS] = {0};
+    unsigned long long index;
     int rc;
     *context = NULL;
     if (request->message_count >= YVEX_PROVIDER_MAX_MESSAGES)
@@ -188,17 +191,23 @@ static int context_complete(const yvex_provider_request *request,
     memcpy(messages, request->messages,
            (size_t)request->message_count * sizeof(*messages));
     messages[request->message_count].role = YVEX_PROVIDER_ROLE_ASSISTANT;
+    messages[request->message_count].reasoning_content.bytes = result->reasoning;
+    messages[request->message_count].reasoning_content.count =
+        result->reasoning_count;
     messages[request->message_count].content.bytes = result->text;
     messages[request->message_count].content.count = result->text_count;
-    if (result->has_tool_call) {
-        yvex_core_text_copy(call.call_id, sizeof(call.call_id),
-                            result->tool_call_id);
-        yvex_core_text_copy(call.name, sizeof(call.name), result->tool_name);
-        call.arguments_json.bytes = result->arguments;
-        call.arguments_json.count = result->arguments_count;
-        messages[request->message_count].tool_calls = &call;
-        messages[request->message_count].tool_call_count = 1u;
+    for (index = 0u; index < result->tool_call_count; ++index) {
+        yvex_core_text_copy(calls[index].call_id, sizeof(calls[index].call_id),
+                            result->tool_calls[index].call_id);
+        yvex_core_text_copy(calls[index].name, sizeof(calls[index].name),
+                            result->tool_calls[index].name);
+        calls[index].arguments_json.bytes =
+            result->tool_calls[index].arguments;
+        calls[index].arguments_json.count =
+            result->tool_calls[index].arguments_count;
     }
+    messages[request->message_count].tool_calls = calls;
+    messages[request->message_count].tool_call_count = result->tool_call_count;
     candidate.messages = messages;
     candidate.message_count = request->message_count + 1u;
     candidate.previous_response_id[0] = '\0';
@@ -374,6 +383,8 @@ static const char *response_sse_name(openai_response_event_kind kind)
         "response.created",
         "response.output_item.added",
         "response.content_part.added",
+        "response.reasoning_content.delta",
+        "response.reasoning_content.done",
         "response.output_text.delta",
         "response.output_text.done",
         "response.content_part.done",
@@ -393,19 +404,57 @@ static int response_event_emit(openai_http_sink *sink,
                                unsigned long long created,
                                const yvex_client_message *message,
                                const openai_generation_result *result,
+                               unsigned long long output_index,
                                yvex_error *err)
 {
     unsigned char *json = NULL;
     unsigned long long count = 0u;
     int rc = openai_json_response_event(
         kind, id, model, created, message, result,
-        sink->response_sequence, &json, &count, err);
+        output_index, sink->response_sequence, &json, &count, err);
     if (rc == YVEX_OK)
         rc = openai_http_sse_event(sink->fd, response_sse_name(kind),
                                    json, count, err);
     if (rc == YVEX_OK) sink->response_sequence++;
     free(json);
     return rc;
+}
+
+static int generation_tool_call(
+    openai_generation_result *result, const yvex_client_message *message,
+    unsigned long long *tool_index, yvex_error *err)
+{
+    unsigned long long index;
+    if (!message->tool_call_id[0] || !message->tool_name[0]) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "server.openai.tool",
+                       "typed tool fragments require call and function identities");
+        return YVEX_ERR_FORMAT;
+    }
+    for (index = 0u; index < result->tool_call_count; ++index)
+        if (strcmp(result->tool_calls[index].call_id,
+                   message->tool_call_id) == 0) {
+            if (strcmp(result->tool_calls[index].name, message->tool_name) != 0) {
+                yvex_error_set(err, YVEX_ERR_FORMAT, "server.openai.tool",
+                               "one tool-call identity changed function name");
+                return YVEX_ERR_FORMAT;
+            }
+            *tool_index = index;
+            return YVEX_OK;
+        }
+    if (result->tool_call_count >= YVEX_PROVIDER_MAX_TOOLS) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "server.openai.tool",
+                       "tool-call result exceeds provider capacity");
+        return YVEX_ERR_BOUNDS;
+    }
+    index = result->tool_call_count++;
+    yvex_core_text_copy(result->tool_calls[index].call_id,
+                        sizeof(result->tool_calls[index].call_id),
+                        message->tool_call_id);
+    yvex_core_text_copy(result->tool_calls[index].name,
+                        sizeof(result->tool_calls[index].name),
+                        message->tool_name);
+    *tool_index = index;
+    return YVEX_OK;
 }
 
 static int response_terminal_emit(openai_http_sink *sink, const char *id,
@@ -419,25 +468,40 @@ static int response_terminal_emit(openai_http_sink *sink, const char *id,
         result->finish == YVEX_PROVIDER_FINISH_LENGTH
             ? OPENAI_RESPONSE_EVENT_INCOMPLETE
             : OPENAI_RESPONSE_EVENT_COMPLETED;
+    unsigned long long index, output_index;
     int rc;
-    if (result->has_tool_call) {
-        rc = response_event_emit(
-            sink, OPENAI_RESPONSE_EVENT_FUNCTION_ARGUMENTS_DONE,
-            id, model, created, message, result, err);
+    if (result->reasoning_count) {
+        rc = response_event_emit(sink, OPENAI_RESPONSE_EVENT_REASONING_DONE,
+                                 id, model, created, message, result, 0u, err);
     } else {
+        rc = YVEX_OK;
+    }
+    if (rc == YVEX_OK && (result->text_count || !result->tool_call_count)) {
         rc = response_event_emit(sink, OPENAI_RESPONSE_EVENT_OUTPUT_TEXT_DONE,
-                                 id, model, created, message, result, err);
+                                 id, model, created, message, result, 0u, err);
         if (rc == YVEX_OK)
             rc = response_event_emit(
                 sink, OPENAI_RESPONSE_EVENT_CONTENT_PART_DONE,
-                id, model, created, message, result, err);
+                id, model, created, message, result, 0u, err);
+        if (rc == YVEX_OK)
+            rc = response_event_emit(
+                sink, OPENAI_RESPONSE_EVENT_OUTPUT_ITEM_DONE,
+                id, model, created, message, result, 0u, err);
+    }
+    for (index = 0u; rc == YVEX_OK && index < result->tool_call_count;
+         ++index) {
+        output_index = (result->text_count ? 1u : 0u) + index;
+        rc = response_event_emit(
+            sink, OPENAI_RESPONSE_EVENT_FUNCTION_ARGUMENTS_DONE,
+            id, model, created, message, result, output_index, err);
+        if (rc == YVEX_OK)
+            rc = response_event_emit(
+                sink, OPENAI_RESPONSE_EVENT_OUTPUT_ITEM_DONE,
+                id, model, created, message, result, output_index, err);
     }
     if (rc == YVEX_OK)
-        rc = response_event_emit(sink, OPENAI_RESPONSE_EVENT_OUTPUT_ITEM_DONE,
-                                 id, model, created, message, result, err);
-    if (rc == YVEX_OK)
         rc = response_event_emit(sink, terminal, id, model, created,
-                                 message, result, err);
+                                 message, result, 0u, err);
     return rc;
 }
 
@@ -448,14 +512,14 @@ static int response_stream_complete(openai_http_sink *sink, const char *id,
                                     yvex_error *err)
 {
     int rc = YVEX_OK;
-    if (!sink->response_item_started) {
+    if (!sink->response_item_mask && !result->tool_call_count) {
         rc = response_event_emit(sink, OPENAI_RESPONSE_EVENT_OUTPUT_ITEM_ADDED,
-                                 id, model, created, NULL, result, err);
-        if (rc == YVEX_OK && !result->has_tool_call)
+                                 id, model, created, NULL, result, 0u, err);
+        if (rc == YVEX_OK)
             rc = response_event_emit(
                 sink, OPENAI_RESPONSE_EVENT_CONTENT_PART_ADDED,
-                id, model, created, NULL, result, err);
-        if (rc == YVEX_OK) sink->response_item_started = 1;
+                id, model, created, NULL, result, 0u, err);
+        if (rc == YVEX_OK) sink->response_item_mask = 1u;
     }
     if (rc == YVEX_OK)
         rc = response_terminal_emit(sink, id, model, created, NULL, result,
@@ -470,18 +534,22 @@ static int generation_message(openai_http_sink *sink, const char *id,
                               yvex_error *err)
 {
     unsigned char *json = NULL;
-    unsigned long long count = 0u;
+    unsigned long long count = 0u, tool_index = 0u, output_index = 0u;
     int rc = YVEX_OK;
     if (message->kind == YVEX_CLIENT_MESSAGE_FRAGMENT) {
         if (message->provider_output_kind == YVEX_PROVIDER_OUTPUT_FUNCTION_CALL) {
-            result->has_tool_call = 1;
-            yvex_core_text_copy(result->tool_call_id,
-                                sizeof(result->tool_call_id),
-                                message->tool_call_id);
-            yvex_core_text_copy(result->tool_name, sizeof(result->tool_name),
-                                message->tool_name);
-            rc = result_append(&result->arguments, &result->arguments_count,
-                               &result->arguments_capacity, message->bytes,
+            rc = generation_tool_call(result, message, &tool_index, err);
+            if (rc == YVEX_OK) {
+                openai_generation_tool_call *call = &result->tool_calls[tool_index];
+                rc = result_append(&call->arguments, &call->arguments_count,
+                                   &call->arguments_capacity, message->bytes,
+                                   message->byte_count, err);
+                output_index = (result->text_count ? 1u : 0u) + tool_index;
+            }
+        } else if (message->provider_output_kind ==
+                   YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING) {
+            rc = result_append(&result->reasoning, &result->reasoning_count,
+                               &result->reasoning_capacity, message->bytes,
                                message->byte_count, err);
         } else {
             rc = result_append(&result->text, &result->text_count,
@@ -492,6 +560,16 @@ static int generation_message(openai_http_sink *sink, const char *id,
         result->prompt_tokens = message->prompt_tokens;
         result->completion_tokens = message->completion_tokens;
         result->total_tokens = message->total_tokens;
+        result->reasoning_tokens = message->reasoning_tokens;
+        result->final_tokens = message->final_tokens;
+        result->first_reasoning_seconds = message->first_reasoning_seconds;
+        result->first_final_seconds = message->first_final_seconds;
+        result->reasoning_seconds = message->reasoning_seconds;
+        result->final_seconds = message->final_seconds;
+        result->total_completion_seconds = message->total_completion_seconds;
+        result->reasoning_rate = message->reasoning_rate;
+        result->final_rate = message->final_rate;
+        result->total_completion_rate = message->total_completion_rate;
         result->finish = message->provider_finish;
         yvex_core_text_copy(result->turn_identity,
                             sizeof(result->turn_identity),
@@ -500,29 +578,40 @@ static int generation_message(openai_http_sink *sink, const char *id,
     }
     if (rc == YVEX_OK && sink->stream &&
         sink->endpoint == OPENAI_ENDPOINT_RESPONSES) {
-        if (message->kind == YVEX_CLIENT_MESSAGE_FRAGMENT) {
-            if (!sink->response_item_started) {
+        if (message->kind == YVEX_CLIENT_MESSAGE_FRAGMENT &&
+            message->provider_output_kind ==
+                YVEX_PROVIDER_OUTPUT_EXPLICIT_REASONING) {
+            rc = response_event_emit(
+                sink, OPENAI_RESPONSE_EVENT_REASONING_DELTA, id, model,
+                created, message, result, 0u, err);
+        } else if (message->kind == YVEX_CLIENT_MESSAGE_FRAGMENT) {
+            unsigned long long mask = 1ull << output_index;
+            if (!(sink->response_item_mask & mask)) {
                 rc = response_event_emit(
                     sink, OPENAI_RESPONSE_EVENT_OUTPUT_ITEM_ADDED,
-                    id, model, created, message, result, err);
-                if (rc == YVEX_OK && !result->has_tool_call)
+                    id, model, created, message, result, output_index, err);
+                if (rc == YVEX_OK &&
+                    message->provider_output_kind !=
+                        YVEX_PROVIDER_OUTPUT_FUNCTION_CALL)
                     rc = response_event_emit(
                         sink, OPENAI_RESPONSE_EVENT_CONTENT_PART_ADDED,
-                        id, model, created, message, result, err);
-                if (rc == YVEX_OK) sink->response_item_started = 1;
+                        id, model, created, message, result, output_index, err);
+                if (rc == YVEX_OK) sink->response_item_mask |= mask;
             }
             if (rc == YVEX_OK)
                 rc = response_event_emit(
                     sink,
-                    result->has_tool_call
+                    message->provider_output_kind ==
+                            YVEX_PROVIDER_OUTPUT_FUNCTION_CALL
                         ? OPENAI_RESPONSE_EVENT_FUNCTION_ARGUMENTS_DELTA
                         : OPENAI_RESPONSE_EVENT_OUTPUT_TEXT_DELTA,
-                    id, model, created, message, result, err);
+                    id, model, created, message, result, output_index, err);
         }
     } else if (rc == YVEX_OK && sink->stream &&
                message->kind == YVEX_CLIENT_MESSAGE_FRAGMENT) {
         rc = openai_json_stream_chunk(sink->endpoint, id, model, created,
-                                      message, 0, &json, &count, err);
+                                      message, tool_index, 0, &json, &count,
+                                      err);
         if (rc == YVEX_OK)
             rc = openai_http_sse_event(
                 sink->fd,
@@ -549,6 +638,7 @@ static int generation_execute(openai_gateway *gateway,
     request.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     request.operation = YVEX_CLIENT_OP_GENERATION_TURN;
     request.request_number = 2u;
+    request.reasoning_policy = provider->reasoning_policy;
     request.provider_request = provider;
     yvex_core_text_copy(request.session_name, sizeof(request.session_name),
                         session_name);
@@ -571,12 +661,12 @@ static int generation_execute(openai_gateway *gateway,
             if (rc == YVEX_OK && sink->endpoint == OPENAI_ENDPOINT_RESPONSES)
                 rc = response_event_emit(
                     sink, OPENAI_RESPONSE_EVENT_CREATED, id, model, created,
-                    NULL, result, err);
+                    NULL, result, 0u, err);
             else if (rc == YVEX_OK) {
                 unsigned char *json = NULL;
                 unsigned long long count = 0u;
                 rc = openai_json_stream_chunk(sink->endpoint, id, model,
-                                              created, NULL, 1, &json,
+                                              created, NULL, 0u, 1, &json,
                                               &count, err);
                 if (rc == YVEX_OK)
                     rc = openai_http_sse_event(sink->fd, NULL,
@@ -606,7 +696,7 @@ static int chat_stream_complete(openai_http_sink *sink, const char *id,
     terminal.kind = YVEX_CLIENT_MESSAGE_TURN_COMPLETE;
     terminal.provider_finish = result->finish;
     rc = openai_json_stream_chunk(OPENAI_ENDPOINT_CHAT, id, model, created,
-                                  &terminal, 0, &json, &count, err);
+                                  &terminal, 0u, 0, &json, &count, err);
     if (rc == YVEX_OK)
         rc = openai_http_sse_event(sink->fd, NULL, json, count, err);
     free(json);
@@ -875,7 +965,7 @@ failure:
         yvex_error stream_error;
         (void)response_event_emit(
             &sink, OPENAI_RESPONSE_EVENT_FAILED, id, summary.target_id, now,
-            NULL, &result, &stream_error);
+            NULL, &result, 0u, &stream_error);
     } else {
         yvex_error stream_error;
         unsigned char *stream_json = NULL;

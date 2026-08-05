@@ -1076,6 +1076,17 @@
       {
         "default_provider": "client.run",
         "enum_values": [
+          "none",
+          "high",
+          "max"
+        ],
+        "name": "--reasoning",
+        "takes_value": true,
+        "value_type": "enum"
+      },
+      {
+        "default_provider": "client.run",
+        "enum_values": [
           "greedy",
           "stochastic"
         ],

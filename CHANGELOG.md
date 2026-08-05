@@ -24,8 +24,12 @@ change. Git history preserves implementation chronology.
 - A daemon-backed `yvex>` console with composed attachment state, live prefill
   progress, direct streamed output, typed turn metrics, registry-derived slash
   completion, semantic watch/human trace, and clean Ctrl-C/Ctrl-D handling.
-- Source-authored explicit-reasoning controls and a typed reasoning stream that
-  remains separate from final text and never infers hidden chain of thought.
+- Exact source-authored chat/non-think, think-high and think-max conversation
+  encoding, including tool continuity and drop-thinking multi-turn behavior.
+  Typed reasoning, final, tool and error streams remain separate; REPL and raw
+  output preserve their respective terminal and byte contracts, and the OpenAI
+  v2 projection exposes explicit model output as `reasoning_content` without
+  inferring or exposing hidden chain of thought.
 - A source-derived model-execution descriptor and identity-bound hardware,
   workload, per-state capacity, page-geometry and phase-roofline contracts for
   GB10 execution planning.
@@ -141,6 +145,9 @@ change. Git history preserves implementation chronology.
   accepted-prefix, and committed-only usage facts; version 4 is refused.
 - Advanced the private local protocol to version 6 for exact partial-turn and
   explicit-reasoning facts; version 5 is refused.
+- Advanced the private local protocol to version 7 for typed reasoning/final/
+  tool/error channels and separate reasoning/final timing and token metrics;
+  every non-v7 peer is refused.
 - Made hosted startup registry-first: `model list` reports complete startup
   profiles, `model select NAME` resolves one profile without path flags, and
   `runtime start` opens the selected model without environment variables.

@@ -91,12 +91,15 @@ the interactive console use:
 /nothink    disable it
 ```
 
-The selected policy is session-bound and changes prompt identity. It cannot be
-changed after committed conversation state exists without resetting or opening
-a new session. Reasoning is streamed through its own typed channel and shown in
-dim text on a TTY; final answer text returns to the normal foreground. Raw and
-redirected modes preserve canonical bytes without terminal controls. YVEX does
-not infer reasoning from prose or expose hidden chain of thought.
+The selected policy is request-bound and retained as the session's next-turn
+selection. If a change no longer extends the committed token prefix, YVEX
+rebuilds only physical sequence state and re-prefills the authoritative
+semantic history. Reasoning is streamed through its own typed channel and
+shown in dim text on a TTY; final answer text returns to the normal foreground.
+`yvex run --reasoning none|high|max` provides the same policy noninteractively:
+stdout contains exact canonical channel bytes and completion metrics go to
+stderr. YVEX does not infer reasoning from prose or expose hidden chain of
+thought.
 
 ## Application-provider path
 
@@ -117,7 +120,8 @@ OpenAI Python and JavaScript SDKs use
 `base_url=http://127.0.0.1:8001/v1`. Chat Completions and Responses translate
 typed messages through the DeepSeek tokenizer/prompt owner; the adapter never
 constructs DeepSeek control-token syntax. Function tools return typed calls for
-the application to execute. See the
+the application to execute. `reasoning_effort` accepts `none`, `high`, or
+`max`; explicit output is exposed separately as `reasoning_content`. See the
 [bounded compatibility profile](../openai-compatibility.md).
 
 ## Offline engineering path

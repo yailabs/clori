@@ -20,26 +20,6 @@
 #define DEEPSEEK_BASE_VOCABULARY_SIZE 128000ull
 #define DEEPSEEK_MERGE_COUNT 127741ull
 #define DEEPSEEK_ADDED_TOKEN_COUNT 1283ull
-#define DEEPSEEK_FAMILY_ADAPTER_ID 0x44535634ull
-#define DEEPSEEK_FAMILY_ADAPTER_VERSION 5ull
-
-static const unsigned char deepseek_bos[] = "<\xef\xbd\x9c" "begin\xe2\x96\x81of\xe2\x96\x81sentence\xef\xbd\x9c>";
-static const unsigned char deepseek_eos[] = "<\xef\xbd\x9c" "end\xe2\x96\x81of\xe2\x96\x81sentence\xef\xbd\x9c>";
-static const unsigned char deepseek_user[] = "<\xef\xbd\x9cUser\xef\xbd\x9c>";
-static const unsigned char deepseek_assistant[] = "<\xef\xbd\x9c" "Assistant\xef\xbd\x9c>";
-static const unsigned char deepseek_think_start[] = "<think>";
-static const unsigned char deepseek_think_end[] = "</think>";
-static const unsigned char deepseek_tool_start[] = "<tool_result>";
-static const unsigned char deepseek_tool_end[] = "</tool_result>";
-static const unsigned char deepseek_reasoning_max[] =
-    "Reasoning Effort: Absolute maximum with no shortcuts permitted.\n"
-    "You MUST be very thorough in your thinking and comprehensively decompose the problem to "
-    "resolve the root cause, rigorously stress-testing your logic against all potential paths, "
-    "edge cases, and adversarial scenarios.\n"
-    "Explicitly write out your entire deliberation process, documenting every intermediate step, "
-    "considered alternative, and rejected hypothesis to ensure absolutely no assumption is left "
-    "unchecked.\n\n";
-
 typedef struct {
     unsigned char *data;
     unsigned long long count, capacity;
@@ -529,20 +509,38 @@ static int special_identity_build(yvex_tokenizer *tokenizer)
 
 static int prompt_identity_build(yvex_tokenizer *tokenizer)
 {
+    const yvex_conversation_protocol *conversation = tokenizer->conversation;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    const unsigned char *facts[] = {
-        deepseek_bos, deepseek_eos, deepseek_user, deepseek_assistant,
-        deepseek_think_start, deepseek_think_end, deepseek_tool_start,
-        deepseek_tool_end, deepseek_reasoning_max};
+    const char *facts[] = {
+        conversation->source_revision, conversation->source_encoding_path,
+        conversation->source_encoding_identity, conversation->bos, conversation->eos,
+        conversation->user, conversation->assistant,
+        conversation->latest_reminder, conversation->thinking_start,
+        conversation->thinking_end, conversation->tool_result_start,
+        conversation->tool_result_end, conversation->dsml,
+        conversation->tool_calls_start, conversation->tool_calls_end,
+        conversation->tool_invoke_start, conversation->tool_invoke_name_end,
+        conversation->tool_invoke_end, conversation->tool_parameter_start,
+        conversation->tool_parameter_name_end,
+        conversation->tool_parameter_kind_end,
+        conversation->tool_parameter_end,
+        conversation->reasoning_effort_max, conversation->tools_prefix,
+        conversation->tools_suffix, conversation->response_format_prefix};
     size_t index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.tokenizer.deepseek-v4-prompt.v2"))
+    if (!yvex_sha256_update_text(&hash, "yvex.tokenizer.conversation-prompt.v3") ||
+        !yvex_sha256_update_u64_be(
+            &hash, conversation->drop_prior_reasoning_by_default) ||
+        !yvex_sha256_update_u64_be(&hash,
+                                   conversation->tools_preserve_reasoning) ||
+        !yvex_sha256_update_u64_be(
+            &hash, conversation->tool_results_merge_into_user))
         return 0;
     for (index = 0u; index < sizeof(facts) / sizeof(facts[0]); ++index)
-        if (!yvex_sha256_update_u64_be(&hash, strlen((const char *)facts[index])) ||
-            !yvex_sha256_update(&hash, facts[index], strlen((const char *)facts[index])))
+        if (!yvex_sha256_update_u64_be(&hash, strlen(facts[index])) ||
+            !yvex_sha256_update(&hash, facts[index], strlen(facts[index])))
             return 0;
     if (!yvex_sha256_final(&hash, digest))
         return 0;
@@ -577,7 +575,7 @@ static int plan_identity_build(yvex_tokenizer *tokenizer)
     size_t index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.tokenizer.plan.v2") ||
+    if (!yvex_sha256_update_text(&hash, "yvex.tokenizer.plan.v3") ||
         !yvex_sha256_update_u64_be(&hash, plan->schema_version) ||
         !yvex_sha256_update_u64_be(&hash, plan->family_adapter_id) ||
         !yvex_sha256_update_u64_be(&hash, plan->family_adapter_version) ||
@@ -591,6 +589,8 @@ static int plan_identity_build(yvex_tokenizer *tokenizer)
         !yvex_sha256_update_u64_be(&hash, plan->add_bos_token) ||
         !yvex_sha256_update_u64_be(&hash, plan->add_eos_token) ||
         !yvex_sha256_update_u64_be(&hash, plan->byte_fallback) ||
+        !yvex_sha256_update_u64_be(&hash, plan->reasoning_start_token_id) ||
+        !yvex_sha256_update_u64_be(&hash, plan->reasoning_end_token_id) ||
         !yvex_sha256_update_u64_be(&hash, plan->explicit_reasoning_supported) ||
         !yvex_sha256_update_u64_be(&hash, plan->maximum_reasoning_supported))
         return 0;
@@ -608,10 +608,41 @@ static int exact_policy_admit(yvex_tokenizer *tokenizer, const yvex_gguf *gguf,
 {
     const char *architecture, *pre, *json, *config;
     unsigned long long architecture_count, pre_count, json_count, config_count;
+    unsigned long long index;
 
-    if (!gguf_string(gguf, "general.architecture", &architecture, &architecture_count) ||
-        architecture_count != strlen("deepseek4") ||
-        memcmp(architecture, "deepseek4", architecture_count) != 0)
+    if (!gguf_string(gguf, "general.architecture", &architecture,
+                     &architecture_count))
+        return YVEX_ERR_UNSUPPORTED;
+    for (index = 0u; !tokenizer->conversation; ++index) {
+        const yvex_conversation_protocol *candidate =
+            yvex_model_conversation_protocol_at(index);
+        if (!candidate) break;
+        if (candidate->schema_version ==
+                YVEX_CONVERSATION_PROTOCOL_SCHEMA_V1 &&
+            architecture_count == strlen(candidate->architecture) &&
+            memcmp(architecture, candidate->architecture,
+                   (size_t)architecture_count) == 0)
+            tokenizer->conversation = candidate;
+    }
+    if (!tokenizer->conversation || !tokenizer->conversation->source_revision ||
+        !tokenizer->conversation->source_encoding_path ||
+        !tokenizer->conversation->source_encoding_identity ||
+        !tokenizer->conversation->bos || !tokenizer->conversation->eos ||
+        !tokenizer->conversation->user || !tokenizer->conversation->assistant ||
+        !tokenizer->conversation->thinking_start ||
+        !tokenizer->conversation->thinking_end ||
+        !tokenizer->conversation->tool_calls_start ||
+        !tokenizer->conversation->tool_calls_end ||
+        !tokenizer->conversation->tool_invoke_start ||
+        !tokenizer->conversation->tool_invoke_name_end ||
+        !tokenizer->conversation->tool_invoke_end ||
+        !tokenizer->conversation->tool_parameter_start ||
+        !tokenizer->conversation->tool_parameter_name_end ||
+        !tokenizer->conversation->tool_parameter_kind_end ||
+        !tokenizer->conversation->tool_parameter_end ||
+        !tokenizer->conversation->reasoning_effort_max ||
+        !tokenizer->conversation->tools_prefix ||
+        !tokenizer->conversation->tools_suffix)
         return YVEX_ERR_UNSUPPORTED;
     if (tokenizer->kind != YVEX_TOKENIZER_KIND_GGML_GPT2 ||
         tokenizer->vocab_size != DEEPSEEK_VOCABULARY_SIZE ||
@@ -651,9 +682,10 @@ int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gg
     rc = exact_policy_admit(tokenizer, gguf, err);
     if (rc != YVEX_OK)
         return rc;
-    tokenizer->plan.schema_version = YVEX_TOKENIZER_PLAN_SCHEMA_V2;
-    tokenizer->plan.family_adapter_id = DEEPSEEK_FAMILY_ADAPTER_ID;
-    tokenizer->plan.family_adapter_version = DEEPSEEK_FAMILY_ADAPTER_VERSION;
+    tokenizer->plan.schema_version = YVEX_TOKENIZER_PLAN_SCHEMA_V3;
+    tokenizer->plan.family_adapter_id = tokenizer->conversation->family_adapter_id;
+    tokenizer->plan.family_adapter_version =
+        tokenizer->conversation->family_adapter_version;
     tokenizer->plan.vocabulary_size = tokenizer->vocab_size;
     tokenizer->plan.base_vocabulary_size = DEEPSEEK_BASE_VOCABULARY_SIZE;
     tokenizer->plan.model_policy = YVEX_TOKENIZER_MODEL_BPE_BYTELEVEL;
@@ -668,14 +700,20 @@ int yvex_tokenizer_execution_seal(yvex_tokenizer *tokenizer, const yvex_gguf *gg
         rc = added_tokens_build(tokenizer, err);
     if (rc == YVEX_OK) {
         unsigned int start_id, end_id;
-        if (!vocab_lookup(tokenizer, deepseek_think_start,
-                          sizeof(deepseek_think_start) - 1u, &start_id) ||
-            !vocab_lookup(tokenizer, deepseek_think_end,
-                          sizeof(deepseek_think_end) - 1u, &end_id)) {
+        if (!vocab_lookup(
+                tokenizer,
+                (const unsigned char *)tokenizer->conversation->thinking_start,
+                strlen(tokenizer->conversation->thinking_start), &start_id) ||
+            !vocab_lookup(
+                tokenizer,
+                (const unsigned char *)tokenizer->conversation->thinking_end,
+                strlen(tokenizer->conversation->thinking_end), &end_id)) {
             yvex_error_set(err, YVEX_ERR_FORMAT, "tokenizer.plan.reasoning",
                            "source-authored reasoning delimiters are absent");
             rc = YVEX_ERR_FORMAT;
         } else {
+            tokenizer->plan.reasoning_start_token_id = start_id;
+            tokenizer->plan.reasoning_end_token_id = end_id;
             tokenizer->plan.explicit_reasoning_supported = 1;
             tokenizer->plan.maximum_reasoning_supported = 1;
         }
@@ -1275,6 +1313,7 @@ static int prompt_roles_valid(const yvex_prompt_message *messages,
 }
 
 static int prompt_message_append(byte_builder *builder,
+                                 const yvex_conversation_protocol *conversation,
                                  const yvex_prompt_message *message,
                                  yvex_prompt_role prior,
                                  yvex_error *err)
@@ -1290,42 +1329,50 @@ static int prompt_message_append(byte_builder *builder,
     if (message->role == YVEX_PROMPT_ROLE_SYSTEM)
         return builder_append(builder, content, count, err);
     if (message->role == YVEX_PROMPT_ROLE_USER) {
-        rc = builder_append(builder, deepseek_user, sizeof(deepseek_user) - 1u, err);
+        rc = builder_append(builder, conversation->user,
+                            strlen(conversation->user), err);
         return rc == YVEX_OK ? builder_append(builder, content, count, err) : rc;
     }
     if (message->role == YVEX_PROMPT_ROLE_ASSISTANT) {
         rc = builder_append(builder, content, count, err);
         return rc == YVEX_OK
-            ? builder_append(builder, deepseek_eos, sizeof(deepseek_eos) - 1u, err) : rc;
+            ? builder_append(builder, conversation->eos,
+                             strlen(conversation->eos), err)
+            : rc;
     }
     if (prior == YVEX_PROMPT_ROLE_ASSISTANT) {
-        rc = builder_append(builder, deepseek_user, sizeof(deepseek_user) - 1u, err);
+        rc = builder_append(builder, conversation->user,
+                            strlen(conversation->user), err);
     } else {
         rc = builder_append(builder, "\n\n", 2u, err);
     }
     if (rc == YVEX_OK)
-        rc = builder_append(builder, deepseek_tool_start, sizeof(deepseek_tool_start) - 1u, err);
+        rc = builder_append(builder, conversation->tool_result_start,
+                            strlen(conversation->tool_result_start), err);
     if (rc == YVEX_OK)
         rc = builder_append(builder, content, count, err);
     return rc == YVEX_OK
-        ? builder_append(builder, deepseek_tool_end, sizeof(deepseek_tool_end) - 1u, err) : rc;
+        ? builder_append(builder, conversation->tool_result_end,
+                         strlen(conversation->tool_result_end), err)
+        : rc;
 }
 
 static int prompt_assistant_transition(byte_builder *builder,
+                                       const yvex_conversation_protocol *conversation,
                                        const yvex_prompt_options *options,
                                        int final_user,
                                        yvex_error *err)
 {
-    int rc = builder_append(builder, deepseek_assistant,
-                            sizeof(deepseek_assistant) - 1u, err);
+    int rc = builder_append(builder, conversation->assistant,
+                            strlen(conversation->assistant), err);
     if (rc != YVEX_OK)
         return rc;
     if (options->mode == YVEX_PROMPT_MODE_THINKING &&
         (final_user || !options->drop_thinking))
-        return builder_append(builder, deepseek_think_start,
-                              sizeof(deepseek_think_start) - 1u, err);
-    return builder_append(builder, deepseek_think_end,
-                          sizeof(deepseek_think_end) - 1u, err);
+        return builder_append(builder, conversation->thinking_start,
+                              strlen(conversation->thinking_start), err);
+    return builder_append(builder, conversation->thinking_end,
+                          strlen(conversation->thinking_end), err);
 }
 
 static int fixture_prompt_render(yvex_rendered_prompt *out,
@@ -1470,22 +1517,29 @@ int yvex_prompt_render(yvex_rendered_prompt *out,
         return YVEX_ERR_INVALID_ARG;
     }
     if (options->add_bos)
-        rc = builder_append(&builder, deepseek_bos, sizeof(deepseek_bos) - 1u, err);
+        rc = builder_append(&builder, tokenizer->conversation->bos,
+                            strlen(tokenizer->conversation->bos), err);
     if (rc == YVEX_OK && options->reasoning_policy == YVEX_REASONING_MAXIMUM)
-        rc = builder_append(&builder, deepseek_reasoning_max,
-                            sizeof(deepseek_reasoning_max) - 1u, err);
+        rc = builder_append(&builder,
+                            tokenizer->conversation->reasoning_effort_max,
+                            strlen(tokenizer->conversation->reasoning_effort_max),
+                            err);
     for (index = 0u; index < message_count && rc == YVEX_OK; ++index) {
         yvex_prompt_role prior = index ? messages[index - 1u].role : YVEX_PROMPT_ROLE_SYSTEM;
-        rc = prompt_message_append(&builder, &messages[index], prior, err);
+        rc = prompt_message_append(&builder, tokenizer->conversation,
+                                   &messages[index], prior, err);
         if (rc == YVEX_OK && messages[index].role == YVEX_PROMPT_ROLE_USER &&
             index + 1u < message_count &&
             messages[index + 1u].role == YVEX_PROMPT_ROLE_ASSISTANT)
-            rc = prompt_assistant_transition(&builder, options, 0, err);
+            rc = prompt_assistant_transition(&builder, tokenizer->conversation,
+                                             options, 0, err);
     }
     if (rc == YVEX_OK && options->add_generation_prompt)
-        rc = prompt_assistant_transition(&builder, options, 1, err);
+        rc = prompt_assistant_transition(&builder, tokenizer->conversation,
+                                         options, 1, err);
     if (rc == YVEX_OK && options->add_eos)
-        rc = builder_append(&builder, deepseek_eos, sizeof(deepseek_eos) - 1u, err);
+        rc = builder_append(&builder, tokenizer->conversation->eos,
+                            strlen(tokenizer->conversation->eos), err);
     if (rc != YVEX_OK) {
         free(builder.data);
         memset(out, 0, sizeof(*out));

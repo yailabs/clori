@@ -6,6 +6,7 @@ include/yvex/core.h	abi	abi.core	generic	public	public-abi	repository	interface	
 include/yvex/gguf.h	abi	abi.gguf	generic	public	public-abi	repository	interface	none
 include/yvex/graph.h	abi	abi.graph	generic	public	public-abi	repository	interface	none
 include/yvex/internal/artifact.h	artifact	artifact.internal	generic	private	internal-abi	gguf,model,runtime	interface	none
+include/yvex/internal/conversation.h	model	model.conversation_protocol	generic	private	internal-abi	model.family,tokenizer,server	interface	none
 include/yvex/internal/candidate.h	graph	graph.candidate	generic	private	internal-abi	graph,runtime,tests	interface	none
 include/yvex/internal/backend.h	backend	backend.internal	generic	private	internal-abi	graph,runtime,cli	interface	none
 include/yvex/internal/benchmark.h	runtime	runtime.benchmark	generic	private	internal-abi	runtime,cli,tests	interface	none
@@ -190,8 +191,9 @@ src/server/openai/json.c	server.openai	server.openai.json	generic	private	reusab
 src/server/openai/private.h	server.openai	server.openai.shared	generic	private	source-local-interface	server.openai.lifecycle,server.openai.http,server.openai.json,server.openai.render,server.openai.state	interface	none
 src/server/openai/render.c	server.openai	server.openai.render	generic	private	reusable-algorithm	server.openai.lifecycle	implementation	none
 src/server/openai/state.c	server.openai	server.openai.state	generic	private	resource-lifecycle	server.openai.lifecycle	implementation	none
-src/server/private.h	server	server.shared	generic	private	private-interface	server.core,server.protocol,server.session,server.telemetry,server.openai.lifecycle	interface	none
+src/server/private.h	server	server.shared	generic	private	private-interface	server.core,server.protocol,server.local_transport,server.session,server.telemetry,server.openai.lifecycle	interface	none
 src/server/protocol.c	server	server.protocol	generic	private	public-protocol	client,daemon	implementation	none
+src/server/transport.c	server	server.local_transport	generic	private	resource-lifecycle	client,daemon	implementation	none
 src/server/session.c	server	server.session	generic	private	resource-lifecycle	server.core	implementation	none
 src/server/telemetry.c	server	server.telemetry	generic	private	resource-lifecycle	server.core,server.session	implementation	none
 src/source/inventory.c	source	source.inventory	generic	private	reusable-algorithm	model,compilation	implementation	none

@@ -14,6 +14,8 @@ or release promotion.
 | Canonical target | `deepseek4-v4-flash-dspark` |
 | Source repository | `deepseek-ai/DeepSeek-V4-Flash-DSpark` |
 | Pinned revision | `62af8fffb2f7030cac4de2f0169f5b8d1101b646` |
+| Conversation encoder | `encoding/encoding_dsv4.py` |
+| Conversation encoder SHA-256 | `bdbd57c132a1b3725042323d02b98b9d1df28e5f388f134399555d041f5055e0` |
 | Snapshot shape | 48 Safetensors shards; 72,317 indexed tensors |
 | Target topology | 43-layer hybrid SWA/CSA/HCA decoder with mHC and MoE |
 | Draft topology | five-position DSpark block conditioned by three target feature taps |
@@ -92,13 +94,25 @@ confidence, special-token and persistent-state geometry. Common runtime,
 server, protocol, CLI and generic backend code consume that descriptor rather
 than duplicate these values.
 
-The official prompt/output contract begins explicit thinking with the
-source-authored `<think>` token and terminates it with the corresponding
-`</think>` token. YVEX's tokenizer owner consumes these delimiters only when a
-request selects an admitted `enabled` or `maximum` reasoning policy and emits a
-typed explicit-reasoning channel. Delimiter text never appears in final output,
-and ordinary prose is never reclassified as reasoning. This is model-emitted
-text, not access to hidden internal chain of thought.
+The pinned conversation encoder owns three admitted modes. Chat/non-think emits
+the assistant marker followed by `</think>`; think-high emits the marker
+followed by `<think>`; think-max additionally prepends the encoder's exact
+maximum-effort instruction. These source facts live in the model-family
+conversation descriptor. Common runtime, protocol and adapters consume typed
+policies and channels and contain no DeepSeek token literals.
+
+In thinking mode, output before the exact source-authored `</think>` token is
+explicit reasoning and output after it is final content. The tokenizer owner
+consumes the delimiter and refuses an unfinished reasoning grammar. It does not
+search disabled-mode prose or classify delimiter-looking text in ordinary
+final content. DSML tool blocks are parsed only through the source grammar and
+remain a third typed result. This is model-emitted text, not access to hidden
+internal chain of thought.
+
+Ordinary multi-turn prompts apply the encoder's `drop_thinking` behavior:
+reasoning from assistant turns before the latest user turn is omitted. A
+tool-enabled prompt disables that drop so reasoning, calls and ordered tool
+results retain the continuity required by the official format.
 
 ## Coverage, transformation, and artifact
 
@@ -155,9 +169,9 @@ DeepSeek-V4-Flash-DSpark is the sole complete YVEX source-to-streamed-text verti
 The hosted native, interactive, and bounded OpenAI-compatible paths
 consume one target-verified runtime authority. Target-only and DSpark modes,
 multi-turn reuse, cancellation, reset, and committed-only streaming are
-implemented under private local protocol v6. The admitted tokenizer/prompt
-profile also supports explicit reasoning enabled, maximum, and disabled policy
-through a separate typed output channel.
+implemented under private local protocol v7. The admitted tokenizer/prompt
+profile also supports explicit reasoning high, maximum, and disabled policies
+through separate reasoning, final, tool, and error channels.
 
 ## Explicit non-claims
 

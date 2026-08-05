@@ -184,7 +184,7 @@ start` in the first and run `runtime status`, then `chat`, in the second.
 Chat opens one concise attachment view and the stable prompt:
 
 ```text
-YVEX 0.1.0 · protocol 6
+YVEX 0.1.0 · protocol 7
 
   model      deepseek4-v4-flash-dspark
   variant    abcdef012345
@@ -231,7 +231,9 @@ locally. Tab completes an unambiguous slash command. Commands for an unsupported
 explicit reasoning channel refuse rather than simulate support. The current
 DSpark profile admits `/think`, `/think-max`, and `/nothink`; they select its
 source-authored model-emitted channel and never expose hidden reasoning. A
-policy change after committed context requires `/reset` or a new session.
+policy change that alters the encoded prefix safely rebuilds only physical
+sequence state and re-prefills the authoritative semantic history; reset is
+not required merely to change reasoning mode.
 
 Ctrl-D exits from the prompt and discards an unfinished line. Ctrl-C during a
 turn requests server-owned cancellation and returns to the prompt; a second
@@ -254,7 +256,15 @@ daemon and model alive:
 
 ```sh
 ./yvex run "Explain attention in one sentence."
+./yvex run --reasoning high "Work this out, then answer briefly."
+./yvex run --reasoning max "Prove the result and state the conclusion."
 ```
+
+`--reasoning none|high|max` selects the same source-authored policy as
+`/nothink`, `/think`, and `/think-max`. Non-interactive stdout is the exact
+concatenation of canonical reasoning and final channel payload bytes; status,
+summary, and separate reasoning/final timing metrics go to stderr. Neither
+stream receives ANSI controls when redirected.
 
 Reuse an existing named session only when conversational continuation is
 intended:
@@ -305,7 +315,7 @@ state, and persistent KV while sharing immutable model resources:
 
 Client disconnect and detach do not close the model. A partial or cancelled
 turn can retain model-committed state and is never silently marked complete.
-Protocol v6 reports the exact committed position, token/text counts, state
+Protocol v7 reports the exact committed position, token/text counts, state
 generations, failure class, and reset requirement. Reset clears the session KV,
 tokens, transcript, decoder, and RNG policy without closing the host.
 

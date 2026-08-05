@@ -122,20 +122,26 @@ session, context, memory, and OpenAI-listener facts instead of relying on
 terminal wrapping. The complete slash catalog then projects one registry-owned
 command and summary per line before the stable `yvex>` prompt. It streams
 committed model text without role labels through a bounded incremental UTF-8
-and Markdown renderer; raw output preserves exact canonical bytes. Prefill progress comes from sealed
-server events; one inline terminal result renders prompt/reuse/prefill,
-generation, TTFT, context, stop, and session facts from the typed protocol
-result. When DSpark is active, the same result line projects proposed, accepted,
+and Markdown renderer; raw output preserves exact canonical bytes. Prefill
+progress comes from sealed server events; one inline terminal result renders
+prompt/reuse/prefill, generation, TTFT, context, stop, and session facts from
+the typed protocol result. A reasoning turn adds one bounded line with
+reasoning/final token counts and rates, TTFR, TTFF, and total completion rate.
+When DSpark is active, the result line also projects proposed, accepted,
 rejected, and target-verification counts. Candidate token text is never
 rendered. Conversation output never includes raw events, logits, tensor facts,
 or capability walls.
 
 The registry also owns `/think`, `/think-max`, and `/nothink`. They are
 admitted only when the live model advertises the source-authored explicit
-reasoning channel. The policy is session-bound, changes prompt identity, and
-cannot be switched over existing committed context. Reasoning text is dim on a
-TTY and separate from final text; delimiter tags and inferred hidden reasoning
-never enter the projection.
+reasoning channel. The policy is request-bound and retained as the session's
+next-turn selection. A change that rewrites the encoded prefix causes a checked
+physical-state rebase and full prefill from authoritative semantic history; it
+does not silently reuse incompatible state or require transcript loss.
+Reasoning text is dim on a TTY and separate from final text; delimiter tags and
+inferred hidden reasoning never enter the projection. Noninteractive
+`yvex run --reasoning none|high|max` emits only canonical channel bytes on
+stdout and sends its typed completion summary to stderr.
 
 The line editor owns bounded in-memory history, registry-derived slash
 completion, UTF-8 deletion, bracketed multiline paste, resize redraw, active

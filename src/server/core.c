@@ -416,6 +416,7 @@ static int protocol_error(int fd, const yvex_client_request *request,
     message.schema_version = YVEX_LOCAL_PROTOCOL_VERSION;
     message.kind = YVEX_CLIENT_MESSAGE_ERROR;
     message.status = status;
+    message.stream_channel = YVEX_CLIENT_STREAM_ERROR;
     message.failure_class = failure_class != YVEX_CLIENT_FAILURE_NONE
                                 ? failure_class
                                 : failure_class_from_status(status);
@@ -941,7 +942,7 @@ static void *client_main(void *opaque)
             message.status = YVEX_OK;
             message.request_number = request.request_number;
             yvex_core_text_copy(message.reason, sizeof(message.reason),
-                                "protocol-v6");
+                                "protocol-v7");
             rc = yvex_server_protocol_send(fd, &message, &err);
         } else {
             server_work_item item;
