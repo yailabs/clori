@@ -1225,12 +1225,15 @@ int yvex_cuda_graph_kernel_update(yvex_backend *backend,
 /*
  * Capture once or replay one exact production launch sequence.
  *
- * Owns capture/instantiate/upload/replay and returns immutable graph counters.
+ * Owns capture/instantiate/upload/replay and returns immutable graph counters. Device timing is
+ * explicit because resolving the stop event serializes the stream; production execution can keep
+ * that audit cost out of every layer while retaining the mandatory completion synchronization.
  */
 int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_identity,
                             yvex_cuda_graph_prepare_fn prepare,
                             yvex_cuda_graph_enqueue_fn enqueue, void *context,
-                            yvex_backend_cuda_graph_info *info, yvex_error *err)
+                            int measure_device_time, yvex_backend_cuda_graph_info *info,
+                            yvex_error *err)
 {
     yvex_cuda_backend_state *state =
         backend && backend->kind == YVEX_BACKEND_KIND_CUDA ? yvex_cuda_state(backend) : NULL;
@@ -1242,10 +1245,11 @@ int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_ide
     yvex_error timing_error;
     if (info)
         memset(info, 0, sizeof(*info));
-    if (!state || !compatibility_identity || !compatibility_identity[0] || !enqueue) {
+    if (!state || !compatibility_identity || !compatibility_identity[0] || !enqueue ||
+        (measure_device_time != 0 && measure_device_time != 1)) {
         return graph_reject(
             err, YVEX_ERR_INVALID_ARG, "cuda.graph.execute",
-            "CUDA backend, compatibility identity, and enqueue callback are required");
+            "CUDA graph execution requires its backend, identity, enqueue callback, and timing policy");
     }
     rc = backend_dispatch_admit(backend, "cuda.graph.execute", err);
     if (rc != YVEX_OK) return rc;
@@ -1311,14 +1315,18 @@ int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_ide
         }
     }
     replay_started = yvex_core_monotonic_ns();
-    rc = yvex_cuda_timing(backend, graph->stream, YVEX_CUDA_TIMING_BEGIN, NULL,
-                          "cuda.graph.timing.begin", err);
+    rc = measure_device_time
+             ? yvex_cuda_timing(backend, graph->stream, YVEX_CUDA_TIMING_BEGIN, NULL,
+                                "cuda.graph.timing.begin", err)
+             : YVEX_OK;
     if (rc == YVEX_OK) rc = graph_launch(graph, err);
     if (rc == YVEX_OK) {
         yvex_error_clear(&timing_error);
-        timing_rc = yvex_cuda_timing(
-            backend, graph->stream, YVEX_CUDA_TIMING_FINISH, &device_elapsed,
-            "cuda.graph.timing.finish", &timing_error);
+        timing_rc = measure_device_time
+                        ? yvex_cuda_timing(
+                              backend, graph->stream, YVEX_CUDA_TIMING_FINISH,
+                              &device_elapsed, "cuda.graph.timing.finish", &timing_error)
+                        : YVEX_OK;
         sync_rc = graph_synchronize(graph, err);
         if (timing_rc != YVEX_OK) {
             if (err) *err = timing_error;
@@ -1326,7 +1334,7 @@ int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_ide
         } else {
             rc = sync_rc;
         }
-    } else {
+    } else if (measure_device_time) {
         (void)yvex_cuda_timing(backend, NULL, YVEX_CUDA_TIMING_DISCARD, NULL, NULL, NULL);
     }
     replay_finished = yvex_core_monotonic_ns();

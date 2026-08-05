@@ -1600,15 +1600,15 @@ static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int la
     yvex_backend_cuda_graph_info info;
     size_t initializer;
     char identity[160];
-    int rc;
+    int measure_device_time = run->job->evidence_level != 0u, rc;
     if (yvex_cuda_attention_graph_key(run->backend, run->job, first, last,
                                       identity, run->err) != YVEX_OK)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_CAPABILITY,
             "cuda.deepseek_attention.graph.identity", 1ull, 0ull,
             YVEX_ERR_STATE, "CUDA attention graph compatibility identity is incomplete");
-    rc = yvex_cuda_graph_execute(run->backend, identity, attn_graph_prepare,
-                                 attn_graph_enqueue, &piece, &info, run->err);
+    rc = yvex_cuda_graph_execute(run->backend, identity, attn_graph_prepare, attn_graph_enqueue,
+                                 &piece, measure_device_time, &info, run->err);
     if (rc != YVEX_OK && run->failure &&
         run->failure->code == YVEX_BACKEND_ATTENTION_FAILURE_NONE) {
         run->failure->code = YVEX_BACKEND_ATTENTION_FAILURE_LAUNCH;
@@ -1627,7 +1627,8 @@ static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int la
             "CUDA attention graph device timing overflowed");
     if (rc == YVEX_OK) {
         run->resources.launches += info.inventory.kernel_node_count;
-        run->stream_synchronizations += 1ull + (unsigned long long)run->state->timing_ready;
+        run->stream_synchronizations += 1ull +
+            (unsigned long long)(measure_device_time && run->state->timing_ready);
         if (first == 0u ||
             (run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_CORE &&
              first == YVEX_CUDA_ATTENTION_STAGE_PROJECT))
@@ -1645,12 +1646,12 @@ static int attn_numerical_execute(attn_run *run) {
     const unsigned int last_begin = YVEX_CUDA_ATTENTION_STAGE_REDUCE;
     unsigned long long token;
     unsigned int stage;
-    int rc = YVEX_OK;
+    int measure_device_time = run->job->evidence_level != 0u, rc = YVEX_OK;
     if (!run->state->attention_graph_configured ||
         run->state->attention_mode == YVEX_BACKEND_CUDA_ATTENTION_EAGER) {
-        rc = yvex_cuda_timing(
-            run->backend, yvex_cuda_launch_stream(run->backend), YVEX_CUDA_TIMING_BEGIN, NULL,
-            "cuda.deepseek_attention.eager.timing.begin", run->err);
+        if (measure_device_time) rc = yvex_cuda_timing(
+                run->backend, yvex_cuda_launch_stream(run->backend), YVEX_CUDA_TIMING_BEGIN, NULL,
+                "cuda.deepseek_attention.eager.timing.begin", run->err);
         for (token = 0ull; rc == YVEX_OK && token < run->job->token_count; ++token) {
             attn_phase_bind(run, token);
             for (stage = 0u; rc == YVEX_OK && stage < first_end; ++stage)
@@ -1666,12 +1667,12 @@ static int attn_numerical_execute(attn_run *run) {
                  ++stage)
                 rc = attn_kernel_stages[stage](run);
         }
-        if (rc == YVEX_OK)
+        if (rc == YVEX_OK && measure_device_time)
             rc = yvex_cuda_timing(
                 run->backend, yvex_cuda_launch_stream(run->backend), YVEX_CUDA_TIMING_FINISH,
                 &run->device_execution_elapsed_ns,
                 "cuda.deepseek_attention.eager.timing.finish", run->err);
-        else
+        else if (rc != YVEX_OK && measure_device_time)
             (void)yvex_cuda_timing(run->backend, NULL, YVEX_CUDA_TIMING_DISCARD,
                                    NULL, NULL, NULL);
         if (rc != YVEX_OK && run->failure &&
@@ -1751,7 +1752,8 @@ static int attn_synchronize(attn_run *run) {
         rc = yvex_cuda_synchronize(run->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
             "cuda.deepseek_attention.synchronize", run->err);
     if (rc == YVEX_OK && !attn_graph_mode(run)) {
-        run->stream_synchronizations += (unsigned long long)run->state->timing_ready;
+        run->stream_synchronizations += (unsigned long long)(
+            run->job->evidence_level != 0u && run->state->timing_ready);
         run->device_synchronizations++;
     }
     if (rc == YVEX_OK && run->job->retain_prefix_checkpoints) {

@@ -101,6 +101,9 @@ change. Git history preserves implementation chronology.
 - CUDA attention graphs now refresh mutable state-bank inputs before capture
   and replay, allowing allocation-stable graphs to survive committed-state
   promotion without restoring stale state or recapturing each turn.
+- Production attention graph replay no longer resolves a CUDA timing event in
+  every layer. Mandatory completion synchronization remains fail-closed;
+  audit and forensic evidence retain explicit per-layer device timing.
 - Target-only CUDA generation now selects admitted full attention graphs through
   the existing compiled-profile contract; CPU and DSpark retain explicit eager
   reference execution, and compatible shape changes preserve cached graph

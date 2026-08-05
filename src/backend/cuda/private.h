@@ -344,7 +344,7 @@ int yvex_cuda_graph_execute(yvex_backend *backend,
                             const char *compatibility_identity,
                             yvex_cuda_graph_prepare_fn prepare,
                             yvex_cuda_graph_enqueue_fn enqueue,
-                            void *context,
+                            void *context, int measure_device_time,
                             yvex_backend_cuda_graph_info *info,
                             yvex_error *err);
 int yvex_cuda_graph_kernel_capture(yvex_backend *backend,

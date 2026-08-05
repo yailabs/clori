@@ -129,3 +129,9 @@ prefill, decode, verification, drafting and concurrent serving selects the
 next causal bottleneck. Physical-variant exploration first uses role probes,
 representative layers, kernel microbenchmarks and bounded logit/acceptance
 checks; complete artifacts are emitted only for surviving candidates.
+
+Production attention replay keeps mandatory graph completion but does not
+resolve a CUDA timing event at every layer. Per-layer device timing belongs to
+audit and forensic evidence; production phase accounting retains exact launch,
+movement and completion-synchronization facts without paying that additional
+measurement serialization.
