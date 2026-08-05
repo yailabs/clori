@@ -200,6 +200,19 @@ static int generation_phase_time(
         context->phase_measurements, YVEX_EXECUTION_ROOFLINE_PHASE_COUNT,
         &context->phase_measurement_count, &delta, err);
 }
+static int generation_phase_physical(
+    yvex_runtime_generation_context *context, yvex_execution_roofline_phase phase,
+    unsigned long long duration, unsigned long long work, unsigned long long committed,
+    const yvex_execution_physical_facts *physical, yvex_error *err)
+{
+    return generation_phase_time(
+        context, phase, duration, work, committed,
+        physical->memory.complete ? &physical->memory : NULL,
+        physical->h2d_bytes, physical->d2h_bytes, physical->d2d_bytes,
+        physical->kernel_count, physical->synchronization_count,
+        generation_transformer_phase_facts |
+            (physical->memory.complete ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull), err);
+}
 static int generation_state_summary(const yvex_runtime_execution_session *session,
     yvex_graph_attention_state_summary *summary, yvex_error *err)
 {
@@ -469,14 +482,17 @@ static int generation_prefill(
             !yvex_core_u64_add(result.stream_synchronizations, result.device_synchronizations,
                                &synchronizations))
             rc = generation_refuse(err, YVEX_ERR_BOUNDS, "prefill physical accounting overflowed");
-        if (rc == YVEX_OK)
+        if (rc == YVEX_OK && context->speculation)
+            rc = generation_phase_physical(
+                context, YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER,
+                completed - started, count, 0ull, &draft_result.physical, err);
+        else if (rc == YVEX_OK)
             rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER,
                 completed - started, count, 0ull,
-                !context->speculation && result.memory.complete ? &result.memory : NULL,
-                context->speculation ? 0ull : result.h2d_bytes, context->speculation ? 0ull : result.d2h_bytes,
-                context->speculation ? 0ull : result.d2d_bytes, context->speculation ? 0ull : result.kernel_launches,
-                context->speculation ? 0ull : synchronizations,
-                context->speculation ? 0ull : generation_transformer_phase_facts |
+                result.memory.complete ? &result.memory : NULL,
+                result.h2d_bytes, result.d2h_bytes, result.d2d_bytes,
+                result.kernel_launches, synchronizations,
+                generation_transformer_phase_facts |
                     (result.memory.complete ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull), err);
         if (rc == YVEX_OK) {
             *final_result = result;
@@ -1310,39 +1326,23 @@ static int generation_speculative_candidate_cycle(
                 tokens, result, err);
     }
     if (rc == YVEX_OK)
-        rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_DRAFT_SWEEP,
-            cycle.draft_ns, cycle.draft_proposed_count, 0ull,
-            cycle.draft_physical.memory.complete ? &cycle.draft_physical.memory : NULL,
-            cycle.draft_physical.h2d_bytes, cycle.draft_physical.d2h_bytes,
-            cycle.draft_physical.d2d_bytes, cycle.draft_physical.kernel_count,
-            cycle.draft_physical.synchronization_count, generation_transformer_phase_facts |
-                (cycle.draft_physical.memory.complete ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull), err);
+        rc = generation_phase_physical(
+            context, YVEX_EXECUTION_ROOFLINE_DRAFT_SWEEP, cycle.draft_ns,
+            cycle.draft_proposed_count, 0ull, &cycle.draft_physical, err);
     if (rc == YVEX_OK)
-        rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_VERIFY_SWEEP,
-            cycle.verification_ns, cycle.candidate_count + 1ull, commit->completed ? commit->token_count : 0ull,
-            cycle.verification_physical.memory.complete ? &cycle.verification_physical.memory : NULL,
-            cycle.verification_physical.h2d_bytes, cycle.verification_physical.d2h_bytes,
-            cycle.verification_physical.d2d_bytes,
-            cycle.verification_physical.kernel_count,
-            cycle.verification_physical.synchronization_count,
-            generation_transformer_phase_facts |
-                (cycle.verification_physical.memory.complete
-                     ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull), err);
+        rc = generation_phase_physical(
+            context, YVEX_EXECUTION_ROOFLINE_VERIFY_SWEEP, cycle.verification_ns,
+            cycle.candidate_count + 1ull, commit->completed ? commit->token_count : 0ull,
+            &cycle.verification_physical, err);
+    if (rc == YVEX_OK && commit->completed && commit->promotion_ns &&
+        !commit->promotion_physical.available)
+        rc = generation_refuse(err, YVEX_ERR_STATE,
+                               "state promotion omitted its physical facts");
     if (rc == YVEX_OK && commit->completed && commit->promotion_ns)
-        rc = generation_phase_time(context, YVEX_EXECUTION_ROOFLINE_STATE_PROMOTION,
+        rc = generation_phase_physical(
+            context, YVEX_EXECUTION_ROOFLINE_STATE_PROMOTION,
             commit->promotion_ns, commit->verified_prefix_count, commit->token_count,
-            commit->promotion_physical.physical.memory.complete
-                ? &commit->promotion_physical.physical.memory : NULL,
-            commit->promotion_physical.physical.h2d_bytes,
-            commit->promotion_physical.physical.d2h_bytes,
-            commit->promotion_physical.physical.d2d_bytes,
-            commit->promotion_physical.physical.kernel_count,
-            commit->promotion_physical.physical.synchronization_count,
-            commit->promotion_physical.available
-                ? generation_transformer_phase_facts |
-                      (commit->promotion_physical.physical.memory.complete
-                           ? YVEX_EXECUTION_PHASE_MEMORY_FACTS : 0ull)
-                : 0ull, err);
+            &commit->promotion_physical.physical, err);
     return rc;
 }
 static int generation_run_dspark(

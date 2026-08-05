@@ -309,6 +309,17 @@ typedef struct {
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes;
     unsigned long long kernel_count, synchronization_count;
 } yvex_execution_physical_facts;
+int yvex_execution_physical_facts_add(
+    yvex_execution_physical_facts *facts,
+    const yvex_execution_memory_facts *memory, unsigned long long h2d_bytes,
+    unsigned long long d2h_bytes, unsigned long long d2d_bytes,
+    unsigned long long kernel_count, unsigned long long synchronization_count,
+    yvex_error *err);
+int yvex_execution_f32_hash_update(
+    yvex_sha256 *hash, const float *values, unsigned long long count);
+int yvex_execution_f32_digest(
+    const char *domain, const float *values, unsigned long long count,
+    char output[YVEX_SHA256_HEX_CAP]);
 
 /* Memory facts count compulsory device spans once, not capacity or observed DRAM transactions. */
 typedef struct {

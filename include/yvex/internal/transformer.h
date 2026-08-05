@@ -257,9 +257,11 @@ typedef struct {
 } yvex_runtime_transformer_result;
 typedef struct {
     int completed;
+    int device_input_consumed;
     unsigned long long token_start, token_count;
     unsigned long long position_before, position_after;
     unsigned long long generation_before, generation_after;
+    yvex_execution_physical_facts physical;
     char input_digest[YVEX_SHA256_HEX_CAP];
     char persistent_state_digest[YVEX_SHA256_HEX_CAP];
     char execution_identity[YVEX_SHA256_HEX_CAP];
@@ -291,7 +293,8 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
                                      yvex_error *err);
 int yvex_runtime_transformer_stage_core_features(
     yvex_runtime_transformer_context *context, unsigned long long token_start,
-    const float *features, unsigned long long token_count,
+    const float *features, const yvex_device_tensor *device_features,
+    const char *feature_identity, unsigned long long token_count,
     yvex_runtime_transformer_core_commit_result *result, yvex_error *err);
 int yvex_runtime_transformer_context_close(yvex_runtime_transformer_context **context,
                                            yvex_error *err);

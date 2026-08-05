@@ -102,11 +102,12 @@ may be replaced only through the existing typed execution profile. CUDA
 target-feature capture reduces mHC streams into both bounded host evidence and a
 transaction-owned token-major device directory. Production feature projection
 consumes that directory without an intervening upload, executes the resident
-encoded width-N projection and batched RMSNorm on CUDA, and downloads only the
-normalized hidden rows for the current draft core. CPU, audit and forensic
-profiles retain the row-wise projection oracle. Eliminating feature-evidence
-materialization and the normalized-row draft handoff belongs to the fully
-device-resident DSpark cutover. CUDA final projection also preserves the
+encoded width-N projection and batched RMSNorm on CUDA, then binds the normalized
+rows directly into the draft core. The same producer owns their canonical digest,
+so the consumer performs neither a re-upload nor a duplicate full-row identity
+scan. CPU, audit and forensic profiles retain the row-wise projection oracle;
+eliminating the bounded feature-evidence materialization remains part of the
+fully device-resident DSpark cutover. CUDA final projection also preserves the
 pre-normalized BF16 drafter row before RMSNorm, so production no longer
 downloads expanded residual streams or recomputes that final stage on the
 host. Compatible width-N CUDA output rows already share activation preparation

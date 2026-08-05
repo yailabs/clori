@@ -48,6 +48,7 @@ struct yvex_runtime_speculation_context {
     char pending_source_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char pending_sampling_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char pending_cycle_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char projected_feature_identity[YVEX_SPECULATION_IDENTITY_CAP];
     const yvex_runtime_commit_participant *publication;
     int publication_prepared, cycle_pending, verification_staged;
 };
@@ -96,29 +97,9 @@ static int speculation_draft_sampling_policy(const yvex_runtime_sampling_policy 
     draft_policy->policy_identity[0] = '\0';
     return yvex_runtime_sampling_policy_seal(draft_policy, vocabulary_size, err);
 }
-static int speculation_values_digest(const char *domain, const float *values,
-                                     unsigned long long count,
-                                     char output[YVEX_SPECULATION_IDENTITY_CAP])
-{
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long index;
-    yvex_sha256_init(&hash);
-    if (!domain || !values || !count || !yvex_sha256_update_text(&hash, domain))
-        return 0;
-    for (index = 0ull; index < count; ++index) {
-        uint32_t bits;
-        if (!isfinite(values[index])) return 0;
-        memcpy(&bits, &values[index], sizeof(bits));
-        if (!yvex_sha256_update_u64(&hash, bits)) return 0;
-    }
-    if (!yvex_sha256_final(&hash, digest)) return 0;
-    yvex_sha256_hex(digest, output);
-    return 1;
-}
-static int speculation_weight_bind(yvex_runtime_speculation_context *context,
-                                   yvex_tensor_role role,
-                                   speculation_weight *out, yvex_error *err)
+static int speculation_weight_bind(yvex_runtime_speculation_context *context, yvex_tensor_role role,
+                                   speculation_weight *out,
+                                   yvex_error *err)
 {
     const yvex_runtime_descriptor_summary *summary =
         yvex_runtime_descriptor_summary_get(context->model_view->descriptor);
@@ -152,8 +133,7 @@ static int speculation_weight_bind(yvex_runtime_speculation_context *context,
 }
 static int speculation_weight_decode_row(const speculation_weight *weight,
                                          unsigned long long row, float *values,
-                                         unsigned long long capacity,
-                                         yvex_error *err)
+                                         unsigned long long capacity, yvex_error *err)
 {
     const yvex_gguf_qtype_geometry *geometry;
     yvex_quant_failure failure;
@@ -291,9 +271,8 @@ overflow:
                               "DSpark runtime workspace extent overflowed");
 #undef SPEC_ADD
 }
-static int speculation_device_tensor_open(
-    yvex_backend *backend, yvex_device_tensor **out, const char *name,
-    unsigned long long elements, yvex_error *err)
+static int speculation_device_tensor_open(yvex_backend *backend, yvex_device_tensor **out,
+    const char *name, unsigned long long elements, yvex_error *err)
 {
     yvex_backend_tensor_desc descriptor = {0};
     unsigned long long bytes;
@@ -528,9 +507,10 @@ static int speculation_project_target_features(
     unsigned long long token_count, yvex_runtime_transformer_result *result,
     yvex_error *err)
 {
-    unsigned long long token, row;
+    unsigned long long token, row, output_elements;
     if (!context || !features || !token_count || !result ||
-        token_count > context->policy.block_size + 2ull)
+        token_count > context->policy.block_size + 2ull ||
+        !yvex_core_u64_mul(token_count, context->hidden_width, &output_elements))
         return speculation_refuse(
             err, YVEX_ERR_INVALID_ARG,
             "DSpark feature projection extent is invalid");
@@ -545,7 +525,7 @@ static int speculation_project_target_features(
         yvex_device_tensor input = *context->device_feature_input;
         yvex_device_tensor projected = *context->device_feature_projected;
         yvex_device_tensor normalized = *context->device_feature_normalized;
-        unsigned long long input_elements, output_elements;
+        unsigned long long input_elements;
         unsigned long long input_bytes, output_bytes, norm_activation;
         unsigned long long h2d, d2h, kernels, uploads, downloads, synchronizations;
         int resident_input = context->device_feature_input->is_written;
@@ -554,8 +534,6 @@ static int speculation_project_target_features(
             !yvex_core_u64_mul(
                 token_count, context->policy.concatenated_feature_width,
                 &input_elements) ||
-            !yvex_core_u64_mul(token_count, context->hidden_width,
-                               &output_elements) ||
             !yvex_core_u64_mul(input_elements, sizeof(float), &input_bytes) ||
             !yvex_core_u64_mul(output_elements, sizeof(float), &output_bytes) ||
             !yvex_core_u64_mul(output_bytes, 2ull, &norm_activation))
@@ -640,6 +618,13 @@ static int speculation_project_target_features(
         context->device_feature_input->is_written = 1;
         context->device_feature_projected->is_written = 1;
         context->device_feature_normalized->is_written = 1;
+        if (!yvex_execution_f32_digest(
+                "yvex.runtime.speculation.projected-features.v2",
+                context->feature_projected, output_elements,
+                context->projected_feature_identity))
+            return speculation_refuse(
+                err, YVEX_ERR_STATE,
+                "DSpark projected feature identity could not be sealed");
         return YVEX_OK;
     }
     for (token = 0ull; token < token_count; ++token) {
@@ -671,6 +656,13 @@ static int speculation_project_target_features(
                 err) != YVEX_OK)
             return yvex_error_code(err);
     }
+    if (!yvex_execution_f32_digest(
+            "yvex.runtime.speculation.projected-features.v2",
+            context->feature_projected, output_elements,
+            context->projected_feature_identity))
+        return speculation_refuse(
+            err, YVEX_ERR_STATE,
+            "DSpark projected feature identity could not be sealed");
     return YVEX_OK;
 }
 static int speculation_weight_matvec(yvex_runtime_speculation_context *context,
@@ -878,25 +870,9 @@ static unsigned int speculation_argmax(const float *values,
         if (values[index] > values[selected]) selected = index;
     return (unsigned int)selected;
 }
-static int speculation_physical_add(yvex_execution_physical_facts *facts,
-    const yvex_execution_memory_facts *memory, unsigned long long h2d, unsigned long long d2h,
-    unsigned long long d2d, unsigned long long kernels, unsigned long long synchronizations,
-    yvex_error *err)
-{
-    int rc = yvex_execution_memory_facts_merge(&facts->memory, memory, err);
-    if (rc != YVEX_OK) return rc;
-    if (!yvex_core_u64_add(facts->h2d_bytes, h2d, &facts->h2d_bytes) ||
-        !yvex_core_u64_add(facts->d2h_bytes, d2h, &facts->d2h_bytes) ||
-        !yvex_core_u64_add(facts->d2d_bytes, d2d, &facts->d2d_bytes) ||
-        !yvex_core_u64_add(facts->kernel_count, kernels, &facts->kernel_count) ||
-        !yvex_core_u64_add(facts->synchronization_count, synchronizations,
-                           &facts->synchronization_count))
-        return speculation_refuse(err, YVEX_ERR_BOUNDS, "DSpark physical accounting overflowed");
-    return YVEX_OK;
-}
 static int speculation_phase_physical(const yvex_runtime_transformer_result *transformer,
-    const yvex_runtime_logits_result *execution,
-    yvex_execution_physical_facts *facts, yvex_error *err)
+    const yvex_runtime_logits_result *execution, yvex_execution_physical_facts *facts,
+    yvex_error *err)
 {
     yvex_execution_physical_facts candidate = {0};
     unsigned long long transformer_sync;
@@ -908,11 +884,11 @@ static int speculation_phase_physical(const yvex_runtime_transformer_result *tra
                            transformer->device_synchronizations,
                            &transformer_sync))
         return speculation_refuse(err, YVEX_ERR_BOUNDS, "DSpark physical accounting overflowed");
-    rc = speculation_physical_add(
+    rc = yvex_execution_physical_facts_add(
         &candidate, &transformer->memory, transformer->h2d_bytes, transformer->d2h_bytes,
         transformer->d2d_bytes, transformer->kernel_launches, transformer_sync, err);
     if (rc == YVEX_OK)
-        rc = speculation_physical_add(
+        rc = yvex_execution_physical_facts_add(
             &candidate, &execution->physical.memory, execution->physical.h2d_bytes,
             execution->physical.d2h_bytes,
             execution->physical.d2d_bytes, execution->physical.kernel_count,
@@ -990,7 +966,7 @@ static int speculation_execute_draft(yvex_runtime_speculation_context *context,
                                 "draft execution identity initialization failed");
     for (index = 0ull; rc == YVEX_OK && index < draft_count; ++index) {
         char probabilities[YVEX_SPECULATION_IDENTITY_CAP];
-        if (!speculation_values_digest(
+        if (!yvex_execution_f32_digest(
                 "yvex.runtime.speculation.draft-distribution.v1",
                 context->draft_probabilities + index * context->vocabulary_size,
                 context->vocabulary_size, probabilities) ||
@@ -1001,7 +977,7 @@ static int speculation_execute_draft(yvex_runtime_speculation_context *context,
     }
     if (rc == YVEX_OK) {
         char confidence[YVEX_SPECULATION_IDENTITY_CAP];
-        if (!speculation_values_digest(
+        if (!yvex_execution_f32_digest(
                 "yvex.runtime.speculation.confidence.v1",
                 result->confidence_logits, draft_count, confidence) ||
             !yvex_sha256_update_text(&hash, confidence))
@@ -1103,7 +1079,7 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
         if (device_verification) {
             yvex_execution_memory_facts no_memory = {0};
             context->target_token_ids[row] = selections[row].selected_token_id;
-            rc = speculation_physical_add(
+            rc = yvex_execution_physical_facts_add(
                 &result->verification_physical, &no_memory, 0ull,
                 selections[row].d2h_bytes, 0ull, selections[row].kernel_launches,
                 selections[row].device_synchronizations, err);
@@ -1451,11 +1427,33 @@ static void speculation_rng_cancel(void *opaque) {
     context->publication_prepared = 0;
     speculation_pending_clear(context);
 }
+static int speculation_stage_draft_features(
+    yvex_runtime_speculation_context *context, unsigned long long token_start,
+    unsigned long long token_count, yvex_runtime_transformer_core_commit_result *result,
+    yvex_error *err)
+{
+    const yvex_device_tensor *resident = context
+        ? context->device_feature_normalized : NULL;
+    int rc;
+    if (context && context->device_feature_normalized) {
+        if (!context->device_feature_normalized->is_written)
+            return speculation_refuse(
+                err, YVEX_ERR_STATE,
+                "DSpark normalized device features are unpublished");
+    }
+    rc = yvex_runtime_transformer_stage_core_features(
+        context->draft_transformer, token_start, context->feature_projected,
+        resident, context->projected_feature_identity, token_count, result, err);
+    if (rc == YVEX_OK && resident && !result->device_input_consumed)
+        rc = speculation_refuse(err, YVEX_ERR_STATE,
+                                "DSpark draft core ignored its resident feature input");
+    return rc;
+}
 static int speculation_stage_tokens(
     yvex_runtime_speculation_context *context, const unsigned int *token_ids,
     unsigned long long token_start, unsigned long long token_count,
-    yvex_runtime_transformer_result *target,
-    yvex_runtime_transformer_core_commit_result *draft, yvex_error *err)
+    yvex_runtime_transformer_result *target, yvex_runtime_transformer_core_commit_result *draft,
+    yvex_error *err)
 {
     int rc = speculation_transformer_execute(
         context, context->target_transformer, token_ids,
@@ -1468,9 +1466,8 @@ static int speculation_stage_tokens(
         rc = speculation_project_target_features(
             context, context->target_features, token_count, target, err);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_transformer_stage_core_features(
-            context->draft_transformer, token_start,
-            context->feature_projected, token_count, draft, err);
+        rc = speculation_stage_draft_features(
+            context, token_start, token_count, draft, err);
     return rc;
 }
 int yvex_runtime_speculation_prefill(
@@ -1485,7 +1482,7 @@ int yvex_runtime_speculation_prefill(
     yvex_runtime_speculation_feature_result prepared = {0};
     yvex_runtime_model_failure failure = {0};
     yvex_sha256 hash;
-    unsigned long long feature_values;
+    unsigned long long feature_values, synchronizations;
     int acquired = 0, rc;
     if (target_result) memset(target_result, 0, sizeof(*target_result));
     if (draft_result) memset(draft_result, 0, sizeof(*draft_result));
@@ -1513,14 +1510,32 @@ int yvex_runtime_speculation_prefill(
             draft.position_after != token_start + token_count ||
             !yvex_sha256_hex_valid(target.persistent_state_digest) ||
             !yvex_sha256_hex_valid(prepared.persistent_state_digest) ||
-            !speculation_values_digest(
-                "yvex.runtime.speculation.projected-features.v2",
-                context->feature_projected, feature_values,
-                prepared.projected_feature_digest))
+            !yvex_sha256_hex_valid(context->projected_feature_identity))
             rc = speculation_refuse(
                 err, YVEX_ERR_STATE,
                 "DSpark prefill staged identity is incomplete");
+        else
+            yvex_runtime_identity_copy(prepared.projected_feature_digest,
+                                       context->projected_feature_identity);
     }
+    if (rc == YVEX_OK &&
+        (!yvex_core_u64_add(target.stream_synchronizations,
+                            target.device_synchronizations,
+                            &synchronizations) ||
+         yvex_execution_physical_facts_add(
+             &prepared.physical, &target.memory, target.h2d_bytes,
+             target.d2h_bytes, target.d2d_bytes, target.kernel_launches,
+             synchronizations, err) != YVEX_OK ||
+         yvex_execution_physical_facts_add(
+             &prepared.physical, &draft.physical.memory,
+             draft.physical.h2d_bytes, draft.physical.d2h_bytes,
+             draft.physical.d2d_bytes, draft.physical.kernel_count,
+             draft.physical.synchronization_count, err) != YVEX_OK))
+        rc = yvex_error_is_set(err)
+                 ? yvex_error_code(err)
+                 : speculation_refuse(
+                       err, YVEX_ERR_BOUNDS,
+                       "DSpark prefill physical accounting overflowed");
     if (rc == YVEX_OK) {
         yvex_sha256_init(&hash);
         if (!yvex_sha256_update_text(
@@ -1675,10 +1690,10 @@ static int speculation_promoted_target_result(yvex_runtime_speculation_context *
         context->pending_verification_target.input_identity);
     yvex_runtime_identity_copy(target->persistent_state_digest,
                                state.staged_state_content_identity);
-    if (!speculation_values_digest(
+    if (!yvex_execution_f32_digest(
             "yvex.transformer.normalized-hidden.v1", context->target_hidden,
             hidden_values, normalized) ||
-        !speculation_values_digest(
+        !yvex_execution_f32_digest(
             "yvex.transformer.target-features.v1", context->target_features,
             feature_values, features))
         return speculation_refuse(
@@ -1795,9 +1810,8 @@ int yvex_runtime_speculation_commit_prefix(
         rc = speculation_project_target_features(
             context, context->target_features, committed_count, &target, err);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_transformer_stage_core_features(
-            context->draft_transformer, context->pending_position,
-            context->feature_projected, committed_count, &draft, err);
+        rc = speculation_stage_draft_features(
+            context, context->pending_position, committed_count, &draft, err);
     if (rc == YVEX_OK) {
         result->position_after = context->pending_position + committed_count;
         result->target_result = target;

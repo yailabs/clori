@@ -1,6 +1,7 @@
 #include "tests/test.h"
 
 #include <limits.h>
+#include <math.h>
 #include <string.h>
 
 #include <yvex/internal/backend.h>
@@ -474,10 +475,13 @@ static int execution_test_roofline(void)
 static int execution_test_memory_facts(void)
 {
     yvex_execution_memory_facts facts = {0}, before;
+    yvex_execution_physical_facts physical = {0}, physical_before;
     const yvex_execution_memory_facts delta = {
         .active_weight_bytes = 1ull, .state_bytes = 2ull,
         .activation_bytes = 3ull, .temporary_bytes = 4ull,
         .measured_operations = 2ull, .complete = 1};
+    float values[] = {1.0f, -2.0f, 3.5f};
+    char digest[YVEX_SHA256_HEX_CAP], repeated[YVEX_SHA256_HEX_CAP];
     yvex_error err;
 
     YVEX_TEST_ASSERT(yvex_execution_memory_facts_add(
@@ -511,6 +515,30 @@ static int execution_test_memory_facts(void)
                          &facts, 0ull, 0ull, 0ull, 0ull, 0ull, 0ull, &err) == YVEX_ERR_INVALID_ARG &&
                          memcmp(&facts, &before, sizeof(facts)) == 0,
                      "memory facts should refuse an ownerless zero-operation delta");
+    YVEX_TEST_ASSERT(yvex_execution_physical_facts_add(
+                         &physical, &delta, 5ull, 6ull, 7ull, 8ull, 9ull, &err) == YVEX_OK &&
+                         physical.memory.active_weight_bytes == 1ull &&
+                         physical.h2d_bytes == 5ull && physical.d2h_bytes == 6ull &&
+                         physical.d2d_bytes == 7ull && physical.kernel_count == 8ull &&
+                         physical.synchronization_count == 9ull,
+                     "physical facts should accumulate one complete causal phase");
+    physical.h2d_bytes = ULLONG_MAX;
+    physical_before = physical;
+    YVEX_TEST_ASSERT(yvex_execution_physical_facts_add(
+                         &physical, &delta, 1ull, 0ull, 0ull, 0ull, 0ull, &err) ==
+                             YVEX_ERR_BOUNDS &&
+                         memcmp(&physical, &physical_before, sizeof(physical)) == 0,
+                     "physical-fact overflow should preserve the prior aggregate transactionally");
+    YVEX_TEST_ASSERT(yvex_execution_f32_digest(
+                         "yvex.test.f32.v1", values, 3ull, digest) &&
+                         yvex_execution_f32_digest(
+                             "yvex.test.f32.v1", values, 3ull, repeated) &&
+                         strcmp(digest, repeated) == 0,
+                     "finite F32 evidence should have one deterministic digest");
+    values[1] = NAN;
+    YVEX_TEST_ASSERT(!yvex_execution_f32_digest(
+                         "yvex.test.f32.v1", values, 3ull, repeated),
+                     "non-finite F32 evidence should refuse identity publication");
     return 0;
 }
 

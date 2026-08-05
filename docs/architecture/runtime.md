@@ -126,13 +126,15 @@ explicitly named portable reference adapters. Production CUDA target-feature
 reduction publishes the source-selected rows both to bounded host evidence and
 to a transaction-owned, token-major device directory. DSpark feature projection
 consumes that resident directory without uploading it, executes one width-N
-encoded projection plus batched RMSNorm, and materializes only the normalized
-hidden rows required by the current draft core. The row-wise CPU projector remains
-the CPU, audit and forensic oracle. This removes host-authoritative projection
-arithmetic and its production re-upload; the retained feature evidence D2H and
-normalized-row draft handoff remain optimization debt. Target-only CUDA generation
-selects full graph execution only when the binding and live Driver capability
-both admit it; the compiled profile records whether eager attention remains.
+encoded projection plus batched RMSNorm, and passes the normalized device rows
+through an identity-bound view to the draft core. The producer seals the one
+canonical feature digest; the draft consumer does not rescan the complete host
+row to reconstruct that fact. A bounded host copy remains available for the CPU,
+audit and forensic oracle. This removes host-authoritative projection arithmetic,
+its production re-upload and the normalized-row draft handoff; the retained
+feature-evidence D2H remains optimization debt. Target-only CUDA generation selects
+full graph execution only when the binding and live Driver capability both admit
+it; the compiled profile records whether eager attention remains.
 Unsupported CUDA operations fail closed; no requested CUDA execution silently
 falls back to CPU.
 
@@ -260,6 +262,12 @@ occupancy and batched-decode facts remain unavailable, so the global
 optimization priority stays provisional. The offline generation operator
 exposes the ledger in audit and JSON projections without adding it to protocol
 v6 or making trace verbosity a numerical dependency.
+
+Speculative prefill now merges the target transformer, resident feature
+projection and draft-core physical records before publishing its phase slot.
+The merge is transactional and preserves explicit incomplete memory facts. It
+therefore cannot report a future zero for DSpark prefill or turn an unmeasured
+operation into a complete roofline lower bound.
 
 Prefix selection also snapshots state-residency counters around its serialized
 mutation. Promotion therefore reports exact H2D and one synchronization per

@@ -85,6 +85,7 @@ typedef struct {
 typedef struct {
     int completed;
     unsigned long long token_start, token_count, position_after;
+    yvex_execution_physical_facts physical;
     char projected_feature_digest[YVEX_SPECULATION_IDENTITY_CAP];
     char persistent_state_digest[YVEX_SPECULATION_IDENTITY_CAP];
     char execution_identity[YVEX_SPECULATION_IDENTITY_CAP];

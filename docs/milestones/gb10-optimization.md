@@ -177,11 +177,18 @@ CUDA and publish each reduced row into both bounded host evidence and a
 transaction-owned token-major device directory. Production feature projection
 consumes that directory without re-upload, then executes its encoded width-N
 matrix and RMSNorm on CUDA with exact activation, temporary, launch,
-synchronization and movement facts. The CPU implementation remains the
-numerical oracle and full-evidence path. Feature evidence and normalized draft
-input still materialize on the host, and draft/Markov execution remains
-host-owned, so this does not claim a fully device-resident DSpark path and
-requires no persisted, wire, public C or profile-schema change.
+synchronization and movement facts. Its normalized device rows are then bound
+to the draft core after current workspace and state generations are prepared;
+the producer-owned digest removes the consumer's duplicate full-row host scan.
+The CPU implementation and one bounded host materialization remain the
+numerical oracle and full-evidence path. Feature evidence and draft/Markov work
+are not yet fully device-resident, so this does not claim the complete DSpark
+cutover and requires no persisted, wire, public C or profile-schema change.
+
+Speculative prefill now contributes the merged target, projection and draft-core
+physical facts to the phase roofline ledger. Checked addition is transactional,
+and missing compulsory-memory operations remain unavailable rather than becoming
+numeric zero or a complete lower bound.
 
 The CUDA transformer final operation now has one optional device output for
 the BF16 pre-normalized row. Production drafting reuses final-layer attention
@@ -233,7 +240,7 @@ It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE or zero per-layer MoE synchronization, full-model
 live qualification of target-only device stochastic sampling or greedy DSpark
 verification, device-resident draft/Markov or stochastic DSpark
-acceptance/correction, host-free target-feature evidence and normalized draft
-handoff, paged state allocation, prefix persistence, continuous batching,
+acceptance/correction, host-free target-feature evidence, paged state allocation,
+prefix persistence, continuous batching,
 competitive throughput, evaluation, benchmark qualification, release
 qualification, or Hugging Face publication.

@@ -6,6 +6,8 @@
 #include <yvex/internal/execution.h>
 
 #include <limits.h>
+#include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -1009,6 +1011,66 @@ int yvex_execution_memory_facts_merge(
         facts, delta->active_weight_bytes, delta->state_bytes,
         delta->activation_bytes, delta->temporary_bytes,
         delta->measured_operations, delta->missing_operations, err);
+}
+
+int yvex_execution_physical_facts_add(
+    yvex_execution_physical_facts *facts,
+    const yvex_execution_memory_facts *memory, unsigned long long h2d_bytes,
+    unsigned long long d2h_bytes, unsigned long long d2d_bytes,
+    unsigned long long kernel_count, unsigned long long synchronization_count,
+    yvex_error *err)
+{
+    yvex_execution_physical_facts candidate;
+    int rc;
+    if (!facts || !memory)
+        return execution_refuse(err, YVEX_ERR_INVALID_ARG,
+                                "runtime.execution.physical-facts",
+                                "physical fact owners are required");
+    candidate = *facts;
+    rc = yvex_execution_memory_facts_merge(&candidate.memory, memory, err);
+    if (rc != YVEX_OK) return rc;
+    if (!yvex_core_u64_add(candidate.h2d_bytes, h2d_bytes, &candidate.h2d_bytes) ||
+        !yvex_core_u64_add(candidate.d2h_bytes, d2h_bytes, &candidate.d2h_bytes) ||
+        !yvex_core_u64_add(candidate.d2d_bytes, d2d_bytes, &candidate.d2d_bytes) ||
+        !yvex_core_u64_add(candidate.kernel_count, kernel_count, &candidate.kernel_count) ||
+        !yvex_core_u64_add(candidate.synchronization_count, synchronization_count,
+                           &candidate.synchronization_count))
+        return execution_refuse(err, YVEX_ERR_BOUNDS,
+                                "runtime.execution.physical-facts",
+                                "physical fact accounting overflowed");
+    *facts = candidate;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_execution_f32_hash_update(
+    yvex_sha256 *hash, const float *values, unsigned long long count)
+{
+    unsigned long long index;
+    if (!hash || !values || !count) return 0;
+    for (index = 0ull; index < count; ++index) {
+        uint32_t bits;
+        if (!isfinite(values[index])) return 0;
+        memcpy(&bits, &values[index], sizeof(bits));
+        if (!yvex_sha256_update_u64(hash, bits)) return 0;
+    }
+    return 1;
+}
+
+int yvex_execution_f32_digest(
+    const char *domain, const float *values, unsigned long long count,
+    char output[YVEX_SHA256_HEX_CAP])
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    if (!domain || !output) return 0;
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, domain) ||
+        !yvex_execution_f32_hash_update(&hash, values, count) ||
+        !yvex_sha256_final(&hash, digest))
+        return 0;
+    yvex_sha256_hex(digest, output);
+    return 1;
 }
 
 int yvex_execution_phase_measurement_accumulate(

@@ -70,9 +70,13 @@ change. Git history preserves implementation chronology.
   residual streams into bounded host evidence and a transaction-owned
   token-major device directory. Production feature projection consumes that
   directory without re-upload, then batches the rows through the resident
-  encoded matrix and CUDA RMSNorm with exact physical accounting. The CPU
-  projector remains the audit/reference oracle; feature-evidence materialization,
-  normalized draft input and draft/Markov execution remain explicit debt.
+  encoded matrix and CUDA RMSNorm with exact physical accounting. The normalized
+  rows feed the draft core through an identity-bound device view, and the
+  producer-owned feature digest removes the consumer's duplicate full-row scan.
+  The CPU projector and bounded host materialization remain the audit/reference
+  oracle; host-free feature evidence and draft/Markov execution remain explicit
+  debt. Speculative prefill now contributes its merged target, projection and
+  draft-core physical facts to the phase roofline ledger.
 - The production CUDA transformer final stage now preserves an optional
   pre-normalized BF16 row in device storage before applying output RMSNorm.
   DSpark drafting materializes only that bounded hidden row instead of the
