@@ -25,17 +25,20 @@ request, not in a decision record.
 Do not open placeholder work for hypothetical family needs. Common owners
 change when a concrete supported consumer exposes a missing invariant.
 
-## Parallel family work
+## Serialized family work
 
-The `main` worktree is the clean accepted integration baseline; implementation
-sessions do not develop directly in it. DeepSeek development uses
-`feature/deepseek-v4-flash` in its dedicated worktree, while MiniMax-H3
-development uses `feature/minimax-h3` in a separate dedicated worktree.
+Family implementation shares one repository and one working directory. Feature
+branches advance independently, but only one session at a time may mutate the
+checkout. Before writing, each session acquires the Git-local lease with
+`tools/checkout_guard.py` for its assigned branch and follows the canonical
+[single-checkout coordination](AGENTS.md#single-checkout-coordination)
+protocol. Other open sessions remain idle until the owner commits and pushes or
+restores a clean checkout, then releases the lease.
 
-The family branches do not merge directly into each other. A generic change is
-reviewed and admitted through `main`, then integrated into both family branches.
-Each family branch retains only its irreducible family facts and composition;
-common mechanisms keep their existing generic owners.
+`main` is the accepted integration branch and is not used for development.
+Family branches do not merge directly into one another. Generic changes are
+admitted through a separately serialized `main` integration and subsequently
+integrated into each family branch.
 
 ## Development order
 
