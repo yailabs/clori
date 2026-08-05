@@ -357,6 +357,15 @@ int yvex_quant_plan_build_explicit(
     const yvex_quant_plan_options *options,
     yvex_quant_failure *failure,
     yvex_error *err);
+int yvex_quant_plan_build_source_faithful(
+    yvex_quant_plan **out,
+    const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding,
+    const char *profile_name,
+    unsigned long long lowering_identity,
+    const yvex_quant_plan_options *options,
+    yvex_quant_failure *failure,
+    yvex_error *err);
 void yvex_quant_plan_release(yvex_quant_plan **plan);
 const yvex_quant_plan_summary *yvex_quant_plan_summary_get(
     const yvex_quant_plan *plan);

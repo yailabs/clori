@@ -73,6 +73,10 @@ typedef struct {
     yvex_source_tensor_snapshot *snapshot;
     yvex_source_payload_budget budget;
     const char *manifest_path;
+    const yvex_source_acquisition *acquisition;
+    const char *acquired_source_root, *acquired_target_id, *acquired_family_key;
+    const char *acquired_payload_identity;
+    unsigned long long acquired_source_snapshot_identity;
 } yvex_source_payload_open_options;
 typedef struct {
     unsigned long long range_count, chunk_count, logical_bytes, page_count;
@@ -136,6 +140,9 @@ int yvex_source_payload_session_open(
     const yvex_source_payload_open_options *options,
     yvex_source_payload_failure *failure,
     yvex_error *err);
+int yvex_source_acquisition_snapshot_create(
+    yvex_source_tensor_snapshot **out, const yvex_source_acquisition *acquisition,
+    const char *source_root, unsigned long long semantic_identity, yvex_error *err);
 int yvex_source_payload_session_verify(
     yvex_source_payload_session *session,
     const yvex_source_payload_plan *delivery_plan,
@@ -270,6 +277,7 @@ struct yvex_source_payload_session {
     yvex_source_payload_budget budget;
     yvex_source_payload_ops ops;
     yvex_source_tensor_snapshot *snapshot;
+    const yvex_source_acquisition *acquisition;
     yvex_source_verification verification;
     char target_id[128];
     char family_key[64];
@@ -283,6 +291,7 @@ struct yvex_source_payload_session {
     yvex_source_payload_buffer *buffers;
     unsigned long long shard_count, tensor_count, logical_tensor_bytes, use_tick, active_plans;
     size_t inflight_host_bytes;
+    int acquired_source;
     yvex_source_payload_session_facts facts;
 };
 struct yvex_source_payload_plan {

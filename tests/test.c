@@ -123,6 +123,7 @@ static int run_model_weights(void)
     if (run_test("tensor_table", yvex_test_tensor_table) != 0) return 1;
     if (run_test("model_descriptor", yvex_test_model_descriptor) != 0) return 1;
     if (run_test("deepseek_arch_ir", yvex_test_deepseek_arch_ir) != 0) return 1;
+    if (run_test("minimax_h3", yvex_test_minimax_h3) != 0) return 1;
     if (run_test("transform_ir", yvex_test_transform_ir) != 0) return 1;
     if (run_test("quant_numeric", yvex_test_quant_numeric) != 0) return 1;
     if (run_test("quant_execute", yvex_test_quant_execute) != 0) return 1;

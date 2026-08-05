@@ -821,6 +821,12 @@ static int quant_explicit_decision_build(quant_build_context *context,
     const yvex_transform_value *terminal = yvex_transform_ir_terminal_at(context->ir, ordinal);
     const yvex_transform_node *node =
         terminal ? yvex_transform_ir_node_at(context->ir, terminal->producer_node_id) : NULL;
+    const yvex_transform_value *input =
+        node && node->input_count == 1u
+            ? yvex_transform_ir_node_input_at(context->ir, node, 0u) : NULL;
+    const yvex_transform_source_value *source =
+        input && input->kind == YVEX_TRANSFORM_VALUE_SOURCE
+            ? yvex_transform_ir_source_at(context->ir, input->source_index) : NULL;
     const yvex_quant_numeric_capability *capability = yvex_quant_numeric_capability_at(spec->qtype);
     yvex_quant_decision *decision = &context->plan->decisions[ordinal];
     yvex_transform_physical_decision binding_decision;
@@ -864,6 +870,9 @@ static int quant_explicit_decision_build(quant_build_context *context,
     decision->role = terminal->logical_key.role;
     decision->scope = terminal->logical_key.scope;
     decision->operation = node->kind;
+    if (source)
+        yvex_core_text_copy(decision->physical_tensor_name,
+                            sizeof(decision->physical_tensor_name), source->source_name);
     decision->qtype = spec->qtype;
     decision->physical_class = capability->physical_class_mask == YVEX_TRANSFORM_PHYSICAL_QUANTIZED
                                    ? YVEX_QUANT_PHYSICAL_BLOCK_QUANTIZED
@@ -1014,6 +1023,66 @@ int yvex_quant_plan_build_explicit(yvex_quant_plan **out, const yvex_transform_i
         memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
     return YVEX_OK;
+}
+
+/*
+ * Preserve one identity-only Transformation IR in its exact scalar source representation.
+ *
+ * This is intentionally narrower than a quantization policy: every terminal must be a one-source
+ * identity operation and its admitted dtype selects the corresponding lossless GGUF scalar type.
+ */
+int yvex_quant_plan_build_source_faithful(
+    yvex_quant_plan **out, const yvex_transform_ir *ir,
+    const yvex_transform_binding *binding, const char *profile_name,
+    unsigned long long lowering_identity, const yvex_quant_plan_options *options,
+    yvex_quant_failure *failure, yvex_error *err) {
+    const yvex_transform_ir_summary *summary = yvex_transform_ir_summary_get(ir);
+    yvex_quant_explicit_decision *decisions = NULL;
+    unsigned long long ordinal;
+    int rc;
+
+    if (out)
+        *out = NULL;
+    if (!out || !summary || !summary->complete || !summary->terminal_count ||
+        summary->terminal_count > SIZE_MAX / sizeof(*decisions))
+        return quant_plan_fail(failure, YVEX_QUANT_FAILURE_INVALID_ARGUMENT, ULLONG_MAX,
+                               ULLONG_MAX, 1u, summary ? summary->terminal_count : 0u, UINT_MAX,
+                               YVEX_TRANSFORM_OP_COUNT, err, YVEX_ERR_INVALID_ARG,
+                               "a bounded sealed Transformation IR is required");
+    decisions = (yvex_quant_explicit_decision *)calloc(
+        (size_t)summary->terminal_count, sizeof(*decisions));
+    if (!decisions)
+        return quant_plan_fail(failure, YVEX_QUANT_FAILURE_ALLOCATION, ULLONG_MAX, ULLONG_MAX,
+                               summary->terminal_count, 0u, UINT_MAX, YVEX_TRANSFORM_OP_COUNT,
+                               err, YVEX_ERR_NOMEM,
+                               "source-faithful decision allocation failed");
+    for (ordinal = 0u; ordinal < summary->terminal_count; ++ordinal) {
+        const yvex_transform_value *terminal = yvex_transform_ir_terminal_at(ir, ordinal);
+        const yvex_transform_node *node =
+            terminal ? yvex_transform_ir_node_at(ir, terminal->producer_node_id) : NULL;
+        unsigned int dimension;
+
+        if (!terminal || !node || node->kind != YVEX_TRANSFORM_OP_IDENTITY ||
+            node->input_count != 1u || node->numeric != YVEX_TRANSFORM_NUMERIC_EXACT ||
+            quant_exact_qtype(terminal->dtype) == UINT_MAX) {
+            free(decisions);
+            return quant_plan_fail(
+                failure, YVEX_QUANT_FAILURE_UNSUPPORTED_OPERATION, ordinal, ULLONG_MAX,
+                YVEX_TRANSFORM_OP_IDENTITY, node ? node->kind : YVEX_TRANSFORM_OP_COUNT,
+                UINT_MAX, node ? node->kind : YVEX_TRANSFORM_OP_COUNT, err,
+                YVEX_ERR_UNSUPPORTED,
+                "source-faithful planning admits only exact one-source identity terminals");
+        }
+        decisions[ordinal].qtype = quant_exact_qtype(terminal->dtype);
+        decisions[ordinal].rank = terminal->shape.rank;
+        for (dimension = 0u; dimension < terminal->shape.rank; ++dimension)
+            decisions[ordinal].dims[dimension] = terminal->shape.dims[dimension];
+    }
+    rc = yvex_quant_plan_build_explicit(
+        out, ir, binding, profile_name, lowering_identity, decisions,
+        summary->terminal_count, options, failure, err);
+    free(decisions);
+    return rc;
 }
 
 /*

@@ -692,7 +692,7 @@ static int test_transform_negative_graphs(void)
     yvex_transform_builder_release(&builder);
 
     transform_test_header(&header, 1u, 1u);
-    header.schema_version++;
+    header.schema_version = YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION + 1u;
     YVEX_TEST_ASSERT(yvex_transform_builder_create(
                          &builder, &header, NULL, &failure, &err) != YVEX_OK &&
                          !builder &&

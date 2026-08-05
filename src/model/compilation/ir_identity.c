@@ -66,11 +66,20 @@ static int transform_identity_shape(yvex_sha256 *hash,
 }
 
 static int transform_identity_key(yvex_sha256 *hash,
-                                  const yvex_transform_logical_key *key)
+                                  const yvex_transform_logical_key *key,
+                                  unsigned int schema_version)
 {
-    return transform_identity_u32(hash, (unsigned int)key->scope) &&
+    int ok = transform_identity_u32(hash, (unsigned int)key->scope) &&
            transform_identity_u32(hash, (unsigned int)key->subsystem) &&
-           transform_identity_u32(hash, (unsigned int)key->role) &&
+           transform_identity_u32(hash, (unsigned int)key->role);
+
+    if (ok && schema_version == YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION) {
+        ok = transform_identity_u64(hash, key->component_identity) &&
+             transform_identity_u64(hash, key->semantic_role) &&
+             transform_identity_u64(hash, key->phase_identity) &&
+             transform_identity_u64(hash, key->lifetime_identity);
+    }
+    return ok &&
            transform_identity_u64(hash, key->layer_index) &&
            transform_identity_u64(hash, key->auxiliary_index) &&
            transform_identity_u64(hash, key->group_index);
@@ -96,13 +105,14 @@ int yvex_transform_ir_compute_identity(yvex_transform_ir *ir,
                                        yvex_transform_failure *failure,
                                        yvex_error *err)
 {
-    static const char domain[] = "yvex.transform-ir.v1";
+    const char *domain;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     unsigned long long index;
 
-    if (!ir || ir->summary.schema_version !=
-                   YVEX_TRANSFORM_IR_SCHEMA_VERSION) {
+    if (!ir || (ir->summary.schema_version != YVEX_TRANSFORM_IR_SCHEMA_VERSION &&
+                ir->summary.schema_version !=
+                    YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION)) {
         return yvex_transform_fail(
             failure, YVEX_TRANSFORM_FAILURE_IDENTITY_ENCODING,
             YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
@@ -111,6 +121,8 @@ int yvex_transform_ir_compute_identity(yvex_transform_ir *ir,
             ir ? ir->summary.schema_version : 0u, 0u, err,
             "transform_ir_identity");
     }
+    domain = ir->summary.schema_version == YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION
+                 ? "yvex.transform-ir.v2" : "yvex.transform-ir.v1";
     yvex_sha256_init(&hash);
     if (!transform_identity_string(&hash, domain) ||
         !transform_identity_u32(&hash, ir->summary.schema_version) ||
@@ -127,6 +139,12 @@ int yvex_transform_ir_compute_identity(yvex_transform_ir *ir,
         !transform_identity_u64(&hash, ir->summary.node_count) ||
         !transform_identity_u64(&hash, ir->summary.edge_count) ||
         !transform_identity_u64(&hash, ir->summary.terminal_count))
+        goto encode_failure;
+    if (ir->summary.schema_version == YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION &&
+        (!transform_identity_string(&hash, ir->summary.component_manifest_identity) ||
+         !transform_identity_string(&hash, ir->summary.architecture_identity) ||
+         !transform_identity_string(&hash, ir->summary.role_map_identity) ||
+         !transform_identity_string(&hash, ir->summary.unresolved_requirements_identity)))
         goto encode_failure;
 
     for (index = 0u; index < ir->summary.source_value_count; ++index) {
@@ -156,6 +174,15 @@ int yvex_transform_ir_compute_identity(yvex_transform_ir *ir,
             !transform_identity_u64(&hash, source->expert_index) ||
             !transform_identity_u64(&hash, source->required_uses))
             goto encode_failure;
+        if (ir->summary.schema_version ==
+                YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION &&
+            (!transform_identity_u64(&hash, source->component_identity) ||
+             !transform_identity_u64(&hash, source->semantic_role) ||
+             !transform_identity_u64(&hash, source->phase_identity) ||
+             !transform_identity_u64(&hash, source->lifetime_identity) ||
+             !transform_identity_u64(
+                 &hash, source->unresolved_requirement_identity)))
+            goto encode_failure;
     }
     for (index = 0u; index < ir->summary.value_count; ++index) {
         const yvex_transform_value *value = &ir->values[index];
@@ -169,7 +196,8 @@ int yvex_transform_ir_compute_identity(yvex_transform_ir *ir,
             !transform_identity_precision(&hash, &value->precision))
             goto encode_failure;
         if (value->kind == YVEX_TRANSFORM_VALUE_TERMINAL &&
-            !transform_identity_key(&hash, &value->logical_key))
+            !transform_identity_key(&hash, &value->logical_key,
+                                    ir->summary.schema_version))
             goto encode_failure;
     }
     for (index = 0u; index < ir->summary.node_count; ++index) {

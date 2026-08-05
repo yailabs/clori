@@ -6,6 +6,8 @@
 #include <yvex/internal/source_payload.h>
 #include <yvex/internal/source.h>
 #include <yvex/internal/compilation.h>
+#include <yvex/internal/gguf.h>
+#include <yvex/internal/gguf_writer.h>
 #include <yvex/internal/quant_numeric.h>
 
 #include <yvex/artifact.h>
@@ -19,6 +21,19 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#define PAYLOAD_COMPONENT_IDENTITY \
+    "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+#define PAYLOAD_SOURCE_SNAPSHOT_IDENTITY \
+    "67890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345"
+#define PAYLOAD_COMPONENT_MANIFEST_IDENTITY \
+    "234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1"
+#define PAYLOAD_ARCHITECTURE_IDENTITY \
+    "34567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12"
+#define PAYLOAD_ROLE_MAP_IDENTITY \
+    "4567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef123"
+#define PAYLOAD_UNRESOLVED_IDENTITY \
+    "567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234"
 
 typedef struct {
     char root[512];
@@ -263,6 +278,24 @@ static int payload_test_write_text(const char *path, const char *text)
     return fclose(file) == 0;
 }
 
+static int payload_test_write_sparse_gguf(const char *path,
+                                          const unsigned char *prefix,
+                                          size_t prefix_bytes,
+                                          unsigned long long file_bytes)
+{
+    FILE *file = fopen(path, "wb");
+    int descriptor;
+
+    if (!file || !prefix || file_bytes < prefix_bytes) return 0;
+    descriptor = fileno(file);
+    if (fwrite(prefix, 1u, prefix_bytes, file) != prefix_bytes ||
+        ftruncate(descriptor, (off_t)file_bytes) != 0) {
+        fclose(file);
+        return 0;
+    }
+    return fclose(file) == 0;
+}
+
 static int payload_test_read_text(const char *path, char *text, size_t cap)
 {
     FILE *file = fopen(path, "rb");
@@ -275,6 +308,85 @@ static int payload_test_read_text(const char *path, char *text, size_t cap)
     got = fread(text, 1u, cap - 1u, file);
     text[got] = '\0';
     return fclose(file) == 0;
+}
+
+static int payload_acquisition_fixture_open(
+    const payload_fixture *fixture, yvex_source_acquisition **out,
+    yvex_source_acquisition_failure *failure, yvex_error *err)
+{
+    static const char repository[] = "Example/Payload";
+    static const char revision[] = "0123456789abcdef0123456789abcdef01234567";
+    static const char subtree[] = "fixture";
+    static const char *const names[] = {
+        "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"
+    };
+    char digests[2][65];
+    char paths[2][768];
+    char identity[65];
+    char manifest[4096];
+    char manifest_path[768];
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    yvex_source_acquisition_options options;
+    unsigned int index;
+    int count;
+
+    for (index = 0u; index < 2u; ++index) {
+        count = snprintf(paths[index], sizeof(paths[index]), "%s/%s",
+                         fixture->root, names[index]);
+        if (count < 0 || (size_t)count >= sizeof(paths[index]) ||
+            yvex_artifact_compute_sha256(paths[index], digests[index], err) != YVEX_OK)
+            return 0;
+    }
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, YVEX_SOURCE_ACQUISITION_SCHEMA) ||
+        !yvex_sha256_update_text(&hash, repository) ||
+        !yvex_sha256_update_text(&hash, revision) ||
+        !yvex_sha256_update_text(&hash, subtree) ||
+        !yvex_sha256_update_u64(&hash, 2u)) return 0;
+    for (index = 0u; index < 2u; ++index) {
+        if (!yvex_sha256_update_text(&hash, names[index]) ||
+            !yvex_sha256_update_u64(&hash, 16400u) ||
+            !yvex_sha256_update_text(&hash, digests[index]) ||
+            !yvex_sha256_update_text(&hash, digests[index]) ||
+            !yvex_sha256_update_text(&hash, "") ||
+            !yvex_sha256_update_text(&hash, digests[index]) ||
+            !yvex_sha256_update_text(&hash, "") ||
+            !yvex_sha256_update_text(&hash, "shard") ||
+            !yvex_sha256_update_text(&hash, "fixture")) return 0;
+    }
+    if (!yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, identity);
+    count = snprintf(
+        manifest, sizeof(manifest),
+        "{\"schema\":\"%s\",\"repository\":\"%s\",\"revision\":\"%s\","
+        "\"admitted_subtree\":\"%s\",\"acquisition_complete\":true,"
+        "\"acquisition_identity\":\"%s\",\"shards\":2,\"metadata_bytes\":0,"
+        "\"shard_bytes\":32800,\"source_bytes\":32800,\"files\":["
+        "{\"path\":\"%s\",\"component\":\"fixture\",\"classification\":\"shard\","
+        "\"expected_size\":16400,\"actual_size\":16400,\"expected_sha256\":\"%s\","
+        "\"actual_sha256\":\"%s\",\"git_oid\":\"\",\"lfs_oid\":\"%s\","
+        "\"xet_hash\":\"\",\"verified\":true},"
+        "{\"path\":\"%s\",\"component\":\"fixture\",\"classification\":\"shard\","
+        "\"expected_size\":16400,\"actual_size\":16400,\"expected_sha256\":\"%s\","
+        "\"actual_sha256\":\"%s\",\"git_oid\":\"\",\"lfs_oid\":\"%s\","
+        "\"xet_hash\":\"\",\"verified\":true}]}",
+        YVEX_SOURCE_ACQUISITION_SCHEMA, repository, revision, subtree, identity,
+        names[0], digests[0], digests[0], digests[0], names[1], digests[1],
+        digests[1], digests[1]);
+    if (count < 0 || (size_t)count >= sizeof(manifest)) return 0;
+    count = snprintf(manifest_path, sizeof(manifest_path), "%s/%s", fixture->root,
+                     YVEX_SOURCE_ACQUISITION_MANIFEST);
+    if (count < 0 || (size_t)count >= sizeof(manifest_path) ||
+        !payload_test_write_text(manifest_path, manifest)) return 0;
+    yvex_source_acquisition_options_default(&options);
+    options.source_root = fixture->root;
+    options.expected_repository = repository;
+    options.expected_revision = revision;
+    options.expected_subtree = subtree;
+    options.maximum_files = 2u;
+    options.maximum_source_bytes = 32800u;
+    return yvex_source_acquisition_open(out, &options, failure, err) == YVEX_OK;
 }
 
 static int payload_test_metadata(const char *root,
@@ -452,11 +564,10 @@ static int payload_fixture_transform_ir(
     unsigned long long source_snapshot_identity,
     const char *required_payload_identity,
     const char *shard_name_override,
+    int component_schema,
     yvex_transform_failure *failure,
     yvex_error *err)
 {
-    static const char logical_identity[] =
-        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
     const yvex_source_payload_range *range =
         yvex_source_payload_range_find(session, "alpha.weight");
     const yvex_source_payload_shard *shard = range
@@ -475,12 +586,19 @@ static int payload_fixture_transform_ir(
     if (out) *out = NULL;
     if (!out || !range || !shard || !required_payload_identity) return 1;
     memset(&header, 0, sizeof(header));
-    header.schema_version = YVEX_TRANSFORM_IR_SCHEMA_VERSION;
-    header.logical_model_identity = logical_identity;
+    header.schema_version = component_schema ? YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION
+                                             : YVEX_TRANSFORM_IR_SCHEMA_VERSION;
+    header.logical_model_identity = PAYLOAD_COMPONENT_IDENTITY;
     header.source_snapshot_identity = source_snapshot_identity;
     header.coverage_identity = 0x1122334455667788ull;
     header.required_payload_identity = required_payload_identity;
     header.payload_trust_class = "upstream_payload_verified";
+    if (component_schema) {
+        header.component_manifest_identity = PAYLOAD_COMPONENT_MANIFEST_IDENTITY;
+        header.architecture_identity = PAYLOAD_ARCHITECTURE_IDENTITY;
+        header.role_map_identity = PAYLOAD_ROLE_MAP_IDENTITY;
+        header.unresolved_requirements_identity = PAYLOAD_UNRESOLVED_IDENTITY;
+    }
     header.expected_source_count = 1u;
     header.expected_terminal_count = 1u;
     rc = yvex_transform_builder_create(
@@ -503,6 +621,12 @@ static int payload_fixture_transform_ir(
     source.scope = YVEX_TRANSFORM_SCOPE_MAIN_LAYER;
     source.subsystem = YVEX_TRANSFORM_SUBSYSTEM_ATTENTION;
     source.role_hint = YVEX_TENSOR_ROLE_ATTENTION_Q_A;
+    if (component_schema) {
+        source.component_identity = 0x778899u;
+        source.semantic_role = 1u;
+        source.phase_identity = 2u;
+        source.lifetime_identity = 3u;
+    }
     source.layer_index = 0u;
     source.auxiliary_index = YVEX_TRANSFORM_IR_NO_ID;
     source.expert_index = YVEX_TRANSFORM_IR_NO_ID;
@@ -522,6 +646,12 @@ static int payload_fixture_transform_ir(
     terminal.logical_key.scope = YVEX_TRANSFORM_SCOPE_MAIN_LAYER;
     terminal.logical_key.subsystem = YVEX_TRANSFORM_SUBSYSTEM_ATTENTION;
     terminal.logical_key.role = YVEX_TENSOR_ROLE_ATTENTION_Q_A;
+    if (component_schema) {
+        terminal.logical_key.component_identity = source.component_identity;
+        terminal.logical_key.semantic_role = source.semantic_role;
+        terminal.logical_key.phase_identity = source.phase_identity;
+        terminal.logical_key.lifetime_identity = source.lifetime_identity;
+    }
     terminal.logical_key.layer_index = 0u;
     terminal.logical_key.auxiliary_index = YVEX_TRANSFORM_IR_NO_ID;
     if (rc == YVEX_OK)
@@ -562,11 +692,26 @@ static int test_payload_transform_binding(
     payload_binding_allocator allocation_state;
     yvex_quant_plan *quant_plan = NULL;
     yvex_quant_plan *second_plan = NULL;
+    yvex_gguf_writer_plan *writer_plan = NULL;
+    yvex_gguf_writer_plan *second_writer_plan = NULL;
+    yvex_gguf_writer_plan_request writer_request;
+    yvex_gguf_writer_failure writer_failure;
     yvex_quant_explicit_decision quant_spec;
     yvex_quant_plan_options quant_plan_options;
     yvex_quant_sink_allocator sink_allocator;
     const yvex_quant_plan_summary *quant_summary;
     const yvex_quant_plan_summary *second_summary;
+    const yvex_gguf_writer_plan_summary *writer_summary;
+    const yvex_gguf_writer_plan_summary *second_writer_summary;
+    const unsigned char *writer_prefix;
+    const unsigned char *second_writer_prefix;
+    size_t writer_prefix_bytes;
+    size_t second_writer_prefix_bytes;
+    char component_path[640];
+    yvex_artifact *component_artifact = NULL;
+    yvex_artifact_options artifact_options;
+    yvex_gguf *component_gguf = NULL;
+    yvex_gguf_parse_result parse;
     yvex_quant_digest_sink *digest_sink = NULL;
     yvex_quant_output_sink output_sink;
     yvex_quant_digest_summary digest_first;
@@ -585,7 +730,7 @@ static int test_payload_transform_binding(
     YVEX_TEST_ASSERT(payload_fixture_transform_ir(
                          &ir, fixture->session,
                          facts->source_snapshot_identity,
-                         facts->payload_identity, NULL, &failure, &err) ==
+                         facts->payload_identity, NULL, 0, &failure, &err) ==
                          YVEX_OK &&
                          ir,
                      "trusted fixture Transformation IR seals");
@@ -1005,8 +1150,108 @@ static int test_payload_transform_binding(
 
     YVEX_TEST_ASSERT(payload_fixture_transform_ir(
                          &mismatch, fixture->session,
+                         facts->source_snapshot_identity, facts->payload_identity,
+                         NULL, 1, &failure, &err) == YVEX_OK && mismatch &&
+                         yvex_transform_binding_create(
+                             &binding, mismatch, fixture->session, NULL,
+                             &failure, &err) == YVEX_OK && binding,
+                     "component-schema source binds without payload reads");
+    YVEX_TEST_ASSERT(yvex_quant_plan_build_source_faithful(
+                         &quant_plan, mismatch, binding,
+                         "minimax-h3-source-faithful-v1", 0x778899u, NULL,
+                         &quant_failure, &err) == YVEX_OK && quant_plan &&
+                         yvex_quant_plan_build_source_faithful(
+                             &second_plan, mismatch, binding,
+                             "minimax-h3-source-faithful-v1", 0x778899u,
+                             NULL, &quant_failure, &err) == YVEX_OK && second_plan,
+                     "source-faithful component physical plan seals twice");
+    quant_summary = yvex_quant_plan_summary_get(quant_plan);
+    second_summary = yvex_quant_plan_summary_get(second_plan);
+    YVEX_TEST_ASSERT(quant_summary && second_summary && quant_summary->complete &&
+                         quant_summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_BF16] == 1u &&
+                         quant_summary->encoded_bytes == 8192u &&
+                         quant_summary->payload_bytes_read == 0u &&
+                         strcmp(quant_summary->physical_variant_identity,
+                                second_summary->physical_variant_identity) == 0,
+                     "exact component physical identity and BF16 accounting repeat");
+    memset(&writer_request, 0, sizeof(writer_request));
+    writer_request.input_class = YVEX_GGUF_WRITER_INPUT_LOGICAL_COMPONENT;
+    writer_request.quant_plan = quant_plan;
+    writer_request.input.component.architecture = "minimax-h3";
+    writer_request.input.component.target_id = "minimax-h3-fl2va";
+    writer_request.input.component.component_id = "transformer";
+    writer_request.input.component.source_snapshot_identity =
+        PAYLOAD_SOURCE_SNAPSHOT_IDENTITY;
+    writer_request.input.component.source_snapshot_key = facts->source_snapshot_identity;
+    writer_request.input.component.component_identity = PAYLOAD_COMPONENT_IDENTITY;
+    writer_request.input.component.component_manifest_identity =
+        PAYLOAD_COMPONENT_MANIFEST_IDENTITY;
+    writer_request.input.component.architecture_identity = PAYLOAD_ARCHITECTURE_IDENTITY;
+    writer_request.input.component.role_map_identity = PAYLOAD_ROLE_MAP_IDENTITY;
+    YVEX_TEST_ASSERT(yvex_gguf_writer_plan_build(
+                         &writer_plan, &writer_request, &writer_failure, &err) == YVEX_OK &&
+                         writer_plan &&
+                         yvex_gguf_writer_plan_build(
+                             &second_writer_plan, &writer_request,
+                             &writer_failure, &err) == YVEX_OK && second_writer_plan,
+                     "logical component writer plan seals twice");
+    writer_summary = yvex_gguf_writer_plan_summary_get(writer_plan);
+    second_writer_summary = yvex_gguf_writer_plan_summary_get(second_writer_plan);
+    writer_prefix = yvex_gguf_writer_plan_prefix(writer_plan, &writer_prefix_bytes);
+    second_writer_prefix = yvex_gguf_writer_plan_prefix(
+        second_writer_plan, &second_writer_prefix_bytes);
+    YVEX_TEST_ASSERT(writer_summary && second_writer_summary && writer_summary->complete &&
+                         writer_summary->tensor_count == 1u &&
+                         writer_summary->tensor_payload_bytes == 8192u &&
+                         writer_summary->payload_bytes_read == 0u && writer_prefix &&
+                         second_writer_prefix && writer_prefix_bytes == second_writer_prefix_bytes &&
+                         memcmp(writer_prefix, second_writer_prefix, writer_prefix_bytes) == 0 &&
+                         strcmp(writer_summary->writer_plan_identity,
+                                second_writer_summary->writer_plan_identity) == 0,
+                     "component GGUF structure is byte-identical and payload-neutral");
+    YVEX_TEST_ASSERT(snprintf(component_path, sizeof(component_path), "%s/component.gguf",
+                              fixture->root) > 0 &&
+                         payload_test_write_sparse_gguf(
+                             component_path, writer_prefix, writer_prefix_bytes,
+                             writer_summary->final_file_bytes),
+                     "component fixture writes one bounded structural GGUF");
+    memset(&artifact_options, 0, sizeof(artifact_options));
+    artifact_options.path = component_path;
+    artifact_options.readonly = 1;
+    memset(&parse, 0, sizeof(parse));
+    YVEX_TEST_ASSERT(yvex_artifact_open(&component_artifact, &artifact_options, &err) == YVEX_OK &&
+                         yvex_gguf_open_ex(&component_gguf, component_artifact, NULL, &parse,
+                                           &err) == YVEX_OK &&
+                         yvex_gguf_metadata_find(
+                             component_gguf, "yvex.logical.component_manifest.identity") &&
+                         yvex_gguf_metadata_find(
+                             component_gguf, "yvex.logical.role_map.identity") &&
+                         yvex_gguf_metadata_find(
+                             component_gguf, "yvex.logical.unresolved_requirements.identity") &&
+                         yvex_gguf_metadata_find(
+                             component_gguf, "yvex.physical.payload_plan.identity"),
+                     "native reader accepts every component metadata key");
+    yvex_gguf_close(component_gguf);
+    yvex_artifact_close(component_artifact);
+    YVEX_TEST_ASSERT(unlink(component_path) == 0,
+                     "component structural fixture is removed");
+    yvex_gguf_writer_plan_release(&second_writer_plan);
+    writer_request.input.component.component_identity = PAYLOAD_ROLE_MAP_IDENTITY;
+    YVEX_TEST_ASSERT(yvex_gguf_writer_plan_build(
+                         &second_writer_plan, &writer_request,
+                         &writer_failure, &err) != YVEX_OK && !second_writer_plan &&
+                         writer_failure.code == YVEX_GGUF_WRITER_IDENTITY_MISMATCH,
+                     "mismatched component identity refuses writer publication");
+    yvex_gguf_writer_plan_release(&writer_plan);
+    yvex_quant_plan_release(&second_plan);
+    yvex_quant_plan_release(&quant_plan);
+    yvex_transform_binding_release(&binding);
+    yvex_transform_ir_release(&mismatch);
+
+    YVEX_TEST_ASSERT(payload_fixture_transform_ir(
+                         &mismatch, fixture->session,
                          facts->source_snapshot_identity, wrong_payload,
-                         NULL, &failure, &err) == YVEX_OK && mismatch &&
+                         NULL, 0, &failure, &err) == YVEX_OK && mismatch &&
                          yvex_transform_binding_create(
                              &binding, mismatch, fixture->session, NULL,
                              &failure, &err) != YVEX_OK && !binding &&
@@ -1019,7 +1264,7 @@ static int test_payload_transform_binding(
                          &mismatch, fixture->session,
                          facts->source_snapshot_identity,
                          facts->payload_identity, "wrong.safetensors",
-                         &failure, &err) == YVEX_OK && mismatch &&
+                         0, &failure, &err) == YVEX_OK && mismatch &&
                          yvex_transform_binding_create(
                              &binding, mismatch, fixture->session, NULL,
                              &failure, &err) != YVEX_OK && !binding &&
@@ -1067,7 +1312,7 @@ static int test_payload_transform_binding_untrusted(payload_fixture *fixture)
     YVEX_TEST_ASSERT(payload_fixture_transform_ir(
                          &ir, fixture->session,
                          fixture->verification.source_snapshot_identity,
-                         pending_payload, NULL, &failure, &err) == YVEX_OK &&
+                         pending_payload, NULL, 0, &failure, &err) == YVEX_OK &&
                          ir,
                      "untrusted-session plan remains valid planning state");
     YVEX_TEST_ASSERT(yvex_transform_binding_create(
@@ -2157,6 +2402,20 @@ static int test_payload_path_admission(void)
     FILE *file;
 
     yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(
+        yvex_source_payload_name_is_canonical(
+            "FL2VA/text_encoder/model-00001-of-00014.safetensors"),
+        "normalized nested source shard path is admitted");
+    YVEX_TEST_ASSERT(
+        !yvex_source_payload_name_is_canonical(
+            "FL2VA//text_encoder/model-00001-of-00014.safetensors") &&
+            !yvex_source_payload_name_is_canonical(
+                "FL2VA/../text_encoder/model-00001-of-00014.safetensors") &&
+            !yvex_source_payload_name_is_canonical(
+                "/FL2VA/text_encoder/model-00001-of-00014.safetensors") &&
+            !yvex_source_payload_name_is_canonical(
+                "FL2VA\\text_encoder\\model-00001-of-00014.safetensors"),
+        "empty, traversal, absolute, and backslash shard paths are refused");
     YVEX_TEST_ASSERT(payload_fixture_create(
                          &fixture, "missing-shard", 1, 0, 2u, NULL,
                          &failure, &err) == YVEX_OK &&
@@ -2631,6 +2890,59 @@ static int test_payload_drift_and_lifecycle(void)
     return 0;
 }
 
+static int test_payload_acquired_identity(void)
+{
+    payload_fixture fixture;
+    yvex_source_acquisition *acquisition = NULL;
+    yvex_source_acquisition_failure acquisition_failure;
+    const yvex_source_acquisition_facts *acquisition_facts;
+    yvex_source_payload_open_options options;
+    yvex_source_payload_session *session = NULL;
+    yvex_source_payload_failure failure;
+    yvex_source_tensor_snapshot_facts snapshot;
+    yvex_error err;
+    char shard[768];
+
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(payload_fixture_create(
+                         &fixture, "acquired", 1, 0, 2u, NULL,
+                         &failure, &err) == YVEX_OK,
+                     "acquired payload fixture opens");
+    YVEX_TEST_ASSERT(payload_acquisition_fixture_open(
+                         &fixture, &acquisition, &acquisition_failure, &err) && acquisition,
+                     "acquired source binds exact shard digests and local identities");
+    acquisition_facts = yvex_source_acquisition_facts_get(acquisition);
+    YVEX_TEST_ASSERT(acquisition_facts && acquisition_facts->complete &&
+                         yvex_source_tensor_snapshot_facts_get(
+                             fixture.snapshot, &snapshot, &err) == YVEX_OK,
+                     "acquired payload fixture identities are available");
+    memset(&options, 0, sizeof(options));
+    options.acquisition = acquisition;
+    options.acquired_source_root = fixture.root;
+    options.acquired_target_id = "fixture-target";
+    options.acquired_family_key = "fixture-family";
+    options.acquired_payload_identity = acquisition_facts->acquisition_identity;
+    options.acquired_source_snapshot_identity = snapshot.identity;
+    options.snapshot = fixture.snapshot;
+    yvex_source_payload_budget_default(&options.budget);
+    YVEX_TEST_ASSERT(yvex_source_payload_session_open(
+                         &session, &options, &failure, &err) == YVEX_OK && session,
+                     "unchanged acquired shards open through verified local identities");
+    YVEX_TEST_ASSERT(yvex_source_payload_session_release(
+                         &session, &failure, &err) == YVEX_OK && !session,
+                     "acquired source session releases cleanly");
+    snprintf(shard, sizeof(shard), "%s/model-00001-of-00002.safetensors", fixture.root);
+    YVEX_TEST_ASSERT(payload_test_write_bytes(shard, 16u, 16384u, 9u),
+                     "same-size acquired shard corruption is prepared");
+    YVEX_TEST_ASSERT(yvex_source_payload_session_open(
+                         &session, &options, &failure, &err) != YVEX_OK && !session &&
+                         failure.code == YVEX_SOURCE_PAYLOAD_FAILURE_SHARD_DRIFT,
+                     "post-verification acquired shard replacement is refused");
+    yvex_source_acquisition_release(&acquisition);
+    payload_fixture_close(&fixture);
+    return 0;
+}
+
 int yvex_test_source_payload(void)
 {
     if (test_storage_shard_index_foundation() != 0) return 1;
@@ -2640,6 +2952,7 @@ int yvex_test_source_payload(void)
     if (test_payload_exact_read_faults() != 0) return 1;
     if (test_payload_consumer_cancel_and_publication_failure() != 0) return 1;
     if (test_payload_drift_and_lifecycle() != 0) return 1;
+    if (test_payload_acquired_identity() != 0) return 1;
     if (test_payload_construction_faults() != 0) return 1;
     if (test_payload_path_admission() != 0) return 1;
     if (test_payload_concurrency_and_contention() != 0) return 1;

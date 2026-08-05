@@ -25,6 +25,18 @@ request, not in a decision record.
 Do not open placeholder work for hypothetical family needs. Common owners
 change when a concrete supported consumer exposes a missing invariant.
 
+## Parallel family work
+
+The `main` worktree is the clean accepted integration baseline; implementation
+sessions do not develop directly in it. DeepSeek development uses
+`feature/deepseek-v4-flash` in its dedicated worktree, while MiniMax-H3
+development uses `feature/minimax-h3` in a separate dedicated worktree.
+
+The family branches do not merge directly into each other. A generic change is
+reviewed and admitted through `main`, then integrated into both family branches.
+Each family branch retains only its irreducible family facts and composition;
+common mechanisms keep their existing generic owners.
+
 ## Development order
 
 Unless a delivery explicitly owns documentation or project doctrine, work in

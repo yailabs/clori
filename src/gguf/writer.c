@@ -661,6 +661,271 @@ serialization_failure:
 }
 
 typedef struct {
+    const yvex_gguf_writer_component_input *input;
+    const yvex_quant_plan *quant_plan;
+    const yvex_quant_plan_summary *quant;
+    const yvex_transform_ir *ir;
+    const yvex_transform_ir_summary *transform;
+    yvex_gguf_writer_plan_options options;
+    yvex_gguf_writer_plan *plan;
+    writer_metadata metadata[WRITER_METADATA_CAP];
+    unsigned int metadata_count;
+    writer_buffer buffer;
+    unsigned long long data_span;
+    yvex_gguf_writer_failure *failure;
+    yvex_error *err;
+} writer_component_context;
+
+static int writer_component_validate(writer_component_context *context) {
+    const yvex_gguf_writer_component_input *input = context->input;
+    const yvex_transform_ir_summary *transform = context->transform;
+    const yvex_quant_plan_summary *quant = context->quant;
+
+    if (!input || !input->architecture || !input->architecture[0] ||
+        strlen(input->architecture) >= 64u || !input->target_id || !input->target_id[0] ||
+        strlen(input->target_id) >= YVEX_GGUF_WRITER_NAME_CAP || !input->component_id ||
+        !input->component_id[0] || strlen(input->component_id) >= YVEX_GGUF_WRITER_NAME_CAP ||
+        !yvex_sha256_hex_valid(input->source_snapshot_identity) ||
+        !input->source_snapshot_key ||
+        !yvex_sha256_hex_valid(input->component_identity) ||
+        !yvex_sha256_hex_valid(input->component_manifest_identity) ||
+        !yvex_sha256_hex_valid(input->architecture_identity) ||
+        !yvex_sha256_hex_valid(input->role_map_identity))
+        return writer_fail(context->failure, YVEX_GGUF_WRITER_INVALID_ARGUMENT, NULL,
+                           ULLONG_MAX, ULLONG_MAX, 1u, 0u, context->err,
+                           YVEX_ERR_INVALID_ARG,
+                           "bounded component labels and immutable identities are required");
+    if (!quant || !transform || !quant->complete || !transform->complete ||
+        transform->schema_version != YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION ||
+        yvex_quant_plan_transform_ir(context->quant_plan) != context->ir ||
+        strcmp(transform->logical_model_identity, input->component_identity) != 0 ||
+        strcmp(transform->component_manifest_identity,
+               input->component_manifest_identity) != 0 ||
+        strcmp(transform->architecture_identity, input->architecture_identity) != 0 ||
+        strcmp(transform->role_map_identity, input->role_map_identity) != 0 ||
+        strcmp(transform->transform_identity, quant->transform_identity) != 0 ||
+        input->source_snapshot_key != transform->source_snapshot_identity ||
+        quant->source_snapshot_identity != transform->source_snapshot_identity ||
+        strcmp(quant->required_payload_identity, transform->required_payload_identity) != 0 ||
+        !quant->mapping_identity || quant->terminal_count != transform->terminal_count ||
+        quant->decision_count != transform->terminal_count ||
+        transform->source_value_count != transform->terminal_count ||
+        transform->node_count != transform->terminal_count)
+        return writer_fail(context->failure, YVEX_GGUF_WRITER_IDENTITY_MISMATCH,
+                           input->component_id, ULLONG_MAX, ULLONG_MAX, 1u, 0u,
+                           context->err, YVEX_ERR_FORMAT,
+                           "component, source, transform, and physical-plan identities diverge");
+    return YVEX_OK;
+}
+
+static int writer_component_metadata_build(writer_component_context *context) {
+    const yvex_gguf_writer_component_input *input = context->input;
+
+    memset(context->metadata, 0, sizeof(context->metadata));
+    return writer_meta_text(context->metadata, &context->metadata_count,
+                            "general.architecture", input->architecture) &&
+           writer_meta_u32(context->metadata, &context->metadata_count,
+                           "general.alignment", context->options.alignment) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "general.name", input->component_id) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.logical.target", input->target_id) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.logical.component", input->component_id) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.source.snapshot.identity",
+                            input->source_snapshot_identity) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.logical.component.identity", input->component_identity) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.logical.component_manifest.identity",
+                            input->component_manifest_identity) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.logical.architecture.identity",
+                            input->architecture_identity) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.logical.role_map.identity", input->role_map_identity) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.logical.unresolved_requirements.identity",
+                            context->transform->unresolved_requirements_identity) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.transformation.identity",
+                            context->transform->transform_identity) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.physical.profile.name", context->quant->profile_name) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.physical.profile.identity",
+                            context->quant->profile_identity) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.physical.payload_plan.identity",
+                            context->quant->payload_plan_identity) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.payload.identity",
+                            context->quant->required_payload_identity) &&
+           writer_meta_text(context->metadata, &context->metadata_count,
+                            "yvex.evidence.stage", "component-artifact-planned");
+}
+
+static writer_fixture_tensor_status writer_component_tensors_build(
+    writer_component_context *context, unsigned long long *failed_ordinal) {
+    yvex_gguf_writer_proof_tensor *names;
+    unsigned long long ordinal;
+    writer_fixture_tensor_status status = WRITER_FIXTURE_TENSOR_INVALID;
+
+    names = (yvex_gguf_writer_proof_tensor *)calloc(
+        (size_t)context->transform->terminal_count, sizeof(*names));
+    if (!names)
+        return WRITER_FIXTURE_TENSOR_ARITHMETIC;
+    for (ordinal = 0u; ordinal < context->transform->terminal_count; ++ordinal) {
+        const yvex_transform_value *terminal = yvex_transform_ir_terminal_at(context->ir, ordinal);
+        const yvex_transform_node *node =
+            terminal ? yvex_transform_ir_node_at(context->ir, terminal->producer_node_id) : NULL;
+        const yvex_transform_value *input =
+            node ? yvex_transform_ir_node_input_at(context->ir, node, 0u) : NULL;
+        const yvex_transform_source_value *source =
+            input && input->kind == YVEX_TRANSFORM_VALUE_SOURCE
+                ? yvex_transform_ir_source_at(context->ir, input->source_index) : NULL;
+
+        if (!terminal || terminal->canonical_ordinal != ordinal || !node ||
+            node->kind != YVEX_TRANSFORM_OP_IDENTITY || node->input_count != 1u ||
+            node->numeric != YVEX_TRANSFORM_NUMERIC_EXACT || !source ||
+            !source->source_name[0]) {
+            *failed_ordinal = ordinal;
+            goto done;
+        }
+        names[ordinal].name = source->source_name;
+    }
+    status = writer_fixture_tensors_build(
+        context->plan, context->quant_plan, names, context->transform->terminal_count,
+        context->options.alignment, failed_ordinal, &context->data_span);
+done:
+    free(names);
+    return status;
+}
+
+static int writer_plan_build_component(
+    yvex_gguf_writer_plan **out, const yvex_quant_plan *quant_plan,
+    const yvex_gguf_writer_component_input *input,
+    const yvex_gguf_writer_plan_options *options, yvex_gguf_writer_failure *failure,
+    yvex_error *err) {
+    writer_component_context context;
+    writer_fixture_tensor_status tensor_status;
+    unsigned long long failed_ordinal = ULLONG_MAX;
+    unsigned long long tensor_bytes;
+    int unique;
+    int rc;
+
+    memset(&context, 0, sizeof(context));
+    context.input = input;
+    context.quant_plan = quant_plan;
+    context.quant = yvex_quant_plan_summary_get(quant_plan);
+    context.ir = yvex_quant_plan_transform_ir(quant_plan);
+    context.transform = yvex_transform_ir_summary_get(context.ir);
+    context.failure = failure;
+    context.err = err;
+    if (out)
+        *out = NULL;
+    if (!out || !quant_plan)
+        return writer_fail(failure, YVEX_GGUF_WRITER_INVALID_ARGUMENT, NULL, ULLONG_MAX,
+                           ULLONG_MAX, 1u, 0u, err, YVEX_ERR_INVALID_ARG,
+                           "one component physical plan is required");
+    yvex_gguf_writer_plan_options_default(&context.options);
+    if (options)
+        context.options = *options;
+    if (!context.options.alignment ||
+        (context.options.alignment & (context.options.alignment - 1u)) != 0u ||
+        context.options.maximum_owned_bytes < 1024u ||
+        (context.options.required_execution_identity &&
+         context.options.required_execution_identity[0] &&
+         !yvex_sha256_hex_valid(context.options.required_execution_identity)))
+        return writer_fail(failure, YVEX_GGUF_WRITER_INVALID_ARGUMENT, NULL, ULLONG_MAX,
+                           ULLONG_MAX, 1u, context.options.alignment, err,
+                           YVEX_ERR_INVALID_ARG, "component writer options are invalid");
+    rc = writer_component_validate(&context);
+    if (rc != YVEX_OK)
+        return rc;
+    if (context.transform->terminal_count > SIZE_MAX / sizeof(*context.plan->tensors))
+        goto allocation_failure;
+    context.plan = (yvex_gguf_writer_plan *)calloc(1u, sizeof(*context.plan));
+    if (!context.plan)
+        goto allocation_failure;
+    context.plan->tensors = (yvex_gguf_writer_tensor *)calloc(
+        (size_t)context.transform->terminal_count, sizeof(*context.plan->tensors));
+    if (!context.plan->tensors)
+        goto allocation_failure;
+    writer_plan_seed(context.plan, quant_plan, context.quant,
+                     context.transform->terminal_count, &context.options);
+    tensor_status = writer_component_tensors_build(&context, &failed_ordinal);
+    if (tensor_status == WRITER_FIXTURE_TENSOR_INVALID)
+        goto tensor_failure;
+    if (tensor_status != WRITER_FIXTURE_TENSOR_OK)
+        goto allocation_failure;
+    unique = writer_tensor_names_unique(context.plan->tensors,
+                                        context.transform->terminal_count);
+    if (unique < 0)
+        goto allocation_failure;
+    if (unique == 0)
+        goto duplicate_failure;
+    if (!writer_component_metadata_build(&context))
+        goto metadata_failure;
+    context.buffer.maximum = context.options.maximum_owned_bytes;
+    if (!writer_prefix_serialize(&context.buffer, context.metadata,
+                                 context.metadata_count, NULL, context.plan->tensors,
+                                 context.transform->terminal_count) ||
+        !writer_prefix_finish(context.plan, &context.buffer, context.options.alignment,
+                              context.data_span))
+        goto serialization_failure;
+    context.plan->summary.metadata_count = context.metadata_count;
+    if (!yvex_core_u64_mul(context.transform->terminal_count,
+                           sizeof(*context.plan->tensors), &tensor_bytes) ||
+        !yvex_core_u64_add(sizeof(*context.plan), tensor_bytes,
+                           &context.plan->summary.owned_bytes) ||
+        !yvex_core_u64_add(context.plan->summary.owned_bytes,
+                           context.plan->prefix_bytes,
+                           &context.plan->summary.owned_bytes) ||
+        context.plan->summary.owned_bytes > context.options.maximum_owned_bytes ||
+        context.plan->summary.tensor_payload_bytes != context.quant->encoded_bytes ||
+        !writer_plan_identity(context.plan))
+        goto serialization_failure;
+    context.plan->summary.complete = 1;
+    *out = context.plan;
+    yvex_core_execution_observation_record(YVEX_CORE_OBSERVE_WRITER_PLAN, 1ull);
+    if (failure)
+        memset(failure, 0, sizeof(*failure));
+    yvex_error_clear(err);
+    return YVEX_OK;
+
+duplicate_failure:
+    rc = writer_fail(failure, YVEX_GGUF_WRITER_DUPLICATE_TENSOR, NULL, ULLONG_MAX,
+                     ULLONG_MAX, context.transform->terminal_count, 0u, err,
+                     YVEX_ERR_FORMAT, "component tensor names are duplicate");
+    goto build_failure;
+metadata_failure:
+    rc = writer_fail(failure, YVEX_GGUF_WRITER_DUPLICATE_METADATA, NULL,
+                     context.metadata_count, ULLONG_MAX, 1u, 0u, err,
+                     YVEX_ERR_FORMAT, "component metadata is duplicate or unrepresentable");
+    goto build_failure;
+tensor_failure:
+    rc = writer_fail(failure, YVEX_GGUF_WRITER_TENSOR_DIVERGENCE, NULL, ULLONG_MAX,
+                     failed_ordinal, 1u, 0u, err, YVEX_ERR_FORMAT,
+                     "component terminal is not one exact source tensor");
+    goto build_failure;
+allocation_failure:
+    rc = writer_fail(failure, YVEX_GGUF_WRITER_ALLOCATION, NULL, ULLONG_MAX,
+                     ULLONG_MAX, context.transform ? context.transform->terminal_count : 0u,
+                     0u, err, YVEX_ERR_NOMEM, "component writer allocation failed");
+    goto build_failure;
+serialization_failure:
+    rc = writer_fail(failure, YVEX_GGUF_WRITER_SERIALIZATION, NULL, ULLONG_MAX,
+                     ULLONG_MAX, 1u, 0u, err, YVEX_ERR_BOUNDS,
+                     "component writer serialization or accounting failed");
+build_failure:
+    free(context.buffer.data);
+    yvex_gguf_writer_plan_release(&context.plan);
+    return rc;
+}
+
+typedef struct {
     yvex_gguf_writer_plan *plan;
     const yvex_quant_plan *quant_plan;
     const yvex_deepseek_gguf_map *map;
@@ -1063,6 +1328,10 @@ int yvex_gguf_writer_plan_build(yvex_gguf_writer_plan **out,
         return writer_plan_build_tensor_proof(
             out, request->quant_plan, request->input.tensor_proof.tensors,
             request->input.tensor_proof.tensor_count, request->options, failure, err);
+    case YVEX_GGUF_WRITER_INPUT_LOGICAL_COMPONENT:
+        return writer_plan_build_component(
+            out, request->quant_plan, &request->input.component, request->options,
+            failure, err);
     default:
         return writer_fail(failure, YVEX_GGUF_WRITER_INVALID_ARGUMENT, NULL, ULLONG_MAX,
                            ULLONG_MAX, YVEX_GGUF_WRITER_INPUT_TENSOR_PROOF,

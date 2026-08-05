@@ -52,6 +52,16 @@ expect_rc 1 "$YVEX_BIN" compile quant preset show no-such-preset \
     > "$OUT_DIR/unknown.out" 2> "$OUT_DIR/unknown.err"
 expect_rc 2 "$YVEX_BIN" compile quant plan --target deepseek4-v4-flash-dspark \
     > "$OUT_DIR/incomplete.out" 2> "$OUT_DIR/incomplete.err"
+expect_rc 1 "$YVEX_BIN" compile quant plan --target minimax-h3-fl2va \
+    --source /does/not/exist --component audio_vae --out-plan "$OUT_DIR/minimax.plan" \
+    > "$OUT_DIR/minimax-missing.out" 2> "$OUT_DIR/minimax-missing.err"
+grep 'immutable source acquisition admission failed' "$OUT_DIR/minimax-missing.err" >/dev/null ||
+    fail "MiniMax source refusal missing"
+expect_rc 1 "$YVEX_BIN" compile quant plan --target minimax-h3-fl2va \
+    --source /does/not/exist --component pipeline --out-plan "$OUT_DIR/minimax.plan" \
+    > "$OUT_DIR/minimax-component.out" 2> "$OUT_DIR/minimax-component.err"
+grep 'component must be text_encoder, transformer, video_vae, or audio_vae' \
+    "$OUT_DIR/minimax-component.err" >/dev/null || fail "MiniMax component refusal missing"
 expect_rc 2 "$YVEX_BIN" compile quant nope > "$OUT_DIR/bad-action.out" 2> "$OUT_DIR/bad-action.err"
 
 printf 'physical variant cli: ok\n'

@@ -38,6 +38,7 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
 | DeepSeek-V4-Flash-DSpark facts | [DeepSeek record](model-families/deepseek-v4-flash.md) |
 | Qwen facts | [Qwen record](model-families/qwen.md) |
 | Gemma facts | [Gemma record](model-families/gemma.md) |
+| MiniMax-H3 FL2VA research facts | [MiniMax-H3 record](model-families/minimax-h3.md) |
 | Artifact admission | [Artifact contract](contracts/artifacts.md) |
 | Hosted runtime behavior | [Runtime contract](contracts/runtime.md) |
 | Private local protocol | [Local protocol v7](contracts/local-protocol.md) |
@@ -62,6 +63,7 @@ behavior; [`ROADMAP.md`](../ROADMAP.md) owns the live project sequence.
   [code-commentary migration](audits/code-commentary-7c90ce1/README.md),
   [execution-substrate disposition](audits/execution-substrate-dd91fb/README.md),
   [GB10 optimization baseline](audits/gb10-optimization-691814/README.md),
+  [MiniMax-H3 FL2VA intake](audits/minimax-h3-fl2va-b8b09e3/README.md),
   [repository-compression disposition](audits/repository-compression-7226f7/README.md),
   operator-surface, and topology audits remain frozen beside the documentation
   baseline.

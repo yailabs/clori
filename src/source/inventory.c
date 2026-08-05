@@ -316,6 +316,94 @@ int yvex_source_tensor_snapshot_take_table_with_shards(yvex_source_tensor_snapsh
     return YVEX_OK;
 }
 
+static int acquired_shard_compare(const void *left, const void *right) {
+    const yvex_source_shard_snapshot *a = (const yvex_source_shard_snapshot *)left;
+    const yvex_source_shard_snapshot *b = (const yvex_source_shard_snapshot *)right;
+
+    return strcmp(a->canonical_name, b->canonical_name);
+}
+
+int yvex_source_acquisition_snapshot_create(yvex_source_tensor_snapshot **out,
+                                            const yvex_source_acquisition *acquisition,
+                                            const char *source_root,
+                                            unsigned long long semantic_identity,
+                                            yvex_error *err) {
+    const yvex_source_acquisition_facts *facts =
+        yvex_source_acquisition_facts_get(acquisition);
+    yvex_source_shard_snapshot *shards = NULL;
+    yvex_native_weight_table *table = NULL;
+    yvex_source_tensor_snapshot *snapshot = NULL;
+    unsigned long long file_index;
+    unsigned long long shard_index = 0u;
+    int rc = YVEX_OK;
+
+    if (out)
+        *out = NULL;
+    if (!out || !facts || !facts->complete || !facts->shard_count || !source_root ||
+        !source_root[0] || !semantic_identity ||
+        facts->shard_count > (unsigned long long)(SIZE_MAX / sizeof(shards[0]))) {
+        return inventory_refuse(err, YVEX_ERR_INVALID_ARG, "source_acquisition_snapshot",
+                                "complete acquisition, source root, and semantic identity are required");
+    }
+    shards = (yvex_source_shard_snapshot *)calloc((size_t)facts->shard_count,
+                                                   sizeof(shards[0]));
+    table = (yvex_native_weight_table *)calloc(1u, sizeof(*table));
+    if (!shards || !table) {
+        rc = inventory_refuse(err, YVEX_ERR_NOMEM, "source_acquisition_snapshot",
+                              "acquired snapshot allocation failed");
+        goto cleanup;
+    }
+    for (file_index = 0u; file_index < facts->file_count; ++file_index) {
+        const yvex_source_acquisition_file *file =
+            yvex_source_acquisition_file_at(acquisition, file_index);
+        yvex_safetensors_file_facts file_facts;
+        char path[YVEX_PATH_CAP];
+
+        if (!file || file->classification != YVEX_SOURCE_ACQUISITION_FILE_SHARD) continue;
+        if (shard_index >= facts->shard_count || !yvex_sha256_hex_valid(file->actual_sha256) ||
+            strcmp(file->expected_sha256, file->actual_sha256) != 0 ||
+            !yvex_source_path_join(path, sizeof(path), source_root, file->path)) {
+            rc = inventory_refuse(err, YVEX_ERR_FORMAT, "source_acquisition_snapshot",
+                                  "acquired shard identity or path is invalid");
+            goto cleanup;
+        }
+        memset(&file_facts, 0, sizeof(file_facts));
+        rc = yvex_safetensors_read_header_file_with_facts(path, file->path, table, &file_facts, err);
+        if (rc != YVEX_OK) goto cleanup;
+        if (file_facts.file_bytes != file->actual_size ||
+            file_facts.data_region_offset >= file_facts.file_bytes ||
+            file_facts.payload_bytes != file_facts.file_bytes - file_facts.data_region_offset) {
+            rc = inventory_refuse(err, YVEX_ERR_FORMAT, "source_acquisition_snapshot",
+                                  "acquired shard geometry differs from its verified file fact");
+            goto cleanup;
+        }
+        shards[shard_index].canonical_name = file->path;
+        shards[shard_index].file_bytes = file_facts.file_bytes;
+        shards[shard_index].data_region_offset = file_facts.data_region_offset;
+        shards[shard_index].payload_bytes = file_facts.payload_bytes;
+        shard_index++;
+    }
+    if (shard_index != facts->shard_count) {
+        rc = inventory_refuse(err, YVEX_ERR_FORMAT, "source_acquisition_snapshot",
+                              "acquired shard population is incomplete");
+        goto cleanup;
+    }
+    qsort(shards, (size_t)shard_index, sizeof(shards[0]), acquired_shard_compare);
+    for (shard_index = 0u; shard_index < facts->shard_count; ++shard_index)
+        shards[shard_index].canonical_id = shard_index;
+    rc = yvex_source_tensor_snapshot_take_table_with_shards(
+        &snapshot, &table, shards, facts->shard_count, 1u, err);
+    if (rc != YVEX_OK) goto cleanup;
+    snapshot->identity = semantic_identity;
+    *out = snapshot;
+    snapshot = NULL;
+cleanup:
+    yvex_source_tensor_snapshot_release(snapshot);
+    yvex_native_weight_table_close(table);
+    free(shards);
+    return rc;
+}
+
 void yvex_source_tensor_snapshot_retain(yvex_source_tensor_snapshot *snapshot) {
     if (snapshot && snapshot->references < UINT_MAX)
         snapshot->references++;
@@ -1168,4 +1256,198 @@ cleanup:
     source_index_free(&index);
     source_shards_free(&shards);
     return rc;
+}
+
+static int component_inventory_prefix(const char *path, const char *prefix)
+{
+    size_t length = prefix ? strlen(prefix) : 0u;
+
+    return path && length && strncmp(path, prefix, length) == 0;
+}
+
+static int component_inventory_shard_add(const char **shards,
+                                         size_t *count,
+                                         size_t capacity,
+                                         const char *path)
+{
+    size_t index;
+
+    for (index = 0u; index < *count; ++index)
+        if (strcmp(shards[index], path) == 0) return 1;
+    if (*count >= capacity) return 0;
+    shards[(*count)++] = path;
+    return 1;
+}
+
+static int component_inventory_index_open(const char *source_root,
+                                          const char *relative_path,
+                                          source_index *index,
+                                          yvex_error *err)
+{
+    char path[YVEX_PATH_CAP];
+    char *data;
+    size_t length = 0u;
+    int parsed;
+
+    if (!yvex_source_path_join(path, sizeof(path), source_root, relative_path)) {
+        return inventory_refuse(err, YVEX_ERR_BOUNDS,
+                                "source_component_inventory",
+                                "component index path exceeds bounds");
+    }
+    data = yvex_read_bounded_file(path, 16u * 1024u * 1024u, &length, err);
+    if (!data) return err ? err->code : YVEX_ERR_IO;
+    parsed = source_parse_index_json(data, length, index, err);
+    free(data);
+    if (parsed == 1) return YVEX_OK;
+    return inventory_refuse(err, YVEX_ERR_FORMAT,
+                            "source_component_inventory",
+                            "component shard index is malformed or duplicated");
+}
+
+static int component_inventory_expected_shard(char *out,
+                                              size_t cap,
+                                              const char *index_path,
+                                              const char *shard)
+{
+    const char *slash;
+    size_t prefix;
+    size_t shard_length;
+
+    if (!out || !index_path || !shard || strchr(shard, '/') ||
+        !yvex_source_payload_name_is_canonical(shard)) return 0;
+    slash = strrchr(index_path, '/');
+    prefix = slash ? (size_t)(slash - index_path + 1) : 0u;
+    shard_length = strlen(shard);
+    if (prefix + shard_length >= cap) return 0;
+    if (prefix) memcpy(out, index_path, prefix);
+    memcpy(out + prefix, shard, shard_length + 1u);
+    return 1;
+}
+
+static int component_inventory_verify_one(
+    const char *source_root,
+    const yvex_native_weight_table *table,
+    const yvex_source_component_inventory_spec *spec,
+    unsigned long long *tensor_count,
+    unsigned long long *shard_count,
+    yvex_error *err)
+{
+    const char *shards[YVEX_SOURCE_ACQUISITION_FILE_CAP];
+    source_index index;
+    unsigned long long payload_bytes = 0u;
+    unsigned long long row;
+    size_t unique_shards = 0u;
+    int rc = YVEX_OK;
+
+    memset(&index, 0, sizeof(index));
+    *tensor_count = 0u;
+    *shard_count = 0u;
+    if (!spec->component || !spec->component[0] || !spec->shard_prefix ||
+        !spec->shard_prefix[0] || !spec->expected_shards ||
+        !spec->expected_tensors) {
+        return inventory_refuse(err, YVEX_ERR_INVALID_ARG,
+                                "source_component_inventory",
+                                "complete component inventory spec is required");
+    }
+    if (spec->index_path) {
+        rc = component_inventory_index_open(source_root, spec->index_path,
+                                            &index, err);
+        if (rc != YVEX_OK) goto cleanup;
+    }
+    for (row = 0u; row < table->count; ++row) {
+        const yvex_native_weight_info *tensor = &table->items[row];
+        source_index_entry *entry;
+
+        if (!component_inventory_prefix(tensor->shard_path,
+                                        spec->shard_prefix)) continue;
+        if (!component_inventory_shard_add(
+                shards, &unique_shards,
+                sizeof(shards) / sizeof(shards[0]), tensor->shard_path) ||
+            !yvex_core_u64_add(payload_bytes, tensor->data_bytes,
+                               &payload_bytes)) {
+            rc = inventory_refuse(err, YVEX_ERR_BOUNDS,
+                                  "source_component_inventory",
+                                  "component inventory exceeds resource bounds");
+            goto cleanup;
+        }
+        (*tensor_count)++;
+        if (!spec->index_path) continue;
+        entry = source_index_find(&index, tensor->name);
+        if (!entry) {
+            rc = inventory_refuse(err, YVEX_ERR_FORMAT,
+                                  "source_component_inventory",
+                                  "component tensor is absent from its shard index");
+            goto cleanup;
+        }
+        {
+            char expected[YVEX_PATH_CAP];
+            if (!component_inventory_expected_shard(
+                    expected, sizeof(expected), spec->index_path,
+                    entry->shard) ||
+                strcmp(expected, tensor->shard_path) != 0) {
+                rc = inventory_refuse(err, YVEX_ERR_FORMAT,
+                                      "source_component_inventory",
+                                      "component tensor shard disagrees with its index");
+                goto cleanup;
+            }
+        }
+    }
+    *shard_count = (unsigned long long)unique_shards;
+    if (*tensor_count != spec->expected_tensors ||
+        *shard_count != spec->expected_shards ||
+        (spec->index_path && index.count != *tensor_count) ||
+        (spec->index_path && index.has_declared_total_size &&
+         index.declared_total_size != payload_bytes)) {
+        rc = inventory_refuse(err, YVEX_ERR_FORMAT,
+                              "source_component_inventory",
+                              "component shard, tensor, or payload totals disagree");
+    }
+cleanup:
+    source_index_free(&index);
+    return rc;
+}
+
+int yvex_source_component_inventory_verify(
+    const char *source_root,
+    const yvex_native_weight_table *table,
+    const yvex_source_component_inventory_spec *specs,
+    size_t spec_count,
+    yvex_source_component_inventory_facts *facts,
+    yvex_error *err)
+{
+    unsigned long long matched = 0u;
+    size_t index;
+
+    if (!source_root || !table || !specs || !spec_count || spec_count > 32u ||
+        !facts) {
+        return inventory_refuse(err, YVEX_ERR_INVALID_ARG,
+                                "source_component_inventory",
+                                "source, table, specs, and facts are required");
+    }
+    memset(facts, 0, sizeof(*facts));
+    for (index = 0u; index < spec_count; ++index) {
+        unsigned long long tensors;
+        unsigned long long shards;
+        int rc = component_inventory_verify_one(
+            source_root, table, &specs[index], &tensors, &shards, err);
+        if (rc != YVEX_OK) return rc;
+        if (!yvex_core_u64_add(matched, tensors, &matched) ||
+            !yvex_core_u64_add(facts->shard_count, shards,
+                               &facts->shard_count)) {
+            return inventory_refuse(err, YVEX_ERR_BOUNDS,
+                                    "source_component_inventory",
+                                    "component totals overflow");
+        }
+        if (specs[index].index_path) facts->indexed_component_count++;
+    }
+    if (matched != table->count) {
+        return inventory_refuse(err, YVEX_ERR_FORMAT,
+                                "source_component_inventory",
+                                "one or more source tensors lack a component owner");
+    }
+    facts->component_count = (unsigned long long)spec_count;
+    facts->tensor_count = matched;
+    facts->complete = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
 }

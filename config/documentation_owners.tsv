@@ -16,6 +16,7 @@ docs/audits/documentation-architecture-51a5c/README.md	audit	frozen	contributors
 docs/audits/documentation-architecture-51a5c/findings.md	audit	frozen	contributors	frozen	documentation_architecture_baseline_findings
 docs/audits/execution-substrate-dd91fb/README.md	audit	frozen	contributors	frozen	execution_substrate_baseline_and_disposition_audit
 docs/audits/gb10-optimization-691814/README.md	audit	frozen	contributors	frozen	gb10_optimization_baseline_audit
+docs/audits/minimax-h3-fl2va-b8b09e3/README.md	audit	frozen	contributors	frozen	minimax_h3_fl2va_intake_audit
 docs/audits/operator-surface-ec7dcc/README.md	audit	frozen	contributors	frozen	operator_surface_audit
 docs/audits/operator-surface-ec7dcc/findings.md	audit	frozen	contributors	frozen	operator_surface_findings
 docs/audits/operator-surface-ec7dcc/project-control-input.md	audit	frozen	contributors	frozen	operator_audit_project_control_input
@@ -56,6 +57,7 @@ docs/milestones/runtime-console-repl.md	milestone	canonical	contributors	accepte
 docs/model-families/deepseek-v4-flash.md	family	canonical	operators-contributors	living	deepseek_v4_flash_facts
 docs/model-families/gemma.md	family	canonical	contributors	living	gemma_facts
 docs/model-families/integration.md	family	canonical	contributors	living	model_family_integration_contract
+docs/model-families/minimax-h3.md	family	canonical	contributors	living	minimax_h3_fl2va_facts
 docs/model-families/qwen.md	family	canonical	contributors	living	qwen_facts
 docs/openai-compatibility.md	contract	canonical	integrators-operators	living	openai_compatibility_v1
 docs/operations/deepseek.md	operations	canonical	operators	living	deepseek_operation

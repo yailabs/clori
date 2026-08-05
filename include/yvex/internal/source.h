@@ -78,19 +78,24 @@ static inline int yvex_source_target_matches_family_name(const char *family,
     return 0;
 }
 
-/* Admit one root-relative shard basename for source payload manifests. */
+/* Admit one normalized root-relative shard path for source payload sessions. */
 static inline int yvex_source_payload_name_is_canonical(const char *name)
 {
     const char *cursor;
-
+    size_t segment = 0u;
     if (!name || !name[0] || name[0] == '/' || strcmp(name, ".") == 0 ||
         strcmp(name, "..") == 0)
         return 0;
     for (cursor = name; *cursor; ++cursor) {
-        if (*cursor == '/' || *cursor == '\\' || *cursor == '\n' || *cursor == '\r')
-            return 0;
+        if (*cursor == '\\' || *cursor == '\n' || *cursor == '\r') return 0;
+        if (*cursor == '/') {
+            if (!segment || (segment == 1u && cursor[-1] == '.') ||
+                (segment == 2u && cursor[-1] == '.' && cursor[-2] == '.')) return 0;
+            segment = 0u;
+        } else segment++;
     }
-    return 1;
+    return segment && !(segment == 1u && cursor[-1] == '.') &&
+           !(segment == 2u && cursor[-1] == '.' && cursor[-2] == '.');
 }
 
 /* Project an immutable source identity beneath a caller-owned models root. */
@@ -400,6 +405,102 @@ int yvex_source_provenance_metadata_read(
     yvex_source_metadata_blob *out,
     yvex_error *err);
 void yvex_source_metadata_blob_release(yvex_source_metadata_blob *blob);
+
+/* Immutable multi-component source acquisition admission. */
+#define YVEX_SOURCE_ACQUISITION_SCHEMA "yvex.source-acquisition.v1"
+#define YVEX_SOURCE_ACQUISITION_MANIFEST "yvex-source-acquisition.json"
+#define YVEX_SOURCE_ACQUISITION_FILE_CAP 256u
+typedef enum {
+    YVEX_SOURCE_ACQUISITION_FILE_METADATA = 0,
+    YVEX_SOURCE_ACQUISITION_FILE_SHARD
+} yvex_source_acquisition_file_class;
+typedef enum {
+    YVEX_SOURCE_ACQUISITION_FAILURE_NONE = 0,
+    YVEX_SOURCE_ACQUISITION_FAILURE_INVALID_ARGUMENT,
+    YVEX_SOURCE_ACQUISITION_FAILURE_MANIFEST_MISSING,
+    YVEX_SOURCE_ACQUISITION_FAILURE_MANIFEST_FORMAT,
+    YVEX_SOURCE_ACQUISITION_FAILURE_SOURCE_IDENTITY,
+    YVEX_SOURCE_ACQUISITION_FAILURE_RESOURCE_BUDGET,
+    YVEX_SOURCE_ACQUISITION_FAILURE_PATH,
+    YVEX_SOURCE_ACQUISITION_FAILURE_SYMLINK,
+    YVEX_SOURCE_ACQUISITION_FAILURE_NON_REGULAR,
+    YVEX_SOURCE_ACQUISITION_FAILURE_SIZE,
+    YVEX_SOURCE_ACQUISITION_FAILURE_DIGEST,
+    YVEX_SOURCE_ACQUISITION_FAILURE_DUPLICATE,
+    YVEX_SOURCE_ACQUISITION_FAILURE_IO,
+    YVEX_SOURCE_ACQUISITION_FAILURE_ALLOCATION
+} yvex_source_acquisition_failure_code;
+typedef struct {
+    char path[YVEX_PATH_CAP];
+    char component[48];
+    char expected_sha256[65], actual_sha256[65], git_oid[65], lfs_oid[65], xet_hash[65];
+    unsigned long long expected_size;
+    unsigned long long actual_size;
+    unsigned long long verified_device, verified_inode;
+    long long verified_mtime_seconds, verified_ctime_seconds;
+    long verified_mtime_nanoseconds, verified_ctime_nanoseconds;
+    yvex_source_acquisition_file_class classification;
+    int local_identity_verified;
+} yvex_source_acquisition_file;
+typedef struct {
+    const char *source_root;
+    const char *expected_repository;
+    const char *expected_revision;
+    const char *expected_subtree;
+    unsigned long long maximum_files;
+    unsigned long long maximum_source_bytes;
+    int verify_digests;
+} yvex_source_acquisition_options;
+typedef struct {
+    yvex_source_acquisition_failure_code code;
+    unsigned long long file_index;
+    char path[YVEX_PATH_CAP];
+} yvex_source_acquisition_failure;
+typedef struct yvex_source_acquisition yvex_source_acquisition;
+typedef struct {
+    char repository[256];
+    char revision[65];
+    char subtree[64];
+    char acquisition_identity[65];
+    unsigned long long file_count;
+    unsigned long long shard_count;
+    unsigned long long metadata_bytes;
+    unsigned long long shard_bytes;
+    unsigned long long source_bytes;
+    unsigned long long payload_bytes_read;
+    int complete;
+} yvex_source_acquisition_facts;
+void yvex_source_acquisition_options_default(
+    yvex_source_acquisition_options *options);
+int yvex_source_acquisition_open(
+    yvex_source_acquisition **out,
+    const yvex_source_acquisition_options *options,
+    yvex_source_acquisition_failure *failure,
+    yvex_error *err);
+void yvex_source_acquisition_release(yvex_source_acquisition **acquisition);
+const yvex_source_acquisition_facts *yvex_source_acquisition_facts_get(
+    const yvex_source_acquisition *acquisition);
+const yvex_source_acquisition_file *yvex_source_acquisition_file_at(
+    const yvex_source_acquisition *acquisition,
+    unsigned long long index);
+typedef struct {
+    const char *component;
+    const char *index_path;
+    const char *shard_prefix;
+    unsigned long long expected_shards;
+    unsigned long long expected_tensors;
+} yvex_source_component_inventory_spec;
+typedef struct {
+    unsigned long long component_count;
+    unsigned long long indexed_component_count;
+    unsigned long long shard_count;
+    unsigned long long tensor_count;
+    int complete;
+} yvex_source_component_inventory_facts;
+int yvex_source_component_inventory_verify(
+    const char *source_root, const yvex_native_weight_table *table,
+    const yvex_source_component_inventory_spec *specs, size_t spec_count,
+    yvex_source_component_inventory_facts *facts, yvex_error *err);
 
 /* Manifest publication. */
 struct yvex_source_payload_session;

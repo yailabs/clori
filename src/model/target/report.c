@@ -9,6 +9,8 @@
 #include <yvex/internal/model_target.h>
 
 #include <yvex/internal/families/deepseek_v4.h>
+#include <yvex/internal/families/minimax_h3.h>
+#include <yvex/internal/compilation.h>
 #include <yvex/internal/source.h>
 
 #include <stdarg.h>
@@ -1596,6 +1598,8 @@ static int class_profile_deepseek_from_verification(
         return YVEX_OK;
     }
     report->family_architecture = architecture;
+    report->family_architecture_kind =
+        YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK;
     {
         const yvex_model_target_report_profile profile = {
             .status = "typed-architecture-specified",
@@ -1605,6 +1609,95 @@ static int class_profile_deepseek_from_verification(
             .next_row = "V010.SOURCE.PAYLOAD.STREAM.0",
             .boundary = "typed architecture specification; mapping is owned by the "
                         "canonical map plan and payload/runtime remain separate"
+        };
+
+        yvex_model_target_report_prepare(report, request, &profile);
+    }
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int class_profile_minimax_report_build(
+    const yvex_model_target_request *request,
+    yvex_model_target_report *report,
+    yvex_error *err)
+{
+    const yvex_minimax_h3_api *api = yvex_model_register_minimax_h3();
+    yvex_minimax_h3_open_options options;
+    yvex_minimax_h3_failure failure;
+    yvex_minimax_h3_target *target = NULL;
+    yvex_transform_ir *transformation = NULL;
+    int rc;
+
+    if (!request->source_path[0]) {
+        report->status = "source-acquisition-required";
+        report->exit_code = 5;
+        yvex_model_target_report_add_error(
+            report, "model-target class-profile: MiniMax-H3 requires --source DIR");
+        return YVEX_OK;
+    }
+    options.source_root = request->source_path;
+    rc = api->open(&target, &options, &failure, err);
+    if (rc != YVEX_OK) {
+        report->status = "source-or-transformation-ir-refused";
+        report->exit_code = 5;
+        if (request->mode == YVEX_MODEL_TARGET_OUTPUT_JSON) {
+            yvex_model_target_report_add_row(
+                report,
+                "{\"status\":\"source-or-transformation-ir-refused\","
+                "\"target_id\":\"%s\",\"failure\":\"%s\","
+                "\"runtime\":\"unsupported\",\"generation\":\"unsupported\"}",
+                request->target_id, api->failure_name(failure.code));
+        } else {
+            yvex_model_target_report_add_error(
+                report, "model-target class-profile: MiniMax-H3 refused: %s tensor=%s",
+                api->failure_name(failure.code),
+                failure.source_name[0] ? failure.source_name : "none");
+        }
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    rc = yvex_model_minimax_h3_transform_api()->build(
+        &transformation, report->family_derivation_identity, target, err);
+    if (rc != YVEX_OK) {
+        api->close(&target);
+        report->status = "transformation-ir-refused";
+        report->exit_code = 5;
+        if (request->mode == YVEX_MODEL_TARGET_OUTPUT_JSON) {
+            yvex_model_target_report_add_row(
+                report,
+                "{\"status\":\"transformation-ir-refused\","
+                "\"target_id\":\"%s\",\"runtime\":\"unsupported\","
+                "\"generation\":\"unsupported\"}",
+                request->target_id);
+        } else {
+            yvex_model_target_report_add_error(
+                report, "model-target class-profile: MiniMax-H3 Transformation IR refused");
+        }
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    report->family_architecture = target;
+    report->family_transformation = transformation;
+    report->family_architecture_kind =
+        YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3;
+    {
+        const yvex_model_target_report_profile profile = {
+            .status = "transformation-ir-admitted",
+            .target_id = request->target_id,
+            .family = "minimax-h3",
+            .model = "MiniMax-H3 Base FL2VA",
+            .target_class = "composite-source-model",
+            .stage = "source-verified-architecture-and-transformation-ir",
+            .source_status = "exact-immutable-source-verified",
+            .artifact_status = "not-produced",
+            .tensor_map_status = "complete-source-to-logical-role-map",
+            .runtime_status = "unsupported",
+            .generation_status = "unsupported",
+            .benchmark_status = "not-measured",
+            .next_row = "component physical variants and artifact emission",
+            .boundary = "source, composite logical target, architecture, tensor roles, and "
+                        "artifact-neutral Transformation IR only"
         };
 
         yvex_model_target_report_prepare(report, request, &profile);
@@ -1742,6 +1835,8 @@ static int model_class_report_build(
     if (yvex_source_is_release_target(request->target_id)) {
         return class_profile_deepseek_report_build(request, report, err);
     }
+    if (strcmp(request->target_id, YVEX_MINIMAX_H3_TARGET_ID) == 0)
+        return class_profile_minimax_report_build(request, report, err);
     family = yvex_model_target_family_key(request->target_id);
     class_profile_family_facts(family, &class_name, &runtime_shape,
                                &backend_pressure, &top_blocker,
@@ -1887,7 +1982,16 @@ void yvex_model_target_report_close(yvex_model_target_report *report)
         (yvex_deepseek_gguf_map *)report->family_lowering);
     yvex_model_register_deepseek_v4()->coverage.close(
         (yvex_deepseek_tensor_coverage *)report->family_coverage);
-    yvex_model_register_deepseek_v4()->ir.close(
-        (yvex_deepseek_v4_ir *)report->family_architecture);
+    yvex_transform_ir_release((yvex_transform_ir **)&report->family_transformation);
+    if (report->family_architecture_kind ==
+        YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_DEEPSEEK) {
+        yvex_model_register_deepseek_v4()->ir.close(
+            (yvex_deepseek_v4_ir *)report->family_architecture);
+    } else if (report->family_architecture_kind ==
+               YVEX_MODEL_TARGET_FAMILY_ARCHITECTURE_MINIMAX_H3) {
+        yvex_minimax_h3_target *target =
+            (yvex_minimax_h3_target *)report->family_architecture;
+        yvex_model_register_minimax_h3()->close(&target);
+    }
     memset(report, 0, sizeof(*report));
 }
