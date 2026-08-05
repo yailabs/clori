@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include <yvex/internal/core.h>
+#include <yvex/internal/compilation.h>
 #include <yvex/internal/source.h>
 
 #define MINIMAX_UNKNOWN_NONE 0ull
@@ -1386,6 +1387,12 @@ static const yvex_minimax_h3_summary *target_summary(
     return target ? &target->summary : NULL;
 }
 
+static const yvex_source_acquisition *target_acquisition(
+    const yvex_minimax_h3_target *target)
+{
+    return target ? target->acquisition : NULL;
+}
+
 static const yvex_minimax_h3_architecture *target_architecture(
     const yvex_minimax_h3_target *target)
 {
@@ -1413,11 +1420,554 @@ static const yvex_minimax_h3_tensor_role *target_role_at(
 const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_api api = {
-        target_open, target_close, target_summary, target_architecture,
+        target_open, target_close, target_summary, target_acquisition, target_architecture,
         target_component_at, target_phase_edge_at, target_role_at,
         family_failure_name, family_role_name, family_component_name,
         components_canonical, component_graph_validate, phase_graph_validate,
         architecture_canonical, tensor_classify
+    };
+
+    return &api;
+}
+static yvex_transform_dtype minimax_transform_dtype(yvex_native_dtype dtype)
+{
+    if (dtype == YVEX_NATIVE_DTYPE_BF16) return YVEX_TRANSFORM_DTYPE_BF16;
+    if (dtype == YVEX_NATIVE_DTYPE_F32) return YVEX_TRANSFORM_DTYPE_F32;
+    return YVEX_TRANSFORM_DTYPE_UNKNOWN;
+}
+
+static yvex_transform_subsystem minimax_transform_subsystem(yvex_minimax_h3_role role)
+{
+    if ((role >= YVEX_MINIMAX_H3_ROLE_TEXT_ATTENTION_Q &&
+         role <= YVEX_MINIMAX_H3_ROLE_TEXT_QK_NORM) ||
+        role == YVEX_MINIMAX_H3_ROLE_VISION_ATTENTION ||
+        role == YVEX_MINIMAX_H3_ROLE_TOKEN_REFINER_ATTENTION ||
+        role == YVEX_MINIMAX_H3_ROLE_OMNI_ATTENTION ||
+        role == YVEX_MINIMAX_H3_ROLE_OMNI_QK_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_VIDEO_DECODER_ATTENTION ||
+        role == YVEX_MINIMAX_H3_ROLE_AUDIO_PRE_ATTENTION)
+        return YVEX_TRANSFORM_SUBSYSTEM_ATTENTION;
+    if (role == YVEX_MINIMAX_H3_ROLE_TEXT_RMS_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_VISION_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_TOKEN_REFINER_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_OMNI_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_FINAL_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_VIDEO_ENCODER_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_VIDEO_DECODER_NORM ||
+        role == YVEX_MINIMAX_H3_ROLE_AUDIO_PRE_NORM)
+        return YVEX_TRANSFORM_SUBSYSTEM_NORMALIZATION;
+    if (role == YVEX_MINIMAX_H3_ROLE_TEXT_OUTPUT_HEAD ||
+        role == YVEX_MINIMAX_H3_ROLE_FINAL_VIDEO ||
+        role == YVEX_MINIMAX_H3_ROLE_FINAL_AUDIO ||
+        role == YVEX_MINIMAX_H3_ROLE_VIDEO_OUTPUT ||
+        role == YVEX_MINIMAX_H3_ROLE_AUDIO_OUTPUT)
+        return YVEX_TRANSFORM_SUBSYSTEM_OUTPUT;
+    return YVEX_TRANSFORM_SUBSYSTEM_AUXILIARY;
+}
+
+static int minimax_transform_add(yvex_transform_builder *builder,
+                                 const yvex_minimax_h3_target *target,
+                                 unsigned long long source_index,
+                                 unsigned long long terminal_ordinal,
+                                 yvex_transform_failure *failure,
+                                 yvex_error *err)
+{
+    const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
+    const yvex_minimax_h3_summary *summary = family->summary(target);
+    const yvex_minimax_h3_tensor_role *role = family->role_at(target, source_index);
+    const yvex_minimax_h3_component *component;
+    yvex_transform_source_spec source = {0};
+    yvex_transform_value_spec terminal = {0};
+    yvex_transform_node_spec node = {0};
+    unsigned long long source_value, terminal_value, node_id, input;
+    unsigned int dimension;
+    int rc;
+
+    if (!summary || !role || role->transform != YVEX_MINIMAX_H3_TRANSFORM_IDENTITY)
+        return yvex_transform_fail(
+            failure, YVEX_TRANSFORM_FAILURE_UNSUPPORTED_OPERATION, source_index,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID, YVEX_TRANSFORM_IR_NO_ID,
+            YVEX_TRANSFORM_IR_NO_ID, YVEX_MINIMAX_H3_TRANSFORM_IDENTITY,
+            role ? role->transform : ~0u, 0u, err, "minimax_h3_transform");
+    component = family->component_at(target, role->component);
+    if (!component) return YVEX_ERR_STATE;
+    source.source_name = role->source_name;
+    source.shard_name = role->shard_name;
+    source.source_tensor_index = source_index;
+    source.requirement_index = terminal_ordinal;
+    source.source_snapshot_identity = summary->source_snapshot_key;
+    source.source_dtype = role->source_dtype;
+    source.value_dtype = minimax_transform_dtype(role->source_dtype);
+    source.shape.rank = role->rank;
+    for (dimension = 0u; dimension < role->rank; ++dimension)
+        source.shape.dims[dimension] = role->source_shape[dimension];
+    source.relative_begin = role->relative_begin;
+    source.relative_end = role->relative_end;
+    source.requirement_identity = yvex_transform_hash_string(role->destination_identity);
+    source.scope = role->layer_index == YVEX_MINIMAX_H3_NO_COORDINATE
+                       ? YVEX_TRANSFORM_SCOPE_GLOBAL : YVEX_TRANSFORM_SCOPE_MAIN_LAYER;
+    source.subsystem = minimax_transform_subsystem(role->role);
+    source.role_hint = YVEX_TENSOR_ROLE_UNKNOWN;
+    source.component_identity = yvex_transform_hash_string(component->identity);
+    source.semantic_role = role->role;
+    source.phase_identity = role->phase;
+    source.lifetime_identity = role->lifetime;
+    source.unresolved_requirement_identity = role->unresolved_requirement_identity;
+    source.layer_index = role->layer_index;
+    source.auxiliary_index = YVEX_TRANSFORM_IR_NO_ID;
+    source.expert_index = YVEX_TRANSFORM_IR_NO_ID;
+    source.required_uses = 1u;
+    rc = yvex_transform_builder_add_source(builder, &source, &source_value, failure, err);
+    if (rc != YVEX_OK) return rc;
+    terminal.kind = YVEX_TRANSFORM_VALUE_TERMINAL;
+    terminal.semantic_id = source.requirement_identity;
+    terminal.canonical_ordinal = terminal_ordinal;
+    terminal.shape = source.shape;
+    terminal.dtype = source.value_dtype;
+    terminal.precision.flags = YVEX_TRANSFORM_PRECISION_EXACT;
+    terminal.precision.allowed_physical_classes =
+        source.value_dtype == YVEX_TRANSFORM_DTYPE_BF16
+            ? YVEX_TRANSFORM_PHYSICAL_BF16 : YVEX_TRANSFORM_PHYSICAL_F32;
+    terminal.logical_key.scope = source.scope;
+    terminal.logical_key.subsystem = source.subsystem;
+    terminal.logical_key.role = YVEX_TENSOR_ROLE_UNKNOWN;
+    terminal.logical_key.component_identity = source.component_identity;
+    terminal.logical_key.semantic_role = role->role;
+    terminal.logical_key.phase_identity = role->phase;
+    terminal.logical_key.lifetime_identity = role->lifetime;
+    terminal.logical_key.layer_index = role->layer_index;
+    terminal.logical_key.auxiliary_index = YVEX_TRANSFORM_IR_NO_ID;
+    terminal.logical_key.group_index = source_index;
+    rc = yvex_transform_builder_declare_value(
+        builder, &terminal, &terminal_value, failure, err);
+    if (rc != YVEX_OK) return rc;
+    input = source_value;
+    node.kind = YVEX_TRANSFORM_OP_IDENTITY;
+    node.output_value_id = terminal_value;
+    node.input_value_ids = &input;
+    node.input_count = 1u;
+    node.numeric = YVEX_TRANSFORM_NUMERIC_EXACT;
+    node.ordering = YVEX_TRANSFORM_ORDER_INPUT;
+    node.payload_execution_required = 1;
+    return yvex_transform_builder_add_node(builder, &node, &node_id, failure, err);
+}
+
+static int minimax_transform_build(yvex_transform_ir **out,
+                                   char derivation_identity[65],
+                                   const yvex_minimax_h3_target *target,
+                                   yvex_error *err)
+{
+    const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
+    const yvex_minimax_h3_summary *facts = family->summary(target);
+    yvex_transform_header header = {0};
+    yvex_transform_builder_options options = {0};
+    yvex_transform_builder *builder = NULL;
+    yvex_transform_failure failure;
+    const yvex_transform_ir_summary *summary;
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long index;
+    int rc;
+
+    if (out) *out = NULL;
+    if (derivation_identity) derivation_identity[0] = '\0';
+    if (!out || !derivation_identity || !facts || !facts->source_verified ||
+        !facts->architecture_admitted || !facts->roles_complete) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax_h3_transform",
+                       "verified source, architecture, and complete roles are required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    header.schema_version = YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION;
+    header.logical_model_identity = facts->target_identity;
+    header.source_snapshot_identity = facts->source_snapshot_key;
+    header.coverage_identity = yvex_transform_hash_string(facts->role_map_identity);
+    header.required_payload_identity = facts->source_acquisition_identity;
+    header.payload_trust_class = "complete-sha256-verified-source";
+    header.component_manifest_identity = facts->component_manifest_identity;
+    header.architecture_identity = facts->architecture_identity;
+    header.role_map_identity = facts->role_map_identity;
+    header.unresolved_requirements_identity = facts->unresolved_requirements_identity;
+    header.expected_source_count = facts->tensor_count;
+    header.expected_terminal_count = facts->tensor_count;
+    header.header_scan_count = facts->shard_count;
+    yvex_transform_budget_default(&options.budget);
+    rc = yvex_transform_builder_create(&builder, &header, &options, &failure, err);
+    for (index = 0u; rc == YVEX_OK && index < facts->tensor_count; ++index)
+        rc = minimax_transform_add(builder, target, index, index, &failure, err);
+    if (rc == YVEX_OK)
+        rc = yvex_transform_builder_seal(builder, out, &failure, err);
+    yvex_transform_builder_release(&builder);
+    summary = rc == YVEX_OK ? yvex_transform_ir_summary_get(*out) : NULL;
+    if (!summary || !summary->complete || summary->source_value_count != facts->tensor_count ||
+        summary->terminal_count != facts->tensor_count ||
+        summary->node_count != facts->tensor_count || summary->payload_bytes_read != 0u) {
+        yvex_transform_ir_release(out);
+        if (rc == YVEX_OK) {
+            yvex_error_set(err, YVEX_ERR_STATE, "minimax_h3_transform",
+                           "sealed Transformation IR coverage is incomplete");
+            rc = YVEX_ERR_STATE;
+        }
+        return rc;
+    }
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.target-derivation.v1") ||
+        !yvex_sha256_update_text(&hash, facts->target_identity) ||
+        !yvex_sha256_update_text(&hash, summary->transform_identity) ||
+        !yvex_sha256_final(&hash, digest)) {
+        yvex_transform_ir_release(out);
+        yvex_error_set(err, YVEX_ERR_STATE, "minimax_h3_transform",
+                       "target derivation identity construction failed");
+        return YVEX_ERR_STATE;
+    }
+    yvex_sha256_hex(digest, derivation_identity);
+    return YVEX_OK;
+}
+
+static int minimax_transform_build_component(yvex_transform_ir **out,
+                                             char derivation_identity[65],
+                                             const yvex_minimax_h3_target *target,
+                                             yvex_minimax_h3_component_id component_id,
+                                             yvex_error *err)
+{
+    const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
+    const yvex_minimax_h3_summary *facts = family->summary(target);
+    const yvex_minimax_h3_component *component = family->component_at(target, component_id);
+    yvex_transform_header header = {0};
+    yvex_transform_builder_options options = {0};
+    yvex_transform_builder *builder = NULL;
+    yvex_transform_failure failure;
+    const yvex_transform_ir_summary *summary;
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long source_index;
+    unsigned long long terminal_ordinal = 0u;
+    int rc;
+
+    if (out) *out = NULL;
+    if (derivation_identity) derivation_identity[0] = '\0';
+    if (!out || !derivation_identity || !facts || !component || !component->weighted ||
+        !facts->source_verified || !facts->architecture_admitted || !facts->roles_complete) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "minimax_h3_component_transform",
+                       "one verified weighted component is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    header.schema_version = YVEX_TRANSFORM_IR_COMPONENT_SCHEMA_VERSION;
+    header.logical_model_identity = component->identity;
+    header.source_snapshot_identity = facts->source_snapshot_key;
+    header.coverage_identity = yvex_transform_hash_string(component->identity);
+    header.required_payload_identity = facts->source_acquisition_identity;
+    header.payload_trust_class = "complete-sha256-verified-source";
+    header.component_manifest_identity = facts->component_manifest_identity;
+    header.architecture_identity = facts->architecture_identity;
+    header.role_map_identity = facts->role_map_identity;
+    header.unresolved_requirements_identity = facts->unresolved_requirements_identity;
+    header.expected_source_count = component->tensor_count;
+    header.expected_terminal_count = component->tensor_count;
+    header.header_scan_count = component->shard_count;
+    yvex_transform_budget_default(&options.budget);
+    rc = yvex_transform_builder_create(&builder, &header, &options, &failure, err);
+    for (source_index = 0u; rc == YVEX_OK && source_index < facts->tensor_count; ++source_index) {
+        const yvex_minimax_h3_tensor_role *role = family->role_at(target, source_index);
+
+        if (role && role->component == component_id) {
+            rc = minimax_transform_add(builder, target, source_index, terminal_ordinal,
+                                       &failure, err);
+            terminal_ordinal++;
+        }
+    }
+    if (rc == YVEX_OK && terminal_ordinal != component->tensor_count) {
+        yvex_error_set(err, YVEX_ERR_STATE, "minimax_h3_component_transform",
+                       "component source-role coverage changed during projection");
+        rc = YVEX_ERR_STATE;
+    }
+    if (rc == YVEX_OK) rc = yvex_transform_builder_seal(builder, out, &failure, err);
+    yvex_transform_builder_release(&builder);
+    summary = rc == YVEX_OK ? yvex_transform_ir_summary_get(*out) : NULL;
+    if (!summary || !summary->complete || summary->source_value_count != component->tensor_count ||
+        summary->terminal_count != component->tensor_count ||
+        summary->node_count != component->tensor_count || summary->payload_bytes_read != 0u) {
+        yvex_transform_ir_release(out);
+        if (rc == YVEX_OK) {
+            yvex_error_set(err, YVEX_ERR_STATE, "minimax_h3_component_transform",
+                           "component Transformation IR coverage is incomplete");
+            rc = YVEX_ERR_STATE;
+        }
+        return rc;
+    }
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.component-derivation.v1") ||
+        !yvex_sha256_update_text(&hash, facts->target_identity) ||
+        !yvex_sha256_update_text(&hash, component->identity) ||
+        !yvex_sha256_update_text(&hash, summary->transform_identity) ||
+        !yvex_sha256_final(&hash, digest)) {
+        yvex_transform_ir_release(out);
+        yvex_error_set(err, YVEX_ERR_STATE, "minimax_h3_component_transform",
+                       "component derivation identity construction failed");
+        return YVEX_ERR_STATE;
+    }
+    yvex_sha256_hex(digest, derivation_identity);
+    return YVEX_OK;
+}
+
+const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void)
+{
+    static const yvex_minimax_h3_transform_api api = {
+        minimax_transform_build, minimax_transform_build_component
+    };
+
+    return &api;
+}
+
+struct yvex_minimax_h3_handoff {
+    yvex_minimax_h3_target *target;
+    yvex_source_tensor_snapshot *snapshot;
+    yvex_source_payload_session *session;
+    yvex_transform_ir *transform_ir;
+    yvex_transform_binding *binding;
+    yvex_source_payload_plan *plan;
+    yvex_minimax_h3_handoff_summary summary;
+};
+
+static int minimax_handoff_refuse(yvex_minimax_h3_handoff_failure *failure,
+                                  yvex_minimax_h3_handoff_code code,
+                                  yvex_status status, yvex_error *err,
+                                  const char *message)
+{
+    if (failure) failure->code = code;
+    if (err && yvex_error_code(err) == YVEX_OK)
+        yvex_error_set(err, status, "minimax_h3_handoff", message);
+    return status;
+}
+
+static void minimax_handoff_close(yvex_minimax_h3_handoff **address)
+{
+    yvex_minimax_h3_handoff *handoff;
+
+    if (!address || !*address) return;
+    handoff = *address;
+    *address = NULL;
+    yvex_source_payload_plan_close(handoff->plan);
+    yvex_transform_binding_release(&handoff->binding);
+    yvex_transform_ir_release(&handoff->transform_ir);
+    (void)yvex_source_payload_session_release(&handoff->session, NULL, NULL);
+    yvex_source_tensor_snapshot_release(handoff->snapshot);
+    yvex_model_register_minimax_h3()->close(&handoff->target);
+    memset(handoff, 0, sizeof(*handoff));
+    free(handoff);
+}
+
+static int minimax_handoff_plan_build(
+    yvex_minimax_h3_handoff *handoff, const yvex_minimax_h3_component *component,
+    const yvex_minimax_h3_handoff_options *options,
+    const yvex_source_payload_budget *budget,
+    yvex_minimax_h3_handoff_failure *failure, yvex_error *err)
+{
+    unsigned long long *indices;
+    unsigned long long index;
+    int rc;
+
+    indices = (unsigned long long *)calloc((size_t)component->tensor_count,
+                                           sizeof(indices[0]));
+    if (!indices)
+        return minimax_handoff_refuse(failure, YVEX_MINIMAX_H3_HANDOFF_ALLOCATION,
+                                      YVEX_ERR_NOMEM, err,
+                                      "payload-plan index allocation failed");
+    for (index = 0u; index < component->tensor_count; ++index) {
+        const yvex_transform_source_value *source =
+            yvex_transform_ir_source_at(handoff->transform_ir, index);
+        if (!source) {
+            free(indices);
+            return minimax_handoff_refuse(
+                failure, YVEX_MINIMAX_H3_HANDOFF_TRANSFORMATION, YVEX_ERR_STATE, err,
+                "component Transformation IR source is absent");
+        }
+        indices[index] = source->source_tensor_index;
+    }
+    rc = yvex_source_payload_plan_build(
+        &handoff->plan, handoff->session, indices, component->tensor_count,
+        options->chunk_bytes ? options->chunk_bytes : budget->chunk_bytes,
+        options->page_bytes ? options->page_bytes : budget->page_bytes,
+        failure ? &failure->payload_failure : NULL, err);
+    free(indices);
+    if (rc != YVEX_OK && failure)
+        failure->code = YVEX_MINIMAX_H3_HANDOFF_PAYLOAD_PLAN;
+    return rc;
+}
+
+static int minimax_handoff_summary_seal(
+    yvex_minimax_h3_handoff *handoff, const yvex_minimax_h3_summary *target,
+    const yvex_minimax_h3_component *component,
+    yvex_minimax_h3_handoff_failure *failure, yvex_error *err)
+{
+    const yvex_source_payload_plan_summary *plan =
+        yvex_source_payload_plan_summary_get(handoff->plan);
+    const yvex_transform_ir_summary *transform =
+        yvex_transform_ir_summary_get(handoff->transform_ir);
+    yvex_source_payload_session_facts session;
+    int rc = yvex_source_payload_session_facts_get(handoff->session, &session, err);
+
+    if (rc != YVEX_OK || !plan || !transform || !transform->complete ||
+        session.state != YVEX_SOURCE_PAYLOAD_STATE_READY ||
+        plan->range_count != component->tensor_count)
+        return minimax_handoff_refuse(failure, YVEX_MINIMAX_H3_HANDOFF_PAYLOAD_PLAN,
+                                      YVEX_ERR_STATE, err,
+                                      "component handoff did not seal");
+    handoff->summary.component = component->id;
+    yvex_core_text_copy(handoff->summary.component_identity,
+                        sizeof(handoff->summary.component_identity), component->identity);
+    yvex_core_text_copy(handoff->summary.source_snapshot_identity,
+                        sizeof(handoff->summary.source_snapshot_identity),
+                        target->source_snapshot_identity);
+    yvex_core_text_copy(handoff->summary.payload_identity,
+                        sizeof(handoff->summary.payload_identity), session.payload_identity);
+    yvex_core_text_copy(handoff->summary.transform_identity,
+                        sizeof(handoff->summary.transform_identity),
+                        transform->transform_identity);
+    handoff->summary.shards = component->shard_count;
+    handoff->summary.tensors = component->tensor_count;
+    handoff->summary.elements = component->element_count;
+    handoff->summary.payload_bytes = component->payload_bytes;
+    handoff->summary.planned_ranges = plan->range_count;
+    handoff->summary.planned_chunks = plan->chunk_count;
+    handoff->summary.payload_execution_bytes_read = transform->payload_bytes_read;
+    handoff->summary.complete = 1;
+    return YVEX_OK;
+}
+
+static int minimax_handoff_open(yvex_minimax_h3_handoff **out,
+                                const yvex_minimax_h3_handoff_options *options,
+                                yvex_minimax_h3_handoff_failure *failure,
+                                yvex_error *err)
+{
+    const yvex_minimax_h3_api *family = yvex_model_register_minimax_h3();
+    yvex_minimax_h3_handoff *handoff = NULL;
+    yvex_minimax_h3_open_options target_options;
+    const yvex_minimax_h3_summary *target;
+    const yvex_minimax_h3_component *component;
+    const yvex_source_acquisition *acquisition;
+    yvex_source_payload_open_options payload = {0};
+    yvex_transform_failure transform_failure;
+    int rc;
+
+    if (out) *out = NULL;
+    if (failure) memset(failure, 0, sizeof(*failure));
+    yvex_error_clear(err);
+    if (!out || !options || !options->source_root || !options->source_root[0] ||
+        options->component >= YVEX_MINIMAX_H3_COMPONENT_COUNT)
+        return minimax_handoff_refuse(failure, YVEX_MINIMAX_H3_HANDOFF_INVALID_ARGUMENT,
+                                      YVEX_ERR_INVALID_ARG, err,
+                                      "one exact source root and component are required");
+    handoff = (yvex_minimax_h3_handoff *)calloc(1u, sizeof(*handoff));
+    if (!handoff)
+        return minimax_handoff_refuse(failure, YVEX_MINIMAX_H3_HANDOFF_ALLOCATION,
+                                      YVEX_ERR_NOMEM, err, "handoff allocation failed");
+    target_options.source_root = options->source_root;
+    rc = family->open(&handoff->target, &target_options,
+                      failure ? &failure->target_failure : NULL, err);
+    if (rc != YVEX_OK) {
+        if (failure) failure->code = YVEX_MINIMAX_H3_HANDOFF_TARGET;
+        goto fail;
+    }
+    target = family->summary(handoff->target);
+    component = family->component_at(handoff->target, options->component);
+    acquisition = family->acquisition(handoff->target);
+    if (!target || !component || !component->weighted || !acquisition) {
+        rc = minimax_handoff_refuse(
+            failure, YVEX_MINIMAX_H3_HANDOFF_INVALID_ARGUMENT, YVEX_ERR_INVALID_ARG, err,
+            "only one admitted weighted component can own a payload handoff");
+        goto fail;
+    }
+    rc = yvex_source_acquisition_snapshot_create(
+        &handoff->snapshot, acquisition, options->source_root,
+        target->source_snapshot_key, err);
+    if (rc != YVEX_OK) {
+        if (failure) failure->code = YVEX_MINIMAX_H3_HANDOFF_SNAPSHOT;
+        goto fail;
+    }
+    payload.acquisition = acquisition;
+    payload.acquired_source_root = options->source_root;
+    payload.acquired_target_id = YVEX_MINIMAX_H3_TARGET_ID;
+    payload.acquired_family_key = "minimax-h3";
+    payload.acquired_payload_identity = target->source_acquisition_identity;
+    payload.acquired_source_snapshot_identity = target->source_snapshot_key;
+    payload.snapshot = handoff->snapshot;
+    payload.budget = options->budget;
+    if (!payload.budget.maximum_shards)
+        yvex_source_payload_budget_default(&payload.budget);
+    rc = yvex_source_payload_session_open(
+        &handoff->session, &payload, failure ? &failure->payload_failure : NULL, err);
+    if (rc != YVEX_OK) {
+        if (failure) failure->code = YVEX_MINIMAX_H3_HANDOFF_PAYLOAD_SESSION;
+        goto fail;
+    }
+    rc = yvex_model_minimax_h3_transform_api()->build_component(
+        &handoff->transform_ir, handoff->summary.derivation_identity,
+        handoff->target, options->component, err);
+    if (rc != YVEX_OK) {
+        if (failure) failure->code = YVEX_MINIMAX_H3_HANDOFF_TRANSFORMATION;
+        goto fail;
+    }
+    rc = yvex_transform_binding_create(
+        &handoff->binding, handoff->transform_ir, handoff->session, NULL,
+        &transform_failure, err);
+    if (rc != YVEX_OK) {
+        if (failure) failure->code = YVEX_MINIMAX_H3_HANDOFF_BINDING;
+        goto fail;
+    }
+    rc = minimax_handoff_plan_build(handoff, component, options, &payload.budget,
+                                    failure, err);
+    if (rc == YVEX_OK)
+        rc = minimax_handoff_summary_seal(handoff, target, component, failure, err);
+    if (rc != YVEX_OK) goto fail;
+    *out = handoff;
+    return YVEX_OK;
+fail:
+    minimax_handoff_close(&handoff);
+    return rc;
+}
+
+static const yvex_minimax_h3_handoff_summary *minimax_handoff_summary(
+    const yvex_minimax_h3_handoff *handoff)
+{
+    return handoff ? &handoff->summary : NULL;
+}
+
+static const yvex_minimax_h3_target *minimax_handoff_target(
+    const yvex_minimax_h3_handoff *handoff)
+{
+    return handoff ? handoff->target : NULL;
+}
+
+static const yvex_transform_ir *minimax_handoff_transform_ir(
+    const yvex_minimax_h3_handoff *handoff)
+{
+    return handoff ? handoff->transform_ir : NULL;
+}
+
+static const yvex_transform_binding *minimax_handoff_binding(
+    const yvex_minimax_h3_handoff *handoff)
+{
+    return handoff ? handoff->binding : NULL;
+}
+
+static yvex_source_payload_session *minimax_handoff_session(
+    yvex_minimax_h3_handoff *handoff)
+{
+    return handoff ? handoff->session : NULL;
+}
+
+static const yvex_source_payload_plan *minimax_handoff_plan(
+    const yvex_minimax_h3_handoff *handoff)
+{
+    return handoff ? handoff->plan : NULL;
+}
+
+const yvex_minimax_h3_handoff_api *yvex_model_minimax_h3_handoff_api(void)
+{
+    static const yvex_minimax_h3_handoff_api api = {
+        minimax_handoff_open, minimax_handoff_close, minimax_handoff_summary,
+        minimax_handoff_target, minimax_handoff_transform_ir, minimax_handoff_binding,
+        minimax_handoff_session, minimax_handoff_plan
     };
 
     return &api;

@@ -10,8 +10,10 @@
 #include <stddef.h>
 #include <yvex/core.h>
 #include <yvex/source.h>
+#include <yvex/internal/source_payload.h>
 
 typedef struct yvex_transform_ir yvex_transform_ir;
+typedef struct yvex_transform_binding yvex_transform_binding;
 
 #define YVEX_MINIMAX_H3_TARGET_ID "minimax-h3-fl2va"
 #define YVEX_MINIMAX_H3_REPOSITORY "MiniMaxAI/MiniMax-H3"
@@ -361,6 +363,7 @@ typedef struct {
                 yvex_error *err);
     void (*close)(yvex_minimax_h3_target **target);
     const yvex_minimax_h3_summary *(*summary)(const yvex_minimax_h3_target *target);
+    const yvex_source_acquisition *(*acquisition)(const yvex_minimax_h3_target *target);
     const yvex_minimax_h3_architecture *(*architecture)(
         const yvex_minimax_h3_target *target);
     const yvex_minimax_h3_component *(*component_at)(
@@ -393,9 +396,64 @@ typedef struct {
                  char derivation_identity[65],
                  const yvex_minimax_h3_target *target,
                  yvex_error *err);
+    int (*build_component)(yvex_transform_ir **out,
+                           char derivation_identity[65],
+                           const yvex_minimax_h3_target *target,
+                           yvex_minimax_h3_component_id component,
+                           yvex_error *err);
 } yvex_minimax_h3_transform_api;
+
+typedef enum {
+    YVEX_MINIMAX_H3_HANDOFF_NONE = 0,
+    YVEX_MINIMAX_H3_HANDOFF_INVALID_ARGUMENT,
+    YVEX_MINIMAX_H3_HANDOFF_TARGET,
+    YVEX_MINIMAX_H3_HANDOFF_SNAPSHOT,
+    YVEX_MINIMAX_H3_HANDOFF_PAYLOAD_SESSION,
+    YVEX_MINIMAX_H3_HANDOFF_TRANSFORMATION,
+    YVEX_MINIMAX_H3_HANDOFF_BINDING,
+    YVEX_MINIMAX_H3_HANDOFF_PAYLOAD_PLAN,
+    YVEX_MINIMAX_H3_HANDOFF_ALLOCATION
+} yvex_minimax_h3_handoff_code;
+typedef struct {
+    yvex_minimax_h3_handoff_code code;
+    yvex_minimax_h3_failure target_failure;
+    yvex_source_payload_failure payload_failure;
+} yvex_minimax_h3_handoff_failure;
+typedef struct {
+    const char *source_root;
+    yvex_minimax_h3_component_id component;
+    yvex_source_payload_budget budget;
+    size_t chunk_bytes;
+    size_t page_bytes;
+} yvex_minimax_h3_handoff_options;
+typedef struct {
+    yvex_minimax_h3_component_id component;
+    char component_identity[65];
+    char source_snapshot_identity[65];
+    char payload_identity[65];
+    char transform_identity[65];
+    char derivation_identity[65];
+    unsigned long long shards, tensors, elements, payload_bytes;
+    unsigned long long planned_ranges, planned_chunks, payload_execution_bytes_read;
+    int complete;
+} yvex_minimax_h3_handoff_summary;
+typedef struct yvex_minimax_h3_handoff yvex_minimax_h3_handoff;
+typedef struct {
+    int (*open)(yvex_minimax_h3_handoff **out,
+                const yvex_minimax_h3_handoff_options *options,
+                yvex_minimax_h3_handoff_failure *failure, yvex_error *err);
+    void (*close)(yvex_minimax_h3_handoff **handoff);
+    const yvex_minimax_h3_handoff_summary *(*summary)(
+        const yvex_minimax_h3_handoff *handoff);
+    const yvex_minimax_h3_target *(*target)(const yvex_minimax_h3_handoff *handoff);
+    const yvex_transform_ir *(*transform_ir)(const yvex_minimax_h3_handoff *handoff);
+    const yvex_transform_binding *(*binding)(const yvex_minimax_h3_handoff *handoff);
+    yvex_source_payload_session *(*session)(yvex_minimax_h3_handoff *handoff);
+    const yvex_source_payload_plan *(*plan)(const yvex_minimax_h3_handoff *handoff);
+} yvex_minimax_h3_handoff_api;
 
 const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void);
 const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void);
+const yvex_minimax_h3_handoff_api *yvex_model_minimax_h3_handoff_api(void);
 
 #endif /* INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED */

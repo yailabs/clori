@@ -159,6 +159,91 @@ static char *payload_strdup(yvex_source_payload_session *session, const char *te
     return copy;
 }
 
+static int payload_open_relative(yvex_source_payload_session *session, const char *name) {
+    char copy[YVEX_PATH_CAP];
+    char *cursor;
+    char *save = NULL;
+    int directory;
+
+    if (!session || !yvex_source_payload_name_is_canonical(name) ||
+        strlen(name) >= sizeof(copy)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!strchr(name, '/'))
+        return session->ops.openat_fn(session->root_fd, name,
+                                      O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    memcpy(copy, name, strlen(name) + 1u);
+    directory = session->ops.openat_fn(session->root_fd, ".",
+                                       O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
+    if (directory < 0) return -1;
+    cursor = strtok_r(copy, "/", &save);
+    while (cursor) {
+        char *next = strtok_r(NULL, "/", &save);
+        int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW;
+        int opened;
+        int saved;
+
+        if (next) flags |= O_DIRECTORY;
+        opened = session->ops.openat_fn(directory, cursor, flags);
+        saved = errno;
+        session->ops.close_fn(directory);
+        errno = saved;
+        if (opened < 0) return -1;
+        directory = opened;
+        cursor = next;
+    }
+    return directory;
+}
+
+static int payload_path_status(yvex_source_payload_session *session, const char *name,
+                               struct stat *status) {
+    int fd;
+    int result;
+    int saved;
+
+    if (!strchr(name, '/'))
+        return session->ops.fstatat_fn(session->root_fd, name, status, AT_SYMLINK_NOFOLLOW);
+    fd = payload_open_relative(session, name);
+    if (fd < 0) return -1;
+    result = session->ops.fstat_fn(fd, status);
+    saved = errno;
+    if (session->ops.close_fn(fd) != 0 && result == 0) {
+        result = -1;
+        saved = errno;
+    }
+    errno = saved;
+    return result;
+}
+
+static const yvex_source_acquisition_file *payload_acquired_file_find(
+    const yvex_source_acquisition *acquisition, const char *path) {
+    const yvex_source_acquisition_facts *facts =
+        yvex_source_acquisition_facts_get(acquisition);
+    unsigned long long index;
+
+    for (index = 0u; facts && index < facts->file_count; ++index) {
+        const yvex_source_acquisition_file *file =
+            yvex_source_acquisition_file_at(acquisition, index);
+        if (file && strcmp(file->path, path) == 0) return file;
+    }
+    return NULL;
+}
+
+static int payload_acquired_identity_equal(
+    const yvex_source_acquisition_file *file,
+    const yvex_source_payload_file_identity *identity)
+{
+    return file && identity && file->local_identity_verified &&
+           file->verified_device == (unsigned long long)identity->device &&
+           file->verified_inode == (unsigned long long)identity->inode &&
+           file->actual_size == (unsigned long long)identity->size &&
+           file->verified_mtime_seconds == (long long)identity->mtime.tv_sec &&
+           file->verified_mtime_nanoseconds == identity->mtime.tv_nsec &&
+           file->verified_ctime_seconds == (long long)identity->ctime.tv_sec &&
+           file->verified_ctime_nanoseconds == identity->ctime.tv_nsec;
+}
+
 static void payload_identity_from_stat(yvex_source_payload_file_identity *out,
                                        const struct stat *status) {
     out->device = status->st_dev;
@@ -263,7 +348,7 @@ static int payload_admit_shard(yvex_source_payload_session *session,
     int fd;
     int saved;
 
-    fd = session->ops.openat_fn(session->root_fd, shard->name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    fd = payload_open_relative(session, shard->name);
     if (fd < 0) {
         saved = errno;
                 return yvex_source_payload_refuse_at(failure,
@@ -357,6 +442,7 @@ static int payload_index_shard(yvex_source_payload_session *session,
     const yvex_source_shard_snapshot *source =
         yvex_source_tensor_snapshot_shard_at(session->snapshot, index);
     yvex_source_payload_digest_fact digest;
+    const yvex_source_acquisition_file *acquired_file;
     yvex_source_payload_owned_shard *target = &session->shards[index];
     int rc;
 
@@ -385,8 +471,27 @@ static int payload_index_shard(yvex_source_payload_session *session,
     target->public_fact.file_bytes = source->file_bytes;
     target->public_fact.data_region_offset = source->data_region_offset;
     target->public_fact.payload_bytes = source->payload_bytes;
-    rc = yvex_source_provenance_payload_digest(
-        &session->verification, source->canonical_name, &digest, err);
+    acquired_file = session->acquired_source
+                        ? payload_acquired_file_find(session->acquisition,
+                                                     source->canonical_name)
+                        : NULL;
+    if (session->acquired_source &&
+        (!acquired_file ||
+         acquired_file->classification != YVEX_SOURCE_ACQUISITION_FILE_SHARD ||
+         acquired_file->actual_size != source->file_bytes ||
+         !yvex_sha256_hex_valid(acquired_file->actual_sha256) ||
+         strcmp(acquired_file->expected_sha256, acquired_file->actual_sha256) != 0 ||
+         !acquired_file->local_identity_verified)) {
+        return yvex_source_payload_refuse_at(
+            failure, YVEX_SOURCE_PAYLOAD_FAILURE_EXPECTED_DIGEST_UNAVAILABLE, index,
+            ULLONG_MAX, 1u, 0u, 0, err, YVEX_ERR_FORMAT, "source_payload_index",
+            "acquired shard lacks one verified SHA-256 and local-file identity");
+    }
+    memset(&digest, 0, sizeof(digest));
+    rc = session->acquired_source
+             ? YVEX_OK
+             : yvex_source_provenance_payload_digest(
+                   &session->verification, source->canonical_name, &digest, err);
     if (rc != YVEX_OK) {
                 return yvex_source_payload_refuse_at(
                     failure,
@@ -395,7 +500,16 @@ static int payload_index_shard(yvex_source_payload_session *session,
                                  ULLONG_MAX, 0u, 0u, 0, err, rc, "source_payload_index",
                                  "invalid provider payload digest fact");
     }
-    if (digest.available) {
+    if (acquired_file) {
+        yvex_core_text_copy(target->expected_digest, sizeof(target->expected_digest),
+                            acquired_file->actual_sha256);
+        yvex_core_text_copy(target->observed_digest, sizeof(target->observed_digest),
+                            acquired_file->actual_sha256);
+        snprintf(target->digest_algorithm, sizeof(target->digest_algorithm), "%s", "sha256");
+        snprintf(target->digest_authority, sizeof(target->digest_authority), "%s",
+                 "verified-source-acquisition");
+        target->public_fact.trust_class = YVEX_SOURCE_PAYLOAD_TRUST_UPSTREAM_VERIFIED;
+    } else if (digest.available) {
         memcpy(target->expected_digest, digest.expected_digest, sizeof(target->expected_digest));
         snprintf(
             target->digest_algorithm, sizeof(target->digest_algorithm), "%s", digest.algorithm);
@@ -419,7 +533,15 @@ static int payload_index_shard(yvex_source_payload_session *session,
     target->public_fact.digest_authority = target->digest_authority;
     target->public_fact.expected_digest = target->expected_digest;
     target->public_fact.observed_digest = target->observed_digest;
-    return payload_admit_shard(session, index, failure, err);
+    rc = payload_admit_shard(session, index, failure, err);
+    if (rc != YVEX_OK) return rc;
+    if (session->acquired_source &&
+        !payload_acquired_identity_equal(acquired_file, &target->admitted_identity))
+        return yvex_source_payload_refuse_at(
+            failure, YVEX_SOURCE_PAYLOAD_FAILURE_SHARD_DRIFT, index,
+            ULLONG_MAX, 1u, 0u, 0, err, YVEX_ERR_FORMAT, "source_payload_index",
+            "acquired shard identity changed after complete SHA-256 verification");
+    return YVEX_OK;
 }
 
 static int payload_index_range(yvex_source_payload_session *session,
@@ -636,6 +758,137 @@ static int payload_restore_published_upstream_trust(yvex_source_payload_session 
     return YVEX_OK;
 }
 
+typedef struct {
+    const yvex_source_target_identity *identity;
+    const yvex_source_acquisition_facts *acquired_facts;
+    const char *source_root;
+    unsigned long long expected_snapshot_identity;
+    int acquired;
+} payload_open_authority;
+
+static int payload_open_authority_resolve(
+    const yvex_source_payload_open_options *options,
+    payload_open_authority *authority, yvex_source_payload_failure *failure,
+    yvex_error *err)
+{
+    memset(authority, 0, sizeof(*authority));
+    authority->acquired = options->acquisition != NULL;
+    if (authority->acquired) {
+        authority->acquired_facts =
+            yvex_source_acquisition_facts_get(options->acquisition);
+        if (!authority->acquired_facts || !authority->acquired_facts->complete ||
+            !options->acquired_source_root || !options->acquired_source_root[0] ||
+            !options->acquired_target_id || !options->acquired_target_id[0] ||
+            !options->acquired_family_key || !options->acquired_family_key[0] ||
+            !yvex_sha256_hex_valid(options->acquired_payload_identity) ||
+            strcmp(options->acquired_payload_identity,
+                   authority->acquired_facts->acquisition_identity) != 0 ||
+            !options->acquired_source_snapshot_identity)
+            return yvex_source_payload_refuse(
+                failure, YVEX_SOURCE_PAYLOAD_FAILURE_METADATA_NOT_VERIFIED, err,
+                YVEX_ERR_STATE, "source_payload_open",
+                "complete acquired source identity facts are required");
+        authority->source_root = options->acquired_source_root;
+        authority->expected_snapshot_identity =
+            options->acquired_source_snapshot_identity;
+        return YVEX_OK;
+    }
+    if (!options->verification_options || !options->verification ||
+        !options->verification_options->identity)
+        return yvex_source_payload_refuse(
+            failure, YVEX_SOURCE_PAYLOAD_FAILURE_INVALID_ARGUMENT, err,
+            YVEX_ERR_INVALID_ARG, "source_payload_open",
+            "source verification authority is required");
+    if (!options->verification->verified || !options->verification->manifest_verified ||
+        options->verification->header_scan_count != 1u) {
+        yvex_source_payload_failure_code code =
+            YVEX_SOURCE_PAYLOAD_FAILURE_METADATA_NOT_VERIFIED;
+        unsigned int blocker;
+
+        for (blocker = 0u; blocker < options->verification->blocker_count; ++blocker)
+            if (strcmp(options->verification->blockers[blocker],
+                       "unsupported-source-manifest-version") == 0)
+                code = YVEX_SOURCE_PAYLOAD_FAILURE_MANIFEST_VERSION_UNSUPPORTED;
+        return yvex_source_payload_refuse(
+            failure, code, err, YVEX_ERR_STATE, "source_payload_open",
+            "exact source metadata/header verification is required");
+    }
+    authority->identity = options->verification_options->identity;
+    if (!authority->identity->target_id || !authority->identity->family_key ||
+        !authority->identity->upstream_repo_id || !authority->identity->upstream_revision ||
+        strlen(authority->identity->target_id) >=
+            sizeof(((yvex_source_payload_session *)0)->target_id) ||
+        strlen(authority->identity->family_key) >=
+            sizeof(((yvex_source_payload_session *)0)->family_key) ||
+        strlen(authority->identity->upstream_repo_id) >=
+            sizeof(((yvex_source_payload_session *)0)->repository_id) ||
+        strcmp(options->verification->repository_id,
+               authority->identity->upstream_repo_id) != 0 ||
+        strcmp(options->verification->revision,
+               authority->identity->upstream_revision) != 0 ||
+        (options->verification->manifest_target_id[0] &&
+         strcmp(options->verification->manifest_target_id,
+                authority->identity->target_id) != 0))
+        return yvex_source_payload_refuse(
+            failure, YVEX_SOURCE_PAYLOAD_FAILURE_SOURCE_IDENTITY_MISMATCH, err,
+            YVEX_ERR_FORMAT, "source_payload_open",
+            "verified source and target identity do not match");
+    authority->source_root = options->verification->resolved_source_path;
+    authority->expected_snapshot_identity =
+        options->verification->source_snapshot_identity;
+    return YVEX_OK;
+}
+
+static void payload_open_session_seed(
+    yvex_source_payload_session *session,
+    const yvex_source_payload_open_options *options,
+    const payload_open_authority *authority)
+{
+    session->acquired_source = authority->acquired;
+    session->acquisition = options->acquisition;
+    if (!authority->acquired) {
+        session->verification = *options->verification;
+        yvex_core_text_copy(session->target_id, sizeof(session->target_id),
+                            authority->identity->target_id);
+        yvex_core_text_copy(session->family_key, sizeof(session->family_key),
+                            authority->identity->family_key);
+        yvex_core_text_copy(session->repository_id, sizeof(session->repository_id),
+                            authority->identity->upstream_repo_id);
+        return;
+    }
+    session->verification.verified = 1;
+    session->verification.manifest_verified = 1;
+    session->verification.header_scan_count = 1u;
+    session->verification.source_snapshot_identity =
+        authority->expected_snapshot_identity;
+    session->verification.manifest_payload_trusted = 1;
+    session->verification.manifest_payload_source_snapshot_identity =
+        authority->expected_snapshot_identity;
+    session->verification.manifest_payload_shard_count =
+        authority->acquired_facts->shard_count;
+    yvex_core_text_copy(session->verification.resolved_source_path,
+                        sizeof(session->verification.resolved_source_path),
+                        authority->source_root);
+    yvex_core_text_copy(session->verification.repository_id,
+                        sizeof(session->verification.repository_id),
+                        authority->acquired_facts->repository);
+    yvex_core_text_copy(session->verification.revision,
+                        sizeof(session->verification.revision),
+                        authority->acquired_facts->revision);
+    yvex_core_text_copy(session->verification.manifest_payload_identity,
+                        sizeof(session->verification.manifest_payload_identity),
+                        options->acquired_payload_identity);
+    yvex_core_text_copy(session->verification.manifest_payload_trust_class,
+                        sizeof(session->verification.manifest_payload_trust_class),
+                        "verified_source_acquisition");
+    yvex_core_text_copy(session->target_id, sizeof(session->target_id),
+                        options->acquired_target_id);
+    yvex_core_text_copy(session->family_key, sizeof(session->family_key),
+                        options->acquired_family_key);
+    yvex_core_text_copy(session->repository_id, sizeof(session->repository_id),
+                        authority->acquired_facts->repository);
+}
+
 int yvex_source_payload_session_open_with_ops(yvex_source_payload_session **out,
                                               const yvex_source_payload_open_options *options,
                                               const yvex_source_payload_ops *ops,
@@ -644,54 +897,23 @@ int yvex_source_payload_session_open_with_ops(yvex_source_payload_session **out,
     yvex_source_payload_session *session;
     yvex_source_tensor_snapshot_facts snapshot_facts;
     yvex_source_payload_ops defaults;
-    const yvex_source_target_identity *identity;
+    payload_open_authority authority;
     int rc;
 
-    if (out)
-        *out = NULL;
-    if (!out || !options || !options->verification_options || !options->verification ||
-        !options->snapshot || !options->verification_options->identity) {
-                return yvex_source_payload_refuse(
-                    failure,
-                    YVEX_SOURCE_PAYLOAD_FAILURE_INVALID_ARGUMENT,
-                    err, YVEX_ERR_INVALID_ARG,
-                              "source_payload_open",
-                              "verification, retained snapshot, and output are required");
-    }
-    if (!options->verification->verified || !options->verification->manifest_verified ||
-        options->verification->header_scan_count != 1u) {
-        unsigned int blocker;
-        yvex_source_payload_failure_code code = YVEX_SOURCE_PAYLOAD_FAILURE_METADATA_NOT_VERIFIED;
-
-        for (blocker = 0u; blocker < options->verification->blocker_count; ++blocker) {
-            if (strcmp(options->verification->blockers[blocker],
-                       "unsupported-source-manifest-version") == 0) {
-                code = YVEX_SOURCE_PAYLOAD_FAILURE_MANIFEST_VERSION_UNSUPPORTED;
-                break;
-            }
-        }
-                return yvex_source_payload_refuse(failure, code, err, YVEX_ERR_STATE, "source_payload_open",
-                              "exact source metadata/header verification is required");
-    }
-    identity = options->verification_options->identity;
-    if (!identity->target_id || !identity->family_key || !identity->upstream_repo_id ||
-        !identity->upstream_revision || strlen(identity->target_id) >= sizeof(session->target_id) ||
-        strlen(identity->family_key) >= sizeof(session->family_key) ||
-        strlen(identity->upstream_repo_id) >= sizeof(session->repository_id) ||
-        strcmp(options->verification->repository_id, identity->upstream_repo_id) != 0 ||
-        strcmp(options->verification->revision, identity->upstream_revision) != 0 ||
-        (options->verification->manifest_target_id[0] &&
-         strcmp(options->verification->manifest_target_id, identity->target_id) != 0)) {
-                return yvex_source_payload_refuse(failure, YVEX_SOURCE_PAYLOAD_FAILURE_SOURCE_IDENTITY_MISMATCH, err,
-                              YVEX_ERR_FORMAT, "source_payload_open",
-                              "verified source and target identity do not match");
-    }
+    if (out) *out = NULL;
+    if (!out || !options || !options->snapshot)
+        return yvex_source_payload_refuse(
+            failure, YVEX_SOURCE_PAYLOAD_FAILURE_INVALID_ARGUMENT, err,
+            YVEX_ERR_INVALID_ARG, "source_payload_open",
+            "retained snapshot, source authority, and output are required");
+    rc = payload_open_authority_resolve(options, &authority, failure, err);
+    if (rc != YVEX_OK) return rc;
     yvex_error_clear(err);
     rc = yvex_source_tensor_snapshot_facts_get(options->snapshot, &snapshot_facts, err);
     if (rc != YVEX_OK)
         return rc;
     if (!yvex_source_tensor_snapshot_has_shard_catalog(options->snapshot) ||
-        snapshot_facts.identity != options->verification->source_snapshot_identity) {
+        snapshot_facts.identity != authority.expected_snapshot_identity) {
                 return yvex_source_payload_refuse(failure, YVEX_SOURCE_PAYLOAD_FAILURE_SOURCE_IDENTITY_MISMATCH, err,
                               YVEX_ERR_FORMAT, "source_payload_open",
                               "retained source snapshot identity mismatch");
@@ -734,24 +956,19 @@ int yvex_source_payload_session_open_with_ops(yvex_source_payload_session **out,
     session->ops = *ops;
     session->state = YVEX_SOURCE_PAYLOAD_STATE_CONSTRUCTING;
     session->budget = options->budget;
-    session->verification = *options->verification;
-    memcpy(session->target_id, identity->target_id, strlen(identity->target_id) + 1u);
-    memcpy(session->family_key, identity->family_key, strlen(identity->family_key) + 1u);
-    memcpy(session->repository_id,
-           identity->upstream_repo_id,
-           strlen(identity->upstream_repo_id) + 1u);
+    payload_open_session_seed(session, options, &authority);
     session->snapshot = options->snapshot;
     session->shard_count = snapshot_facts.shard_count;
     session->tensor_count = snapshot_facts.tensor_count;
     session->facts.source_snapshot_identity = snapshot_facts.identity;
     session->facts.header_scan_count = snapshot_facts.header_scan_count;
-    if (options->verification->manifest_payload_trusted &&
-        options->verification->manifest_payload_source_snapshot_identity ==
+    if (session->verification.manifest_payload_trusted &&
+        session->verification.manifest_payload_source_snapshot_identity ==
             snapshot_facts.identity &&
-        yvex_sha256_hex_valid(options->verification->manifest_payload_identity)) {
+        yvex_sha256_hex_valid(session->verification.manifest_payload_identity)) {
         yvex_core_text_copy(session->facts.admitted_payload_identity,
                             sizeof(session->facts.admitted_payload_identity),
-                            options->verification->manifest_payload_identity);
+                            session->verification.manifest_payload_identity);
     }
     if (pthread_mutex_init(&session->mutex, NULL) != 0) {
         ops->free_fn(session);
@@ -764,10 +981,11 @@ int yvex_source_payload_session_open_with_ops(yvex_source_payload_session **out,
     }
     session->mutex_initialized = 1;
     yvex_source_tensor_snapshot_retain(session->snapshot);
-    session->manifest_path = payload_strdup(
-        session,
-        options->manifest_path ? options->manifest_path : options->verification->manifest_path);
-    if (!session->manifest_path) {
+    if (!authority.acquired)
+        session->manifest_path = payload_strdup(
+            session,
+            options->manifest_path ? options->manifest_path : options->verification->manifest_path);
+    if (!authority.acquired && !session->manifest_path) {
         rc = YVEX_ERR_NOMEM;
         yvex_source_payload_fail(failure,
                                  YVEX_SOURCE_PAYLOAD_FAILURE_ALLOCATION,
@@ -782,8 +1000,7 @@ int yvex_source_payload_session_open_with_ops(yvex_source_payload_session **out,
                                  "payload manifest path allocation failed");
         goto fail;
     }
-    session->root_fd = ops->openat_fn(AT_FDCWD,
-                                      options->verification->resolved_source_path,
+    session->root_fd = ops->openat_fn(AT_FDCWD, authority.source_root,
                                       O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
     if (session->root_fd < 0) {
         rc = YVEX_ERR_IO;
@@ -809,7 +1026,26 @@ int yvex_source_payload_session_open_with_ops(yvex_source_payload_session **out,
     session->facts.shard_count = session->shard_count;
     session->facts.tensor_count = session->tensor_count;
     session->facts.logical_tensor_bytes = session->logical_tensor_bytes;
-    rc = payload_restore_published_upstream_trust(session, failure, err);
+    if (authority.acquired) {
+        unsigned long long index;
+
+        session->verification.manifest_payload_tensor_count = session->tensor_count;
+        session->verification.manifest_payload_logical_tensor_bytes = session->logical_tensor_bytes;
+        yvex_core_text_copy(session->facts.payload_identity,
+                            sizeof(session->facts.payload_identity),
+                            options->acquired_payload_identity);
+        session->facts.trust_class = YVEX_SOURCE_PAYLOAD_TRUST_UPSTREAM_VERIFIED;
+        session->facts.trusted_shard_count = session->shard_count;
+        for (index = 0u; index < session->tensor_count; ++index) {
+            session->ranges[index].payload_identity = session->facts.payload_identity;
+            session->ranges[index].trust_class = YVEX_SOURCE_PAYLOAD_TRUST_UPSTREAM_VERIFIED;
+        }
+        session->state = YVEX_SOURCE_PAYLOAD_STATE_READY;
+        session->facts.state = session->state;
+        rc = YVEX_OK;
+    } else {
+        rc = payload_restore_published_upstream_trust(session, failure, err);
+    }
     if (rc != YVEX_OK)
         goto fail;
     *out = session;
@@ -852,10 +1088,7 @@ int yvex_source_payload_handle_acquire(yvex_source_payload_session *session,
             struct stat cached_path_status;
             yvex_source_payload_owned_shard *cached_shard = &session->shards[shard_index];
             if (session->ops.fstat_fn(session->handles[slot].fd, &cached_status) != 0 ||
-                session->ops.fstatat_fn(session->root_fd,
-                                        cached_shard->name,
-                                        &cached_path_status,
-                                        AT_SYMLINK_NOFOLLOW) != 0 ||
+                payload_path_status(session, cached_shard->name, &cached_path_status) != 0 ||
                 !S_ISREG(cached_path_status.st_mode) ||
                 !payload_identity_equal(&cached_shard->admitted_identity, &cached_status) ||
                 cached_status.st_dev != cached_path_status.st_dev ||
@@ -915,8 +1148,7 @@ int yvex_source_payload_handle_acquire(yvex_source_payload_session *session,
         }
     }
     shard = &session->shards[shard_index];
-    opened =
-        session->ops.openat_fn(session->root_fd, shard->name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    opened = payload_open_relative(session, shard->name);
     if (opened < 0) {
         saved = errno;
         session->facts.handle_cache_misses++;
@@ -931,8 +1163,7 @@ int yvex_source_payload_handle_acquire(yvex_source_payload_session *session,
     session->facts.handle_opens++;
     session->facts.handle_reopens++;
     if (session->ops.fstat_fn(opened, &descriptor_status) != 0 ||
-        session->ops.fstatat_fn(session->root_fd, shard->name, &path_status, AT_SYMLINK_NOFOLLOW) !=
-            0) {
+        payload_path_status(session, shard->name, &path_status) != 0) {
         saved = errno;
         session->ops.close_fn(opened);
         pthread_mutex_unlock(&session->mutex);

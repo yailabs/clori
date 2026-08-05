@@ -78,19 +78,24 @@ static inline int yvex_source_target_matches_family_name(const char *family,
     return 0;
 }
 
-/* Admit one root-relative shard basename for source payload manifests. */
+/* Admit one normalized root-relative shard path for source payload sessions. */
 static inline int yvex_source_payload_name_is_canonical(const char *name)
 {
     const char *cursor;
-
+    size_t segment = 0u;
     if (!name || !name[0] || name[0] == '/' || strcmp(name, ".") == 0 ||
         strcmp(name, "..") == 0)
         return 0;
     for (cursor = name; *cursor; ++cursor) {
-        if (*cursor == '/' || *cursor == '\\' || *cursor == '\n' || *cursor == '\r')
-            return 0;
+        if (*cursor == '\\' || *cursor == '\n' || *cursor == '\r') return 0;
+        if (*cursor == '/') {
+            if (!segment || (segment == 1u && cursor[-1] == '.') ||
+                (segment == 2u && cursor[-1] == '.' && cursor[-2] == '.')) return 0;
+            segment = 0u;
+        } else segment++;
     }
-    return 1;
+    return segment && !(segment == 1u && cursor[-1] == '.') &&
+           !(segment == 2u && cursor[-1] == '.' && cursor[-2] == '.');
 }
 
 /* Project an immutable source identity beneath a caller-owned models root. */
@@ -428,14 +433,14 @@ typedef enum {
 typedef struct {
     char path[YVEX_PATH_CAP];
     char component[48];
-    char expected_sha256[65];
-    char actual_sha256[65];
-    char git_oid[65];
-    char lfs_oid[65];
-    char xet_hash[65];
+    char expected_sha256[65], actual_sha256[65], git_oid[65], lfs_oid[65], xet_hash[65];
     unsigned long long expected_size;
     unsigned long long actual_size;
+    unsigned long long verified_device, verified_inode;
+    long long verified_mtime_seconds, verified_ctime_seconds;
+    long verified_mtime_nanoseconds, verified_ctime_nanoseconds;
     yvex_source_acquisition_file_class classification;
+    int local_identity_verified;
 } yvex_source_acquisition_file;
 typedef struct {
     const char *source_root;

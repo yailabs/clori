@@ -102,6 +102,7 @@ typedef struct {
 typedef enum {
     YVEX_GGUF_WRITER_INPUT_INVALID = 0,
     YVEX_GGUF_WRITER_INPUT_COMPLETE_ARTIFACT,
+    YVEX_GGUF_WRITER_INPUT_LOGICAL_COMPONENT,
     YVEX_GGUF_WRITER_INPUT_TENSOR_PROOF
 } yvex_gguf_writer_input_class;
 typedef struct {
@@ -113,8 +114,20 @@ typedef struct {
     const yvex_gguf_writer_proof_tensor *tensors;
     unsigned long long tensor_count;
 } yvex_gguf_writer_proof_input;
+typedef struct {
+    const char *architecture;
+    const char *target_id;
+    const char *component_id;
+    const char *source_snapshot_identity;
+    unsigned long long source_snapshot_key;
+    const char *component_identity;
+    const char *component_manifest_identity;
+    const char *architecture_identity;
+    const char *role_map_identity;
+} yvex_gguf_writer_component_input;
 typedef union {
     yvex_gguf_writer_complete_input complete;
+    yvex_gguf_writer_component_input component;
     yvex_gguf_writer_proof_input tensor_proof;
 } yvex_gguf_writer_input;
 typedef struct {

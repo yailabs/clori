@@ -1105,6 +1105,7 @@ int yvex_test_gguf_writer_artifact(void)
     quant_execute_fixture fixture;
     yvex_gguf_writer_plan *writer = NULL;
     yvex_gguf_writer_plan *duplicate_writer = NULL;
+    yvex_quant_plan *source_faithful = NULL;
     yvex_gguf_file_sink *file_sink = NULL;
     yvex_quant_output_sink output_sink;
     yvex_quant_executor_options executor_options;
@@ -1149,6 +1150,12 @@ int yvex_test_gguf_writer_artifact(void)
     YVEX_TEST_ASSERT(quant_fixture_create(
                          &fixture, "gguf-writer", 0, 0, &err),
                      "writer fixture must construct trusted quant inputs");
+    YVEX_TEST_ASSERT(yvex_quant_plan_build_source_faithful(
+                         &source_faithful, fixture.ir, fixture.binding,
+                         "invalid-source-faithful-v1", 0x112233u, NULL,
+                         &quant_failure, &err) != YVEX_OK && !source_faithful &&
+                         quant_failure.code == YVEX_QUANT_FAILURE_UNSUPPORTED_OPERATION,
+                     "source-faithful plan refuses non-identity transformation composition");
     memset(&writer_request, 0, sizeof(writer_request));
     writer_request.input_class = YVEX_GGUF_WRITER_INPUT_TENSOR_PROOF;
     writer_request.quant_plan = fixture.plan;

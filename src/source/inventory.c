@@ -316,6 +316,94 @@ int yvex_source_tensor_snapshot_take_table_with_shards(yvex_source_tensor_snapsh
     return YVEX_OK;
 }
 
+static int acquired_shard_compare(const void *left, const void *right) {
+    const yvex_source_shard_snapshot *a = (const yvex_source_shard_snapshot *)left;
+    const yvex_source_shard_snapshot *b = (const yvex_source_shard_snapshot *)right;
+
+    return strcmp(a->canonical_name, b->canonical_name);
+}
+
+int yvex_source_acquisition_snapshot_create(yvex_source_tensor_snapshot **out,
+                                            const yvex_source_acquisition *acquisition,
+                                            const char *source_root,
+                                            unsigned long long semantic_identity,
+                                            yvex_error *err) {
+    const yvex_source_acquisition_facts *facts =
+        yvex_source_acquisition_facts_get(acquisition);
+    yvex_source_shard_snapshot *shards = NULL;
+    yvex_native_weight_table *table = NULL;
+    yvex_source_tensor_snapshot *snapshot = NULL;
+    unsigned long long file_index;
+    unsigned long long shard_index = 0u;
+    int rc = YVEX_OK;
+
+    if (out)
+        *out = NULL;
+    if (!out || !facts || !facts->complete || !facts->shard_count || !source_root ||
+        !source_root[0] || !semantic_identity ||
+        facts->shard_count > (unsigned long long)(SIZE_MAX / sizeof(shards[0]))) {
+        return inventory_refuse(err, YVEX_ERR_INVALID_ARG, "source_acquisition_snapshot",
+                                "complete acquisition, source root, and semantic identity are required");
+    }
+    shards = (yvex_source_shard_snapshot *)calloc((size_t)facts->shard_count,
+                                                   sizeof(shards[0]));
+    table = (yvex_native_weight_table *)calloc(1u, sizeof(*table));
+    if (!shards || !table) {
+        rc = inventory_refuse(err, YVEX_ERR_NOMEM, "source_acquisition_snapshot",
+                              "acquired snapshot allocation failed");
+        goto cleanup;
+    }
+    for (file_index = 0u; file_index < facts->file_count; ++file_index) {
+        const yvex_source_acquisition_file *file =
+            yvex_source_acquisition_file_at(acquisition, file_index);
+        yvex_safetensors_file_facts file_facts;
+        char path[YVEX_PATH_CAP];
+
+        if (!file || file->classification != YVEX_SOURCE_ACQUISITION_FILE_SHARD) continue;
+        if (shard_index >= facts->shard_count || !yvex_sha256_hex_valid(file->actual_sha256) ||
+            strcmp(file->expected_sha256, file->actual_sha256) != 0 ||
+            !yvex_source_path_join(path, sizeof(path), source_root, file->path)) {
+            rc = inventory_refuse(err, YVEX_ERR_FORMAT, "source_acquisition_snapshot",
+                                  "acquired shard identity or path is invalid");
+            goto cleanup;
+        }
+        memset(&file_facts, 0, sizeof(file_facts));
+        rc = yvex_safetensors_read_header_file_with_facts(path, file->path, table, &file_facts, err);
+        if (rc != YVEX_OK) goto cleanup;
+        if (file_facts.file_bytes != file->actual_size ||
+            file_facts.data_region_offset >= file_facts.file_bytes ||
+            file_facts.payload_bytes != file_facts.file_bytes - file_facts.data_region_offset) {
+            rc = inventory_refuse(err, YVEX_ERR_FORMAT, "source_acquisition_snapshot",
+                                  "acquired shard geometry differs from its verified file fact");
+            goto cleanup;
+        }
+        shards[shard_index].canonical_name = file->path;
+        shards[shard_index].file_bytes = file_facts.file_bytes;
+        shards[shard_index].data_region_offset = file_facts.data_region_offset;
+        shards[shard_index].payload_bytes = file_facts.payload_bytes;
+        shard_index++;
+    }
+    if (shard_index != facts->shard_count) {
+        rc = inventory_refuse(err, YVEX_ERR_FORMAT, "source_acquisition_snapshot",
+                              "acquired shard population is incomplete");
+        goto cleanup;
+    }
+    qsort(shards, (size_t)shard_index, sizeof(shards[0]), acquired_shard_compare);
+    for (shard_index = 0u; shard_index < facts->shard_count; ++shard_index)
+        shards[shard_index].canonical_id = shard_index;
+    rc = yvex_source_tensor_snapshot_take_table_with_shards(
+        &snapshot, &table, shards, facts->shard_count, 1u, err);
+    if (rc != YVEX_OK) goto cleanup;
+    snapshot->identity = semantic_identity;
+    *out = snapshot;
+    snapshot = NULL;
+cleanup:
+    yvex_source_tensor_snapshot_release(snapshot);
+    yvex_native_weight_table_close(table);
+    free(shards);
+    return rc;
+}
+
 void yvex_source_tensor_snapshot_retain(yvex_source_tensor_snapshot *snapshot) {
     if (snapshot && snapshot->references < UINT_MAX)
         snapshot->references++;

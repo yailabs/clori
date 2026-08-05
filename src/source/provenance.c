@@ -1445,7 +1445,7 @@ static int source_acquisition_open_relative(int root_fd,
 
 static int source_acquisition_hash_file(
     int root_fd,
-    const yvex_source_acquisition_file *file,
+    yvex_source_acquisition_file *file,
     unsigned long long *bytes_read,
     char digest_hex[65],
     char git_blob_hex[41],
@@ -1462,7 +1462,8 @@ static int source_acquisition_hash_file(
     char git_header[64];
     unsigned long long total = 0u;
     int fd = source_acquisition_open_relative(root_fd, file->path, symlink_refused);
-    int git_header_length;
+    int hash_git_blob = !file->expected_sha256[0];
+    int git_header_length = 0;
     unsigned int index;
     ssize_t count;
 
@@ -1472,38 +1473,58 @@ static int source_acquisition_hash_file(
         close(fd);
         return 0;
     }
-    git_header_length = snprintf(git_header, sizeof(git_header), "blob %llu", file->expected_size);
-    if (git_header_length < 0 || (size_t)git_header_length + 1u > sizeof(git_header)) {
-        close(fd);
-        return 0;
+    git_blob_hex[0] = '\0';
+    if (hash_git_blob) {
+        git_header_length = snprintf(git_header, sizeof(git_header), "blob %llu",
+                                     file->expected_size);
+        if (git_header_length < 0 ||
+            (size_t)git_header_length + 1u > sizeof(git_header)) {
+            close(fd);
+            return 0;
+        }
     }
     yvex_sha256_init(&hash);
-    source_sha1_init(&git_hash);
-    source_sha1_update(&git_hash, (const unsigned char *)git_header,
-                       (size_t)git_header_length + 1u);
+    if (hash_git_blob) {
+        source_sha1_init(&git_hash);
+        source_sha1_update(&git_hash, (const unsigned char *)git_header,
+                           (size_t)git_header_length + 1u);
+    }
     while ((count = read(fd, buffer, sizeof(buffer))) > 0) {
         if (!yvex_sha256_update(&hash, buffer, (size_t)count) ||
             !yvex_core_u64_add(total, (unsigned long long)count, &total)) {
             close(fd);
             return 0;
         }
-        source_sha1_update(&git_hash, buffer, (size_t)count);
+        if (hash_git_blob) source_sha1_update(&git_hash, buffer, (size_t)count);
     }
     if (count < 0 || fstat(fd, &after) != 0 || before.st_dev != after.st_dev ||
         before.st_ino != after.st_ino || before.st_size != after.st_size ||
-        before.st_mtime != after.st_mtime || total != file->expected_size ||
+        before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+        before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec ||
+        total != file->expected_size ||
         !yvex_sha256_final(&hash, digest)) {
         close(fd);
         return 0;
     }
+    file->verified_device = (unsigned long long)after.st_dev;
+    file->verified_inode = (unsigned long long)after.st_ino;
+    file->verified_mtime_seconds = (long long)after.st_mtim.tv_sec;
+    file->verified_mtime_nanoseconds = after.st_mtim.tv_nsec;
+    file->verified_ctime_seconds = (long long)after.st_ctim.tv_sec;
+    file->verified_ctime_nanoseconds = after.st_ctim.tv_nsec;
+    file->local_identity_verified = 1;
     close(fd);
     yvex_sha256_hex(digest, digest_hex);
-    source_sha1_final(&git_hash, git_digest);
-    for (index = 0u; index < sizeof(git_digest); ++index) {
-        git_blob_hex[index * 2u] = hex[git_digest[index] >> 4u];
-        git_blob_hex[index * 2u + 1u] = hex[git_digest[index] & 0x0fu];
+    if (hash_git_blob) {
+        source_sha1_final(&git_hash, git_digest);
+        for (index = 0u; index < sizeof(git_digest); ++index) {
+            git_blob_hex[index * 2u] = hex[git_digest[index] >> 4u];
+            git_blob_hex[index * 2u + 1u] = hex[git_digest[index] & 0x0fu];
+        }
+        git_blob_hex[40] = '\0';
     }
-    git_blob_hex[40] = '\0';
     *bytes_read = total;
     return 1;
 }
@@ -1581,7 +1602,7 @@ static int source_acquisition_verify_files(
             "cannot open source root");
     }
     for (index = 0u; index < acquisition->facts.file_count; ++index) {
-        const yvex_source_acquisition_file *file = &acquisition->files[index];
+        yvex_source_acquisition_file *file = &acquisition->files[index];
         unsigned long long bytes = 0u;
         char digest[65];
         char git_blob[41];

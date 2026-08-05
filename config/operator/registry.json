@@ -772,6 +772,7 @@
       "booleans": [],
       "repeatable_values": [],
       "values": [
+        "--component",
         "--imatrix-manifest",
         "--models-root",
         "--out",
@@ -787,6 +788,7 @@
       "booleans": [],
       "repeatable_values": [],
       "values": [
+        "--component",
         "--imatrix-manifest",
         "--models-root",
         "--plan",
@@ -837,6 +839,7 @@
       "repeatable_values": [],
       "values": [
         "--backend",
+        "--component",
         "--imatrix-manifest",
         "--models-root",
         "--out-plan",
@@ -868,6 +871,7 @@
       "booleans": [],
       "repeatable_values": [],
       "values": [
+        "--component",
         "--imatrix-manifest",
         "--models-root",
         "--plan",

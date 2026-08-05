@@ -623,6 +623,7 @@ static int source_verify_acquisition(void)
     yvex_source_acquisition_failure failure;
     yvex_source_acquisition *acquisition = NULL;
     const yvex_source_acquisition_facts *facts;
+    const yvex_source_acquisition_file *file;
     yvex_error err;
     char path[512];
     int rc;
@@ -644,11 +645,13 @@ static int source_verify_acquisition(void)
     yvex_error_clear(&err);
     rc = yvex_source_acquisition_open(&acquisition, &options, &failure, &err);
     facts = yvex_source_acquisition_facts_get(acquisition);
+    file = yvex_source_acquisition_file_at(acquisition, 0u);
     YVEX_TEST_ASSERT(rc == YVEX_OK && facts && facts->complete &&
                          facts->file_count == 1u && facts->shard_count == 0u &&
                          facts->source_bytes == strlen(payload) &&
-                         facts->payload_bytes_read == strlen(payload),
-                     "production source admission verifies complete source bytes");
+                         facts->payload_bytes_read == strlen(payload) && file &&
+                         file->local_identity_verified && file->verified_inode,
+                     "source admission binds complete bytes and their local file identity");
     yvex_source_acquisition_release(&acquisition);
 
     options.expected_repository = "Example/Wrong";
