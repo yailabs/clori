@@ -508,6 +508,39 @@ static int capacity_ceil_div(unsigned long long value, unsigned long long diviso
     return 1;
 }
 
+/* Compute one exact scaled ratio without requiring the numerator product to fit. */
+static int capacity_mul_div(unsigned long long left, unsigned long long right,
+                            unsigned long long divisor, int round_up,
+                            unsigned long long *result)
+{
+    unsigned long long quotient = 0ull, remainder = 0ull;
+    unsigned long long right_quotient, right_remainder;
+    unsigned int bit;
+    if (!divisor || !result) return 0;
+    right_quotient = right / divisor;
+    right_remainder = right % divisor;
+    for (bit = 64u; bit-- > 0u;) {
+        if (!yvex_core_u64_mul(quotient, 2ull, &quotient)) return 0;
+        if (remainder >= divisor - remainder) {
+            remainder -= divisor - remainder;
+            if (!capacity_add(&quotient, 1ull)) return 0;
+        } else {
+            remainder += remainder;
+        }
+        if (!(left & (1ull << bit))) continue;
+        if (!capacity_add(&quotient, right_quotient)) return 0;
+        if (right_remainder && remainder >= divisor - right_remainder) {
+            remainder -= divisor - right_remainder;
+            if (!capacity_add(&quotient, 1ull)) return 0;
+        } else {
+            remainder += right_remainder;
+        }
+    }
+    if (round_up && remainder && !capacity_add(&quotient, 1ull)) return 0;
+    *result = quotient;
+    return 1;
+}
+
 static int capacity_state_request_valid(
     const yvex_execution_state_class_request *request)
 {
@@ -871,29 +904,15 @@ int yvex_execution_capacity_plan_build(
 static int roofline_rate(unsigned long long bytes, unsigned long long duration,
                          unsigned long long scale, unsigned long long *result)
 {
-    unsigned long long whole, remainder, scaled_whole, scaled_remainder;
-    if (!duration || !result) return 0;
-    whole = bytes / duration;
-    remainder = bytes % duration;
-    if (!yvex_core_u64_mul(whole, scale, &scaled_whole) ||
-        !yvex_core_u64_mul(remainder, scale, &scaled_remainder) ||
-        !yvex_core_u64_add(scaled_whole, scaled_remainder / duration, result)) return 0;
-    return 1;
+    return capacity_mul_div(bytes, scale, duration, 0, result);
 }
 
 static int roofline_minimum_time(unsigned long long bytes,
                                  unsigned long long bytes_per_second,
                                  unsigned long long *nanoseconds)
 {
-    unsigned long long whole, remainder, scaled_remainder;
-    if (!bytes_per_second || !nanoseconds) return 0;
-    whole = bytes / bytes_per_second;
-    remainder = bytes % bytes_per_second;
-    if (!yvex_core_u64_mul(whole, 1000000000ull, nanoseconds) ||
-        !yvex_core_u64_mul(remainder, 1000000000ull, &scaled_remainder)) return 0;
-    scaled_remainder = scaled_remainder / bytes_per_second +
-                       (scaled_remainder % bytes_per_second != 0ull);
-    return capacity_add(nanoseconds, scaled_remainder);
+    return capacity_mul_div(bytes, 1000000000ull, bytes_per_second, 1,
+                            nanoseconds);
 }
 
 static int roofline_measurement_build(

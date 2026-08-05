@@ -319,6 +319,7 @@ static int execution_test_roofline(void)
 {
     yvex_execution_hardware_profile hardware = {0};
     yvex_execution_phase_measurement measurements[YVEX_EXECUTION_ROOFLINE_PHASE_COUNT] = {{0}};
+    yvex_execution_phase_measurement large_measurement = {0};
     yvex_execution_roofline_ledger_request request = {0};
     yvex_execution_roofline_ledger ledger, repeated;
     char identity[YVEX_SHA256_HEX_CAP];
@@ -446,6 +447,23 @@ static int execution_test_roofline(void)
     YVEX_TEST_ASSERT(yvex_execution_roofline_ledger_build(&request, &repeated, &err) == YVEX_OK &&
                          strcmp(ledger.identity, repeated.identity) == 0,
                      "equal causal measurements should produce one stable ledger identity");
+    large_measurement = (yvex_execution_phase_measurement){
+        .phase = YVEX_EXECUTION_ROOFLINE_DECODE_LAYER,
+        .active_weight_bytes = 100ull * 1024ull * 1024ull * 1024ull,
+        .h2d_bytes = 64ull * 1024ull * 1024ull * 1024ull,
+        .occupancy_parts_per_million = 500000ull,
+        .measured_duration_ns = 30ull * 1000ull * 1000ull * 1000ull,
+        .work_units = 8ull,
+        .committed_tokens = 8ull};
+    request.measurements = &large_measurement;
+    request.measurement_count = 1ull;
+    YVEX_TEST_ASSERT(
+        yvex_execution_roofline_ledger_build(&request, &repeated, &err) == YVEX_OK &&
+            repeated.phases[YVEX_EXECUTION_ROOFLINE_DECODE_LAYER]
+                    .minimum_memory_time_ns == 536870912ull,
+        "large causal phases should not overflow representable roofline ratios");
+    request.measurements = measurements;
+    request.measurement_count = YVEX_EXECUTION_ROOFLINE_PHASE_COUNT;
     measurements[1].phase = YVEX_EXECUTION_ROOFLINE_PREFILL_LAYER;
     YVEX_TEST_ASSERT(yvex_execution_roofline_ledger_build(&request, &repeated, &err) ==
                          YVEX_ERR_INVALID_ARG,
