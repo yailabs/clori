@@ -70,6 +70,8 @@ typedef struct {
 
 typedef struct yvex_runtime_logits_context yvex_runtime_logits_context;
 typedef struct yvex_runtime_sampling_context yvex_runtime_sampling_context;
+struct yvex_runtime_sampling_result;
+struct yvex_runtime_sampling_source;
 struct yvex_runtime_sampling_policy;
 typedef struct yvex_runtime_speculation_context yvex_runtime_speculation_context;
 
@@ -134,7 +136,7 @@ typedef struct {
     unsigned long long position;
     unsigned int token_id;
     unsigned long long target_rng_draw_count;
-    char source_distribution_identity[YVEX_SPECULATION_IDENTITY_CAP];
+    char source_selection_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char sampling_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char cycle_identity[YVEX_SPECULATION_IDENTITY_CAP];
 } yvex_runtime_speculation_target_step_result;
@@ -164,7 +166,6 @@ int yvex_speculation_acceptance_seal(
     const unsigned int *committed_token_ids,
     unsigned long long committed_capacity,
     yvex_speculation_acceptance_result *result, yvex_error *err);
-int yvex_speculation_distribution_valid(const float *row, unsigned long long count);
 unsigned int yvex_speculation_distribution_sample(
     const float *target, const float *draft, unsigned long long count,
     double uniform, int residual);
@@ -197,11 +198,11 @@ int yvex_runtime_speculation_cycle(
     yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *result, yvex_error *err);
-int yvex_runtime_speculation_target_step(
+int yvex_runtime_speculation_target_step_select(
     yvex_runtime_speculation_context *context, unsigned long long position,
-    const float *target_probabilities, unsigned long long probability_capacity,
-    const char *distribution_identity,
-    yvex_runtime_speculation_target_step_result *result, yvex_error *err);
+    const struct yvex_runtime_sampling_source *source,
+    yvex_runtime_speculation_target_step_result *result,
+    struct yvex_runtime_sampling_result *selection, yvex_error *err);
 int yvex_runtime_speculation_commit_prefix(
     yvex_runtime_speculation_context *context,
     unsigned long long committed_count, float *final_hidden,

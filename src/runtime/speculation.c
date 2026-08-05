@@ -1139,7 +1139,6 @@ static int speculation_target_draws(yvex_runtime_speculation_context *context,
     if (rc == YVEX_OK) result->target_rng_draw_count += draw_result.draw_count;
     return rc;
 }
-
 static int speculation_accept_device(yvex_runtime_speculation_context *context,
     const yvex_runtime_speculation_cycle_request *request,
     yvex_runtime_speculation_cycle_result *cycle, const double *uniforms,
@@ -1334,64 +1333,65 @@ int yvex_runtime_speculation_cycle(yvex_runtime_speculation_context *context,
     speculation_pending_clear(context);
     return rc;
 }
-int yvex_runtime_speculation_target_step(
+int yvex_runtime_speculation_target_step_select(
     yvex_runtime_speculation_context *context, unsigned long long position,
-    const float *target_probabilities, unsigned long long probability_capacity,
-    const char *distribution_identity,
-    yvex_runtime_speculation_target_step_result *result, yvex_error *err)
+    const yvex_runtime_sampling_source *source,
+    yvex_runtime_speculation_target_step_result *result,
+    yvex_runtime_sampling_result *selection, yvex_error *err)
 {
-    yvex_runtime_sampling_uniform_result draw = {0};
+    yvex_runtime_sampling_result staged = {0};
     yvex_sha256 hash;
-    double uniform = 0.0;
-    unsigned int token;
     int rc = YVEX_OK;
     if (result) memset(result, 0, sizeof(*result));
-    if (!context || !result || context->cycle_pending ||
-        !target_probabilities || probability_capacity < context->vocabulary_size ||
+    if (selection) memset(selection, 0, sizeof(*selection));
+    if (!context || !source || !result || !selection || context->cycle_pending ||
         position >= context->options.context_capacity ||
-        !yvex_sha256_hex_valid(distribution_identity) ||
-        !yvex_speculation_distribution_valid(target_probabilities, context->vocabulary_size))
-        return speculation_refuse(err, YVEX_ERR_INVALID_ARG,
-            "target step requires one admitted distribution and no pending cycle");
-    if (context->sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_GREEDY)
-        token = speculation_argmax(target_probabilities, context->vocabulary_size);
-    else {
+        !yvex_sha256_hex_valid(source->source_identity))
+        return speculation_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "target selection requires one admitted source and no pending cycle");
+    if (context->sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC)
         rc = yvex_runtime_sampling_transaction_begin(
             context->target_sampling, &context->target_rng, err);
-        if (rc == YVEX_OK)
-            rc = yvex_runtime_sampling_transaction_uniforms(
-                context->target_rng, &uniform, 1ull, &draw, err);
-        token = rc == YVEX_OK
-                    ? yvex_speculation_distribution_sample(target_probabilities, NULL,
-                          context->vocabulary_size, uniform, 0)
-                    : UINT32_MAX;
-    }
-    if (rc == YVEX_OK && token == UINT32_MAX)
-        rc = speculation_refuse(err, YVEX_ERR_FORMAT,
-                                "target distribution has no selectable mass");
+    if (rc == YVEX_OK)
+        rc = yvex_runtime_sampling_select(
+            context->target_sampling, context->target_rng, source, &staged,
+            err);
+    if (rc == YVEX_OK &&
+        (!staged.completed || staged.selected_token_id >= context->vocabulary_size ||
+         strcmp(staged.source_identity, source->source_identity) != 0 ||
+         !yvex_sha256_hex_valid(staged.execution_identity)))
+        rc = speculation_refuse(
+            err, YVEX_ERR_STATE,
+            "target selection returned incomplete or stale facts");
     yvex_sha256_init(&hash);
-    if (rc == YVEX_OK && (!yvex_sha256_update_text(
-             &hash, "yvex.runtime.speculation.target-step.v1") ||
+    if (rc == YVEX_OK &&
+        (!yvex_sha256_update_text(
+             &hash, "yvex.runtime.speculation.target-step-selection.v1") ||
          !yvex_sha256_update_text(&hash, context->policy.policy_identity) ||
-         !yvex_sha256_update_text(&hash, distribution_identity) ||
-         !yvex_sha256_update_u64(&hash, position) || !yvex_sha256_update_u64(&hash, token) ||
+         !yvex_sha256_update_text(&hash, source->source_identity) ||
+         !yvex_sha256_update_text(&hash, staged.execution_identity) ||
+         !yvex_sha256_update_u64(&hash, position) ||
+         !yvex_sha256_update_u64(&hash, staged.selected_token_id) ||
          !speculation_hash_finish(&hash, result->cycle_identity)))
-        rc = speculation_refuse(err, YVEX_ERR_STATE,
-                                "target step identity derivation failed");
+        rc = speculation_refuse(
+            err, YVEX_ERR_STATE,
+            "resident target selection identity derivation failed");
     if (rc == YVEX_OK) {
         result->completed = 1;
         result->position = position;
-        result->token_id = token;
-        result->target_rng_draw_count = draw.draw_count;
-        yvex_runtime_identity_copy(result->source_distribution_identity, distribution_identity);
-        yvex_runtime_identity_copy(result->sampling_identity, result->cycle_identity);
+        result->token_id = staged.selected_token_id;
+        result->target_rng_draw_count = staged.rng_draw_count;
+        yvex_runtime_identity_copy(result->source_selection_identity, source->source_identity);
+        yvex_runtime_identity_copy(result->sampling_identity, staged.execution_identity);
         context->pending_position = position;
         context->pending_committed_count = 1ull;
-        context->pending_tokens[0] = token;
-        yvex_runtime_identity_copy(context->pending_source_identity, distribution_identity);
-        yvex_runtime_identity_copy(context->pending_sampling_identity, result->cycle_identity);
+        context->pending_tokens[0] = staged.selected_token_id;
+        yvex_runtime_identity_copy(context->pending_source_identity, source->source_identity);
+        yvex_runtime_identity_copy(context->pending_sampling_identity, staged.execution_identity);
         yvex_runtime_identity_copy(context->pending_cycle_identity, result->cycle_identity);
         context->cycle_pending = 1;
+        *selection = staged;
         yvex_error_clear(err);
         return YVEX_OK;
     }

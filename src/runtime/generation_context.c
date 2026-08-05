@@ -42,7 +42,6 @@ static int generation_device_selection(
     const yvex_backend *backend)
 {
     return context && context->options.backend == YVEX_BACKEND_KIND_CUDA &&
-           context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
            context->options.evidence_profile == YVEX_EXECUTION_EVIDENCE_PRODUCTION &&
            (context->options.sampling_policy.strategy ==
                 YVEX_SAMPLING_STRATEGY_GREEDY ||
@@ -737,6 +736,8 @@ static int generation_execution_owners_open(
         generation_device_selection(context, session_view->backend);
     int rc;
 
+    context->device_selection = device_selection;
+
     if (generation_sampling_workspace(
             context, session_view ? session_view->backend : NULL, model,
             &sampling_workspace, err) != YVEX_OK)
@@ -754,7 +755,8 @@ static int generation_execution_owners_open(
     transformer.cancel_context = options->cancel_context;
     transformer.evidence_level =
         runtime_attention_evidence(options->evidence_profile);
-    transformer.device_hidden_output = device_selection;
+    transformer.device_hidden_output =
+        device_selection && options->mode == YVEX_GENERATION_MODE_TARGET_ONLY;
     transformer.execution_profile = &context->execution_profile;
     transformer.shape_registry = context->execution_shapes;
     rc = yvex_runtime_transformer_context_open(
@@ -765,7 +767,7 @@ static int generation_execution_owners_open(
     logits.maximum_host_bytes = options->maximum_host_bytes;
     logits.maximum_device_bytes = options->maximum_device_bytes;
     logits.evidence_profile = options->evidence_profile;
-    logits.device_selection = transformer.device_hidden_output;
+    logits.device_selection = device_selection;
     logits.execution_profile = &context->execution_profile;
     logits.cancel_requested = options->cancel_requested;
     logits.cancel_context = options->cancel_context;
@@ -853,7 +855,6 @@ int yvex_runtime_generation_context_open(
     rc = generation_stops_open(
         context, yvex_tokenizer_vocab_size(context->tokenizer), err);
     if (rc != YVEX_OK) goto failure;
-    context->options.sampling_policy = options->sampling_policy;
     rc = yvex_runtime_sampling_policy_seal(
         &context->options.sampling_policy,
         yvex_tokenizer_vocab_size(context->tokenizer), err);
@@ -896,31 +897,28 @@ int yvex_runtime_generation_context_open(
                             YVEX_SPECULATION_MAX_BLOCK + 2ull,
                             &context->hidden_count)) ||
         !yvex_core_u64_mul(context->hidden_count, sizeof(float), &hidden_bytes) ||
-        !yvex_core_u64_mul(context->logits_count, sizeof(float), &logits_bytes) ||
-        !yvex_core_u64_add(hidden_bytes, logits_bytes,
-                           &context->workspace_bytes) ||
-        (context->speculation &&
+        !yvex_core_u64_mul(context->logits_count, sizeof(float), &logits_bytes)) {
+        rc = generation_context_refuse(err, YVEX_ERR_NOMEM,
+            "generation-local workspace geometry overflowed");
+        goto failure;
+    }
+    context->workspace_bytes = hidden_bytes;
+    if ((!context->device_selection &&
          !yvex_core_u64_add(context->workspace_bytes, logits_bytes,
                             &context->workspace_bytes)) ||
         context->workspace_bytes > SIZE_MAX ||
         (options->maximum_host_bytes &&
          context->workspace_bytes > options->maximum_host_bytes)) {
-        rc = generation_context_refuse(
-            err, YVEX_ERR_NOMEM,
+        rc = generation_context_refuse(err, YVEX_ERR_NOMEM,
             "generation-local workspace exceeds its budget");
         goto failure;
     }
-    context->hidden = yvex_core_calloc(
-        (size_t)context->hidden_count, sizeof(float));
-    context->logits_row = yvex_core_calloc(
-        (size_t)context->logits_count, sizeof(float));
-    if (context->speculation)
-        context->anchor_probabilities = yvex_core_calloc(
-            (size_t)context->logits_count, sizeof(float));
-    if (!context->hidden || !context->logits_row ||
-        (context->speculation && !context->anchor_probabilities)) {
-        rc = generation_context_refuse(
-            err, YVEX_ERR_NOMEM,
+    context->hidden = yvex_core_calloc((size_t)context->hidden_count, sizeof(float));
+    if (!context->device_selection)
+        context->logits_row = yvex_core_calloc((size_t)context->logits_count, sizeof(float));
+    if (!context->hidden ||
+        (!context->device_selection && !context->logits_row)) {
+        rc = generation_context_refuse(err, YVEX_ERR_NOMEM,
             "generation-local workspace allocation failed");
         goto failure;
     }
@@ -962,7 +960,6 @@ failure:
         if (context->drain_mutex_ready)
             (void)pthread_mutex_destroy(&context->drain_mutex);
         yvex_core_free(context->logits_row);
-        yvex_core_free(context->anchor_probabilities);
         yvex_core_free(context->hidden);
         yvex_core_free(context->additional_stops);
         yvex_core_free(context);
@@ -1042,7 +1039,6 @@ int yvex_runtime_generation_context_close(
                           YVEX_GENERATION_LIFECYCLE_CLOSED,
                           memory_order_release);
     yvex_core_free(owner->logits_row);
-    yvex_core_free(owner->anchor_probabilities);
     yvex_core_free(owner->hidden);
     yvex_core_free(owner->additional_stops);
     memset(owner, 0, sizeof(*owner));

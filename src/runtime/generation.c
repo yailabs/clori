@@ -544,7 +544,8 @@ static int generation_project_logits(
         started = yvex_core_monotonic_ns();
         rc = yvex_runtime_logits_project(
             context->logits, &logits_source, context->options.backend,
-            context->logits_row, context->logits_count, logits_result, err);
+            context->logits_row, context->logits_row ? context->logits_count : 0ull,
+            logits_result, err);
         completed = yvex_core_monotonic_ns();
         if (rc == YVEX_OK)
             rc = yvex_runtime_generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_OUTPUT_HEAD,
@@ -578,6 +579,24 @@ static int generation_project_logits(
     }
     return rc;
 }
+static int generation_sampling_account(
+    yvex_runtime_profile_record *profile, const yvex_runtime_sampling_result *sampling,
+    unsigned long long elapsed, yvex_error *err)
+{
+    const unsigned long long d2h = sampling->d2h_bytes, scans = sampling->full_array_host_scan_bytes;
+    const unsigned long long kernels = sampling->kernel_launches, streams = sampling->stream_synchronizations;
+    const unsigned long long devices = sampling->device_synchronizations;
+    int rc = yvex_runtime_generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_SAMPLING, elapsed, err);
+    if (rc == YVEX_OK && profile->mode != YVEX_RUNTIME_PROFILE_OFF &&
+        (generation_profile_count(profile, YVEX_RUNTIME_PROFILE_D2H_BYTES, d2h, err) != YVEX_OK ||
+         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES, d2h, err) != YVEX_OK ||
+         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES, scans, err) != YVEX_OK ||
+         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES, kernels, err) != YVEX_OK ||
+         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS, streams, err) != YVEX_OK ||
+         generation_profile_count(profile, YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS, devices, err) != YVEX_OK))
+        rc = yvex_error_code(err);
+    return rc;
+}
 static int generation_project_sample(
     yvex_runtime_generation_context *context,
     const yvex_runtime_transformer_result *prefill,
@@ -595,7 +614,9 @@ static int generation_project_sample(
                                    decode, logits_result, profile, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_sampling_source_from_logits(
-            context->sampling, &source, context->logits_row, context->logits_count, logits_result, err);
+            context->sampling, &source, context->logits_row,
+            context->logits_row ? context->logits_count : 0ull,
+            logits_result, err);
     if (rc == YVEX_OK && context->options.sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC)
         rc = yvex_runtime_sampling_transaction_begin(context->sampling, &transaction, err);
     if (rc == YVEX_OK) {
@@ -603,22 +624,8 @@ static int generation_project_sample(
         rc = yvex_runtime_sampling_select(context->sampling, transaction, &source, sampling_result, err);
         completed = yvex_core_monotonic_ns();
         if (rc == YVEX_OK)
-            rc = yvex_runtime_generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_SAMPLING,
-                                           completed - started, err);
-        if (rc == YVEX_OK && profile->mode != YVEX_RUNTIME_PROFILE_OFF &&
-            (generation_profile_count(profile, YVEX_RUNTIME_PROFILE_D2H_BYTES,
-                                      sampling_result->d2h_bytes, err) != YVEX_OK ||
-             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES,
-                                      sampling_result->d2h_bytes, err) != YVEX_OK ||
-             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
-                                      sampling_result->full_array_host_scan_bytes, err) != YVEX_OK ||
-             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES,
-                                      sampling_result->kernel_launches, err) != YVEX_OK ||
-             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS,
-                                      sampling_result->stream_synchronizations, err) != YVEX_OK ||
-             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS,
-                                      sampling_result->device_synchronizations, err) != YVEX_OK))
-            rc = yvex_error_code(err);
+            rc = generation_sampling_account(profile, sampling_result,
+                                             completed - started, err);
     }
     if (transaction && rc == YVEX_OK)
         rc = yvex_runtime_sampling_transaction_prepare_commit(transaction, err);
@@ -626,27 +633,6 @@ static int generation_project_sample(
         yvex_runtime_sampling_transaction_publish_commit(&transaction);
     else if (transaction)
         (void)yvex_runtime_sampling_transaction_abort(&transaction, NULL);
-    return rc;
-}
-static int generation_project_distribution(
-    yvex_runtime_generation_context *context,
-    const yvex_runtime_transformer_result *prefill,
-    const float *prefill_hidden, unsigned long long prefill_hidden_count,
-    yvex_runtime_logits_row_result *logits_result,
-    yvex_runtime_sampling_distribution_result *distribution,
-    yvex_runtime_profile_record *profile, yvex_error *err)
-{
-    yvex_runtime_sampling_source source;
-    int rc;
-    memset(distribution, 0, sizeof(*distribution));
-    rc = generation_project_logits(context, prefill, prefill_hidden, prefill_hidden_count, NULL,
-                                   logits_result, profile, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_sampling_source_from_logits(
-            context->sampling, &source, context->logits_row, context->logits_count, logits_result, err);
-    if (rc == YVEX_OK)
-        rc = yvex_runtime_sampling_distribution(
-            context->sampling, &source, context->anchor_probabilities, context->logits_count, distribution, err);
     return rc;
 }
 static int generation_terminal_token(
@@ -976,7 +962,7 @@ static int generation_speculative_terminal(
     token->persistent_generation_before = before->generation;
     token->persistent_generation_after = before->generation;
     yvex_runtime_identity_copy(token->source_logits_identity,
-                               step->source_distribution_identity);
+                               step->source_selection_identity);
     yvex_runtime_identity_copy(token->sampling_result_identity,
                                step->sampling_identity);
     rc = generation_token_classify(context, step->token_id,
@@ -1167,34 +1153,48 @@ static int generation_speculative_current_step(
     const yvex_runtime_transformer_result *anchor, const float *anchor_hidden,
     unsigned long long anchor_hidden_count,
     const yvex_graph_attention_state_summary *before,
-    yvex_runtime_generation_token_result *tokens,
-    yvex_runtime_generation_result *result,
+    yvex_runtime_generation_token_result *tokens, yvex_runtime_generation_result *result,
     yvex_runtime_speculation_target_step_result *step,
     int *terminal, yvex_error *err)
 {
     yvex_runtime_logits_row_result logits = {0};
-    yvex_runtime_sampling_distribution_result distribution = {0};
-    unsigned long long terminal_index = 0ull;
+    yvex_runtime_sampling_source source = {0};
+    yvex_runtime_sampling_result selection = {0};
+    unsigned long long terminal_index = 0ull, started, completed;
     int rc;
     *terminal = 0;
     memset(step, 0, sizeof(*step));
     rc = generation_cancelled(context, err);
     if (rc == YVEX_OK)
-        rc = generation_project_distribution(
-            context, anchor, anchor_hidden, anchor_hidden_count, &logits,
-            &distribution, &result->profile, err);
-    if (logits.completed) result->logits_projection_count++;
+        rc = generation_project_logits(context, anchor, anchor_hidden,
+            anchor_hidden_count, NULL, &logits, &result->profile, err);
+    if (rc == YVEX_OK && context->device_selection &&
+        (!logits.device_values_available || logits.full_array_host_scan_bytes))
+        rc = generation_refuse(err, YVEX_ERR_STATE,
+            "production DSpark target logits were materialized on the host");
     if (rc == YVEX_OK)
-        rc = yvex_runtime_speculation_target_step(
-            context->speculation, before->next_position,
-            context->anchor_probabilities, context->logits_count,
-            distribution.distribution_identity, step, err);
+        rc = yvex_runtime_sampling_source_from_logits(
+            context->sampling, &source, context->logits_row,
+            context->logits_row ? context->logits_count : 0ull, &logits, err);
+    if (rc == YVEX_OK) {
+        started = yvex_core_monotonic_ns();
+        rc = yvex_runtime_speculation_target_step_select(
+            context->speculation, before->next_position, &source, step, &selection, err);
+        completed = yvex_core_monotonic_ns();
+        if (rc == YVEX_OK)
+            rc = generation_sampling_account(&result->profile, &selection,
+                                             completed - started, err);
+    }
+    if (rc == YVEX_OK && context->device_selection &&
+        (!selection.device_selection || selection.full_array_host_scan_bytes))
+        rc = generation_refuse(err, YVEX_ERR_STATE,
+            "production DSpark target selection returned host-authored facts");
+    if (logits.completed) result->logits_projection_count++;
     if (rc == YVEX_OK)
         rc = generation_speculative_terminal_find(
             context, &step->token_id, 1ull, terminal, &terminal_index, err);
     if (rc == YVEX_OK && *terminal)
-        return generation_speculative_terminal(
-            context, step, before, tokens, result, err);
+        return generation_speculative_terminal(context, step, before, tokens, result, err);
     return rc;
 }
 static int generation_speculative_candidate_cycle(
@@ -1233,8 +1233,8 @@ static int generation_speculative_candidate_cycle(
     if (!candidate_count) {
         rc = generation_speculative_publish(
             context, turn, committed, 1ull, 0, 0u, &before,
-            anchor_step->source_distribution_identity, anchor_step->sampling_identity,
-            anchor_step->source_distribution_identity, anchor_step->sampling_identity,
+            anchor_step->source_selection_identity, anchor_step->sampling_identity,
+            anchor_step->source_selection_identity, anchor_step->sampling_identity,
             tokens, text, text_capacity, result, commit, err);
         if (commit->completed)
             result->sampling_draw_count += anchor_step->target_rng_draw_count;
@@ -1299,7 +1299,7 @@ static int generation_speculative_candidate_cycle(
         rc = generation_speculative_publish(
             context, turn, committed, committed_count,
             commit_plan.terminal, terminal_id, &before,
-            anchor_step->source_distribution_identity, anchor_step->sampling_identity,
+            anchor_step->source_selection_identity, anchor_step->sampling_identity,
             cycle.acceptance.acceptance_identity,
             cycle.acceptance.acceptance_identity, tokens, text, text_capacity,
             result, commit, err);

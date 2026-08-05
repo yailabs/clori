@@ -38,6 +38,7 @@ entry audit:
 | Physical-facts internal ABI | v1 | v1 | stream and device-wide synchronization deltas enter one checked aggregate | in-process function signature only; the stored fact remains one aggregate | old objects are never mixed with rebuilt objects; old callers supplied one combined count | complete rebuild; no persistence, wire, layout, or identity migration | class-sum overflow rollback, runtime execution, sampling and speculation accounting |
 | Width-N MoE internal ABI | v1 | v1 | deferred stack completion plus bounded per-layer status, unique-expert and active-byte factors | in-process result and operation-table layout only; no independently deployed reader or writer | old readers require completed rows and route arrays; old writers synchronize and materialize them per layer | complete rebuild; immediate execution remains the audit oracle; no persistence, wire, public API or profile migration | immediate/deferred output and active-byte parity, untouched route sentinels, bounded D2H, proved-barrier accounting, sync fault refusal |
 | Sampling-transaction internal ABI | v1 | v1 | the existing selection call accepts an optional staged RNG transaction; its test-only result validator is retired | in-process signature and private transaction layout only; result layout is unchanged | old callers select directly or obtain uniform values and select outside the sampling owner | complete rebuild; direct callers pass no transaction; outer transactions retain prepare/publish/abort authority; no persistence, wire, public API or profile migration | CPU/CUDA abort and exact retry, commit-only sample and RNG accounting, stale-base refusal, bounded device result |
+| DSpark target-anchor internal ABI | v1 | v1 | one typed sampling source and its staged selection replace mandatory complete-probability materialization | in-process helper and result-field naming only; no persisted, wire, state-layout or public incompatibility | old rebuilt callers materialize one complete probability row before target selection | complete rebuild; CPU and evidence-bearing paths use the host sampling oracle, production CUDA consumes resident logits; explicit full distributions remain forensic operations | runtime sampling/speculation/generation, CUDA bounded selection, full-array production guard, transaction abort and commit |
 | Stochastic-speculation internal ABI | v1 | v1 | resident draft/target row directories and bounded p/q acceptance facts | in-process operation table and helper signatures only; no persisted, wire or state-layout incompatibility | old objects are never mixed with rebuilt objects; the retained oracle expects host probability rows | complete rebuild; production CUDA uses the device operation, while CPU and audit/forensic profiles retain the oracle; no artifact, binding, protocol, event, profile or public API migration | every accepted prefix, residual and bonus agreement, workspace and malformed-token refusal, canonical identity reseal |
 
 ## Planning authority
@@ -195,10 +196,12 @@ session execution stream and wait on that stream once; the incomplete-Driver
 fallback remains an explicitly counted device-wide barrier. Physical-ledger
 addition accepts the two synchronization classes separately and owns their
 checked aggregate, so overflow cannot partially publish phase accounting.
-Audit/forensic profiles and DSpark retain the host distribution oracle. The
-existing compiled-profile reference flag and internal device-view contracts
-already represent this cutover, so no persisted, wire, public C, execution-
-profile or state-layout version changes.
+Audit/forensic profiles retain the host sampling oracle. Explicit complete
+distribution materialization remains available only to an admitted forensic
+consumer; it is no longer mandatory for a DSpark target anchor. The existing
+compiled-profile reference flag and internal device-view contracts already
+represent this cutover, so no persisted, wire, public C, execution-profile or
+state-layout version changes.
 
 The same sampling owner can execute a stochastic selection against an open RNG
 transaction without advancing the context authority. Host and CUDA paths
@@ -219,6 +222,17 @@ audit/forensic execution retain the complete-distribution oracle. This changes
 only an internal operation table and helper signature; binding v8, protocol v6,
 events v3, compiled profile v1, generation ABI v4 and the public C API remain
 unchanged.
+
+Production CUDA DSpark now selects each target-authored anchor directly from
+the resident output-head row. Greedy selection returns one bounded token/value
+record; stochastic selection remains inside the speculation-owned RNG
+transaction until target/draft state and publication commit together. CPU and
+evidence-bearing profiles select through the same sampling owner over the host
+row, rather than reconstructing a second selection algorithm in speculation.
+The normal production profile refuses host-authored selection facts and records
+zero full-array host-scan bytes. This is an internal complete-rebuild ABI change
+only; binding v8, protocol v6, events v3, generation ABI v4 and the public C API
+remain unchanged.
 
 Source-selected target features now collapse their mHC residual streams on
 CUDA. Production CUDA execution publishes reduced rows only into the
@@ -282,11 +296,11 @@ The currently admitted code establishes model-derived geometry, v7/v8 binding
 coexistence, typed capacity/page planning, pre-materialization memory refusal,
 the availability-aware production phase ledger, and identity-bound native
 SM121 CUBIN admission. It also establishes identity-bound width-N CUDA logits
-publication and greedy DSpark target selection without full-vocabulary host
-materialization.
+publication and greedy/stochastic DSpark target-anchor selection without
+full-vocabulary host materialization.
 It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE, zero per-layer attention synchronization,
-full-model live qualification of target-only device stochastic sampling or
-greedy/stochastic DSpark verification, paged state allocation, prefix persistence, continuous
-batching, competitive throughput, evaluation, benchmark qualification,
-release qualification, or Hugging Face publication.
+full-model live qualification of target-only or DSpark device sampling,
+source-authored reasoning-mode product reachability, paged state allocation,
+prefix persistence, continuous batching, competitive throughput, evaluation,
+benchmark qualification, release qualification, or Hugging Face publication.

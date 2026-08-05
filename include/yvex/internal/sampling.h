@@ -39,7 +39,7 @@ typedef struct yvex_runtime_sampling_policy {
     char policy_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_sampling_policy;
 
-typedef struct {
+typedef struct yvex_runtime_sampling_source {
     unsigned int schema_version;
     int host_values_available, device_values_available;
     yvex_logits_source_phase source_phase;
@@ -54,7 +54,7 @@ typedef struct {
     char source_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_sampling_source;
 
-typedef struct {
+typedef struct yvex_runtime_sampling_result {
     unsigned int schema_version;
     int completed, numeric_fallback_used, device_selection;
     yvex_sampling_strategy strategy;

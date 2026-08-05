@@ -252,6 +252,14 @@ static int live_production_prompt(
         rc = yvex_runtime_generation_result_validate(
             &out->plan, out->tokens, LIVE_GENERATION_MAX_TOKENS,
             out->text, sizeof(out->text), &out->result, err);
+    if (rc == YVEX_OK && backend == YVEX_BACKEND_KIND_CUDA &&
+        out->result.profile.counters[
+            YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES]) {
+        rc = YVEX_ERR_FORMAT;
+        yvex_error_set(
+            err, rc, "generation_live",
+            "production CUDA generation performed a full-array host scan");
+    }
     yvex_error_clear(&cleanup);
     close_rc = yvex_runtime_generation_context_close(&context, &cleanup);
     if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; *err = cleanup; }

@@ -20,7 +20,7 @@ static int acceptance_hash_finish(
     return 1;
 }
 
-int yvex_speculation_distribution_valid(const float *row, unsigned long long count)
+static int acceptance_distribution_valid(const float *row, unsigned long long count)
 {
     double sum = 0.0;
     unsigned long long index;
@@ -132,10 +132,10 @@ static int acceptance_validate(const yvex_speculation_acceptance_request *reques
         if (!isfinite(request->acceptance_uniforms[row]) ||
             request->acceptance_uniforms[row] < 0.0 ||
             request->acceptance_uniforms[row] >= 1.0 ||
-            !yvex_speculation_distribution_valid(
+            !acceptance_distribution_valid(
                 request->draft_probabilities + row * request->distribution_stride,
                 request->vocabulary_size) ||
-            !yvex_speculation_distribution_valid(
+            !acceptance_distribution_valid(
                 request->target_probabilities + row * request->distribution_stride,
                 request->vocabulary_size) ||
             request->draft_probabilities[
@@ -143,7 +143,7 @@ static int acceptance_validate(const yvex_speculation_acceptance_request *reques
             return acceptance_refuse(err, YVEX_ERR_FORMAT,
                                      "speculative probability row is malformed");
     }
-    if (!yvex_speculation_distribution_valid(
+    if (!acceptance_distribution_valid(
             request->target_probabilities +
                 request->candidate_count * request->distribution_stride,
             request->vocabulary_size))

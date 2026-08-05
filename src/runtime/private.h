@@ -109,7 +109,7 @@ struct yvex_runtime_generation_context {
     yvex_execution_phase_measurement phase_measurements[YVEX_EXECUTION_ROOFLINE_PHASE_COUNT];
     unsigned long long phase_measurement_count;
     unsigned int *additional_stops;
-    float *hidden, *logits_row, *anchor_probabilities;
+    float *hidden, *logits_row;
     unsigned long long hidden_count, logits_count, workspace_bytes;
     atomic_uint lifecycle;
     atomic_ullong admission_failures;
@@ -117,6 +117,7 @@ struct yvex_runtime_generation_context {
     pthread_cond_t drain_condition;
     unsigned long long execution_count, failure_count, cancellation_count;
     int drain_mutex_ready, drain_condition_ready, continuation_allowed;
+    int device_selection;
 };
 
 typedef enum {
