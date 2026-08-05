@@ -33,6 +33,8 @@ struct yvex_runtime_transformer_context {
     unsigned long long embedding_row_bytes;
     yvex_device_tensor *device_embedding_encoded, *device_embedding;
     yvex_device_tensor *device_residual[2], *device_attention, *device_hidden;
+    /* Max-shaped workspaces publish only the exact final rows completed by the kernel. */
+    yvex_device_tensor device_hidden_publication, device_pre_normalized_publication;
     yvex_device_tensor *device_global[YVEX_TRANSFORMER_WEIGHT_COUNT];
     float *embedding, *expanded_a, *expanded_b, *candidate_hidden;
     float *moe_combined, *moe_post, *moe_combination, *moe_routed, *moe_shared;
@@ -872,6 +874,7 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
         unsigned long long started_ns = yvex_core_monotonic_ns();
         unsigned long long read_count = 0ull;
         yvex_backend_cuda_operation_facts facts = {0};
+        yvex_device_tensor device_pre_normalized = {0};
         int full = context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL;
         int device_pre = context->options.device_pre_normalized_output;
         int reference_pre = chunk->output->pre_normalized_hidden && full && !device_pre;
@@ -891,17 +894,32 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                     context->candidate_hidden, err);
         } else {
             /* Final attention storage is dead here; reuse it for the optional pre-normalized row. */
-            rc = yvex_backend_transformer_cuda_final(
-                context->session_view->backend, &chunk->device_current,
-                context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_FUNCTION],
-                context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_BASE],
-                context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_SCALE],
-                context->device_global[YVEX_TRANSFORMER_WEIGHT_OUTPUT_NORM],
-                chunk->token_count, s->hidden_width, s->residual_streams,
-                s->output_norm_epsilon, s->mhc_epsilon,
-                chunk->output->pre_normalized_hidden || device_pre
-                    ? &chunk->device_attention : NULL,
-                &chunk->device_hidden, &facts, err);
+            if ((chunk->output->pre_normalized_hidden || device_pre) &&
+                !yvex_backend_tensor_f32_subview(
+                    &chunk->device_attention, 0ull,
+                    chunk->token_count * s->hidden_width,
+                    &device_pre_normalized))
+                rc = transformer_runtime_refuse(
+                    err, YVEX_ERR_BOUNDS,
+                    "transformer final pre-normalized view is invalid");
+            if (rc == YVEX_OK)
+                rc = yvex_backend_transformer_cuda_final(
+                    context->session_view->backend, &chunk->device_current,
+                    context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_FUNCTION],
+                    context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_BASE],
+                    context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_SCALE],
+                    context->device_global[YVEX_TRANSFORMER_WEIGHT_OUTPUT_NORM],
+                    chunk->token_count, s->hidden_width, s->residual_streams,
+                    s->output_norm_epsilon, s->mhc_epsilon,
+                    chunk->output->pre_normalized_hidden || device_pre
+                        ? &device_pre_normalized : NULL,
+                    &chunk->device_hidden, &facts, err);
+            if (rc == YVEX_OK) {
+                context->device_hidden_publication = chunk->device_hidden;
+                if (chunk->output->pre_normalized_hidden || device_pre)
+                    context->device_pre_normalized_publication =
+                        device_pre_normalized;
+            }
             if (rc == YVEX_OK && full)
                 rc = yvex_backend_tensor_read(
                     context->session_view->backend, &chunk->device_current,
@@ -913,8 +931,9 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                     context->candidate_hidden, hidden_bytes, err);
             if (rc == YVEX_OK && chunk->output->pre_normalized_hidden)
                 rc = yvex_backend_tensor_read(
-                    context->session_view->backend, &chunk->device_attention,
-                    chunk->output->pre_normalized_hidden + chunk->token_offset * s->hidden_width,
+                    context->session_view->backend, &device_pre_normalized,
+                    chunk->output->pre_normalized_hidden +
+                        chunk->token_offset * s->hidden_width,
                     hidden_bytes, err);
         }
         read_count = reference_pre ? 1ull
@@ -1220,7 +1239,7 @@ static int transformer_core_features_execute(
     yvex_device_tensor device_input = {0}, device_output = {0};
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long value_count, expanded_count;
+    unsigned long long value_count;
     int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !plan || plan->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
@@ -1228,7 +1247,6 @@ static int transformer_core_features_execute(
          disposition != YVEX_ATTENTION_TRANSACTION_STAGE) ||
         (!features && !device_features) || !token_count || !result ||
         !yvex_core_u64_mul(token_count, plan->hidden_width, &value_count) ||
-        !yvex_core_u64_mul(token_count, plan->expanded_width, &expanded_count) ||
         !yvex_sha256_hex_valid(feature_identity))
         return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG,
                                           "draft core-feature commit geometry is invalid");
@@ -1268,7 +1286,7 @@ static int transformer_core_features_execute(
                                           device_view.element_offset,
                                           value_count, &device_input) ||
          !yvex_backend_tensor_f32_subview(context->device_attention, 0ull,
-                                          expanded_count, &device_output)))
+                                          value_count, &device_output)))
         rc = transformer_runtime_refuse(err, YVEX_ERR_BOUNDS,
                                         "draft core-feature device activation extent is invalid");
     activation.device_input = device_features ? &device_input : NULL;
@@ -1576,7 +1594,8 @@ static int transformer_execution_finish(
         transformer_device_output_publish(
             context, plan, chunk, output->pre_normalized_hidden ? NULL
                 : "yvex.transformer.device-pre-normalized-hidden.v1",
-            context->device_attention, result->pre_normalized_hidden_digest,
+            &context->device_pre_normalized_publication,
+            result->pre_normalized_hidden_digest,
             &result->device_pre_normalized_hidden, err) != YVEX_OK)
         rc = transformer_runtime_refuse(err, YVEX_ERR_STATE,
             "transformer device pre-normalized publication failed");
@@ -1595,7 +1614,8 @@ static int transformer_execution_finish(
                (!context->options.device_hidden_output ||
                 transformer_device_output_publish(
                     context, plan, chunk, "yvex.transformer.device-hidden.v1",
-                    context->device_hidden, result->normalized_hidden_digest,
+                    &context->device_hidden_publication,
+                    result->normalized_hidden_digest,
                     &result->device_hidden, err) != YVEX_OK))
         rc = transformer_runtime_refuse(
             err, YVEX_ERR_STATE, "transformer device-hidden publication failed");

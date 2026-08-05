@@ -821,6 +821,7 @@ static int attn_allocations_execute(attn_run *run,
 static int attn_prepare(attn_run *run) {
     const char *injected = getenv("YVEX_TEST_CUDA_ATTENTION_FAILURE");
     unsigned long long phase_end, local_storage, compressed_end, indexer_end;
+    unsigned long long device_input_elements, device_output_elements;
     int rc;
     if (!run->backend || !run->state)
         return attn_run_fail(
@@ -836,9 +837,16 @@ static int attn_prepare(attn_run *run) {
     run->input_extent = run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
                             ? run->job->residual_expanded_width : run->job->hidden_width;
     if ((run->job->device_input || run->job->device_output) &&
-        !yvex_cuda_activation_views_valid(run->backend, run->job->device_input,
-            run->job->token_count * run->input_extent, run->job->device_output,
-            run->job->token_count * run->job->residual_expanded_width))
+        (!yvex_core_u64_mul(run->job->token_count, run->input_extent,
+                            &device_input_elements) ||
+         !yvex_core_u64_mul(
+             run->job->token_count,
+             run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
+                 ? run->job->residual_expanded_width : run->job->hidden_width,
+             &device_output_elements) ||
+         !yvex_cuda_activation_views_valid(
+             run->backend, run->job->device_input, device_input_elements,
+             run->job->device_output, device_output_elements)))
         return attn_run_fail(run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
             "cuda.deepseek_attention.validate.device-activation", 1ull, 0ull,
             YVEX_ERR_FORMAT, "CUDA attention device activation views are incompatible");
@@ -1721,18 +1729,23 @@ static int attn_numerical_execute(attn_run *run) {
 
 static int attn_synchronize(attn_run *run) {
     unsigned long long expected_topk, output_elements, token;
+    unsigned long long output_width;
+    CUdeviceptr output_source;
     size_t index;
     int device_wide = 0, rc = YVEX_OK;
+    output_width = run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
+                       ? run->job->residual_expanded_width : run->job->hidden_width;
+    output_source = run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
+                        ? run->phase_envelope_output : run->phase_output;
     if (run->job->device_output &&
-        !yvex_core_u64_mul(run->job->token_count, run->job->residual_expanded_width,
-                           &output_elements))
+        !yvex_core_u64_mul(run->job->token_count, output_width, &output_elements))
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET,
             "cuda.deepseek_attention.copy.device-output", ULLONG_MAX,
             run->job->token_count, YVEX_ERR_BOUNDS,
             "CUDA attention device output extent overflowed");
     if (run->job->device_output)
-        rc = yvex_cuda_activation_copy(run->backend, run->phase_envelope_output,
+        rc = yvex_cuda_activation_copy(run->backend, output_source,
             run->job->device_output, output_elements,
             "cuda.deepseek_attention.copy.device-output", run->err);
     if (rc == YVEX_OK && run->job->device_output) {

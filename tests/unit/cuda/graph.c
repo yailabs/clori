@@ -1586,6 +1586,30 @@ static int test_execution_stream_lifecycle(void)
     return 0;
 }
 
+static int test_attention_failure_preserves_cause(void)
+{
+    const yvex_cuda_attention_operations *operations =
+        yvex_cuda_attention_operations_get();
+    yvex_backend_attention_failure failure = {0};
+    yvex_error err;
+    int rc;
+
+    yvex_error_set(&err, YVEX_ERR_BOUNDS, "cuda.attention.specific",
+                   "specific attention capacity was exceeded");
+    rc = operations->fail(
+        &failure, YVEX_BACKEND_ATTENTION_FAILURE_SYNCHRONIZE,
+        "cuda.attention.wrapper", 7ull, 5ull, &err, YVEX_ERR_BOUNDS,
+        "generic attention completion failed");
+    YVEX_TEST_ASSERT(
+        rc == YVEX_ERR_BOUNDS &&
+            failure.code == YVEX_BACKEND_ATTENTION_FAILURE_SYNCHRONIZE &&
+            failure.expected == 7ull && failure.actual == 5ull &&
+            strcmp(yvex_error_where(&err), "cuda.attention.specific") == 0 &&
+            strstr(yvex_error_message(&err), "specific attention capacity") != NULL,
+        "attention failure facts preserve the originating CUDA cause");
+    return 0;
+}
+
 int yvex_cuda_test_graph(void)
 {
     yvex_backend *backend = NULL;
@@ -1630,6 +1654,9 @@ int yvex_cuda_test_graph(void)
     if (rc != 0)
         return rc;
     rc = test_execution_stream_lifecycle();
+    if (rc != 0)
+        return rc;
+    rc = test_attention_failure_preserves_cause();
     if (rc != 0)
         return rc;
     return test_backend_detach();

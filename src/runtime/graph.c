@@ -1307,9 +1307,10 @@ int yvex_runtime_attention_probe_execute(yvex_runtime_execution_session *session
          !session_view->attention_workspace) ||
         request->backend_context ||
         request->workspace || request->state_provider || request->logical_model_identity ||
-        (request->activation_view ? request->probe != YVEX_ATTENTION_PROBE_UNSPECIFIED ||
-                                        !yvex_sha256_hex_valid(request->input_identity)
-                                  : request->probe != YVEX_ATTENTION_PROBE_CANONICAL_V2) ||
+        ((request->activation_view || request->device_view)
+             ? request->probe != YVEX_ATTENTION_PROBE_UNSPECIFIED ||
+                   !yvex_sha256_hex_valid(request->input_identity)
+             : request->probe != YVEX_ATTENTION_PROBE_CANONICAL_V2) ||
         (request->compare_backends
              ? yvex_backend_kind_of(session_view->backend) != YVEX_BACKEND_KIND_CUDA
              : yvex_backend_kind_of(session_view->backend) != request->backend))

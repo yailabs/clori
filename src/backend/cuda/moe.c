@@ -1526,6 +1526,7 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
     }
     cleanup_rc = yvex_cuda_work_cleanup(&batch.work, rc == YVEX_OK ? err : NULL);
     if (rc == YVEX_OK && cleanup_rc != YVEX_OK) rc = cleanup_rc;
+    if (rc == YVEX_OK) rows->device_outputs->is_written = 1;
     if (rc != YVEX_OK) memset(result, 0, sizeof(*result));
     return rc;
 }

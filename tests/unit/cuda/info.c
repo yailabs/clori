@@ -369,11 +369,14 @@ static int assert_grouped_moe(yvex_backend *backend)
     job.device_input = batch_input;
     job.device_output = batch_output;
     job.expanded_input = host_batch;
+    YVEX_TEST_ASSERT(!yvex_device_tensor_is_written(batch_output),
+                     "width-N MoE output begins unpublished");
     rc = row_operations->execute_rows(
         backend, &job, &row_batch, &row_output, &row_result, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && row_result.completed == 1 && row_result.row_count == 2ull &&
             row_result.row_expert_pairs == 2ull && row_result.unique_experts >= 1ull &&
+            yvex_device_tensor_is_written(batch_output) &&
             row_result.kernel_launches < 2ull * normal.kernel_launches &&
             row_result.stream_synchronizations == 1ull &&
             row_result.device_synchronizations == 0ull &&
@@ -390,11 +393,13 @@ static int assert_grouped_moe(yvex_backend *backend)
     device_completion.host_status = &deferred_status;
     device_completion.host_unique_experts = &deferred_unique;
     job.device_completion = &device_completion;
+    batch_output->is_written = 0;
     rc = row_operations->execute_rows(
         backend, &job, &row_batch, &row_output, &row_result, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && !row_result.completed &&
             row_result.device_completion_pending &&
+            yvex_device_tensor_is_written(batch_output) &&
             !row_result.stream_synchronizations &&
             !row_result.device_synchronizations &&
             row_result.d2h_bytes == sizeof(deferred_status) + sizeof(deferred_unique) &&

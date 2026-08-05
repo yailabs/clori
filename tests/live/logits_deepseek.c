@@ -370,7 +370,8 @@ static int live_device_batch(live_logits *execution, yvex_runtime_model *model,
     yvex_runtime_sampling_context *sampling = NULL;
     yvex_compiled_execution_profile profile;
     yvex_runtime_logits_options logits_options = {
-        .maximum_rows = LIVE_LOGITS_ROWS, .maximum_host_bytes = 128ull * 1024ull,
+        .maximum_rows = LIVE_LOGITS_ROWS + 1ull,
+        .maximum_host_bytes = 128ull * 1024ull,
         .evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION, .device_selection = 1};
     yvex_runtime_sampling_options sampling_options = {
         .maximum_rows = LIVE_LOGITS_ROWS, .device_selection = 1};

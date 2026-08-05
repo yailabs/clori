@@ -231,7 +231,7 @@ static int attention_fail(yvex_backend_attention_failure *failure,
         failure->expected = expected;
         failure->actual = actual;
     }
-    yvex_error_set(err, status, stage, message);
+    if (!yvex_error_is_set(err)) yvex_error_set(err, status, stage, message);
     return status;
 }
 static int attention_account_transfer(

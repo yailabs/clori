@@ -35,6 +35,8 @@ struct yvex_runtime_logits_context {
     unsigned long long resident_head_bytes;
     float *candidate, *host_hidden_rows;
     yvex_device_tensor *device_hidden, *device_logits;
+    /* The allocation is max-shaped; only this exact completed prefix may be published. */
+    yvex_device_tensor device_logits_publication;
     pthread_mutex_t mutex;
     unsigned long long execution_count;
     char shared_draft_plan_identity[YVEX_SHA256_HEX_CAP];
@@ -715,7 +717,7 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
 {
     unsigned long long hidden_bytes, logits_bytes;
     yvex_backend_cuda_operation_facts facts;
-    yvex_device_tensor borrowed_hidden;
+    yvex_device_tensor borrowed_hidden, staging_hidden, logits_view;
     const yvex_device_tensor *device_hidden = context->device_hidden;
     int rc;
     if (!context->device_hidden || !context->device_logits ||
@@ -725,6 +727,11 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
                            &logits_bytes))
         return logits_refuse(err, YVEX_ERR_STATE,
                              "stable logits CUDA buffers are unavailable");
+    if (!yvex_backend_tensor_f32_subview(
+            context->device_logits, 0ull,
+            context->plan.summary.vocabulary_size, &logits_view))
+        return logits_refuse(err, YVEX_ERR_BOUNDS,
+                             "one-row device logits view is unavailable");
     if (source->device_values_available) {
         if (!yvex_backend_tensor_f32_subview(
                 source->device_hidden.tensor,
@@ -735,9 +742,16 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
         device_hidden = &borrowed_hidden;
         rc = YVEX_OK;
     } else {
-        rc = yvex_backend_tensor_write(
-            context->session_view->backend, context->device_hidden,
-            source->normalized_hidden, hidden_bytes, err);
+        if (!yvex_backend_tensor_f32_subview(
+                context->device_hidden, 0ull,
+                context->plan.summary.hidden_width, &staging_hidden))
+            return logits_refuse(err, YVEX_ERR_BOUNDS,
+                                 "one-row hidden staging view is unavailable");
+        device_hidden = &staging_hidden;
+        rc = yvex_backend_tensor_write(context->session_view->backend,
+                                       &staging_hidden,
+                                       source->normalized_hidden,
+                                       hidden_bytes, err);
     }
     if (rc == YVEX_OK)
         rc = yvex_backend_cuda_encoded_matvec(
@@ -745,10 +759,12 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
             context->plan.summary.row_bytes, 1ull, device_hidden,
-            NULL, 0ull, NULL, context->device_logits, &facts, err);
+            NULL, 0ull, NULL, &logits_view, &facts, err);
+    if (rc == YVEX_OK)
+        context->device_logits_publication = logits_view;
     if (rc == YVEX_OK && !context->options.device_selection)
         rc = yvex_backend_tensor_read(context->session_view->backend,
-                                      context->device_logits,
+                                      &logits_view,
                                       context->candidate, logits_bytes, err);
     if (rc == YVEX_OK) {
         result->h2d_bytes = source->device_values_available ? 0ull : hidden_bytes;
@@ -788,7 +804,8 @@ static int logits_device_view_build(
                              "device logits generations are unavailable");
     return yvex_runtime_device_view_bind(
         view, YVEX_EXECUTION_DEVICE_LOGITS, context->model, context->session,
-        provider, context->options.execution_profile, context->device_logits,
+        provider, context->options.execution_profile,
+        &context->device_logits_publication,
         element_offset, 1ull, context->plan.summary.vocabulary_size, err);
 }
 
@@ -1402,7 +1419,7 @@ static int logits_project_cuda_batch(
     yvex_runtime_logits_result *result, yvex_error *err)
 {
     yvex_backend_cuda_operation_facts facts = {0};
-    yvex_device_tensor borrowed_hidden;
+    yvex_device_tensor borrowed_hidden, staging_hidden, logits_view;
     const yvex_device_tensor *device_hidden = context->device_hidden;
     unsigned long long hidden_elements, logits_elements, hidden_bytes, logits_bytes, index;
     int device_input = sources[0].device_values_available;
@@ -1421,6 +1438,11 @@ static int logits_project_cuda_batch(
         context->options.cancel_requested(context->options.cancel_context))
         rc = logits_refuse(err, YVEX_ERR_CANCELLED,
                            "grouped logits projection was cancelled before execution");
+    if (rc == YVEX_OK &&
+        !yvex_backend_tensor_f32_subview(
+            context->device_logits, 0ull, logits_elements, &logits_view))
+        rc = logits_refuse(err, YVEX_ERR_BOUNDS,
+                           "grouped device logits view is unavailable");
     if (rc == YVEX_OK && device_input) {
         if (!yvex_backend_tensor_f32_subview(
                 sources[0].device_hidden.tensor,
@@ -1437,9 +1459,17 @@ static int logits_project_cuda_batch(
                        index * context->plan.summary.hidden_width,
                    sources[index].normalized_hidden,
                    (size_t)context->plan.summary.hidden_width * sizeof(float));
-        rc = yvex_backend_tensor_write(
-            context->session_view->backend, context->device_hidden,
-            context->host_hidden_rows, hidden_bytes, err);
+        if (!yvex_backend_tensor_f32_subview(
+                context->device_hidden, 0ull, hidden_elements,
+                &staging_hidden))
+            rc = logits_refuse(err, YVEX_ERR_BOUNDS,
+                               "grouped hidden staging view is unavailable");
+        else {
+            device_hidden = &staging_hidden;
+            rc = yvex_backend_tensor_write(
+                context->session_view->backend, &staging_hidden,
+                context->host_hidden_rows, hidden_bytes, err);
+        }
     }
     if (rc == YVEX_OK)
         rc = yvex_backend_cuda_encoded_matvec(
@@ -1447,10 +1477,12 @@ static int logits_project_cuda_batch(
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
             context->plan.summary.row_bytes, row_count, device_hidden,
-            NULL, 0ull, NULL, context->device_logits, &facts, err);
+            NULL, 0ull, NULL, &logits_view, &facts, err);
+    if (rc == YVEX_OK)
+        context->device_logits_publication = logits_view;
     if (rc == YVEX_OK && !device_output)
         rc = yvex_backend_tensor_read(context->session_view->backend,
-                                      context->device_logits, logits,
+                                      &logits_view, logits,
                                       logits_bytes, err);
     if (rc == YVEX_OK)
         rc = logits_cuda_batch_physical(result, &facts, device_input, device_output,
