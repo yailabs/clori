@@ -89,7 +89,7 @@ static int transformer_runtime_refuse(yvex_error *err, yvex_status status, const
     yvex_error_set(err, status, "runtime.transformer", reason);
     return status;
 }
-static int transformer_cuda_facts_add(yvex_runtime_transformer_result *result,
+int yvex_runtime_transformer_cuda_facts_add(yvex_runtime_transformer_result *result,
     const yvex_backend_cuda_operation_facts *facts, unsigned long long h2d_bytes,
     unsigned long long download_count, unsigned long long device_synchronizations, yvex_error *err)
 {
@@ -573,7 +573,7 @@ static int transformer_runtime_embedding(transformer_chunk_context *chunk, yvex_
                 s->residual_streams, context->device_embedding,
                 context->device_residual[0], &facts, err);
         if (rc != YVEX_OK) return rc;
-        rc = transformer_cuda_facts_add(chunk->result, &facts, bytes, 0ull, 1ull, err);
+        rc = yvex_runtime_transformer_cuda_facts_add(chunk->result, &facts, bytes, 0ull, 1ull, err);
         if (rc != YVEX_OK) return rc;
     }
     return yvex_transformer_initial_residual(context->plan, context->embedding,
@@ -638,7 +638,7 @@ static int transformer_feature_capture(transformer_chunk_context *chunk,
             feature_index * plan->hidden_width,
             destination ? chunk->owner->candidate_hidden : NULL, &facts, err);
         if (rc != YVEX_OK) return rc;
-        rc = transformer_cuda_facts_add(chunk->result, &facts, 0ull, 0ull, 0ull, err);
+        rc = yvex_runtime_transformer_cuda_facts_add(chunk->result, &facts, 0ull, 0ull, 0ull, err);
         if (rc != YVEX_OK) return rc;
         if (destination)
             for (token = 0ull; token < chunk->token_count; ++token)
@@ -922,8 +922,8 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                   (unsigned long long)(chunk->output->normalized_hidden != NULL || full) +
                   (unsigned long long)(chunk->output->pre_normalized_hidden != NULL);
         if (rc == YVEX_OK)
-            rc = transformer_cuda_facts_add(chunk->result, &facts, 0ull,
-                                            read_count, read_count, err);
+            rc = yvex_runtime_transformer_cuda_facts_add(
+                chunk->result, &facts, 0ull, read_count, read_count, err);
         if (rc == YVEX_OK) {
             chunk->result->d2h_bytes += reference_pre ? expanded_bytes
                 : (unsigned long long)full * expanded_bytes +

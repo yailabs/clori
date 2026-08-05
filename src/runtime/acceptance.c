@@ -57,16 +57,18 @@ unsigned int yvex_speculation_distribution_sample(
     return UINT32_MAX;
 }
 
-static int acceptance_policy_identity(const yvex_speculation_acceptance_request *request,
-                                      char output[YVEX_SPECULATION_IDENTITY_CAP])
+static int acceptance_policy_identity(
+    yvex_speculation_acceptance_kind kind, unsigned long long proposed_count,
+    unsigned long long vocabulary_size,
+    char output[YVEX_SPECULATION_IDENTITY_CAP])
 {
     yvex_sha256 hash;
     yvex_sha256_init(&hash);
     return yvex_sha256_update_text(&hash, "yvex.speculation.policy.fixed.v1") &&
-           yvex_sha256_update_u64(&hash, request->schema_version) &&
-           yvex_sha256_update_u64(&hash, request->kind) &&
-           yvex_sha256_update_u64(&hash, request->candidate_count) &&
-           yvex_sha256_update_u64(&hash, request->vocabulary_size) &&
+           yvex_sha256_update_u64(&hash, YVEX_SPECULATION_SCHEMA_V1) &&
+           yvex_sha256_update_u64(&hash, kind) &&
+           yvex_sha256_update_u64(&hash, proposed_count) &&
+           yvex_sha256_update_u64(&hash, vocabulary_size) &&
            acceptance_hash_finish(&hash, output);
 }
 
@@ -150,6 +152,61 @@ static int acceptance_validate(const yvex_speculation_acceptance_request *reques
     return YVEX_OK;
 }
 
+int yvex_speculation_acceptance_seal(
+    unsigned long long vocabulary_size,
+    const unsigned int *committed_token_ids,
+    unsigned long long committed_capacity,
+    yvex_speculation_acceptance_result *result, yvex_error *err)
+{
+    unsigned long long index;
+    if (!result || result->schema_version != YVEX_SPECULATION_SCHEMA_V1 ||
+        result->kind < YVEX_SPECULATION_ACCEPT_GREEDY ||
+        result->kind > YVEX_SPECULATION_ACCEPT_STOCHASTIC ||
+        !result->proposed_count ||
+        result->proposed_count > YVEX_SPECULATION_MAX_BLOCK ||
+        !vocabulary_size || vocabulary_size > UINT32_MAX ||
+        !committed_token_ids || !result->committed_count ||
+        committed_capacity < result->committed_count ||
+        result->accepted_draft_count > result->proposed_count ||
+        result->rejected_draft_count !=
+            result->proposed_count - result->accepted_draft_count ||
+        result->committed_count != result->accepted_draft_count + 1ull ||
+        (result->all_candidates_accepted != 0 &&
+         result->all_candidates_accepted != 1) ||
+        (result->correction_present != 0 && result->correction_present != 1) ||
+        (result->bonus_present != 0 && result->bonus_present != 1) ||
+        result->correction_present + result->bonus_present != 1 ||
+        result->all_candidates_accepted != result->bonus_present ||
+        (result->correction_present &&
+         (result->accepted_draft_count >= result->proposed_count ||
+          result->rejection_index != result->accepted_draft_count)) ||
+        (result->bonus_present &&
+         (result->accepted_draft_count != result->proposed_count ||
+          result->rejection_index != result->proposed_count)) ||
+        result->correction_or_bonus_token_id !=
+            committed_token_ids[result->committed_count - 1ull])
+        return acceptance_refuse(
+            err, YVEX_ERR_FORMAT,
+            "bounded speculative acceptance facts are inconsistent");
+    for (index = 0ull; index < result->committed_count; ++index)
+        if (committed_token_ids[index] >= vocabulary_size)
+            return acceptance_refuse(
+                err, YVEX_ERR_BOUNDS,
+                "bounded speculative acceptance token is outside the vocabulary");
+    result->policy_identity[0] = '\0';
+    result->acceptance_identity[0] = '\0';
+    if (!acceptance_policy_identity(
+            result->kind, result->proposed_count, vocabulary_size,
+            result->policy_identity) ||
+        !acceptance_identity(
+            committed_token_ids, result, result->acceptance_identity))
+        return acceptance_refuse(
+            err, YVEX_ERR_STATE,
+            "speculative acceptance identity derivation failed");
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 int yvex_speculation_accept(
     const yvex_speculation_acceptance_request *request,
     unsigned int *committed_token_ids, unsigned long long committed_capacity,
@@ -167,9 +224,6 @@ int yvex_speculation_accept(
     result->kind = request->kind;
     result->proposed_count = request->candidate_count;
     result->rejection_index = request->candidate_count;
-    if (!acceptance_policy_identity(request, result->policy_identity))
-        return acceptance_refuse(err, YVEX_ERR_STATE,
-                                 "speculative policy identity derivation failed");
     for (index = 0ull; index < request->candidate_count; ++index) {
         unsigned int candidate = request->candidate_token_ids[index];
         int accepted;
@@ -219,11 +273,9 @@ int yvex_speculation_accept(
         result->bonus_present = 1;
         result->correction_or_bonus_token_id = bonus;
     }
-    if (!acceptance_identity(committed_token_ids, result, result->acceptance_identity))
-        return acceptance_refuse(err, YVEX_ERR_STATE,
-                                 "speculative acceptance identity derivation failed");
-    yvex_error_clear(err);
-    return YVEX_OK;
+    return yvex_speculation_acceptance_seal(
+        request->vocabulary_size, committed_token_ids, committed_capacity,
+        result, err);
 }
 
 int yvex_speculation_candidate_extent(

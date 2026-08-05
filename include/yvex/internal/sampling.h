@@ -110,10 +110,22 @@ typedef struct {
     double typical_retained_mass, top_p_retained_mass, normalization_error;
 } yvex_backend_sampling_result;
 
+typedef struct {
+    int completed;
+    unsigned long long proposed_count, accepted_draft_count;
+    unsigned long long rejected_draft_count, committed_count, rejection_index;
+    int all_candidates_accepted, correction_present, bonus_present;
+    unsigned int correction_or_bonus_token_id;
+} yvex_backend_speculation_result;
+
 /* Device sampling owns full-row numerical selection; runtime retains transactional RNG publish. */
 typedef struct {
     int (*workspace_required)(unsigned long long vocabulary_size,
                               unsigned long long *bytes, yvex_error *err);
+    int (*speculation_workspace_required)(unsigned long long vocabulary_size,
+                                          unsigned long long candidate_count,
+                                          unsigned long long *bytes,
+                                          yvex_error *err);
     int (*select_greedy_rows)(yvex_backend *backend,
                               const yvex_device_tensor *logits,
                               unsigned long long row_count,
@@ -131,6 +143,18 @@ typedef struct {
                              yvex_backend_sampling_result *result,
                              yvex_backend_cuda_operation_facts *facts,
                              yvex_error *err);
+    int (*accept_stochastic)(
+        yvex_backend *backend, const yvex_device_tensor *draft_logits,
+        const yvex_device_tensor *target_logits,
+        unsigned long long candidate_count,
+        unsigned long long vocabulary_size,
+        const yvex_runtime_sampling_policy *policy,
+        const unsigned int *candidate_tokens,
+        const double *acceptance_uniforms, double correction_uniform,
+        unsigned int *committed_tokens,
+        unsigned long long committed_capacity,
+        yvex_backend_speculation_result *result,
+        yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 } yvex_backend_sampling_operations;
 
 const yvex_backend_sampling_operations *yvex_backend_sampling_operations_get(

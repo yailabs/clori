@@ -294,6 +294,11 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
                                      yvex_runtime_transformer_output *output,
                                      yvex_runtime_transformer_result *result,
                                      yvex_error *err);
+int yvex_runtime_transformer_cuda_facts_add(
+    yvex_runtime_transformer_result *result,
+    const yvex_backend_cuda_operation_facts *facts,
+    unsigned long long h2d_bytes, unsigned long long download_count,
+    unsigned long long device_synchronizations, yvex_error *err);
 int yvex_runtime_transformer_stage_core_features(
     yvex_runtime_transformer_context *context, unsigned long long token_start,
     const float *features, const yvex_device_tensor *device_features,

@@ -147,6 +147,26 @@ static int test_stochastic_acceptance(void)
                          YVEX_OK &&
                          strcmp(first.acceptance_identity, second.acceptance_identity) == 0,
                      "stochastic acceptance is deterministic for explicit draws");
+    second = first;
+    second.policy_identity[0] = '\0';
+    second.acceptance_identity[0] = '\0';
+    YVEX_TEST_ASSERT(
+        yvex_speculation_acceptance_seal(3ull, committed, 3ull, &second, &err) == YVEX_OK &&
+            strcmp(first.policy_identity, second.policy_identity) == 0 &&
+            strcmp(first.acceptance_identity, second.acceptance_identity) == 0,
+        "bounded device facts seal to the canonical stochastic acceptance identity");
+    second.rejection_index = 0ull;
+    YVEX_TEST_ASSERT(
+        yvex_speculation_acceptance_seal(3ull, committed, 3ull, &second, &err) ==
+            YVEX_ERR_FORMAT,
+        "inconsistent bounded acceptance facts refuse before identity publication");
+    second = first;
+    second.bonus_present = 2;
+    second.correction_present = -1;
+    YVEX_TEST_ASSERT(
+        yvex_speculation_acceptance_seal(3ull, committed, 3ull, &second, &err) ==
+            YVEX_ERR_FORMAT,
+        "non-Boolean bounded acceptance facts refuse before identity publication");
     return 0;
 }
 

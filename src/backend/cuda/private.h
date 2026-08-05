@@ -189,6 +189,7 @@ typedef struct {
     CUfunction qtype_gather_function;
     CUfunction argmax_f32_function;
     CUfunction sample_stochastic_f32_function;
+    CUfunction speculation_stochastic_f32_function;
     CUfunction q8_quantize_function;
     CUfunction deepseek_decode_function;
     CUfunction deepseek_weighted_norm_function;

@@ -38,6 +38,7 @@ entry audit:
 | Physical-facts internal ABI | v1 | v1 | stream and device-wide synchronization deltas enter one checked aggregate | in-process function signature only; the stored fact remains one aggregate | old objects are never mixed with rebuilt objects; old callers supplied one combined count | complete rebuild; no persistence, wire, layout, or identity migration | class-sum overflow rollback, runtime execution, sampling and speculation accounting |
 | Width-N MoE internal ABI | v1 | v1 | deferred stack completion plus bounded per-layer status, unique-expert and active-byte factors | in-process result and operation-table layout only; no independently deployed reader or writer | old readers require completed rows and route arrays; old writers synchronize and materialize them per layer | complete rebuild; immediate execution remains the audit oracle; no persistence, wire, public API or profile migration | immediate/deferred output and active-byte parity, untouched route sentinels, bounded D2H, proved-barrier accounting, sync fault refusal |
 | Sampling-transaction internal ABI | v1 | v1 | the existing selection call accepts an optional staged RNG transaction; its test-only result validator is retired | in-process signature and private transaction layout only; result layout is unchanged | old callers select directly or obtain uniform values and select outside the sampling owner | complete rebuild; direct callers pass no transaction; outer transactions retain prepare/publish/abort authority; no persistence, wire, public API or profile migration | CPU/CUDA abort and exact retry, commit-only sample and RNG accounting, stale-base refusal, bounded device result |
+| Stochastic-speculation internal ABI | v1 | v1 | resident draft/target row directories and bounded p/q acceptance facts | in-process operation table and helper signatures only; no persisted, wire or state-layout incompatibility | old objects are never mixed with rebuilt objects; the retained oracle expects host probability rows | complete rebuild; production CUDA uses the device operation, while CPU and audit/forensic profiles retain the oracle; no artifact, binding, protocol, event, profile or public API migration | every accepted prefix, residual and bonus agreement, workspace and malformed-token refusal, canonical identity reseal |
 
 ## Planning authority
 
@@ -129,7 +130,7 @@ selection/status facts. Physical accounting is attached once to the ordered
 batch rather than multiplied across logical rows. The accepted-prefix decision
 remains in the target-authoritative speculation transaction, so cancellation
 and failed verification cannot publish selected IDs or state. CPU,
-audit/forensic and stochastic DSpark retain the complete-distribution oracle.
+audit/forensic and host-reference DSpark retain the complete-distribution oracle.
 No persisted, wire, public C or profile schema needed a version change.
 
 CUDA attention graph replay now separates mutable state preparation from the
@@ -199,27 +200,37 @@ existing compiled-profile reference flag and internal device-view contracts
 already represent this cutover, so no persisted, wire, public C, execution-
 profile or state-layout version changes.
 
-The same sampling owner can now execute a stochastic selection against an open
-RNG transaction without advancing the context authority. Host and CUDA paths
+The same sampling owner can execute a stochastic selection against an open RNG
+transaction without advancing the context authority. Host and CUDA paths
 derive result identities from the transaction's staged before/after states;
 abort leaves the context unchanged, exact retry selects the same token, and
 caller-owned prepare/publish advances one draw only at the admitted caller
-commit boundary. CUDA keeps the vocabulary resident and returns the same
-bounded result facts as target-only selection. This is the transactional
-prerequisite for stochastic DSpark; target p/q comparison and residual
-correction remain on the explicit host oracle, so no DSpark cutover is claimed.
+commit boundary.
+
+Production stochastic DSpark now keeps every adjusted draft row and width-N
+target-verification row on CUDA. The device applies the sealed sampling filter
+to p and q, evaluates each explicit target-owned acceptance draw, selects the
+residual correction or target bonus, and returns only committed token IDs and
+bounded acceptance facts. Runtime reseals those facts through the canonical
+acceptance identity before state or RNG publication. Workspace capacity is
+derived from vocabulary and model-authored proposal width before execution;
+undersized capacity and malformed candidates refuse before a launch. CPU and
+audit/forensic execution retain the complete-distribution oracle. This changes
+only an internal operation table and helper signature; binding v8, protocol v6,
+events v3, compiled profile v1, generation ABI v4 and the public C API remain
+unchanged.
 
 Source-selected target features now collapse their mHC residual streams on
-CUDA. Production greedy execution publishes reduced rows only into the
+CUDA. Production CUDA execution publishes reduced rows only into the
 transaction-owned token-major device directory and transfers bounded status;
-stochastic and evidence-bearing paths retain the compact host output. Feature
+evidence-bearing paths retain the compact host output. Feature
 projection consumes resident input without re-upload, executes its encoded
 width-N matrix and RMSNorm on CUDA, and no longer downloads normalized rows in
-the greedy path. The draft core consumes those rows through its device view,
+the production path. The draft core consumes those rows through its device view,
 while semantic identities bind the exact producer, execution, tensor and
 promoted-prefix facts without scanning device values on the host. Corresponding
 unused host feature workspaces are omitted. The CPU, audit/forensic and
-stochastic implementations remain explicit numerical oracles. This requires no
+host implementations remain explicit numerical oracles. This requires no
 persisted, wire, public C or profile-schema change.
 
 Speculative prefill now contributes the merged target, projection and draft-core
@@ -276,7 +287,6 @@ materialization.
 It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE, zero per-layer attention synchronization,
 full-model live qualification of target-only device stochastic sampling or
-greedy DSpark verification, device-resident stochastic DSpark
-acceptance/correction, paged state allocation, prefix persistence, continuous
+greedy/stochastic DSpark verification, paged state allocation, prefix persistence, continuous
 batching, competitive throughput, evaluation, benchmark qualification,
 release qualification, or Hugging Face publication.

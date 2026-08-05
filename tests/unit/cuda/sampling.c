@@ -1,6 +1,7 @@
 /* CUDA sampling conformance against analytically bounded stochastic fixtures. */
 #include <yvex/api.h>
 #include <yvex/internal/backend.h>
+#include <yvex/internal/decode.h>
 #include <yvex/internal/sampling.h>
 
 #include <math.h>
@@ -249,6 +250,172 @@ static int sampling_full_vocabulary(
     return 0;
 }
 
+static void sampling_softmax_row(const float *logits, unsigned long long count,
+                                 float *probabilities)
+{
+    double maximum = logits[0], total = 0.0;
+    unsigned long long index;
+    for (index = 1ull; index < count; ++index)
+        if (logits[index] > maximum) maximum = logits[index];
+    for (index = 0ull; index < count; ++index) {
+        probabilities[index] = (float)exp((double)logits[index] - maximum);
+        total += probabilities[index];
+    }
+    for (index = 0ull; index < count; ++index)
+        probabilities[index] = (float)(probabilities[index] / total);
+}
+
+static int sampling_speculation_device(
+    yvex_backend *backend, const yvex_backend_sampling_operations *operations)
+{
+    static const float draft_logits[] = {
+        2.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 2.0f, 0.0f, 0.0f};
+    static const float target_cases[][12] = {
+        {0.0f, 2.0f, 0.0f, 0.0f,
+         0.0f, 2.0f, 0.0f, 0.0f,
+         0.0f, 0.0f, 2.0f, 0.0f},
+        {2.0f, 0.0f, 0.0f, 0.0f,
+         0.0f, 2.0f, 0.0f, 0.0f,
+         0.0f, 0.0f, 2.0f, 0.0f},
+        {2.0f, 0.0f, 0.0f, 0.0f,
+         0.0f, 0.0f, 2.0f, 0.0f,
+         0.0f, 0.0f, 2.0f, 0.0f}};
+    const unsigned int candidates[] = {0u, 1u};
+    static const double uniform_cases[][2] = {
+        {0.5, 0.0}, {0.5, 0.5}, {0.5, 0.5}};
+    static const double correction_cases[] = {0.25, 0.5, 0.25};
+    static const unsigned long long accepted_cases[] = {0ull, 2ull, 1ull};
+    float draft_probabilities[8], target_probabilities[12];
+    unsigned int device_tokens[3] = {UINT_MAX, UINT_MAX, UINT_MAX};
+    unsigned int reference_tokens[3] = {UINT_MAX, UINT_MAX, UINT_MAX};
+    yvex_runtime_sampling_policy policy = sampling_policy();
+    yvex_speculation_acceptance_request request = {0};
+    yvex_speculation_acceptance_result reference = {0};
+    yvex_backend_speculation_result result = {0};
+    yvex_backend_cuda_operation_facts facts = {0};
+    yvex_backend_tensor_desc descriptor;
+    yvex_device_tensor *draft = NULL, *target = NULL, *workspace = NULL;
+    unsigned long long workspace_bytes, row, case_index;
+    yvex_error err;
+    for (row = 0ull; row < 2ull; ++row)
+        sampling_softmax_row(
+            draft_logits + row * 4ull, 4ull,
+            draft_probabilities + row * 4ull);
+    request.schema_version = YVEX_SPECULATION_SCHEMA_V1;
+    request.kind = YVEX_SPECULATION_ACCEPT_STOCHASTIC;
+    request.candidate_count = 2ull;
+    request.vocabulary_size = request.distribution_stride = 4ull;
+    request.candidate_token_ids = candidates;
+    request.draft_probabilities = draft_probabilities;
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_policy_seal(&policy, 4ull, &err) == YVEX_OK &&
+            operations->speculation_workspace_required(
+                4ull, 2ull, &workspace_bytes, &err) == YVEX_OK,
+        "derive stochastic speculation reference and workspace");
+    sampling_tensor_desc(
+        &descriptor, "speculation-draft-logits", YVEX_DTYPE_F32,
+        sizeof(draft_logits));
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &descriptor, &draft, &err) == YVEX_OK &&
+            yvex_backend_tensor_write(
+                backend, draft, draft_logits, sizeof(draft_logits), &err) == YVEX_OK,
+        "upload resident draft distributions");
+    sampling_tensor_desc(
+        &descriptor, "speculation-target-logits", YVEX_DTYPE_F32,
+        sizeof(target_cases[0]));
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &descriptor, &target, &err) == YVEX_OK,
+        "allocate resident target distributions");
+    sampling_tensor_desc(
+        &descriptor, "speculation-small-workspace", YVEX_DTYPE_I8,
+        workspace_bytes - 1ull);
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_write(
+            backend, target, target_cases[0], sizeof(target_cases[0]), &err) == YVEX_OK &&
+            yvex_backend_tensor_alloc(backend, &descriptor, &workspace, &err) == YVEX_OK &&
+            yvex_backend_workspace_attach(backend, workspace, 4ull, &err) == YVEX_OK &&
+            operations->accept_stochastic(
+                backend, draft, target, 2ull, 4ull, &policy, candidates,
+                uniform_cases[0], correction_cases[0], device_tokens, 3ull,
+                &result, &facts, &err) == YVEX_ERR_NOMEM &&
+            !result.completed && !facts.kernel_launches,
+        "speculative acceptance refuses a workspace below its derived capacity");
+    yvex_backend_workspace_detach(backend);
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK,
+        "release refused stochastic speculation workspace");
+    sampling_tensor_desc(
+        &descriptor, "speculation-workspace", YVEX_DTYPE_I8, workspace_bytes);
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &descriptor, &workspace, &err) == YVEX_OK &&
+            yvex_backend_workspace_attach(backend, workspace, 4ull, &err) == YVEX_OK,
+        "attach stochastic speculation workspace");
+    {
+        const unsigned int invalid_candidates[] = {4u, 1u};
+        memset(device_tokens, 0xff, sizeof(device_tokens));
+        YVEX_TEST_ASSERT(
+            operations->accept_stochastic(
+                backend, draft, target, 2ull, 4ull, &policy,
+                invalid_candidates, uniform_cases[0], correction_cases[0],
+                device_tokens, 3ull, &result, &facts, &err) == YVEX_ERR_FORMAT &&
+                !result.completed && !facts.kernel_launches &&
+                device_tokens[0] == 0u && device_tokens[1] == 0u &&
+                device_tokens[2] == 0u,
+            "invalid device candidates refuse before launch or token publication");
+    }
+    for (case_index = 0ull; case_index < 3ull; ++case_index) {
+        memset(device_tokens, 0xff, sizeof(device_tokens));
+        memset(reference_tokens, 0xff, sizeof(reference_tokens));
+        for (row = 0ull; row < 3ull; ++row)
+            sampling_softmax_row(
+                target_cases[case_index] + row * 4ull, 4ull,
+                target_probabilities + row * 4ull);
+        request.target_probabilities = target_probabilities;
+        request.acceptance_uniforms = uniform_cases[case_index];
+        request.correction_uniform = correction_cases[case_index];
+        YVEX_TEST_ASSERT(
+            yvex_speculation_accept(
+                &request, reference_tokens, 3ull, &reference, &err) == YVEX_OK &&
+                yvex_backend_tensor_write(
+                    backend, target, target_cases[case_index],
+                    sizeof(target_cases[case_index]), &err) == YVEX_OK &&
+                operations->accept_stochastic(
+                    backend, draft, target, 2ull, 4ull, &policy, candidates,
+                    uniform_cases[case_index], correction_cases[case_index],
+                    device_tokens, 3ull, &result, &facts, &err) == YVEX_OK,
+            "execute CUDA acceptance at each speculative prefix length");
+        YVEX_TEST_ASSERT(
+            result.completed &&
+                result.accepted_draft_count == accepted_cases[case_index] &&
+                result.accepted_draft_count == reference.accepted_draft_count &&
+                result.rejected_draft_count == reference.rejected_draft_count &&
+                result.committed_count == reference.committed_count &&
+                result.rejection_index == reference.rejection_index &&
+                result.correction_present == reference.correction_present &&
+                result.bonus_present == reference.bonus_present &&
+                memcmp(device_tokens, reference_tokens,
+                       (size_t)reference.committed_count *
+                           sizeof(*device_tokens)) == 0 &&
+                facts.h2d_bytes ==
+                    sizeof(candidates) + sizeof(uniform_cases[case_index]) &&
+                facts.d2h_bytes <= 128ull && facts.kernel_launches == 1ull &&
+                facts.stream_synchronizations == 1ull &&
+                facts.device_synchronizations == 0ull &&
+                facts.activation_bytes ==
+                    sizeof(draft_logits) + sizeof(target_cases[case_index]) &&
+                facts.temporary_bytes == workspace_bytes,
+            "device p/q acceptance matches the independent bounded oracle");
+    }
+    yvex_backend_workspace_detach(backend);
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &target, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &draft, &err) == YVEX_OK,
+        "release stochastic speculation device fixtures");
+    return 0;
+}
+
 int yvex_cuda_test_sampling(void)
 {
     static const float logits[] = {0.0f, 1.0f, 2.0f, 3.0f};
@@ -266,14 +433,18 @@ int yvex_cuda_test_sampling(void)
     if (rc != 0) return rc;
     operations = yvex_backend_sampling_operations_get(backend);
     YVEX_TEST_ASSERT(
-        operations && operations->workspace_required && operations->select_greedy_rows &&
-            operations->select_stochastic &&
+        operations && operations->workspace_required &&
+            operations->speculation_workspace_required &&
+            operations->select_greedy_rows && operations->select_stochastic &&
+            operations->accept_stochastic &&
             yvex_runtime_sampling_policy_seal(&policy, 4ull, &err) == YVEX_OK &&
             operations->workspace_required(4ull, &workspace_bytes, &err) == YVEX_OK &&
             workspace_bytes > sizeof(logits),
         "CUDA stochastic sampling admits sealed policy and derived workspace");
     YVEX_TEST_ASSERT(sampling_greedy_rows(backend, operations) == 0,
                      "CUDA sampling owns batched greedy selection");
+    YVEX_TEST_ASSERT(sampling_speculation_device(backend, operations) == 0,
+                     "CUDA sampling owns stochastic speculative acceptance");
     sampling_tensor_desc(&descriptor, "sampling-logits", YVEX_DTYPE_F32,
                          sizeof(logits));
     YVEX_TEST_ASSERT(

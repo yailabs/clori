@@ -159,6 +159,11 @@ int yvex_speculation_accept(
     const yvex_speculation_acceptance_request *request,
     unsigned int *committed_token_ids, unsigned long long committed_capacity,
     yvex_speculation_acceptance_result *result, yvex_error *err);
+int yvex_speculation_acceptance_seal(
+    unsigned long long vocabulary_size,
+    const unsigned int *committed_token_ids,
+    unsigned long long committed_capacity,
+    yvex_speculation_acceptance_result *result, yvex_error *err);
 int yvex_speculation_distribution_valid(const float *row, unsigned long long count);
 unsigned int yvex_speculation_distribution_sample(
     const float *target, const float *draft, unsigned long long count,

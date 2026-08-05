@@ -207,6 +207,7 @@ static int test_module_release_retry(void)
     yvex_backend *backend = NULL;
     yvex_cuda_backend_state *state;
     CUfunction expected_function;
+    unsigned int expected_modules;
     yvex_error err;
     int retained_ok;
     int rc = open_cuda(&backend);
@@ -214,6 +215,7 @@ static int test_module_release_retry(void)
     if (rc != 0)
         return rc;
     state = yvex_cuda_state(backend);
+    expected_modules = state->module_count;
     module_real_unload = state->driver.cuModuleUnload;
     module_expected_handle = state->modules[0];
     expected_function = state->rope_function;
@@ -223,12 +225,14 @@ static int test_module_release_retry(void)
     state->driver.cuModuleUnload = fail_before_module_unload;
     rc = yvex_backend_close_checked(&backend, &err);
     retained_ok = rc == YVEX_ERR_BACKEND && backend != NULL &&
-                  yvex_cuda_state(backend) == state && state->module_count == 2u &&
+                  yvex_cuda_state(backend) == state &&
+                  state->module_count == expected_modules &&
                   state->modules[0] == module_expected_handle &&
                   state->rope_function == expected_function &&
                   module_unload_calls == 1u && module_true_unloads == 0u;
     rc = yvex_backend_close_checked(&backend, &err);
-    YVEX_TEST_ASSERT(rc == YVEX_OK && !backend && module_unload_calls == 3u &&
+    YVEX_TEST_ASSERT(rc == YVEX_OK && !backend &&
+                         module_unload_calls == expected_modules + 1u &&
                          module_true_unloads == 1u,
                      "checked-close retry performs one true module unload");
     YVEX_TEST_ASSERT(retained_ok,
@@ -242,15 +246,18 @@ static int test_module_rollback_retry(void)
     yvex_cuda_backend_state *state;
     CUmodule admitted_module;
     CUfunction admitted_function;
+    unsigned int expected_modules;
     yvex_error err;
     int retained_ok, rc = open_cuda(&backend);
 
     if (rc != 0) return rc;
     state = yvex_cuda_state(backend);
+    expected_modules = state->module_count;
     admitted_module = state->modules[0];
     admitted_function = state->rope_function;
     YVEX_TEST_ASSERT(yvex_cuda_kernel_bundle_admit(backend, &err) == YVEX_OK &&
-                         state->module_count == 2u && state->modules[0] == admitted_module &&
+                         state->module_count == expected_modules &&
+                         state->modules[0] == admitted_module &&
                          state->rope_function == admitted_function,
                      "repeated bundle admission preserves the admitted module");
     YVEX_TEST_ASSERT(yvex_cuda_kernel_bundle_close(backend, &err) == YVEX_OK,
@@ -263,7 +270,8 @@ static int test_module_rollback_retry(void)
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_BUNDLE_FAILURE", "symbol", 1) == 0,
                      "inject symbol refusal before rollback unload");
     rc = yvex_cuda_kernel_bundle_admit(backend, &err);
-    retained_ok = rc == YVEX_ERR_BACKEND && state->module_count == 2u && state->modules[0] &&
+    retained_ok = rc == YVEX_ERR_BACKEND &&
+                  state->module_count == expected_modules && state->modules[0] &&
                   module_unload_calls == 0u && module_true_unloads == 0u;
     module_expected_handle = state->modules[0];
     YVEX_TEST_ASSERT(yvex_cuda_kernel_bundle_admit(backend, &err) == YVEX_ERR_STATE &&
@@ -274,7 +282,8 @@ static int test_module_rollback_retry(void)
                          backend && module_unload_calls == 1u && module_true_unloads == 0u,
                      "first checked close retains the rejected module after Driver refusal");
     YVEX_TEST_ASSERT(yvex_backend_close_checked(&backend, &err) == YVEX_OK && !backend &&
-                         module_unload_calls == 3u && module_true_unloads == 1u,
+                         module_unload_calls == expected_modules + 1u &&
+                         module_true_unloads == 1u,
                      "checked backend close retries the retained rejected module");
     YVEX_TEST_ASSERT(retained_ok,
                      "failed rollback unload preserves module ownership");
@@ -292,10 +301,12 @@ static int test_shared_open_rollback_retry(void)
     yvex_error err;
     yvex_backend_capability aggregate;
     yvex_backend_operation_variant variant;
+    unsigned int expected_modules;
     int retained_ok, rc = open_cuda(&owner);
 
     if (rc != 0) return rc;
     owner_state = yvex_cuda_state(owner);
+    expected_modules = owner_state->module_count;
     module_real_unload = owner_state->driver.cuModuleUnload;
     module_expected_handle = NULL;
     module_unload_calls = module_true_unloads = 0u;
@@ -308,7 +319,8 @@ static int test_shared_open_rollback_retry(void)
     retained_ok = rc == YVEX_ERR_BACKEND && retained && retained_state &&
                   yvex_backend_status_of(retained) == YVEX_BACKEND_STATUS_FAILED &&
                   retained_state->modules[0] == module_expected_handle &&
-                  retained_state->module_count == 2u && module_unload_calls == 1u &&
+                  retained_state->module_count == expected_modules &&
+                  module_unload_calls == 1u &&
                   module_true_unloads == 0u;
     for (variant = YVEX_BACKEND_VARIANT_TENSOR_ALLOC;
          variant < YVEX_BACKEND_VARIANT_COUNT; ++variant) {
@@ -330,7 +342,8 @@ static int test_shared_open_rollback_retry(void)
                      "clear shared bundle admission refusal");
     module_unload_failures = 0u;
     YVEX_TEST_ASSERT(yvex_backend_close_checked(&retained, &err) == YVEX_OK && !retained &&
-                         module_unload_calls == 3u && module_true_unloads == 1u,
+                         module_unload_calls == expected_modules + 1u &&
+                         module_true_unloads == 1u,
                      "shared cleanup owner retries one true module unload");
     owner_state->driver.cuModuleUnload = module_real_unload;
     YVEX_TEST_ASSERT(yvex_backend_close_checked(&owner, &err) == YVEX_OK && !owner,

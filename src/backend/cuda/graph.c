@@ -224,6 +224,7 @@ static const char *kernel_function_identity(const yvex_cuda_backend_state *state
     MATCH(deepseek_rolling_function);
     MATCH(deepseek_topk_function); MATCH(deepseek_reduce_function);
     MATCH(argmax_f32_function); MATCH(sample_stochastic_f32_function);
+    MATCH(speculation_stochastic_f32_function);
     MATCH(moe_route_function); MATCH(moe_route_rows_function); MATCH(moe_pair_order_function);
     MATCH(moe_grouped_up_function); MATCH(moe_grouped_down_function);
     MATCH(moe_grouped_up_rows_function); MATCH(moe_grouped_down_rows_function);

@@ -63,8 +63,11 @@ change. Git history preserves implementation chronology.
   audit/reference oracles.
 - Target-only production stochastic sampling now filters and selects directly
   from resident CUDA logits. The host publishes the deterministic PCG advance
-  only after cancellation-safe validation, while audit/forensic and stochastic
-  DSpark retain the complete-distribution host reference.
+  only after cancellation-safe validation. Production stochastic DSpark keeps
+  adjusted draft and target-verification rows resident, performs p/q acceptance
+  and residual correction on CUDA, then publishes RNG and state only after the
+  bounded facts reseal through the canonical acceptance identity. CPU and
+  audit/forensic profiles retain the complete-distribution host reference.
 - Production greedy DSpark verification now projects its complete target row
   batch to CUDA-resident logits, selects every row through one width-N argmax
   launch and one synchronization, and transfers only bounded aggregate facts. The
@@ -77,15 +80,15 @@ change. Git history preserves implementation chronology.
   and Markov views directly and transfers one scalar result. The portable host
   distribution and confidence paths remain the CPU, audit/forensic and stochastic
   oracles.
-- Production greedy CUDA target-feature capture now averages source-selected mHC
+- Production CUDA target-feature capture now averages source-selected mHC
   residual streams directly into a transaction-owned token-major device
   directory and transfers only bounded status. Feature projection consumes that
   directory without re-upload, executes the resident encoded matrix and RMSNorm
   without downloading the normalized rows, and feeds the draft core through an
   identity-bound device view. Its unused host feature workspaces are no longer
   allocated. Prefix-specific semantic identities bind device-only candidate and
-  promoted rows without a full-array host scan. CPU, audit/forensic and
-  stochastic DSpark retain explicit host feature oracles. Speculative prefill
+  promoted rows without a full-array host scan. CPU and audit/forensic profiles
+  retain explicit host feature oracles. Speculative prefill
   contributes its merged target, projection and draft-core physical facts to the
   phase roofline ledger.
 - The production CUDA transformer final stage now preserves an optional

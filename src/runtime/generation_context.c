@@ -31,7 +31,6 @@ static int generation_device_stochastic(
     const yvex_backend *backend)
 {
     return context && context->options.backend == YVEX_BACKEND_KIND_CUDA &&
-           context->options.mode == YVEX_GENERATION_MODE_TARGET_ONLY &&
            context->options.evidence_profile == YVEX_EXECUTION_EVIDENCE_PRODUCTION &&
            context->options.sampling_policy.strategy ==
                YVEX_SAMPLING_STRATEGY_STOCHASTIC &&
@@ -430,6 +429,39 @@ static int generation_capacity_workload(
         &context->workload_profile, err);
 }
 
+static int generation_sampling_workspace(
+    const yvex_runtime_generation_context *context, yvex_backend *backend,
+    const yvex_model_execution_descriptor *model,
+    unsigned long long *workspace, yvex_error *err)
+{
+    const yvex_backend_sampling_operations *operations;
+    unsigned long long selection = 0ull, speculation = 0ull;
+    if (workspace) *workspace = 0ull;
+    if (!context || !workspace)
+        return generation_context_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "device sampling workspace owner is unavailable");
+    if (!generation_device_stochastic(context, backend)) return YVEX_OK;
+    operations = yvex_backend_sampling_operations_get(backend);
+    if (!model || !operations || !operations->workspace_required ||
+        operations->workspace_required(
+            model->vocabulary_size, &selection, err) != YVEX_OK)
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "device stochastic workspace geometry is unavailable");
+    if (context->options.mode == YVEX_GENERATION_MODE_DSPARK &&
+        (!model->proposal_width ||
+         !operations->speculation_workspace_required ||
+         operations->speculation_workspace_required(
+             model->vocabulary_size, model->proposal_width,
+             &speculation, err) != YVEX_OK))
+        return generation_context_refuse(
+            err, YVEX_ERR_STATE,
+            "device stochastic speculation workspace geometry is unavailable");
+    *workspace = speculation > selection ? speculation : selection;
+    return YVEX_OK;
+}
+
 static int generation_capacity_build(
     yvex_runtime_generation_context *context, yvex_error *err)
 {
@@ -443,7 +475,6 @@ static int generation_capacity_build(
     generation_capacity_geometry geometry;
     yvex_execution_state_class_request states[YVEX_MODEL_STATE_CLASS_COUNT];
     yvex_execution_capacity_plan_request request = {0};
-    const yvex_backend_sampling_operations *sampling_operations;
     unsigned long long workspace, sampling_workspace = 0ull, index, count = 0ull;
     if (generation_capacity_hardware(context, err) != YVEX_OK) return yvex_error_code(err);
     if (!model) return YVEX_OK;
@@ -472,16 +503,10 @@ static int generation_capacity_build(
         return generation_context_refuse(
             err, YVEX_ERR_BOUNDS,
             "execution workspace geometry overflowed");
-    sampling_operations = yvex_backend_sampling_operations_get(
-        yvex_runtime_session_view_get(context->session)->backend);
-    if (generation_device_stochastic(
-            context, yvex_runtime_session_view_get(context->session)->backend) &&
-        (!sampling_operations || !sampling_operations->workspace_required ||
-         sampling_operations->workspace_required(
-             model->vocabulary_size, &sampling_workspace, err) != YVEX_OK))
-        return generation_context_refuse(
-            err, YVEX_ERR_STATE,
-            "device stochastic workspace geometry is unavailable");
+    if (generation_sampling_workspace(
+            context, yvex_runtime_session_view_get(context->session)->backend,
+            model, &sampling_workspace, err) != YVEX_OK)
+        return yvex_error_code(err);
     if (sampling_workspace > workspace) workspace = sampling_workspace;
     request.schema_version = YVEX_EXECUTION_CAPACITY_PLAN_SCHEMA_V1;
     request.model = model;
@@ -701,24 +726,21 @@ static int generation_execution_owners_open(
     yvex_runtime_speculation_options speculation = {0};
     const yvex_runtime_session_view *session_view =
         yvex_runtime_session_view_get(context->session);
-    const yvex_backend_sampling_operations *sampling_operations =
-        session_view
-            ? yvex_backend_sampling_operations_get(session_view->backend)
+    const yvex_runtime_descriptor_summary *runtime =
+        yvex_runtime_descriptor_summary_get(context->model_view->descriptor);
+    const yvex_model_execution_descriptor *model =
+        runtime && runtime->model_execution.schema_version
+            ? &runtime->model_execution
             : NULL;
     unsigned long long sampling_workspace = 0ull;
     int device_selection = session_view &&
         generation_device_selection(context, session_view->backend);
     int rc;
 
-    if (generation_device_stochastic(
-            context, session_view ? session_view->backend : NULL) &&
-        (!sampling_operations || !sampling_operations->workspace_required ||
-         sampling_operations->workspace_required(
-             yvex_tokenizer_vocab_size(context->tokenizer),
-             &sampling_workspace, err) != YVEX_OK))
-        return generation_context_refuse(
-            err, YVEX_ERR_STATE,
-            "device stochastic workspace cannot be admitted");
+    if (generation_sampling_workspace(
+            context, session_view ? session_view->backend : NULL, model,
+            &sampling_workspace, err) != YVEX_OK)
+        return yvex_error_code(err);
 
     transformer.maximum_host_bytes = options->maximum_host_bytes;
     transformer.maximum_device_bytes = options->maximum_device_bytes;
@@ -792,7 +814,7 @@ int yvex_runtime_generation_context_open(
     yvex_runtime_generation_context *context = NULL;
     yvex_runtime_decode_options decode_options = {0};
     yvex_tokenizer_decode_options decoder_options = {0};
-    const yvex_runtime_logits_plan_summary *logits_plan;
+    const yvex_runtime_logits_plan_summary *logits_plan = NULL;
     unsigned long long hidden_bytes, logits_bytes;
     int rc = YVEX_OK;
     if (out) *out = NULL;

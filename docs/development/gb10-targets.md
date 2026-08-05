@@ -95,29 +95,29 @@ validates it once, reconstructs exact active bytes and reuses a proved final
 session-stream barrier. It no longer materializes selected routes or weights on
 the production host path. The portable Driver fallback reports any context-wide
 synchronization explicitly; immediate and token-local paths remain the
-audit/reference oracles. Target-only production now
-selects stochastic tokens from resident CUDA logits with bounded result
-transfer; audit/forensic and stochastic DSpark still own explicit host sampling
-references. The sampling owner can stage either host or CUDA selection inside
-the outer RNG transaction, retry an aborted draw exactly and publish one draw
-only with the surrounding transaction. Target p/q evaluation and residual
-correction remain the stochastic DSpark device-cutover boundary. Greedy and
-stochastic CUDA selection enqueue those bounded facts
+audit/reference oracles. Target-only production selects stochastic tokens from
+resident CUDA logits with bounded result transfer. Production stochastic
+DSpark now keeps draft and target p/q rows resident, evaluates explicit
+acceptance draws and residual correction on CUDA, and returns only bounded
+tokens and acceptance facts; audit/forensic profiles retain the complete host
+oracle. The sampling owner can stage either host or CUDA selection inside the
+outer RNG transaction, retry an aborted draw exactly and publish one draw only
+with the surrounding transaction. Greedy and stochastic CUDA selection enqueue those bounded facts
 on the session stream and complete only that stream; any legacy context-wide
 fallback remains separately visible. Production greedy DSpark verification now
 retains its width-N
 target logits on CUDA, selects the complete row directory with one argmax
 launch and synchronization, and transfers only bounded aggregate facts.
-Eager attention, reference layouts and host-materialized stochastic adapters
+Eager attention, reference layouts and evidence-bearing host adapters
 may be replaced only through the existing typed execution profile. Production
-greedy CUDA target-feature capture reduces mHC streams directly into a
+CUDA target-feature capture reduces mHC streams directly into a
 transaction-owned token-major device directory and transfers only bounded
-status. Feature projection consumes that directory without an intervening
+status for both production sampling classes. Feature projection consumes that directory without an intervening
 upload or normalized-row download, executes the resident encoded width-N
 projection and batched RMSNorm, then binds those rows directly into the draft
 core. Device-only candidate and promoted-prefix identities derive from exact
 producer, binding, tensor and prefix facts rather than a host array scan. CPU,
-audit/forensic and stochastic DSpark retain their explicit host feature oracles.
+audit/forensic profiles retain their explicit host feature oracles.
 CUDA final projection also preserves the
 pre-normalized BF16 drafter row before RMSNorm, so production no longer
 downloads expanded residual streams or recomputes that final stage on the
@@ -133,9 +133,9 @@ from admitted residency and transfers only its row identifier. The drafter's
 normalized and pre-normalized rows remain resident through output-head and
 confidence projection, while confidence consumes split hidden/Markov device
 views and transfers one scalar. Host Markov decode and confidence remain
-reachable only through the CPU, audit/forensic and stochastic references;
-stochastic distribution and acceptance still require their bounded device
-cutover.
+reachable only through the CPU and audit/forensic references. Full-model
+stochastic DSpark qualification remains blocked by the current machine-reserve
+refusal, not by a host p/q or residual-acceptance path.
 The wave must keep prefix promotion, shape
 admission, partial-turn semantics, protocol channels and one model/session
 authority unchanged.
