@@ -288,11 +288,13 @@ the exact CUDA workspace requirement derived from the admitted layer geometry
 and maximum row width. `yvex_runtime_moe_execute_layer` is the retained
 token-local CPU/CUDA oracle; it accepts one expanded hidden activation and
 returns distinct router, routed, shared, combined, and deferred mHC post facts.
-`yvex_runtime_moe_execute_layer_rows` is the ordered width-N contract.
-Production CUDA routes the complete row set, constructs one deterministic
-expert-major pair order, executes grouped routed and shared paths, and publishes
-only bounded selected-expert facts after one batch synchronization. Portable,
-audit, and forensic execution retain the row-local oracle.
+`yvex_runtime_moe_rows` is the ordered width-N execute/complete contract.
+Full-stack production CUDA routes the complete row set, constructs one
+deterministic expert-major pair order, executes grouped routed and shared paths,
+and defers publication across its layers. It transfers only bounded status and
+unique-expert facts, validates them once at stack completion, and derives exact
+active bytes without materializing selected routes. Portable, audit, forensic
+and standalone block execution retain a completion-safe immediate oracle.
 `yvex_runtime_moe_execute` executes an ordered all-layer input and publishes
 only after the complete request succeeds. Reset and close preserve session
 isolation and never advance persistent KV or sequence position.
@@ -317,9 +319,11 @@ identities. Memory and bounded-file admission share one validation contract.
 `yvex_runtime_transformer_execute_block` consumes the attention publication
 already staged inside an active request transaction, executes the admitted MoE
 layer and deferred FFN mHC post, and returns field-wise routing/output/execution
-identities. `yvex_runtime_transformer_execute` owns chunk planning, selected-row
-embedding, 43 ordered blocks, final mHC collapse, final RMSNorm, atomic state
-commit, and normalized-hidden publication. Its request carries an explicit
+identities. The full-stack coordinator alone selects deferred device-native MoE;
+a standalone block remains complete before it returns.
+`yvex_runtime_transformer_execute` owns chunk planning, selected-row embedding,
+43 ordered blocks, final mHC collapse, final RMSNorm, atomic state commit, and
+normalized-hidden publication. Its request carries an explicit
 prefill or decode phase; one-token geometry alone never selects decode
 semantics. The repeated-decode owner reuses this exact component.
 

@@ -116,10 +116,13 @@ workspace values with explicit owner, identity, generation, extent, lifetime,
 synchronization and materialization policy. Production greedy selection uses a
 device argmax and transfers only the selected token and bounded status.
 Production CUDA MoE routes compatible rows together, orders row/expert pairs
-by expert, executes grouped routed and shared paths, and transfers only bounded
-routing/status facts. Its workspace derives from layer qtypes and admitted row
-capacity instead of a fixed allocation. The token-local CPU/CUDA path remains
-the explicit audit/reference oracle; one final synchronization per MoE layer
+by expert, executes grouped routed and shared paths, and leaves route arrays on
+the device. Each layer transfers only bounded status and unique-expert facts;
+one stack completion validates them and reconstructs exact active weight bytes.
+A final-stage barrier on the same session stream satisfies completion without a
+redundant wait. Its workspace derives from layer qtypes and admitted row capacity
+instead of a fixed allocation. The immediate and token-local CPU/CUDA paths
+remain the explicit audit/reference oracles; per-layer attention completion
 remains optimization debt. Stochastic sampling, incompatible-row output projection,
 DSpark generation attention and host-materialized draft/Markov execution remain
 explicitly named portable reference adapters. Production CUDA target-feature

@@ -941,8 +941,14 @@ static int moe_cuda_rows_geometry(const yvex_moe_layer_job *job,
                            &routed_down_rows) ||
         !backend_tensor_f32_elements(rows->device_rows, expanded) ||
         !backend_tensor_f32_elements(rows->device_outputs, expanded) ||
-        !output->selected_experts || !output->selected_weights ||
-        output->selection_capacity < *pairs || !output->combined_rows ||
+        ((job->device_completion &&
+          (!job->device_completion->defer ||
+           !job->device_completion->host_status ||
+           !job->device_completion->host_unique_experts)) ||
+         (!job->device_completion &&
+          (!output->selected_experts || !output->selected_weights ||
+           output->selection_capacity < *pairs))) ||
+        !output->combined_rows ||
         output->combined_capacity < hidden || !output->routed_rows ||
         output->routed_capacity < hidden || !output->shared_rows ||
         output->shared_capacity < hidden || !output->post_rows ||
@@ -1314,6 +1320,7 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
     unsigned long long hidden, expanded, activation_bytes, selected_bytes, weight_bytes;
     unsigned long long started, completed, cache_hits = 0ull, slot;
     unsigned int hidden_grid, expanded_grid;
+    int deferred = job->device_completion != NULL;
     int rc, device_wide = 0;
     if (!yvex_core_u64_mul(rows->row_count, layer->hidden_width, &hidden) ||
         !yvex_core_u64_mul(rows->row_count, layer->expanded_width, &expanded) ||
@@ -1351,18 +1358,25 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
                                       (stage_), &batch->failure, err);                     \
         if (rc == YVEX_OK) { batch->d2h += (bytes_); batch->downloads++; }                 \
     } while (0)
-    DOWNLOAD(output->selected_experts, batch->selected,
-             (size_t)selected_bytes,
-             "cuda.moe.rows.selected-download");
-    DOWNLOAD(output->selected_weights, batch->weights,
-             (size_t)weight_bytes,
-             "cuda.moe.rows.weights-download");
-    DOWNLOAD(&batch->host_unique, batch->unique, sizeof(batch->host_unique),
-             "cuda.moe.rows.unique-download");
-    DOWNLOAD(&batch->host_status, batch->status, sizeof(batch->host_status),
-             "cuda.moe.rows.status-download");
+    if (deferred) {
+        DOWNLOAD(job->device_completion->host_unique_experts, batch->unique,
+                 sizeof(*job->device_completion->host_unique_experts),
+                 "cuda.moe.rows.unique-download");
+        DOWNLOAD(job->device_completion->host_status, batch->status,
+                 sizeof(*job->device_completion->host_status),
+                 "cuda.moe.rows.status-download");
+    } else {
+        DOWNLOAD(output->selected_experts, batch->selected,
+                 (size_t)selected_bytes, "cuda.moe.rows.selected-download");
+        DOWNLOAD(output->selected_weights, batch->weights,
+                 (size_t)weight_bytes, "cuda.moe.rows.weights-download");
+        DOWNLOAD(&batch->host_unique, batch->unique, sizeof(batch->host_unique),
+                 "cuda.moe.rows.unique-download");
+        DOWNLOAD(&batch->host_status, batch->status, sizeof(batch->host_status),
+                 "cuda.moe.rows.status-download");
+    }
 #undef DOWNLOAD
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && !deferred) {
         started = yvex_core_monotonic_ns();
         rc = yvex_cuda_launch_synchronize(
             batch->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
@@ -1374,18 +1388,19 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
             batch->stream_synchronizations += (unsigned long long)!device_wide;
         }
     }
-    if (rc == YVEX_OK && batch->host_status)
+    if (rc == YVEX_OK && !deferred && batch->host_status)
         rc = moe_cuda_refuse(err, YVEX_ERR_BACKEND,
                              "CUDA width-N MoE reported invalid or non-finite numerics");
     if (rc == YVEX_OK) {
         for (slot = 0ull; slot < YVEX_MOE_WEIGHT_COUNT; ++slot)
             cache_hits += layer->tensor_ids[slot] != YVEX_MOE_NO_TENSOR;
         result->schema_version = YVEX_MOE_ROW_BATCH_SCHEMA_V1;
-        result->completed = 1;
+        result->completed = !deferred;
+        result->device_completion_pending = deferred;
         result->execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
         result->row_count = rows->row_count;
         result->row_expert_pairs = pairs;
-        result->unique_experts = batch->host_unique;
+        result->unique_experts = deferred ? 0ull : batch->host_unique;
         result->grouped_expert_operations = pairs;
         result->shared_expert_operations = rows->row_count;
         result->h2d_bytes = batch->h2d;
@@ -1400,8 +1415,8 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
         result->synchronization_ns = batch->synchronization_ns;
         result->memory.activation_bytes = activation_bytes;
         result->memory.temporary_bytes = batch->work.peak_bytes;
-        result->memory.measured_operations = 1ull;
-        result->memory.complete = 1;
+        result->memory.measured_operations = (unsigned long long)!deferred;
+        result->memory.complete = !deferred;
         result->total_ns = yvex_core_monotonic_ns() - batch->started_ns;
     }
     return rc;
@@ -1409,11 +1424,12 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
 
 static int moe_cuda_rows_active_bytes(const yvex_moe_layer_job *job,
                                       const yvex_moe_row_batch *rows,
-                                      unsigned long long unique,
-                                      unsigned long long *bytes)
+                                      unsigned long long *base_bytes,
+                                      unsigned long long *per_expert_bytes)
 {
     const yvex_moe_layer_plan *layer = job->layer;
-    unsigned long long slot, total = 0ull, value;
+    unsigned long long slot, base = 0ull, per_expert = 0ull, value;
+    if (!base_bytes || !per_expert_bytes) return 0;
     for (slot = 0ull; slot < YVEX_MOE_WEIGHT_COUNT; ++slot) {
         const yvex_moe_weight_view *weight = &job->weights[slot];
         if (layer->tensor_ids[slot] == YVEX_MOE_NO_TENSOR ||
@@ -1424,19 +1440,20 @@ static int moe_cuda_rows_active_bytes(const yvex_moe_layer_job *job,
         if (slot == YVEX_MOE_WEIGHT_ROUTER_TABLE &&
             !yvex_core_u64_mul(rows->row_count, weight->row_bytes, &value))
             return 0;
-        if (!yvex_core_u64_add(total, value, &total)) return 0;
+        if (!yvex_core_u64_add(base, value, &base)) return 0;
     }
     for (slot = YVEX_MOE_WEIGHT_ROUTED_GATE;
          slot <= YVEX_MOE_WEIGHT_ROUTED_DOWN; ++slot) {
         const yvex_moe_weight_view *weight = &job->weights[slot];
         if (!layer->routed_experts ||
             weight->encoded_bytes % layer->routed_experts != 0ull ||
-            !yvex_core_u64_mul(weight->encoded_bytes / layer->routed_experts,
-                               unique, &value) ||
-            !yvex_core_u64_add(total, value, &total))
+            !yvex_core_u64_add(per_expert,
+                               weight->encoded_bytes / layer->routed_experts,
+                               &per_expert))
             return 0;
     }
-    *bytes = total;
+    *base_bytes = base;
+    *per_expert_bytes = per_expert;
     return 1;
 }
 
@@ -1451,6 +1468,7 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
     const yvex_moe_layer_plan *layer = job ? job->layer : NULL;
     yvex_moe_weight_view routed_weights[3], shared_weights[3];
     unsigned long long pairs = 0ull, required = 0ull, active_bytes = 0ull;
+    unsigned long long active_base = 0ull, active_per_expert = 0ull;
     int routed_q8, shared_q8, rc, cleanup_rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!backend || !job || !rows || !output || !result ||
@@ -1496,10 +1514,18 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
     if (rc == YVEX_OK)
         rc = moe_cuda_batch_publish(&batch, job, rows, output, pairs, result, err);
     if (rc == YVEX_OK &&
-        !moe_cuda_rows_active_bytes(job, rows, result->unique_experts, &active_bytes))
+        !moe_cuda_rows_active_bytes(job, rows, &active_base, &active_per_expert))
         rc = moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
                              "CUDA width-N MoE active-byte accounting overflowed");
+    if (rc == YVEX_OK && !result->device_completion_pending &&
+        (!yvex_core_u64_mul(active_per_expert, result->unique_experts,
+                            &active_bytes) ||
+         !yvex_core_u64_add(active_base, active_bytes, &active_bytes)))
+        rc = moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
+                             "CUDA width-N MoE active-byte total overflowed");
     if (rc == YVEX_OK) {
+        result->active_weight_base_bytes = active_base;
+        result->active_weight_per_unique_expert_bytes = active_per_expert;
         result->encoded_bytes_read = active_bytes;
         result->memory.active_weight_bytes = active_bytes;
     }
@@ -1509,9 +1535,45 @@ static int moe_cuda_execute_rows(yvex_backend *backend,
     return rc;
 }
 
+static int moe_cuda_complete_rows(yvex_backend *backend,
+                                  int barrier_observed,
+                                  yvex_moe_row_batch_result *result,
+                                  yvex_error *err)
+{
+    unsigned long long started = 0ull, completed;
+    int device_wide = 0, rc = YVEX_OK;
+    if (result) memset(result, 0, sizeof(*result));
+    if (!backend || !result ||
+        (barrier_observed != 0 && barrier_observed != 1) ||
+        yvex_backend_kind_of(backend) != YVEX_BACKEND_KIND_CUDA)
+        return moe_cuda_refuse(err, YVEX_ERR_INVALID_ARG,
+                               "CUDA MoE completion owner is invalid");
+    if (!barrier_observed) {
+        started = yvex_core_monotonic_ns();
+        rc = yvex_cuda_launch_synchronize(
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, &device_wide,
+            "cuda.moe.rows.phase-sync", err);
+    }
+    completed = yvex_core_monotonic_ns();
+    if (rc == YVEX_OK) {
+        result->schema_version = YVEX_MOE_ROW_BATCH_SCHEMA_V1;
+        result->completed = 1;
+        result->execution_class = YVEX_EXECUTION_CLASS_DEVICE_NATIVE;
+        result->device_synchronizations =
+            (unsigned long long)(!barrier_observed && device_wide);
+        result->stream_synchronizations =
+            (unsigned long long)(!barrier_observed && !device_wide);
+        result->synchronization_ns =
+            !barrier_observed && completed > started ? completed - started : 0ull;
+        yvex_error_clear(err);
+    }
+    return rc;
+}
+
 static const yvex_backend_moe_operations moe_cuda_row_operations = {
     moe_cuda_rows_workspace_required,
-    moe_cuda_execute_rows
+    moe_cuda_execute_rows,
+    moe_cuda_complete_rows
 };
 
 const yvex_backend_moe_operations *yvex_backend_moe_operations_get(

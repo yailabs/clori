@@ -33,6 +33,7 @@ entry audit:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Kernel-bundle identity | v2 | v3 | ordered set of independently compiled modules | semantic identity derivation only; no wire or persisted layout | v2 hashes one image and cannot identify the module set | full rebuild admits all manifest-owned modules atomically; model artifacts do not migrate | PTX/native admission, missing-symbol rollback, checked unload retry, identity mutation |
 | Physical-facts internal ABI | v1 | v1 | stream and device-wide synchronization deltas enter one checked aggregate | in-process function signature only; the stored fact remains one aggregate | old objects are never mixed with rebuilt objects; old callers supplied one combined count | complete rebuild; no persistence, wire, layout, or identity migration | class-sum overflow rollback, runtime execution, sampling and speculation accounting |
+| Width-N MoE internal ABI | v1 | v1 | deferred stack completion plus bounded per-layer status, unique-expert and active-byte factors | in-process result and operation-table layout only; no independently deployed reader or writer | old readers require completed rows and route arrays; old writers synchronize and materialize them per layer | complete rebuild; immediate execution remains the audit oracle; no persistence, wire, public API or profile migration | immediate/deferred output and active-byte parity, untouched route sentinels, bounded D2H, proved-barrier accounting, sync fault refusal |
 
 ## Planning authority
 
@@ -155,21 +156,25 @@ Production CUDA MoE now consumes the existing width-N runtime contract through
 one backend capability table. Workspace size derives from every admitted layer
 qtype and the compiled row capacity. Each layer routes all rows, builds a
 deterministic expert-major pair order, executes resident routed/shared packs,
-and publishes only selected experts, weights, unique count, and bounded status.
-The independent token-local CPU/CUDA implementation remains reachable only as
-the portable audit/reference oracle. The internal source ABI rebuilds
-atomically; no persisted, wire, public C, execution-profile, or state-layout
-schema changes.
+and leaves its selected experts and weights on the device. It enqueues only one
+bounded status word and one unique-expert count per layer. One completion after
+the full transformer stack validates all layer statuses, recovers exact active
+weight bytes from sealed base/per-expert factors, and publishes the aggregate
+facts. A later final-stage read or synchronization on the same session stream
+satisfies that completion without another barrier; otherwise one stream wait
+closes the stack. The independent immediate and token-local CPU/CUDA paths
+remain the audit/reference oracles. The internal source ABI rebuilds atomically;
+no persisted, wire, public C, execution-profile, or state-layout schema changes.
 
 Each CUDA backend/session now owns one non-blocking ordinary-execution stream;
 graph capture and graph-parameter refresh temporarily select their graph-owned
-stream. Eager attention and width-N MoE completion therefore wait only for the
-session stream and report stream synchronizations with zero device-wide
-synchronizations on the admitted Driver. A Driver without a complete stream
+stream. Eager attention waits on that session stream per layer; width-N MoE now
+defers its completion until the transformer stack ends and reuses a proved
+same-stream barrier when one already exists. A Driver without a complete stream
 lifecycle retains the portable context-wide fallback and reports that wider
 barrier. Creation, completion and checked cleanup are fail-closed and
-independently fault-tested. This removes their context-wide barriers but does
-not yet remove their final per-layer stream synchronization.
+independently fault-tested. The remaining per-layer attention completion is
+still explicit optimization debt.
 
 Target-only production stochastic sampling now keeps the complete vocabulary
 row on CUDA. Runtime stages exactly one PCG transition, the backend applies the
@@ -252,9 +257,9 @@ SM121 CUBIN admission. It also establishes identity-bound width-N CUDA logits
 publication and greedy DSpark target selection without full-vocabulary host
 materialization.
 It does not yet establish Tensor Core execution, specialized attention,
-GB10-competitive grouped MoE or zero per-layer MoE synchronization, full-model
-live qualification of target-only device stochastic sampling or greedy DSpark
-verification, device-resident stochastic DSpark acceptance/correction, paged
-state allocation, prefix persistence, continuous batching,
-competitive throughput, evaluation, benchmark qualification, release
-qualification, or Hugging Face publication.
+GB10-competitive grouped MoE, zero per-layer attention synchronization,
+full-model live qualification of target-only device stochastic sampling or
+greedy DSpark verification, device-resident stochastic DSpark
+acceptance/correction, paged state allocation, prefix persistence, continuous
+batching, competitive throughput, evaluation, benchmark qualification,
+release qualification, or Hugging Face publication.

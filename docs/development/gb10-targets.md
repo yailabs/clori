@@ -88,13 +88,14 @@ quality or release qualification.
 
 ## Next-owner obligations
 
-The GB10 optimization owner must finish the admitted correctness-first width-N
-MoE path by removing its final per-layer stream synchronization and selecting
-GB10-specific expert layouts/kernels from causal evidence. Its admitted
-completion barrier is already session-stream scoped rather than context-wide;
-the portable Driver fallback reports any context-wide synchronization
-explicitly. The token-local path remains only as a portable audit/reference
-oracle. Target-only production now
+The GB10 optimization owner must select GB10-specific expert layouts and
+kernels from causal evidence. The correctness-first width-N MoE path already
+defers bounded status/unique-expert publication across the transformer stack,
+validates it once, reconstructs exact active bytes and reuses a proved final
+session-stream barrier. It no longer materializes selected routes or weights on
+the production host path. The portable Driver fallback reports any context-wide
+synchronization explicitly; immediate and token-local paths remain the
+audit/reference oracles. Target-only production now
 selects stochastic tokens from resident CUDA logits with bounded result
 transfer; audit/forensic and stochastic DSpark still own explicit host sampling
 references. Greedy and stochastic CUDA selection enqueue those bounded facts

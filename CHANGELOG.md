@@ -55,8 +55,12 @@ change. Git history preserves implementation chronology.
 - Production CUDA MoE now routes a complete compatible row batch, orders its
   row/expert pairs by expert, executes resident routed and shared packs through
   one width-N backend transaction, and derives workspace from admitted layer
-  qtypes and row capacity. The token-local CPU/CUDA implementation remains the
-  explicit portable audit/reference oracle.
+  qtypes and row capacity. Selected routes and weights remain device-local;
+  each layer enqueues only bounded status and unique-expert facts, and one
+  transformer-stack completion validates them and reconstructs exact active
+  bytes. A proved final-stage session-stream barrier avoids a redundant wait.
+  Immediate and token-local CPU/CUDA execution remain the explicit portable
+  audit/reference oracles.
 - Target-only production stochastic sampling now filters and selects directly
   from resident CUDA logits. The host publishes the deterministic PCG advance
   only after cancellation-safe validation, while audit/forensic and stochastic

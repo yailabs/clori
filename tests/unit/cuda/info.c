@@ -2,6 +2,7 @@
  * Exercises the CUDA backend CUDA device probe opens a real CUDA backend when the local
  * driver/device is available. Returns 77 when CUDA is unavailable.
  */
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -150,7 +151,8 @@ static int assert_grouped_moe(yvex_backend *backend)
     const yvex_backend_moe_operations *row_operations;
     yvex_moe_row_batch row_batch = {0};
     yvex_moe_row_batch_output row_output = {0};
-    yvex_moe_row_batch_result row_result;
+    yvex_moe_row_batch_result row_result, completion_result;
+    yvex_moe_device_completion device_completion = {0};
     moe_fixture_weights fixture = {0};
     yvex_error err;
     float host_input[2] = {1.0f, 0.5f};
@@ -161,8 +163,10 @@ static int assert_grouped_moe(yvex_backend *backend)
     float batch_combined[4] = {0}, batch_routed[4] = {0}, batch_shared[4] = {0};
     float batch_post[2] = {0}, batch_combination[2] = {0}, batch_weights[2] = {0};
     unsigned long long batch_selected[2] = {0};
+    unsigned long long deferred_unique = 0ull;
     unsigned long long address = 0ull, expert, workspace_bytes = 0ull, slot;
-    int rc;
+    unsigned long long immediate_active_bytes;
+    int deferred_status = 0, rc;
     memset(&descriptor, 0, sizeof(descriptor));
     descriptor.name = "grouped-moe-anchor";
     descriptor.dtype = YVEX_DTYPE_I8;
@@ -379,6 +383,47 @@ static int assert_grouped_moe(yvex_backend *backend)
                                      sizeof(reference_device), &err) == YVEX_OK &&
             memcmp(batch_device, reference_device, sizeof(batch_device)) == 0,
         "width-N MoE equals two one-row oracles with one grouped transaction");
+    immediate_active_bytes = row_result.encoded_bytes_read;
+    batch_selected[0] = batch_selected[1] = ULLONG_MAX;
+    batch_weights[0] = batch_weights[1] = -99.0f;
+    device_completion.defer = 1;
+    device_completion.host_status = &deferred_status;
+    device_completion.host_unique_experts = &deferred_unique;
+    job.device_completion = &device_completion;
+    rc = row_operations->execute_rows(
+        backend, &job, &row_batch, &row_output, &row_result, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && !row_result.completed &&
+            row_result.device_completion_pending &&
+            !row_result.stream_synchronizations &&
+            !row_result.device_synchronizations &&
+            row_result.d2h_bytes == sizeof(deferred_status) + sizeof(deferred_unique) &&
+            !row_result.memory.complete && row_result.memory.activation_bytes != 0ull &&
+            batch_selected[0] == ULLONG_MAX && batch_selected[1] == ULLONG_MAX &&
+            batch_weights[0] == -99.0f && batch_weights[1] == -99.0f,
+        "deferred width-N MoE keeps routing evidence and completion off the layer path");
+    rc = row_operations->complete_rows(
+        backend, 2, &completion_result, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
+                     "deferred MoE refuses an unproved completion barrier");
+    rc = row_operations->complete_rows(
+        backend, 0, &completion_result, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && completion_result.completed && deferred_status == 0 &&
+            deferred_unique >= 1ull &&
+            completion_result.stream_synchronizations == 1ull &&
+            completion_result.device_synchronizations == 0ull &&
+            row_result.active_weight_base_bytes +
+                    row_result.active_weight_per_unique_expert_bytes * deferred_unique ==
+                immediate_active_bytes,
+        "one phase completion validates deferred MoE and restores exact active bytes");
+    rc = row_operations->complete_rows(backend, 1, &completion_result, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && completion_result.completed &&
+            !completion_result.stream_synchronizations &&
+            !completion_result.device_synchronizations,
+        "a proved same-stream barrier adds no redundant MoE synchronization");
+    job.device_completion = NULL;
     yvex_backend_workspace_detach(backend);
     YVEX_TEST_ASSERT(yvex_backend_tensor_release(backend, &workspace, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &reference_output, &err) == YVEX_OK &&
@@ -516,6 +561,22 @@ int yvex_cuda_test_info(void)
         YVEX_TEST_ASSERT(assert_supported_variant(
                              backend, (yvex_backend_operation_variant)rc) == 0,
                          "all advertised CUDA variants are exact");
+    }
+    {
+        const yvex_backend_moe_operations *operations =
+            yvex_backend_moe_operations_get(backend);
+        yvex_moe_row_batch_result completion = {0};
+        YVEX_TEST_ASSERT(
+            operations && operations->complete_rows &&
+                setenv("YVEX_TEST_CUDA_SYNC_FAILURE", "encoded-attention", 1) == 0,
+            "inject deferred MoE completion failure");
+        rc = operations->complete_rows(backend, 0, &completion, &err);
+        YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_SYNC_FAILURE") == 0,
+                         "clear deferred MoE completion failure");
+        YVEX_TEST_ASSERT(
+            rc == YVEX_ERR_BACKEND && !completion.completed &&
+                strstr(yvex_error_message(&err), "synchronization failure") != NULL,
+            "deferred MoE completion fails closed before physical facts publish");
     }
     yvex_backend_close(backend);
     YVEX_TEST_ASSERT(assert_bundle_rollback(

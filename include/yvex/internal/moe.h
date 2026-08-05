@@ -156,6 +156,11 @@ int yvex_moe_router_result_identity(const yvex_moe_router_result *router,
                                     unsigned long long routed_experts,
                                     char output[YVEX_SHA256_HEX_CAP]);
 typedef struct {
+    int defer;
+    int *host_status;
+    unsigned long long *host_unique_experts;
+} yvex_moe_device_completion;
+typedef struct {
     const yvex_moe_layer_plan *layer;
     yvex_moe_weight_view weights[YVEX_MOE_WEIGHT_COUNT];
     const float *expanded_input;
@@ -166,6 +171,7 @@ typedef struct {
     int (*cancel_requested)(void *context);
     void *cancel_context;
     yvex_attention_evidence_level evidence_level;
+    const yvex_moe_device_completion *device_completion;
 } yvex_moe_layer_job;
 typedef struct {
     float *combined_output, *post, *combination;
@@ -213,7 +219,7 @@ typedef struct {
 
 typedef struct {
     unsigned int schema_version;
-    int completed, execution_profile_available;
+    int completed, execution_profile_available, device_completion_pending;
     yvex_execution_class execution_class;
     unsigned long long row_count, row_expert_pairs, unique_experts;
     unsigned long long grouped_expert_operations, shared_expert_operations;
@@ -221,6 +227,8 @@ typedef struct {
     unsigned long long h2d_bytes, d2h_bytes, d2d_bytes, kernel_launches;
     unsigned long long upload_count, download_count, cache_hits, cache_misses;
     unsigned long long stream_synchronizations, device_synchronizations;
+    unsigned long long active_weight_base_bytes;
+    unsigned long long active_weight_per_unique_expert_bytes;
     yvex_execution_memory_facts memory;
     unsigned long long total_ns, synchronization_ns;
     char execution_profile_identity[YVEX_SHA256_HEX_CAP];
@@ -241,6 +249,8 @@ typedef struct {
                         const yvex_moe_row_batch *batch,
                         const yvex_moe_row_batch_output *output,
                         yvex_moe_row_batch_result *result, yvex_error *err);
+    int (*complete_rows)(yvex_backend *backend, int barrier_observed,
+                         yvex_moe_row_batch_result *result, yvex_error *err);
 } yvex_backend_moe_operations;
 const yvex_backend_moe_operations *yvex_backend_moe_operations_get(
     const yvex_backend *backend);
@@ -311,10 +321,21 @@ int yvex_runtime_moe_execute_layer(yvex_runtime_moe_context *context,
                                    const float *expanded_input, unsigned int token_id,
                                    int token_id_present, yvex_moe_layer_result *result,
                                    yvex_error *err);
-int yvex_runtime_moe_execute_layer_rows(
-    yvex_runtime_moe_context *context, unsigned long long layer_index,
-    const yvex_moe_row_batch *batch, const yvex_moe_row_batch_output *output,
-    yvex_moe_row_batch_result *result, yvex_error *err);
+typedef enum {
+    YVEX_MOE_ROWS_EXECUTE = 0,
+    YVEX_MOE_ROWS_COMPLETE
+} yvex_moe_rows_operation;
+typedef struct {
+    yvex_moe_rows_operation operation;
+    unsigned long long layer_index;
+    const yvex_moe_row_batch *batch;
+    const yvex_moe_row_batch_output *output;
+    int barrier_observed;
+} yvex_moe_rows_request;
+int yvex_runtime_moe_rows(yvex_runtime_moe_context *context,
+                          const yvex_moe_rows_request *request,
+                          yvex_moe_row_batch_result *result,
+                          yvex_error *err);
 int yvex_runtime_moe_context_reset(yvex_runtime_moe_context *context, yvex_error *err);
 int yvex_runtime_moe_context_close(yvex_runtime_moe_context **context, yvex_error *err);
 typedef struct {
