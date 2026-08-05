@@ -27,27 +27,27 @@ static unsigned long long quant_elapsed_ns(const struct timespec *begin,
 }
 
 static int quant_plan_invariants(const yvex_quant_plan_summary *summary, int policy_plan,
-                                 int ds4_plan)
+                                 int ds4_preset)
 {
-    return summary && summary->complete &&
-           summary->state == YVEX_QUANT_PLAN_SEALED &&
-           summary->schema_version ==
-               (policy_plan ? YVEX_QUANT_POLICY_SCHEMA_VERSION
-                            : YVEX_QUANT_PROFILE_SCHEMA_VERSION) &&
-           summary->terminal_count == 1409u &&
-           summary->decision_count == 1409u &&
-           summary->source_value_count == 72317u &&
-           summary->mapping_identity ==
-               YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY &&
-           summary->payload_bytes_read == 0u &&
-           summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q8_0] != 0u &&
-           (ds4_plan
-                ? summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K] == 43u &&
-                      summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_IQ2_XXS] == 86u &&
-                      summary->calibration_required
-                : summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K] == 132u &&
-                      summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_IQ2_XXS] == 0u &&
-                      !summary->calibration_required);
+    int common = summary && summary->complete && summary->state == YVEX_QUANT_PLAN_SEALED &&
+                 summary->schema_version ==
+                     (policy_plan ? YVEX_QUANT_POLICY_SCHEMA_VERSION
+                                  : YVEX_QUANT_PROFILE_SCHEMA_VERSION) &&
+                 summary->terminal_count == 1409u && summary->decision_count == 1409u &&
+                 summary->source_value_count == 72317u &&
+                 summary->mapping_identity == YVEX_DEEPSEEK_GGUF_MAPPING_IDENTITY &&
+                 summary->payload_bytes_read == 0u &&
+                 summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q8_0] != 0u;
+
+    if (!common) return 0;
+    if (!policy_plan)
+        return summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K] == 132u &&
+               summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_IQ2_XXS] == 0u &&
+               !summary->calibration_required;
+    if (!ds4_preset) return 1;
+    return summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K] == 43u &&
+           summary->qtype_tensor_counts[YVEX_GGUF_QTYPE_IQ2_XXS] == 86u &&
+           summary->calibration_required;
 }
 
 static int quant_plan_physical_equal(const yvex_quant_plan *left,
@@ -141,9 +141,12 @@ int main(int argc, char **argv)
     int plan_only = 0;
     const char *artifact_path = NULL;
     const char *preset_name = getenv("YVEX_QUANT_PRESET");
+    const char *policy_path = getenv("YVEX_QUANT_POLICY_PATH");
     const char *imatrix_path = getenv("YVEX_IMATRIX_PATH");
-    int policy_plan = preset_name && preset_name[0];
-    int ds4_plan = policy_plan && strcmp(preset_name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0;
+    int preset_plan = preset_name && preset_name[0];
+    int external_policy_plan = policy_path && policy_path[0];
+    int policy_plan = preset_plan || external_policy_plan;
+    int ds4_plan = preset_plan && strcmp(preset_name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0;
     int compatibility_profile_equal = 0;
     int rc;
 
@@ -159,6 +162,10 @@ int main(int argc, char **argv)
     }
     if (!plan_only && argc - argument == 4)
         artifact_path = argv[argument + 3];
+    if (preset_plan && external_policy_plan) {
+        fprintf(stderr, "quant_policy_source=ambiguous\n");
+        return 2;
+    }
     memset(&options, 0, sizeof(options));
     options.source_path = argv[argument];
     options.models_root = argv[argument + 1];
@@ -185,7 +192,9 @@ int main(int argc, char **argv)
     memset(&imatrix_summary, 0, sizeof(imatrix_summary));
     if (policy_plan) {
         yvex_imatrix_data_options imatrix_options;
-        rc = yvex_quant_policy_preset_open(&policy, preset_name, &error);
+        rc = external_policy_plan
+                 ? yvex_quant_policy_open(&policy, policy_path, &error)
+                 : yvex_quant_policy_preset_open(&policy, preset_name, &error);
         if (rc == YVEX_OK && imatrix_path && imatrix_path[0]) {
             memset(&imatrix_options, 0, sizeof(imatrix_options));
             imatrix_options.path = imatrix_path;
@@ -230,7 +239,7 @@ int main(int argc, char **argv)
         return 1;
     }
     summary = yvex_quant_plan_summary_get(plan);
-    if (policy_plan && !ds4_plan) {
+    if (preset_plan && !ds4_plan) {
         yvex_quant_plan *compatibility = NULL;
         rc = yvex_quant_plan_build_deepseek_profile(
             &compatibility,
@@ -438,7 +447,7 @@ int main(int argc, char **argv)
     printf("peak_builder_bytes=%zu\n", summary->peak_builder_bytes);
     printf("header_scans=%llu\n", verification->header_scan_count);
     printf("payload_bytes_read=%llu\n", summary->payload_bytes_read);
-    if (policy_plan && !ds4_plan)
+    if (preset_plan && !ds4_plan)
         printf("fixed_profile_physical_decisions_equal=%d\n", compatibility_profile_equal);
     printf("terminal_lowering_bijection=complete\n");
     printf("aggregate_execution_identity=%s\n",
