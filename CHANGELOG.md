@@ -64,8 +64,11 @@ change. Git history preserves implementation chronology.
 - Production greedy DSpark verification now projects its complete target row
   batch to CUDA-resident logits, selects every row through one width-N argmax
   launch and one synchronization, and transfers only bounded aggregate facts. The
-  portable host distribution remains the CPU, audit/forensic and stochastic
-  oracle; draft feature/Markov execution is unchanged.
+  greedy draft path now keeps the shared-head base rows resident, fuses each
+  encoded Markov projection with its base row, and transfers only the selected
+  token and bounded status. The portable host distribution remains the CPU,
+  audit/forensic and stochastic oracle; bounded Markov embedding decode and the
+  confidence head remain explicit host reference adapters.
 - Production CUDA target-feature capture now averages source-selected mHC
   residual streams into bounded host evidence and a transaction-owned
   token-major device directory. Production feature projection consumes that
@@ -74,9 +77,9 @@ change. Git history preserves implementation chronology.
   rows feed the draft core through an identity-bound device view, and the
   producer-owned feature digest removes the consumer's duplicate full-row scan.
   The CPU projector and bounded host materialization remain the audit/reference
-  oracle; host-free feature evidence and draft/Markov execution remain explicit
-  debt. Speculative prefill now contributes its merged target, projection and
-  draft-core physical facts to the phase roofline ledger.
+  oracle; host-free feature evidence, Markov embedding decode and confidence
+  execution remain explicit debt. Speculative prefill now contributes its merged
+  target, projection and draft-core physical facts to the phase roofline ledger.
 - The production CUDA transformer final stage now preserves an optional
   pre-normalized BF16 row in device storage before applying output RMSNorm.
   DSpark drafting materializes only that bounded hidden row instead of the

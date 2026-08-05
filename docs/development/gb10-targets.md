@@ -114,9 +114,12 @@ host. Compatible width-N CUDA output rows already share activation preparation
 and one encoded-head execution; incompatible and reference directories retain
 an explicit row-local fallback. Batched device selection
 now consumes ordered resident logits views with no vocabulary D2H; greedy
-DSpark target verification consumes the same result class, while draft/Markov
-and stochastic distribution/acceptance still require their device cutover. The
-wave must keep prefix promotion, shape
+DSpark target verification consumes the same result class. Greedy drafting also
+keeps the shared-head base rows resident, fuses the encoded Markov projection
+with each base row and selects each proposal on CUDA without vocabulary D2H or a
+host vocabulary scan. Markov embedding decode, the confidence head and
+stochastic distribution/acceptance still require their bounded device cutover.
+The wave must keep prefix promotion, shape
 admission, partial-turn semantics, protocol channels and one model/session
 authority unchanged.
 

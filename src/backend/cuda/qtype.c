@@ -49,7 +49,8 @@ int yvex_backend_cuda_encoded_matvec(
     unsigned long long encoded_bytes, unsigned int qtype,
     unsigned long long row_count, unsigned long long row_width,
     unsigned long long row_bytes, unsigned long long input_rows,
-    const yvex_device_tensor *input, yvex_device_tensor *output,
+    const yvex_device_tensor *input, const yvex_device_tensor *additive,
+    yvex_device_tensor *output,
     yvex_backend_cuda_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
@@ -57,7 +58,8 @@ int yvex_backend_cuda_encoded_matvec(
     unsigned long long device_address = 0ull, input_bytes, output_bytes, activation_bytes;
     unsigned long long input_elements, output_elements, projection_rows;
     unsigned long long temporary_bytes = sizeof(int), q8_workspace_bytes = 0ull;
-    CUdeviceptr encoded_ptr, input_ptr, output_ptr, status = 0ull, quantized = 0ull;
+    CUdeviceptr encoded_ptr, input_ptr, additive_ptr = 0ull, output_ptr;
+    CUdeviceptr status = 0ull, quantized = 0ull;
     unsigned long long start_row = 0ull, launches = 0ull;
     int output_bf16 = 0, host_status = 0, rc, cleanup_rc, q8_path, q8_input = 0;
     int forensic_numeric = 0;
@@ -70,13 +72,19 @@ int yvex_backend_cuda_encoded_matvec(
         !yvex_core_u64_mul(input_elements, sizeof(float), &input_bytes) ||
         !yvex_core_u64_mul(output_elements, sizeof(float), &output_bytes) ||
         !yvex_core_u64_add(input_bytes, output_bytes, &activation_bytes) ||
+        (additive && !yvex_core_u64_add(activation_bytes, output_bytes,
+                                        &activation_bytes)) ||
         !yvex_core_u64_add(output_elements, CUDA_QTYPE_MATVEC_ROWS - 1ull,
                            &projection_rows) ||
         projection_rows / CUDA_QTYPE_MATVEC_ROWS > UINT_MAX ||
         row_count > ULLONG_MAX / row_bytes || row_count * row_bytes != encoded_bytes ||
-        !backend_tensor_owner_is(backend, input) || input->dtype != YVEX_DTYPE_F32 ||
+        !backend_tensor_owner_is(backend, input) || !input->is_written ||
+        input->dtype != YVEX_DTYPE_F32 ||
         input->bytes < input_bytes || !backend_tensor_owner_is(backend, output) ||
         output->dtype != YVEX_DTYPE_F32 || output->bytes < output_bytes ||
+        (additive && (!backend_tensor_owner_is(backend, additive) ||
+                      additive->dtype != YVEX_DTYPE_F32 || !additive->is_written ||
+                      additive->bytes < output_bytes || additive == output)) ||
         yvex_backend_resident_resolve(backend, resident_encoded, encoded_bytes,
                                       &device_address) != YVEX_BACKEND_RESIDENT_HIT) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.encoded-matvec",
@@ -95,6 +103,7 @@ int yvex_backend_cuda_encoded_matvec(
                                      "cuda.encoded-matvec.status", NULL, err);
     encoded_ptr = (CUdeviceptr)device_address;
     input_ptr = (CUdeviceptr)input->data;
+    if (additive) additive_ptr = (CUdeviceptr)additive->data;
     output_ptr = (CUdeviceptr)output->data;
     q8_path = row_width % 256ull == 0ull &&
               (qtype == YVEX_GGUF_QTYPE_IQ2_XXS || qtype == YVEX_GGUF_QTYPE_Q2_K ||
@@ -124,11 +133,11 @@ int yvex_backend_cuda_encoded_matvec(
     if (rc == YVEX_OK) {
         void *params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
                           &row_count, &input_rows, &qtype, &input_ptr, &q8_input,
-                          &forensic_numeric, &output_ptr,
+                          &forensic_numeric, &additive_ptr, &output_ptr,
                           &output_bf16, &status};
         void *q8_params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
                              &row_count, &input_rows, &qtype, &quantized, &q8_input,
-                             &forensic_numeric, &output_ptr,
+                             &forensic_numeric, &additive_ptr, &output_ptr,
                              &output_bf16, &status};
         unsigned int grid = (unsigned int)(projection_rows / CUDA_QTYPE_MATVEC_ROWS);
         q8_input = q8_path;

@@ -437,6 +437,7 @@ static int attention_matvec(yvex_cuda_work *work,
                                yvex_backend_attention_failure *failure,
                                yvex_error *err)
 {
+    CUdeviceptr additive = 0ull;
     int q8_path, q8_input = 0;
     unsigned long long output_rows;
     if (!weight || !weight->present || !device_weight || !vector || !out ||
@@ -481,11 +482,10 @@ static int attention_matvec(yvex_cuda_work *work,
         }
         if (rc == YVEX_OK) {
             q8_input = 1;
-            void *params[] = {
-                &device_weight, (void *)&weight->row_bytes,
+            void *params[] = {&device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &start_row, &rows,
                 &input_rows, (void *)&weight->qtype, &quantized, &q8_input,
-                &work->forensic_numeric, &out,
+                &work->forensic_numeric, &additive, &out,
                 &output_bf16, &status
             };
             unsigned int grid = (unsigned int)((output_rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
@@ -497,11 +497,10 @@ static int attention_matvec(yvex_cuda_work *work,
         return rc;
     }
     {
-        void *params[] = {
-            &device_weight, (void *)&weight->row_bytes,
+        void *params[] = {&device_weight, (void *)&weight->row_bytes,
             (void *)&weight->row_width, &start_row, &rows,
             &input_rows, (void *)&weight->qtype, &vector, &q8_input,
-            &work->forensic_numeric, &out, &output_bf16, &status
+            &work->forensic_numeric, &additive, &out, &output_bf16, &status
         };
         unsigned int grid = (unsigned int)((output_rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
                                            CUDA_QTYPE_MATVEC_ROWS);

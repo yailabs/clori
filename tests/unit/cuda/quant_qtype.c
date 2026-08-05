@@ -188,12 +188,12 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
 {
     enum { ROWS = 3, INPUT_ROWS = 3, WIDTH = 512 };
     yvex_backend_tensor_desc descriptor = {0};
-    yvex_device_tensor *resident = NULL, *input = NULL, *output = NULL;
+    yvex_device_tensor *resident = NULL, *input = NULL, *additive = NULL, *output = NULL;
     unsigned char *mapped = NULL, *row = NULL;
     float source[ROWS * WIDTH], vectors[INPUT_ROWS * WIDTH];
     float q8_vectors[INPUT_ROWS * WIDTH];
     float exact[INPUT_ROWS * ROWS], expected[INPUT_ROWS * ROWS];
-    float actual[INPUT_ROWS * ROWS];
+    float additive_values[INPUT_ROWS * ROWS], actual[INPUT_ROWS * ROWS];
     yvex_quant_failure failure;
     yvex_error err;
     size_t row_bytes = 0u;
@@ -213,6 +213,8 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
     for (index = 0ull; index < ROWS * WIDTH; ++index)
         source[index] = (float)((int)((index * 7ull + 3ull) % 41ull) - 20) /
                         (float)(2ull + index % 11ull);
+    for (index = 0ull; index < INPUT_ROWS * ROWS; ++index)
+        additive_values[index] = (float)((int)index - 4) * 0.25f;
     for (row_index = 0u; row_index < ROWS; ++row_index) {
         size_t current_bytes = 0u;
         YVEX_TEST_ASSERT(quant_cuda_encode_row(
@@ -255,18 +257,24 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
     descriptor.dtype = YVEX_DTYPE_F32;
     descriptor.dims[0] = INPUT_ROWS * WIDTH;
     descriptor.bytes = sizeof(vectors);
-    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &input, &err) == YVEX_OK &&
-                         yvex_backend_tensor_write(
-                             backend, input, vectors, sizeof(vectors), &err) == YVEX_OK,
-                     "Q8 activation row batch uploads once");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &input, &err) == YVEX_OK,
+                     "Q8 activation row batch allocates");
     descriptor.name = "q8_activation_output";
     descriptor.dims[0] = INPUT_ROWS * ROWS;
     descriptor.bytes = sizeof(actual);
     YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &output, &err) == YVEX_OK,
                      "Q8 activation output allocates");
     rc = yvex_backend_cuda_encoded_matvec(
+        backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
+        INPUT_ROWS, input, NULL, output, &facts, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && !facts.kernel_launches,
+                     "encoded matvec refuses an unpublished input before launch");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_write(
+                         backend, input, vectors, sizeof(vectors), &err) == YVEX_OK,
+                     "Q8 activation row batch uploads once");
+    rc = yvex_backend_cuda_encoded_matvec(
         backend, mapped, descriptor.bytes ? ROWS * row_bytes : 0u, qtype,
-        ROWS, WIDTH, row_bytes, INPUT_ROWS, input, output, &facts, &err);
+        ROWS, WIDTH, row_bytes, INPUT_ROWS, input, NULL, output, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
                          facts.d2h_bytes == sizeof(int) &&
                          facts.device_synchronizations == 1ull &&
@@ -288,7 +296,38 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
         YVEX_TEST_ASSERT(exact_difference <= approximation,
                          "Q8 activation matvec remains within bounded execution approximation");
     }
+    descriptor.name = "q8_activation_additive";
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &additive, &err) == YVEX_OK,
+                     "Q8 activation additive row batch allocates");
+    rc = yvex_backend_cuda_encoded_matvec(
+        backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
+        INPUT_ROWS, input, additive, output, &facts, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && !facts.kernel_launches,
+                     "fused encoded matvec refuses an unpublished additive before launch");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_write(backend, additive, additive_values,
+                                               sizeof(additive_values), &err) == YVEX_OK,
+                     "Q8 activation additive row batch uploads once");
+    rc = yvex_backend_cuda_encoded_matvec(
+        backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
+        INPUT_ROWS, input, additive, output, &facts, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
+                         facts.d2h_bytes == sizeof(int) &&
+                         facts.device_synchronizations == 1ull &&
+                         facts.activation_bytes == sizeof(vectors) + 2ull * sizeof(actual) &&
+                         yvex_backend_tensor_read(backend, output, actual,
+                                                  sizeof(actual), &err) == YVEX_OK,
+                     "fused encoded matvec adds resident rows without another launch");
+    for (index = 0ull; index < INPUT_ROWS * ROWS; ++index)
+        YVEX_TEST_ASSERT(fabs((double)actual[index] - expected[index] - additive_values[index]) <=
+                             1e-5 * (1.0 + fabs((double)expected[index])),
+                         "fused encoded matvec matches the independent additive reference");
+    rc = yvex_backend_cuda_encoded_matvec(
+        backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
+        INPUT_ROWS, input, output, output, &facts, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && !facts.kernel_launches,
+                     "fused encoded matvec refuses aliased additive and output ownership");
     YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &additive, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,

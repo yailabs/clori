@@ -172,11 +172,11 @@ int yvex_runtime_logits_project(
     float *logits, unsigned long long logits_capacity,
     yvex_runtime_logits_row_result *result, yvex_error *err);
 int yvex_runtime_logits_additive_adjust(
-    const yvex_runtime_logits_context *context, const float *base_logits,
-    unsigned long long base_capacity,
+    const yvex_runtime_logits_context *context,
     const yvex_runtime_logits_row_result *base_result,
-    const float *additive_logits, unsigned long long additive_capacity,
-    float *adjusted_logits, unsigned long long adjusted_capacity,
+    const float *base_logits, const float *additive_logits, float *adjusted_logits,
+    unsigned long long host_capacity, const yvex_device_tensor *adjusted_device,
+    unsigned long long device_offset, const char *adjustment_identity,
     yvex_runtime_logits_row_result *result, yvex_error *err);
 int yvex_runtime_logits_execute(
     yvex_runtime_logits_context *context,

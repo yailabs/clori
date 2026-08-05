@@ -762,6 +762,7 @@ extern "C" __global__ void yvex_qtype_matvec(
     const void *vector,
     int q8_input,
     int forensic_numeric,
+    const float *additive,
     float *out,
     int output_bf16,
     int *status)
@@ -795,6 +796,8 @@ extern "C" __global__ void yvex_qtype_matvec(
                 reference = __dadd_rn(reference, __dmul_rn(weight, value));
             }
             float value = (float)reference;
+            if (additive)
+                value = __fadd_rn(value, additive[input_row * row_count + row]);
             if (!isfinite(value)) atomicCAS(status, 0, 1);
             else out[input_row * row_count + row] =
                 output_bf16 ? float_to_bf16_rne(value) : value;
@@ -814,7 +817,8 @@ extern "C" __global__ void yvex_qtype_matvec(
     if (lane == 0u) {
         if (!isfinite(sum)) atomicCAS(status, 0, 1);
         else {
-            float value = sum;
+            float value = additive
+                ? __fadd_rn(sum, additive[input_row * row_count + row]) : sum;
             if (!isfinite(value)) atomicCAS(status, 0, 1);
             else out[input_row * row_count + row] =
                 output_bf16 ? float_to_bf16_rne(value) : value;

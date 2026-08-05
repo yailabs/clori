@@ -72,34 +72,6 @@ static int logits_refuse(yvex_error *err, yvex_status status, const char *reason
     yvex_error_set(err, status, "runtime.logits", reason);
     return status;
 }
-static int logits_hash_values(yvex_sha256 *hash, const float *values,
-                              unsigned long long count)
-{
-    unsigned long long index;
-    if (!hash || (!values && count)) return 0;
-    for (index = 0ull; index < count; ++index) {
-        uint32_t bits;
-        if (!isfinite(values[index])) return 0;
-        memcpy(&bits, &values[index], sizeof(bits));
-        if (!yvex_sha256_update_u64(hash, bits)) return 0;
-    }
-    return 1;
-}
-static int logits_values_digest(const char *domain, const float *values,
-                                unsigned long long count,
-                                char output[YVEX_SHA256_HEX_CAP])
-{
-    yvex_sha256 hash;
-    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    if (output) output[0] = '\0';
-    if (!domain || !values || !count || !output) return 0;
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, domain) ||
-        !logits_hash_values(&hash, values, count) ||
-        !yvex_sha256_final(&hash, digest)) return 0;
-    yvex_sha256_hex(digest, output);
-    return 1;
-}
 /*
  * Derive the pointer-free output-head plan identity.
  *
@@ -480,7 +452,7 @@ static int logits_source_begin(const yvex_runtime_logits_context *context,
     yvex_runtime_identity_copy(source->transformer_execution_identity,
                                producer_identity);
     if (hidden &&
-        !logits_values_digest("yvex.transformer.normalized-hidden.v1", hidden,
+        !yvex_execution_f32_digest("yvex.transformer.normalized-hidden.v1", hidden,
                               source->hidden_width,
                               source->normalized_hidden_digest))
         return logits_refuse(err, YVEX_ERR_FORMAT,
@@ -516,7 +488,7 @@ int yvex_runtime_logits_source_from_transformer(
                              "Transformer normalized-hidden publication is incompatible");
     if (producer->normalized_hidden_host_available) {
         if (!normalized_hidden || hidden_capacity < complete_values ||
-            !logits_values_digest(
+            !yvex_execution_f32_digest(
                 "yvex.transformer.normalized-hidden.v1", normalized_hidden,
                 complete_values, complete_digest) ||
             strcmp(complete_digest, producer->normalized_hidden_digest) != 0)
@@ -571,7 +543,7 @@ int yvex_runtime_logits_source_from_decode(
     if (producer->normalized_hidden_host_available) {
         if (!normalized_hidden ||
             hidden_capacity < context->plan.summary.hidden_width ||
-            !logits_values_digest(
+            !yvex_execution_f32_digest(
                 "yvex.transformer.normalized-hidden.v1", normalized_hidden,
                 context->plan.summary.hidden_width, digest) ||
             strcmp(digest, producer->normalized_hidden_digest) != 0)
@@ -619,7 +591,7 @@ int yvex_runtime_logits_source_from_draft(
         !yvex_core_u64_mul(producer->token_count, draft->hidden_width,
                            &complete_values) ||
         hidden_capacity < complete_values || !normalized_hidden ||
-        !logits_values_digest("yvex.transformer.normalized-hidden.v1",
+        !yvex_execution_f32_digest("yvex.transformer.normalized-hidden.v1",
                               normalized_hidden, complete_values,
                               complete_digest) ||
         strcmp(complete_digest, producer->normalized_hidden_digest) != 0 ||
@@ -664,7 +636,7 @@ static int logits_source_validate(const yvex_runtime_logits_context *context,
         return logits_refuse(err, YVEX_ERR_FORMAT,
                              "normalized-hidden source identity or geometry is stale");
     if (source->host_values_available &&
-        (!logits_values_digest("yvex.transformer.normalized-hidden.v1",
+        (!yvex_execution_f32_digest("yvex.transformer.normalized-hidden.v1",
                                source->normalized_hidden, source->hidden_width,
                                digest) ||
          strcmp(digest, source->normalized_hidden_digest) != 0))
@@ -760,7 +732,7 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
             context->plan.summary.row_bytes, 1ull, device_hidden,
-            context->device_logits, &facts, err);
+            NULL, context->device_logits, &facts, err);
     if (rc == YVEX_OK && !context->options.device_selection)
         rc = yvex_backend_tensor_read(context->session_view->backend,
                                       context->device_logits,
@@ -892,7 +864,7 @@ static int logits_row_finish(yvex_runtime_logits_context *context,
         }
         if (!yvex_core_u64_mul(result->vocabulary_size, sizeof(float),
                                &scan_bytes) ||
-            !logits_values_digest("yvex.runtime.raw-logits.v1",
+            !yvex_execution_f32_digest("yvex.runtime.raw-logits.v1",
                                   host_values, result->logits_count,
                                   result->raw_logits_digest))
             return logits_refuse(err, YVEX_ERR_STATE,
@@ -972,7 +944,7 @@ int yvex_runtime_logits_row_validate(
          !result->finite_count_available || !result->range_available ||
          !result->raw_digest_available ||
          result->finite_count != result->logits_count ||
-         !logits_values_digest("yvex.runtime.raw-logits.v1", logits,
+         !yvex_execution_f32_digest("yvex.runtime.raw-logits.v1", logits,
                                result->logits_count, raw_digest) ||
          strcmp(raw_digest, result->raw_logits_digest) != 0))
         return logits_refuse(err, YVEX_ERR_FORMAT,
@@ -999,29 +971,62 @@ int yvex_runtime_logits_row_validate(
 }
 
 int yvex_runtime_logits_additive_adjust(
-    const yvex_runtime_logits_context *context, const float *base_logits,
-    unsigned long long base_capacity,
+    const yvex_runtime_logits_context *context,
     const yvex_runtime_logits_row_result *base_result,
-    const float *additive_logits, unsigned long long additive_capacity,
-    float *adjusted_logits, unsigned long long adjusted_capacity,
+    const float *base_logits, const float *additive_logits, float *adjusted_logits,
+    unsigned long long host_capacity, const yvex_device_tensor *adjusted_device,
+    unsigned long long device_offset, const char *adjustment_identity,
     yvex_runtime_logits_row_result *result, yvex_error *err)
 {
-    const yvex_runtime_logits_plan_summary *plan =
-        context ? &context->plan.summary : NULL;
+    const yvex_runtime_logits_plan_summary *plan = context ? &context->plan.summary : NULL;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
     char additive_digest[YVEX_SHA256_HEX_CAP];
     unsigned long long index;
     float minimum = FLT_MAX, maximum = -FLT_MAX;
+    int device = base_result && base_result->device_values_available;
     if (result) memset(result, 0, sizeof(*result));
-    if (!plan || !base_logits || !base_result || !additive_logits ||
-        !adjusted_logits || !result || base_result->source_phase != YVEX_LOGITS_SOURCE_DRAFT ||
-        additive_capacity < plan->vocabulary_size ||
-        adjusted_capacity < plan->vocabulary_size ||
-        yvex_runtime_logits_row_validate(plan, base_logits, base_capacity,
-                                         base_result, err) != YVEX_OK)
+    if (!plan || !base_result || !result ||
+        base_result->source_phase != YVEX_LOGITS_SOURCE_DRAFT ||
+        yvex_runtime_logits_row_validate(plan, device ? NULL : base_logits,
+                                         device ? 0ull : host_capacity,
+                                         base_result, err) != YVEX_OK ||
+        (device && (!adjusted_device || base_logits || additive_logits || adjusted_logits ||
+                    host_capacity || !adjusted_device->is_written ||
+                    adjusted_device->owner != base_result->device_logits.backend ||
+                    adjusted_device->dtype != YVEX_DTYPE_F32 ||
+                    device_offset > adjusted_device->bytes / sizeof(float) ||
+                    plan->vocabulary_size >
+                        adjusted_device->bytes / sizeof(float) - device_offset ||
+                    !yvex_sha256_hex_valid(adjustment_identity))) ||
+        (!device && (!base_logits || !additive_logits || !adjusted_logits ||
+                     host_capacity < plan->vocabulary_size || adjusted_device ||
+                     device_offset || adjustment_identity)))
         return logits_refuse(err, YVEX_ERR_INVALID_ARG,
                              "draft additive logits require one admitted base row");
+    *result = *base_result;
+    memset(&result->memory, 0, sizeof(result->memory));
+    result->h2d_bytes = result->d2h_bytes = result->d2d_bytes = 0ull;
+    result->kernel_launches = result->device_synchronizations = 0ull;
+    if (device) {
+        result->device_logits.tensor = adjusted_device;
+        result->device_logits.element_offset = device_offset;
+        yvex_sha256_init(&hash);
+        if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.device-adjustment.v1") ||
+            !yvex_sha256_update_text(&hash, base_result->logits_row_identity) ||
+            !yvex_sha256_update_text(&hash, adjustment_identity) ||
+            !yvex_sha256_update_u64(&hash, device_offset) || !yvex_sha256_final(&hash, digest))
+            return logits_refuse(err, YVEX_ERR_STATE,
+                                 "device logits adjustment identity derivation failed");
+        yvex_sha256_hex(digest, result->backend_execution_identity);
+        result->logits_row_identity[0] = '\0';
+        if (!logits_row_identity_build(result) ||
+            yvex_runtime_logits_row_validate(plan, NULL, 0ull, result, err) != YVEX_OK)
+            return logits_refuse(err, YVEX_ERR_STATE,
+                                 "device logits adjustment publication failed");
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
     for (index = 0ull; index < plan->vocabulary_size; ++index) {
         double value = (double)base_logits[index] + additive_logits[index];
         if (!isfinite(additive_logits[index]) || !isfinite(value) ||
@@ -1032,20 +1037,16 @@ int yvex_runtime_logits_additive_adjust(
         if (adjusted_logits[index] < minimum) minimum = adjusted_logits[index];
         if (adjusted_logits[index] > maximum) maximum = adjusted_logits[index];
     }
-    *result = *base_result;
     result->minimum_logit = minimum;
     result->maximum_logit = maximum;
-    result->h2d_bytes = result->d2h_bytes = result->d2d_bytes = result->kernel_launches = 0ull;
-    result->device_synchronizations = 0ull;
-    memset(&result->memory, 0, sizeof(result->memory));
     if (!yvex_core_u64_mul(plan->vocabulary_size, sizeof(float), &index) ||
         !yvex_core_u64_add(result->full_array_host_scan_bytes, index,
                            &result->full_array_host_scan_bytes))
         return logits_refuse(err, YVEX_ERR_BOUNDS,
                              "draft adjusted logits evidence extent overflowed");
-    if (!logits_values_digest("yvex.runtime.draft-logits-bias.v1", additive_logits,
+    if (!yvex_execution_f32_digest("yvex.runtime.draft-logits-bias.v1", additive_logits,
                               plan->vocabulary_size, additive_digest) ||
-        !logits_values_digest("yvex.runtime.raw-logits.v1", adjusted_logits,
+        !yvex_execution_f32_digest("yvex.runtime.raw-logits.v1", adjusted_logits,
                               plan->vocabulary_size, result->raw_logits_digest))
         return logits_refuse(err, YVEX_ERR_STATE,
                              "draft adjusted logits digest derivation failed");
@@ -1070,26 +1071,13 @@ static int logits_physical_add_row(
     yvex_execution_physical_facts *physical,
     const yvex_runtime_logits_row_result *row, yvex_error *err)
 {
-    int rc;
     if (!physical || !row)
         return logits_refuse(err, YVEX_ERR_INVALID_ARG,
                              "logits physical row is unavailable");
-    rc = yvex_execution_memory_facts_merge(&physical->memory, &row->memory, err);
-    if (rc != YVEX_OK) return rc;
-    if (!yvex_core_u64_add(physical->h2d_bytes, row->h2d_bytes,
-                           &physical->h2d_bytes) ||
-        !yvex_core_u64_add(physical->d2h_bytes, row->d2h_bytes,
-                           &physical->d2h_bytes) ||
-        !yvex_core_u64_add(physical->d2d_bytes, row->d2d_bytes,
-                           &physical->d2d_bytes) ||
-        !yvex_core_u64_add(physical->kernel_count, row->kernel_launches,
-                           &physical->kernel_count) ||
-        !yvex_core_u64_add(physical->synchronization_count,
-                           row->device_synchronizations,
-                           &physical->synchronization_count))
-        return logits_refuse(err, YVEX_ERR_BOUNDS,
-                             "logits physical row accounting overflowed");
-    return YVEX_OK;
+    return yvex_execution_physical_facts_add(
+        physical, &row->memory, row->h2d_bytes, row->d2h_bytes,
+        row->d2d_bytes, row->kernel_launches,
+        row->device_synchronizations, err);
 }
 
 static int logits_physical_equal(
@@ -1446,7 +1434,7 @@ static int logits_project_cuda_batch(
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
             context->plan.summary.row_bytes, row_count, device_hidden,
-            context->device_logits, &facts, err);
+            NULL, context->device_logits, &facts, err);
     if (rc == YVEX_OK && !device_output)
         rc = yvex_backend_tensor_read(context->session_view->backend,
                                       context->device_logits, logits,
