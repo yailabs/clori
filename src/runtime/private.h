@@ -46,6 +46,7 @@ struct yvex_runtime_model {
     yvex_attention_plan *draft_attention;
     yvex_tokenizer *tokenizer;
     yvex_runtime_residency *residency;
+    yvex_backend *opening_backend;
     yvex_runtime_model_summary summary;
     yvex_runtime_model_view view;
     pthread_mutex_t lifecycle_mutex;

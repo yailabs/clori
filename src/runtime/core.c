@@ -386,6 +386,8 @@ static int runtime_model_release(yvex_runtime_model *model, yvex_error *err) {
     }
     rc = yvex_runtime_residency_close(&model->residency, err);
     if (rc != YVEX_OK) return rc;
+    rc = yvex_backend_close_checked(&model->opening_backend, err);
+    if (rc != YVEX_OK) return rc;
     yvex_physical_execution_ir_close(&model->physical_execution);
     yvex_tokenizer_close(model->tokenizer);
     model->tokenizer = NULL;
@@ -699,6 +701,7 @@ static int runtime_model_residency_open(
     memset(&summary, 0, sizeof(summary));
     rc = yvex_runtime_residency_snapshot(model->residency, &summary, NULL, NULL, err);
     if (rc != YVEX_OK || !summary.model_complete || !summary.host_locked ||
+        (request->residency_backend == YVEX_BACKEND_KIND_CUDA && !summary.cuda_ready) ||
         summary.binding_count != descriptor_summary->tensor_count ||
         summary.encoded_bytes != descriptor_summary->payload_bytes ||
         !summary.core_complete || !summary.envelope_complete ||
@@ -787,6 +790,18 @@ int yvex_runtime_model_open(yvex_runtime_model **out, const yvex_runtime_model_o
     if (rc != YVEX_OK)
         return runtime_model_open_fail(
             out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_ARTIFACT, 1ull, 0ull, err, (yvex_status)rc);
+    if (request->residency_backend == YVEX_BACKEND_KIND_CUDA) {
+        yvex_backend_options backend_options = {
+            .kind = YVEX_BACKEND_KIND_CUDA,
+            .memory_limit_bytes = request->maximum_device_bytes,
+        };
+
+        rc = yvex_backend_open(&model->opening_backend, &backend_options, err);
+        if (rc != YVEX_OK)
+            return runtime_model_open_fail(
+                out, model, failure, YVEX_RUNTIME_REFUSE_OPEN_RESIDENCY,
+                1ull, 0ull, err, (yvex_status)rc);
+    }
     phase_started = yvex_core_monotonic_ns();
     rc = runtime_model_progress(
         request, YVEX_RUNTIME_LIFECYCLE_MATERIALIZATION_OPEN, 0ull, 1ull, err);

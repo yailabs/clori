@@ -1,7 +1,5 @@
-/*
- * Runtime descriptors bind immutable model resources while execution sessions isolate mutable
- * sequence state. This non-installed ABI keeps those lifetimes explicit across runtime consumers.
- */
+/* Runtime descriptors bind immutable model resources while execution sessions isolate mutable
+ * sequence state. This non-installed ABI keeps those lifetimes explicit across runtime consumers. */
 #ifndef INCLUDE_YVEX_INTERNAL_RUNTIME_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_RUNTIME_H_INCLUDED
 #include <string.h>
@@ -228,7 +226,8 @@ typedef struct yvex_runtime_model_failure {
 } yvex_runtime_model_failure;
 typedef struct {
     const char *artifact_path, *runtime_binding_path, *target_id;
-    unsigned long long maximum_host_bytes;
+    yvex_backend_kind residency_backend;
+    unsigned long long maximum_host_bytes, maximum_device_bytes;
     yvex_runtime_progress_callback progress;
     void *progress_context;
 } yvex_runtime_model_open_request;

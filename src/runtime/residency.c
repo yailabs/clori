@@ -782,6 +782,63 @@ static int residency_register_cuda(yvex_runtime_residency *residency,
     residency->arena_registered = 1;
     return YVEX_OK;
 }
+
+/* Transfer one pre-opened model context only after its locked arena is addressable. */
+static int residency_claim_cuda(yvex_runtime_residency *residency,
+                                yvex_backend **prepared_backend,
+                                yvex_error *err)
+{
+    yvex_backend *backend = prepared_backend ? *prepared_backend : NULL;
+    yvex_device_tensor *weights = NULL;
+    unsigned long long address = 0ull;
+    yvex_error primary, cleanup;
+    int rc, cleanup_rc;
+
+    if (!residency || !backend || yvex_backend_kind_of(backend) != YVEX_BACKEND_KIND_CUDA) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "runtime.residency.cuda-claim",
+                       "one pre-opened CUDA model backend is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = residency_register_cuda(residency, backend, &weights, err);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_resident_attach(
+            backend, residency->arena, residency->summary.encoded_bytes,
+            weights, residency->summary.generation, err);
+    if (rc == YVEX_OK &&
+        yvex_backend_resident_resolve(
+            backend, residency->arena, residency->summary.encoded_bytes,
+            &address) != YVEX_BACKEND_RESIDENT_HIT) {
+        rc = YVEX_ERR_STATE;
+        yvex_error_set(err, rc, "runtime.residency.cuda-claim",
+                       "pre-opened CUDA model residency did not resolve");
+    }
+    if (rc != YVEX_OK) {
+        primary = err ? *err : (yvex_error){0};
+        yvex_error_clear(&cleanup);
+        cleanup_rc = yvex_backend_resident_detach(backend, &cleanup);
+        if (cleanup_rc == YVEX_OK && weights)
+            cleanup_rc = yvex_backend_tensor_release(backend, &weights, &cleanup);
+        residency->arena_registered = 0;
+        if (cleanup_rc != YVEX_OK) {
+            if (err) *err = cleanup;
+            return cleanup_rc;
+        }
+        if (err) *err = primary;
+        return rc;
+    }
+    residency->cuda_backend = backend;
+    residency->cuda_weights = weights;
+    residency->cuda_addressable_device_base = address;
+    residency->summary.host_resident_bytes = residency->summary.encoded_bytes;
+    residency->summary.device_resident_bytes = 0ull;
+    residency->summary.cuda_addressable_bytes = residency->summary.encoded_bytes;
+    residency->summary.cuda_host_registration_count = 1ull;
+    residency->summary.cuda_ready = 1;
+    *prepared_backend = NULL;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 /* Build and attach one exact process-lifetime full-model residency pack. */
 int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_model *model,
                                    const yvex_runtime_residency_options *options,
@@ -936,6 +993,9 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
     if (rc == YVEX_OK) rc = residency_arena_prepare(residency, options, failure, err);
     if (rc == YVEX_OK)
         rc = residency_identity_build(residency, &model_summary, attention, err);
+    if (rc == YVEX_OK) residency->summary.generation = 1ull;
+    if (rc == YVEX_OK && model->opening_backend)
+        rc = residency_claim_cuda(residency, &model->opening_backend, err);
     if (rc == YVEX_OK) {
         provider.context = residency;
         provider.resolve = residency_resolve;
@@ -949,7 +1009,17 @@ int yvex_runtime_residency_prepare(yvex_runtime_residency **out, yvex_runtime_mo
                                   (yvex_status)rc, err);
     }
     if (rc != YVEX_OK) {
-        residency_storage_release(&residency);
+        yvex_error primary = err ? *err : (yvex_error){0};
+        yvex_error cleanup;
+        int cleanup_rc;
+
+        yvex_error_clear(&cleanup);
+        cleanup_rc = residency_release(&residency, &cleanup);
+        if (cleanup_rc != YVEX_OK) {
+            if (err) *err = cleanup;
+            return cleanup_rc;
+        }
+        if (err) *err = primary;
         return rc;
     }
     residency->summary.schema_version = YVEX_RUNTIME_RESIDENCY_SCHEMA_V4;

@@ -241,6 +241,18 @@ static int execution_test_planning(void)
                          &capacity_request, &repeated, &err) == YVEX_OK &&
                          strcmp(capacity.identity, repeated.identity) == 0,
                      "capacity plan identity should be deterministic");
+    hardware.device_page_bytes = 4096ull;
+    states[YVEX_MODEL_STATE_SWA_RING].bytes_per_block = 4104ull;
+    YVEX_TEST_ASSERT(yvex_execution_hardware_profile_seal(&hardware, &err) == YVEX_OK &&
+                         yvex_execution_capacity_plan_build(
+                             &capacity_request, &repeated, &err) == YVEX_OK &&
+                         repeated.state_classes[YVEX_MODEL_STATE_SWA_RING].page_tokens == 32ull &&
+                         repeated.state_classes[YVEX_MODEL_STATE_SWA_RING].page_bytes == 131328ull,
+                     "logical state pages should span hardware pages when alignment requires it");
+    hardware.device_page_bytes = 65536ull;
+    states[YVEX_MODEL_STATE_SWA_RING].bytes_per_block = 4096ull;
+    YVEX_TEST_ASSERT(yvex_execution_hardware_profile_seal(&hardware, &err) == YVEX_OK,
+                     "capacity fixture hardware should restore after the spanning-page case");
     {
         yvex_execution_state_class_request swap = states[0];
         states[0] = states[1];

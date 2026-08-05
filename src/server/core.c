@@ -582,7 +582,9 @@ int yvex_server_start(yvex_server *server, yvex_error *err)
     request.artifact_path = server->artifact_path;
     request.runtime_binding_path = server->runtime_binding_path;
     request.target_id = server->target_id;
+    request.residency_backend = server->options.backend;
     request.maximum_host_bytes = server->options.maximum_host_bytes;
+    request.maximum_device_bytes = server->options.maximum_device_bytes;
     rc = yvex_runtime_model_open(&server->model, &request, &failure, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_model_summary_copy(server->model, &model, err);

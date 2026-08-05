@@ -537,7 +537,7 @@ static int capacity_state_geometry(
     const yvex_execution_workload_profile *workload,
     yvex_execution_state_class_plan *plan)
 {
-    unsigned long long base_tokens, candidate_tokens;
+    unsigned long long alignment_blocks, alignment_tokens, base_tokens, candidate_tokens;
     unsigned long long maximum_tokens, logical_tokens, best_score = ULLONG_MAX;
     unsigned long long best_tokens = 0ull;
     if (!capacity_state_request_valid(request)) return 0;
@@ -546,6 +546,12 @@ static int capacity_state_geometry(
                       &base_tokens) ||
         !capacity_lcm(base_tokens, request->promotion_granularity_tokens,
                       &base_tokens)) return 0;
+    alignment_blocks =
+        request->alignment_bytes /
+        capacity_gcd(request->bytes_per_block, request->alignment_bytes);
+    if (!yvex_core_u64_mul(request->logical_block_tokens, alignment_blocks,
+                           &alignment_tokens) ||
+        !capacity_lcm(base_tokens, alignment_tokens, &base_tokens)) return 0;
     maximum_tokens = hardware->device_page_bytes / request->bytes_per_block;
     if (!yvex_core_u64_mul(maximum_tokens, request->logical_block_tokens,
                            &maximum_tokens)) return 0;
