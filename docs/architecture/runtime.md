@@ -121,8 +121,14 @@ routing/status facts. Its workspace derives from layer qtypes and admitted row
 capacity instead of a fixed allocation. The token-local CPU/CUDA path remains
 the explicit audit/reference oracle; one final synchronization per MoE layer
 remains optimization debt. Stochastic sampling, incompatible-row output
-projection, DSpark generation attention and host feature projection remain
-explicitly named portable reference adapters. Target-only CUDA generation
+projection, DSpark generation attention and host-materialized draft/Markov
+execution remain explicitly named portable reference adapters. Production
+CUDA DSpark feature projection uploads only the already-reduced target rows,
+executes one resident width-N encoded projection plus batched RMSNorm, and
+materializes only the normalized hidden rows required by the current draft
+core. The row-wise CPU projector remains the CPU, audit and forensic oracle.
+This removes host-authoritative projection arithmetic, but the bounded device
+handoff on either side of the projector remains optimization debt. Target-only CUDA generation
 selects full graph execution only when the binding and live Driver capability
 both admit it; the compiled profile records whether eager attention remains.
 Unsupported CUDA operations fail closed; no requested CUDA execution silently

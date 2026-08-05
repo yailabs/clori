@@ -68,9 +68,10 @@ change. Git history preserves implementation chronology.
   oracle; draft feature/Markov execution is unchanged.
 - Production CUDA target-feature capture now averages source-selected mHC
   residual streams on device and materializes only the reduced hidden rows.
-  Independent CUDA tests prove exact finite reduction, physical-byte facts and
-  refusal before host publication; feature projection and draft/Markov remain
-  explicit host-side optimization debt.
+  Production feature projection now batches those rows through the resident
+  encoded matrix and CUDA RMSNorm, with exact physical accounting; the CPU
+  projector remains the audit/reference oracle. Bounded feature handoffs and
+  draft/Markov execution remain explicit device-residency debt.
 - The production CUDA transformer final stage now preserves an optional
   pre-normalized BF16 row in device storage before applying output RMSNorm.
   DSpark drafting materializes only that bounded hidden row instead of the

@@ -31,6 +31,9 @@ struct yvex_runtime_speculation_context {
     yvex_speculation_family_policy policy;
     speculation_weight feature_projection, feature_norm, markov_embedding;
     speculation_weight markov_output, confidence;
+    yvex_backend *device_backend;
+    yvex_device_tensor *device_feature_input, *device_feature_projected;
+    yvex_device_tensor *device_feature_normalized, *device_feature_norm;
     float *feature_projected, *feature_norm_weights, *target_features;
     float *draft_hidden, *draft_pre_normalized, *target_hidden;
     float *base_logits, *adjusted_logits, *markov_bias;
@@ -288,6 +291,79 @@ overflow:
                               "DSpark runtime workspace extent overflowed");
 #undef SPEC_ADD
 }
+static int speculation_device_tensor_open(
+    yvex_backend *backend, yvex_device_tensor **out, const char *name,
+    unsigned long long elements, yvex_error *err)
+{
+    yvex_backend_tensor_desc descriptor = {0};
+    unsigned long long bytes;
+    if (!backend || !out || !name ||
+        !yvex_core_u64_mul(elements, sizeof(float), &bytes))
+        return speculation_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "DSpark device feature workspace extent overflowed");
+    descriptor.name = name;
+    descriptor.dtype = YVEX_DTYPE_F32;
+    descriptor.rank = 1u;
+    descriptor.dims[0] = elements;
+    descriptor.bytes = bytes;
+    return yvex_backend_tensor_alloc(backend, &descriptor, out, err);
+}
+static int speculation_context_device_buffers(
+    yvex_runtime_speculation_context *context, yvex_error *err)
+{
+    const yvex_runtime_session_view *view;
+    unsigned long long rows, input_elements, output_elements;
+    unsigned long long total_elements, total_bytes;
+    int rc;
+    if (context->options.backend != YVEX_BACKEND_KIND_CUDA ||
+        context->options.execution_profile->evidence !=
+            YVEX_EXECUTION_EVIDENCE_PRODUCTION)
+        return YVEX_OK;
+    view = yvex_runtime_session_view_get(context->session);
+    rows = context->policy.block_size + 2ull;
+    if (!view || !view->backend)
+        return speculation_refuse(
+            err, YVEX_ERR_STATE,
+            "DSpark CUDA feature workspace backend is unavailable");
+    if (!yvex_core_u64_mul(rows, context->policy.concatenated_feature_width,
+                           &input_elements) ||
+        !yvex_core_u64_mul(rows, context->hidden_width, &output_elements) ||
+        !yvex_core_u64_mul(output_elements, 2ull, &total_elements) ||
+        !yvex_core_u64_add(total_elements, input_elements, &total_elements) ||
+        !yvex_core_u64_add(total_elements, context->hidden_width,
+                           &total_elements) ||
+        !yvex_core_u64_mul(total_elements, sizeof(float), &total_bytes))
+        return speculation_refuse(
+            err, YVEX_ERR_BOUNDS,
+            "DSpark CUDA feature workspace is not admitted");
+    if (yvex_backend_memory_can_add(
+            view->backend, total_bytes, "CUDA",
+            "runtime.speculation.device-workspace", err) != YVEX_OK)
+        return yvex_error_code(err);
+    context->device_backend = view->backend;
+    rc = speculation_device_tensor_open(
+        view->backend, &context->device_feature_input,
+        "dspark_feature_input", input_elements, err);
+    if (rc == YVEX_OK)
+        rc = speculation_device_tensor_open(
+            view->backend, &context->device_feature_projected,
+            "dspark_feature_projected", output_elements, err);
+    if (rc == YVEX_OK)
+        rc = speculation_device_tensor_open(
+            view->backend, &context->device_feature_normalized,
+            "dspark_feature_normalized", output_elements, err);
+    if (rc == YVEX_OK)
+        rc = speculation_device_tensor_open(
+            view->backend, &context->device_feature_norm,
+            "dspark_feature_norm", context->hidden_width, err);
+    if (rc == YVEX_OK)
+        rc = yvex_backend_tensor_write(
+            view->backend, context->device_feature_norm,
+            context->feature_norm_weights,
+            context->device_feature_norm->bytes, err);
+    return rc;
+}
 int yvex_runtime_speculation_context_open(
     yvex_runtime_speculation_context **out, yvex_runtime_model *model,
     yvex_runtime_execution_session *session,
@@ -433,6 +509,7 @@ int yvex_runtime_speculation_context_open(
 #undef BIND
     if (rc == YVEX_OK) rc = speculation_context_geometry(context, err);
     if (rc == YVEX_OK) rc = speculation_context_buffers(context, err);
+    if (rc == YVEX_OK) rc = speculation_context_device_buffers(context, err);
     if (rc != YVEX_OK) {
         (void)yvex_runtime_speculation_context_close(&context, NULL);
         return rc;
@@ -448,9 +525,119 @@ const yvex_speculation_family_policy *yvex_runtime_speculation_policy_get(
 }
 static int speculation_project_target_features(
     yvex_runtime_speculation_context *context, const float *features,
-    unsigned long long token_count, yvex_error *err)
+    unsigned long long token_count, yvex_runtime_transformer_result *result,
+    yvex_error *err)
 {
     unsigned long long token, row;
+    if (!context || !features || !token_count || !result ||
+        token_count > context->policy.block_size + 2ull)
+        return speculation_refuse(
+            err, YVEX_ERR_INVALID_ARG,
+            "DSpark feature projection extent is invalid");
+    if (context->device_feature_input) {
+        const yvex_transformer_plan_summary *plan =
+            yvex_transformer_plan_summary_get(
+                yvex_runtime_transformer_context_plan(
+                    context->draft_transformer));
+        yvex_backend_cuda_operation_facts facts = {0};
+        yvex_runtime_transformer_result candidate = *result;
+        yvex_execution_memory_facts memory = result->memory;
+        yvex_device_tensor input = *context->device_feature_input;
+        yvex_device_tensor projected = *context->device_feature_projected;
+        yvex_device_tensor normalized = *context->device_feature_normalized;
+        unsigned long long input_elements, output_elements;
+        unsigned long long input_bytes, output_bytes, norm_activation;
+        unsigned long long h2d, d2h, kernels, uploads, downloads, synchronizations;
+        int rc;
+        if (!plan ||
+            !yvex_core_u64_mul(
+                token_count, context->policy.concatenated_feature_width,
+                &input_elements) ||
+            !yvex_core_u64_mul(token_count, context->hidden_width,
+                               &output_elements) ||
+            !yvex_core_u64_mul(input_elements, sizeof(float), &input_bytes) ||
+            !yvex_core_u64_mul(output_elements, sizeof(float), &output_bytes) ||
+            !yvex_core_u64_mul(output_bytes, 2ull, &norm_activation))
+            return speculation_refuse(
+                err, YVEX_ERR_BOUNDS,
+                "DSpark CUDA feature projection extent overflowed");
+        if (context->options.cancel_requested &&
+            context->options.cancel_requested(context->options.cancel_context))
+            return speculation_refuse(
+                err, YVEX_ERR_CANCELLED,
+                "DSpark feature projection was cancelled");
+        input.rank = projected.rank = normalized.rank = 2u;
+        input.dims[0] = projected.dims[0] = normalized.dims[0] = token_count;
+        input.dims[1] = context->policy.concatenated_feature_width;
+        projected.dims[1] = normalized.dims[1] = context->hidden_width;
+        input.bytes = input_bytes;
+        projected.bytes = normalized.bytes = output_bytes;
+        rc = yvex_backend_tensor_write(
+            context->device_backend, &input, features, input_bytes, err);
+        if (rc == YVEX_OK)
+            rc = yvex_backend_cuda_encoded_matvec(
+                context->device_backend, context->feature_projection.encoded,
+                context->feature_projection.encoded_bytes,
+                context->feature_projection.binding->qtype,
+                context->hidden_width,
+                context->policy.concatenated_feature_width,
+                context->feature_projection.row_bytes, token_count, &input,
+                &projected, &facts, err);
+        if (rc == YVEX_OK)
+            rc = yvex_backend_op_rms_norm(
+                context->device_backend, &projected,
+                context->device_feature_norm,
+                (float)plan->output_norm_epsilon, &normalized, err);
+        if (rc == YVEX_OK)
+            rc = yvex_backend_tensor_read(
+                context->device_backend, &normalized,
+                context->feature_projected, output_bytes, err);
+        if (rc != YVEX_OK) return rc;
+        if (yvex_execution_memory_facts_add(
+                &memory, facts.active_weight_bytes, facts.state_bytes,
+                facts.activation_bytes, facts.temporary_bytes,
+                facts.compulsory_memory_facts_available,
+                !facts.compulsory_memory_facts_available, err) != YVEX_OK ||
+            yvex_execution_memory_facts_add(
+                &memory, context->device_feature_norm->bytes, 0ull,
+                norm_activation, 0ull, 1ull, 0ull, err) != YVEX_OK)
+            return yvex_error_code(err);
+        if (!yvex_core_u64_add(facts.h2d_bytes, input_bytes, &h2d) ||
+            !yvex_core_u64_add(facts.d2h_bytes, output_bytes, &d2h) ||
+            !yvex_core_u64_add(facts.kernel_launches, 1ull, &kernels) ||
+            !yvex_core_u64_add(facts.upload_count, 1ull, &uploads) ||
+            !yvex_core_u64_add(facts.download_count, 1ull, &downloads) ||
+            !yvex_core_u64_add(facts.device_synchronizations, 3ull,
+                               &synchronizations) ||
+            !yvex_core_u64_add(candidate.h2d_bytes, h2d,
+                               &candidate.h2d_bytes) ||
+            !yvex_core_u64_add(candidate.d2h_bytes, d2h,
+                               &candidate.d2h_bytes) ||
+            !yvex_core_u64_add(candidate.d2d_bytes, facts.d2d_bytes,
+                               &candidate.d2d_bytes) ||
+            !yvex_core_u64_add(candidate.kernel_launches, kernels,
+                               &candidate.kernel_launches) ||
+            !yvex_core_u64_add(candidate.upload_count, uploads,
+                               &candidate.upload_count) ||
+            !yvex_core_u64_add(candidate.download_count, downloads,
+                               &candidate.download_count) ||
+            !yvex_core_u64_add(
+                candidate.stream_synchronizations,
+                facts.stream_synchronizations,
+                &candidate.stream_synchronizations) ||
+            !yvex_core_u64_add(candidate.device_synchronizations,
+                               synchronizations,
+                               &candidate.device_synchronizations))
+            return speculation_refuse(
+                err, YVEX_ERR_BOUNDS,
+                "DSpark CUDA feature accounting overflowed");
+        candidate.memory = memory;
+        *result = candidate;
+        context->device_feature_input->is_written = 1;
+        context->device_feature_projected->is_written = 1;
+        context->device_feature_normalized->is_written = 1;
+        return YVEX_OK;
+    }
     for (token = 0ull; token < token_count; ++token) {
         const float *source =
             features + token * context->policy.concatenated_feature_width;
@@ -1261,7 +1448,7 @@ static int speculation_stage_tokens(
         NULL, context->target_features, target, err);
     if (rc == YVEX_OK)
         rc = speculation_project_target_features(
-            context, context->target_features, token_count, err);
+            context, context->target_features, token_count, target, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_stage_core_features(
             context->draft_transformer, token_start,
@@ -1582,16 +1769,16 @@ int yvex_runtime_speculation_commit_prefix(
             yvex_core_monotonic_ns() - extension_started;
     }
     if (rc == YVEX_OK)
+        rc = speculation_promoted_target_result(
+            context, committed_count,
+            extension_required ? &extension : NULL, &target, err);
+    if (rc == YVEX_OK)
         rc = speculation_project_target_features(
-            context, context->target_features, committed_count, err);
+            context, context->target_features, committed_count, &target, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_stage_core_features(
             context->draft_transformer, context->pending_position,
             context->feature_projected, committed_count, &draft, err);
-    if (rc == YVEX_OK)
-        rc = speculation_promoted_target_result(
-            context, committed_count,
-            extension_required ? &extension : NULL, &target, err);
     if (rc == YVEX_OK) {
         result->position_after = context->pending_position + committed_count;
         result->target_result = target;
@@ -1704,6 +1891,23 @@ int yvex_runtime_speculation_context_close(
         rc = yvex_runtime_speculation_cycle_abort(*context, err);
         if (rc != YVEX_OK) return rc;
     }
+    if ((*context)->device_feature_normalized)
+        rc = yvex_backend_tensor_release(
+            (*context)->device_backend,
+            &(*context)->device_feature_normalized, err);
+    if (rc == YVEX_OK && (*context)->device_feature_projected)
+        rc = yvex_backend_tensor_release(
+            (*context)->device_backend,
+            &(*context)->device_feature_projected, err);
+    if (rc == YVEX_OK && (*context)->device_feature_input)
+        rc = yvex_backend_tensor_release(
+            (*context)->device_backend,
+            &(*context)->device_feature_input, err);
+    if (rc == YVEX_OK && (*context)->device_feature_norm)
+        rc = yvex_backend_tensor_release(
+            (*context)->device_backend,
+            &(*context)->device_feature_norm, err);
+    if (rc != YVEX_OK) return rc;
     if ((*context)->verification_sampling)
         rc = yvex_runtime_sampling_context_close(&(*context)->verification_sampling, err);
     if (rc == YVEX_OK && (*context)->verification_logits)

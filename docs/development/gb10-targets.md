@@ -97,10 +97,14 @@ transfer; audit/forensic and stochastic DSpark still own explicit host sampling
 references. Production greedy DSpark verification now retains its width-N
 target logits on CUDA, selects the complete row directory with one argmax
 launch and synchronization, and transfers only bounded aggregate facts.
-Eager attention, reference layouts and host feature projection may be replaced
-only through the existing typed execution profile. CUDA target-feature capture
-already reduces mHC streams before transferring one hidden row per token;
-eliminating that remaining bounded materialization belongs to the
+Eager attention, reference layouts and host-materialized draft/Markov adapters
+may be replaced only through the existing typed execution profile. CUDA
+target-feature capture already reduces mHC streams before transferring one
+hidden row per token. Production then uploads those bounded rows once, executes
+the resident encoded width-N projection and batched RMSNorm on CUDA, and
+downloads only normalized hidden rows for the current draft core. CPU, audit
+and forensic profiles retain the row-wise projection oracle. Eliminating the
+reduced-row and normalized-row host handoffs belongs to the fully
 device-resident DSpark cutover. CUDA final projection also preserves the
 pre-normalized BF16 drafter row before RMSNorm, so production no longer
 downloads expanded residual streams or recomputes that final stage on the
