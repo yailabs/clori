@@ -251,6 +251,15 @@ typedef struct {
     const yvex_backend *context_owner;
     int context_borrowed;
 } yvex_cuda_backend_state;
+
+/* These formats have a blockwise dot against the canonical Q8_K activation
+ * workspace. Keep admission singular so attention, generic projection, and
+ * MoE cannot silently choose different physical paths. */
+static inline int yvex_cuda_q8_activation_eligible(unsigned int qtype)
+{
+    return qtype == YVEX_GGUF_QTYPE_IQ2_XXS || qtype == YVEX_GGUF_QTYPE_Q2_K ||
+           qtype == YVEX_GGUF_QTYPE_Q8_0 || qtype == YVEX_GGUF_QTYPE_MXFP4;
+}
 typedef int (*yvex_cuda_graph_enqueue_fn)(void *context, int enqueue_kernels,
                                           yvex_error *err);
 typedef int (*yvex_cuda_graph_prepare_fn)(void *context, yvex_error *err);

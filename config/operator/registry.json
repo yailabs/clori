@@ -847,6 +847,22 @@
         "--target"
       ]
     },
+    "cli_offline_quant_probe": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--backend",
+        "--imatrix-manifest",
+        "--models-root",
+        "--plan",
+        "--policy",
+        "--preset",
+        "--source",
+        "--source-manifest",
+        "--target",
+        "--tensor"
+      ]
+    },
     "cli_offline_quant_policy": {
       "booleans": [],
       "repeatable_values": [],
@@ -2455,6 +2471,52 @@
       "summary": "Inspect, validate, or derive quantization policy.",
       "test_owner": "tests/client_cutover.sh",
       "visibility": "product-advanced"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "quant",
+        "probe"
+      ],
+      "adapter_id": "quant",
+      "aliases": [],
+      "architectural_plane": "Compile",
+      "arguments": [
+        {
+          "completion_provider": "none",
+          "multiplicity": "many",
+          "name": "arguments",
+          "required": false,
+          "validator": "syntax.delegated",
+          "value_type": "text"
+        }
+      ],
+      "artifact_requirement": "descriptor",
+      "backend_requirement": "none",
+      "command_path": [
+        "compile",
+        "quant",
+        "probe"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_quant_probe"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "quant.probe",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "read-only",
+      "slash_projection": "none",
+      "summary": "Probe one planned tensor numerically without emitting an artifact.",
+      "test_owner": "tests/live/physical_variant.sh",
+      "visibility": "engineering"
     },
     {
       "CLI_projection": true,

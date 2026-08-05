@@ -119,8 +119,7 @@ int yvex_backend_cuda_encoded_matvec(
     if (additive) additive_ptr = (CUdeviceptr)additive->data;
     output_ptr = (CUdeviceptr)output->data;
     q8_path = !split_input && row_width % 256ull == 0ull &&
-              (qtype == YVEX_GGUF_QTYPE_IQ2_XXS || qtype == YVEX_GGUF_QTYPE_Q2_K ||
-               qtype == YVEX_GGUF_QTYPE_Q8_0);
+              yvex_cuda_q8_activation_eligible(qtype);
     if (rc == YVEX_OK && q8_path) {
         unsigned long long blocks = row_width / 256ull, quantize_tasks;
         if (!yvex_core_u64_mul(blocks, input_rows, &quantize_tasks) ||

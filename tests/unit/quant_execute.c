@@ -797,6 +797,12 @@ static int quant_test_executor_success(void)
     yvex_quant_execution_summary first;
     yvex_quant_execution_summary second;
     yvex_quant_failure failure;
+    yvex_quant_digest_sink *selection_digest = NULL;
+    yvex_quant_output_sink selection_sink;
+    yvex_quant_executor_options selection_options;
+    yvex_quant_execution_summary selection;
+    yvex_source_payload_session_facts session_facts;
+    const yvex_quant_decision *selected;
     yvex_error err;
     int second_ok;
 
@@ -853,6 +859,48 @@ static int quant_test_executor_success(void)
                      "chunk boundaries and worker scheduling preserve identity");
     YVEX_TEST_ASSERT(first.source_chunks != second.source_chunks,
                      "different source chunks must exercise distinct plans");
+    selected = yvex_quant_plan_decision_at(fixture.plan, 3u);
+    YVEX_TEST_ASSERT(selected &&
+                         yvex_source_payload_session_facts_get(
+                             fixture.session, &session_facts, &err) == YVEX_OK &&
+                         yvex_quant_digest_sink_create(
+                             &selection_digest, fixture.plan, session_facts.payload_identity,
+                             &failure, &err) == YVEX_OK,
+                     "one-terminal probe sink must bind the complete physical plan");
+    yvex_quant_digest_sink_adapter(selection_digest, &selection_sink);
+    yvex_quant_executor_options_default(&selection_options);
+    selection_options.first_terminal = 3u;
+    selection_options.terminal_count = 1u;
+    selection_options.source_chunk_bytes = 4096u;
+    selection_options.output_chunk_bytes = 4096u;
+    selection_options.maximum_owned_bytes = 8u * 1024u * 1024u;
+    YVEX_TEST_ASSERT(yvex_quant_execute(
+                         fixture.plan, &selection_sink, &selection_options, &selection,
+                         &failure, &err) == YVEX_OK && selection.complete &&
+                         selection.partial_plan_execution &&
+                         selection.plan_terminal_decisions == QUANT_EXEC_TERMINAL_COUNT &&
+                         selection.first_terminal == 3u && selection.terminal_decisions == 1u &&
+                         selection.terminals_executed == 1u &&
+                         selection.committed_terminals == 1u &&
+                         selection.source_values_consumed == QUANT_EXEC_EXPERTS * 2u &&
+                         selection.encoded_output_bytes == selected->encoded_bytes &&
+                         selection.qtype_tensor_counts[YVEX_GGUF_QTYPE_Q2_K] == 1u &&
+                         selection.role_metrics[YVEX_TENSOR_ROLE_MOE_EXPERT_GATE].element_count ==
+                             selected->element_count,
+                     "one-terminal execution must preserve exact bounded accounting and metrics");
+    yvex_quant_digest_sink_release(&selection_digest);
+    YVEX_TEST_ASSERT(yvex_quant_digest_sink_create(
+                         &selection_digest, fixture.plan, session_facts.payload_identity,
+                         &failure, &err) == YVEX_OK,
+                     "invalid-selection refusal sink must construct");
+    yvex_quant_digest_sink_adapter(selection_digest, &selection_sink);
+    selection_options.first_terminal = QUANT_EXEC_TERMINAL_COUNT;
+    YVEX_TEST_ASSERT(yvex_quant_execute(
+                         fixture.plan, &selection_sink, &selection_options, &selection,
+                         &failure, &err) != YVEX_OK && !selection.complete &&
+                         selection.terminals_attempted == 0u,
+                     "terminal selection beyond the sealed plan must refuse before payload work");
+    yvex_quant_digest_sink_release(&selection_digest);
     quant_fixture_release(&fixture);
     return 0;
 }

@@ -858,10 +858,15 @@ int yvex_cuda_test_quant_qtype(void)
     yvex_error err;
     unsigned int index;
     unsigned int row;
+    int rc;
 
     memset(&options, 0, sizeof(options));
     options.kind = YVEX_BACKEND_KIND_CUDA;
-    YVEX_TEST_ASSERT(yvex_backend_open(&backend, &options, &err) == YVEX_OK,
+    rc = yvex_backend_open(&backend, &options, &err);
+    if (rc != YVEX_OK)
+        fprintf(stderr, "CUDA qtype backend open failed: %s (%s)\n",
+                yvex_error_message(&err), yvex_error_where(&err));
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "CUDA qtype parity backend opens");
     for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
         double maximum_difference = 0.0;
@@ -885,6 +890,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "Q2_K production Q8 activation matvec");
     YVEX_TEST_ASSERT(quant_cuda_q8_matvec(backend, YVEX_GGUF_QTYPE_IQ2_XXS) == 0,
                      "IQ2_XXS production Q8 activation matvec");
+    YVEX_TEST_ASSERT(quant_cuda_q8_matvec(backend, YVEX_GGUF_QTYPE_MXFP4) == 0,
+                     "MXFP4 production Q8 activation matvec");
     YVEX_TEST_ASSERT(quant_cuda_encoded_gather(backend) == 0,
                      "resident qtype row gather");
     YVEX_TEST_ASSERT(quant_cuda_transformer_facts(backend) == 0,

@@ -140,6 +140,7 @@ require_text docs/operator-runbook.md './yvex runtime memory'
 require_text docs/operator-runbook.md './yvex chat --session main'
 require_text docs/operator-runbook.md './yvex runtime watch'
 require_text docs/operator-runbook.md './yvex runtime trace'
+require_text docs/operator-runbook.md './yvex compile quant probe'
 reject_text docs/operator-runbook.md 'export YVEX_MODEL_ARTIFACT'
 require_text docs/operations/deepseek.md './yvex execute transformer generate --help'
 

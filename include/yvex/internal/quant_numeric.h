@@ -464,6 +464,10 @@ typedef struct {
     size_t source_chunk_bytes;
     size_t output_chunk_bytes;
     size_t maximum_owned_bytes;
+    /* A zero count executes the complete sealed plan; otherwise only this
+     * contiguous terminal extent is materialized for bounded engineering evidence. */
+    unsigned long long first_terminal;
+    unsigned long long terminal_count;
     yvex_quant_cancellation *cancellation;
     const yvex_imatrix_data *imatrix;
     yvex_quant_executor_allocate_fn allocate;
@@ -475,6 +479,8 @@ typedef struct {
     void *context;
 } yvex_quant_executor_options;
 typedef struct {
+    unsigned long long plan_terminal_decisions;
+    unsigned long long first_terminal;
     unsigned long long terminal_decisions;
     unsigned long long terminals_attempted;
     unsigned long long terminals_executed;
@@ -505,6 +511,7 @@ typedef struct {
     size_t peak_owned_bytes;
     unsigned int configured_workers;
     unsigned int workers_started;
+    int partial_plan_execution;
     int complete;
 } yvex_quant_execution_summary;
 void yvex_quant_executor_options_default(yvex_quant_executor_options *options);

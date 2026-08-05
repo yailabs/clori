@@ -106,6 +106,11 @@ change. Git history preserves implementation chronology.
   target generation publishes a complete phase memory mask only when every
   contributing operation is measured. Output-head reporting uses the same
   representation instead of retaining duplicate mutable fields.
+- Physical-variant research can execute one exact tensor decision from a sealed
+  quantization plan and report bounded reconstruction evidence without emitting
+  a complete artifact. Source-native MXFP4 weights now use the shared Q8_K CUDA
+  activation path in dense, attention and grouped-MoE execution, preserving the
+  portable reference while candidate policies are filtered by role.
 
 ### Changed
 

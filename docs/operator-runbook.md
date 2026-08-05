@@ -74,6 +74,30 @@ This command neither maps tensors nor emits an artifact. The subsequent
 compilation stages consume the published payload identity and retained source
 inventory through their typed owners.
 
+## Probing a physical-variant candidate
+
+Before paying the storage and admission cost of a complete candidate GGUF, run
+one decision from its sealed physical plan against the real source payload:
+
+```sh
+./yvex compile quant probe \
+  --target deepseek4-v4-flash-dspark \
+  --source /srv/yvex/sources/DeepSeek-V4-Flash-DSpark \
+  --models-root /srv/yvex \
+  --source-manifest /srv/yvex/manifests/deepseek-v4-flash-dspark-source.json \
+  --policy /srv/yvex/plans/candidate-policy.json \
+  --imatrix-manifest /srv/yvex/calibration/deepseek-v4-flash.imatrix \
+  --backend cuda \
+  --plan /srv/yvex/plans/candidate.plan \
+  --tensor blk.21.ffn_down_exps.weight
+```
+
+The command executes exactly the selected terminal from the identity-bound
+plan and reports its encoded bytes and reconstruction metrics. It does not
+publish an artifact, alter the registry, or claim whole-model quality. Use it
+as the role-level funnel before promoting a surviving policy to complete
+artifact emission.
+
 ## First verified startup
 
 First check whether this user already owns a ready host:

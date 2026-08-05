@@ -1415,11 +1415,11 @@ $(OBJ_DIR)/tests/unit/cuda/%.o: tests/unit/cuda/%.c tests/test.h
 	@mkdir -p $(@D)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/%.ptx: %.cu include/yvex/qtype.h
+$(OBJ_DIR)/%.ptx: %.cu include/yvex/qtype.h src/backend/cuda/kernel_primitives.h
 	@mkdir -p $(@D)
 	$(NVCC) $(CPPFLAGS) $(NVCCFLAGS) $(CUDA_ARCH_FLAG) -ptx $< -o $@
 
-$(OBJ_DIR)/%.cubin: %.cu include/yvex/qtype.h
+$(OBJ_DIR)/%.cubin: %.cu include/yvex/qtype.h src/backend/cuda/kernel_primitives.h
 	@mkdir -p $(@D)
 	$(NVCC) $(CPPFLAGS) $(NVCCFLAGS) $(CUDA_ARCH_FLAG) -cubin $< -o $@
 	@$(CUOBJDUMP) --list-elf $@ | grep -F '$(CUDA_NATIVE_ARCH)' >/dev/null || { \

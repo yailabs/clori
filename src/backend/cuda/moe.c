@@ -54,8 +54,7 @@ static int moe_cuda_refuse(yvex_error *err, yvex_status status, const char *reas
 
 static int moe_cuda_q8_eligible(unsigned int qtype)
 {
-    return qtype == YVEX_GGUF_QTYPE_IQ2_XXS || qtype == YVEX_GGUF_QTYPE_Q2_K ||
-           qtype == YVEX_GGUF_QTYPE_Q8_0;
+    return yvex_cuda_q8_activation_eligible(qtype);
 }
 
 static int moe_cuda_workspace_add(unsigned long long *total,
@@ -600,13 +599,9 @@ static int moe_cuda_add_selected(yvex_backend_moe_execution *execution, yvex_err
     up_expert_bytes = up->row_bytes * layer->expert_intermediate_width;
     down_expert_bytes = down->row_bytes * layer->hidden_width;
     q8_input = layer->hidden_width % 256ull == 0ull &&
-        layer->expert_intermediate_width % 256ull == 0ull &&
-        (gate->qtype == YVEX_GGUF_QTYPE_IQ2_XXS || gate->qtype == YVEX_GGUF_QTYPE_Q2_K ||
-         gate->qtype == YVEX_GGUF_QTYPE_Q8_0) &&
-        (up->qtype == YVEX_GGUF_QTYPE_IQ2_XXS || up->qtype == YVEX_GGUF_QTYPE_Q2_K ||
-         up->qtype == YVEX_GGUF_QTYPE_Q8_0) &&
-        (down->qtype == YVEX_GGUF_QTYPE_IQ2_XXS || down->qtype == YVEX_GGUF_QTYPE_Q2_K ||
-         down->qtype == YVEX_GGUF_QTYPE_Q8_0);
+               layer->expert_intermediate_width % 256ull == 0ull &&
+               moe_cuda_q8_eligible(gate->qtype) && moe_cuda_q8_eligible(up->qtype) &&
+               moe_cuda_q8_eligible(down->qtype);
     hidden_blocks = q8_input ? layer->hidden_width / 256ull : layer->hidden_width;
     intermediate_blocks = q8_input ? layer->expert_intermediate_width / 256ull :
                           layer->expert_intermediate_width;

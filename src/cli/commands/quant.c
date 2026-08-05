@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <yvex/internal/artifact.h>
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/families/deepseek_v4.h>
@@ -23,6 +24,7 @@ typedef enum {
     QUANT_CLI_NONE = 0,
     QUANT_CLI_PLAN,
     QUANT_CLI_EMIT,
+    QUANT_CLI_PROBE,
     QUANT_CLI_SUMMARIZE,
     QUANT_CLI_EXPLAIN
 } quant_cli_action;
@@ -80,6 +82,7 @@ static int quant_cli_parse(int argc, char **argv, quant_cli_options *options)
     if (argc < 3) return 0;
     if (strcmp(argv[2], "plan") == 0) options->action = QUANT_CLI_PLAN;
     else if (strcmp(argv[2], "emit") == 0) options->action = QUANT_CLI_EMIT;
+    else if (strcmp(argv[2], "probe") == 0) options->action = QUANT_CLI_PROBE;
     else if (strcmp(argv[2], "summarize") == 0) options->action = QUANT_CLI_SUMMARIZE;
     else if (strcmp(argv[2], "explain") == 0) options->action = QUANT_CLI_EXPLAIN;
     else return 0;
@@ -127,6 +130,8 @@ static int quant_cli_options_valid(const quant_cli_options *options)
     if (options->action == QUANT_CLI_PLAN) return options->out_plan != NULL;
     if (options->action == QUANT_CLI_EMIT)
         return options->plan_path && options->out_artifact;
+    if (options->action == QUANT_CLI_PROBE)
+        return options->plan_path && options->tensor && !options->role;
     if (options->action == QUANT_CLI_SUMMARIZE) return options->plan_path != NULL;
     if (options->action == QUANT_CLI_EXPLAIN)
         return options->plan_path && (!!options->tensor != !!options->role);
@@ -464,6 +469,103 @@ static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *c
     return rc;
 }
 
+static int quant_cli_probe(const quant_cli_options *options, quant_cli_context *context,
+                           yvex_error *err)
+{
+    const yvex_quant_plan_summary *plan = yvex_quant_plan_summary_get(context->plan);
+    const yvex_quant_decision *selected = NULL;
+    yvex_quant_digest_sink *digest = NULL;
+    yvex_quant_output_sink sink;
+    yvex_quant_executor_options executor;
+    yvex_quant_execution_summary execution;
+    yvex_quant_failure failure;
+    const yvex_quant_metrics *metrics;
+    struct timespec started;
+    struct timespec stopped;
+    unsigned long long ordinal;
+    double seconds;
+    int rc;
+
+    rc = yvex_quant_plan_file_validate(options->plan_path, context->plan, err);
+    for (ordinal = 0u; rc == YVEX_OK && ordinal < plan->decision_count; ++ordinal) {
+        const yvex_quant_decision *decision =
+            yvex_quant_plan_decision_at(context->plan, ordinal);
+        if (!decision || strcmp(decision->physical_tensor_name, options->tensor) != 0)
+            continue;
+        if (selected) {
+            yvex_error_set(err, YVEX_ERR_FORMAT, "quant_cli_probe",
+                           "probe tensor selector is not unique");
+            rc = YVEX_ERR_FORMAT;
+            break;
+        }
+        selected = decision;
+    }
+    if (rc == YVEX_OK && !selected) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "quant_cli_probe",
+                       "probe tensor is absent from the sealed physical plan");
+        rc = YVEX_ERR_FORMAT;
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_quant_digest_sink_create(&digest, context->plan,
+                                           plan->required_payload_identity, &failure, err);
+    if (rc == YVEX_OK) {
+        yvex_quant_digest_sink_adapter(digest, &sink);
+        yvex_quant_executor_options_default(&executor);
+        executor.worker_count = 1u;
+        executor.maximum_owned_bytes = 64u * 1024u * 1024u;
+        executor.first_terminal = selected->terminal_ordinal;
+        executor.terminal_count = 1u;
+        executor.imatrix = context->imatrix;
+        if (clock_gettime(CLOCK_MONOTONIC, &started) != 0) {
+            yvex_error_set(err, YVEX_ERR_IO, "quant_cli_probe",
+                           "probe monotonic clock start failed");
+            rc = YVEX_ERR_IO;
+        }
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_quant_execute(context->plan, &sink, &executor, &execution, &failure, err);
+    if (rc == YVEX_OK && clock_gettime(CLOCK_MONOTONIC, &stopped) != 0) {
+        yvex_error_set(err, YVEX_ERR_IO, "quant_cli_probe",
+                       "probe monotonic clock stop failed");
+        rc = YVEX_ERR_IO;
+    }
+    if (rc == YVEX_OK) {
+        metrics = &execution.role_metrics[selected->role];
+        seconds = (double)(stopped.tv_sec - started.tv_sec) +
+                  (double)(stopped.tv_nsec - started.tv_nsec) / 1000000000.0;
+        yvex_cli_out_writef(stdout, "status: quant-role-probe-complete\n");
+        yvex_cli_out_writef(stdout, "profile_identity: %s\n", plan->profile_identity);
+        yvex_cli_out_writef(stdout, "tensor: %s\n", selected->physical_tensor_name);
+        yvex_cli_out_writef(stdout, "role: %s\n", yvex_tensor_role_name(selected->role));
+        yvex_cli_out_writef(stdout, "terminal_ordinal: %llu\n", selected->terminal_ordinal);
+        yvex_cli_out_writef(stdout, "qtype: %u\n", selected->qtype);
+        yvex_cli_out_writef(stdout, "elements: %llu\n", metrics->element_count);
+        yvex_cli_out_writef(stdout, "finite_elements: %llu\n", metrics->finite_count);
+        yvex_cli_out_writef(stdout, "nonfinite_elements: %llu\n", metrics->nonfinite_count);
+        yvex_cli_out_writef(stdout, "encoded_bytes: %llu\n", execution.encoded_output_bytes);
+        yvex_cli_out_writef(stdout, "payload_bytes_read: %llu\n", execution.payload_bytes_read);
+        yvex_cli_out_writef(stdout, "maximum_absolute_error: %.17g\n",
+                            metrics->maximum_absolute_error);
+        yvex_cli_out_writef(stdout, "rmse: %.17g\n", yvex_quant_metrics_rmse(metrics));
+        yvex_cli_out_writef(stdout, "mean_absolute_error: %.17g\n",
+                            metrics->finite_count
+                                ? metrics->absolute_error_sum / (double)metrics->finite_count
+                                : 0.0);
+        yvex_cli_out_writef(stdout, "mean_relative_error: %.17g\n",
+                            metrics->finite_count
+                                ? metrics->relative_error_sum / (double)metrics->finite_count
+                                : 0.0);
+        yvex_cli_out_writef(stdout, "reference_squared_sum: %.17g\n",
+                            metrics->reference_squared_sum);
+        yvex_cli_out_writef(stdout, "dot_reference: %.17g\n", metrics->dot_reference);
+        yvex_cli_out_writef(stdout, "dot_reconstructed: %.17g\n",
+                            metrics->dot_reconstructed);
+        yvex_cli_out_writef(stdout, "wall_seconds: %.9f\n", seconds);
+    }
+    yvex_quant_digest_sink_release(&digest);
+    return rc;
+}
+
 static int quant_cli_preset(int argc, char **argv)
 {
     yvex_quant_policy *policy = NULL;
@@ -535,6 +637,8 @@ int yvex_quant_command(int arg_count, char **args)
         rc = yvex_quant_plan_file_validate(options.plan_path, context.plan, &err);
     if (rc == YVEX_OK && options.action == QUANT_CLI_EMIT)
         rc = quant_cli_emit(&options, &context, &err);
+    if (rc == YVEX_OK && options.action == QUANT_CLI_PROBE)
+        rc = quant_cli_probe(&options, &context, &err);
     if (rc == YVEX_OK && (options.action == QUANT_CLI_PLAN ||
                           options.action == QUANT_CLI_SUMMARIZE))
         quant_cli_summary_print(&context);
@@ -556,6 +660,10 @@ void yvex_quant_help(FILE *fp)
                         "  yvex compile quant emit --target TARGET --source DIR --models-root DIR "
                         "--source-manifest FILE (--preset NAME|--policy FILE) [--imatrix-manifest FILE] "
                         "--plan FILE --out FILE\n");
+    yvex_cli_out_writef(fp,
+                        "  yvex compile quant probe --target TARGET --source DIR --models-root DIR "
+                        "--source-manifest FILE (--preset NAME|--policy FILE) [--imatrix-manifest FILE] "
+                        "--plan FILE --tensor NAME\n");
     yvex_cli_out_writef(fp,
                         "  yvex inspect quant summary|explain [same source/policy options] --plan FILE "
                         "[--tensor NAME|--role ROLE]\n\n");

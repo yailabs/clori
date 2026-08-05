@@ -77,6 +77,24 @@ grep '^cpu_runtime_executable: 1$' "$OUT_DIR/accepted.out" >/dev/null ||
 grep '^cuda_runtime_executable: 1$' "$OUT_DIR/accepted.out" >/dev/null ||
     fail "CUDA compatibility missing"
 
+"$YVEX_BIN" compile quant probe \
+    --target deepseek4-v4-flash-dspark \
+    --source "$YVEX_DEEPSEEK_SOURCE" \
+    --models-root "$YVEX_DEEPSEEK_MODELS_ROOT" \
+    --source-manifest "$YVEX_DEEPSEEK_SOURCE_MANIFEST" \
+    --preset deepseek-v4-flash-dspark-bootstrap-q2-v1 \
+    --imatrix-manifest "$YVEX_IMATRIX_PATH" \
+    --backend cuda \
+    --plan "$OUT_DIR/accepted.plan" \
+    --tensor yvex.draft.v1.2.draft_confidence.weight \
+    > "$OUT_DIR/probe.out"
+grep '^status: quant-role-probe-complete$' "$OUT_DIR/probe.out" >/dev/null ||
+    fail "bounded quant probe did not complete"
+grep '^tensor: yvex.draft.v1.2.draft_confidence.weight$' "$OUT_DIR/probe.out" >/dev/null ||
+    fail "bounded quant probe selected the wrong tensor"
+grep '^nonfinite_elements: 0$' "$OUT_DIR/probe.out" >/dev/null ||
+    fail "bounded quant probe produced non-finite reconstruction"
+
 cat > "$OUT_DIR/conflict.json" <<'JSON'
 {
   "schema": "yvex.quant_policy.v2",

@@ -44,6 +44,7 @@ grep '^imatrix_rules: 3$' "$OUT_DIR/show.out" >/dev/null || fail "imatrix rules 
 "$YVEX_BIN" compile quant --help > "$OUT_DIR/help.out" 2> "$OUT_DIR/help.err" ||
     fail "quant help failed"
 grep 'yvex compile quant plan' "$OUT_DIR/help.out" >/dev/null || fail "plan grammar missing"
+grep 'yvex compile quant probe' "$OUT_DIR/help.out" >/dev/null || fail "probe grammar missing"
 grep 'Plan an identity-bound physical variant' "$OUT_DIR/help.out" >/dev/null ||
     fail "plan summary missing"
 

@@ -295,7 +295,7 @@ def test_audit_reconciliation(registry: dict[str, object]) -> None:
     slash = {row.get("slash_projection") for row in rows if row.get("slash_projection") != "none"}
     require(slash == {"/help", "/status", "/runtime", "/model", "/memory", "/context", "/sessions",
                       "/session", "/new", "/attach", "/detach", "/reset", "/close",
-                      "/cancel", "/quit"},
+                      "/cancel", "/quit", "/nothink", "/think", "/think-max"},
             f"unexpected slash catalog: {sorted(slash)}")
     with tempfile.TemporaryDirectory(prefix="yvex-audit-reconciliation-") as temporary:
         root = pathlib.Path(temporary)

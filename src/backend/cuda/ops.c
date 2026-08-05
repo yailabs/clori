@@ -450,9 +450,7 @@ static int attention_matvec(yvex_cuda_work *work,
             weight ? weight->row_count : 0ull, start_row + rows, err,
             YVEX_ERR_BOUNDS, "CUDA attention matvec geometry is invalid");
     q8_path = !work->forensic_numeric && weight->row_width % 256ull == 0ull &&
-              (weight->qtype == YVEX_GGUF_QTYPE_IQ2_XXS ||
-               weight->qtype == YVEX_GGUF_QTYPE_Q2_K ||
-               weight->qtype == YVEX_GGUF_QTYPE_Q8_0);
+              yvex_cuda_q8_activation_eligible(weight->qtype);
     if (q8_path) {
         unsigned long long blocks = weight->row_width / 256ull;
         unsigned long long quantize_tasks, quantized_bytes;

@@ -90,6 +90,7 @@ for arguments in \
     'profile attention run --help' \
     'compile quant plan --help' \
     'compile quant emit --help' \
+    'compile quant probe --help' \
     'inspect quant summary --help' \
     'inspect quant decision --help' \
     'compile quant policy --help' \

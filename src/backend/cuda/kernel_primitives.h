@@ -353,6 +353,43 @@ static __device__ float q8_0_q8_k_dot(const unsigned char *weight,
     }
     return total;
 }
+static __device__ int mxfp4_i8x4(unsigned int packed, unsigned int high)
+{
+    unsigned int values = 0u;
+#pragma unroll
+    for (unsigned int i = 0u; i < 4u; ++i) {
+        unsigned int code = (packed >> (8u * i + (high ? 4u : 0u))) & 15u;
+        int magnitude = (code & 7u) == 0u ? 0 :
+                        (code & 7u) < 5u ? (int)(code & 7u) :
+                        (code & 7u) == 5u ? 6 :
+                        (code & 7u) == 6u ? 8 : 12;
+        int value = code & 8u ? -magnitude : magnitude;
+        values |= ((unsigned int)value & 255u) << (8u * i);
+    }
+    return (int)values;
+}
+static __device__ float mxfp4_q8_k_dot(const unsigned char *weight,
+                                       const unsigned char *activation)
+{
+    float activation_scale = __uint_as_float(qtype_load_u32(activation));
+    float total = 0.0f;
+#pragma unroll
+    for (unsigned int block = 0u; block < 8u; ++block) {
+        const unsigned char *mxfp4 = weight + block * 17u;
+        const unsigned char *q8 = activation + 4u + block * 32u;
+        int dot = 0;
+#pragma unroll
+        for (unsigned int i = 0u; i < 16u; i += 4u) {
+            unsigned int packed = qtype_load_u32(mxfp4 + 1u + i);
+            dot = __dp4a(mxfp4_i8x4(packed, 0u), (int)qtype_load_u32(q8 + i), dot);
+            dot = __dp4a(mxfp4_i8x4(packed, 1u),
+                         (int)qtype_load_u32(q8 + 16u + i), dot);
+        }
+        total = fmaf(e8m0_bits_to_float(mxfp4[0]) * 0.5f * activation_scale,
+                     (float)dot, total);
+    }
+    return total;
+}
 static __device__ float qtype_q8_k_dot(const unsigned char *weight,
                                        const unsigned char *activation,
                                        unsigned int qtype)
@@ -360,6 +397,7 @@ static __device__ float qtype_q8_k_dot(const unsigned char *weight,
     if (qtype == YVEX_GGUF_QTYPE_IQ2_XXS) return iq2_xxs_q8_k_dot(weight, activation);
     if (qtype == YVEX_GGUF_QTYPE_Q2_K) return q2_k_q8_k_dot(weight, activation);
     if (qtype == YVEX_GGUF_QTYPE_Q8_0) return q8_0_q8_k_dot(weight, activation);
+    if (qtype == YVEX_GGUF_QTYPE_MXFP4) return mxfp4_q8_k_dot(weight, activation);
     return __uint_as_float(0x7fc00000u);
 }
 static __device__ float q8_warp_dot(const unsigned char *weight,

@@ -123,6 +123,7 @@ struct quant_executor {
     pthread_mutex_t mutex;
     int mutex_initialized;
     unsigned long long next_terminal;
+    unsigned long long terminal_end;
     atomic_int start;
     atomic_int stop;
     int failure_set;
@@ -235,6 +236,59 @@ void yvex_quant_executor_options_default(yvex_quant_executor_options *options) {
     options->allocate = quant_executor_default_allocate;
     options->release = quant_executor_default_release;
     options->thread_create = quant_executor_default_thread_create;
+}
+
+/*
+ * Resolve one bounded contiguous terminal selection against the sealed plan.
+ *
+ * A zero terminal count denotes the complete plan. Selection changes only the execution extent;
+ * it never creates a second plan identity or permits an unsealed decision.
+ */
+static int quant_selection_resolve(const yvex_quant_plan *plan,
+                                   const yvex_quant_plan_summary *summary,
+                                   const yvex_quant_executor_options *options,
+                                   unsigned long long *first,
+                                   unsigned long long *count,
+                                   unsigned long long *source_values,
+                                   unsigned long long *encoded_bytes,
+                                   yvex_quant_failure *failure, yvex_error *err)
+{
+    const yvex_transform_ir *ir = yvex_quant_plan_transform_ir(plan);
+    unsigned long long ordinal;
+
+    if (!summary || !options || !first || !count || !source_values || !encoded_bytes ||
+        !ir || (options->terminal_count == 0u && options->first_terminal != 0u))
+        return quant_execute_fail(failure, YVEX_QUANT_FAILURE_INVALID_ARGUMENT, NULL,
+                                  ULLONG_MAX, ULLONG_MAX, ULLONG_MAX, 0u,
+                                  options ? options->first_terminal : ULLONG_MAX, err,
+                                  YVEX_ERR_INVALID_ARG,
+                                  "quant terminal selection is invalid");
+    *first = options->terminal_count ? options->first_terminal : 0u;
+    *count = options->terminal_count ? options->terminal_count : summary->decision_count;
+    *source_values = 0u;
+    *encoded_bytes = 0u;
+    if (*count == 0u || *first >= summary->decision_count ||
+        *count > summary->decision_count - *first)
+        return quant_execute_fail(failure, YVEX_QUANT_FAILURE_INVALID_ARGUMENT, NULL,
+                                  ULLONG_MAX, ULLONG_MAX, ULLONG_MAX,
+                                  summary->decision_count, *first, err, YVEX_ERR_BOUNDS,
+                                  "quant terminal selection exceeds the sealed plan");
+    for (ordinal = *first; ordinal < *first + *count; ++ordinal) {
+        const yvex_quant_decision *decision = yvex_quant_plan_decision_at(plan, ordinal);
+        const yvex_transform_value *terminal = yvex_transform_ir_terminal_at(ir, ordinal);
+        const yvex_transform_node *node =
+            terminal ? yvex_transform_ir_node_at(ir, terminal->producer_node_id) : NULL;
+
+        if (!decision || !terminal || !node || decision->terminal_ordinal != ordinal ||
+            decision->terminal_value_id != terminal->id ||
+            !yvex_core_u64_add(*source_values, node->input_count, source_values) ||
+            !yvex_core_u64_add(*encoded_bytes, decision->encoded_bytes, encoded_bytes))
+            return quant_execute_fail(failure, YVEX_QUANT_FAILURE_INCOMPLETE, decision,
+                                      ULLONG_MAX, ULLONG_MAX, ULLONG_MAX, *count,
+                                      ordinal - *first, err, YVEX_ERR_FORMAT,
+                                      "quant terminal selection cannot be derived exactly");
+    }
+    return YVEX_OK;
 }
 
 static int quant_executor_cancelled(const quant_executor *executor) {
@@ -1626,7 +1680,7 @@ static void *quant_worker_main(void *opaque) {
 
         pthread_mutex_lock(&executor->mutex);
         if (atomic_load_explicit(&executor->stop, memory_order_acquire) ||
-            executor->next_terminal >= executor->summary.terminal_decisions) {
+            executor->next_terminal >= executor->terminal_end) {
             pthread_mutex_unlock(&executor->mutex);
             break;
         }
@@ -1678,6 +1732,10 @@ int yvex_quant_execute(const yvex_quant_plan *plan, const yvex_quant_output_sink
     int thread_budget_exceeded = 0;
     unsigned int started = 0u;
     unsigned int index;
+    unsigned long long first_terminal;
+    unsigned long long selected_terminal_count;
+    unsigned long long expected_source_values;
+    unsigned long long expected_encoded_bytes;
     int rc;
 
     if (summary)
@@ -1711,6 +1769,11 @@ int yvex_quant_execute(const yvex_quant_plan *plan, const yvex_quant_output_sink
             failure, YVEX_QUANT_FAILURE_RESOURCE_BUDGET, NULL, ULLONG_MAX, ULLONG_MAX, ULLONG_MAX,
             required_output_bytes ? required_output_bytes : SIZE_MAX, options.maximum_owned_bytes,
             err, YVEX_ERR_BOUNDS, "executor worker, chunk, or memory budget is invalid");
+    rc = quant_selection_resolve(plan, plan_summary, &options, &first_terminal,
+                                 &selected_terminal_count, &expected_source_values,
+                                 &expected_encoded_bytes, failure, err);
+    if (rc != YVEX_OK)
+        return rc;
     rc = quant_imatrix_plan_validate(plan, plan_summary, options.imatrix, failure, err);
     if (rc != YVEX_OK)
         return rc;
@@ -1731,9 +1794,15 @@ int yvex_quant_execute(const yvex_quant_plan *plan, const yvex_quant_output_sink
     executor.session = yvex_transform_binding_payload_session(binding);
     executor.sink = sink;
     executor.options = options;
-    executor.summary.terminal_decisions = plan_summary->decision_count;
+    executor.next_terminal = first_terminal;
+    executor.terminal_end = first_terminal + selected_terminal_count;
+    executor.summary.plan_terminal_decisions = plan_summary->decision_count;
+    executor.summary.first_terminal = first_terminal;
+    executor.summary.terminal_decisions = selected_terminal_count;
     executor.summary.configured_memory_budget = options.maximum_owned_bytes;
     executor.summary.configured_workers = options.worker_count;
+    executor.summary.partial_plan_execution =
+        selected_terminal_count != plan_summary->decision_count;
     atomic_init(&executor.start, 0);
     atomic_init(&executor.stop, 0);
     if (!executor.ir || !executor.session || pthread_mutex_init(&executor.mutex, NULL) != 0)
@@ -1799,13 +1868,13 @@ join:
             rc = YVEX_ERR_STATE;
         goto cleanup;
     }
-    if (executor.summary.terminals_executed != plan_summary->decision_count ||
-        executor.summary.source_values_consumed != plan_summary->source_value_count ||
-        executor.summary.encoded_output_bytes != plan_summary->encoded_bytes) {
+    if (executor.summary.terminals_executed != selected_terminal_count ||
+        executor.summary.source_values_consumed != expected_source_values ||
+        executor.summary.encoded_output_bytes != expected_encoded_bytes) {
         rc = quant_execute_fail(failure, YVEX_QUANT_FAILURE_INCOMPLETE, NULL, ULLONG_MAX,
-                                ULLONG_MAX, ULLONG_MAX, plan_summary->decision_count,
+                                ULLONG_MAX, ULLONG_MAX, selected_terminal_count,
                                 executor.summary.terminals_executed, err, YVEX_ERR_FORMAT,
-                                "complete-plan execution accounting is incomplete");
+                                "selected quant execution accounting is incomplete");
         goto cleanup;
     }
     executor.summary.complete = 1;
