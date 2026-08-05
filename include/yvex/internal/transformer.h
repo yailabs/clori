@@ -154,6 +154,7 @@ int yvex_backend_transformer_cuda_initial(
     unsigned long long residual_streams, yvex_device_tensor *embedding,
     yvex_device_tensor *expanded, yvex_backend_cuda_operation_facts *facts,
     yvex_error *err);
+/* Host output is optional bounded evidence; device publication still waits for checked status. */
 int yvex_backend_transformer_cuda_feature_mean(
     yvex_backend *backend, const yvex_device_tensor *expanded,
     unsigned long long token_count, unsigned long long hidden_width,
@@ -217,6 +218,7 @@ typedef struct {
     unsigned long long capacity;
     float *pre_normalized_hidden;
     unsigned long long pre_normalized_capacity;
+    /* Non-full CUDA execution may publish only the device directory. */
     float *features;
     unsigned long long feature_capacity;
     yvex_device_tensor *device_features;

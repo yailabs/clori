@@ -608,6 +608,30 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
                              resident_features[token * HIDDEN * 2ull + HIDDEN + lane] == expected,
                          "transformer feature mean publishes the requested resident columns");
     }
+    memset(features, 0, sizeof(features));
+    memset(resident_features, 0, sizeof(resident_features));
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_write(backend, resident_feature_device,
+                                  resident_features, sizeof(resident_features), &err) == YVEX_OK &&
+            yvex_backend_transformer_cuda_feature_mean(
+                backend, expanded_device, TOKENS, HIDDEN, STREAMS, feature_device,
+                resident_feature_device, 0ull, HIDDEN * 2ull, HIDDEN,
+                NULL, &facts, &err) == YVEX_OK &&
+            facts.d2h_bytes == sizeof(int) && facts.download_count == 1ull &&
+            facts.kernel_launches == 1ull && facts.device_synchronizations == 1ull &&
+            yvex_backend_tensor_read(backend, feature_device, features,
+                                     sizeof(features), &err) == YVEX_OK &&
+            yvex_backend_tensor_read(backend, resident_feature_device,
+                                     resident_features,
+                                     sizeof(resident_features), &err) == YVEX_OK,
+        "transformer feature mean publishes device-only rows with bounded status transfer");
+    for (index = 0ull; index < TOKENS * HIDDEN; ++index) {
+        unsigned long long token = index / HIDDEN, lane = index % HIDDEN;
+        float expected = (float)(token * STREAMS * 4ull + lane + 2ull);
+        YVEX_TEST_ASSERT(features[index] == expected &&
+                             resident_features[token * HIDDEN * 2ull + HIDDEN + lane] == expected,
+                         "device-only feature mean retains exact compact and resident values");
+    }
     expanded[0] = NAN;
     features[0] = 77.0f;
     YVEX_TEST_ASSERT(

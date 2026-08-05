@@ -671,7 +671,7 @@ static int attention_validate_job(yvex_backend_attention_job *job,
         !job->indexer_count && !job->indexer_stride)
         job->indexer_stride = job->indexer_head_dimension;
     if (!job || !output || job->schema != YVEX_BACKEND_ATTENTION_JOB_SCHEMA ||
-        !job->input || !job->token_count || !input_width ||
+        (!job->input && !job->device_input) || !job->token_count || !input_width ||
         job->input_stride < input_width ||
         job->token_position > ULLONG_MAX - job->token_count ||
         (job->phase == YVEX_BACKEND_ATTENTION_PHASE_DECODE &&
@@ -879,7 +879,7 @@ static int attention_validate_alias(
                                          transfers[i].width};
 #define READ(data_, count_, width_) \
     (reads[read_count++] = (yvex_cuda_host_span){(data_), (count_), (width_)})
-    READ(job->input, input_count, sizeof(float));
+    if (!job->device_input) READ(job->input, input_count, sizeof(float));
     READ(job->local_kv, local_extent, sizeof(float));
     READ(job->local_positions, job->local_count, sizeof(unsigned long long));
     READ(job->compressed_kv, compressed_extent, sizeof(float));
@@ -1749,8 +1749,8 @@ int yvex_backend_transformer_cuda_initial(
 /*
  * Collapse target-feature residual streams on CUDA and publish compact and optional resident rows.
  *
- * The caller supplies reusable device and host storage. Bounded status, compact host evidence
- * and optional resident rows become visible together; expanded input never leaves the device.
+ * The caller supplies reusable device storage and may request compact host evidence. Bounded
+ * status and resident rows become visible together; expanded input never leaves the device.
  */
 int yvex_backend_transformer_cuda_feature_mean(
     yvex_backend *backend, const yvex_device_tensor *expanded,
@@ -1770,7 +1770,7 @@ int yvex_backend_transformer_cuda_feature_mean(
     int host_status = 0, rc, cleanup_rc;
     yvex_error cleanup;
     if (facts) memset(facts, 0, sizeof(*facts));
-    if (!state || !state->transformer_feature_mean_function || !facts || !host_output ||
+    if (!state || !state->transformer_feature_mean_function || !facts ||
         !token_count || !hidden_width || !residual_streams ||
         !yvex_core_u64_mul(token_count, hidden_width, &output_count) ||
         !yvex_core_u64_mul(output_count, residual_streams, &input_count) ||
@@ -1830,7 +1830,7 @@ int yvex_backend_transformer_cuda_feature_mean(
         rc = cuda_transformer_refuse(
             err, YVEX_ERR_FORMAT, "cuda.transformer.feature-mean",
             "CUDA transformer feature reduction produced invalid numerics");
-    if (rc == YVEX_OK)
+    if (rc == YVEX_OK && host_output)
         rc = yvex_cuda_status(
             &state->driver,
             state->driver.cuMemcpyDtoH_v2(host_output, output_ptr, output_bytes),
@@ -1844,9 +1844,9 @@ int yvex_backend_transformer_cuda_feature_mean(
     if (rc == YVEX_OK) {
         device_output->is_written = 1;
         if (resident_output) resident_output->is_written = 1;
-        facts->d2h_bytes = output_bytes + sizeof(host_status);
+        facts->d2h_bytes = sizeof(host_status) + (host_output ? output_bytes : 0u);
         facts->kernel_launches = 1ull;
-        facts->download_count = 2ull;
+        facts->download_count = 1ull + (host_output != NULL);
         facts->device_synchronizations = 1ull;
         facts->activation_bytes = activation_bytes;
         facts->temporary_bytes = sizeof(host_status);

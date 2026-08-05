@@ -88,7 +88,7 @@ bounded status transfers. Output projection now consumes the same canonical
 memory representation rather than maintaining a parallel report truth. DSpark
 draft/verification transactionally merge the same transformer and batched
 output-head memory facts with exact launch, H2D/D2H/D2D and synchronization
-counters. Host feature projection, Markov, sampling and acceptance remain
+counters. Stochastic feature, sampling and acceptance references remain
 outside the device-byte lower bound; their elapsed cost remains inside the
 phase duration. Occupancy remains unavailable, so optimization ordering is
 still provisional rather than a promoted kernel-priority decision.
@@ -120,12 +120,11 @@ session, output-head residency and compiled profile; it projects all target
 rows together, performs one width-N CUDA argmax launch and synchronization
 through the sampling owner, and transfers only bounded aggregate
 selection/status facts. Physical accounting is attached once to the ordered
-batch rather than multiplied across logical rows. The accepted-prefix decision remains in
-the target-authoritative speculation transaction, so cancellation and failed
-verification cannot publish selected IDs or state. CPU, audit/forensic and
-stochastic DSpark retain the complete-distribution oracle. The drafter feature,
-Markov and confidence path remains host materialized and is still optimization
-debt. No persisted, wire, public C or profile schema needed a version change.
+batch rather than multiplied across logical rows. The accepted-prefix decision
+remains in the target-authoritative speculation transaction, so cancellation
+and failed verification cannot publish selected IDs or state. CPU,
+audit/forensic and stochastic DSpark retain the complete-distribution oracle.
+No persisted, wire, public C or profile schema needed a version change.
 
 CUDA attention graph replay now separates mutable state preparation from the
 captured kernel topology. The graph-stream preamble refreshes the current state
@@ -173,17 +172,17 @@ already represent this cutover, so no persisted, wire, public C, execution-
 profile or state-layout version changes.
 
 Source-selected target features now collapse their mHC residual streams on
-CUDA and publish each reduced row into both bounded host evidence and a
-transaction-owned token-major device directory. Production feature projection
-consumes that directory without re-upload, then executes its encoded width-N
-matrix and RMSNorm on CUDA with exact activation, temporary, launch,
-synchronization and movement facts. Its normalized device rows are then bound
-to the draft core after current workspace and state generations are prepared;
-the producer-owned digest removes the consumer's duplicate full-row host scan.
-The CPU implementation and one bounded host materialization remain the
-numerical oracle and full-evidence path. Feature evidence and draft/Markov work
-are not yet fully device-resident, so this does not claim the complete DSpark
-cutover and requires no persisted, wire, public C or profile-schema change.
+CUDA. Production greedy execution publishes reduced rows only into the
+transaction-owned token-major device directory and transfers bounded status;
+stochastic and evidence-bearing paths retain the compact host output. Feature
+projection consumes resident input without re-upload, executes its encoded
+width-N matrix and RMSNorm on CUDA, and no longer downloads normalized rows in
+the greedy path. The draft core consumes those rows through its device view,
+while semantic identities bind the exact producer, execution, tensor and
+promoted-prefix facts without scanning device values on the host. Corresponding
+unused host feature workspaces are omitted. The CPU, audit/forensic and
+stochastic implementations remain explicit numerical oracles. This requires no
+persisted, wire, public C or profile-schema change.
 
 Speculative prefill now contributes the merged target, projection and draft-core
 physical facts to the phase roofline ledger. Checked addition is transactional,
@@ -239,8 +238,7 @@ materialization.
 It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE or zero per-layer MoE synchronization, full-model
 live qualification of target-only device stochastic sampling or greedy DSpark
-verification, device-resident draft/Markov or stochastic DSpark
-acceptance/correction, host-free target-feature evidence, paged state allocation,
-prefix persistence, continuous batching,
+verification, device-resident stochastic DSpark acceptance/correction, paged
+state allocation, prefix persistence, continuous batching,
 competitive throughput, evaluation, benchmark qualification, release
 qualification, or Hugging Face publication.

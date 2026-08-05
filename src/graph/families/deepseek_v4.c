@@ -1528,21 +1528,18 @@ if (!context->opts) {
 }
 if (!context->plan || !context->session ||
     !context->descriptor || !context->backend || !context->result ||
-    !context->opts->input || context->opts->input_stride == 0ull)
+    (!context->opts->input && !context->opts->device_input) ||
+    context->opts->input_stride == 0ull)
     return yvex_attention_cuda_reject(
-        context, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT,
-        1ull, 0ull, YVEX_ERR_INVALID_ARG,
-        "CUDA attention requires an explicit input phase and backend");
+        context, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, 1ull, 0ull, YVEX_ERR_INVALID_ARG,
+        "CUDA attention requires an explicit host or device input and backend");
 context->token_count = context->opts->token_count ? context->opts->token_count : 1ull;
 context->rc = graph_execution_admit(
-    context->plan, context->family_ir, context->session, context->descriptor,
-    context->opts,
-    "CUDA attention cancelled before graph dispatch",
-    &context->layer, context->failure, context->err);
+    context->plan, context->family_ir, context->session, context->descriptor, context->opts,
+    "CUDA attention cancelled before graph dispatch", &context->layer, context->failure, context->err);
 if (context->rc != YVEX_OK) return context->rc;
 context->rc = graph_history_admit(
-    context->layer, context->opts, 0, &context->empty_history,
-    context->failure, context->err);
+    context->layer, context->opts, 0, &context->empty_history, context->failure, context->err);
 if (context->rc != YVEX_OK) return context->rc;
 context->history = &context->empty_history;
 context->rc = yvex_attention_cuda_trace_open(
@@ -1553,6 +1550,10 @@ context->rc = yvex_attention_cuda_trace_open(
     context->opts->scratch_limit_bytes, &context->trace_bytes,
     context->failure, context->err);
 if (context->rc != YVEX_OK) return context->rc;
+if (context->trace.input && !context->opts->input)
+    return yvex_attention_cuda_reject(
+        context, YVEX_DEEPSEEK_ATTENTION_FAILURE_INVALID_ARGUMENT, 1ull, 0ull, YVEX_ERR_INVALID_ARG,
+        "CUDA full evidence requires explicit host input materialization");
 if (context->trace.input) {
     unsigned long long token;
     unsigned long long width = context->opts->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE
@@ -1560,8 +1561,7 @@ if (context->trace.input) {
                                    : context->layer->hidden_dimension;
     for (token = 0ull; token < context->token_count; ++token)
         memcpy(context->trace.input + token * width,
-               context->opts->input + token * context->opts->input_stride,
-               (size_t)width * sizeof(float));
+               context->opts->input + token * context->opts->input_stride, (size_t)width * sizeof(float));
 }
     return YVEX_OK;
 }

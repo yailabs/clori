@@ -1299,6 +1299,11 @@ static int attention_probe_input_open(
                 "activation input geometry disagrees with the admitted layer");
         return YVEX_OK;
     }
+    if (context->request->device_view) {
+        *input = NULL;
+        *input_stride = input_width;
+        return YVEX_OK;
+    }
     *owned_input = attention_probe_calloc(
         context->request->workspace, input_count, sizeof(**owned_input));
     *input = *owned_input;
@@ -1759,11 +1764,15 @@ int yvex_attention_execute(
     int selected[ATTENTION_PROBE_CLASS_COUNT] = {0};
     int workspace_started = 0, rc = YVEX_OK;
     if (!request ||
-        ((!request->activation_view &&
+        (((!request->activation_view && !request->device_view) &&
           request->probe != YVEX_ATTENTION_PROBE_CANONICAL_V2) ||
-         (request->activation_view &&
+         ((request->activation_view || request->device_view) &&
           (request->probe != YVEX_ATTENTION_PROBE_UNSPECIFIED ||
-           !yvex_sha256_hex_valid(request->input_identity)))) ||
+           !yvex_sha256_hex_valid(request->input_identity))) ||
+         (request->device_view && !request->activation_view &&
+          (request->backend != YVEX_BACKEND_KIND_CUDA ||
+           request->compare_backends ||
+           request->evidence_level == YVEX_ATTENTION_EVIDENCE_FULL))) ||
         (request->backend != YVEX_BACKEND_KIND_CPU &&
          request->backend != YVEX_BACKEND_KIND_CUDA) ||
         (request->scope != YVEX_ATTENTION_PROBE_SCOPE_QUICK &&

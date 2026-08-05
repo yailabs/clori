@@ -47,8 +47,7 @@ static const yvex_attention_plan *transformer_runtime_attention(
     if (!view) return NULL;
     return scope == YVEX_TENSOR_SCOPE_DRAFT ? view->draft_attention : view->attention;
 }
-static int transformer_device_value_digest(const char *domain,
-    const yvex_transformer_plan_summary *plan,
+static int transformer_device_value_digest(const char *domain, const yvex_transformer_plan_summary *plan,
     unsigned long long layer, const char *routing,
     char output[YVEX_SHA256_HEX_CAP])
 {
@@ -92,14 +91,13 @@ static int transformer_runtime_refuse(yvex_error *err, yvex_status status, const
     return status;
 }
 static int transformer_cuda_facts_add(yvex_runtime_transformer_result *result,
-    const yvex_backend_cuda_operation_facts *facts,
-    unsigned long long h2d_bytes, unsigned long long download_count,
+    const yvex_backend_cuda_operation_facts *facts, unsigned long long h2d_bytes,
+    unsigned long long download_count,
     unsigned long long device_synchronizations, yvex_error *err)
 {
     unsigned long long downloads, uploads, synchronizations;
     if (!result || !facts)
-        return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG,
-                                           "CUDA physical facts are required");
+        return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG, "CUDA physical facts are required");
     if (yvex_execution_memory_facts_add(&result->memory, facts->active_weight_bytes,
             facts->state_bytes,
             facts->activation_bytes, facts->temporary_bytes,
@@ -125,7 +123,7 @@ static int transformer_cuda_facts_add(yvex_runtime_transformer_result *result,
 static int transformer_feature_request_validate(
     const yvex_transformer_plan_summary *plan, const yvex_transformer_input_summary *input,
     const yvex_runtime_transformer_request *request, const yvex_runtime_transformer_output *output,
-    unsigned long long *feature_elements, yvex_error *err)
+    yvex_attention_evidence_level evidence, unsigned long long *feature_elements, yvex_error *err)
 {
     unsigned long long index, rows, hidden_elements;
     *feature_elements = 0ull;
@@ -159,11 +157,14 @@ static int transformer_feature_request_validate(
                          err, YVEX_ERR_INVALID_ARG,
                          "transformer feature outputs require requested layers")
                    : YVEX_OK;
-    if (!request->feature_layer_ordinals || !output->features ||
+    if (!request->feature_layer_ordinals ||
         !yvex_core_u64_mul(input->token_count, request->feature_layer_count,
                            &rows) ||
         !yvex_core_u64_mul(rows, plan->hidden_width, feature_elements) ||
-        output->feature_capacity < *feature_elements)
+        (output->features && output->feature_capacity < *feature_elements) ||
+        (!output->features &&
+         (output->feature_capacity || request->backend != YVEX_BACKEND_KIND_CUDA ||
+          !output->device_features || evidence == YVEX_ATTENTION_EVIDENCE_FULL)))
         return transformer_runtime_refuse(err, YVEX_ERR_BOUNDS,
                                           "transformer feature output capacity is insufficient");
     if ((output->device_features &&
@@ -581,10 +582,8 @@ static int transformer_activation_view(void *opaque, unsigned long long layer_or
     *stride = source->input_width;
     return YVEX_OK;
 }
-static int transformer_device_view(void *opaque, unsigned long long layer_ordinal,
-                                   unsigned long long token_count,
-                                   const yvex_device_tensor **input,
-                                   yvex_device_tensor **output, yvex_error *err)
+static int transformer_device_view(void *opaque, unsigned long long layer_ordinal, unsigned long long token_count,
+                                   const yvex_device_tensor **input, yvex_device_tensor **output, yvex_error *err)
 {
     transformer_activation_source *source = (transformer_activation_source *)opaque;
     if (!source || !source->device_input || !source->device_output || !input || !output ||
@@ -607,9 +606,11 @@ static int transformer_feature_capture(transformer_chunk_context *chunk,
         chunk->request->feature_layer_ordinals[chunk->feature_next] != completed_layer)
         return YVEX_OK;
     feature_index = chunk->feature_next++;
-    destination = chunk->output->features +
-        (chunk->token_offset * chunk->request->feature_layer_count +
-         feature_index) * plan->hidden_width;
+    destination = chunk->output->features
+        ? chunk->output->features +
+              (chunk->token_offset * chunk->request->feature_layer_count +
+               feature_index) * plan->hidden_width
+        : NULL;
     if (chunk->backend == YVEX_BACKEND_KIND_CUDA &&
         chunk->owner->options.evidence_level != YVEX_ATTENTION_EVIDENCE_FULL) {
         yvex_backend_cuda_operation_facts facts = {0};
@@ -623,14 +624,15 @@ static int transformer_feature_capture(transformer_chunk_context *chunk,
             &chunk->device_hidden, chunk->output->device_features,
             resident_row_offset, chunk->output->device_feature_row_stride,
             feature_index * plan->hidden_width,
-            chunk->owner->candidate_hidden, &facts, err);
+            destination ? chunk->owner->candidate_hidden : NULL, &facts, err);
         if (rc != YVEX_OK) return rc;
         rc = transformer_cuda_facts_add(chunk->result, &facts, 0ull, 0ull, 0ull, err);
         if (rc != YVEX_OK) return rc;
-        for (token = 0ull; token < chunk->token_count; ++token)
-            memcpy(destination + token * chunk->request->feature_layer_count * plan->hidden_width,
-                   chunk->owner->candidate_hidden + token * plan->hidden_width,
-                   (size_t)plan->hidden_width * sizeof(float));
+        if (destination)
+            for (token = 0ull; token < chunk->token_count; ++token)
+                memcpy(destination + token * chunk->request->feature_layer_count * plan->hidden_width,
+                       chunk->owner->candidate_hidden + token * plan->hidden_width,
+                       (size_t)plan->hidden_width * sizeof(float));
         return YVEX_OK;
     }
     for (token = 0ull; token < chunk->token_count; ++token) {
@@ -646,8 +648,7 @@ static int transformer_feature_capture(transformer_chunk_context *chunk,
     }
     return YVEX_OK;
 }
-/* Complete one ordered block from staged attention through MoE/deferred mHC while the request
- * coordinator retains attention and KV commit authority. */
+/* Complete one ordered block while the coordinator retains attention and KV commit authority. */
 int yvex_runtime_transformer_execute_block(
     yvex_runtime_transformer_context *context, unsigned long long layer_ordinal,
     const unsigned int *token_ids, unsigned long long token_count,
@@ -1218,7 +1219,7 @@ static int transformer_core_features_execute(
     if (!context || !plan || plan->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
         (disposition != YVEX_ATTENTION_TRANSACTION_COMMIT &&
          disposition != YVEX_ATTENTION_TRANSACTION_STAGE) ||
-        !features || !token_count || !result ||
+        (!features && !device_features) || !token_count || !result ||
         !yvex_core_u64_mul(token_count, plan->hidden_width, &value_count) ||
         !yvex_core_u64_mul(token_count, plan->expanded_width, &expanded_count) ||
         !yvex_sha256_hex_valid(feature_identity))
@@ -1274,7 +1275,7 @@ static int transformer_core_features_execute(
         .operation_scope = YVEX_ATTENTION_OPERATION_CORE, .token_count = token_count,
         .token_position = token_start, .select_position = 1,
         .input_identity = result->input_digest,
-        .activation_view = transformer_activation_view,
+        .activation_view = features ? transformer_activation_view : NULL,
         .device_view = device_features ? transformer_device_view : NULL,
         .activation_context = &activation,
         .cancel_requested = context->options.cancel_requested,
@@ -1427,8 +1428,7 @@ failure:
     (void)yvex_runtime_transformer_context_close(&context, NULL);
     return rc;
 }
-const yvex_transformer_plan *yvex_runtime_transformer_context_plan(
-    const yvex_runtime_transformer_context *context)
+const yvex_transformer_plan *yvex_runtime_transformer_context_plan(const yvex_runtime_transformer_context *context)
 {
     return context ? context->plan : NULL;
 }
@@ -1459,22 +1459,18 @@ static int transformer_execution_identity(
         !yvex_sha256_update_u64(&hash, request->candidate_block_visible) ||
         !yvex_sha256_update_u64(&hash, request->retain_prefix_checkpoints) ||
         !yvex_sha256_update_u64(&hash, request->feature_layer_count))
-        return transformer_runtime_refuse(err, YVEX_ERR_STATE,
-                                          "transformer execution identity failed");
+        return transformer_runtime_refuse(err, YVEX_ERR_STATE, "transformer execution identity failed");
     for (index = 0ull; index < request->feature_layer_count; ++index)
         if (!yvex_sha256_update_u64(
                 &hash, request->feature_layer_ordinals[index]))
             return transformer_runtime_refuse(
-                err, YVEX_ERR_STATE,
-                "transformer feature identity derivation failed");
+                err, YVEX_ERR_STATE, "transformer feature identity derivation failed");
     if (!yvex_sha256_final(&hash, digest))
-        return transformer_runtime_refuse(err, YVEX_ERR_STATE,
-                                          "transformer execution identity failed");
+        return transformer_runtime_refuse(err, YVEX_ERR_STATE, "transformer execution identity failed");
     yvex_sha256_hex(digest, result->execution_identity);
     return YVEX_OK;
 }
-int yvex_runtime_transformer_context_validate_input(
-    const yvex_runtime_transformer_context *context,
+int yvex_runtime_transformer_context_validate_input(const yvex_runtime_transformer_context *context,
     const yvex_transformer_input *input, yvex_error *err)
 {
     if (!context || !input)
@@ -1607,12 +1603,15 @@ static int transformer_execution_finish(
             err, YVEX_ERR_STATE, "transformer device-hidden publication failed");
     else if (rc == YVEX_OK)
         result->normalized_hidden_device_available = 1;
-    if (rc == YVEX_OK && feature_elements &&
-        !yvex_execution_f32_digest("yvex.transformer.target-features.v1",
-                                   output->features, feature_elements,
-                                   result->feature_digest))
-        rc = transformer_runtime_refuse(
+    if (rc == YVEX_OK && feature_elements) {
+        int sealed = output->features
+            ? yvex_execution_f32_digest("yvex.transformer.target-features.v1",
+                  output->features, feature_elements, result->feature_digest)
+            : transformer_device_value_digest("yvex.transformer.device-target-features.v1",
+                  plan, result->position_after, result->layer_digest, result->feature_digest);
+        if (!sealed) rc = transformer_runtime_refuse(
             err, YVEX_ERR_STATE, "transformer feature digest derivation failed");
+    }
     if (rc == YVEX_OK) {
         result->feature_layer_count = request->feature_layer_count;
         result->feature_row_count = input_summary->token_count;
@@ -1626,8 +1625,7 @@ static int transformer_execution_finish(
     if (rc == YVEX_OK) result->completed = 1;
     return rc;
 }
-/* Execute identity-bound tokens as independently committed full-stack chunks; normalized hidden
- * rows become visible only after commit. */
+/* Publish normalized rows only after each identity-bound full-stack chunk commits. */
 int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
                                      const yvex_transformer_input *input,
                                      const yvex_runtime_transformer_request *request,
@@ -1660,7 +1658,8 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
         return transformer_runtime_refuse(err, YVEX_ERR_INVALID_ARG,
                                           "transformer execution owners/capacity are invalid");
     rc = transformer_feature_request_validate(
-        plan, input_summary, request, output, &feature_elements, err);
+        plan, input_summary, request, output, context->options.evidence_level,
+        &feature_elements, err);
     if (rc != YVEX_OK) return rc;
     if (pthread_mutex_lock(&context->mutex) != 0)
         return transformer_runtime_refuse(err, YVEX_ERR_STATE, "transformer context lock failed");

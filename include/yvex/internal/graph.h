@@ -483,6 +483,7 @@ typedef struct {
     void *cancel_context;
     const char *input_identity;
     yvex_attention_activation_view_fn activation_view;
+    /* This view may stand alone only for CUDA execution without full host evidence. */
     yvex_attention_device_view_fn device_view;
     void *activation_context;
     const yvex_attention_probe_state_provider *state_provider;

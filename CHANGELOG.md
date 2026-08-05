@@ -73,17 +73,17 @@ change. Git history preserves implementation chronology.
   and Markov views directly and transfers one scalar result. The portable host
   distribution and confidence paths remain the CPU, audit/forensic and stochastic
   oracles.
-- Production CUDA target-feature capture now averages source-selected mHC
-  residual streams into bounded host evidence and a transaction-owned
-  token-major device directory. Production feature projection consumes that
-  directory without re-upload, then batches the rows through the resident
-  encoded matrix and CUDA RMSNorm with exact physical accounting. The normalized
-  rows feed the draft core through an identity-bound device view, and the
-  producer-owned feature digest removes the consumer's duplicate full-row scan.
-  The CPU projector and bounded host materialization remain the audit/reference
-  oracle; host-free feature evidence, Markov embedding decode and confidence
-  execution remain explicit debt. Speculative prefill now contributes its merged
-  target, projection and draft-core physical facts to the phase roofline ledger.
+- Production greedy CUDA target-feature capture now averages source-selected mHC
+  residual streams directly into a transaction-owned token-major device
+  directory and transfers only bounded status. Feature projection consumes that
+  directory without re-upload, executes the resident encoded matrix and RMSNorm
+  without downloading the normalized rows, and feeds the draft core through an
+  identity-bound device view. Its unused host feature workspaces are no longer
+  allocated. Prefix-specific semantic identities bind device-only candidate and
+  promoted rows without a full-array host scan. CPU, audit/forensic and
+  stochastic DSpark retain explicit host feature oracles. Speculative prefill
+  contributes its merged target, projection and draft-core physical facts to the
+  phase roofline ledger.
 - The production CUDA transformer final stage now preserves an optional
   pre-normalized BF16 row in device storage before applying output RMSNorm.
   DSpark drafting materializes only that bounded hidden row instead of the

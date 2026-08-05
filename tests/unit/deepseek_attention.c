@@ -2437,6 +2437,19 @@ static int test_probe_seed_contract(void)
     return 0;
 }
 
+static int probe_device_view_unreached(
+    void *context, unsigned long long layer_ordinal, unsigned long long token_count,
+    const yvex_device_tensor **input, yvex_device_tensor **output, yvex_error *error)
+{
+    (void)context;
+    (void)layer_ordinal;
+    (void)token_count;
+    (void)input;
+    (void)output;
+    yvex_error_set(error, YVEX_ERR_STATE, "test.attention", "device view was unexpectedly opened");
+    return YVEX_ERR_STATE;
+}
+
 static int test_probe_version_refusal(void)
 {
     yvex_attention_probe_request request = {0};
@@ -2488,6 +2501,37 @@ static int test_probe_version_refusal(void)
             NULL, NULL, NULL, NULL, NULL, &request, &result, NULL, &error) ==
             YVEX_ERR_INVALID_ARG && result.layers_executed == 0ull,
         "direct graph API refuses unknown operation scope before publication");
+    request.operation_scope = YVEX_ATTENTION_OPERATION_CORE;
+    request.backend = YVEX_BACKEND_KIND_CUDA;
+    request.probe = YVEX_ATTENTION_PROBE_UNSPECIFIED;
+    request.device_view = probe_device_view_unreached;
+    request.input_identity =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    yvex_error_clear(&error);
+    YVEX_TEST_ASSERT(
+        yvex_attention_execute(
+            NULL, NULL, NULL, NULL, NULL, &request, &result, NULL, &error) ==
+                YVEX_ERR_INVALID_ARG &&
+            strcmp(yvex_error_message(&error),
+                   "sealed attention owners and execution API are required") == 0,
+        "device-only CUDA input passes request admission before owner validation");
+    request.backend = YVEX_BACKEND_KIND_CPU;
+    yvex_error_clear(&error);
+    YVEX_TEST_ASSERT(
+        yvex_attention_execute(
+            NULL, NULL, NULL, NULL, NULL, &request, &result, NULL, &error) ==
+                YVEX_ERR_INVALID_ARG &&
+            strcmp(yvex_error_message(&error), "canonical V2 probe request is invalid") == 0,
+        "device-only input refuses CPU execution");
+    request.backend = YVEX_BACKEND_KIND_CUDA;
+    request.evidence_level = YVEX_ATTENTION_EVIDENCE_FULL;
+    yvex_error_clear(&error);
+    YVEX_TEST_ASSERT(
+        yvex_attention_execute(
+            NULL, NULL, NULL, NULL, NULL, &request, &result, NULL, &error) ==
+                YVEX_ERR_INVALID_ARG &&
+            strcmp(yvex_error_message(&error), "canonical V2 probe request is invalid") == 0,
+        "device-only input refuses full host evidence without materialization");
     return 0;
 }
 
