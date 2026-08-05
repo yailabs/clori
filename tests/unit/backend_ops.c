@@ -313,10 +313,16 @@ static int test_rms_norm_success(void)
     yvex_device_tensor *out = NULL;
     yvex_backend_tensor_desc desc;
     yvex_error err;
-    float input_data[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float input_data[8] = {
+        1.0f, 1.0f, 1.0f, 1.0f,
+        1.0f, -1.0f, 1.0f, -1.0f,
+    };
     unsigned char weight_data[8];
-    float out_data[4];
-    float expected[4] = {0.9999995f, 1.9999990f, 2.9999985f, 3.9999980f};
+    float out_data[8];
+    float expected[8] = {
+        0.9999995f, 1.9999990f, 2.9999985f, 3.9999980f,
+        0.9999995f, -1.9999990f, 2.9999985f, -3.9999980f,
+    };
     unsigned int half_values[4] = {0x3c00u, 0x4000u, 0x4200u, 0x4400u};
     unsigned int i;
     int rc;
@@ -327,7 +333,7 @@ static int test_rms_norm_success(void)
 
     YVEX_TEST_ASSERT(yvex_backend_open_cpu(&backend, &err) == YVEX_OK, "open cpu rms");
 
-    make_desc(&desc, "input", YVEX_DTYPE_F32, 2, 1, 4, sizeof(input_data));
+    make_desc(&desc, "input", YVEX_DTYPE_F32, 2, 2, 4, sizeof(input_data));
     rc = yvex_backend_tensor_alloc(backend, &desc, &input, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "allocate rms input");
     rc = yvex_backend_tensor_write(backend, input, input_data, sizeof(input_data), &err);
@@ -339,7 +345,7 @@ static int test_rms_norm_success(void)
     rc = yvex_backend_tensor_write(backend, weight, weight_data, sizeof(weight_data), &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "write rms weight");
 
-    make_desc(&desc, "out", YVEX_DTYPE_F32, 2, 1, 4, sizeof(out_data));
+    make_desc(&desc, "out", YVEX_DTYPE_F32, 2, 2, 4, sizeof(out_data));
     rc = yvex_backend_tensor_alloc(backend, &desc, &out, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "allocate rms output");
 
@@ -347,7 +353,7 @@ static int test_rms_norm_success(void)
     YVEX_TEST_ASSERT(rc == YVEX_OK, "rms norm succeeds");
     rc = yvex_backend_tensor_read(backend, out, out_data, sizeof(out_data), &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "read rms output");
-    for (i = 0; i < 4u; ++i) {
+    for (i = 0; i < 8u; ++i) {
         YVEX_TEST_ASSERT(float_close(out_data[i], expected[i], 0.0001f), "rms output matches expected");
     }
 

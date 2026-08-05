@@ -1245,9 +1245,10 @@ int yvex_cuda_op_rms_norm(yvex_backend *backend,
     CUdeviceptr weight_ptr;
     CUdeviceptr out_ptr;
     unsigned long long hidden_size;
+    unsigned long long row_count;
     unsigned int block_size = 256u;
     unsigned int shared_bytes = block_size * (unsigned int)sizeof(float);
-    void *params[5];
+    void *params[6];
     yvex_backend_operation_variant variant;
     int rc;
     if (!state) {
@@ -1255,18 +1256,18 @@ int yvex_cuda_op_rms_norm(yvex_backend *backend,
                        "CUDA backend state is missing");
         return YVEX_ERR_STATE;
     }
-    if (!backend_tensor_owner_is(backend, input) ||
-        !backend_tensor_owner_is(backend, weight) ||
-        !backend_tensor_owner_is(backend, out)) {
-        yvex_error_set(err, YVEX_ERR_STATE, "yvex_backend_op_rms_norm",
-                       "input, weight, and output tensors must belong to this backend");
-        return YVEX_ERR_STATE;
+    rc = yvex_backend_validate_rms_norm(
+        backend, input, weight, epsilon, out, &hidden_size,
+        "CUDA RMSNorm supports F32 input/output with F16 or F32 weight",
+        "yvex_backend_op_rms_norm", err);
+    if (rc != YVEX_OK) {
+        return rc;
     }
-    if (input->dtype != YVEX_DTYPE_F32 || out->dtype != YVEX_DTYPE_F32 ||
-        (weight->dtype != YVEX_DTYPE_F32 && weight->dtype != YVEX_DTYPE_F16)) {
-        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "yvex_backend_op_rms_norm",
-                       "CUDA RMSNorm supports F32 input/output with F16 or F32 weight");
-        return YVEX_ERR_UNSUPPORTED;
+    row_count = input->rank == 2 ? input->dims[0] : 1ull;
+    if (row_count > UINT_MAX) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "yvex_backend_op_rms_norm",
+                       "CUDA RMSNorm row count exceeds launch geometry");
+        return YVEX_ERR_BOUNDS;
     }
     variant = weight->dtype == YVEX_DTYPE_F16
                   ? YVEX_BACKEND_VARIANT_RMS_NORM_F32_WEIGHT_F16
@@ -1274,13 +1275,6 @@ int yvex_cuda_op_rms_norm(yvex_backend *backend,
     out->is_written = 0;
     rc = yvex_cuda_require_capability(backend, variant,
                                       "yvex_backend_op_rms_norm", err);
-    if (rc != YVEX_OK) {
-        return rc;
-    }
-    rc = yvex_backend_validate_rms_norm(
-        backend, input, weight, epsilon, out, &hidden_size,
-        "CUDA RMSNorm supports F32 input/output with F16 or F32 weight",
-        "yvex_backend_op_rms_norm", err);
     if (rc != YVEX_OK) {
         return rc;
     }
@@ -1295,12 +1289,13 @@ int yvex_cuda_op_rms_norm(yvex_backend *backend,
     params[1] = &weight_ptr;
     params[2] = &out_ptr;
     params[3] = &hidden_size;
-    params[4] = &epsilon;
+    params[4] = &row_count;
+    params[5] = &epsilon;
     rc = yvex_cuda_launch(backend, variant,
                           weight->dtype == YVEX_DTYPE_F16
                               ? state->rms_norm_f16_function
                               : state->rms_norm_f32_function,
-                          1, block_size, shared_bytes, params,
+                          (unsigned int)row_count, block_size, shared_bytes, params,
                           "cuda.rms_norm.launch", err);
     if (rc == YVEX_OK) {
         rc = yvex_cuda_synchronize(backend, variant, "cuda.rms_norm.sync", err);

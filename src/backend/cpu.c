@@ -596,10 +596,9 @@ static int cpu_op_rms_norm(yvex_backend *backend,
     const unsigned char *weight_f16;
     float *out_data;
     unsigned long long hidden_size;
+    unsigned long long row_count;
+    unsigned long long row;
     unsigned long long i;
-    double sum_squares = 0.0;
-    double rms;
-    double inv_rms;
     int rc;
 
     rc = yvex_backend_validate_rms_norm(
@@ -614,17 +613,27 @@ static int cpu_op_rms_norm(yvex_backend *backend,
     weight_f32 = (const float *)weight->data;
     weight_f16 = (const unsigned char *)weight->data;
     out_data = (float *)out->data;
+    row_count = input->rank == 2 ? input->dims[0] : 1ull;
 
-    for (i = 0; i < hidden_size; ++i) {
-        sum_squares += (double)input_data[i] * (double)input_data[i];
-    }
-    rms = backend_sqrt_double((sum_squares / (double)hidden_size) + (double)epsilon);
-    inv_rms = rms > 0.0 ? 1.0 / rms : 0.0;
-    for (i = 0; i < hidden_size; ++i) {
-        float w = weight->dtype == YVEX_DTYPE_F16
-                      ? cpu_decode_f16(weight_f16 + (i * 2ull))
-                      : weight_f32[i];
-        out_data[i] = (float)((double)input_data[i] * inv_rms * (double)w);
+    for (row = 0ull; row < row_count; ++row) {
+        unsigned long long offset = row * hidden_size;
+        double sum_squares = 0.0;
+        double rms;
+        double inv_rms;
+
+        for (i = 0ull; i < hidden_size; ++i) {
+            sum_squares += (double)input_data[offset + i] *
+                           (double)input_data[offset + i];
+        }
+        rms = backend_sqrt_double((sum_squares / (double)hidden_size) + (double)epsilon);
+        inv_rms = rms > 0.0 ? 1.0 / rms : 0.0;
+        for (i = 0ull; i < hidden_size; ++i) {
+            float w = weight->dtype == YVEX_DTYPE_F16
+                          ? cpu_decode_f16(weight_f16 + (i * 2ull))
+                          : weight_f32[i];
+            out_data[offset + i] =
+                (float)((double)input_data[offset + i] * inv_rms * (double)w);
+        }
     }
 
     out->is_written = 1;

@@ -1065,6 +1065,9 @@ int yvex_backend_validate_rms_norm(const yvex_backend *backend,
                                    const char *where,
                                    yvex_error *err)
 {
+    unsigned long long row_count;
+    unsigned long long element_count;
+
     if (!hidden_size) {
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, where, "hidden-size output is required");
         return YVEX_ERR_INVALID_ARG;
@@ -1085,36 +1088,46 @@ int yvex_backend_validate_rms_norm(const yvex_backend *backend,
         yvex_error_set(err, YVEX_ERR_INVALID_ARG, where, "epsilon must be finite and positive");
         return YVEX_ERR_INVALID_ARG;
     }
-    if (input->rank == 2 && input->dims[0] == 1) {
+    if (input->rank == 2) {
+        row_count = input->dims[0];
         *hidden_size = input->dims[1];
     } else if (input->rank == 1) {
+        row_count = 1ull;
         *hidden_size = input->dims[0];
     } else {
         yvex_error_set(err, YVEX_ERR_FORMAT, where,
-                       "RMSNorm input must be rank 1 or dims [1, hidden]");
+                       "RMSNorm input must be rank 1 or dims [rows, hidden]");
         return YVEX_ERR_FORMAT;
     }
-    if (*hidden_size == 0ull || weight->rank != 1 || weight->dims[0] != *hidden_size ||
+    if (row_count == 0ull || *hidden_size == 0ull) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, where,
+                       "RMSNorm row count and hidden size must be non-zero");
+        return YVEX_ERR_FORMAT;
+    }
+    if (*hidden_size > ULLONG_MAX / row_count) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, where, "RMSNorm dimensions overflow");
+        return YVEX_ERR_BOUNDS;
+    }
+    if (weight->rank != 1 || weight->dims[0] != *hidden_size ||
         out->rank != input->rank || out->dims[0] != input->dims[0] ||
         (input->rank == 2 && out->dims[1] != input->dims[1])) {
         yvex_error_set(err, YVEX_ERR_FORMAT, where,
-                       *hidden_size == 0ull
-                           ? "RMSNorm hidden size must be non-zero"
-                           : weight->rank != 1 || weight->dims[0] != *hidden_size
-                                 ? "RMSNorm weight must be rank 1 and match hidden size"
-                                 : "RMSNorm output shape must match input shape");
+                       weight->rank != 1 || weight->dims[0] != *hidden_size
+                           ? "RMSNorm weight must be rank 1 and match hidden size"
+                           : "RMSNorm output shape must match input shape");
         return YVEX_ERR_FORMAT;
     }
-    if (!backend_tensor_f32_elements(input, *hidden_size) ||
-        !backend_tensor_f32_elements(out, *hidden_size) ||
+    element_count = row_count * *hidden_size;
+    if (!backend_tensor_f32_elements(input, element_count) ||
+        !backend_tensor_f32_elements(out, element_count) ||
         (weight->dtype == YVEX_DTYPE_F32 &&
          !backend_tensor_f32_elements(weight, *hidden_size)) ||
         (weight->dtype == YVEX_DTYPE_F16 &&
          !backend_f16_elements(weight, *hidden_size))) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, where,
-                       !backend_tensor_f32_elements(input, *hidden_size) ||
-                               !backend_tensor_f32_elements(out, *hidden_size)
-                           ? "RMSNorm input/output bytes must match F32 hidden size"
+                       !backend_tensor_f32_elements(input, element_count) ||
+                               !backend_tensor_f32_elements(out, element_count)
+                           ? "RMSNorm input/output bytes must match F32 row geometry"
                            : weight->dtype == YVEX_DTYPE_F32
                                  ? "RMSNorm F32 weight bytes must match hidden size"
                                  : "RMSNorm F16 weight bytes must match hidden size");

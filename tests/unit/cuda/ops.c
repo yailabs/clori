@@ -262,11 +262,17 @@ int yvex_cuda_test_ops(void)
     float embedding_f16_sentinel[6] = {
         -91.0f, -92.0f, -93.0f, -94.0f, -95.0f, -96.0f,
     };
-    float rms_input_data[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float rms_input_data[8] = {
+        1.0f, 1.0f, 1.0f, 1.0f,
+        1.0f, -1.0f, 1.0f, -1.0f,
+    };
     float rms_weight_f32_data[4] = {1.0f, 2.0f, 3.0f, 4.0f};
     unsigned char rms_weight_data[8];
-    float rms_out_data[4];
-    float rms_expected[4] = {0.9999995f, 1.9999990f, 2.9999985f, 3.9999980f};
+    float rms_out_data[8];
+    float rms_expected[8] = {
+        0.9999995f, 1.9999990f, 2.9999985f, 3.9999980f,
+        0.9999995f, -1.9999990f, 2.9999985f, -3.9999980f,
+    };
     float rope_input_data[8] = {0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f};
     float rope_out_data[8];
     float attention_query_data[4] = {0.1f, 0.2f, 0.3f, 0.4f};
@@ -451,7 +457,7 @@ int yvex_cuda_test_ops(void)
                          "F16 embedding covers signed, subnormal, and boundary values");
     }
 
-    make_desc(&desc, "rms_input", YVEX_DTYPE_F32, 2, 1, 4, sizeof(rms_input_data));
+    make_desc(&desc, "rms_input", YVEX_DTYPE_F32, 2, 2, 4, sizeof(rms_input_data));
     rc = yvex_backend_tensor_alloc(cuda_backend, &desc, &rms_input, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "allocate cuda rms input");
     rc = yvex_backend_tensor_write(cuda_backend, rms_input, rms_input_data, sizeof(rms_input_data), &err);
@@ -472,7 +478,7 @@ int yvex_cuda_test_ops(void)
     rc = yvex_backend_tensor_write(cuda_backend, rms_weight, rms_weight_data, sizeof(rms_weight_data), &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "write cuda rms weight");
 
-    make_desc(&desc, "rms_out", YVEX_DTYPE_F32, 2, 1, 4, sizeof(rms_out_data));
+    make_desc(&desc, "rms_out", YVEX_DTYPE_F32, 2, 2, 4, sizeof(rms_out_data));
     rc = yvex_backend_tensor_alloc(cuda_backend, &desc, &rms_out, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "allocate cuda rms output");
     rc = yvex_backend_op_rms_norm(cuda_backend, rms_input, rms_weight_f32,
@@ -481,7 +487,7 @@ int yvex_cuda_test_ops(void)
     rc = yvex_backend_tensor_read(cuda_backend, rms_out, rms_out_data,
                                   sizeof(rms_out_data), &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "read CUDA RMSNorm F32 output");
-    for (i = 0; i < 4u; ++i) {
+    for (i = 0; i < 8u; ++i) {
         YVEX_TEST_ASSERT(float_close(rms_out_data[i], rms_expected[i], 0.0001f),
                          "CUDA RMSNorm F32 output matches reference");
     }
@@ -489,7 +495,7 @@ int yvex_cuda_test_ops(void)
     YVEX_TEST_ASSERT(rc == YVEX_OK, "cuda rms norm succeeds");
     rc = yvex_backend_tensor_read(cuda_backend, rms_out, rms_out_data, sizeof(rms_out_data), &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK, "read cuda rms output");
-    for (i = 0; i < 4u; ++i) {
+    for (i = 0; i < 8u; ++i) {
         YVEX_TEST_ASSERT(float_close(rms_out_data[i], rms_expected[i], 0.0001f),
                          "cuda rms output matches expected");
     }

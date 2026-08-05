@@ -424,19 +424,23 @@ extern "C" __global__ void yvex_embed_f16_to_f32(
 }
 extern "C" __global__ void yvex_rms_norm_f32_weight_f32(
     const float *input, const float *weight, float *out,
-    unsigned long long hidden_size, float epsilon)
+    unsigned long long hidden_size, unsigned long long row_count, float epsilon)
 {
     extern __shared__ float scratch[];
     unsigned int tid = threadIdx.x;
     unsigned int stride = blockDim.x;
+    unsigned long long row = (unsigned long long)blockIdx.x;
+    unsigned long long row_offset;
     unsigned long long i;
     float sum = 0.0f;
     float inv_rms;
-    if (!input || !weight || !out || hidden_size == 0ull || epsilon <= 0.0f) {
+    if (!input || !weight || !out || hidden_size == 0ull || row >= row_count ||
+        epsilon <= 0.0f) {
         return;
     }
+    row_offset = row * hidden_size;
     for (i = (unsigned long long)tid; i < hidden_size; i += (unsigned long long)stride) {
-        float v = input[i];
+        float v = input[row_offset + i];
         sum += v * v;
     }
     scratch[tid] = sum;
@@ -449,24 +453,28 @@ extern "C" __global__ void yvex_rms_norm_f32_weight_f32(
     }
     inv_rms = rsqrtf((scratch[0] / (float)hidden_size) + epsilon);
     for (i = (unsigned long long)tid; i < hidden_size; i += (unsigned long long)stride) {
-        out[i] = input[i] * inv_rms * weight[i];
+        out[row_offset + i] = input[row_offset + i] * inv_rms * weight[i];
     }
 }
 extern "C" __global__ void yvex_rms_norm_f32_weight_f16(
     const float *input, const unsigned short *weight, float *out,
-    unsigned long long hidden_size, float epsilon)
+    unsigned long long hidden_size, unsigned long long row_count, float epsilon)
 {
     extern __shared__ float scratch[];
     unsigned int tid = threadIdx.x;
     unsigned int stride = blockDim.x;
+    unsigned long long row = (unsigned long long)blockIdx.x;
+    unsigned long long row_offset;
     unsigned long long i;
     float sum = 0.0f;
     float inv_rms;
-    if (!input || !weight || !out || hidden_size == 0ull || epsilon <= 0.0f) {
+    if (!input || !weight || !out || hidden_size == 0ull || row >= row_count ||
+        epsilon <= 0.0f) {
         return;
     }
+    row_offset = row * hidden_size;
     for (i = (unsigned long long)tid; i < hidden_size; i += (unsigned long long)stride) {
-        float v = input[i];
+        float v = input[row_offset + i];
         sum += v * v;
     }
     scratch[tid] = sum;
@@ -479,7 +487,8 @@ extern "C" __global__ void yvex_rms_norm_f32_weight_f16(
     }
     inv_rms = rsqrtf((scratch[0] / (float)hidden_size) + epsilon);
     for (i = (unsigned long long)tid; i < hidden_size; i += (unsigned long long)stride) {
-        out[i] = input[i] * inv_rms * f16_bits_to_float((unsigned int)weight[i]);
+        out[row_offset + i] = input[row_offset + i] * inv_rms *
+                              f16_bits_to_float((unsigned int)weight[i]);
     }
 }
 /* Apply bounded causal RoPE to one F32 activation. */
