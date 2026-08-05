@@ -1087,18 +1087,13 @@ static int runtime_binding_compiler_plan(runtime_binding_compiler *compiler,
         }
         if (rc == YVEX_OK && request->imatrix_path) {
             imatrix_options.path = request->imatrix_path;
-            if (request->quant_preset_name &&
-                strcmp(request->quant_preset_name, YVEX_QUANT_DSPARK_PROFILE_NAME) == 0) {
-                imatrix_options.source_model_identity =
-                    YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY;
-                imatrix_options.calibration_dataset_identity =
-                    YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY;
-            } else {
-                imatrix_options.source_model_identity =
-                    transform ? transform->transform_identity : NULL;
-                imatrix_options.calibration_dataset_identity =
-                    "deepseek-v4-flash-chat-v2-rendered-prompts-v1";
-            }
+            /* This request carries a path, not independent calibration provenance. Reconstruct
+             * only the admitted predecessor prior used by planning and emission; a fresh
+             * calibration requires an explicit provenance contract rather than inference from
+             * the policy-selection mechanism. */
+            imatrix_options.source_model_identity = YVEX_QUANT_DSPARK_IMATRIX_SOURCE_IDENTITY;
+            imatrix_options.calibration_dataset_identity =
+                YVEX_QUANT_DSPARK_IMATRIX_DATASET_IDENTITY;
             imatrix_options.producer = "llama.cpp-imatrix";
             imatrix_options.producer_version = 1u;
             imatrix_options.maximum_mapped_bytes = 1024u * 1024u * 1024u;
