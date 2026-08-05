@@ -158,6 +158,8 @@ int yvex_backend_transformer_cuda_feature_mean(
     yvex_backend *backend, const yvex_device_tensor *expanded,
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, yvex_device_tensor *device_output,
+    yvex_device_tensor *resident_output, unsigned long long resident_row_offset,
+    unsigned long long resident_row_stride, unsigned long long resident_column_offset,
     float *host_output, yvex_backend_cuda_operation_facts *facts,
     yvex_error *err);
 int yvex_backend_transformer_cuda_final(
@@ -217,6 +219,9 @@ typedef struct {
     unsigned long long pre_normalized_capacity;
     float *features;
     unsigned long long feature_capacity;
+    yvex_device_tensor *device_features;
+    unsigned long long device_feature_row_offset;
+    unsigned long long device_feature_row_stride;
 } yvex_runtime_transformer_output;
 typedef struct {
     int completed;

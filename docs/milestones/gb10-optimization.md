@@ -173,13 +173,15 @@ already represent this cutover, so no persisted, wire, public C, execution-
 profile or state-layout version changes.
 
 Source-selected target features now collapse their mHC residual streams on
-CUDA before explicit host materialization. Production transfers one reduced
-hidden row plus bounded status instead of the complete expanded row, and the
-same operation publishes exact activation, temporary, launch, synchronization
-and movement facts. The CPU implementation remains the numerical oracle and
-full-evidence path. Feature projection and draft/Markov execution are still
-host-owned, so this does not claim a device-resident DSpark path and requires
-no persisted, wire, public C or profile-schema change.
+CUDA and publish each reduced row into both bounded host evidence and a
+transaction-owned token-major device directory. Production feature projection
+consumes that directory without re-upload, then executes its encoded width-N
+matrix and RMSNorm on CUDA with exact activation, temporary, launch,
+synchronization and movement facts. The CPU implementation remains the
+numerical oracle and full-evidence path. Feature evidence and normalized draft
+input still materialize on the host, and draft/Markov execution remains
+host-owned, so this does not claim a fully device-resident DSpark path and
+requires no persisted, wire, public C or profile-schema change.
 
 The CUDA transformer final operation now has one optional device output for
 the BF16 pre-normalized row. Production drafting reuses final-layer attention
@@ -231,6 +233,7 @@ It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE or zero per-layer MoE synchronization, full-model
 live qualification of target-only device stochastic sampling or greedy DSpark
 verification, device-resident draft/Markov or stochastic DSpark
-acceptance/correction, host-free target-feature projection, paged state
-allocation, prefix persistence, continuous batching, competitive throughput, evaluation,
-benchmark qualification, release qualification, or Hugging Face publication.
+acceptance/correction, host-free target-feature evidence and normalized draft
+handoff, paged state allocation, prefix persistence, continuous batching,
+competitive throughput, evaluation, benchmark qualification, release
+qualification, or Hugging Face publication.

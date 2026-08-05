@@ -67,11 +67,12 @@ change. Git history preserves implementation chronology.
   portable host distribution remains the CPU, audit/forensic and stochastic
   oracle; draft feature/Markov execution is unchanged.
 - Production CUDA target-feature capture now averages source-selected mHC
-  residual streams on device and materializes only the reduced hidden rows.
-  Production feature projection now batches those rows through the resident
-  encoded matrix and CUDA RMSNorm, with exact physical accounting; the CPU
-  projector remains the audit/reference oracle. Bounded feature handoffs and
-  draft/Markov execution remain explicit device-residency debt.
+  residual streams into bounded host evidence and a transaction-owned
+  token-major device directory. Production feature projection consumes that
+  directory without re-upload, then batches the rows through the resident
+  encoded matrix and CUDA RMSNorm with exact physical accounting. The CPU
+  projector remains the audit/reference oracle; feature-evidence materialization,
+  normalized draft input and draft/Markov execution remain explicit debt.
 - The production CUDA transformer final stage now preserves an optional
   pre-normalized BF16 row in device storage before applying output RMSNorm.
   DSpark drafting materializes only that bounded hidden row instead of the

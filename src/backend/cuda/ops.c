@@ -191,7 +191,6 @@ int yvex_cuda_work_cleanup(yvex_cuda_work *work, yvex_error *err)
         yvex_error_clear(err);
     return result;
 }
-
 static int cuda_work_launch(yvex_cuda_work *work,
                             CUfunction function,
                             unsigned int grid,
@@ -216,7 +215,6 @@ static int cuda_work_launch(yvex_cuda_work *work,
         work->launches++;
     return rc;
 }
-
 static int attention_fail(yvex_backend_attention_failure *failure,
                              yvex_backend_attention_failure_code code,
                              const char *stage,
@@ -236,7 +234,6 @@ static int attention_fail(yvex_backend_attention_failure *failure,
     yvex_error_set(err, status, stage, message);
     return status;
 }
-
 static int attention_account_transfer(
     unsigned long long count, size_t width, unsigned long long *total,
     const char *stage, yvex_backend_attention_failure *failure, yvex_error *err)
@@ -304,7 +301,6 @@ static int attention_allocate(yvex_cuda_work *work,
             work->backend->workspace_bytes);
     return rc;
 }
-
 static int attention_initialize(yvex_cuda_work *work, CUdeviceptr target,
                                    size_t bytes, const void *source, int zero,
                                    const char *stage,
@@ -331,7 +327,6 @@ static int attention_initialize(yvex_cuda_work *work, CUdeviceptr target,
         failure, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull, err,
         (yvex_status)rc, "CUDA attention range initialization failed");
 }
-
 static int attention_download(yvex_cuda_work *work, void *target,
                                  CUdeviceptr source, size_t bytes,
                                  const char *stage,
@@ -408,7 +403,6 @@ static int attention_launch(yvex_cuda_work *work,
             err, (yvex_status)rc, "CUDA attention kernel launch failed");
     return YVEX_OK;
 }
-
 static int attention_round_bf16(
     yvex_cuda_work *work, CUdeviceptr values, unsigned long long count,
     CUdeviceptr status, const char *stage,
@@ -429,7 +423,6 @@ static int attention_round_bf16(
             CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
-
 static int attention_matvec(yvex_cuda_work *work,
                                const yvex_backend_attention_weight *weight,
                                CUdeviceptr device_weight,
@@ -517,7 +510,6 @@ static int attention_matvec(yvex_cuda_work *work,
             grid, CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
-
 static int attention_decode(yvex_cuda_work *work,
                                const yvex_backend_attention_weight *weight,
                                CUdeviceptr device_weight,
@@ -550,7 +542,6 @@ static int attention_decode(yvex_cuda_work *work,
             CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
-
 static int attention_weighted_norm(
     yvex_cuda_work *work, CUdeviceptr values, unsigned long long count,
     unsigned long long vectors,
@@ -574,7 +565,6 @@ static int attention_weighted_norm(
             1u, 0u, params, stage, failure, err);
     }
 }
-
 static int attention_unit_norm(yvex_cuda_work *work,
                                   CUdeviceptr values,
                                   unsigned long long vectors,
@@ -599,7 +589,6 @@ static int attention_unit_norm(yvex_cuda_work *work,
             failure, err);
     }
 }
-
 static int attention_rope(yvex_cuda_work *work,
                              CUdeviceptr values,
                              unsigned long long vectors,
@@ -642,7 +631,6 @@ static int attention_rope(yvex_cuda_work *work,
             CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
-
 static int attention_activation(
     yvex_cuda_work *work, CUdeviceptr values, unsigned long long vectors,
     unsigned long long width, const yvex_backend_attention_activation *policy,
@@ -1760,22 +1748,24 @@ int yvex_backend_transformer_cuda_initial(
 }
 
 /*
- * Collapse target-feature residual streams on CUDA and materialize only the reduced rows.
+ * Collapse target-feature residual streams on CUDA and publish compact and optional resident rows.
  *
- * The caller supplies reusable device and host storage. Completion, bounded status and the
- * reduced copy become visible together; the expanded input never crosses the device boundary.
+ * The caller supplies reusable device and host storage. Bounded status, compact host evidence
+ * and optional resident rows become visible together; expanded input never leaves the device.
  */
 int yvex_backend_transformer_cuda_feature_mean(
     yvex_backend *backend, const yvex_device_tensor *expanded,
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, yvex_device_tensor *device_output,
+    yvex_device_tensor *resident_output, unsigned long long resident_row_offset,
+    unsigned long long resident_row_stride, unsigned long long resident_column_offset,
     float *host_output, yvex_backend_cuda_operation_facts *facts,
     yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
-    CUdeviceptr status = 0ull, input_ptr, output_ptr;
-    unsigned long long input_count, output_count, activation_count;
+    CUdeviceptr status = 0ull, input_ptr, output_ptr, resident_ptr = 0ull;
+    unsigned long long input_count, output_count, activation_count, resident_rows, resident_elements;
     size_t output_bytes, activation_bytes;
     unsigned int grid;
     int host_status = 0, rc, cleanup_rc;
@@ -1786,6 +1776,19 @@ int yvex_backend_transformer_cuda_feature_mean(
         !yvex_core_u64_mul(token_count, hidden_width, &output_count) ||
         !yvex_core_u64_mul(output_count, residual_streams, &input_count) ||
         !yvex_core_u64_add(input_count, output_count, &activation_count) ||
+        (resident_output &&
+         (!yvex_core_u64_add(activation_count, output_count, &activation_count) ||
+          !resident_row_stride || resident_column_offset > resident_row_stride ||
+          hidden_width > resident_row_stride - resident_column_offset ||
+          !yvex_core_u64_add(resident_row_offset, token_count, &resident_rows) ||
+          !yvex_core_u64_mul(resident_rows, resident_row_stride, &resident_elements) ||
+          resident_elements > ULLONG_MAX / sizeof(float) ||
+          !backend_tensor_owner_is(backend, resident_output) ||
+          resident_output->dtype != YVEX_DTYPE_F32 ||
+          resident_output->data == expanded->data || resident_output->data == device_output->data ||
+          resident_output->bytes < resident_elements * sizeof(float))) ||
+        (!resident_output &&
+         (resident_row_offset || resident_row_stride || resident_column_offset)) ||
         !yvex_cuda_work_checked_bytes(output_count, sizeof(float), &output_bytes) ||
         !yvex_cuda_work_checked_bytes(activation_count, sizeof(float), &activation_bytes) ||
         output_count > UINT_MAX * (unsigned long long)CUDA_ATTENTION_BLOCK ||
@@ -1794,6 +1797,8 @@ int yvex_backend_transformer_cuda_feature_mean(
         return cuda_transformer_refuse(
             err, YVEX_ERR_FORMAT, "cuda.transformer.feature-mean",
             "CUDA transformer feature geometry is incompatible");
+    device_output->is_written = 0;
+    if (resident_output) resident_output->is_written = 0;
     work.backend = backend;
     work.state = state;
     work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
@@ -1801,11 +1806,14 @@ int yvex_backend_transformer_cuda_feature_mean(
                                  "cuda.transformer.feature-mean.status", NULL, err);
     input_ptr = (CUdeviceptr)expanded->data;
     output_ptr = (CUdeviceptr)device_output->data;
+    if (resident_output) resident_ptr = (CUdeviceptr)resident_output->data;
     grid = (unsigned int)((output_count + CUDA_ATTENTION_BLOCK - 1ull) /
                           CUDA_ATTENTION_BLOCK);
     if (rc == YVEX_OK) {
-        void *params[] = {&input_ptr, &token_count, &residual_streams,
-                          &hidden_width, &output_ptr, &status};
+        void *params[] = {
+            &input_ptr, &token_count, &residual_streams, &hidden_width,
+            &output_ptr, &resident_ptr, &resident_row_offset,
+            &resident_row_stride, &resident_column_offset, &status};
         rc = yvex_cuda_launch(
             backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
             state->transformer_feature_mean_function, grid, CUDA_ATTENTION_BLOCK,
@@ -1836,6 +1844,7 @@ int yvex_backend_transformer_cuda_feature_mean(
     }
     if (rc == YVEX_OK) {
         device_output->is_written = 1;
+        if (resident_output) resident_output->is_written = 1;
         facts->d2h_bytes = output_bytes + sizeof(host_status);
         facts->kernel_launches = 1ull;
         facts->download_count = 2ull;

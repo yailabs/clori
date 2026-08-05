@@ -548,6 +548,7 @@ static int speculation_project_target_features(
         unsigned long long input_elements, output_elements;
         unsigned long long input_bytes, output_bytes, norm_activation;
         unsigned long long h2d, d2h, kernels, uploads, downloads, synchronizations;
+        int resident_input = context->device_feature_input->is_written;
         int rc;
         if (!plan ||
             !yvex_core_u64_mul(
@@ -572,7 +573,7 @@ static int speculation_project_target_features(
         projected.dims[1] = normalized.dims[1] = context->hidden_width;
         input.bytes = input_bytes;
         projected.bytes = normalized.bytes = output_bytes;
-        rc = yvex_backend_tensor_write(
+        rc = resident_input ? YVEX_OK : yvex_backend_tensor_write(
             context->device_backend, &input, features, input_bytes, err);
         if (rc == YVEX_OK)
             rc = yvex_backend_cuda_encoded_matvec(
@@ -602,12 +603,15 @@ static int speculation_project_target_features(
                 &memory, context->device_feature_norm->bytes, 0ull,
                 norm_activation, 0ull, 1ull, 0ull, err) != YVEX_OK)
             return yvex_error_code(err);
-        if (!yvex_core_u64_add(facts.h2d_bytes, input_bytes, &h2d) ||
+        if (!yvex_core_u64_add(facts.h2d_bytes,
+                               resident_input ? 0ull : input_bytes, &h2d) ||
             !yvex_core_u64_add(facts.d2h_bytes, output_bytes, &d2h) ||
             !yvex_core_u64_add(facts.kernel_launches, 1ull, &kernels) ||
-            !yvex_core_u64_add(facts.upload_count, 1ull, &uploads) ||
+            !yvex_core_u64_add(facts.upload_count,
+                               resident_input ? 0ull : 1ull, &uploads) ||
             !yvex_core_u64_add(facts.download_count, 1ull, &downloads) ||
-            !yvex_core_u64_add(facts.device_synchronizations, 3ull,
+            !yvex_core_u64_add(facts.device_synchronizations,
+                               resident_input ? 2ull : 3ull,
                                &synchronizations) ||
             !yvex_core_u64_add(candidate.h2d_bytes, h2d,
                                &candidate.h2d_bytes) ||
@@ -700,7 +704,7 @@ static int speculation_transformer_execute(yvex_runtime_speculation_context *con
     yvex_attention_transaction_disposition disposition,
     const unsigned long long *feature_layers,
     unsigned long long feature_layer_count, float *normalized,
-    float *pre_normalized, float *features,
+    float *pre_normalized, float *features, unsigned long long feature_row_offset,
     yvex_runtime_transformer_result *result, yvex_error *err)
 {
     const yvex_transformer_plan_summary *plan =
@@ -749,9 +753,21 @@ static int speculation_transformer_execute(yvex_runtime_speculation_context *con
     output.pre_normalized_capacity = pre_normalized ? value_count : 0ull;
     output.features = features;
     output.feature_capacity = feature_count;
+    if (features && context->device_feature_input) {
+        output.device_features = context->device_feature_input;
+        output.device_feature_row_offset = feature_row_offset;
+        output.device_feature_row_stride = context->policy.concatenated_feature_width;
+        context->device_feature_input->is_written = 0;
+    }
     if (rc == YVEX_OK)
         rc = yvex_runtime_transformer_execute(transformer, input, &request,
                                               &output, result, err);
+    if (rc != YVEX_OK && output.device_features)
+        output.device_features->is_written = 0;
+    else if (rc == YVEX_OK && output.device_features &&
+             !output.device_features->is_written)
+        rc = speculation_refuse(err, YVEX_ERR_STATE,
+                                "target feature device publication is incomplete");
     yvex_transformer_input_close(&input);
     if (rc == YVEX_OK && disposition == YVEX_ATTENTION_TRANSACTION_ABORT &&
         (result->position_before != position ||
@@ -935,7 +951,8 @@ static int speculation_execute_draft(yvex_runtime_speculation_context *context,
         context, context->draft_transformer, context->draft_input_ids,
         draft_count, request->position, 1, 0,
         YVEX_ATTENTION_TRANSACTION_ABORT, NULL, 0ull,
-        context->draft_hidden, context->draft_pre_normalized, NULL, &draft, err);
+        context->draft_hidden, context->draft_pre_normalized, NULL, 0ull,
+        &draft, err);
     if (rc == YVEX_OK)
         rc = speculation_project_draft_base(
             context, &draft, rows, draft_count, &logits_execution, err);
@@ -1034,7 +1051,8 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
             YVEX_ATTENTION_TRANSACTION_STAGE,
             context->policy.target_feature_layers,
             context->policy.target_feature_layer_count,
-            context->target_hidden, NULL, context->target_features, &target, err);
+            context->target_hidden, NULL, context->target_features, 0ull,
+            &target, err);
     yvex_sha256_init(&hash);
     if (rc == YVEX_OK &&
         (!yvex_sha256_update_text(
@@ -1445,7 +1463,7 @@ static int speculation_stage_tokens(
         YVEX_ATTENTION_TRANSACTION_STAGE,
         context->policy.target_feature_layers,
         context->policy.target_feature_layer_count, context->target_hidden,
-        NULL, context->target_features, target, err);
+        NULL, context->target_features, 0ull, target, err);
     if (rc == YVEX_OK)
         rc = speculation_project_target_features(
             context, context->target_features, token_count, target, err);
@@ -1764,7 +1782,8 @@ int yvex_runtime_speculation_commit_prefix(
             context->policy.target_feature_layers,
             context->policy.target_feature_layer_count,
             context->target_hidden + hidden_offset, NULL,
-            context->target_features + feature_offset, &extension, err);
+            context->target_features + feature_offset, base_count,
+            &extension, err);
         result->target_extension_ns =
             yvex_core_monotonic_ns() - extension_started;
     }

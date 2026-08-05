@@ -1326,7 +1326,10 @@ extern "C" __global__ void yvex_deepseek_mhc_post(
 extern "C" __global__ void yvex_transformer_feature_mean(
     const float *expanded, unsigned long long token_count,
     unsigned long long streams, unsigned long long width,
-    float *output, int *status)
+    float *output, float *resident_output,
+    unsigned long long resident_row_offset,
+    unsigned long long resident_row_stride,
+    unsigned long long resident_column_offset, int *status)
 {
     unsigned long long index =
         (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
@@ -1344,7 +1347,12 @@ extern "C" __global__ void yvex_transformer_feature_mean(
         sum += (double)expanded[(token * streams + stream) * width + lane];
     float value = (float)(sum / (double)streams);
     if (!isfinite(value)) atomicCAS(status, 0, 1);
-    else output[index] = value;
+    else {
+        output[index] = value;
+        if (resident_output)
+            resident_output[(resident_row_offset + token) * resident_row_stride +
+                            resident_column_offset + lane] = value;
+    }
 }
 /*
  * Collapse the final mHC streams and apply transformer-owned RMSNorm.

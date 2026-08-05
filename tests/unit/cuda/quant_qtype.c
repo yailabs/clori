@@ -319,13 +319,14 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
     yvex_device_tensor *expanded_device = NULL, *function_device = NULL;
     yvex_device_tensor *base_device = NULL, *scale_device = NULL;
     yvex_device_tensor *norm_device = NULL, *pre_device = NULL, *output_device = NULL;
-    yvex_device_tensor *feature_device = NULL;
+    yvex_device_tensor *feature_device = NULL, *resident_feature_device = NULL;
     unsigned char *row = NULL, *encoded = NULL;
     float source[TOKENS * HIDDEN] = {0};
     float embedding[TOKENS * HIDDEN], expanded[TOKENS * HIDDEN * STREAMS];
     float function[STREAMS * STREAMS * HIDDEN] = {0};
     float base[STREAMS] = {0}, scale[1] = {1.0f}, norm[HIDDEN];
     float pre[TOKENS * HIDDEN], output[TOKENS * HIDDEN], features[TOKENS * HIDDEN];
+    float resident_features[TOKENS * HIDDEN * 2] = {0};
     float reference_pre[TOKENS * HIDDEN], reference_output[TOKENS * HIDDEN];
     yvex_backend_cuda_operation_facts facts;
     yvex_error err;
@@ -380,25 +381,42 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
         yvex_backend_tensor_write(backend, expanded_device, expanded,
                                   sizeof(expanded), &err) == YVEX_OK &&
             quant_cuda_tensor(backend, "transformer_features", YVEX_DTYPE_F32,
-                              NULL, sizeof(features), &feature_device, &err),
+                              NULL, sizeof(features), &feature_device, &err) &&
+            quant_cuda_tensor(backend, "transformer_resident_features", YVEX_DTYPE_F32,
+                              resident_features, sizeof(resident_features),
+                              &resident_feature_device, &err),
         "transformer feature tensors prepare");
+    YVEX_TEST_ASSERT(
+        yvex_backend_transformer_cuda_feature_mean(
+            backend, expanded_device, TOKENS, HIDDEN, STREAMS, feature_device,
+            feature_device, 0ull, HIDDEN, 0ull, features, &facts, &err) ==
+            YVEX_ERR_FORMAT,
+        "transformer feature mean refuses aliased compact and resident publication");
     rc = yvex_backend_transformer_cuda_feature_mean(
         backend, expanded_device, TOKENS, HIDDEN, STREAMS, feature_device,
+        resident_feature_device, 0ull, HIDDEN * 2ull, HIDDEN,
         features, &facts, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && facts.compulsory_memory_facts_available &&
             !facts.active_weight_bytes && !facts.state_bytes &&
-            facts.activation_bytes == sizeof(expanded) + sizeof(features) &&
+            facts.activation_bytes == sizeof(expanded) + 2ull * sizeof(features) &&
             facts.temporary_bytes == sizeof(int) &&
             facts.d2h_bytes == sizeof(features) + sizeof(int) &&
             facts.kernel_launches == 1ull && facts.download_count == 2ull &&
-            facts.device_synchronizations == 1ull,
+            facts.device_synchronizations == 1ull && feature_device->is_written &&
+            resident_feature_device->is_written &&
+            yvex_backend_tensor_read(backend, resident_feature_device,
+                                     resident_features,
+                                     sizeof(resident_features), &err) == YVEX_OK,
         "transformer feature mean reports bounded physical facts");
     for (index = 0ull; index < TOKENS * HIDDEN; ++index) {
         unsigned long long token = index / HIDDEN, lane = index % HIDDEN;
         float expected = (float)(token * STREAMS * 4ull + lane + 2ull);
         YVEX_TEST_ASSERT(features[index] == expected,
                          "transformer feature mean matches independent reduction");
+        YVEX_TEST_ASSERT(resident_features[token * HIDDEN * 2ull + lane] == 0.0f &&
+                             resident_features[token * HIDDEN * 2ull + HIDDEN + lane] == expected,
+                         "transformer feature mean publishes the requested resident columns");
     }
     expanded[0] = NAN;
     features[0] = 77.0f;
@@ -407,8 +425,10 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
                                   sizeof(expanded), &err) == YVEX_OK &&
             yvex_backend_transformer_cuda_feature_mean(
                 backend, expanded_device, TOKENS, HIDDEN, STREAMS, feature_device,
+                resident_feature_device, 0ull, HIDDEN * 2ull, HIDDEN,
                 features, &facts, &err) == YVEX_ERR_FORMAT &&
-            features[0] == 77.0f,
+            features[0] == 77.0f && !feature_device->is_written &&
+            !resident_feature_device->is_written,
         "transformer feature mean refuses non-finite output before publication");
     expanded[0] = 0.0f;
     YVEX_TEST_ASSERT(yvex_backend_tensor_write(
@@ -478,7 +498,8 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
 
     free(encoded);
     YVEX_TEST_ASSERT(
-        yvex_backend_tensor_release(backend, &feature_device, &err) == YVEX_OK &&
+        yvex_backend_tensor_release(backend, &resident_feature_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &feature_device, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &output_device, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &pre_device, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &norm_device, &err) == YVEX_OK &&
