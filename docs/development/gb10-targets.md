@@ -143,8 +143,11 @@ next causal bottleneck. Physical-variant exploration first uses role probes,
 representative layers, kernel microbenchmarks and bounded logit/acceptance
 checks; complete artifacts are emitted only for surviving candidates.
 
-Production attention replay keeps mandatory graph completion but does not
-resolve a CUDA timing event at every layer. Per-layer device timing belongs to
-audit and forensic evidence; production phase accounting retains exact launch,
-movement and completion-synchronization facts without paying that additional
-measurement serialization.
+Production attention graph pieces borrow the session execution stream and
+defer completion to the existing layer publication barrier. Piecewise mode now
+uses one scoped wait per layer instead of one graph-local wait per piece plus
+publication. Per-layer device timing belongs to audit and forensic evidence;
+that path retains isolated immediate graphs. Production phase accounting keeps
+exact launch, movement and completion-synchronization facts. Removing the
+remaining layer publication wait requires a later transaction owner that can
+defer state and status visibility across the transformer stack.

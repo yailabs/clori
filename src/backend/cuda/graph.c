@@ -1,7 +1,7 @@
 /*
- * A launch-graph object owns its stream and at most one admitted CUDA graph/executable pair.
- * Capture is exclusive within a backend because Driver capture state and the temporary operation
- * inventory must describe one coherent launch sequence.
+ * A launch-graph object owns or borrows one stream and admits at most one CUDA graph/executable
+ * pair. Capture is exclusive within a backend because Driver capture state and the temporary
+ * operation inventory must describe one coherent launch sequence.
  *
  * Updates preserve the prior executable graph until compatibility and Driver admission succeed.
  * Graph replay only schedules operations already admitted by backend owners; it never infers model
@@ -37,6 +37,7 @@ struct yvex_backend_cuda_graph {
     yvex_backend_cuda_capture_mode capture_mode;
     char *compatibility_identity;
     CUstream stream;
+    int stream_owned;
     CUgraph graph;
     CUgraph pending_graph;
     CUgraphExec exec;
@@ -313,12 +314,13 @@ static int exec_identity(const yvex_backend_cuda_graph *owner, const char *graph
     const yvex_cuda_backend_state *state = yvex_cuda_state(owner->backend);
     yvex_sha256 sha;
     yvex_sha256_init(&sha);
-    if (!yvex_sha256_update_text(&sha, "yvex.cuda.graph-exec.v1") ||
+    if (!yvex_sha256_update_text(&sha, "yvex.cuda.graph-exec.v2") ||
         !yvex_sha256_update_text(&sha, graph_identity) ||
         !yvex_sha256_update_text(&sha, state->kernel_bundle_identity) ||
         !yvex_sha256_update_u64(&sha, YVEX_BACKEND_CUDA_GRAPH_SCHEMA) ||
         !yvex_sha256_update_u64(&sha, (unsigned long long)state->driver_version) ||
-        !yvex_sha256_update_u64(&sha, (unsigned long long)state->device_index)) {
+        !yvex_sha256_update_u64(&sha, (unsigned long long)state->device_index) ||
+        !yvex_sha256_update_u64(&sha, (unsigned long long)!owner->stream_owned)) {
         return graph_reject(err, YVEX_ERR_STATE, "cuda.graph.identity",
                             "CUDA graph executable identity stream rejected input");
     }
@@ -340,13 +342,14 @@ static int inventory_identity(const yvex_backend_cuda_graph *owner, const int *t
     yvex_sha256 sha;
     size_t index, position;
     yvex_sha256_init(&sha);
-    if (!yvex_sha256_update_text(&sha, "yvex.cuda.launch-graph.v2") ||
+    if (!yvex_sha256_update_text(&sha, "yvex.cuda.launch-graph.v3") ||
         !yvex_sha256_update_text(&sha, owner->compatibility_identity) ||
         !yvex_sha256_update_text(&sha, state->kernel_bundle_identity) ||
         !yvex_sha256_update_u64(&sha, YVEX_BACKEND_CUDA_GRAPH_SCHEMA) ||
         !yvex_sha256_update_u64(&sha, (unsigned long long)state->driver_version) ||
         !yvex_sha256_update_u64(&sha, (unsigned long long)state->device_index) ||
         !yvex_sha256_update_u64(&sha, (unsigned long long)owner->capture_mode) ||
+        !yvex_sha256_update_u64(&sha, (unsigned long long)!owner->stream_owned) ||
         !yvex_sha256_update_u64(&sha, (unsigned long long)node_count) ||
         !yvex_sha256_update_u64(&sha, (unsigned long long)edge_count) ||
         !yvex_sha256_update_u64(&sha, 1ull))
@@ -610,12 +613,15 @@ static void graph_unlink(yvex_backend_cuda_graph *graph)
     }
 }
 
-static yvex_backend_cuda_graph *graph_find(yvex_cuda_backend_state *state, const char *identity)
+static yvex_backend_cuda_graph *graph_find(yvex_cuda_backend_state *state, const char *identity,
+                                           int shared_launch_stream)
 {
     yvex_backend_cuda_graph *graph;
     if (!state || !identity) return NULL;
     for (graph = state->graphs; graph; graph = graph->next) {
-        if (graph->compatibility_identity && strcmp(graph->compatibility_identity, identity) == 0)
+        if (graph->compatibility_identity &&
+            strcmp(graph->compatibility_identity, identity) == 0 &&
+            shared_launch_stream == !graph->stream_owned)
             return graph;
     }
     return NULL;
@@ -728,13 +734,15 @@ int yvex_backend_cuda_graph_query(const yvex_backend *backend,
 /*
  * Create one stream-backed launch-graph object after complete optional API admission.
  *
- * A CUDA backend, schema/capture options, and caller-owned result storage. Creates one
- * non-blocking stream and registers the object beneath the backend context lifetime. API, schema,
- * allocation, or stream failures publish no partial graph object. Compatibility identity is
- * caller-provided execution truth, never inferred from a family name.
+ * A CUDA backend, schema/capture options, stream policy, and caller-owned result storage. The
+ * graph either creates an isolated non-blocking stream or borrows the session execution stream;
+ * borrowed ownership never escapes or destroys that session resource. API, schema, allocation,
+ * or stream failures publish no partial graph object. Compatibility identity is caller-provided
+ * execution truth, never inferred from a family name.
  */
 static int graph_open(yvex_backend *backend,
                       const yvex_backend_cuda_graph_options *options,
+                      int shared_launch_stream,
                       yvex_backend_cuda_graph **out, yvex_error *err)
 {
     yvex_backend_cuda_graph_capability capability;
@@ -742,6 +750,7 @@ static int graph_open(yvex_backend *backend,
     yvex_cuda_backend_state *state;
     int rc;
     if (!backend || !options || !out || !options->compatibility_identity ||
+        (shared_launch_stream != 0 && shared_launch_stream != 1) ||
         options->compatibility_identity[0] == '\0') {
         return graph_reject(err, YVEX_ERR_INVALID_ARG, "cuda.graph.open",
                             "backend, options, compatibility identity, and out are required");
@@ -775,15 +784,21 @@ static int graph_open(yvex_backend *backend,
     }
     state = yvex_cuda_state(backend);
     rc = yvex_cuda_set_current(backend, "cuda.graph.open", err);
-    if (rc == YVEX_OK && graph_failure_matches("stream-create")) {
+    if (rc == YVEX_OK && !shared_launch_stream && graph_failure_matches("stream-create")) {
         rc = graph_reject(err, YVEX_ERR_BACKEND, "cuda.graph.open",
                           "injected CUDA graph stream creation failure");
     }
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && shared_launch_stream) {
+        graph->stream = yvex_cuda_launch_stream(backend);
+        if (!graph->stream)
+            rc = graph_reject(err, YVEX_ERR_STATE, "cuda.graph.open",
+                              "session execution stream is unavailable");
+    } else if (rc == YVEX_OK) {
         rc = yvex_cuda_status(&state->driver,
                               state->driver.cuStreamCreate(&graph->stream,
                                                            YVEX_CUDA_STREAM_NON_BLOCKING),
                               "cuda.graph.stream_create", err);
+        if (rc == YVEX_OK) graph->stream_owned = 1;
     }
     if (rc != YVEX_OK) {
         free(graph->compatibility_identity);
@@ -1228,20 +1243,30 @@ int yvex_cuda_graph_kernel_update(yvex_backend *backend,
 /*
  * Capture once or replay one exact production launch sequence.
  *
- * Owns capture/instantiate/upload/replay and returns immutable graph counters. Device timing is
- * explicit because resolving the stop event serializes the stream; production execution can keep
- * that audit cost out of every layer while retaining the mandatory completion synchronization.
+ * Owns capture/instantiate/upload/replay and returns immutable graph counters. Device timing and
+ * completion are explicit because either one serializes the stream. A graph may therefore enqueue
+ * on the session stream and leave completion to the transaction boundary that publishes its
+ * results; isolated graph streams always complete before returning.
  */
 int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_identity,
                             yvex_cuda_graph_prepare_fn prepare,
                             yvex_cuda_graph_enqueue_fn enqueue, void *context,
-                            int measure_device_time, yvex_backend_cuda_graph_info *info,
+                            unsigned int execution_flags, yvex_backend_cuda_graph_info *info,
                             yvex_error *err)
 {
+    const unsigned int allowed_flags = YVEX_CUDA_GRAPH_EXECUTION_MEASURE_DEVICE_TIME |
+                                       YVEX_CUDA_GRAPH_EXECUTION_SHARED_LAUNCH_STREAM |
+                                       YVEX_CUDA_GRAPH_EXECUTION_DEFER_COMPLETION;
     yvex_cuda_backend_state *state =
         backend && backend->kind == YVEX_BACKEND_KIND_CUDA ? yvex_cuda_state(backend) : NULL;
     yvex_backend_cuda_graph_options options;
     yvex_backend_cuda_graph *graph;
+    int measure_device_time =
+        (execution_flags & YVEX_CUDA_GRAPH_EXECUTION_MEASURE_DEVICE_TIME) != 0u;
+    int shared_launch_stream =
+        (execution_flags & YVEX_CUDA_GRAPH_EXECUTION_SHARED_LAUNCH_STREAM) != 0u;
+    int defer_completion =
+        (execution_flags & YVEX_CUDA_GRAPH_EXECUTION_DEFER_COMPLETION) != 0u;
     int created = 0;
     int rc, sync_rc, timing_rc;
     unsigned long long replay_started, replay_finished, device_elapsed = 0ull;
@@ -1249,14 +1274,15 @@ int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_ide
     if (info)
         memset(info, 0, sizeof(*info));
     if (!state || !compatibility_identity || !compatibility_identity[0] || !enqueue ||
-        (measure_device_time != 0 && measure_device_time != 1)) {
+        (execution_flags & ~allowed_flags) != 0u ||
+        (defer_completion && (!shared_launch_stream || measure_device_time))) {
         return graph_reject(
             err, YVEX_ERR_INVALID_ARG, "cuda.graph.execute",
-            "CUDA graph execution requires its backend, identity, enqueue callback, and timing policy");
+            "CUDA graph execution requires a valid backend, identity, callback, and completion policy");
     }
     rc = backend_dispatch_admit(backend, "cuda.graph.execute", err);
     if (rc != YVEX_OK) return rc;
-    graph = graph_find(state, compatibility_identity);
+    graph = graph_find(state, compatibility_identity, shared_launch_stream);
     if (graph && graph->state != YVEX_BACKEND_CUDA_GRAPH_INSTANTIATED &&
         graph->state != YVEX_BACKEND_CUDA_GRAPH_OPEN &&
         graph->state != YVEX_BACKEND_CUDA_GRAPH_INVALIDATED) {
@@ -1270,10 +1296,15 @@ int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_ide
         options.schema = YVEX_BACKEND_CUDA_GRAPH_SCHEMA;
         options.capture_mode = YVEX_BACKEND_CUDA_CAPTURE_THREAD_LOCAL;
         options.compatibility_identity = compatibility_identity;
-        rc = graph_open(backend, &options, &graph, err);
+        rc = graph_open(backend, &options, shared_launch_stream, &graph, err);
         if (rc != YVEX_OK)
             return rc;
         created = 1;
+    }
+    if ((graph->state != YVEX_BACKEND_CUDA_GRAPH_INSTANTIATED || graph->update_requested) &&
+        graph->in_flight) {
+        rc = graph_quiesce(graph, err);
+        if (rc != YVEX_OK) goto failed;
     }
     if (prepare) {
         state->parameter_update_owner = graph;
@@ -1318,12 +1349,16 @@ int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_ide
         }
     }
     replay_started = yvex_core_monotonic_ns();
+    if (defer_completion) {
+        graph->last_replay_elapsed_ns = 0ull;
+        graph->last_device_elapsed_ns = 0ull;
+    }
     rc = measure_device_time
              ? yvex_cuda_timing(backend, graph->stream, YVEX_CUDA_TIMING_BEGIN, NULL,
                                 "cuda.graph.timing.begin", err)
              : YVEX_OK;
     if (rc == YVEX_OK) rc = graph_launch(graph, err);
-    if (rc == YVEX_OK) {
+    if (rc == YVEX_OK && !defer_completion) {
         yvex_error_clear(&timing_error);
         timing_rc = measure_device_time
                         ? yvex_cuda_timing(
@@ -1341,7 +1376,7 @@ int yvex_cuda_graph_execute(yvex_backend *backend, const char *compatibility_ide
         (void)yvex_cuda_timing(backend, NULL, YVEX_CUDA_TIMING_DISCARD, NULL, NULL, NULL);
     }
     replay_finished = yvex_core_monotonic_ns();
-    if (rc == YVEX_OK && replay_finished >= replay_started) {
+    if (rc == YVEX_OK && !defer_completion && replay_finished >= replay_started) {
         graph->last_replay_elapsed_ns = replay_finished - replay_started;
         graph->last_device_elapsed_ns = device_elapsed;
     }
@@ -1561,6 +1596,8 @@ static int graph_info(const yvex_backend_cuda_graph *graph,
     out->reason = graph->reason;
     out->capture_mode = graph->capture_mode;
     out->uploaded = graph->uploaded;
+    out->shared_launch_stream = !graph->stream_owned;
+    out->completion_pending = graph->in_flight;
     out->inventory = graph->inventory;
     out->capture_count = graph->capture_count;
     out->instantiate_count = graph->instantiate_count;
@@ -1584,8 +1621,9 @@ static int graph_info(const yvex_backend_cuda_graph *graph,
 /*
  * Release one graph object after invalidating every owned Driver resource.
  *
- * Unlinks the object, destroys its stream, frees host ownership, and nulls the caller pointer.
- * Cleanup failure preserves ownership and pointer for retry.
+ * Unlinks the object, destroys an owned stream, frees host ownership, and nulls the caller
+ * pointer. A borrowed session stream remains owned by the backend. Cleanup failure preserves
+ * ownership and pointer for retry.
  */
 static int graph_release(yvex_backend_cuda_graph **graph_ptr, yvex_error *err)
 {
@@ -1609,13 +1647,15 @@ static int graph_release(yvex_backend_cuda_graph **graph_ptr, yvex_error *err)
     rc = graph_invalidate(graph, err);
     if (rc != YVEX_OK) return rc;
     state = yvex_cuda_state(graph->backend);
-    if (graph_failure_matches("stream-destroy")) {
-        return graph_cleanup_fail(graph, "cuda.graph.stream_destroy",
-                                  "injected CUDA graph stream cleanup failure", err);
+    if (graph->stream_owned) {
+        if (graph_failure_matches("stream-destroy")) {
+            return graph_cleanup_fail(graph, "cuda.graph.stream_destroy",
+                                      "injected CUDA graph stream cleanup failure", err);
+        }
+        rc = yvex_cuda_status(&state->driver, state->driver.cuStreamDestroy_v2(graph->stream),
+                              "cuda.graph.stream_destroy", err);
+        if (rc != YVEX_OK) return graph_cleanup_result(graph, rc);
     }
-    rc = yvex_cuda_status(&state->driver, state->driver.cuStreamDestroy_v2(graph->stream),
-                          "cuda.graph.stream_destroy", err);
-    if (rc != YVEX_OK) return graph_cleanup_result(graph, rc);
     graph->stream = NULL;
     graph_unlink(graph);
     graph->backend = NULL;

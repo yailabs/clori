@@ -32,6 +32,9 @@ entry audit:
 | Contract | Current | Admitted | New fact | Incompatibility | Old behavior | Rule | Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Kernel-bundle identity | v2 | v3 | ordered set of independently compiled modules | semantic identity derivation only; no wire or persisted layout | v2 hashes one image and cannot identify the module set | full rebuild admits all manifest-owned modules atomically; model artifacts do not migrate | PTX/native admission, missing-symbol rollback, checked unload retry, identity mutation |
+| Launch-graph identity | v2 | v3 | owned versus borrowed launch-stream policy | semantic identity derivation only; no wire or persisted layout | v2 cannot distinguish an isolated graph stream from the session stream | rebuilt graph registries recapture under the selected stream policy; no model, binding or profile migration | identity mutation, isolated/shared registry separation, capture and warm replay |
+| Graph-executable identity | v1 | v2 | owned versus borrowed launch-stream policy | semantic identity derivation only; no wire or persisted layout | v1 authenticates device and executable topology but omits completion ownership | rebuilt executables are admitted beneath launch-graph v3; old in-process objects are never mixed | exact identity, shared-stream capture/replay, checked teardown |
+| CUDA graph execution internal ABI | v1 | v1 | explicit stream and deferred-completion flags plus returned completion facts | in-process function and result layout only; no independently deployed reader or writer | old callers pass a Boolean timing policy and always wait on a graph-owned stream | complete rebuild; isolated immediate execution remains the audit path; no persistence, wire, public API or profile migration | invalid flag combinations, zero local waits, scoped completion, eager numerical parity |
 | Physical-facts internal ABI | v1 | v1 | stream and device-wide synchronization deltas enter one checked aggregate | in-process function signature only; the stored fact remains one aggregate | old objects are never mixed with rebuilt objects; old callers supplied one combined count | complete rebuild; no persistence, wire, layout, or identity migration | class-sum overflow rollback, runtime execution, sampling and speculation accounting |
 | Width-N MoE internal ABI | v1 | v1 | deferred stack completion plus bounded per-layer status, unique-expert and active-byte factors | in-process result and operation-table layout only; no independently deployed reader or writer | old readers require completed rows and route arrays; old writers synchronize and materialize them per layer | complete rebuild; immediate execution remains the audit oracle; no persistence, wire, public API or profile migration | immediate/deferred output and active-byte parity, untouched route sentinels, bounded D2H, proved-barrier accounting, sync fault refusal |
 
@@ -166,15 +169,18 @@ closes the stack. The independent immediate and token-local CPU/CUDA paths
 remain the audit/reference oracles. The internal source ABI rebuilds atomically;
 no persisted, wire, public C, execution-profile, or state-layout schema changes.
 
-Each CUDA backend/session now owns one non-blocking ordinary-execution stream;
-graph capture and graph-parameter refresh temporarily select their graph-owned
-stream. Eager attention waits on that session stream per layer; width-N MoE now
-defers its completion until the transformer stack ends and reuses a proved
-same-stream barrier when one already exists. A Driver without a complete stream
-lifecycle retains the portable context-wide fallback and reports that wider
-barrier. Creation, completion and checked cleanup are fail-closed and
-independently fault-tested. The remaining per-layer attention completion is
-still explicit optimization debt.
+Each CUDA backend/session now owns one non-blocking ordinary-execution stream.
+Production attention graph pieces borrow that stream, preserve their order and
+defer completion to the existing layer publication barrier; piecewise execution
+therefore performs one scoped wait per layer instead of one wait per captured
+piece plus publication. Audit timing retains an isolated graph stream and
+immediate completion because resolving its timing event is explicit evidence
+work. Width-N MoE defers completion until the transformer stack ends and reuses
+a proved same-stream barrier when one already exists. A Driver without a
+complete stream lifecycle retains the portable context-wide fallback and
+reports that wider barrier. Creation, completion and checked cleanup are
+fail-closed and independently fault-tested. The final per-layer attention
+publication wait remains explicit optimization debt.
 
 Target-only production stochastic sampling now keeps the complete vocabulary
 row on CUDA. Runtime stages exactly one PCG transition, the backend applies the

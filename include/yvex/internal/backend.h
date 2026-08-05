@@ -488,7 +488,7 @@ typedef struct {
     yvex_backend_cuda_graph_state state;
     yvex_backend_cuda_graph_reason reason;
     yvex_backend_cuda_capture_mode capture_mode;
-    int uploaded;
+    int uploaded, shared_launch_stream, completion_pending;
     yvex_backend_cuda_graph_inventory inventory;
     unsigned long long capture_count, instantiate_count, upload_count, update_count;
     unsigned long long launch_count, replay_count, synchronize_count, invalidation_count;

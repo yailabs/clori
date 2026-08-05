@@ -109,9 +109,10 @@ change. Git history preserves implementation chronology.
 - CUDA attention graphs now refresh mutable state-bank inputs before capture
   and replay, allowing allocation-stable graphs to survive committed-state
   promotion without restoring stale state or recapturing each turn.
-- Production attention graph replay no longer resolves a CUDA timing event in
-  every layer. Mandatory completion synchronization remains fail-closed;
-  audit and forensic evidence retain explicit per-layer device timing.
+- Production attention graph pieces now borrow the session execution stream
+  and defer to one fail-closed layer publication barrier instead of
+  synchronizing every captured piece. Audit and forensic timing retains
+  isolated immediate graph completion.
 - CUDA backends now own one non-blocking execution stream per session. Eager
   attention and width-N MoE completion synchronize that stream instead of the
   complete CUDA context, while legacy Driver configurations retain an

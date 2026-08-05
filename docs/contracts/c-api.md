@@ -198,6 +198,14 @@ verification sweeps merge that aggregate once with their transformer facts.
 Their transformer active weight, state, activation, temporary and occupancy
 stay explicitly unavailable; a partial record is not a complete roofline.
 
+The non-installed CUDA graph execution ABI accepts explicit timing,
+session-stream and deferred-completion flags. Production attention pieces
+borrow the session stream and return before a graph-local wait; their existing
+layer publication barrier owns completion. Audit timing uses an isolated stream
+and completes immediately. Launch-graph v3 and graph-executable v2 identities
+bind that stream policy. No installed declaration, persisted model contract,
+protocol or compiled-profile schema changed.
+
 Accepted-prefix selection returns a v1 in-process physical-facts record. It
 derives CUDA H2D and synchronization deltas from the session-owned state
 residency counters and states the zero D2H, D2D and kernel facts explicitly.

@@ -573,9 +573,9 @@ static int test_rolling_cursor_update(yvex_backend *backend)
 
     rc = yvex_cuda_graph_execute(
         backend, "cuda-rolling-dynamic-cursor-v1", NULL, enqueue_rolling_fixture,
-        &fixture, 2, &info, &err);
+        &fixture, 8u, &info, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_INVALID_ARG,
-                     "graph execution refuses a non-Boolean timing policy");
+                     "graph execution refuses unsupported execution flags");
     YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_EVENT_FAILURE", "synchronize", 1) == 0,
                      "inject an event synchronization failure");
     fixture.cursor = 3ull;
@@ -612,6 +612,113 @@ static int test_rolling_cursor_update(yvex_backend *backend)
         YVEX_TEST_ASSERT(
             yvex_backend_tensor_release(backend, tensors[i], &err) == YVEX_OK,
             "release rolling state fixture");
+    return 0;
+}
+
+/* Prove graph pieces borrow the session stream and publish only after its explicit barrier. */
+static int test_shared_graph_completion(yvex_backend *backend)
+{
+    const float input_data[8] = {0.25f, -0.5f, 1.0f, -1.5f, 2.0f, -2.5f, 3.0f, -3.5f};
+    float graph_data[8] = {0}, eager_data[8] = {0};
+    yvex_backend_cuda_graph_info info;
+    yvex_backend_tensor_desc desc;
+    yvex_device_tensor *input = NULL;
+    yvex_device_tensor *graph_output = NULL;
+    yvex_device_tensor *piece_output = NULL;
+    yvex_device_tensor *eager_output = NULL;
+    rope_graph_fixture fixture = {0};
+    rope_graph_fixture next_piece = {0};
+    yvex_error err;
+    int device_wide = 1;
+    int rc;
+
+    make_desc(&desc, "shared_graph_input");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &desc, &input, &err) == YVEX_OK,
+                     "allocate shared-stream graph input");
+    make_desc(&desc, "shared_graph_output");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &desc, &graph_output, &err) == YVEX_OK,
+        "allocate shared-stream graph output");
+    make_desc(&desc, "shared_graph_piece");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &desc, &piece_output, &err) == YVEX_OK,
+        "allocate ordered graph-piece output");
+    make_desc(&desc, "shared_graph_eager");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &desc, &eager_output, &err) == YVEX_OK,
+        "allocate shared-stream eager output");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_write(backend, input, input_data, sizeof(input_data), &err) == YVEX_OK,
+        "write shared-stream graph input");
+    fixture = (rope_graph_fixture){
+        .backend = backend, .input = input, .output = graph_output, .position = 7ull
+    };
+    rc = yvex_cuda_graph_execute(
+        backend, "cuda-shared-stream-rope-v1", NULL, enqueue_rope_fixture, &fixture,
+        YVEX_CUDA_GRAPH_EXECUTION_SHARED_LAUNCH_STREAM |
+            YVEX_CUDA_GRAPH_EXECUTION_DEFER_COMPLETION,
+        &info, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && info.shared_launch_stream && info.completion_pending &&
+            info.capture_count == 1ull && info.replay_count == 1ull &&
+            info.synchronize_count == 0ull && info.last_replay_elapsed_ns == 0ull &&
+            info.last_device_elapsed_ns == 0ull,
+        "shared-stream graph capture leaves completion to its transaction owner");
+    rc = yvex_cuda_launch_synchronize(
+        backend, YVEX_BACKEND_VARIANT_ROPE_F32, &device_wide,
+        "cuda.test.shared-graph.capture", &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && device_wide == 0,
+                     "shared-stream graph completes through one scoped barrier");
+
+    fixture.position = 8ull;
+    rc = yvex_cuda_graph_execute(
+        backend, "cuda-shared-stream-rope-v1", NULL, enqueue_rope_fixture, &fixture,
+        YVEX_CUDA_GRAPH_EXECUTION_SHARED_LAUNCH_STREAM |
+            YVEX_CUDA_GRAPH_EXECUTION_DEFER_COMPLETION,
+        &info, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && info.shared_launch_stream && info.completion_pending &&
+            info.capture_count == 1ull && info.replay_count == 2ull &&
+            info.synchronize_count == 0ull,
+        "warm shared-stream replay updates parameters without a graph-local barrier");
+    next_piece = (rope_graph_fixture){
+        .backend = backend, .input = graph_output, .output = piece_output, .position = 9ull
+    };
+    rc = yvex_cuda_graph_execute(
+        backend, "cuda-shared-stream-rope-piece-v1", NULL, enqueue_rope_fixture, &next_piece,
+        YVEX_CUDA_GRAPH_EXECUTION_SHARED_LAUNCH_STREAM |
+            YVEX_CUDA_GRAPH_EXECUTION_DEFER_COMPLETION,
+        &info, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK && info.completion_pending &&
+                         info.capture_count == 1ull && info.synchronize_count == 0ull,
+                     "a later graph piece captures behind pending work on the same stream");
+    device_wide = 1;
+    YVEX_TEST_ASSERT(
+        yvex_cuda_launch_synchronize(
+            backend, YVEX_BACKEND_VARIANT_ROPE_F32, &device_wide,
+            "cuda.test.shared-graph.replay", &err) == YVEX_OK &&
+            device_wide == 0 &&
+            yvex_backend_tensor_read(
+                backend, piece_output, graph_data, sizeof(graph_data), &err) == YVEX_OK,
+        "one barrier completes and exposes every ordered graph piece");
+    YVEX_TEST_ASSERT(
+        yvex_backend_op_rope(backend, input, fixture.position, 10000.0f,
+                             graph_output, &err) == YVEX_OK &&
+            yvex_backend_op_rope(backend, graph_output, next_piece.position, 10000.0f,
+                                 eager_output, &err) == YVEX_OK &&
+            yvex_cuda_launch_synchronize(
+                backend, YVEX_BACKEND_VARIANT_ROPE_F32, &device_wide,
+                "cuda.test.shared-graph.reference", &err) == YVEX_OK &&
+            yvex_backend_tensor_read(
+                backend, eager_output, eager_data, sizeof(eager_data), &err) == YVEX_OK &&
+            memcmp(graph_data, eager_data, sizeof(graph_data)) == 0,
+        "deferred shared-stream replay matches eager numerical execution exactly");
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &eager_output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &piece_output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &graph_output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK,
+        "release shared-stream graph fixtures");
     return 0;
 }
 
@@ -1482,6 +1589,8 @@ int yvex_cuda_test_graph(void)
                      "CUDA attention graph mode configuration");
     YVEX_TEST_ASSERT(test_rolling_cursor_update(backend) == 0,
                      "CUDA rolling cursor replay update");
+    YVEX_TEST_ASSERT(test_shared_graph_completion(backend) == 0,
+                     "CUDA shared-stream graph completion");
     YVEX_TEST_ASSERT(test_graph_prepare_lifecycle(backend) == 0,
                      "CUDA graph dynamic preamble lifecycle");
     rc = yvex_backend_close_checked(&backend, NULL);

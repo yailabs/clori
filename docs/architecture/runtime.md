@@ -163,6 +163,14 @@ while reset, invalidation and resource teardown retain their explicit lifetime
 boundaries. A preamble failure refuses the launch without publishing state or
 discarding an otherwise valid executable.
 
+Production attention graph pieces borrow the session execution stream and
+remain ordered with state refresh, later pieces and bounded downloads. They do
+not synchronize independently: the existing layer publication barrier proves
+all preceding pieces before status, output and candidate state become visible.
+Audit timing retains an isolated graph stream and immediate completion. Stream
+ownership is part of launch-graph v3 and graph-executable v2 identity; the
+execution flags and completion facts are an in-process ABI change only.
+
 The backend registry may hold multiple shape keys beneath one compiled
 execution-profile identity. Changing capture bucket or admitted capacity within
 one mode selects another key without invalidating compatible executables;

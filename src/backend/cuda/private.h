@@ -344,11 +344,16 @@ int yvex_cuda_timing(yvex_backend *backend, CUstream stream,
                      const char *where, yvex_error *err);
 int yvex_cuda_capture_active(const yvex_backend *backend);
 int yvex_cuda_graphs_close_all(yvex_backend *backend, yvex_error *err);
+typedef enum {
+    YVEX_CUDA_GRAPH_EXECUTION_MEASURE_DEVICE_TIME = 1u << 0,
+    YVEX_CUDA_GRAPH_EXECUTION_SHARED_LAUNCH_STREAM = 1u << 1,
+    YVEX_CUDA_GRAPH_EXECUTION_DEFER_COMPLETION = 1u << 2
+} yvex_cuda_graph_execution_flag;
 int yvex_cuda_graph_execute(yvex_backend *backend,
                             const char *compatibility_identity,
                             yvex_cuda_graph_prepare_fn prepare,
                             yvex_cuda_graph_enqueue_fn enqueue,
-                            void *context, int measure_device_time,
+                            void *context, unsigned int execution_flags,
                             yvex_backend_cuda_graph_info *info,
                             yvex_error *err);
 int yvex_cuda_graph_kernel_capture(yvex_backend *backend,

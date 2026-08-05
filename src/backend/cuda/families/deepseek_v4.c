@@ -1580,7 +1580,6 @@ static int attn_graph_enqueue(void *opaque, int enqueue_kernels, yvex_error *err
     piece->run->resources.prepare_only = 0;
     return rc;
 }
-
 /* State promotion changes source addresses, so refresh copies on the graph stream before replay. */
 static int attn_graph_prepare(void *opaque, yvex_error *err) {
     attn_graph_piece *piece = (attn_graph_piece *)opaque;
@@ -1591,7 +1590,6 @@ static int attn_graph_prepare(void *opaque, yvex_error *err) {
         return attn_initializers_enqueue(piece->run);
     return YVEX_OK;
 }
-
 static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int last) {
     attn_graph_piece piece = {run, first, last};
     yvex_backend_cuda_graph_info info;
@@ -1605,7 +1603,9 @@ static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int la
             "cuda.deepseek_attention.graph.identity", 1ull, 0ull,
             YVEX_ERR_STATE, "CUDA attention graph compatibility identity is incomplete");
     rc = yvex_cuda_graph_execute(run->backend, identity, attn_graph_prepare, attn_graph_enqueue,
-                                 &piece, measure_device_time, &info, run->err);
+        &piece, measure_device_time ? YVEX_CUDA_GRAPH_EXECUTION_MEASURE_DEVICE_TIME :
+            YVEX_CUDA_GRAPH_EXECUTION_SHARED_LAUNCH_STREAM |
+                YVEX_CUDA_GRAPH_EXECUTION_DEFER_COMPLETION, &info, run->err);
     if (rc != YVEX_OK && run->failure &&
         run->failure->code == YVEX_BACKEND_ATTENTION_FAILURE_NONE) {
         run->failure->code = YVEX_BACKEND_ATTENTION_FAILURE_LAUNCH;
@@ -1624,8 +1624,9 @@ static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int la
             "CUDA attention graph device timing overflowed");
     if (rc == YVEX_OK) {
         run->resources.launches += info.inventory.kernel_node_count;
-        run->stream_synchronizations += 1ull +
-            (unsigned long long)(measure_device_time && run->state->timing_ready);
+        if (!info.completion_pending)
+            run->stream_synchronizations += 1ull +
+                (unsigned long long)(measure_device_time && run->state->timing_ready);
         if (first == 0u ||
             (run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_CORE &&
              first == YVEX_CUDA_ATTENTION_STAGE_PROJECT))
@@ -1637,7 +1638,6 @@ static int attn_graph_execute(attn_run *run, unsigned int first, unsigned int la
     }
     return rc;
 }
-
 static int attn_numerical_execute(attn_run *run) {
     const unsigned int first_end = YVEX_CUDA_ATTENTION_STAGE_COMPRESS;
     const unsigned int last_begin = YVEX_CUDA_ATTENTION_STAGE_REDUCE;
