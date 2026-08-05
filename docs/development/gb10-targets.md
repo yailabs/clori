@@ -118,10 +118,13 @@ DSpark target verification consumes the same result class. Greedy drafting also
 keeps the shared-head base rows resident, fuses the encoded Markov projection
 with each base row and selects each proposal on CUDA without vocabulary D2H or a
 host vocabulary scan. Production greedy CUDA gathers each encoded Markov row
-from admitted residency and transfers only its row identifier; the bounded host
-decode remains reachable for confidence and the current adjustment identity.
-The confidence head and stochastic distribution/acceptance require their
-bounded device cutover.
+from admitted residency and transfers only its row identifier. The drafter's
+normalized and pre-normalized rows remain resident through output-head and
+confidence projection, while confidence consumes split hidden/Markov device
+views and transfers one scalar. Host Markov decode and confidence remain
+reachable only through the CPU, audit/forensic and stochastic references;
+stochastic distribution and acceptance still require their bounded device
+cutover.
 The wave must keep prefix promotion, shape
 admission, partial-turn semantics, protocol channels and one model/session
 authority unchanged.

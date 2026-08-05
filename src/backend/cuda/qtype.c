@@ -49,27 +49,36 @@ int yvex_backend_cuda_encoded_matvec(
     unsigned long long encoded_bytes, unsigned int qtype,
     unsigned long long row_count, unsigned long long row_width,
     unsigned long long row_bytes, unsigned long long input_rows,
-    const yvex_device_tensor *input, const yvex_device_tensor *additive,
+    const yvex_device_tensor *input, const yvex_device_tensor *input_tail,
+    unsigned long long input_head_width, const yvex_device_tensor *additive,
     yvex_device_tensor *output,
     yvex_backend_cuda_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
     unsigned long long device_address = 0ull, input_bytes, output_bytes, activation_bytes;
-    unsigned long long input_elements, output_elements, projection_rows;
+    unsigned long long input_elements, input_head_elements, input_tail_elements;
+    unsigned long long input_head_bytes, input_tail_bytes, output_elements, projection_rows;
     unsigned long long temporary_bytes = sizeof(int), q8_workspace_bytes = 0ull;
-    CUdeviceptr encoded_ptr, input_ptr, additive_ptr = 0ull, output_ptr;
+    CUdeviceptr encoded_ptr, input_ptr, input_tail_ptr = 0ull, additive_ptr = 0ull, output_ptr;
     CUdeviceptr status = 0ull, quantized = 0ull;
     unsigned long long start_row = 0ull, launches = 0ull;
     int output_bf16 = 0, host_status = 0, rc, cleanup_rc, q8_path, q8_input = 0;
-    int forensic_numeric = 0;
+    int forensic_numeric = 0, split_input = input_tail != NULL;
     yvex_error cleanup;
     if (facts) memset(facts, 0, sizeof(*facts));
     if (!state || !resident_encoded || !encoded_bytes || !row_count || !input_rows ||
-        !row_width || !row_bytes || !facts ||
+        !row_width || !row_bytes || !facts || split_input != (input_head_width != 0ull) ||
+        (split_input && input_head_width >= row_width) ||
         !yvex_core_u64_mul(input_rows, row_width, &input_elements) ||
+        !yvex_core_u64_mul(input_rows, split_input ? input_head_width : row_width,
+                           &input_head_elements) ||
+        !yvex_core_u64_mul(input_rows, split_input ? row_width - input_head_width : 0ull,
+                           &input_tail_elements) ||
         !yvex_core_u64_mul(input_rows, row_count, &output_elements) ||
         !yvex_core_u64_mul(input_elements, sizeof(float), &input_bytes) ||
+        !yvex_core_u64_mul(input_head_elements, sizeof(float), &input_head_bytes) ||
+        !yvex_core_u64_mul(input_tail_elements, sizeof(float), &input_tail_bytes) ||
         !yvex_core_u64_mul(output_elements, sizeof(float), &output_bytes) ||
         !yvex_core_u64_add(input_bytes, output_bytes, &activation_bytes) ||
         (additive && !yvex_core_u64_add(activation_bytes, output_bytes,
@@ -79,8 +88,11 @@ int yvex_backend_cuda_encoded_matvec(
         projection_rows / CUDA_QTYPE_MATVEC_ROWS > UINT_MAX ||
         row_count > ULLONG_MAX / row_bytes || row_count * row_bytes != encoded_bytes ||
         !backend_tensor_owner_is(backend, input) || !input->is_written ||
-        input->dtype != YVEX_DTYPE_F32 ||
-        input->bytes < input_bytes || !backend_tensor_owner_is(backend, output) ||
+        input->dtype != YVEX_DTYPE_F32 || input->bytes < input_head_bytes ||
+        (split_input && (!backend_tensor_owner_is(backend, input_tail) ||
+                         !input_tail->is_written || input_tail->dtype != YVEX_DTYPE_F32 ||
+                         input_tail->bytes < input_tail_bytes || input_tail == output)) ||
+        !backend_tensor_owner_is(backend, output) ||
         output->dtype != YVEX_DTYPE_F32 || output->bytes < output_bytes ||
         (additive && (!backend_tensor_owner_is(backend, additive) ||
                       additive->dtype != YVEX_DTYPE_F32 || !additive->is_written ||
@@ -103,9 +115,10 @@ int yvex_backend_cuda_encoded_matvec(
                                      "cuda.encoded-matvec.status", NULL, err);
     encoded_ptr = (CUdeviceptr)device_address;
     input_ptr = (CUdeviceptr)input->data;
+    if (input_tail) input_tail_ptr = (CUdeviceptr)input_tail->data;
     if (additive) additive_ptr = (CUdeviceptr)additive->data;
     output_ptr = (CUdeviceptr)output->data;
-    q8_path = row_width % 256ull == 0ull &&
+    q8_path = !split_input && row_width % 256ull == 0ull &&
               (qtype == YVEX_GGUF_QTYPE_IQ2_XXS || qtype == YVEX_GGUF_QTYPE_Q2_K ||
                qtype == YVEX_GGUF_QTYPE_Q8_0);
     if (rc == YVEX_OK && q8_path) {
@@ -139,11 +152,17 @@ int yvex_backend_cuda_encoded_matvec(
                              &row_count, &input_rows, &qtype, &quantized, &q8_input,
                              &forensic_numeric, &additive_ptr, &output_ptr,
                              &output_bf16, &status};
+        void *split_params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
+                                &row_count, &input_rows, &qtype, &input_ptr,
+                                &input_tail_ptr, &input_head_width, &additive_ptr,
+                                &output_ptr, &output_bf16, &status};
         unsigned int grid = (unsigned int)(projection_rows / CUDA_QTYPE_MATVEC_ROWS);
         q8_input = q8_path;
         rc = yvex_cuda_launch(
-            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, state->qtype_matvec_function,
-            grid, CUDA_QTYPE_MATVEC_BLOCK, 0u, q8_path ? q8_params : params,
+            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            split_input ? state->qtype_split_matvec_function : state->qtype_matvec_function,
+            grid, CUDA_QTYPE_MATVEC_BLOCK, 0u,
+            split_input ? split_params : q8_path ? q8_params : params,
             "cuda.encoded-matvec.launch", err);
         if (rc == YVEX_OK) launches++;
     }

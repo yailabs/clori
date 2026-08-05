@@ -182,7 +182,7 @@ typedef struct {
     int (*cancel_requested)(void *context);
     void *cancel_context;
     yvex_attention_evidence_level evidence_level;
-    int device_hidden_output;
+    int device_hidden_output, device_pre_normalized_output;
     const yvex_compiled_execution_profile *execution_profile;
     yvex_execution_shape_registry *shape_registry;
 } yvex_runtime_transformer_options;
@@ -226,6 +226,7 @@ typedef struct {
 typedef struct {
     int completed;
     int normalized_hidden_host_available, normalized_hidden_device_available;
+    int pre_normalized_hidden_host_available, pre_normalized_hidden_device_available;
     yvex_runtime_transformer_phase phase;
     unsigned long long token_start, token_count, chunk_count, committed_prefix;
     unsigned long long position_before, position_after, generation_before, generation_after;
@@ -243,7 +244,7 @@ typedef struct {
     unsigned long long embedding_ns, attention_ns, attention_device_ns, moe_ns, final_ns;
     unsigned long long synchronization_ns;
     unsigned long long full_array_host_scan_bytes;
-    yvex_execution_device_view device_hidden;
+    yvex_execution_device_view device_hidden, device_pre_normalized_hidden;
     char input_identity[YVEX_SHA256_HEX_CAP];
     char embedding_digest[YVEX_SHA256_HEX_CAP];
     char routing_digest[YVEX_SHA256_HEX_CAP];

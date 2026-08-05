@@ -569,10 +569,8 @@ int yvex_runtime_logits_source_from_decode(
         context->plan.summary.transformer_plan_identity,
         producer->transformer_execution_identity, err);
 }
-
 int yvex_runtime_logits_source_from_draft(
-    const yvex_runtime_logits_context *context,
-    yvex_runtime_logits_source *source,
+    const yvex_runtime_logits_context *context, yvex_runtime_logits_source *source,
     const yvex_transformer_plan *draft_plan,
     const yvex_runtime_transformer_result *producer,
     const float *normalized_hidden, unsigned long long hidden_capacity,
@@ -580,6 +578,7 @@ int yvex_runtime_logits_source_from_draft(
 {
     const yvex_transformer_plan_summary *draft =
         yvex_transformer_plan_summary_get(draft_plan);
+    yvex_execution_device_view device_row;
     char complete_digest[YVEX_SHA256_HEX_CAP];
     unsigned long long complete_values, row_offset;
     if (!context || !source || !draft || !producer || !producer->completed ||
@@ -588,26 +587,40 @@ int yvex_runtime_logits_source_from_draft(
         strcmp(draft->transformer_plan_identity,
                context->shared_draft_plan_identity) != 0 ||
         !producer->token_count || row_ordinal >= producer->token_count ||
-        !yvex_core_u64_mul(producer->token_count, draft->hidden_width,
-                           &complete_values) ||
-        hidden_capacity < complete_values || !normalized_hidden ||
-        !yvex_execution_f32_digest("yvex.transformer.normalized-hidden.v1",
-                              normalized_hidden, complete_values,
-                              complete_digest) ||
-        strcmp(complete_digest, producer->normalized_hidden_digest) != 0 ||
+        !yvex_core_u64_mul(producer->token_count, draft->hidden_width, &complete_values) ||
         !yvex_core_u64_mul(row_ordinal, draft->hidden_width, &row_offset))
         return logits_refuse(err, YVEX_ERR_FORMAT,
                              "draft normalized-hidden publication is incompatible");
-    return logits_source_begin(
-        context, source, YVEX_LOGITS_SOURCE_DRAFT,
-        producer->token_start + row_ordinal, normalized_hidden + row_offset,
-        NULL, producer->normalized_hidden_digest,
-        draft->transformer_plan_identity, producer->execution_identity, err);
+    if (producer->normalized_hidden_host_available) {
+        if (!normalized_hidden || hidden_capacity < complete_values ||
+            !yvex_execution_f32_digest("yvex.transformer.normalized-hidden.v1", normalized_hidden,
+                                       complete_values, complete_digest) ||
+            strcmp(complete_digest, producer->normalized_hidden_digest) != 0)
+            return logits_refuse(err, YVEX_ERR_FORMAT,
+                                 "draft host hidden publication is incompatible");
+        return logits_source_begin(context, source, YVEX_LOGITS_SOURCE_DRAFT,
+            producer->token_start + row_ordinal, normalized_hidden + row_offset, NULL,
+            producer->normalized_hidden_digest,
+            draft->transformer_plan_identity, producer->execution_identity, err);
+    }
+    if (!producer->normalized_hidden_device_available || normalized_hidden || hidden_capacity ||
+        producer->device_hidden.rows != producer->token_count)
+        return logits_refuse(err, YVEX_ERR_FORMAT,
+                             "draft device hidden publication is incompatible");
+    device_row = producer->device_hidden;
+    if (!yvex_core_u64_add(device_row.element_offset, row_offset, &device_row.element_offset))
+        return logits_refuse(err, YVEX_ERR_BOUNDS,
+                             "draft device hidden row offset overflowed");
+    device_row.rows = 1ull;
+    if (yvex_execution_device_view_validate(&device_row, err) != YVEX_OK)
+        return yvex_error_code(err);
+    return logits_source_begin(context, source, YVEX_LOGITS_SOURCE_DRAFT,
+        producer->token_start + row_ordinal, NULL, &device_row,
+        producer->normalized_hidden_digest, draft->transformer_plan_identity,
+        producer->execution_identity, err);
 }
-
 /*
  * Validate one normalized-hidden source against exact producing identities.
- *
  * Refuses stale model/plan/producer identity, geometry, or payload digest.
  */
 static int logits_source_validate(const yvex_runtime_logits_context *context,
@@ -732,7 +745,7 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
             context->plan.summary.row_bytes, 1ull, device_hidden,
-            NULL, context->device_logits, &facts, err);
+            NULL, 0ull, NULL, context->device_logits, &facts, err);
     if (rc == YVEX_OK && !context->options.device_selection)
         rc = yvex_backend_tensor_read(context->session_view->backend,
                                       context->device_logits,
@@ -1434,7 +1447,7 @@ static int logits_project_cuda_batch(
             context->resident_head_bytes, context->plan.summary.qtype,
             context->plan.summary.row_count, context->plan.summary.row_width,
             context->plan.summary.row_bytes, row_count, device_hidden,
-            NULL, context->device_logits, &facts, err);
+            NULL, 0ull, NULL, context->device_logits, &facts, err);
     if (rc == YVEX_OK && !device_output)
         rc = yvex_backend_tensor_read(context->session_view->backend,
                                       context->device_logits, logits,

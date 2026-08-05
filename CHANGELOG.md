@@ -67,10 +67,12 @@ change. Git history preserves implementation chronology.
   greedy draft path now keeps the shared-head base rows resident, fuses each
   encoded Markov projection with its base row, and transfers only the selected
   token and bounded status. Greedy CUDA now gathers the encoded Markov embedding
-  row directly from admitted residency and uploads only its bounded row ID. The
-  portable host distribution remains the CPU, audit/forensic and stochastic
-  oracle; bounded host Markov decode remains for confidence and the current row
-  identity until that adapter moves to device execution.
+  row directly from admitted residency and uploads only its bounded row ID. Its
+  normalized and pre-normalized drafter rows now remain device resident through
+  output-head and confidence projection; confidence consumes the resident hidden
+  and Markov views directly and transfers one scalar result. The portable host
+  distribution and confidence paths remain the CPU, audit/forensic and stochastic
+  oracles.
 - Production CUDA target-feature capture now averages source-selected mHC
   residual streams into bounded host evidence and a transaction-owned
   token-major device directory. Production feature projection consumes that

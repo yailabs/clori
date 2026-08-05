@@ -186,14 +186,18 @@ static void quant_q8_reference(const float input[512], float output[512])
 
 static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
 {
-    enum { ROWS = 3, INPUT_ROWS = 3, WIDTH = 512 };
+    enum { ROWS = 3, INPUT_ROWS = 3, WIDTH = 512, HEAD = 173 };
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *resident = NULL, *input = NULL, *additive = NULL, *output = NULL;
+    yvex_device_tensor *split_head = NULL, *split_tail = NULL;
+    yvex_device_tensor split_output = {0};
     unsigned char *mapped = NULL, *row = NULL;
     float source[ROWS * WIDTH], vectors[INPUT_ROWS * WIDTH];
     float q8_vectors[INPUT_ROWS * WIDTH];
     float exact[INPUT_ROWS * ROWS], expected[INPUT_ROWS * ROWS];
     float additive_values[INPUT_ROWS * ROWS], actual[INPUT_ROWS * ROWS];
+    float head[HEAD], tail[WIDTH - HEAD], split_reference[WIDTH];
+    float split_expected[ROWS], split_actual[ROWS];
     yvex_quant_failure failure;
     yvex_error err;
     size_t row_bytes = 0u;
@@ -207,9 +211,13 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
             vectors[input_index * WIDTH + index] =
                 (float)((int)((index + input_index * 5u) % 29ull) - 14) /
                 (float)(13u + input_index);
-        quant_q8_reference(vectors + input_index * WIDTH,
-                           q8_vectors + input_index * WIDTH);
+        quant_q8_reference(vectors + input_index * WIDTH, q8_vectors + input_index * WIDTH);
     }
+    for (index = 0ull; index < WIDTH; ++index)
+        split_reference[index] = yvex_quant_bf16_decode(
+            yvex_quant_bf16_encode(vectors[index]));
+    memcpy(head, vectors, sizeof(head));
+    memcpy(tail, vectors + HEAD, sizeof(tail));
     for (index = 0ull; index < ROWS * WIDTH; ++index)
         source[index] = (float)((int)((index * 7ull + 3ull) % 41ull) - 20) /
                         (float)(2ull + index % 11ull);
@@ -222,8 +230,7 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
                              &row, &current_bytes),
                          "Q8 activation matvec row encodes");
         if (!row_index) row_bytes = current_bytes;
-        YVEX_TEST_ASSERT(current_bytes == row_bytes,
-                         "Q8 activation matvec rows share exact geometry");
+        YVEX_TEST_ASSERT(current_bytes == row_bytes, "Q8 activation matvec rows share exact geometry");
         if (!mapped) {
             descriptor.name = "q8_activation_encoded";
             descriptor.dtype = YVEX_DTYPE_I8;
@@ -248,6 +255,11 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
                         q8_vectors + input_index * WIDTH, WIDTH,
                         &expected[output_index], &failure, &err) == YVEX_OK,
                 "Q8 activation CPU reference succeeds for every input row");
+            if (!input_index)
+                YVEX_TEST_ASSERT(yvex_quant_cpu_dot(
+                    qtype, mapped + row_index * row_bytes, row_bytes, split_reference,
+                    WIDTH, &split_expected[row_index], &failure, &err) == YVEX_OK,
+                    "split-input matvec reference uses the canonical codec");
         }
     }
     YVEX_TEST_ASSERT(yvex_backend_resident_attach(
@@ -266,7 +278,7 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
                      "Q8 activation output allocates");
     rc = yvex_backend_cuda_encoded_matvec(
         backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
-        INPUT_ROWS, input, NULL, output, &facts, &err);
+        INPUT_ROWS, input, NULL, 0ull, NULL, output, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && !facts.kernel_launches,
                      "encoded matvec refuses an unpublished input before launch");
     YVEX_TEST_ASSERT(yvex_backend_tensor_write(
@@ -274,7 +286,8 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
                      "Q8 activation row batch uploads once");
     rc = yvex_backend_cuda_encoded_matvec(
         backend, mapped, descriptor.bytes ? ROWS * row_bytes : 0u, qtype,
-        ROWS, WIDTH, row_bytes, INPUT_ROWS, input, NULL, output, &facts, &err);
+        ROWS, WIDTH, row_bytes, INPUT_ROWS, input, NULL, 0ull, NULL,
+        output, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
                          facts.d2h_bytes == sizeof(int) &&
                          facts.device_synchronizations == 1ull &&
@@ -301,7 +314,7 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
                      "Q8 activation additive row batch allocates");
     rc = yvex_backend_cuda_encoded_matvec(
         backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
-        INPUT_ROWS, input, additive, output, &facts, &err);
+        INPUT_ROWS, input, NULL, 0ull, additive, output, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && !facts.kernel_launches,
                      "fused encoded matvec refuses an unpublished additive before launch");
     YVEX_TEST_ASSERT(yvex_backend_tensor_write(backend, additive, additive_values,
@@ -309,7 +322,7 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
                      "Q8 activation additive row batch uploads once");
     rc = yvex_backend_cuda_encoded_matvec(
         backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
-        INPUT_ROWS, input, additive, output, &facts, &err);
+        INPUT_ROWS, input, NULL, 0ull, additive, output, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_OK && facts.kernel_launches == 2ull &&
                          facts.d2h_bytes == sizeof(int) &&
                          facts.device_synchronizations == 1ull &&
@@ -323,10 +336,49 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
                          "fused encoded matvec matches the independent additive reference");
     rc = yvex_backend_cuda_encoded_matvec(
         backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes,
-        INPUT_ROWS, input, output, output, &facts, &err);
+        INPUT_ROWS, input, NULL, 0ull, output, output, &facts, &err);
     YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && !facts.kernel_launches,
                      "fused encoded matvec refuses aliased additive and output ownership");
+    descriptor.name = "split_head";
+    descriptor.dims[0] = HEAD;
+    descriptor.bytes = sizeof(head);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &split_head, &err) == YVEX_OK &&
+        yvex_backend_tensor_write(backend, split_head, head, sizeof(head), &err) == YVEX_OK,
+                     "split-input head becomes device resident");
+    descriptor.name = "split_tail";
+    descriptor.dims[0] = WIDTH - HEAD;
+    descriptor.bytes = sizeof(tail);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_alloc(backend, &descriptor, &split_tail, &err) == YVEX_OK,
+                     "split-input tail allocates");
+    rc = yvex_backend_cuda_encoded_matvec(
+        backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes, 1ull,
+        split_head, split_tail, HEAD, NULL, output, &facts, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && !facts.kernel_launches,
+                     "split-input projection refuses an unpublished tail");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_write(
+                         backend, split_tail, tail, sizeof(tail), &err) == YVEX_OK,
+                     "split-input tail becomes device resident");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_f32_subview(output, 0ull, ROWS, &split_output),
+                     "split-input projection owns one bounded output view");
+    rc = yvex_backend_cuda_encoded_matvec(
+        backend, mapped, ROWS * row_bytes, qtype, ROWS, WIDTH, row_bytes, 1ull,
+        split_head, split_tail, HEAD, NULL, &split_output, &facts, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_OK,
+                     "split-input encoded projection executes");
+    YVEX_TEST_ASSERT(facts.kernel_launches == 1ull &&
+                         facts.activation_bytes == sizeof(head) + sizeof(tail) +
+                                                       sizeof(split_actual),
+                     "split-input projection accounts one direct launch");
+    YVEX_TEST_ASSERT(yvex_backend_tensor_read(backend, &split_output, split_actual,
+                                              sizeof(split_actual), &err) == YVEX_OK,
+                     "split-input projection publishes its bounded rows");
+    for (index = 0ull; index < ROWS; ++index)
+        YVEX_TEST_ASSERT(fabs((double)split_actual[index] - split_expected[index]) <=
+                             1e-4 * (1.0 + fabs((double)split_expected[index])),
+                         "split-input CUDA projection matches the independent reference");
     YVEX_TEST_ASSERT(yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &split_tail, &err) == YVEX_OK &&
+                         yvex_backend_tensor_release(backend, &split_head, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &additive, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
                          yvex_backend_tensor_release(backend, &input, &err) == YVEX_OK &&

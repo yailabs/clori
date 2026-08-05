@@ -826,6 +826,56 @@ extern "C" __global__ void yvex_qtype_matvec(
     }
 }
 
+extern "C" __global__ void yvex_qtype_split_matvec(
+    const unsigned char *encoded,
+    unsigned long long row_bytes,
+    unsigned long long row_width,
+    unsigned long long start_row,
+    unsigned long long row_count,
+    unsigned long long input_rows,
+    unsigned int qtype,
+    const float *head,
+    const float *tail,
+    unsigned long long head_width,
+    const float *additive,
+    float *out,
+    int output_bf16,
+    int *status)
+{
+    unsigned int lane = threadIdx.x & 31u;
+    unsigned int warp = threadIdx.x >> 5u;
+    unsigned long long pair = (unsigned long long)blockIdx.x * 8ull + warp;
+    unsigned long long input_row = row_count ? pair / row_count : input_rows;
+    unsigned long long row = row_count ? pair % row_count : row_count;
+    float sum = 0.0f;
+    if (!status || *status != 0 || input_row >= input_rows) return;
+    if (!encoded || !head || !tail || !out || !row_bytes || !row_width ||
+        !row_count || !head_width || head_width >= row_width) {
+        atomicCAS(status, 0, 2);
+        return;
+    }
+    const unsigned char *row_data = encoded + (start_row + row) * row_bytes;
+    unsigned long long tail_width = row_width - head_width;
+    const float *head_row = head + input_row * head_width;
+    const float *tail_row = tail + input_row * tail_width;
+    for (unsigned long long i = lane; i < row_width; i += 32ull) {
+        float weight = qtype_value(row_data, i, qtype);
+        float value = float_to_bf16_rne(
+            i < head_width ? head_row[i] : tail_row[i - head_width]);
+        if (!isfinite(weight) || !isfinite(value)) atomicCAS(status, 0, 1);
+        else sum = fmaf(weight, value, sum);
+    }
+    for (unsigned int offset = 16u; offset; offset >>= 1u)
+        sum += __shfl_down_sync(0xffffffffu, sum, offset);
+    if (lane == 0u) {
+        float value = additive
+            ? __fadd_rn(sum, additive[input_row * row_count + row]) : sum;
+        if (!isfinite(value)) atomicCAS(status, 0, 1);
+        else out[input_row * row_count + row] =
+            output_bf16 ? float_to_bf16_rne(value) : value;
+    }
+}
+
 extern "C" __global__ void yvex_deepseek_decode(
     const unsigned char *encoded, unsigned long long count,
     unsigned int qtype, float *out, int *status)

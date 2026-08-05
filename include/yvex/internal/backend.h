@@ -294,7 +294,6 @@ static inline int backend_tensor_f32_elements(const yvex_device_tensor *tensor,
 }
 /*
  * Commit one admitted allocation to the backend counters.
- *
  * None after the caller's overflow and capacity admission. Concrete storage ownership remains with
  * the backend implementation.
  */
@@ -369,8 +368,9 @@ typedef struct yvex_backend_cuda_operation_facts {
 int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
     unsigned long long row_width, unsigned long long row_bytes, unsigned long long input_rows,
-    const yvex_device_tensor *input, const yvex_device_tensor *additive, yvex_device_tensor *output,
-    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+    const yvex_device_tensor *input, const yvex_device_tensor *input_tail, unsigned long long input_head_width,
+    const yvex_device_tensor *additive,
+    yvex_device_tensor *output, yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 int yvex_backend_cuda_encoded_gather(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
     unsigned long long row_width, unsigned long long row_bytes, const unsigned int *row_ids,
