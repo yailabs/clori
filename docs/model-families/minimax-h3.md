@@ -1,16 +1,18 @@
 # MiniMax-H3 FL2VA Family Record
 
-Status: source acquired and verified; logical architecture, tensor roles, and
-Transformation IR admitted; not an executable family
+Status: source acquired and verified; logical architecture, tensor roles,
+Transformation IR, and one source-faithful Audio VAE physical artifact
+admitted through native roundtrip; not an executable family
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
 the complete immutable FL2VA source through its production source owner and
 has a non-runtime model target, one bounded family owner, a composite logical
 component manifest, a seven-edge phase DAG through transactional media
 publication, an exact tensor-role classifier, and component-aware
-artifact-neutral Transformation IR schema v2. It does not add an artifact
-format, runtime adapter, backend operation, hosted path, or release
-obligation. The frozen quantitative intake evidence is the
+artifact-neutral Transformation IR schema v2. YVEX also emits one independently
+identified Audio VAE component GGUF without changing source dtype or executing
+its payload. It does not add component materialization, a runtime adapter,
+backend operation, hosted path, or release obligation. The frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
 
@@ -21,9 +23,9 @@ promotion rules remain in the [family integration contract](integration.md).
 | Implementation branch | `feature/minimax-h3` |
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
-| Current wave | `R010.MINIMAX.H3.FL2VA.IR.0` |
-| Current boundary | exact source acquired and verified; composite architecture, 3,240 tensor roles, and component-aware Transformation IR admitted live |
-| Next expected boundary | independently admitted component physical variants and artifact emission |
+| Current wave | `R010.MINIMAX.H3.FL2VA.PHYSICAL.0` |
+| Current boundary | source-faithful Audio VAE physical variant emitted and accepted by the native YVEX GGUF roundtrip |
+| Next expected boundary | component artifact admission and Audio VAE materialization/numerical decode |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -49,7 +51,7 @@ or rename the branch.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; no artifact or execution |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; one Audio VAE component artifact emitted; no numerical execution |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -320,19 +322,21 @@ acceptable generation speed, 768p practicality, or any 2K path.
 | E. No integration until every numeric primitive exists | avoids early runtime work but also blocks safe source/IR admission that does not consume numeric execution | missing numeric prerequisites have explicit later consumers and need not block identity/IR work | reject as the immediate strategy |
 
 Alternative B is now admitted only as a typed logical component manifest and
-phase/lifetime DAG. It is not a composite artifact: no physical component
-artifact exists, and later artifacts retain independent identity, admission,
-materialization, and failure. The logical target creates no runtime readiness.
+phase/lifetime DAG. It is not a composite artifact: the independently emitted
+Audio VAE physical artifact retains its own identity, and later admission,
+materialization, and failure remain separate boundaries. The logical target
+creates no runtime readiness.
 
 The decision preserves one common YVEX runtime, no family runtime hierarchy,
 backend ownership of allocation/transfer/execution/cleanup, graph ownership of
 executable semantics, artifact identity separate from runtime readiness, and
-no promotion from metadata. This wave implements the component manifest and
-artifact-neutral Transformation IR only; it deliberately does not implement
-an execution package, composite artifact, Physical Execution IR, residency
-transition, media session, artifact format, or backend operation.
+no promotion from metadata. The current branch implements the component
+manifest, artifact-neutral Transformation IR, and the bounded generic writer
+input needed for one logical component. It deliberately does not implement an
+execution package, composite artifact, Physical Execution IR, residency
+transition, media session, or backend operation.
 
-## Selected first executable slice
+## Completed IR slice
 
 Scores are 0–5 with 5 favorable. Full scoring is frozen in the audit metrics.
 
@@ -399,25 +403,75 @@ Numerical conformance, scheduler semantics, component artifact formats,
 runtime residency, Omni execution, VAE execution, media serialization,
 generation quality, and performance remain explicit non-claims of that slice.
 
+## Audio VAE physical artifact boundary
+
+The next bounded pass admitted a source-faithful physical plan for one logical
+component and emitted its bytes through the existing quantization and GGUF
+owners. Source-faithful means exact F32 retention: it is not a numerical
+quantization claim. The source session verifies the immutable acquired tree,
+binds each terminal to one admitted byte range, and refuses file drift before
+payload delivery. The file sink publishes only after the native GGUF reader,
+layout validator, tensor-directory comparison, whole-file hash, and aggregate
+payload hash all succeed.
+
+| Fact | Value |
+| --- | --- |
+| Component | Audio VAE |
+| Component identity | `be921beb8581b44624aaad452f30f77f1e204159ae8fe11da455d5208dc4e62b` |
+| Transformation identity | `e6f8f3ac2ae01157a57049f0db2439271585966174c0bfe202a5546471361ab3` |
+| Physical variant identity | `b8b5aa330a617b0fa33fdd1428e5fea9e8edcdd7f6a2ba6f530d378fbaddaa65` |
+| Writer-plan identity | `40c89b292935ae03708df9a131d92fbd2fc2de6428550ade6f8c436294217271` |
+| Quant-execution identity | `551609d790bd9af9a51297bacbc7d476bbe436239ee0ce86fb1daa896fccd2ec` |
+| Artifact identity / SHA-256 | `52a10c9f6f6e3b9b81569a95329f503fcb3cbddb224d12bf7851b4929d02e1c1` |
+| Tensor coverage | 1,087 of 1,087 |
+| Element coverage | 151,326,585 |
+| Source and physical dtype | F32 |
+| Payload bytes | 605,306,340 |
+| GGUF file bytes | 605,401,984 |
+| Native roundtrip | accepted |
+| Official-reader admission | pending |
+| Runtime/media readiness | false |
+
+The artifact lives in the external identity-bound operator evidence root and
+is not tracked by Git. The operator commands are:
+
+```sh
+yvex compile quant plan --target minimax-h3-fl2va \
+  --source <IMMUTABLE_SOURCE_ROOT> --component audio_vae \
+  --out-plan <EXTERNAL_PLAN>
+yvex compile quant emit --target minimax-h3-fl2va \
+  --source <IMMUTABLE_SOURCE_ROOT> --component audio_vae \
+  --plan <EXTERNAL_PLAN> --out <EXTERNAL_GGUF>
+```
+
+Planning reads no tensor payload. Emission read and delivered exactly the
+component payload and published atomically; the full acquired-source trust
+scan is a prerequisite, not model execution. A same-size source mutation after
+trust publication is covered by a focused file-drift refusal test. Invalid
+component identity, non-identity transformation, missing source range, invalid
+dtype/shape, malformed GGUF metadata, failed native roundtrip, and incomplete
+publication all fail closed.
+
 ## Progression and non-claims
 
 `progression_decision: proceed`
 
 `downstream_safe: true`
 
-The downstream consumer is the next MiniMax-H3 wave on `feature/minimax-h3`.
-There is no gate blocker, boundary incompleteness, evidence gap, or current
-external blocker within the IR boundary. Component physical variants and
-artifacts, the exact scheduler and MM-RoPE numerical contracts, component
+The downstream consumer is component artifact admission and Audio VAE
+materialization/numerical decode on `feature/minimax-h3`. There is no gate
+blocker, boundary incompleteness, evidence gap, or current external blocker in
+the source-faithful emission boundary. Official-reader evidence, materialized
+weights, the exact scheduler and MM-RoPE numerical contracts, component
 execution, staged residency, synchronized media transaction, evaluation, and
 benchmark are deferred depth with explicit later consumers. They do not weaken
-the admitted source-to-Transformation-IR path, and none is claimed by it.
+the emitted component identity, and none is claimed by it.
 License review remains an external authorization prerequisite for any use that
 requires an eligibility conclusion.
 
 This implementation boundary does not prove:
 
-- MiniMax-H3 numerical execution or component artifact emission;
+- MiniMax-H3 numerical execution or artifacts for the other three weighted components;
 - complete composite-artifact support or Physical Execution IR;
 - GB10 backend support or simultaneous/staged runtime residency;
 - Omni-Transformer, solver, timestep, or MM-RoPE numerical correctness;
