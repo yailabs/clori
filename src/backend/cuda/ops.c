@@ -559,7 +559,7 @@ static int attention_weighted_norm(
         };
         return attention_launch(
             work, work->state->deepseek_weighted_norm_function, (unsigned int)vectors,
-            1u, 0u, params, stage, failure, err);
+            CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
     }
 }
 static int attention_unit_norm(yvex_cuda_work *work,
@@ -648,7 +648,8 @@ static int attention_activation(
         };
         return attention_launch(
             work, work->state->deepseek_activation_function,
-            (unsigned int)vectors, 1u, 0u, params, stage, failure, err);
+            (unsigned int)vectors, CUDA_ATTENTION_BLOCK, 0u, params, stage,
+            failure, err);
     }
 }
 

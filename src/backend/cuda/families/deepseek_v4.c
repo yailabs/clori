@@ -1153,9 +1153,16 @@ static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
 
 static int attn_envelope_pre(attn_run *run) {
     unsigned long long streams = run->job->residual_stream_count, width = run->job->residual_stream_width;
+    unsigned int shared_bytes;
     int rc;
     if (run->job->operation_scope != YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE)
         return YVEX_OK;
+    if (streams >= UINT_MAX / sizeof(double))
+        return attn_run_fail(
+            run, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT,
+            "cuda.deepseek_attention.mhc_pre", UINT_MAX, streams,
+            YVEX_ERR_BOUNDS, "CUDA mHC shared geometry exceeds launch bounds");
+    shared_bytes = (unsigned int)((streams + 1ull) * sizeof(double));
     rc = run->ops->matvec(
         &run->resources,
         &run->job->weights[YVEX_BACKEND_ATTENTION_WEIGHT_MHC_FUNCTION],
@@ -1188,8 +1195,9 @@ static int attn_envelope_pre(attn_run *run) {
             &run->mhc_post, &run->mhc_combination, &one, &run->device_status
         };
         rc = run->ops->launch(
-            &run->resources, run->state->deepseek_mhc_pre_function, 1u, 1u, 0u,
-            params, "cuda.deepseek_attention.mhc_pre", run->failure, run->err);
+            &run->resources, run->state->deepseek_mhc_pre_function, 1u,
+            YVEX_CUDA_ATTN_BLOCK, shared_bytes, params,
+            "cuda.deepseek_attention.mhc_pre", run->failure, run->err);
     }
     if (rc == YVEX_OK)
         rc = run->ops->weighted_norm(

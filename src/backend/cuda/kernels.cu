@@ -660,31 +660,43 @@ extern "C" __global__ void yvex_deepseek_weighted_norm(
     unsigned int weight_qtype, double epsilon, unsigned long long vectors,
     int *status)
 {
+    __shared__ double inverse;
+    __shared__ int active;
     unsigned int lane = threadIdx.x;
-    double mean = 0.0;
     if (!status) return;
-    if (*status != 0 || (unsigned long long)blockIdx.x >= vectors) return;
+    if ((unsigned long long)blockIdx.x >= vectors) return;
     if (!values || !weight || !count || !vectors || epsilon <= 0.0) {
         if (lane == 0u) atomicCAS(status, 0, 2);
         return;
     }
-    if (lane != 0u) return;
+    if (lane == 0u) active = *status == 0;
+    __syncthreads();
+    if (!active) return;
     values += (unsigned long long)blockIdx.x * count;
-    for (unsigned long long i = 0ull; i < count; ++i) {
-        double value = (double)values[i];
-        if (!isfinite(value)) {
-            atomicCAS(status, 0, 1);
-            return;
+    /* Keep the admitted double reduction order in one lane. The independent
+       normalization writes can then occupy the block without changing bits. */
+    if (lane == 0u) {
+        double mean = 0.0;
+        for (unsigned long long i = 0ull; i < count; ++i) {
+            double value = (double)values[i];
+            if (!isfinite(value)) {
+                atomicCAS(status, 0, 1);
+                active = 0;
+                break;
+            }
+            mean = __dadd_rn(mean, __dmul_rn(value, value));
         }
-        mean = __dadd_rn(mean, __dmul_rn(value, value));
+        mean = __ddiv_rn(mean, (double)count);
+        inverse = __ddiv_rn(1.0, sqrt(__dadd_rn(mean, epsilon)));
+        if (!isfinite(inverse)) {
+            atomicCAS(status, 0, 1);
+            active = 0;
+        }
     }
-    mean = __ddiv_rn(mean, (double)count);
-    double inverse = __ddiv_rn(1.0, sqrt(__dadd_rn(mean, epsilon)));
-    if (!isfinite(inverse)) {
-        atomicCAS(status, 0, 1);
-        return;
-    }
-    for (unsigned long long i = 0ull; i < count; ++i) {
+    __syncthreads();
+    if (!active) return;
+    for (unsigned long long i = (unsigned long long)lane; i < count;
+         i += (unsigned long long)blockDim.x) {
         double scale = (double)qtype_value(weight, i, weight_qtype);
         double result = __dmul_rn(
             __dmul_rn((double)values[i], inverse), scale);
@@ -921,74 +933,102 @@ extern "C" __global__ void yvex_deepseek_activation(
     unsigned long long vector_width, unsigned long long block_width,
     unsigned int quantization, int hadamard, int *status)
 {
+    __shared__ unsigned int maximum_bits;
+    __shared__ float quantization_scale;
+    __shared__ int active;
     unsigned long long vector_index = (unsigned long long)blockIdx.x;
+    unsigned int thread = threadIdx.x;
     if (!status) return;
-    if (*status != 0 || threadIdx.x != 0u || vector_index >= vector_count)
-        return;
+    if (vector_index >= vector_count) return;
     if (!values || !vector_count || !vector_width || !block_width ||
         vector_width % block_width || (quantization != 1u && quantization != 2u)) {
-        atomicCAS(status, 0, 2);
+        if (thread == 0u) atomicCAS(status, 0, 2);
         return;
     }
+    if (thread == 0u) active = *status == 0;
+    __syncthreads();
+    if (!active) return;
     float *vector = values + vector_index * vector_width;
     if (hadamard) {
         if ((vector_width & (vector_width - 1ull)) != 0ull ||
             vector_width > 1024ull) {
-            atomicCAS(status, 0, 2);
+            if (thread == 0u) atomicCAS(status, 0, 2);
             return;
         }
-        for (unsigned long long step = 1ull; step < vector_width; step *= 2ull)
-            for (unsigned long long block = 0ull; block < vector_width;
-                 block += step * 2ull)
-                for (unsigned long long lane = 0ull; lane < step; ++lane) {
-                    float left = vector[block + lane];
-                    float right = vector[block + lane + step];
-                    vector[block + lane] = left + right;
-                    vector[block + lane + step] = left - right;
-                }
+        /* Each butterfly pair is independent within a stage. The stage
+           barrier preserves the source-authored Hadamard operation order. */
+        for (unsigned long long step = 1ull; step < vector_width; step *= 2ull) {
+            for (unsigned long long pair = (unsigned long long)thread;
+                 pair < vector_width / 2ull;
+                 pair += (unsigned long long)blockDim.x) {
+                unsigned long long block = (pair / step) * step * 2ull;
+                unsigned long long lane = pair % step;
+                float left = vector[block + lane];
+                float right = vector[block + lane + step];
+                vector[block + lane] = left + right;
+                vector[block + lane + step] = left - right;
+            }
+            __syncthreads();
+        }
         float scale = rsqrtf((float)vector_width);
-        for (unsigned long long i = 0ull; i < vector_width; ++i)
+        for (unsigned long long i = (unsigned long long)thread; i < vector_width;
+             i += (unsigned long long)blockDim.x)
             vector[i] *= scale;
+        __syncthreads();
     }
     for (unsigned long long offset = 0ull; offset < vector_width;
          offset += block_width) {
-        float amax = quantization == 1u ? 1.0e-4f : 0.0f;
-        for (unsigned long long i = 0ull; i < block_width; ++i) {
+        if (thread == 0u)
+            maximum_bits = __float_as_uint(quantization == 1u ? 1.0e-4f : 0.0f);
+        __syncthreads();
+        for (unsigned long long i = (unsigned long long)thread; i < block_width;
+             i += (unsigned long long)blockDim.x) {
             float value = vector[offset + i];
             if (!isfinite(value)) {
                 atomicCAS(status, 0, 1);
-                return;
+                atomicExch(&active, 0);
+                continue;
             }
             float magnitude = fabsf(value);
-            if (magnitude > amax) amax = magnitude;
+            atomicMax(&maximum_bits, __float_as_uint(magnitude));
         }
-        float minimum = 6.0f * ldexpf(1.0f, -126);
-        if (quantization == 2u && amax < minimum) amax = minimum;
-        float scale = deepseek_power_two_ceil(
-            amax / (quantization == 1u ? 448.0f : 6.0f));
-        unsigned int scale_code = deepseek_e8m0_encode(scale);
-        scale = e8m0_bits_to_float(scale_code);
-        if (!isfinite(scale) || scale <= 0.0f) {
-            atomicCAS(status, 0, 1);
-            return;
+        __syncthreads();
+        if (!active) return;
+        if (thread == 0u) {
+            float amax = __uint_as_float(maximum_bits);
+            float minimum = 6.0f * ldexpf(1.0f, -126);
+            if (quantization == 2u && amax < minimum) amax = minimum;
+            float scale = deepseek_power_two_ceil(
+                amax / (quantization == 1u ? 448.0f : 6.0f));
+            unsigned int scale_code = deepseek_e8m0_encode(scale);
+            quantization_scale = e8m0_bits_to_float(scale_code);
+            if (!isfinite(quantization_scale) || quantization_scale <= 0.0f) {
+                atomicCAS(status, 0, 1);
+                active = 0;
+            }
         }
-        for (unsigned long long i = 0ull; i < block_width; ++i) {
-            float normalized = vector[offset + i] / scale;
+        __syncthreads();
+        if (!active) return;
+        for (unsigned long long i = (unsigned long long)thread; i < block_width;
+             i += (unsigned long long)blockDim.x) {
+            float normalized = vector[offset + i] / quantization_scale;
             if (quantization == 1u) {
                 if (normalized > 448.0f) normalized = 448.0f;
                 if (normalized < -448.0f) normalized = -448.0f;
                 vector[offset + i] = float_to_bf16_rne(
                     deepseek_fp8_decode(deepseek_fp8_encode(normalized)) *
-                    scale);
+                    quantization_scale);
             } else if (quantization == 2u) {
                 vector[offset + i] = float_to_bf16_rne(
                     deepseek_fp4_decode(deepseek_fp4_encode(normalized)) *
-                    scale);
+                    quantization_scale);
             } else {
                 atomicCAS(status, 0, 2);
-                return;
+                atomicExch(&active, 0);
             }
         }
+        __syncthreads();
+        if (!active) return;
     }
 }
 
@@ -1000,105 +1040,139 @@ extern "C" __global__ void yvex_deepseek_mhc_pre(
     double mhc_epsilon, double post_multiplier, float *collapsed,
     float *post, float *combination, unsigned long long row_count, int *status)
 {
+    extern __shared__ double shared[];
+    __shared__ int active;
     unsigned long long batch = (unsigned long long)blockIdx.x;
-    if (!status || batch >= row_count || threadIdx.x != 0u || *status != 0)
-        return;
+    unsigned int thread = threadIdx.x;
+    if (!status || batch >= row_count) return;
     if (!residual || !linear_mix || !scale || !base || !collapsed || !post ||
         !combination || !row_count || !streams || !stream_width || !sinkhorn_iterations ||
         mixing_rows != (streams + 2ull) * streams || rms_epsilon <= 0.0 ||
         mhc_epsilon <= 0.0 || post_multiplier <= 0.0) {
-        atomicCAS(status, 0, 2);
+        if (thread == 0u) atomicCAS(status, 0, 2);
         return;
     }
+    if (thread == 0u) active = *status == 0;
+    __syncthreads();
+    if (!active) return;
     unsigned long long expanded = streams * stream_width;
     residual += batch * expanded;
     linear_mix += batch * mixing_rows;
     collapsed += batch * stream_width;
     post += batch * streams;
     combination += batch * streams * streams;
-    double squares = 0.0;
-    for (unsigned long long lane = 0ull; lane < expanded; ++lane) {
+    double *pre_weights = shared;
+    double *inverse = shared + streams;
+    for (unsigned long long lane = (unsigned long long)thread; lane < expanded;
+         lane += (unsigned long long)blockDim.x) {
         float value = float_to_bf16_rne(residual[lane]);
         residual[lane] = value;
         if (!isfinite(value)) {
             atomicCAS(status, 0, 1);
-            return;
+            atomicExch(&active, 0);
         }
-        squares += (double)value * (double)value;
     }
-    double inverse = 1.0 / sqrt(squares / (double)expanded + rms_epsilon);
-    if (!isfinite(inverse)) {
-        atomicCAS(status, 0, 1);
-        return;
-    }
-    for (unsigned long long lane = 0ull; lane < stream_width; ++lane)
-        collapsed[lane] = 0.0f;
-    for (unsigned long long stream = 0ull; stream < streams; ++stream) {
-        double pre_arg = (double)linear_mix[stream] * inverse * (double)scale[0] +
-                         (double)base[stream];
-        double pre = pre_arg >= 0.0 ? 1.0 / (1.0 + exp(-pre_arg))
-                                    : exp(pre_arg) / (1.0 + exp(pre_arg));
-        unsigned long long post_index = streams + stream;
-        double post_arg = (double)linear_mix[post_index] * inverse * (double)scale[1] +
-                          (double)base[post_index];
-        double post_sigmoid = post_arg >= 0.0 ? 1.0 / (1.0 + exp(-post_arg))
-                                              : exp(post_arg) / (1.0 + exp(post_arg));
-        post[stream] = (float)(post_multiplier * post_sigmoid);
-        for (unsigned long long target = 0ull; target < streams; ++target) {
-            unsigned long long index = 2ull * streams + stream * streams + target;
-            combination[stream * streams + target] =
-                (float)((double)linear_mix[index] * inverse * (double)scale[2] +
-                        (double)base[index]);
+    __syncthreads();
+    if (!active) return;
+    /* The square reduction and Sinkhorn recurrence retain their exact serial
+       order; only BF16 ingress and row-independent projections are fanned out. */
+    if (thread == 0u) {
+        double squares = 0.0;
+        for (unsigned long long lane = 0ull; lane < expanded; ++lane) {
+            double value = (double)residual[lane];
+            squares += value * value;
         }
-        for (unsigned long long lane = 0ull; lane < stream_width; ++lane)
-            collapsed[lane] += (float)((pre + mhc_epsilon) *
-                (double)residual[stream * stream_width + lane]);
-    }
-    for (unsigned long long row = 0ull; row < streams; ++row) {
-        double maximum = -INFINITY;
-        double total = 0.0;
-        for (unsigned long long column = 0ull; column < streams; ++column)
-            maximum = maximum > (double)combination[row * streams + column]
-                ? maximum : (double)combination[row * streams + column];
-        for (unsigned long long column = 0ull; column < streams; ++column) {
-            double value = exp((double)combination[row * streams + column] - maximum);
-            combination[row * streams + column] = (float)value;
-            total += value;
-        }
-        if (!isfinite(total) || total <= 0.0) {
+        *inverse = 1.0 / sqrt(squares / (double)expanded + rms_epsilon);
+        if (!isfinite(*inverse)) {
             atomicCAS(status, 0, 1);
-            return;
+            active = 0;
         }
-        for (unsigned long long column = 0ull; column < streams; ++column)
-            combination[row * streams + column] =
-                (float)((double)combination[row * streams + column] / total + mhc_epsilon);
     }
-    for (unsigned long long iteration = 0ull; iteration < sinkhorn_iterations; ++iteration) {
-        if (iteration != 0ull) {
-            for (unsigned long long row = 0ull; row < streams; ++row) {
+    __syncthreads();
+    if (!active) return;
+    if (thread == 0u) {
+        for (unsigned long long stream = 0ull; stream < streams; ++stream) {
+            double pre_arg = (double)linear_mix[stream] * *inverse *
+                             (double)scale[0] + (double)base[stream];
+            double pre = pre_arg >= 0.0 ? 1.0 / (1.0 + exp(-pre_arg))
+                                        : exp(pre_arg) / (1.0 + exp(pre_arg));
+            pre_weights[stream] = pre + mhc_epsilon;
+            unsigned long long post_index = streams + stream;
+            double post_arg = (double)linear_mix[post_index] * *inverse *
+                              (double)scale[1] + (double)base[post_index];
+            double post_sigmoid = post_arg >= 0.0 ? 1.0 / (1.0 + exp(-post_arg))
+                                                  : exp(post_arg) / (1.0 + exp(post_arg));
+            post[stream] = (float)(post_multiplier * post_sigmoid);
+            for (unsigned long long target = 0ull; target < streams; ++target) {
+                unsigned long long index = 2ull * streams + stream * streams + target;
+                combination[stream * streams + target] =
+                    (float)((double)linear_mix[index] * *inverse *
+                            (double)scale[2] + (double)base[index]);
+            }
+        }
+    }
+    __syncthreads();
+    for (unsigned long long lane = (unsigned long long)thread; lane < stream_width;
+         lane += (unsigned long long)blockDim.x) {
+        float total = 0.0f;
+        for (unsigned long long stream = 0ull; stream < streams; ++stream)
+            total += (float)(pre_weights[stream] *
+                (double)residual[stream * stream_width + lane]);
+        collapsed[lane] = total;
+    }
+    if (thread == 0u) {
+        for (unsigned long long row = 0ull; row < streams; ++row) {
+            double maximum = -INFINITY;
+            double total = 0.0;
+            for (unsigned long long column = 0ull; column < streams; ++column)
+                maximum = maximum > (double)combination[row * streams + column]
+                    ? maximum : (double)combination[row * streams + column];
+            for (unsigned long long column = 0ull; column < streams; ++column) {
+                double value = exp((double)combination[row * streams + column] - maximum);
+                combination[row * streams + column] = (float)value;
+                total += value;
+            }
+            if (!isfinite(total) || total <= 0.0) {
+                atomicCAS(status, 0, 1);
+                active = 0;
+                break;
+            }
+            for (unsigned long long column = 0ull; column < streams; ++column)
+                combination[row * streams + column] =
+                    (float)((double)combination[row * streams + column] / total + mhc_epsilon);
+        }
+        for (unsigned long long iteration = 0ull;
+             active && iteration < sinkhorn_iterations; ++iteration) {
+            if (iteration != 0ull) {
+                for (unsigned long long row = 0ull; row < streams; ++row) {
+                    double total = 0.0;
+                    for (unsigned long long column = 0ull; column < streams; ++column)
+                        total += combination[row * streams + column];
+                    for (unsigned long long column = 0ull; column < streams; ++column)
+                        combination[row * streams + column] =
+                            (float)((double)combination[row * streams + column] /
+                                    (total + mhc_epsilon));
+                }
+            }
+            for (unsigned long long column = 0ull; column < streams; ++column) {
                 double total = 0.0;
-                for (unsigned long long column = 0ull; column < streams; ++column)
+                for (unsigned long long row = 0ull; row < streams; ++row)
                     total += combination[row * streams + column];
-                for (unsigned long long column = 0ull; column < streams; ++column)
+                for (unsigned long long row = 0ull; row < streams; ++row)
                     combination[row * streams + column] =
                         (float)((double)combination[row * streams + column] /
                                 (total + mhc_epsilon));
             }
         }
-        for (unsigned long long column = 0ull; column < streams; ++column) {
-            double total = 0.0;
-            for (unsigned long long row = 0ull; row < streams; ++row)
-                total += combination[row * streams + column];
-            for (unsigned long long row = 0ull; row < streams; ++row)
-                combination[row * streams + column] =
-                    (float)((double)combination[row * streams + column] /
-                            (total + mhc_epsilon));
-        }
     }
-    for (unsigned long long lane = 0ull; lane < stream_width; ++lane) {
+    __syncthreads();
+    if (!active) return;
+    for (unsigned long long lane = (unsigned long long)thread; lane < stream_width;
+         lane += (unsigned long long)blockDim.x) {
         if (!isfinite(collapsed[lane]) || !isfinite(post[lane % streams])) {
             atomicCAS(status, 0, 1);
-            return;
+            atomicExch(&active, 0);
+            continue;
         }
         collapsed[lane] = float_to_bf16_rne(collapsed[lane]);
     }
