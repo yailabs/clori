@@ -166,8 +166,8 @@ int yvex_backend_transformer_cuda_final(
     const yvex_device_tensor *scale, const yvex_device_tensor *norm,
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, double epsilon, double mhc_epsilon,
-    yvex_device_tensor *output, yvex_backend_cuda_operation_facts *facts,
-    yvex_error *err);
+    yvex_device_tensor *pre_normalized, yvex_device_tensor *output,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 typedef struct yvex_runtime_transformer_context yvex_runtime_transformer_context;
 typedef enum {
     YVEX_TRANSFORMER_PHASE_PREFILL = 0,

@@ -318,14 +318,15 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
     yvex_device_tensor *encoded_device = NULL, *embedding_device = NULL;
     yvex_device_tensor *expanded_device = NULL, *function_device = NULL;
     yvex_device_tensor *base_device = NULL, *scale_device = NULL;
-    yvex_device_tensor *norm_device = NULL, *output_device = NULL;
+    yvex_device_tensor *norm_device = NULL, *pre_device = NULL, *output_device = NULL;
     yvex_device_tensor *feature_device = NULL;
     unsigned char *row = NULL, *encoded = NULL;
     float source[TOKENS * HIDDEN] = {0};
     float embedding[TOKENS * HIDDEN], expanded[TOKENS * HIDDEN * STREAMS];
     float function[STREAMS * STREAMS * HIDDEN] = {0};
     float base[STREAMS] = {0}, scale[1] = {1.0f}, norm[HIDDEN];
-    float output[TOKENS * HIDDEN], features[TOKENS * HIDDEN];
+    float pre[TOKENS * HIDDEN], output[TOKENS * HIDDEN], features[TOKENS * HIDDEN];
+    float reference_pre[TOKENS * HIDDEN], reference_output[TOKENS * HIDDEN];
     yvex_backend_cuda_operation_facts facts;
     yvex_error err;
     size_t row_bytes = 0u, current_bytes = 0u;
@@ -409,10 +410,29 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
                 features, &facts, &err) == YVEX_ERR_FORMAT &&
             features[0] == 77.0f,
         "transformer feature mean refuses non-finite output before publication");
-    memset(expanded, 0, sizeof(expanded));
+    expanded[0] = 0.0f;
     YVEX_TEST_ASSERT(yvex_backend_tensor_write(
                          backend, expanded_device, expanded, sizeof(expanded), &err) == YVEX_OK,
                      "transformer final input resets");
+    for (index = 0ull; index < TOKENS; ++index) {
+        unsigned long long lane, stream;
+        double squares = 0.0;
+        for (lane = 0ull; lane < HIDDEN; ++lane) {
+            double collapsed = 0.0;
+            for (stream = 0ull; stream < STREAMS; ++stream)
+                collapsed += (0.5 + 1e-6) *
+                    expanded[(index * STREAMS + stream) * HIDDEN + lane];
+            reference_pre[index * HIDDEN + lane] = yvex_quant_bf16_decode(
+                yvex_quant_bf16_encode((float)collapsed));
+            squares += (double)reference_pre[index * HIDDEN + lane] *
+                       reference_pre[index * HIDDEN + lane];
+        }
+        for (lane = 0ull; lane < HIDDEN; ++lane)
+            reference_output[index * HIDDEN + lane] = yvex_quant_bf16_decode(
+                yvex_quant_bf16_encode((float)(
+                    reference_pre[index * HIDDEN + lane] /
+                    sqrt(squares / (double)HIDDEN + 1e-6))));
+    }
 
     YVEX_TEST_ASSERT(
         quant_cuda_tensor(backend, "transformer_function", YVEX_DTYPE_F32,
@@ -423,31 +443,44 @@ static int quant_cuda_transformer_facts(yvex_backend *backend)
                               scale, sizeof(scale), &scale_device, &err) &&
             quant_cuda_tensor(backend, "transformer_norm", YVEX_DTYPE_F32,
                               norm, sizeof(norm), &norm_device, &err) &&
+            quant_cuda_tensor(backend, "transformer_pre", YVEX_DTYPE_F32,
+                              NULL, sizeof(pre), &pre_device, &err) &&
             quant_cuda_tensor(backend, "transformer_output", YVEX_DTYPE_F32,
                               NULL, sizeof(output), &output_device, &err),
         "transformer final tensors allocate");
+    YVEX_TEST_ASSERT(
+        yvex_backend_transformer_cuda_final(
+            backend, expanded_device, function_device, base_device, scale_device,
+            norm_device, TOKENS, HIDDEN, STREAMS, 1e-6, 1e-6, output_device,
+            output_device, &facts, &err) == YVEX_ERR_FORMAT &&
+            !facts.kernel_launches && !facts.d2h_bytes,
+        "transformer final refuses aliased pre-normalized publication");
     rc = yvex_backend_transformer_cuda_final(
         backend, expanded_device, function_device, base_device, scale_device,
-        norm_device, TOKENS, HIDDEN, STREAMS, 1e-6, 1e-6, output_device,
-        &facts, &err);
+        norm_device, TOKENS, HIDDEN, STREAMS, 1e-6, 1e-6, pre_device,
+        output_device, &facts, &err);
     YVEX_TEST_ASSERT(
         rc == YVEX_OK && facts.compulsory_memory_facts_available &&
             facts.active_weight_bytes == sizeof(function) + sizeof(base) +
                                              sizeof(scale) + sizeof(norm) &&
             !facts.state_bytes &&
-            facts.activation_bytes == sizeof(expanded) + sizeof(output) &&
+            facts.activation_bytes == sizeof(expanded) + sizeof(pre) + sizeof(output) &&
             facts.temporary_bytes == sizeof(int) &&
+            yvex_backend_tensor_read(backend, pre_device, pre,
+                                     sizeof(pre), &err) == YVEX_OK &&
             yvex_backend_tensor_read(backend, output_device, output,
                                      sizeof(output), &err) == YVEX_OK,
         "transformer final reports exact compulsory memory spans");
     for (index = 0ull; index < TOKENS * HIDDEN; ++index)
-        YVEX_TEST_ASSERT(output[index] == 0.0f,
-                         "transformer final publishes finite normalized rows");
+        YVEX_TEST_ASSERT(pre[index] == reference_pre[index] &&
+                             output[index] == reference_output[index],
+                         "transformer final preserves pre-normalized and normalized rows");
 
     free(encoded);
     YVEX_TEST_ASSERT(
         yvex_backend_tensor_release(backend, &feature_device, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &output_device, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &pre_device, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &norm_device, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &scale_device, &err) == YVEX_OK &&
             yvex_backend_tensor_release(backend, &base_device, &err) == YVEX_OK &&

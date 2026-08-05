@@ -1346,7 +1346,7 @@ extern "C" __global__ void yvex_deepseek_transformer_final(
     const float *expanded, const float *function, const float *base,
     const float *scale, const float *norm, unsigned long long token_count,
     unsigned long long streams, unsigned long long width, double epsilon,
-    double mhc_epsilon, float *output, int *status)
+    double mhc_epsilon, float *pre_output, float *output, int *status)
 {
     extern __shared__ double final_scratch[];
     unsigned int lane = threadIdx.x;
@@ -1398,6 +1398,7 @@ extern "C" __global__ void yvex_deepseek_transformer_final(
     sum = 0.0;
     for (unsigned long long index = lane; index < width; index += blockDim.x) {
         row[index] = float_to_bf16_rne(row[index]);
+        if (pre_output) pre_output[token * width + index] = row[index];
         sum += (double)row[index] * (double)row[index];
     }
     final_scratch[lane] = sum;

@@ -181,6 +181,15 @@ full-evidence path. Feature projection and draft/Markov execution are still
 host-owned, so this does not claim a device-resident DSpark path and requires
 no persisted, wire, public C or profile-schema change.
 
+The CUDA transformer final operation now has one optional device output for
+the BF16 pre-normalized row. Production drafting reuses final-layer attention
+storage after its last consumer, then explicitly materializes that bounded row
+without downloading the expanded residual streams or recomputing the final
+stage on the CPU. Aliased normalized and pre-normalized outputs fail before a
+kernel launch. Full evidence retains expanded-row materialization and the CPU
+final-stage oracle. This extends only the existing internal backend ABI and
+earns no persisted, wire, profile or public C version change.
+
 Accepted-prefix promotion now contributes its exact state-residency H2D,
 synchronization and zero kernel/D2H/D2D facts. These counters are deltas around
 the serialized session mutation, not estimates from configured capacity.
@@ -222,6 +231,6 @@ It does not yet establish Tensor Core execution, specialized attention,
 GB10-competitive grouped MoE or zero per-layer MoE synchronization, full-model
 live qualification of target-only device stochastic sampling or greedy DSpark
 verification, device-resident draft/Markov or stochastic DSpark
-acceptance/correction, host-free target-feature projection, paged state allocation, prefix
-persistence, continuous batching, competitive throughput, evaluation,
+acceptance/correction, host-free target-feature projection, paged state
+allocation, prefix persistence, continuous batching, competitive throughput, evaluation,
 benchmark qualification, release qualification, or Hugging Face publication.

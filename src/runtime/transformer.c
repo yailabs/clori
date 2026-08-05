@@ -47,8 +47,7 @@ static const yvex_attention_plan *transformer_runtime_attention(
     if (!view) return NULL;
     return scope == YVEX_TENSOR_SCOPE_DRAFT ? view->draft_attention : view->attention;
 }
-static int transformer_hash_values(yvex_sha256 *hash, const float *values,
-                                   unsigned long long count);
+static int transformer_hash_values(yvex_sha256 *hash, const float *values, unsigned long long count);
 static int transformer_device_value_digest(
     const char *domain,
     const yvex_transformer_plan_summary *plan, unsigned long long layer,
@@ -882,7 +881,9 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
         unsigned long long started_ns = yvex_core_monotonic_ns();
         unsigned long long read_count = 0ull;
         yvex_backend_cuda_operation_facts facts = {0};
-        if (chunk->output->pre_normalized_hidden) {
+        int full = context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL;
+        int reference_pre = chunk->output->pre_normalized_hidden && full;
+        if (reference_pre) {
             rc = yvex_backend_tensor_read(context->session_view->backend,
                                           &chunk->device_current, chunk->current,
                                           expanded_bytes, err);
@@ -897,6 +898,7 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                         chunk->token_offset * s->hidden_width,
                     context->candidate_hidden, err);
         } else {
+            /* Final attention storage is dead here; reuse it for the optional pre-normalized row. */
             rc = yvex_backend_transformer_cuda_final(
                 context->session_view->backend, &chunk->device_current,
                 context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_FUNCTION],
@@ -904,39 +906,38 @@ static int transformer_layer_evidence(void *opaque, yvex_backend_kind backend,
                 context->device_global[YVEX_TRANSFORMER_WEIGHT_FINAL_SCALE],
                 context->device_global[YVEX_TRANSFORMER_WEIGHT_OUTPUT_NORM],
                 chunk->token_count, s->hidden_width, s->residual_streams,
-                s->output_norm_epsilon, s->mhc_epsilon, &chunk->device_hidden,
-                &facts, err);
-            if (rc == YVEX_OK &&
-                context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL)
+                s->output_norm_epsilon, s->mhc_epsilon,
+                chunk->output->pre_normalized_hidden ? &chunk->device_attention : NULL,
+                &chunk->device_hidden, &facts, err);
+            if (rc == YVEX_OK && full)
                 rc = yvex_backend_tensor_read(
                     context->session_view->backend, &chunk->device_current,
                     chunk->current, expanded_bytes, err);
             if (rc == YVEX_OK &&
-                (chunk->output->normalized_hidden ||
-                 context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL))
+                (chunk->output->normalized_hidden || full))
                 rc = yvex_backend_tensor_read(
                     context->session_view->backend, &chunk->device_hidden,
                     context->candidate_hidden, hidden_bytes, err);
+            if (rc == YVEX_OK && chunk->output->pre_normalized_hidden)
+                rc = yvex_backend_tensor_read(
+                    context->session_view->backend, &chunk->device_attention,
+                    chunk->output->pre_normalized_hidden + chunk->token_offset * s->hidden_width,
+                    hidden_bytes, err);
         }
+        read_count = reference_pre ? 1ull
+            : (unsigned long long)full +
+                  (unsigned long long)(chunk->output->normalized_hidden != NULL || full) +
+                  (unsigned long long)(chunk->output->pre_normalized_hidden != NULL);
+        if (rc == YVEX_OK)
+            rc = transformer_cuda_facts_add(chunk->result, &facts, 0ull,
+                                            read_count, read_count, err);
         if (rc == YVEX_OK) {
-            read_count = chunk->output->pre_normalized_hidden
-                             ? 1ull
-                             : (unsigned long long)(context->options.evidence_level ==
-                                                    YVEX_ATTENTION_EVIDENCE_FULL) +
-                                   (unsigned long long)(chunk->output->normalized_hidden != NULL ||
-                                                        context->options.evidence_level ==
-                                                            YVEX_ATTENTION_EVIDENCE_FULL);
-            rc = transformer_cuda_facts_add(
-                chunk->result, &facts, 0ull, read_count, read_count, err);
-        }
-        if (rc == YVEX_OK) {
-            if (!chunk->output->pre_normalized_hidden &&
-                (chunk->output->normalized_hidden ||
-                 context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL))
-                chunk->result->d2h_bytes += hidden_bytes;
-            if (chunk->output->pre_normalized_hidden ||
-                context->options.evidence_level == YVEX_ATTENTION_EVIDENCE_FULL)
-                chunk->result->d2h_bytes += expanded_bytes;
+            chunk->result->d2h_bytes += reference_pre ? expanded_bytes
+                : (unsigned long long)full * expanded_bytes +
+                      (unsigned long long)(chunk->output->normalized_hidden != NULL || full) *
+                          hidden_bytes +
+                      (unsigned long long)(chunk->output->pre_normalized_hidden != NULL) *
+                          hidden_bytes;
             chunk->result->final_ns += yvex_core_monotonic_ns() - started_ns;
         }
         return rc;

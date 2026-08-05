@@ -101,9 +101,12 @@ Eager attention, reference layouts and host feature projection may be replaced
 only through the existing typed execution profile. CUDA target-feature capture
 already reduces mHC streams before transferring one hidden row per token;
 eliminating that remaining bounded materialization belongs to the
-device-resident DSpark cutover. Compatible width-N CUDA output rows already share
-activation preparation and one encoded-head execution; incompatible and reference
-directories retain an explicit row-local fallback. Batched device selection
+device-resident DSpark cutover. CUDA final projection also preserves the
+pre-normalized BF16 drafter row before RMSNorm, so production no longer
+downloads expanded residual streams or recomputes that final stage on the
+host. Compatible width-N CUDA output rows already share activation preparation
+and one encoded-head execution; incompatible and reference directories retain
+an explicit row-local fallback. Batched device selection
 now consumes ordered resident logits views with no vocabulary D2H; greedy
 DSpark target verification consumes the same result class, while draft/Markov
 and stochastic distribution/acceptance still require their device cutover. The

@@ -1859,12 +1859,13 @@ int yvex_backend_transformer_cuda_final(
     const yvex_device_tensor *scale, const yvex_device_tensor *norm,
     unsigned long long token_count, unsigned long long hidden_width,
     unsigned long long residual_streams, double epsilon, double mhc_epsilon,
-    yvex_device_tensor *output, yvex_backend_cuda_operation_facts *facts,
-    yvex_error *err)
+    yvex_device_tensor *pre_normalized, yvex_device_tensor *output,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
     yvex_cuda_work work = {0};
-    CUdeviceptr status = 0ull, input_ptr, function_ptr, base_ptr, scale_ptr, norm_ptr, output_ptr;
+    CUdeviceptr status = 0ull, input_ptr, function_ptr, base_ptr, scale_ptr, norm_ptr;
+    CUdeviceptr pre_output_ptr = 0ull, output_ptr;
     unsigned long long expanded_width, expanded_count, function_count, output_count;
     unsigned long long weight_count, activation_count;
     size_t weight_bytes, activation_bytes;
@@ -1880,6 +1881,8 @@ int yvex_backend_transformer_cuda_final(
         !yvex_core_u64_add(weight_count, 1ull, &weight_count) ||
         !yvex_core_u64_add(weight_count, hidden_width, &weight_count) ||
         !yvex_core_u64_add(expanded_count, output_count, &activation_count) ||
+        (pre_normalized &&
+         !yvex_core_u64_add(activation_count, output_count, &activation_count)) ||
         !yvex_cuda_work_checked_bytes(weight_count, sizeof(float), &weight_bytes) ||
         !yvex_cuda_work_checked_bytes(activation_count, sizeof(float), &activation_bytes) ||
         token_count > UINT_MAX || !backend_tensor_f32_elements(expanded, expanded_count) ||
@@ -1887,7 +1890,10 @@ int yvex_backend_transformer_cuda_final(
         !backend_tensor_f32_elements(base, residual_streams) ||
         !backend_tensor_f32_elements(scale, 1ull) ||
         !backend_tensor_f32_elements(norm, hidden_width) ||
-        !backend_tensor_f32_elements(output, output_count))
+        !backend_tensor_f32_elements(output, output_count) ||
+        (pre_normalized &&
+         (!backend_tensor_f32_elements(pre_normalized, output_count) ||
+          pre_normalized->data == output->data)))
         return cuda_transformer_refuse(err, YVEX_ERR_FORMAT, "cuda.transformer.final",
                                        "CUDA transformer final geometry is incompatible");
     work.backend = backend;
@@ -1897,11 +1903,13 @@ int yvex_backend_transformer_cuda_final(
                                  "cuda.transformer.final.status", NULL, err);
     input_ptr = (CUdeviceptr)expanded->data; function_ptr = (CUdeviceptr)function->data;
     base_ptr = (CUdeviceptr)base->data; scale_ptr = (CUdeviceptr)scale->data;
-    norm_ptr = (CUdeviceptr)norm->data; output_ptr = (CUdeviceptr)output->data;
+    norm_ptr = (CUdeviceptr)norm->data;
+    if (pre_normalized) pre_output_ptr = (CUdeviceptr)pre_normalized->data;
+    output_ptr = (CUdeviceptr)output->data;
     if (rc == YVEX_OK) {
         void *params[] = {&input_ptr, &function_ptr, &base_ptr, &scale_ptr, &norm_ptr,
                           &token_count, &residual_streams, &hidden_width, &epsilon,
-                          &mhc_epsilon, &output_ptr, &status};
+                          &mhc_epsilon, &pre_output_ptr, &output_ptr, &status};
         rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
             state->deepseek_transformer_final_function, (unsigned int)token_count,
             CUDA_ATTENTION_BLOCK, CUDA_ATTENTION_BLOCK * (unsigned int)sizeof(double),
@@ -1921,6 +1929,7 @@ int yvex_backend_transformer_cuda_final(
     cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
     if (rc == YVEX_OK && cleanup_rc != YVEX_OK) { rc = cleanup_rc; if (err) *err = cleanup; }
     if (rc == YVEX_OK) {
+        if (pre_normalized) pre_normalized->is_written = 1;
         output->is_written = 1;
         facts->d2h_bytes = sizeof(host_status);
         facts->kernel_launches = 1ull;

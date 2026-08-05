@@ -71,6 +71,11 @@ change. Git history preserves implementation chronology.
   Independent CUDA tests prove exact finite reduction, physical-byte facts and
   refusal before host publication; feature projection and draft/Markov remain
   explicit host-side optimization debt.
+- The production CUDA transformer final stage now preserves an optional
+  pre-normalized BF16 row in device storage before applying output RMSNorm.
+  DSpark drafting materializes only that bounded hidden row instead of the
+  expanded residual streams and no longer recomputes the final stage on the
+  host; full evidence retains the independent CPU oracle.
 - Compulsory memory accounting now has one transactional internal fact owner.
   CUDA embedding, attention, MoE and final projection contribute measured or
   explicitly missing operations through transformer and decode aggregation;
