@@ -37,6 +37,7 @@ entry audit:
 | CUDA graph execution internal ABI | v1 | v1 | explicit stream and deferred-completion flags plus returned completion facts | in-process function and result layout only; no independently deployed reader or writer | old callers pass a Boolean timing policy and always wait on a graph-owned stream | complete rebuild; isolated immediate execution remains the audit path; no persistence, wire, public API or profile migration | invalid flag combinations, zero local waits, scoped completion, eager numerical parity |
 | Physical-facts internal ABI | v1 | v1 | stream and device-wide synchronization deltas enter one checked aggregate | in-process function signature only; the stored fact remains one aggregate | old objects are never mixed with rebuilt objects; old callers supplied one combined count | complete rebuild; no persistence, wire, layout, or identity migration | class-sum overflow rollback, runtime execution, sampling and speculation accounting |
 | Width-N MoE internal ABI | v1 | v1 | deferred stack completion plus bounded per-layer status, unique-expert and active-byte factors | in-process result and operation-table layout only; no independently deployed reader or writer | old readers require completed rows and route arrays; old writers synchronize and materialize them per layer | complete rebuild; immediate execution remains the audit oracle; no persistence, wire, public API or profile migration | immediate/deferred output and active-byte parity, untouched route sentinels, bounded D2H, proved-barrier accounting, sync fault refusal |
+| Sampling-transaction internal ABI | v1 | v1 | the existing selection call accepts an optional staged RNG transaction; its test-only result validator is retired | in-process signature and private transaction layout only; result layout is unchanged | old callers select directly or obtain uniform values and select outside the sampling owner | complete rebuild; direct callers pass no transaction; outer transactions retain prepare/publish/abort authority; no persistence, wire, public API or profile migration | CPU/CUDA abort and exact retry, commit-only sample and RNG accounting, stale-base refusal, bounded device result |
 
 ## Planning authority
 
@@ -197,6 +198,16 @@ Audit/forensic profiles and DSpark retain the host distribution oracle. The
 existing compiled-profile reference flag and internal device-view contracts
 already represent this cutover, so no persisted, wire, public C, execution-
 profile or state-layout version changes.
+
+The same sampling owner can now execute a stochastic selection against an open
+RNG transaction without advancing the context authority. Host and CUDA paths
+derive result identities from the transaction's staged before/after states;
+abort leaves the context unchanged, exact retry selects the same token, and
+caller-owned prepare/publish advances one draw only at the admitted caller
+commit boundary. CUDA keeps the vocabulary resident and returns the same
+bounded result facts as target-only selection. This is the transactional
+prerequisite for stochastic DSpark; target p/q comparison and residual
+correction remain on the explicit host oracle, so no DSpark cutover is claimed.
 
 Source-selected target features now collapse their mHC residual streams on
 CUDA. Production greedy execution publishes reduced rows only into the

@@ -124,7 +124,7 @@ static int sampling_test_select_fixture(
         rc = yvex_runtime_sampling_source_from_logits(
             context, &source, logits, count, &row, err);
     if (rc == YVEX_OK)
-        rc = yvex_runtime_sampling_select(context, &source, result, err);
+        rc = yvex_runtime_sampling_select(context, NULL, &source, result, err);
     yvex_error_clear(&cleanup);
     close_rc = yvex_runtime_sampling_context_close(&context, &cleanup);
     if (rc == YVEX_OK && close_rc != YVEX_OK) {
@@ -259,7 +259,7 @@ static int sampling_test_greedy(void)
     YVEX_TEST_ASSERT(yvex_runtime_sampling_context_snapshot(
                          context, &before, &err) == YVEX_OK,
                      "greedy context snapshots before selection");
-    if (yvex_runtime_sampling_select(context, &source, &result, &err) != YVEX_OK) {
+    if (yvex_runtime_sampling_select(context, NULL, &source, &result, &err) != YVEX_OK) {
         fprintf(stderr, "sampling greedy refusal: %s\n", yvex_error_message(&err));
         YVEX_TEST_FAIL("complete admitted logits row samples greedily");
     }
@@ -267,8 +267,7 @@ static int sampling_test_greedy(void)
                          result.values_considered == 6ull &&
                          result.tied_maximum_count == 2ull &&
                          result.final_candidate_count == 6ull &&
-                         result.rng_draw_count == 0ull &&
-                         yvex_runtime_sampling_result_validate(&result, &err) == YVEX_OK,
+                         result.rng_draw_count == 0ull,
                      "greedy scans all values and lowest token ID wins ties");
     YVEX_TEST_ASSERT(yvex_runtime_sampling_context_snapshot(context, &after, &err) == YVEX_OK &&
                          before.stochastic_draws == after.stochastic_draws &&
@@ -276,11 +275,11 @@ static int sampling_test_greedy(void)
                          after.warm_workspace_allocations == 0ull,
                      "greedy reuses workspace without RNG advancement");
     logits[2] = -10.0f;
-    YVEX_TEST_ASSERT(yvex_runtime_sampling_select(context, &source, &result, &err) ==
+    YVEX_TEST_ASSERT(yvex_runtime_sampling_select(context, NULL, &source, &result, &err) ==
                          YVEX_ERR_FORMAT && !result.completed,
                      "unsealed logits mutation refuses before selection");
     logits[2] = NAN;
-    YVEX_TEST_ASSERT(yvex_runtime_sampling_select(context, &source, &result, &err) ==
+    YVEX_TEST_ASSERT(yvex_runtime_sampling_select(context, NULL, &source, &result, &err) ==
                          YVEX_ERR_FORMAT && !result.completed,
                      "non-finite logits refuse before candidate publication");
     YVEX_TEST_ASSERT(yvex_runtime_sampling_context_close(&context, &err) == YVEX_OK && !context,
@@ -389,8 +388,8 @@ static int sampling_test_stochastic(void)
                              first, &source, logits, 8ull, &row, &err) == YVEX_OK,
                      "isolated stochastic contexts open over one source");
     yvex_test_sampling_reference_seed(42ull, &rng);
-    YVEX_TEST_ASSERT(yvex_runtime_sampling_select(first, &source, &a, &err) == YVEX_OK &&
-                         yvex_runtime_sampling_select(second, &source, &b, &err) == YVEX_OK &&
+    YVEX_TEST_ASSERT(yvex_runtime_sampling_select(first, NULL, &source, &a, &err) == YVEX_OK &&
+                         yvex_runtime_sampling_select(second, NULL, &source, &b, &err) == YVEX_OK &&
                          yvex_test_sampling_reference_select(
                              logits, 8ull, &policy, &rng, &reference),
                      "production and independent filtered samplers execute");
@@ -405,88 +404,9 @@ static int sampling_test_stochastic(void)
                          summary.successful_samples == 1ull &&
                          summary.warm_workspace_allocations == 0ull,
                      "one successful stochastic sample commits exactly one warm draw");
-    b.selected_token_id ^= 1u;
-    YVEX_TEST_ASSERT(yvex_runtime_sampling_result_validate(&b, &err) == YVEX_ERR_FORMAT,
-                     "selected-token mutation invalidates result identity");
     YVEX_TEST_ASSERT(yvex_runtime_sampling_context_close(&first, &err) == YVEX_OK &&
                          yvex_runtime_sampling_context_close(&second, &err) == YVEX_OK,
                      "stochastic contexts close independently");
-    return 0;
-}
-
-static void sampling_test_mutate_identity(char identity[YVEX_SHA256_HEX_CAP])
-{
-    identity[0] = identity[0] == 'a' ? 'b' : 'a';
-}
-
-static void sampling_test_mutate_result(yvex_runtime_sampling_result *result,
-                                        unsigned int mutation)
-{
-    switch (mutation) {
-        case 0u: result->selected_log_probability += 0.125; break;
-        case 1u: result->maximum_logit += 0.25f; break;
-        case 2u: result->candidates_after_top_k--; break;
-        case 3u: result->candidates_after_min_p--; break;
-        case 4u: result->candidates_after_typical_p--; break;
-        case 5u: result->candidates_after_top_p--; break;
-        case 6u: result->normalization_error += 1.0e-16; break;
-        case 7u: result->entropy += 1.0e-6; break;
-        case 8u: result->typical_retained_mass += 1.0e-6; break;
-        case 9u: result->top_p_retained_mass += 1.0e-6; break;
-        case 10u: result->temperature += 1.0e-6; break;
-        case 11u: result->effective_top_k++; break;
-        case 12u: result->effective_top_p -= 1.0e-6; break;
-        case 13u: result->effective_min_p += 1.0e-6; break;
-        case 14u: result->effective_typical_p -= 1.0e-6; break;
-        case 15u: result->min_p_threshold += 1.0e-6; break;
-        case 16u: result->numeric_fallback_used ^= 1; break;
-        case 17u: result->rng_draw_count = 0ull; break;
-        case 18u: result->strategy = YVEX_SAMPLING_STRATEGY_GREEDY; break;
-        case 19u: result->tied_maximum_count++; break;
-        case 20u: result->selected_token_id ^= 1u; break;
-        case 21u: result->source_phase = YVEX_LOGITS_SOURCE_PREFILL; break;
-        case 22u: result->source_position++; break;
-        case 23u: result->vocabulary_size--; break;
-        case 24u: result->values_considered--; break;
-        case 25u: result->candidates_before--; break;
-        case 26u: result->final_candidate_count--; break;
-        case 27u: result->selected_logit -= 0.125f; break;
-        case 28u: result->selected_probability *= 0.5; break;
-        case 29u: result->greedy_tie_policy = 0u; break;
-        case 30u: result->completed = 0; break;
-        case 31u: result->schema_version++; break;
-        case 32u: sampling_test_mutate_identity(result->rng_state_before_identity); break;
-        case 33u: sampling_test_mutate_identity(result->rng_state_after_identity); break;
-        case 34u: sampling_test_mutate_identity(result->policy_identity); break;
-        case 35u: sampling_test_mutate_identity(result->source_identity); break;
-        case 36u: sampling_test_mutate_identity(result->candidate_set_identity); break;
-        case 37u: sampling_test_mutate_identity(result->selected_token_identity); break;
-        default: sampling_test_mutate_identity(result->execution_identity); break;
-    }
-}
-
-static int sampling_test_evidence_mutations(void)
-{
-    const float logits[8] = {3.0f, 2.0f, 1.5f, 1.0f, 0.5f, 0.0f, -1.0f, -2.0f};
-    yvex_runtime_sampling_policy policy = {
-        .schema_version = YVEX_RUNTIME_SAMPLING_SCHEMA_V1,
-        .strategy = YVEX_SAMPLING_STRATEGY_STOCHASTIC,
-        .temperature = 0.8, .top_k = 6ull, .top_p = 0.9,
-        .min_p = 0.05, .typical_p = 0.95, .seed_present = 1, .seed = 42ull};
-    yvex_runtime_sampling_result canonical, mutated;
-    yvex_error err;
-    unsigned int mutation;
-    YVEX_TEST_ASSERT(sampling_test_select_fixture(
-                         logits, 8ull, policy, &canonical, &err) == YVEX_OK &&
-                         yvex_runtime_sampling_result_validate(&canonical, &err) == YVEX_OK,
-                     "canonical evidence fixture validates before mutation");
-    for (mutation = 0u; mutation <= 38u; ++mutation) {
-        mutated = canonical;
-        sampling_test_mutate_result(&mutated, mutation);
-        YVEX_TEST_ASSERT(yvex_runtime_sampling_result_validate(
-                             &mutated, &err) == YVEX_ERR_FORMAT,
-                         "authoritative sampling evidence mutation refuses");
-    }
     return 0;
 }
 
@@ -525,9 +445,9 @@ static int sampling_test_rng_vectors(void)
                          yvex_runtime_sampling_source_from_logits(
                              second, &second_source, logits, 8ull, &row, &err) == YVEX_OK &&
                          yvex_runtime_sampling_select(
-                             first, &first_source, &first_result, &err) == YVEX_OK &&
+                             first, NULL, &first_source, &first_result, &err) == YVEX_OK &&
                          yvex_runtime_sampling_select(
-                             second, &second_source, &second_result, &err) == YVEX_OK,
+                             second, NULL, &second_source, &second_result, &err) == YVEX_OK,
                      "versioned PCG fixture selections execute");
     YVEX_TEST_ASSERT(first_result.selected_token_id == 6u &&
                          second_result.selected_token_id == 1u &&
@@ -542,12 +462,16 @@ static int sampling_test_rng_vectors(void)
 
 static int sampling_test_rng_transactions(void)
 {
+    const float logits[8] = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f};
     yvex_runtime_logits_plan_summary plan;
+    yvex_runtime_logits_row_result row;
     yvex_runtime_sampling_policy policy = sampling_test_neutral_stochastic();
     yvex_runtime_sampling_options options = {
         .maximum_vocabulary_size = 8ull, .maximum_rows = 8ull};
     yvex_runtime_sampling_context *context = NULL;
     yvex_runtime_sampling_transaction *transaction = NULL, *stale = NULL;
+    yvex_runtime_sampling_source source;
+    yvex_runtime_sampling_result aborted, retried;
     yvex_runtime_sampling_uniform_result draw;
     yvex_runtime_sampling_context_summary before, after;
     double values[2] = {0.0, 0.0}, stale_value = 0.0;
@@ -555,9 +479,12 @@ static int sampling_test_rng_transactions(void)
 
     sampling_test_plan(&plan, 8ull);
     YVEX_TEST_ASSERT(
-        yvex_runtime_sampling_policy_seal(&policy, 8ull, &err) == YVEX_OK &&
+        sampling_test_row(&plan, logits, 8ull, 1ull, &row) &&
+            yvex_runtime_sampling_policy_seal(&policy, 8ull, &err) == YVEX_OK &&
             yvex_runtime_sampling_context_open(
                 &context, &plan, &policy, &options, &err) == YVEX_OK &&
+            yvex_runtime_sampling_source_from_logits(
+                context, &source, logits, 8ull, &row, &err) == YVEX_OK &&
             yvex_runtime_sampling_context_snapshot(context, &before, &err) == YVEX_OK,
         "transactional RNG fixture opens");
 
@@ -572,6 +499,29 @@ static int sampling_test_rng_transactions(void)
             after.stochastic_draws == before.stochastic_draws &&
             strcmp(after.rng_state_identity, before.rng_state_identity) == 0,
         "aborted RNG draws leave the sampling authority unchanged");
+
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_transaction_begin(context, &transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_select(
+                context, transaction, &source, &aborted, &err) == YVEX_OK &&
+            yvex_runtime_sampling_transaction_abort(&transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_snapshot(context, &after, &err) == YVEX_OK &&
+            after.successful_samples == before.successful_samples &&
+            after.stochastic_draws == before.stochastic_draws &&
+            yvex_runtime_sampling_transaction_begin(context, &transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_select(
+                context, transaction, &source, &retried, &err) == YVEX_OK &&
+            strcmp(aborted.execution_identity, retried.execution_identity) == 0 &&
+            yvex_runtime_sampling_transaction_prepare_commit(transaction, &err) == YVEX_OK,
+        "transaction-owned selection retries the exact staged RNG draw");
+    yvex_runtime_sampling_transaction_publish_commit(&transaction);
+    YVEX_TEST_ASSERT(
+        !transaction && yvex_runtime_sampling_context_snapshot(context, &after, &err) == YVEX_OK &&
+            after.successful_samples == before.successful_samples + 1ull &&
+            after.stochastic_draws == before.stochastic_draws + 1ull &&
+            strcmp(after.rng_state_identity, retried.rng_state_after_identity) == 0,
+        "transaction-owned selection publishes exactly one staged RNG transition");
+    before = after;
 
     YVEX_TEST_ASSERT(
         yvex_runtime_sampling_transaction_begin(context, &transaction, &err) == YVEX_OK &&
@@ -597,6 +547,8 @@ static int sampling_test_rng_transactions(void)
     yvex_runtime_sampling_transaction_publish_commit(&transaction);
     YVEX_TEST_ASSERT(
         !transaction &&
+            yvex_runtime_sampling_select(
+                context, stale, &source, &retried, &err) == YVEX_ERR_STATE && !retried.completed &&
             yvex_runtime_sampling_transaction_prepare_commit(stale, &err) == YVEX_ERR_STATE &&
             yvex_runtime_sampling_transaction_abort(&stale, &err) == YVEX_OK && !stale &&
             yvex_runtime_sampling_context_snapshot(context, &after, &err) == YVEX_OK &&
@@ -653,7 +605,7 @@ static int sampling_test_reenter(void *opaque)
     if (!state->attempted) {
         state->attempted = 1;
         state->refusal = yvex_runtime_sampling_select(
-            state->context, state->source, &result, &err);
+            state->context, NULL, state->source, &result, &err);
     }
     return 0;
 }
@@ -676,7 +628,7 @@ static void *sampling_test_select_thread_main(void *opaque)
     yvex_runtime_sampling_result result;
     yvex_error err;
     thread->rc = yvex_runtime_sampling_select(
-        thread->context, thread->source, &result, &err);
+        thread->context, NULL, thread->source, &result, &err);
     return NULL;
 }
 
@@ -688,7 +640,7 @@ static void *sampling_test_contender_thread_main(void *opaque)
     for (thread->attempts = 1ull; thread->attempts <= 1000000ull;
          ++thread->attempts) {
         thread->rc = yvex_runtime_sampling_select(
-            thread->context, thread->source, &result, &err);
+            thread->context, NULL, thread->source, &result, &err);
         if (thread->rc == YVEX_ERR_STATE &&
             strcmp(yvex_error_message(&err), "sampling context is closing") == 0) {
             thread->closing_refusal = 1;
@@ -808,7 +760,7 @@ static int sampling_test_lifecycle(void)
     reentry.context = context;
     reentry.source = &source;
     YVEX_TEST_ASSERT(yvex_runtime_sampling_select(
-                         context, &source, &result, &err) == YVEX_OK &&
+                         context, NULL, &source, &result, &err) == YVEX_OK &&
                          result.selected_token_id == 1u && reentry.attempted &&
                          reentry.refusal == YVEX_ERR_STATE,
                      "same-context concurrent use refuses while outer selection completes");
@@ -955,7 +907,7 @@ static int sampling_test_partial_logits_prefix(void)
                              context, &source, result.raw_logits,
                              result.raw_logits_count, &rows[0], &err) == YVEX_OK &&
                          yvex_runtime_sampling_select(
-                             context, &source, &sample, &err) == YVEX_OK &&
+                             context, NULL, &source, &sample, &err) == YVEX_OK &&
                          sample.completed,
                      "sampling consumes exactly the completed logits prefix");
     YVEX_TEST_ASSERT(yvex_runtime_sampling_context_close(&context, &err) == YVEX_OK,
@@ -997,7 +949,7 @@ static int sampling_test_device_context(void)
     YVEX_TEST_ASSERT(
         yvex_runtime_sampling_source_from_logits(
             context, &source, logits, 4ull, &row, &err) == YVEX_OK &&
-            yvex_runtime_sampling_select(context, &source, &result, &err) ==
+            yvex_runtime_sampling_select(context, NULL, &source, &result, &err) ==
                 YVEX_ERR_FORMAT &&
             !result.completed,
         "device sampling context refuses host-authoritative source substitution");
@@ -1014,7 +966,6 @@ int yvex_test_runtime_sampling(void)
     if (sampling_test_greedy()) return 1;
     if (sampling_test_filter_matrix()) return 1;
     if (sampling_test_stochastic()) return 1;
-    if (sampling_test_evidence_mutations()) return 1;
     if (sampling_test_rng_vectors()) return 1;
     if (sampling_test_rng_transactions()) return 1;
     if (sampling_test_lifecycle()) return 1;

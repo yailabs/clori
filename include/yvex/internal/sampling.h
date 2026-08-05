@@ -184,6 +184,7 @@ int yvex_runtime_sampling_source_from_logits(
     const yvex_runtime_logits_row_result *row, yvex_error *err);
 int yvex_runtime_sampling_select(
     yvex_runtime_sampling_context *context,
+    yvex_runtime_sampling_transaction *transaction,
     const yvex_runtime_sampling_source *source,
     yvex_runtime_sampling_result *result, yvex_error *err);
 int yvex_runtime_sampling_distribution(
@@ -212,8 +213,6 @@ int yvex_runtime_sampling_execute(
 int yvex_runtime_sampling_context_snapshot(
     const yvex_runtime_sampling_context *context,
     yvex_runtime_sampling_context_summary *summary, yvex_error *err);
-int yvex_runtime_sampling_result_validate(
-    const yvex_runtime_sampling_result *result, yvex_error *err);
 int yvex_runtime_sampling_context_close(
     yvex_runtime_sampling_context **context, yvex_error *err);
 

@@ -844,7 +844,7 @@ static int speculation_draft_one(
             context->device_draft_selection ? 0ull : context->vocabulary_size,
             &adjusted, err);
     if (rc == YVEX_OK && context->device_draft_selection)
-        rc = yvex_runtime_sampling_select(context->draft_sampling, &source, &selection, err);
+        rc = yvex_runtime_sampling_select(context->draft_sampling, NULL, &source, &selection, err);
     if (rc == YVEX_OK && !context->device_draft_selection)
         rc = yvex_runtime_sampling_distribution(
             context->draft_sampling, &source,

@@ -98,7 +98,11 @@ synchronization explicitly; immediate and token-local paths remain the
 audit/reference oracles. Target-only production now
 selects stochastic tokens from resident CUDA logits with bounded result
 transfer; audit/forensic and stochastic DSpark still own explicit host sampling
-references. Greedy and stochastic CUDA selection enqueue those bounded facts
+references. The sampling owner can stage either host or CUDA selection inside
+the outer RNG transaction, retry an aborted draw exactly and publish one draw
+only with the surrounding transaction. Target p/q evaluation and residual
+correction remain the stochastic DSpark device-cutover boundary. Greedy and
+stochastic CUDA selection enqueue those bounded facts
 on the session stream and complete only that stream; any legacy context-wide
 fallback remains separately visible. Production greedy DSpark verification now
 retains its width-N

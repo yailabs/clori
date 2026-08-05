@@ -886,7 +886,7 @@ static int live_manual_execute(yvex_runtime_model *model,
                 logits_plan->vocabulary_size, &logits_result, err);
         if (rc == YVEX_OK)
             rc = yvex_runtime_sampling_select(
-                sampling, &sample_source, &sample, err);
+                sampling, NULL, &sample_source, &sample, err);
         if (rc == YVEX_OK) {
             out->tokens[out->sampled++] = sample.selected_token_id;
             rc = yvex_tokenizer_token_classify(

@@ -582,26 +582,25 @@ static int generation_project_sample(
     yvex_runtime_generation_context *context,
     const yvex_runtime_transformer_result *prefill,
     const float *prefill_hidden, unsigned long long prefill_hidden_count,
-    const yvex_runtime_decode_step_result *decode,
-    yvex_runtime_logits_row_result *logits_result,
+    const yvex_runtime_decode_step_result *decode, yvex_runtime_logits_row_result *logits_result,
     yvex_runtime_sampling_result *sampling_result,
     yvex_runtime_profile_record *profile, yvex_error *err)
 {
     yvex_runtime_sampling_source source;
+    yvex_runtime_sampling_transaction *transaction = NULL;
     unsigned long long started, completed;
     int rc;
     memset(sampling_result, 0, sizeof(*sampling_result));
-    rc = generation_project_logits(context, prefill, prefill_hidden,
-                                   prefill_hidden_count, decode,
-                                   logits_result, profile, err);
+    rc = generation_project_logits(context, prefill, prefill_hidden, prefill_hidden_count,
+                                   decode, logits_result, profile, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_sampling_source_from_logits(
-            context->sampling, &source, context->logits_row,
-            context->logits_count, logits_result, err);
+            context->sampling, &source, context->logits_row, context->logits_count, logits_result, err);
+    if (rc == YVEX_OK && context->options.sampling_policy.strategy == YVEX_SAMPLING_STRATEGY_STOCHASTIC)
+        rc = yvex_runtime_sampling_transaction_begin(context->sampling, &transaction, err);
     if (rc == YVEX_OK) {
         started = yvex_core_monotonic_ns();
-        rc = yvex_runtime_sampling_select(context->sampling, &source,
-                                          sampling_result, err);
+        rc = yvex_runtime_sampling_select(context->sampling, transaction, &source, sampling_result, err);
         completed = yvex_core_monotonic_ns();
         if (rc == YVEX_OK)
             rc = yvex_runtime_generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_SAMPLING,
@@ -621,6 +620,12 @@ static int generation_project_sample(
                                       sampling_result->device_synchronizations, err) != YVEX_OK))
             rc = yvex_error_code(err);
     }
+    if (transaction && rc == YVEX_OK)
+        rc = yvex_runtime_sampling_transaction_prepare_commit(transaction, err);
+    if (transaction && rc == YVEX_OK)
+        yvex_runtime_sampling_transaction_publish_commit(&transaction);
+    else if (transaction)
+        (void)yvex_runtime_sampling_transaction_abort(&transaction, NULL);
     return rc;
 }
 static int generation_project_distribution(
@@ -634,17 +639,14 @@ static int generation_project_distribution(
     yvex_runtime_sampling_source source;
     int rc;
     memset(distribution, 0, sizeof(*distribution));
-    rc = generation_project_logits(context, prefill, prefill_hidden,
-                                   prefill_hidden_count, NULL,
+    rc = generation_project_logits(context, prefill, prefill_hidden, prefill_hidden_count, NULL,
                                    logits_result, profile, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_sampling_source_from_logits(
-            context->sampling, &source, context->logits_row,
-            context->logits_count, logits_result, err);
+            context->sampling, &source, context->logits_row, context->logits_count, logits_result, err);
     if (rc == YVEX_OK)
         rc = yvex_runtime_sampling_distribution(
-            context->sampling, &source, context->anchor_probabilities,
-            context->logits_count, distribution, err);
+            context->sampling, &source, context->anchor_probabilities, context->logits_count, distribution, err);
     return rc;
 }
 static int generation_terminal_token(

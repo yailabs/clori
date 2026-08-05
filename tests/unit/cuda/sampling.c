@@ -51,6 +51,123 @@ static yvex_runtime_sampling_policy sampling_policy(void)
     return policy;
 }
 
+static void sampling_identity(char output[YVEX_SHA256_HEX_CAP], char digit)
+{
+    memset(output, digit, YVEX_SHA256_HEX_CAP - 1u);
+    output[YVEX_SHA256_HEX_CAP - 1u] = '\0';
+}
+
+static int sampling_device_row(
+    yvex_backend *backend, const yvex_device_tensor *tensor,
+    const yvex_runtime_logits_plan_summary *plan,
+    yvex_runtime_logits_row_result *row)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    memset(row, 0, sizeof(*row));
+    row->schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1;
+    row->completed = row->device_values_available = 1;
+    row->evidence_profile = YVEX_EXECUTION_EVIDENCE_PRODUCTION;
+    row->source_phase = YVEX_LOGITS_SOURCE_DECODE;
+    row->source_position = 1ull;
+    row->vocabulary_size = row->logits_count = plan->vocabulary_size;
+    row->hidden_width = plan->hidden_width;
+    sampling_identity(row->source_hidden_digest, 'b');
+    sampling_identity(row->output_head_residency_identity, 'c');
+    sampling_identity(row->backend_execution_identity, 'd');
+    yvex_runtime_identity_copy(row->output_head_plan_identity,
+                               plan->output_head_plan_identity);
+    row->device_logits.schema_version = YVEX_EXECUTION_DEVICE_VIEW_SCHEMA_V1;
+    row->device_logits.kind = YVEX_EXECUTION_DEVICE_LOGITS;
+    row->device_logits.backend = backend;
+    row->device_logits.tensor = tensor;
+    row->device_logits.model_generation = row->device_logits.session_generation =
+        row->device_logits.state_generation = 1ull;
+    row->device_logits.rows = 1ull;
+    row->device_logits.columns = plan->vocabulary_size;
+    row->device_logits.element_bytes = sizeof(float);
+    row->device_logits.dtype = YVEX_DTYPE_F32;
+    row->device_logits.synchronization_required = 1;
+    row->device_logits.materialization = YVEX_EXECUTION_MATERIALIZE_NONE;
+    sampling_identity(row->device_logits.runtime_model_identity, 'e');
+    sampling_identity(row->device_logits.execution_profile_identity, 'f');
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.runtime.logits.row.v2") ||
+        !yvex_sha256_update_u64(&hash, row->source_phase) ||
+        !yvex_sha256_update_u64(&hash, row->source_position) ||
+        !yvex_sha256_update_u64(&hash, row->vocabulary_size) ||
+        !yvex_sha256_update_u64(&hash, row->host_values_available) ||
+        !yvex_sha256_update_u64(&hash, row->device_values_available) ||
+        !yvex_sha256_update_u64(&hash, row->evidence_profile) ||
+        !yvex_sha256_update_text(&hash, row->source_hidden_digest) ||
+        !yvex_sha256_update_text(&hash, row->output_head_plan_identity) ||
+        !yvex_sha256_update_text(&hash, row->output_head_residency_identity) ||
+        !yvex_sha256_update_text(&hash, row->backend_execution_identity) ||
+        !yvex_sha256_update_text(&hash, row->device_logits.execution_profile_identity) ||
+        !yvex_sha256_update_u64(&hash, row->device_logits.model_generation) ||
+        !yvex_sha256_update_u64(&hash, row->device_logits.session_generation) ||
+        !yvex_sha256_update_u64(&hash, row->device_logits.state_generation) ||
+        !yvex_sha256_update_u64(&hash, row->device_logits.element_offset) ||
+        !yvex_sha256_update_u64(&hash, row->device_logits.rows) ||
+        !yvex_sha256_update_u64(&hash, row->device_logits.columns) ||
+        !yvex_sha256_final(&hash, digest)) return 0;
+    yvex_sha256_hex(digest, row->logits_row_identity);
+    return 1;
+}
+
+static int sampling_transactional_device(
+    yvex_backend *backend, const yvex_device_tensor *device_logits)
+{
+    yvex_runtime_logits_plan_summary plan = {0};
+    yvex_runtime_logits_row_result row;
+    yvex_runtime_sampling_policy policy = sampling_policy();
+    yvex_runtime_sampling_options options = {
+        .maximum_vocabulary_size = 4ull, .maximum_rows = 2ull, .device_selection = 1};
+    yvex_runtime_sampling_context *context = NULL;
+    yvex_runtime_sampling_transaction *transaction = NULL;
+    yvex_runtime_sampling_context_summary before, after;
+    yvex_runtime_sampling_source source;
+    yvex_runtime_sampling_result aborted, committed;
+    yvex_error err;
+    plan.schema_version = YVEX_RUNTIME_LOGITS_SCHEMA_V1;
+    plan.vocabulary_size = plan.row_count = 4ull;
+    plan.row_width = plan.hidden_width = 4ull;
+    sampling_identity(plan.output_head_plan_identity, 'a');
+    YVEX_TEST_ASSERT(
+        sampling_device_row(backend, device_logits, &plan, &row) &&
+            yvex_runtime_sampling_policy_seal(&policy, 4ull, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_open(
+                &context, &plan, &policy, &options, &err) == YVEX_OK &&
+            yvex_runtime_sampling_source_from_logits(
+                context, &source, NULL, 0ull, &row, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_snapshot(context, &before, &err) == YVEX_OK,
+        "admit transaction-owned stochastic CUDA selection");
+    YVEX_TEST_ASSERT(
+        yvex_runtime_sampling_transaction_begin(context, &transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_select(
+                context, transaction, &source, &aborted, &err) == YVEX_OK &&
+            yvex_runtime_sampling_transaction_abort(&transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_context_snapshot(context, &after, &err) == YVEX_OK &&
+            after.successful_samples == before.successful_samples &&
+            after.stochastic_draws == before.stochastic_draws &&
+            yvex_runtime_sampling_transaction_begin(context, &transaction, &err) == YVEX_OK &&
+            yvex_runtime_sampling_select(
+                context, transaction, &source, &committed, &err) == YVEX_OK &&
+            strcmp(aborted.execution_identity, committed.execution_identity) == 0 &&
+            yvex_runtime_sampling_transaction_prepare_commit(transaction, &err) == YVEX_OK,
+        "aborted CUDA selection retries the same staged token and RNG transition");
+    yvex_runtime_sampling_transaction_publish_commit(&transaction);
+    YVEX_TEST_ASSERT(
+        !transaction && committed.device_selection && !committed.full_array_host_scan_bytes &&
+            yvex_runtime_sampling_context_snapshot(context, &after, &err) == YVEX_OK &&
+            after.successful_samples == before.successful_samples + 1ull &&
+            after.stochastic_draws == before.stochastic_draws + 1ull &&
+            strcmp(after.rng_state_identity, committed.rng_state_after_identity) == 0 &&
+            yvex_runtime_sampling_context_close(&context, &err) == YVEX_OK,
+        "CUDA sampling transaction publishes one bounded device result and one RNG draw");
+    return 0;
+}
+
 static int sampling_greedy_rows(
     yvex_backend *backend, const yvex_backend_sampling_operations *operations)
 {
@@ -226,6 +343,8 @@ int yvex_cuda_test_sampling(void)
             result.candidates_after_top_p == 1ull &&
             result.selected_token_id == 3u && result.selected_probability == 1.0,
         "device filters preserve canonical top-k min-p typical-p top-p order");
+    YVEX_TEST_ASSERT(sampling_transactional_device(backend, device_logits) == 0,
+                     "runtime transaction owns CUDA stochastic selection");
     {
         const float invalid[4] = {0.0f, 1.0f, NAN, 3.0f};
         YVEX_TEST_ASSERT(
