@@ -93,9 +93,22 @@ static int test_artifact_symlink_refusal(void)
     return 0;
 }
 
-static int test_deepseek_variant_admission_catalog(void)
+typedef struct {
+    const char *filename;
+    unsigned long long file_bytes;
+    unsigned long long payload_bytes;
+    const char *profile_identity;
+    const char *artifact_identity;
+    const char *quant_execution_identity;
+    const char *payload_plan_identity;
+    const char *payload_byte_identity;
+    const char *writer_plan_identity;
+    const char *admission_identity;
+} deepseek_catalog_fixture;
+
+static int test_deepseek_catalog_entry(const char *root,
+                                       const deepseek_catalog_fixture *fixture)
 {
-    char root[] = "/tmp/yvex-artifact-variant-XXXXXX";
     char path[YVEX_ARTIFACT_PATH_CAP];
     yvex_artifact_options options = {0};
     yvex_artifact *artifact = NULL;
@@ -104,11 +117,11 @@ static int test_deepseek_variant_admission_catalog(void)
     yvex_error err;
     int fd;
 
-    YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "variant catalog root created");
-    YVEX_TEST_ASSERT(snprintf(path, sizeof(path), "%s/candidate.gguf", root) < (int)sizeof(path),
+    YVEX_TEST_ASSERT(snprintf(path, sizeof(path), "%s/%s", root, fixture->filename) <
+                         (int)sizeof(path),
                      "variant catalog path fits");
     fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    YVEX_TEST_ASSERT(fd >= 0 && ftruncate(fd, (off_t)YVEX_SELECTED_DEEPSEEK_FILE_BYTES) == 0 &&
+    YVEX_TEST_ASSERT(fd >= 0 && ftruncate(fd, (off_t)fixture->file_bytes) == 0 &&
                          close(fd) == 0,
                      "variant sparse extent created");
     options.path = path;
@@ -117,20 +130,69 @@ static int test_deepseek_variant_admission_catalog(void)
                      "variant sparse artifact opened");
     YVEX_TEST_ASSERT(yvex_artifact_admit_deepseek(artifact, &admission, &failure, &err) == YVEX_OK,
                      "variant catalog admission reconstructed");
-    YVEX_TEST_ASSERT(admission.file_bytes == YVEX_SELECTED_DEEPSEEK_FILE_BYTES &&
-                         admission.payload_bytes == YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTES &&
-                         strcmp(admission.profile_identity,
-                                YVEX_SELECTED_DEEPSEEK_PROFILE_IDENTITY) == 0 &&
-                         strcmp(admission.artifact_identity,
-                                YVEX_SELECTED_DEEPSEEK_ARTIFACT_IDENTITY) == 0 &&
-                         strcmp(admission.admission_identity,
-                                "d8966a5222ef10f612595c657cbcf0a9cf557e277cb28bb44d85ad89c3bf42a0") == 0,
+    YVEX_TEST_ASSERT(admission.file_bytes == fixture->file_bytes &&
+                         admission.payload_bytes == fixture->payload_bytes &&
+                         strcmp(admission.profile_identity, fixture->profile_identity) == 0 &&
+                         strcmp(admission.artifact_identity, fixture->artifact_identity) == 0 &&
+                         strcmp(admission.quant_execution_identity,
+                                fixture->quant_execution_identity) == 0 &&
+                         strcmp(admission.payload_plan_identity,
+                                fixture->payload_plan_identity) == 0 &&
+                         strcmp(admission.payload_byte_identity,
+                                fixture->payload_byte_identity) == 0 &&
+                         strcmp(admission.writer_plan_identity,
+                                fixture->writer_plan_identity) == 0 &&
+                         strcmp(admission.admission_identity, fixture->admission_identity) == 0,
                      "variant catalog binds exact admitted identities");
     YVEX_TEST_ASSERT(!admission.artifact_identity_verified && admission.artifact_bytes_hashed == 0u,
                      "catalog reconstruction does not fabricate byte verification");
     yvex_artifact_close(artifact);
-    YVEX_TEST_ASSERT(unlink(path) == 0 && rmdir(root) == 0,
-                     "variant sparse artifact cleaned");
+    YVEX_TEST_ASSERT(unlink(path) == 0, "variant sparse artifact cleaned");
+    return 0;
+}
+
+static int test_deepseek_variant_admission_catalog(void)
+{
+    char root[] = "/tmp/yvex-artifact-variant-XXXXXX";
+    const deepseek_catalog_fixture selected = {
+        .filename = "selected.gguf",
+        .file_bytes = YVEX_SELECTED_DEEPSEEK_FILE_BYTES,
+        .payload_bytes = YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTES,
+        .profile_identity = YVEX_SELECTED_DEEPSEEK_PROFILE_IDENTITY,
+        .artifact_identity = YVEX_SELECTED_DEEPSEEK_ARTIFACT_IDENTITY,
+        .quant_execution_identity = YVEX_SELECTED_DEEPSEEK_EXECUTION_IDENTITY,
+        .payload_plan_identity = YVEX_SELECTED_DEEPSEEK_PAYLOAD_PLAN_IDENTITY,
+        .payload_byte_identity = YVEX_SELECTED_DEEPSEEK_PAYLOAD_BYTE_IDENTITY,
+        .writer_plan_identity = YVEX_SELECTED_DEEPSEEK_WRITER_PLAN_IDENTITY,
+        .admission_identity =
+            "d8966a5222ef10f612595c657cbcf0a9cf557e277cb28bb44d85ad89c3bf42a0",
+    };
+    const deepseek_catalog_fixture native_drafter = {
+        .filename = "native-drafter.gguf",
+        .file_bytes = 98018204640ull,
+        .payload_bytes = 98006498296ull,
+        .profile_identity =
+            "6a99e9f7c374e3f718cce705002bf2b799db9cc1b86f65091631857f52c1c587",
+        .artifact_identity =
+            "59c4649b19bb9f3eb7c01559e12ae52c3d4fbd067957e35de0a1a851759c7cc1",
+        .quant_execution_identity =
+            "35002244d5854a2d51b877ea31614cd985c9795d11c7e0904ed3475fec7fcb77",
+        .payload_plan_identity =
+            "e83545c729b219d327d4a437d499b73407648c94748ba7fda13905baace15c3e",
+        .payload_byte_identity =
+            "c79712bb85e31ebdcbd71ef0256709a001ae4cc62c4150ba8726d5dc5722dcd0",
+        .writer_plan_identity =
+            "2d4694925c02c04811ea846f389a94dbf524d26809a292c93f2c46ca8f05a025",
+        .admission_identity =
+            "9a6f6844e47dd7214b4bf12dd14a1ec34f0e88bc85c68cb00bba59fb674df6d9",
+    };
+
+    YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "variant catalog root created");
+    YVEX_TEST_ASSERT(test_deepseek_catalog_entry(root, &selected) == 0,
+                     "selected DeepSeek catalog entry is exact");
+    YVEX_TEST_ASSERT(test_deepseek_catalog_entry(root, &native_drafter) == 0,
+                     "native-drafter DeepSeek catalog entry is exact");
+    YVEX_TEST_ASSERT(rmdir(root) == 0, "variant catalog root cleaned");
     return 0;
 }
 

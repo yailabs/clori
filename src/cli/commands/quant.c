@@ -421,10 +421,12 @@ static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *c
     yvex_gguf_file_sink_summary emission;
     yvex_gguf_roundtrip_options roundtrip_options;
     yvex_gguf_roundtrip_summary roundtrip;
+    const yvex_quant_plan_summary *plan_summary;
     const yvex_gguf_writer_plan_summary *writer_summary;
     int rc;
 
     rc = yvex_quant_plan_file_validate(options->plan_path, context->plan, err);
+    plan_summary = yvex_quant_plan_summary_get(context->plan);
     writer_summary = yvex_gguf_writer_plan_summary_get(context->writer);
     if (rc == YVEX_OK) {
         yvex_gguf_file_sink_options_default(&file_options);
@@ -454,14 +456,39 @@ static int quant_cli_emit(const quant_cli_options *options, quant_cli_context *c
     if (rc == YVEX_OK) {
         yvex_cli_out_writef(stdout, "status: complete-physical-artifact-emitted\n");
         yvex_cli_out_writef(stdout, "artifact: %s\n", options->out_artifact);
+        yvex_cli_out_writef(stdout, "profile: %s\n", writer_summary->profile_name);
+        yvex_cli_out_writef(stdout, "profile_identity: %s\n",
+                            writer_summary->profile_identity);
+        yvex_cli_out_writef(stdout, "physical_variant_identity: %s\n",
+                            plan_summary->physical_variant_identity);
+        yvex_cli_out_writef(stdout, "source_snapshot_identity: %016llx\n",
+                            writer_summary->source_snapshot_identity);
+        yvex_cli_out_writef(stdout, "mapping_identity: %016llx\n",
+                            writer_summary->mapping_identity);
+        yvex_cli_out_writef(stdout, "payload_identity: %s\n",
+                            writer_summary->payload_identity);
+        yvex_cli_out_writef(stdout, "transform_identity: %s\n",
+                            writer_summary->transform_identity);
+        yvex_cli_out_writef(stdout, "payload_plan_identity: %s\n",
+                            writer_summary->payload_plan_identity);
         yvex_cli_out_writef(stdout, "artifact_identity: %s\n", roundtrip.artifact_identity);
         yvex_cli_out_writef(stdout, "writer_plan_identity: %s\n",
                             writer_summary->writer_plan_identity);
         yvex_cli_out_writef(stdout, "quant_execution_identity: %s\n",
                             emission.execution_identity);
+        yvex_cli_out_writef(stdout, "payload_byte_identity: %s\n",
+                            emission.payload_byte_identity);
         yvex_cli_out_writef(stdout, "file_bytes: %llu\n", roundtrip.file_bytes);
         yvex_cli_out_writef(stdout, "payload_bytes: %llu\n", roundtrip.payload_bytes_verified);
+        yvex_cli_out_writef(stdout, "metadata_count: %llu\n", roundtrip.metadata_count);
+        yvex_cli_out_writef(stdout, "tensor_count: %llu\n", roundtrip.tensor_count);
         yvex_cli_out_writef(stdout, "terminal_count: %llu\n", roundtrip.terminals_verified);
+        yvex_cli_out_writef(stdout, "tokenizer_tokens: %llu\n",
+                            writer_summary->tokenizer_token_count);
+        yvex_cli_out_writef(stdout, "tokenizer_merges: %llu\n",
+                            writer_summary->tokenizer_merge_count);
+        yvex_cli_out_writef(stdout, "policy_identity: %s\n", plan_summary->policy_identity);
+        yvex_cli_out_writef(stdout, "imatrix_identity: %s\n", plan_summary->imatrix_identity);
         yvex_cli_out_writef(stdout, "native_roundtrip: accepted\n");
         yvex_cli_out_writef(stdout, "official_reader_admission: pending\n");
     }
