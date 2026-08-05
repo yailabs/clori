@@ -1,16 +1,16 @@
-# MiniMax-H3 FL2VA Research Record
+# MiniMax-H3 FL2VA Family Record
 
-Status: source-profiled implementation target; logical architecture and
-Transformation IR are admitted offline, and authorized exact source-payload
-acquisition is in progress; not an executable family
+Status: source acquired and verified; logical architecture, tensor roles, and
+Transformation IR admitted; not an executable family
 
-This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now has a
-non-runtime model target, one bounded family owner, a composite logical
+This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
+the complete immutable FL2VA source through its production source owner and
+has a non-runtime model target, one bounded family owner, a composite logical
 component manifest, a seven-edge phase DAG through transactional media
 publication, an exact tensor-role classifier, and component-aware
 artifact-neutral Transformation IR schema v2. It does not add an artifact
 format, runtime adapter, backend operation, hosted path, or release
-obligation. The frozen quantitative evidence is the
+obligation. The frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
 
@@ -22,8 +22,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.IR.0` |
-| Current boundary | offline composite architecture and component-aware Transformation IR implemented; authorized live acquisition and exact-source admission are in progress |
-| Next expected boundary | complete live 29-shard/3,240-tensor reconciliation, then component physical variants and artifact emission |
+| Current boundary | exact source acquired and verified; composite architecture, 3,240 tensor roles, and component-aware Transformation IR admitted live |
+| Next expected boundary | independently admitted component physical variants and artifact emission |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -41,7 +41,15 @@ or rename the branch.
 | Source-tree identity | `91972f8e4e6562562456c339b43eed1fba5f7b9d7fb13987f495b416a5109b5e` |
 | External evidence identity | `1e7db0167eafc1e43ecaad37897198cd54f838398907b686211886dbc288b662` |
 | Model-index SHA-256 | `d1113e0f123c69f79cd0de35ca1771606ebc3ec924270d257b771f96f584aa6b` |
-| Evidence stage | source profiled; logical architecture and Transformation IR verified with offline fixtures; complete local payload acquisition in progress and not yet trusted |
+| Acquisition identity | `7eec5b07bbb6427611553b16670f9dc31969ae8ba602a79c0c7a2693a5fa168a` |
+| Source snapshot identity | `897ceaff08708f431132c6643bc8f1041ace8c0444a3ea248bbf727fc7da9943` |
+| Component manifest identity | `715f2359aaff048ccca8207976421af5f9f76b08b6f24986b3cc186d2822bc0e` |
+| Phase DAG identity | `c02c17739fda5ef12698f486f201d638e9b5afdd2cc97c27b24768f8e51ccfa5` |
+| Architecture identity | `47a03bbac2b5346771f70ae39155920f9b1c6e6cec17f2639dd0cbedfa90b517` |
+| Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
+| Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
+| Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; no artifact or execution |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -54,6 +62,14 @@ intake admits those 81 files and the repository license documents. It excludes
 `Ref2VA/`, root hosted-system components, `transformer_ref/`, 2K/context/
 regeneration scripts, assets, and all non-FL2VA weights. It does not assume
 that similarly named root and FL2VA components are interchangeable.
+
+The canonical acquisition contains exactly 83 admitted files: 29 weighted
+shards totaling 144,016,376,436 file bytes and 54 metadata/license files
+totaling 34,827,744 bytes. Complete SHA-256 verification covered all
+144,051,204,180 source bytes. Production admission reconciled all 3,240 tensor
+headers, 69,235,580,593 elements, and 144,016,000,740 declared payload bytes.
+No tensor payload byte was executed. Local paths, transfer URLs, timestamps,
+and the implementation branch are absent from every semantic identity.
 
 ## License facts
 
@@ -327,7 +343,7 @@ Scores are 0–5 with 5 favorable. Full scoring is frozen in the audit metrics.
 | One Omni-Transformer block | 35 | high generic value, but exact mask/MM-RoPE/AdaLN semantics must be admitted first |
 | Full source-to-architecture/Transformation IR without numeric execution | 40 | selected; closes identity, role, component, and phase ownership before numeric abstraction |
 
-The active internal boundary is `R010.MINIMAX.H3.FL2VA.IR.0`.
+The completed internal boundary is `R010.MINIMAX.H3.FL2VA.IR.0`.
 
 Its required after-state is one production-admitted, artifact-neutral
 MiniMax-H3 FL2VA source-to-Transformation-IR path. It must:
@@ -348,17 +364,28 @@ MiniMax-H3 FL2VA source-to-Transformation-IR path. It must:
 - stop before artifact emission, materialization, Physical Execution IR,
   runtime sessions, backend execution, or media output.
 
-The code and offline fixture portions of that after-state are present. The
-operator authorization gate is scoped explicitly to the acquisition process,
-which is serially streaming the exact 144,051,204,180-byte source allowlist to
-immutable-revision storage. Partial files are resumable operational state, not
-published source trust. The live source-to-IR claim remains unestablished until
-all files pass final size and digest verification and canonical admission.
-The acquisition and production provenance owners independently bind non-LFS
-metadata to authoritative Git blob OIDs and LFS payloads to their authoritative
-SHA-256 identities. A replay over the accepted 3,240-row header inventory maps
-every tensor once with zero classifier refusals; it remains comparison evidence,
-not a substitute for live payload admission.
+That after-state is now present. The authorization gate was recorded only as
+operator permission to acquire the source and made no legal conclusion. The
+acquisition owner published trust only after all 83 files passed final size and
+digest verification. The production provenance owner then independently bound
+non-LFS metadata to authoritative Git blob OIDs, LFS payloads to authoritative
+SHA-256 identities, and every tensor to one source shard and byte range. Two
+independent operator runs over the canonical source produced byte-identical JSON
+and identical source, component, architecture, role-map, Transformation IR, and
+aggregate derivation identities.
+
+The operator-reachable inspection command is:
+
+```sh
+yvex inspect target class-profile minimax-h3-fl2va \
+  --source <IMMUTABLE_SOURCE_ROOT> \
+  --output json
+```
+
+It reports `transformation-ir-admitted`, `source_verified: true`, exact source
+coverage, `payload_execution_bytes: 0`, and the next physical-artifact boundary.
+It explicitly reports artifacts as not produced and runtime and generation as
+unsupported.
 
 Dependencies are the canonical source inventory/payload APIs, model-family
 registration, Transformation IR, documentation ownership, and the exact
@@ -374,22 +401,19 @@ generation quality, and performance remain explicit non-claims of that slice.
 
 ## Progression and non-claims
 
-`progression_decision: repair_same_boundary`
+`progression_decision: proceed`
 
-`downstream_safe: false`
+`downstream_safe: true`
 
 The downstream consumer is the next MiniMax-H3 wave on `feature/minimax-h3`.
-There is no current external blocker. Boundary incompleteness is the in-progress
-canonical payload acquisition, live digest admission, exact live role-map
-reconciliation, live IR identity, and positive operator execution over that
-source. Offline component,
-architecture, classifier, Transformation IR, refusal, determinism, and
-truthfulness tests do not promote those live facts. Deferred depth consists of
-the exact scheduler and MM-RoPE numeric contract, component artifacts and
-execution, residency, media transaction, evaluation, and benchmark, each
-owned by a later executable consumer. License review remains an external
-authorization prerequisite for any use that requires an eligibility
-conclusion.
+There is no gate blocker, boundary incompleteness, evidence gap, or current
+external blocker within the IR boundary. Component physical variants and
+artifacts, the exact scheduler and MM-RoPE numerical contracts, component
+execution, staged residency, synchronized media transaction, evaluation, and
+benchmark are deferred depth with explicit later consumers. They do not weaken
+the admitted source-to-Transformation-IR path, and none is claimed by it.
+License review remains an external authorization prerequisite for any use that
+requires an eligibility conclusion.
 
 This implementation boundary does not prove:
 
