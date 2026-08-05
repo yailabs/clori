@@ -214,7 +214,7 @@ static const char *kernel_function_identity(const yvex_cuda_backend_state *state
     MATCH(embed_function); MATCH(embed_f16_function); MATCH(rms_norm_f32_function);
     MATCH(rms_norm_f16_function); MATCH(rope_function); MATCH(matmul_function);
     MATCH(qtype_row_dot_function); MATCH(attention_bf16_round_function);
-    MATCH(qtype_matvec_function); MATCH(q8_quantize_function);
+    MATCH(qtype_matvec_function); MATCH(qtype_gather_function); MATCH(q8_quantize_function);
     MATCH(deepseek_decode_function); MATCH(deepseek_weighted_norm_function);
     MATCH(deepseek_unit_norm_function); MATCH(deepseek_rope_function);
     MATCH(deepseek_activation_function); MATCH(deepseek_mhc_pre_function);

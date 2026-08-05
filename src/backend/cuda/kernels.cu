@@ -844,6 +844,36 @@ extern "C" __global__ void yvex_deepseek_decode(
     else out[index] = value;
 }
 
+extern "C" __global__ void yvex_qtype_gather(
+    const unsigned char *encoded, unsigned long long row_bytes,
+    unsigned long long row_width, unsigned long long row_count,
+    const unsigned int *row_ids, unsigned long long selected_rows,
+    unsigned int qtype, float *out, int *status)
+{
+    unsigned long long index =
+        (unsigned long long)blockIdx.x * (unsigned long long)blockDim.x +
+        (unsigned long long)threadIdx.x;
+    unsigned long long row = row_width ? index / row_width : selected_rows;
+    unsigned long long column = row_width ? index % row_width : 0ull;
+    unsigned long long selected;
+    const unsigned char *row_data;
+    float value;
+    if (!status || *status != 0 || row >= selected_rows) return;
+    if (!encoded || !row_bytes || !row_width || !row_count || !row_ids || !out) {
+        atomicCAS(status, 0, 2);
+        return;
+    }
+    selected = (unsigned long long)row_ids[row];
+    if (selected >= row_count) {
+        atomicCAS(status, 0, 2);
+        return;
+    }
+    row_data = encoded + selected * row_bytes;
+    value = qtype_value(row_data, column, qtype);
+    if (!isfinite(value)) atomicCAS(status, 0, 1);
+    else out[index] = value;
+}
+
 extern "C" __global__ void yvex_deepseek_weighted_norm(
     float *values, unsigned long long count, const unsigned char *weight,
     unsigned int weight_qtype, double epsilon, unsigned long long vectors,

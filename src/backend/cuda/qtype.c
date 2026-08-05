@@ -182,6 +182,122 @@ int yvex_backend_cuda_encoded_matvec(
 }
 
 /*
+ * Decode selected rows from one admitted resident matrix into a backend-owned F32 view.
+ * Row identifiers are bounded host control facts; encoded values never leave device residency.
+ */
+int yvex_backend_cuda_encoded_gather(
+    yvex_backend *backend, const unsigned char *resident_encoded,
+    unsigned long long encoded_bytes, unsigned int qtype,
+    unsigned long long row_count, unsigned long long row_width,
+    unsigned long long row_bytes, const unsigned int *row_ids,
+    unsigned long long selected_rows, yvex_device_tensor *output,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err)
+{
+    const yvex_gguf_qtype_geometry *geometry = yvex_gguf_qtype_geometry_find(qtype);
+    const yvex_quant_numeric_capability *capability =
+        yvex_quant_numeric_capability_at(qtype);
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_cuda_work work = {0};
+    unsigned long long device_address = 0ull, id_bytes, output_bytes;
+    unsigned long long output_elements, launch_elements, active_weight_bytes;
+    CUdeviceptr encoded_ptr, device_ids = 0ull, output_ptr, status = 0ull;
+    unsigned long long index;
+    int host_status = 0, rc, cleanup_rc;
+    yvex_error cleanup;
+
+    if (facts) memset(facts, 0, sizeof(*facts));
+    if (!state || !geometry || !capability || !capability->dedicated_cuda_compute_available ||
+        !geometry->block_size || !geometry->bytes_per_block ||
+        !resident_encoded || !encoded_bytes || !row_count ||
+        !row_width || !row_bytes || !row_ids || !selected_rows || !facts ||
+        row_width % geometry->block_size != 0ull ||
+        row_width / geometry->block_size > ULLONG_MAX / geometry->bytes_per_block ||
+        row_width / geometry->block_size * geometry->bytes_per_block != row_bytes ||
+        row_count > ULLONG_MAX / row_bytes || row_count * row_bytes != encoded_bytes ||
+        !yvex_core_u64_mul(selected_rows, sizeof(*row_ids), &id_bytes) ||
+        !yvex_core_u64_mul(selected_rows, row_width, &output_elements) ||
+        !yvex_core_u64_mul(output_elements, sizeof(float), &output_bytes) ||
+        !yvex_core_u64_add(output_elements, CUDA_QTYPE_MATVEC_BLOCK - 1ull,
+                           &launch_elements) ||
+        launch_elements / CUDA_QTYPE_MATVEC_BLOCK > UINT_MAX || id_bytes > SIZE_MAX ||
+        !yvex_core_u64_mul(selected_rows, row_bytes, &active_weight_bytes) ||
+        !backend_tensor_owner_is(backend, output) || output->dtype != YVEX_DTYPE_F32 ||
+        output->bytes < output_bytes ||
+        yvex_backend_resident_resolve(backend, resident_encoded, encoded_bytes,
+                                      &device_address) != YVEX_BACKEND_RESIDENT_HIT) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.encoded-gather",
+                       "resident encoded gather geometry or ownership is incompatible");
+        return YVEX_ERR_FORMAT;
+    }
+    output->is_written = 0;
+    for (index = 0ull; index < selected_rows; ++index) {
+        if ((unsigned long long)row_ids[index] >= row_count) {
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.encoded-gather",
+                           "encoded gather row identifier exceeds the resident matrix");
+            return YVEX_ERR_BOUNDS;
+        }
+    }
+
+    rc = yvex_cuda_require_capability(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                                      "cuda.encoded-gather", err);
+    if (rc == YVEX_OK) rc = yvex_cuda_set_current(backend, "cuda.encoded-gather", err);
+    work.backend = backend;
+    work.state = state;
+    work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_work_allocate(&work, &device_ids, (size_t)id_bytes, row_ids, 0,
+                                     "cuda.encoded-gather.ids", NULL, err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_work_allocate(&work, &status, sizeof(int), NULL, 1,
+                                     "cuda.encoded-gather.status", NULL, err);
+    encoded_ptr = (CUdeviceptr)device_address;
+    output_ptr = (CUdeviceptr)output->data;
+    if (rc == YVEX_OK) {
+        unsigned int grid = (unsigned int)(launch_elements / CUDA_QTYPE_MATVEC_BLOCK);
+        void *params[] = {&encoded_ptr, &row_bytes, &row_width, &row_count,
+                          &device_ids, &selected_rows, &qtype, &output_ptr, &status};
+        rc = yvex_cuda_launch(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                              state->qtype_gather_function, grid,
+                              CUDA_QTYPE_MATVEC_BLOCK, 0u, params,
+                              "cuda.encoded-gather.launch", err);
+    }
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_synchronize(backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+                                   "cuda.encoded-gather.sync", err);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemcpyDtoH_v2(&host_status, status, sizeof(host_status)),
+            "cuda.encoded-gather.status", err);
+    if (rc == YVEX_OK && host_status) {
+        yvex_error_set(err, YVEX_ERR_FORMAT, "cuda.encoded-gather",
+                       "encoded CUDA gather produced invalid numerics");
+        rc = YVEX_ERR_FORMAT;
+    }
+    yvex_error_clear(&cleanup);
+    cleanup_rc = yvex_cuda_work_cleanup(&work, &cleanup);
+    if (rc == YVEX_OK && cleanup_rc != YVEX_OK) {
+        rc = cleanup_rc;
+        if (err) *err = cleanup;
+    }
+    if (rc == YVEX_OK) {
+        output->is_written = 1;
+        facts->h2d_bytes = id_bytes;
+        facts->d2h_bytes = sizeof(host_status);
+        facts->kernel_launches = 1ull;
+        facts->upload_count = 1ull;
+        facts->download_count = 1ull;
+        facts->device_synchronizations = 1ull;
+        facts->active_weight_bytes = active_weight_bytes;
+        facts->activation_bytes = output_bytes;
+        facts->temporary_bytes = id_bytes + sizeof(host_status);
+        facts->compulsory_memory_facts_available = 1;
+        yvex_error_clear(err);
+    }
+    return rc;
+}
+
+/*
  * Executes one encoded row dot directly on CUDA. Host inputs are borrowed,
  * device temporaries are always released, and no decoded tensor is retained. */
 

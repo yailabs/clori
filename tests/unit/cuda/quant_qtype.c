@@ -351,6 +351,105 @@ static int quant_cuda_tensor(yvex_backend *backend, const char *name,
                            backend, *tensor, source, bytes, err) == YVEX_OK);
 }
 
+static int quant_cuda_encoded_gather(yvex_backend *backend)
+{
+    enum { ROWS = 4, SELECTED = 3, WIDTH = 64 };
+    static const unsigned int row_ids[SELECTED] = {3u, 1u, 3u};
+    static const unsigned int invalid_ids[SELECTED] = {3u, 4u, 1u};
+    const yvex_gguf_qtype_geometry *geometry =
+        yvex_gguf_qtype_geometry_find(YVEX_GGUF_QTYPE_Q8_0);
+    yvex_backend_tensor_desc descriptor = {0};
+    yvex_device_tensor *resident = NULL, *output = NULL;
+    unsigned char *mapped = NULL, *encoded_row = NULL;
+    float source[ROWS * WIDTH], expected[SELECTED * WIDTH], actual[SELECTED * WIDTH];
+    yvex_backend_cuda_operation_facts facts;
+    yvex_quant_failure failure;
+    yvex_error err;
+    size_t row_bytes = 0u;
+    unsigned long long row, block, index;
+    int rc;
+
+    YVEX_TEST_ASSERT(geometry, "encoded gather qtype geometry resolves");
+    for (index = 0ull; index < ROWS * WIDTH; ++index)
+        source[index] = (float)((int)((index * 5ull + 7ull) % 37ull) - 18) /
+                        (float)(3ull + index % 5ull);
+    for (row = 0ull; row < ROWS; ++row) {
+        size_t current_bytes = 0u;
+        YVEX_TEST_ASSERT(quant_cuda_encode_row(
+                             YVEX_GGUF_QTYPE_Q8_0, source + row * WIDTH, WIDTH,
+                             &encoded_row, &current_bytes),
+                         "encoded gather row encodes canonically");
+        if (!row) {
+            row_bytes = current_bytes;
+            descriptor.name = "encoded_gather_resident";
+            descriptor.dtype = YVEX_DTYPE_I8;
+            descriptor.rank = 1u;
+            descriptor.dims[0] = descriptor.bytes = ROWS * row_bytes;
+            YVEX_TEST_ASSERT(backend->vtable->resident_alloc(
+                                 backend, &descriptor, &resident, &mapped, &err) == YVEX_OK,
+                             "encoded gather resident matrix allocates");
+        }
+        YVEX_TEST_ASSERT(current_bytes == row_bytes,
+                         "encoded gather rows share exact geometry");
+        memcpy(mapped + row * row_bytes, encoded_row, row_bytes);
+        free(encoded_row);
+        encoded_row = NULL;
+    }
+    for (row = 0ull; row < SELECTED; ++row) {
+        for (block = 0ull; block < WIDTH / geometry->block_size; ++block) {
+            YVEX_TEST_ASSERT(
+                yvex_quant_decode_block(
+                    YVEX_GGUF_QTYPE_Q8_0,
+                    mapped + (unsigned long long)row_ids[row] * row_bytes +
+                        block * geometry->bytes_per_block,
+                    geometry->bytes_per_block,
+                    expected + row * WIDTH + block * geometry->block_size,
+                    geometry->block_size, &failure, &err) == YVEX_OK,
+                "encoded gather independent row decode succeeds");
+        }
+    }
+    YVEX_TEST_ASSERT(
+        quant_cuda_tensor(backend, "encoded_gather_output", YVEX_DTYPE_F32,
+                          NULL, sizeof(actual), &output, &err),
+        "encoded gather output allocates");
+    rc = yvex_backend_cuda_encoded_gather(
+        backend, mapped, ROWS * row_bytes, YVEX_GGUF_QTYPE_Q8_0,
+        ROWS, WIDTH, row_bytes, row_ids, SELECTED, output, &facts, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_FORMAT && !facts.kernel_launches,
+                     "encoded gather refuses a matrix outside resident authority");
+    YVEX_TEST_ASSERT(yvex_backend_resident_attach(
+                         backend, mapped, ROWS * row_bytes, resident, 17ull, &err) == YVEX_OK,
+                     "encoded gather resident matrix attaches");
+    rc = yvex_backend_cuda_encoded_gather(
+        backend, mapped, ROWS * row_bytes, YVEX_GGUF_QTYPE_Q8_0,
+        ROWS, WIDTH, row_bytes, row_ids, SELECTED, output, &facts, &err);
+    YVEX_TEST_ASSERT(
+        rc == YVEX_OK && facts.h2d_bytes == sizeof(row_ids) &&
+            facts.d2h_bytes == sizeof(int) && facts.kernel_launches == 1ull &&
+            facts.upload_count == 1ull && facts.download_count == 1ull &&
+            facts.device_synchronizations == 1ull &&
+            facts.active_weight_bytes == SELECTED * row_bytes &&
+            facts.activation_bytes == sizeof(actual) &&
+            facts.temporary_bytes == sizeof(row_ids) + sizeof(int) &&
+            facts.compulsory_memory_facts_available &&
+            yvex_backend_tensor_read(backend, output, actual, sizeof(actual), &err) == YVEX_OK,
+        "encoded gather publishes exact rows and compulsory physical facts");
+    for (index = 0ull; index < SELECTED * WIDTH; ++index)
+        YVEX_TEST_ASSERT(actual[index] == expected[index],
+                         "encoded gather matches the independent qtype decoder exactly");
+    rc = yvex_backend_cuda_encoded_gather(
+        backend, mapped, ROWS * row_bytes, YVEX_GGUF_QTYPE_Q8_0,
+        ROWS, WIDTH, row_bytes, invalid_ids, SELECTED, output, &facts, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_BOUNDS && !output->is_written && !facts.kernel_launches,
+                     "encoded gather refuses an invalid row before publication or launch");
+    YVEX_TEST_ASSERT(
+        yvex_backend_resident_detach(backend, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &output, &err) == YVEX_OK &&
+            yvex_backend_tensor_release(backend, &resident, &err) == YVEX_OK,
+        "encoded gather releases resident and output ownership");
+    return 0;
+}
+
 static int quant_cuda_transformer_facts(yvex_backend *backend)
 {
     enum { TOKENS = 2, HIDDEN = 32, STREAMS = 2 };
@@ -710,6 +809,8 @@ int yvex_cuda_test_quant_qtype(void)
                      "Q2_K production Q8 activation matvec");
     YVEX_TEST_ASSERT(quant_cuda_q8_matvec(backend, YVEX_GGUF_QTYPE_IQ2_XXS) == 0,
                      "IQ2_XXS production Q8 activation matvec");
+    YVEX_TEST_ASSERT(quant_cuda_encoded_gather(backend) == 0,
+                     "resident qtype row gather");
     YVEX_TEST_ASSERT(quant_cuda_transformer_facts(backend) == 0,
                      "transformer envelope physical facts");
     yvex_backend_close(backend);

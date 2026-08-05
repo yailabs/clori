@@ -43,8 +43,7 @@ struct yvex_runtime_speculation_context {
     unsigned long long vocabulary_size, hidden_width, workspace_bytes;
     unsigned long long pending_position, pending_committed_count;
     unsigned long long pending_verified_prefix_count;
-    unsigned int pending_tokens[YVEX_SPECULATION_MAX_BLOCK + 2u],
-        target_token_ids[YVEX_SPECULATION_MAX_BLOCK + 1u];
+    unsigned int pending_tokens[YVEX_SPECULATION_MAX_BLOCK + 2u], target_token_ids[YVEX_SPECULATION_MAX_BLOCK + 1u];
     yvex_runtime_transformer_result pending_verification_target;
     char pending_source_identity[YVEX_SPECULATION_IDENTITY_CAP];
     char pending_sampling_identity[YVEX_SPECULATION_IDENTITY_CAP];
@@ -234,8 +233,7 @@ static int speculation_context_buffers(yvex_runtime_speculation_context *context
     context->draft_hidden = yvex_core_calloc((size_t)hidden_rows, sizeof(float));
     context->draft_pre_normalized = yvex_core_calloc((size_t)hidden_rows, sizeof(float));
     context->target_hidden = yvex_core_calloc((size_t)target_hidden_rows, sizeof(float));
-    /* Draft and verification are disjoint phases, so one (block + 1)-row output-head arena serves
-     * both without defining width-N as repeated one-row projections. */
+    /* Disjoint draft/verify phases share one block-plus-one arena without row-localizing width-N. */
     context->base_logits = yvex_core_calloc((size_t)logits_rows, sizeof(float));
     context->adjusted_logits =
         yvex_core_calloc((size_t)context->vocabulary_size, sizeof(float));
@@ -787,11 +785,10 @@ static int speculation_draft_one(
     yvex_runtime_sampling_source source = {0};
     yvex_runtime_sampling_distribution_result distribution = {0};
     yvex_runtime_sampling_result selection = {0};
-    yvex_backend_cuda_operation_facts device_facts = {0};
-    yvex_execution_memory_facts memory = {0}, no_memory = {0};
+    yvex_backend_cuda_operation_facts gather_facts = {0}, device_facts = {0};
+    yvex_execution_memory_facts gather_memory = {0}, device_memory = {0}, no_memory = {0};
     yvex_device_tensor markov_input = {0}, additive = {0};
     char adjustment_identity[YVEX_SPECULATION_IDENTITY_CAP];
-    unsigned long long markov_bytes;
     unsigned int token = UINT32_MAX;
     int rc = speculation_weight_decode_row(&context->markov_embedding, previous_token, markov,
                                            context->policy.markov_rank, err);
@@ -800,12 +797,15 @@ static int speculation_draft_one(
                                           context->policy.markov_rank, &markov_input) ||
          !yvex_backend_tensor_f32_subview(base_result->device_logits.tensor,
                                           base_result->device_logits.element_offset,
-                                          context->vocabulary_size, &additive) ||
-         !yvex_core_u64_mul(context->policy.markov_rank, sizeof(float), &markov_bytes)))
+                                          context->vocabulary_size, &additive)))
         rc = speculation_refuse(err, YVEX_ERR_BOUNDS, "device Markov projection extent is invalid");
     if (rc == YVEX_OK && context->device_draft_selection)
-        rc = yvex_backend_tensor_write(
-            context->device_backend, &markov_input, markov, markov_bytes, err);
+        rc = yvex_backend_cuda_encoded_gather(
+            context->device_backend, context->markov_embedding.encoded,
+            context->markov_embedding.encoded_bytes, context->markov_embedding.binding->qtype,
+            context->markov_embedding.binding->row_count,
+            context->policy.markov_rank, context->markov_embedding.row_bytes,
+            &previous_token, 1ull, &markov_input, &gather_facts, err);
     if (rc == YVEX_OK && context->device_draft_selection)
         rc = yvex_backend_cuda_encoded_matvec(
             context->device_backend, context->markov_output.encoded,
@@ -863,14 +863,23 @@ static int speculation_draft_one(
         rc = speculation_refuse(err, YVEX_ERR_FORMAT, "draft distribution has no selectable mass");
     if (rc == YVEX_OK && context->device_draft_selection &&
         (yvex_execution_memory_facts_add(
-             &memory, device_facts.active_weight_bytes, device_facts.state_bytes,
+             &gather_memory, gather_facts.active_weight_bytes, gather_facts.state_bytes,
+             gather_facts.activation_bytes, gather_facts.temporary_bytes,
+             gather_facts.compulsory_memory_facts_available,
+             !gather_facts.compulsory_memory_facts_available, err) != YVEX_OK ||
+         yvex_execution_physical_facts_add(
+             physical, &gather_memory, gather_facts.h2d_bytes, gather_facts.d2h_bytes,
+             gather_facts.d2d_bytes, gather_facts.kernel_launches,
+             gather_facts.device_synchronizations, err) != YVEX_OK ||
+         yvex_execution_memory_facts_add(
+             &device_memory, device_facts.active_weight_bytes, device_facts.state_bytes,
              device_facts.activation_bytes, device_facts.temporary_bytes,
              device_facts.compulsory_memory_facts_available,
              !device_facts.compulsory_memory_facts_available, err) != YVEX_OK ||
          yvex_execution_physical_facts_add(
-             physical, &memory, markov_bytes, device_facts.d2h_bytes,
+             physical, &device_memory, device_facts.h2d_bytes, device_facts.d2h_bytes,
              device_facts.d2d_bytes, device_facts.kernel_launches,
-             device_facts.device_synchronizations + 1ull, err) != YVEX_OK ||
+             device_facts.device_synchronizations, err) != YVEX_OK ||
          yvex_execution_physical_facts_add(
              physical, &no_memory, 0ull, selection.d2h_bytes, 0ull,
              selection.kernel_launches, selection.device_synchronizations, err) != YVEX_OK))
@@ -936,16 +945,11 @@ static int speculation_execute_draft(yvex_runtime_speculation_context *context,
     for (index = 1ull; index < draft_count; ++index)
         context->draft_input_ids[index] = (unsigned int)context->policy.noise_token_id;
     started = yvex_core_monotonic_ns();
-    /* The target features at position - 1 come from the input token whose target
-     * distribution produced the conditioning token at position. The reference
-     * stores those main_x features first, then embeds that target-authored output
-     * token beside the noise queries. Reprocessing the conditioning token before
-     * this block would shift both caches and every proposal by one position.
-     *
-     * Always execute and sample the complete source-authored block. Candidate
-     * attention is non-causal inside that block, so running only a bounded output
-     * prefix would alter the hidden states being verified. The request extent
-     * limits only the prefix handed to the target verifier. */
+    /* Position -1 features belong to the input whose target distribution produced the conditioning
+     * token. The reference stores them before embedding that token beside noise; reprocessing it
+     * shifts both caches and every proposal. Execute the complete source-authored block: attention
+     * is non-causal within it, so truncation changes verified hidden state. The request extent
+     * limits only the prefix handed to the verifier. */
     rc = speculation_transformer_execute(
         context, context->draft_transformer, context->draft_input_ids,
         draft_count, request->position, 1, 0,
@@ -1046,9 +1050,8 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
     memcpy(verification_tokens + 1u, result->candidate_token_ids,
            (size_t)request->candidate_count * sizeof(*verification_tokens));
     started = yvex_core_monotonic_ns();
-    /* Row zero is the target distribution for the first draft candidate after
-     * consuming the target-authored conditioning token. The final row supplies
-     * the correction or bonus distribution when the complete draft survives. */
+    /* Row zero follows the target-authored conditioning token; the final row supplies correction
+     * or bonus when the complete draft survives. */
     rc = yvex_runtime_session_begin(context->session, &failure, err);
     acquired = rc == YVEX_OK;
     if (rc == YVEX_OK)
@@ -1157,9 +1160,8 @@ static int speculation_target_draws(yvex_runtime_speculation_context *context,
                  ? YVEX_OK
                  : yvex_runtime_sampling_transaction_begin(
                        context->target_sampling, &context->target_rng, err);
-    /* DeepSpec draws the whole acceptance mask before taking its contiguous
-     * prefix. Consuming every position keeps the target RNG contract stable
-     * even when an early rejection makes later draws observationally inert. */
+    /* DeepSpec draws the whole mask before taking its contiguous prefix. Consuming every position
+     * keeps target RNG stable when early rejection makes later draws observationally inert. */
     for (index = 0ull; rc == YVEX_OK && index < request->candidate_count;
          ++index) {
         unsigned int candidate = result->candidate_token_ids[index];
@@ -1613,11 +1615,8 @@ static int speculation_commit_identity(const yvex_runtime_speculation_context *c
            yvex_sha256_update_u64(&hash, result->token_count) &&
            speculation_hash_finish(&hash, output);
 }
-/*
- * A short output or context tail may leave no room for a draft block.  The
- * target-authored anchor still has to advance target and draft state together;
- * it is not a verified candidate prefix and must not enter prefix promotion.
- */
+/* A short tail may leave no draft room. Its target-authored anchor still advances both states,
+ * but is not a verified candidate prefix and never enters prefix promotion. */
 static int speculation_commit_target_step(
     yvex_runtime_speculation_context *context, float *final_hidden,
     const yvex_runtime_commit_participant *publication,
@@ -1867,10 +1866,9 @@ int yvex_runtime_speculation_commit_prefix(
         context->session, rc, &participant, err);
     if (rc != YVEX_OK) return rc;
     result->commit_ns = yvex_core_monotonic_ns() - started;
-    /* The transformer result authenticates the complete committed prefix. Keep
-     * every matching hidden row until the next anchor distribution is sealed;
-     * retaining only the last row would break that producer/digest contract on
-     * the second speculative cycle. */
+    /* The transformer result authenticates the complete committed prefix. Retain every matching
+     * hidden row until the next anchor distribution is sealed; the last row alone breaks that
+     * producer/digest contract on the second cycle. */
     memcpy(final_hidden, context->target_hidden,
            (size_t)final_values * sizeof(*final_hidden));
     result->replayed_target_token_count = 0ull;

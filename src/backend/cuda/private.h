@@ -184,6 +184,7 @@ typedef struct {
     CUfunction qtype_row_dot_function;
     CUfunction attention_bf16_round_function;
     CUfunction qtype_matvec_function;
+    CUfunction qtype_gather_function;
     CUfunction argmax_f32_function;
     CUfunction sample_stochastic_f32_function;
     CUfunction q8_quantize_function;

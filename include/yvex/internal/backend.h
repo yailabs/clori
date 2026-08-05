@@ -356,8 +356,7 @@ typedef struct {
     unsigned long long capacity, used, peak, generation, allocation_count;
 } yvex_backend_host_workspace_summary;
 int yvex_backend_resident_attach(yvex_backend *backend, const unsigned char *host_base,
-                                 unsigned long long bytes, const yvex_device_tensor *device_tensor,
-                                 unsigned long long generation, yvex_error *err);
+    unsigned long long bytes, const yvex_device_tensor *device_tensor, unsigned long long generation, yvex_error *err);
 int yvex_backend_resident_detach(yvex_backend *backend, yvex_error *err);
 int yvex_backend_resident_resolve(const yvex_backend *backend, const unsigned char *host,
                                   unsigned long long bytes, unsigned long long *device_address);
@@ -370,15 +369,18 @@ typedef struct yvex_backend_cuda_operation_facts {
 int yvex_backend_cuda_encoded_matvec(yvex_backend *backend, const unsigned char *resident_encoded,
     unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
     unsigned long long row_width, unsigned long long row_bytes, unsigned long long input_rows,
-    const yvex_device_tensor *input, const yvex_device_tensor *additive,
-    yvex_device_tensor *output,
+    const yvex_device_tensor *input, const yvex_device_tensor *additive, yvex_device_tensor *output,
+    yvex_backend_cuda_operation_facts *facts, yvex_error *err);
+int yvex_backend_cuda_encoded_gather(yvex_backend *backend, const unsigned char *resident_encoded,
+    unsigned long long encoded_bytes, unsigned int qtype, unsigned long long row_count,
+    unsigned long long row_width, unsigned long long row_bytes, const unsigned int *row_ids,
+    unsigned long long selected_rows, yvex_device_tensor *output,
     yvex_backend_cuda_operation_facts *facts, yvex_error *err);
 int yvex_backend_state_residency_attach(yvex_backend *backend, const void *context,
     yvex_backend_state_resolve_fn resolve, unsigned long long generation, yvex_error *err);
 void yvex_backend_state_residency_detach(yvex_backend *backend);
-int yvex_backend_state_residency_resolve(
-    const yvex_backend *backend, const void *host, unsigned long long bytes,
-    unsigned long long *device_address);
+int yvex_backend_state_residency_resolve(const yvex_backend *backend, const void *host,
+    unsigned long long bytes, unsigned long long *device_address);
 int yvex_backend_workspace_attach(yvex_backend *backend,
                                   const yvex_device_tensor *device_tensor, unsigned long long generation,
                                   yvex_error *err);
