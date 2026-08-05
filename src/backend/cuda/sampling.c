@@ -78,14 +78,38 @@ static int sampling_cuda_workspace_required(unsigned long long vocabulary_size,
     return YVEX_OK;
 }
 
-static int sampling_cuda_download(yvex_cuda_backend_state *state,
+static int sampling_cuda_download(yvex_backend *backend,
                                   void *target, CUdeviceptr source,
                                   size_t bytes, const char *stage,
                                   yvex_error *err)
 {
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    CUstream stream = yvex_cuda_launch_stream(backend);
+    if (!state || !target || !source || !bytes) {
+        return sampling_cuda_refuse(err, YVEX_ERR_INVALID_ARG,
+                                    "CUDA sampling download is invalid");
+    }
     return yvex_cuda_status(
         &state->driver,
-        state->driver.cuMemcpyDtoH_v2(target, source, bytes), stage, err);
+        stream ? state->driver.cuMemcpyDtoHAsync_v2(target, source, bytes, stream)
+               : state->driver.cuMemcpyDtoH_v2(target, source, bytes),
+        stage, err);
+}
+
+/* A failed bounded download cannot leave earlier work pending against reusable workspace. */
+static int sampling_cuda_complete(yvex_backend *backend, int required,
+                                  int *device_wide, const char *stage,
+                                  int current, yvex_error *err)
+{
+    yvex_error completion;
+    int rc;
+    if (!required) return current;
+    rc = yvex_cuda_launch_synchronize(
+        backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+        device_wide, stage, &completion);
+    if (rc == YVEX_OK) return current;
+    if (err) *err = completion;
+    return rc;
 }
 
 static int sampling_cuda_result_valid(
@@ -140,7 +164,7 @@ static int sampling_cuda_select_greedy_rows(
     CUdeviceptr status_device = 0ull, input;
     unsigned long long value_count, value_bytes, token_bytes, selected_bytes, tie_bytes;
     unsigned long long temporary_bytes, row;
-    int status = 0, rc, cleanup_rc;
+    int status = 0, device_wide = 0, launched = 0, rc, cleanup_rc;
     yvex_error cleanup;
     if (facts) memset(facts, 0, sizeof(*facts));
     if (!state || !selected_tokens || !selected_values || !tie_counts || !facts ||
@@ -187,20 +211,20 @@ static int sampling_cuda_select_greedy_rows(
             backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
             state->argmax_f32_function, (unsigned int)row_count, 128u, 0u,
             params, "cuda.sampling.greedy.launch", err);
+        launched = rc == YVEX_OK;
     }
-    if (rc == YVEX_OK)
-        rc = yvex_cuda_synchronize(
-            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-            "cuda.sampling.greedy.sync", err);
 #define READ(target_, source_, bytes_, stage_)                                    \
     if (rc == YVEX_OK)                                                            \
-        rc = sampling_cuda_download(state, (target_), (source_), (size_t)(bytes_), \
+        rc = sampling_cuda_download(backend, (target_), (source_), (size_t)(bytes_), \
                                     (stage_), err)
     READ(&status, status_device, sizeof(status), "cuda.sampling.greedy.status");
     READ(selected_tokens, tokens_device, token_bytes, "cuda.sampling.greedy.tokens");
     READ(selected_values, values_device, selected_bytes, "cuda.sampling.greedy.values");
     READ(tie_counts, ties_device, tie_bytes, "cuda.sampling.greedy.ties");
 #undef READ
+    rc = sampling_cuda_complete(
+        backend, launched || (work.count && yvex_cuda_launch_stream(backend)),
+        &device_wide, "cuda.sampling.greedy.sync", rc, err);
     for (row = 0ull; rc == YVEX_OK && row < row_count; ++row)
         if (status || selected_tokens[row] >= row_width ||
             !isfinite(selected_values[row]) || !tie_counts[row])
@@ -217,7 +241,8 @@ static int sampling_cuda_select_greedy_rows(
         facts->d2h_bytes = temporary_bytes;
         facts->kernel_launches = 1ull;
         facts->download_count = 4ull;
-        facts->device_synchronizations = 1ull;
+        facts->stream_synchronizations = (unsigned long long)!device_wide;
+        facts->device_synchronizations = (unsigned long long)device_wide;
         facts->activation_bytes = value_bytes;
         facts->temporary_bytes = temporary_bytes;
         facts->compulsory_memory_facts_available = 1;
@@ -243,7 +268,7 @@ static int sampling_cuda_select_stochastic(
     double statistics[YVEX_CUDA_SAMPLING_STATISTIC_FIELDS] = {0};
     float output_values[YVEX_CUDA_SAMPLING_VALUE_FIELDS] = {0};
     unsigned int selection[YVEX_CUDA_SAMPLING_SELECTION_FIELDS] = {0};
-    int status = 0, rc, cleanup_rc;
+    int status = 0, device_wide = 0, launched = 0, rc, cleanup_rc;
     yvex_error cleanup;
     if (result) memset(result, 0, sizeof(*result));
     if (facts) memset(facts, 0, sizeof(*facts));
@@ -299,26 +324,26 @@ static int sampling_cuda_select_stochastic(
             backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
             state->sample_stochastic_f32_function, 1u, CUDA_SAMPLING_BLOCK,
             0u, params, "cuda.sampling.launch", err);
+        launched = rc == YVEX_OK;
     }
     if (rc == YVEX_OK)
-        rc = yvex_cuda_synchronize(
-            backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-            "cuda.sampling.sync", err);
-    if (rc == YVEX_OK)
-        rc = sampling_cuda_download(state, &status, status_device,
+        rc = sampling_cuda_download(backend, &status, status_device,
                                     sizeof(status), "cuda.sampling.status", err);
     if (rc == YVEX_OK)
-        rc = sampling_cuda_download(state, counts, counts_device,
+        rc = sampling_cuda_download(backend, counts, counts_device,
                                     sizeof(counts), "cuda.sampling.counts", err);
     if (rc == YVEX_OK)
-        rc = sampling_cuda_download(state, statistics, statistics_device,
+        rc = sampling_cuda_download(backend, statistics, statistics_device,
                                     sizeof(statistics), "cuda.sampling.statistics", err);
     if (rc == YVEX_OK)
-        rc = sampling_cuda_download(state, output_values, output_values_device,
+        rc = sampling_cuda_download(backend, output_values, output_values_device,
                                     sizeof(output_values), "cuda.sampling.values", err);
     if (rc == YVEX_OK)
-        rc = sampling_cuda_download(state, selection, selection_device,
+        rc = sampling_cuda_download(backend, selection, selection_device,
                                     sizeof(selection), "cuda.sampling.selection", err);
+    rc = sampling_cuda_complete(
+        backend, launched || (work.count && yvex_cuda_launch_stream(backend)),
+        &device_wide, "cuda.sampling.sync", rc, err);
     if (rc == YVEX_OK &&
         (status || !sampling_cuda_result_valid(
                        vocabulary_size, counts, statistics, output_values, selection)))
@@ -347,7 +372,8 @@ static int sampling_cuda_select_stochastic(
         facts->d2h_bytes = sizeof(status) + sizeof(counts) + sizeof(statistics) +
                            sizeof(output_values) + sizeof(selection);
         facts->kernel_launches = 1ull; facts->download_count = 5ull;
-        facts->device_synchronizations = 1ull;
+        facts->stream_synchronizations = (unsigned long long)!device_wide;
+        facts->device_synchronizations = (unsigned long long)device_wide;
         facts->activation_bytes = logits_bytes;
         facts->temporary_bytes = required;
         facts->compulsory_memory_facts_available = 1;

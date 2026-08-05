@@ -97,7 +97,10 @@ explicitly. The token-local path remains only as a portable audit/reference
 oracle. Target-only production now
 selects stochastic tokens from resident CUDA logits with bounded result
 transfer; audit/forensic and stochastic DSpark still own explicit host sampling
-references. Production greedy DSpark verification now retains its width-N
+references. Greedy and stochastic CUDA selection enqueue those bounded facts
+on the session stream and complete only that stream; any legacy context-wide
+fallback remains separately visible. Production greedy DSpark verification now
+retains its width-N
 target logits on CUDA, selects the complete row directory with one argmax
 launch and synchronization, and transfers only bounded aggregate facts.
 Eager attention, reference layouts and host-materialized stochastic adapters

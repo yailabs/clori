@@ -516,16 +516,22 @@ static int execution_test_memory_facts(void)
                          memcmp(&facts, &before, sizeof(facts)) == 0,
                      "memory facts should refuse an ownerless zero-operation delta");
     YVEX_TEST_ASSERT(yvex_execution_physical_facts_add(
-                         &physical, &delta, 5ull, 6ull, 7ull, 8ull, 9ull, &err) == YVEX_OK &&
+                         &physical, &delta, 5ull, 6ull, 7ull, 8ull, 4ull, 5ull, &err) == YVEX_OK &&
                          physical.memory.active_weight_bytes == 1ull &&
                          physical.h2d_bytes == 5ull && physical.d2h_bytes == 6ull &&
                          physical.d2d_bytes == 7ull && physical.kernel_count == 8ull &&
                          physical.synchronization_count == 9ull,
                      "physical facts should accumulate one complete causal phase");
+    physical_before = physical;
+    YVEX_TEST_ASSERT(yvex_execution_physical_facts_add(
+                         &physical, &delta, 0ull, 0ull, 0ull, 0ull,
+                         ULLONG_MAX, 1ull, &err) == YVEX_ERR_BOUNDS &&
+                         memcmp(&physical, &physical_before, sizeof(physical)) == 0,
+                     "synchronization-class overflow should preserve physical facts");
     physical.h2d_bytes = ULLONG_MAX;
     physical_before = physical;
     YVEX_TEST_ASSERT(yvex_execution_physical_facts_add(
-                         &physical, &delta, 1ull, 0ull, 0ull, 0ull, 0ull, &err) ==
+                         &physical, &delta, 1ull, 0ull, 0ull, 0ull, 0ull, 0ull, &err) ==
                              YVEX_ERR_BOUNDS &&
                          memcmp(&physical, &physical_before, sizeof(physical)) == 0,
                      "physical-fact overflow should preserve the prior aggregate transactionally");

@@ -1213,7 +1213,7 @@ static int transformer_core_features_execute(
     yvex_device_tensor device_input = {0}, device_output = {0};
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    unsigned long long value_count, expanded_count, synchronizations;
+    unsigned long long value_count, expanded_count;
     int rc;
     if (result) memset(result, 0, sizeof(*result));
     if (!context || !plan || plan->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
@@ -1287,11 +1287,10 @@ static int transformer_core_features_execute(
                                                   &execution, &probe, &failure, err);
     if (rc == YVEX_OK) rc = transformer_state_summary(context, &after, err);
     if (rc == YVEX_OK &&
-        (!yvex_core_u64_add(probe.stream_synchronizations, probe.device_synchronizations,
-                            &synchronizations) ||
-         yvex_execution_physical_facts_add(
+        yvex_execution_physical_facts_add(
              &result->physical, &probe.memory, probe.h2d_bytes, probe.d2h_bytes,
-             probe.d2d_bytes, probe.kernel_launches, synchronizations, err) != YVEX_OK))
+             probe.d2d_bytes, probe.kernel_launches, probe.stream_synchronizations,
+             probe.device_synchronizations, err) != YVEX_OK)
         rc = yvex_error_is_set(err) ? yvex_error_code(err)
                                     : transformer_runtime_refuse(
                                           err, YVEX_ERR_BOUNDS,

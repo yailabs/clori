@@ -85,6 +85,7 @@ static int speculation_cuda_physical_add(yvex_execution_physical_facts *physical
     const yvex_backend_cuda_operation_facts *facts, yvex_error *err)
 {
     yvex_execution_memory_facts memory = {0};
+    if (!facts) return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "CUDA physical facts are required");
     if (yvex_execution_memory_facts_add(
             &memory, facts->active_weight_bytes, facts->state_bytes, facts->activation_bytes,
             facts->temporary_bytes, facts->compulsory_memory_facts_available,
@@ -92,7 +93,17 @@ static int speculation_cuda_physical_add(yvex_execution_physical_facts *physical
         return yvex_error_code(err);
     return yvex_execution_physical_facts_add(
         physical, &memory, facts->h2d_bytes, facts->d2h_bytes, facts->d2d_bytes,
-        facts->kernel_launches, facts->device_synchronizations, err);
+        facts->kernel_launches, facts->stream_synchronizations, facts->device_synchronizations, err);
+}
+static int speculation_sampling_physical_add(yvex_execution_physical_facts *physical,
+    const yvex_runtime_sampling_result *selection, yvex_error *err)
+{
+    yvex_execution_memory_facts no_memory = {0};
+    if (!selection) return speculation_refuse(err, YVEX_ERR_INVALID_ARG, "sampling physical facts are required");
+    return yvex_execution_physical_facts_add(
+        physical, &no_memory, 0ull, selection->d2h_bytes, 0ull,
+        selection->kernel_launches, selection->stream_synchronizations,
+        selection->device_synchronizations, err);
 }
 static int speculation_draft_sampling_policy(const yvex_runtime_sampling_policy *target_policy,
     unsigned long long vocabulary_size, yvex_runtime_sampling_policy *draft_policy, yvex_error *err)
@@ -879,11 +890,10 @@ static int speculation_draft_one(
         (speculation_cuda_physical_add(physical, &gather_facts, err) != YVEX_OK ||
          speculation_cuda_physical_add(physical, &device_facts, err) != YVEX_OK ||
          speculation_cuda_physical_add(physical, &confidence_facts, err) != YVEX_OK ||
+         speculation_sampling_physical_add(physical, &selection, err) != YVEX_OK ||
          yvex_execution_physical_facts_add(
-             physical, &no_memory, 0ull, selection.d2h_bytes, 0ull,
-             selection.kernel_launches, selection.device_synchronizations, err) != YVEX_OK ||
-         yvex_execution_physical_facts_add(
-             physical, &no_memory, 0ull, sizeof(*confidence), 0ull, 0ull, 1ull, err) != YVEX_OK))
+             physical, &no_memory, 0ull, sizeof(*confidence), 0ull,
+             0ull, 0ull, 1ull, err) != YVEX_OK))
         rc = yvex_error_code(err);
     if (rc == YVEX_OK) *selected = token;
     return rc;
@@ -900,24 +910,20 @@ static int speculation_phase_physical(const yvex_runtime_transformer_result *tra
     yvex_error *err)
 {
     yvex_execution_physical_facts candidate = {0};
-    unsigned long long transformer_sync;
     int rc;
     if (!transformer || !execution || !execution->completed || !execution->completed_rows || !facts)
         return speculation_refuse(err, YVEX_ERR_INVALID_ARG,
                                   "DSpark physical accounting requires complete owners");
-    if (!yvex_core_u64_add(transformer->stream_synchronizations,
-                           transformer->device_synchronizations,
-                           &transformer_sync))
-        return speculation_refuse(err, YVEX_ERR_BOUNDS, "DSpark physical accounting overflowed");
     rc = yvex_execution_physical_facts_add(
         &candidate, &transformer->memory, transformer->h2d_bytes, transformer->d2h_bytes,
-        transformer->d2d_bytes, transformer->kernel_launches, transformer_sync, err);
+        transformer->d2d_bytes, transformer->kernel_launches,
+        transformer->stream_synchronizations, transformer->device_synchronizations, err);
     if (rc == YVEX_OK)
         rc = yvex_execution_physical_facts_add(
             &candidate, &execution->physical.memory, execution->physical.h2d_bytes,
             execution->physical.d2h_bytes,
             execution->physical.d2d_bytes, execution->physical.kernel_count,
-            execution->physical.synchronization_count, err);
+            execution->physical.synchronization_count, 0ull, err);
     if (rc != YVEX_OK) return rc;
     *facts = candidate;
     return YVEX_OK;
@@ -1104,12 +1110,9 @@ static int speculation_verify_target(yvex_runtime_speculation_context *context,
             selections, YVEX_SPECULATION_MAX_BLOCK + 1ull, &sampling_execution, err);
     for (row = 0ull; rc == YVEX_OK && row <= request->candidate_count; ++row) {
         if (device_verification) {
-            yvex_execution_memory_facts no_memory = {0};
             context->target_token_ids[row] = selections[row].selected_token_id;
-            rc = yvex_execution_physical_facts_add(
-                &result->verification_physical, &no_memory, 0ull,
-                selections[row].d2h_bytes, 0ull, selections[row].kernel_launches,
-                selections[row].device_synchronizations, err);
+            rc = speculation_sampling_physical_add(
+                &result->verification_physical, &selections[row], err);
         } else {
             yvex_runtime_sampling_distribution_result distribution = {0};
             rc = yvex_runtime_sampling_distribution(
@@ -1504,7 +1507,7 @@ int yvex_runtime_speculation_prefill(
     yvex_runtime_speculation_feature_result prepared = {0};
     yvex_runtime_model_failure failure = {0};
     yvex_sha256 hash;
-    unsigned long long feature_values, synchronizations;
+    unsigned long long feature_values;
     int acquired = 0, rc;
     if (target_result) memset(target_result, 0, sizeof(*target_result));
     if (draft_result) memset(draft_result, 0, sizeof(*draft_result));
@@ -1541,18 +1544,15 @@ int yvex_runtime_speculation_prefill(
                                        context->projected_feature_identity);
     }
     if (rc == YVEX_OK &&
-        (!yvex_core_u64_add(target.stream_synchronizations,
-                            target.device_synchronizations,
-                            &synchronizations) ||
-         yvex_execution_physical_facts_add(
+        (yvex_execution_physical_facts_add(
              &prepared.physical, &target.memory, target.h2d_bytes,
              target.d2h_bytes, target.d2d_bytes, target.kernel_launches,
-             synchronizations, err) != YVEX_OK ||
+             target.stream_synchronizations, target.device_synchronizations, err) != YVEX_OK ||
          yvex_execution_physical_facts_add(
              &prepared.physical, &draft.physical.memory,
              draft.physical.h2d_bytes, draft.physical.d2h_bytes,
              draft.physical.d2d_bytes, draft.physical.kernel_count,
-             draft.physical.synchronization_count, err) != YVEX_OK))
+             draft.physical.synchronization_count, 0ull, err) != YVEX_OK))
         rc = yvex_error_is_set(err)
                  ? yvex_error_code(err)
                  : speculation_refuse(

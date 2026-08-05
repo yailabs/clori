@@ -747,7 +747,7 @@ static int sampling_execution_identity(
     yvex_sha256 hash;
     yvex_sha256_init(&hash);
     return result &&
-           yvex_sha256_update_text(&hash, "yvex.runtime.sampling.execution.v3") &&
+           yvex_sha256_update_text(&hash, "yvex.runtime.sampling.execution.v4") &&
            yvex_sha256_update_u64(&hash, result->schema_version) &&
            yvex_sha256_update_u64(&hash, (unsigned int)result->completed) &&
            yvex_sha256_update_u64(&hash, (unsigned int)result->numeric_fallback_used) &&
@@ -775,6 +775,8 @@ static int sampling_execution_identity(
            yvex_sha256_update_u64(&hash, result->rng_draw_count) &&
            yvex_sha256_update_u64(&hash, result->d2h_bytes) &&
            yvex_sha256_update_u64(&hash, result->kernel_launches) &&
+           yvex_sha256_update_u64(&hash, result->stream_synchronizations) &&
+           yvex_sha256_update_u64(&hash, result->device_synchronizations) &&
            yvex_sha256_update_u64(&hash, result->full_array_host_scan_bytes) &&
            sampling_hash_f64(&hash, result->effective_top_p) &&
            sampling_hash_f64(&hash, result->effective_min_p) &&
@@ -969,6 +971,7 @@ static int sampling_select_device_stochastic(
     result->normalization_error = selected.normalization_error;
     result->d2h_bytes = facts.d2h_bytes;
     result->kernel_launches = facts.kernel_launches;
+    result->stream_synchronizations = facts.stream_synchronizations;
     result->device_synchronizations = facts.device_synchronizations;
     result->rng_draw_count = 1ull;
     if (!sampling_device_stochastic_candidate_identity(
@@ -1147,6 +1150,7 @@ static int sampling_select_device_greedy_batch(
         if (!index) {
             result->d2h_bytes = facts.d2h_bytes;
             result->kernel_launches = facts.kernel_launches;
+            result->stream_synchronizations = facts.stream_synchronizations;
             result->device_synchronizations = facts.device_synchronizations;
         }
         if (!sampling_device_candidate_identity(
@@ -1557,8 +1561,11 @@ static int sampling_result_structure_valid(
          result->numeric_fallback_used != 1) ||
         (result->device_selection && result->full_array_host_scan_bytes) ||
         (result->device_selection && !result->kernel_launches &&
-         (result->d2h_bytes || result->device_synchronizations)) ||
-        (!result->device_selection && result->d2h_bytes))
+         (result->d2h_bytes || result->stream_synchronizations ||
+          result->device_synchronizations)) ||
+        (!result->device_selection &&
+         (result->d2h_bytes || result->stream_synchronizations ||
+          result->device_synchronizations)))
         return 0;
     tolerance = sampling_normalization_tolerance(result->vocabulary_size);
     if (result->normalization_error > tolerance ||

@@ -62,7 +62,9 @@ static int cuda_execution_stream_open(yvex_backend *backend, yvex_error *err)
     if (!state) return YVEX_ERR_INVALID_ARG;
     driver = &state->driver;
     if (!driver->cuStreamCreate || !driver->cuStreamDestroy_v2 ||
-        !driver->cuStreamSynchronize) {
+        !driver->cuStreamSynchronize || !driver->cuMemcpyHtoDAsync_v2 ||
+        !driver->cuMemcpyDtoHAsync_v2 || !driver->cuMemcpyDtoDAsync_v2 ||
+        !driver->cuMemsetD8Async) {
         yvex_error_clear(err);
         return YVEX_OK;
     }

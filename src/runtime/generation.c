@@ -513,6 +513,12 @@ static int generation_prefill(
     yvex_core_free(buffer);
     return rc;
 }
+static int generation_profile_count(yvex_runtime_profile_record *profile,
+    yvex_runtime_profile_counter counter, unsigned long long value, yvex_error *err)
+{
+    return !value || runtime_profile_counter_add(profile, counter, value, err) == YVEX_OK
+               ? YVEX_OK : yvex_error_code(err);
+}
 /* Derive token-step identity from published fields, never pointers, padding, or object bytes. */
 static int generation_project_logits(
     yvex_runtime_generation_context *context, const yvex_runtime_transformer_result *prefill,
@@ -556,25 +562,18 @@ static int generation_project_logits(
                     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_KERNELS) |
                     YVEX_EXECUTION_PHASE_FACT_BIT(YVEX_EXECUTION_PHASE_FACT_SYNCHRONIZATIONS), err);
         if (rc == YVEX_OK && profile->mode != YVEX_RUNTIME_PROFILE_OFF &&
-            ((logits_result->h2d_bytes && runtime_profile_counter_add(
-                  profile, YVEX_RUNTIME_PROFILE_H2D_BYTES,
-                  logits_result->h2d_bytes, err) != YVEX_OK) ||
-             (logits_result->d2h_bytes && runtime_profile_counter_add(
-                  profile, YVEX_RUNTIME_PROFILE_D2H_BYTES,
-                  logits_result->d2h_bytes, err) != YVEX_OK) ||
-             (logits_result->h2d_bytes && runtime_profile_counter_add(
-                  profile, YVEX_RUNTIME_PROFILE_LOGITS_H2D_BYTES,
-                  logits_result->h2d_bytes, err) != YVEX_OK) ||
-             (logits_result->d2h_bytes && runtime_profile_counter_add(
-                  profile, YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES,
-                  logits_result->d2h_bytes, err) != YVEX_OK) ||
-             (logits_result->full_array_host_scan_bytes &&
-              runtime_profile_counter_add(
-                  profile, YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
-                  logits_result->full_array_host_scan_bytes, err) != YVEX_OK) ||
-             (logits_result->kernel_launches && runtime_profile_counter_add(
-                  profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES,
-                  logits_result->kernel_launches, err) != YVEX_OK)))
+            (generation_profile_count(profile, YVEX_RUNTIME_PROFILE_H2D_BYTES,
+                                      logits_result->h2d_bytes, err) != YVEX_OK ||
+             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_D2H_BYTES,
+                                      logits_result->d2h_bytes, err) != YVEX_OK ||
+             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_LOGITS_H2D_BYTES,
+                                      logits_result->h2d_bytes, err) != YVEX_OK ||
+             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES,
+                                      logits_result->d2h_bytes, err) != YVEX_OK ||
+             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
+                                      logits_result->full_array_host_scan_bytes, err) != YVEX_OK ||
+             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES,
+                                      logits_result->kernel_launches, err) != YVEX_OK))
             rc = yvex_error_code(err);
     }
     return rc;
@@ -608,19 +607,18 @@ static int generation_project_sample(
             rc = yvex_runtime_generation_profile_phase(profile, YVEX_RUNTIME_PROFILE_SAMPLING,
                                            completed - started, err);
         if (rc == YVEX_OK && profile->mode != YVEX_RUNTIME_PROFILE_OFF &&
-            ((sampling_result->d2h_bytes && runtime_profile_counter_add(
-                  profile, YVEX_RUNTIME_PROFILE_D2H_BYTES,
-                  sampling_result->d2h_bytes, err) != YVEX_OK) ||
-             (sampling_result->d2h_bytes && runtime_profile_counter_add(
-                  profile, YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES,
-                  sampling_result->d2h_bytes, err) != YVEX_OK) ||
-             (sampling_result->full_array_host_scan_bytes &&
-              runtime_profile_counter_add(
-                  profile, YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
-                  sampling_result->full_array_host_scan_bytes, err) != YVEX_OK) ||
-             (sampling_result->kernel_launches && runtime_profile_counter_add(
-                  profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES,
-                  sampling_result->kernel_launches, err) != YVEX_OK)))
+            (generation_profile_count(profile, YVEX_RUNTIME_PROFILE_D2H_BYTES,
+                                      sampling_result->d2h_bytes, err) != YVEX_OK ||
+             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_LOGITS_D2H_BYTES,
+                                      sampling_result->d2h_bytes, err) != YVEX_OK ||
+             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_FULL_ARRAY_HOST_SCAN_BYTES,
+                                      sampling_result->full_array_host_scan_bytes, err) != YVEX_OK ||
+             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_KERNEL_LAUNCHES,
+                                      sampling_result->kernel_launches, err) != YVEX_OK ||
+             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_STREAM_SYNCHRONIZATIONS,
+                                      sampling_result->stream_synchronizations, err) != YVEX_OK ||
+             generation_profile_count(profile, YVEX_RUNTIME_PROFILE_DEVICE_SYNCHRONIZATIONS,
+                                      sampling_result->device_synchronizations, err) != YVEX_OK))
             rc = yvex_error_code(err);
     }
     return rc;

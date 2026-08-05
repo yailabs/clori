@@ -1090,7 +1090,7 @@ static int logits_physical_add_row(
     return yvex_execution_physical_facts_add(
         physical, &row->memory, row->h2d_bytes, row->d2h_bytes,
         row->d2d_bytes, row->kernel_launches,
-        row->device_synchronizations, err);
+        0ull, row->device_synchronizations, err);
 }
 
 static int logits_physical_equal(

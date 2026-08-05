@@ -78,7 +78,8 @@ static int sampling_greedy_rows(
         tokens[0] == 1u && selected[0] == 3.5f && ties[0] == 2ull &&
             tokens[1] == 0u && selected[1] == 9.0f && ties[1] == 1ull &&
             tokens[2] == 2u && selected[2] == 2.0f && ties[2] == 3ull &&
-            facts.kernel_launches == 1ull && facts.device_synchronizations == 1ull &&
+            facts.kernel_launches == 1ull && facts.stream_synchronizations == 1ull &&
+            facts.device_synchronizations == 0ull &&
             facts.d2h_bytes == sizeof(int) + sizeof(tokens) + sizeof(selected) + sizeof(ties),
         "batched CUDA argmax preserves lowest-token tie policy and aggregate physical facts");
     YVEX_TEST_ASSERT(
@@ -197,7 +198,8 @@ int yvex_cuda_test_sampling(void)
             result.candidates_after_typical_p == 4ull &&
             result.candidates_after_top_p == 4ull &&
             fabs(result.selected_probability - 1.0 / denominator) < 1.0e-14 &&
-            facts.kernel_launches == 1ull && facts.device_synchronizations == 1ull &&
+            facts.kernel_launches == 1ull && facts.stream_synchronizations == 1ull &&
+            facts.device_synchronizations == 0ull &&
             facts.download_count == 5ull && facts.d2h_bytes == 100ull &&
             facts.activation_bytes == sizeof(logits) &&
             facts.temporary_bytes == workspace_bytes,
@@ -241,6 +243,34 @@ int yvex_cuda_test_sampling(void)
             yvex_backend_tensor_release(backend, &device_logits, &err) == YVEX_OK,
         "release bounded stochastic sampling tensors");
     if (sampling_full_vocabulary(backend, operations)) return 1;
+    sampling_tensor_desc(&descriptor, "sampling-sync-fault", YVEX_DTYPE_F32,
+                         sizeof(logits));
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_alloc(backend, &descriptor, &device_logits, &err) == YVEX_OK &&
+            yvex_backend_tensor_write(
+                backend, device_logits, logits, sizeof(logits), &err) == YVEX_OK,
+        "prepare CUDA selection completion fault fixture");
+    {
+        unsigned int token = UINT_MAX;
+        unsigned long long ties = 0ull;
+        float selected = 0.0f;
+        YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_SYNC_FAILURE", "encoded-attention", 1) == 0,
+                         "inject CUDA selection completion failure");
+        rc = operations->select_greedy_rows(
+            backend, device_logits, 1ull, 4ull, &token, &selected, &ties, &facts, &err);
+        YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_SYNC_FAILURE") == 0,
+                         "clear CUDA selection completion failure");
+        YVEX_TEST_ASSERT(
+            rc == YVEX_ERR_BACKEND &&
+                strstr(yvex_error_message(&err), "synchronization failure") != NULL,
+            "CUDA selection fails closed when stream completion fails");
+        YVEX_TEST_ASSERT(
+            facts.kernel_launches == 0ull && facts.d2h_bytes == 0ull,
+            "failed stream completion publishes no physical facts");
+    }
+    YVEX_TEST_ASSERT(
+        yvex_backend_tensor_release(backend, &device_logits, &err) == YVEX_OK,
+        "release CUDA selection completion fault fixture");
     YVEX_TEST_ASSERT(
         yvex_backend_close_checked(&backend, &err) == YVEX_OK && !backend,
         "release stochastic sampling backend ownership");

@@ -32,6 +32,7 @@ entry audit:
 | Contract | Current | Admitted | New fact | Incompatibility | Old behavior | Rule | Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Kernel-bundle identity | v2 | v3 | ordered set of independently compiled modules | semantic identity derivation only; no wire or persisted layout | v2 hashes one image and cannot identify the module set | full rebuild admits all manifest-owned modules atomically; model artifacts do not migrate | PTX/native admission, missing-symbol rollback, checked unload retry, identity mutation |
+| Physical-facts internal ABI | v1 | v1 | stream and device-wide synchronization deltas enter one checked aggregate | in-process function signature only; the stored fact remains one aggregate | old objects are never mixed with rebuilt objects; old callers supplied one combined count | complete rebuild; no persistence, wire, layout, or identity migration | class-sum overflow rollback, runtime execution, sampling and speculation accounting |
 
 ## Planning authority
 
@@ -176,6 +177,11 @@ sealed temperature/top-k/min-p/typical-p/top-p order and categorical draw, and
 runtime publishes the RNG state only after bounded device facts survive
 cancellation and validation. The correctness-first kernel downloads 100 bytes
 of token, survivor, probability and status facts rather than the vocabulary.
+Greedy and stochastic bounded downloads are enqueued behind selection on the
+session execution stream and wait on that stream once; the incomplete-Driver
+fallback remains an explicitly counted device-wide barrier. Physical-ledger
+addition accepts the two synchronization classes separately and owns their
+checked aggregate, so overflow cannot partially publish phase accounting.
 Audit/forensic profiles and DSpark retain the host distribution oracle. The
 existing compiled-profile reference flag and internal device-view contracts
 already represent this cutover, so no persisted, wire, public C, execution-

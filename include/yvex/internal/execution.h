@@ -313,8 +313,8 @@ int yvex_execution_physical_facts_add(
     yvex_execution_physical_facts *facts,
     const yvex_execution_memory_facts *memory, unsigned long long h2d_bytes,
     unsigned long long d2h_bytes, unsigned long long d2d_bytes,
-    unsigned long long kernel_count, unsigned long long synchronization_count,
-    yvex_error *err);
+    unsigned long long kernel_count, unsigned long long stream_synchronization_count,
+    unsigned long long device_synchronization_count, yvex_error *err);
 int yvex_execution_f32_hash_update(
     yvex_sha256 *hash, const float *values, unsigned long long count);
 int yvex_execution_f32_digest(

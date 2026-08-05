@@ -1017,10 +1017,11 @@ int yvex_execution_physical_facts_add(
     yvex_execution_physical_facts *facts,
     const yvex_execution_memory_facts *memory, unsigned long long h2d_bytes,
     unsigned long long d2h_bytes, unsigned long long d2d_bytes,
-    unsigned long long kernel_count, unsigned long long synchronization_count,
-    yvex_error *err)
+    unsigned long long kernel_count, unsigned long long stream_synchronization_count,
+    unsigned long long device_synchronization_count, yvex_error *err)
 {
     yvex_execution_physical_facts candidate;
+    unsigned long long synchronization_count;
     int rc;
     if (!facts || !memory)
         return execution_refuse(err, YVEX_ERR_INVALID_ARG,
@@ -1029,7 +1030,9 @@ int yvex_execution_physical_facts_add(
     candidate = *facts;
     rc = yvex_execution_memory_facts_merge(&candidate.memory, memory, err);
     if (rc != YVEX_OK) return rc;
-    if (!yvex_core_u64_add(candidate.h2d_bytes, h2d_bytes, &candidate.h2d_bytes) ||
+    if (!yvex_core_u64_add(stream_synchronization_count, device_synchronization_count,
+                           &synchronization_count) ||
+        !yvex_core_u64_add(candidate.h2d_bytes, h2d_bytes, &candidate.h2d_bytes) ||
         !yvex_core_u64_add(candidate.d2h_bytes, d2h_bytes, &candidate.d2h_bytes) ||
         !yvex_core_u64_add(candidate.d2d_bytes, d2d_bytes, &candidate.d2d_bytes) ||
         !yvex_core_u64_add(candidate.kernel_count, kernel_count, &candidate.kernel_count) ||

@@ -112,6 +112,10 @@ change. Git history preserves implementation chronology.
   attention and width-N MoE completion synchronize that stream instead of the
   complete CUDA context, while legacy Driver configurations retain an
   explicitly accounted context-wide fallback.
+- Greedy and stochastic CUDA selection now enqueue bounded result downloads
+  behind their kernels and complete only the owning session stream. The phase
+  ledger accounts stream and device-wide synchronization classes through one
+  checked aggregate without changing persisted, wire, or public C contracts.
 - Target-only CUDA generation now selects admitted full attention graphs through
   the existing compiled-profile contract; CPU and DSpark retain explicit eager
   reference execution, and compatible shape changes preserve cached graph

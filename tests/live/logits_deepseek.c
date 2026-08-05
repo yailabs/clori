@@ -464,7 +464,9 @@ static int live_device_batch(live_logits *execution, yvex_runtime_model *model,
     for (index = 0ull; rc == YVEX_OK && index < LIVE_LOGITS_ROWS; ++index) {
         sampling_d2h += out->sampling.rows[index].d2h_bytes;
         sampling_kernels += out->sampling.rows[index].kernel_launches;
-        sampling_synchronizations += out->sampling.rows[index].device_synchronizations;
+        sampling_synchronizations +=
+            out->sampling.rows[index].stream_synchronizations +
+            out->sampling.rows[index].device_synchronizations;
         if (!out->sampling.rows[index].device_selection ||
             out->sampling.rows[index].full_array_host_scan_bytes ||
             out->sampling.rows[index].selected_token_id !=
