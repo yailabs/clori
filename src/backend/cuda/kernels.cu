@@ -660,6 +660,7 @@ extern "C" __global__ void yvex_deepseek_weighted_norm(
     unsigned int weight_qtype, double epsilon, unsigned long long vectors,
     int *status)
 {
+    extern __shared__ double square_terms[];
     __shared__ double inverse;
     __shared__ int active;
     unsigned int lane = threadIdx.x;
@@ -673,19 +674,31 @@ extern "C" __global__ void yvex_deepseek_weighted_norm(
     __syncthreads();
     if (!active) return;
     values += (unsigned long long)blockIdx.x * count;
-    /* Keep the admitted double reduction order in one lane. The independent
-       normalization writes can then occupy the block without changing bits. */
+    /* Products are independent, but their sum is identity-bearing. Accumulate
+       each shared-memory tile in source order before the next tile starts. */
     if (lane == 0u) {
-        double mean = 0.0;
-        for (unsigned long long i = 0ull; i < count; ++i) {
-            double value = (double)values[i];
-            if (!isfinite(value)) {
-                atomicCAS(status, 0, 1);
-                active = 0;
-                break;
-            }
-            mean = __dadd_rn(mean, __dmul_rn(value, value));
+        inverse = 0.0;
+    }
+    for (unsigned long long base = 0ull; base < count;
+         base += (unsigned long long)blockDim.x) {
+        unsigned long long i = base + (unsigned long long)lane;
+        double value = i < count ? (double)values[i] : 0.0;
+        if (i < count && !isfinite(value)) {
+            atomicCAS(status, 0, 1);
+            atomicExch(&active, 0);
         }
+        square_terms[lane] = i < count ? __dmul_rn(value, value) : 0.0;
+        __syncthreads();
+        if (lane == 0u) {
+            unsigned long long tile = count - base;
+            if (tile > (unsigned long long)blockDim.x) tile = blockDim.x;
+            for (unsigned long long i = 0ull; i < tile; ++i)
+                inverse = __dadd_rn(inverse, square_terms[i]);
+        }
+        __syncthreads();
+    }
+    if (lane == 0u) {
+        double mean = inverse;
         mean = __ddiv_rn(mean, (double)count);
         inverse = __ddiv_rn(1.0, sqrt(__dadd_rn(mean, epsilon)));
         if (!isfinite(inverse)) {
@@ -1063,6 +1076,7 @@ extern "C" __global__ void yvex_deepseek_mhc_pre(
     combination += batch * streams * streams;
     double *pre_weights = shared;
     double *inverse = shared + streams;
+    double *square_terms = inverse + 1;
     for (unsigned long long lane = (unsigned long long)thread; lane < expanded;
          lane += (unsigned long long)blockDim.x) {
         float value = float_to_bf16_rne(residual[lane]);
@@ -1074,15 +1088,26 @@ extern "C" __global__ void yvex_deepseek_mhc_pre(
     }
     __syncthreads();
     if (!active) return;
-    /* The square reduction and Sinkhorn recurrence retain their exact serial
-       order; only BF16 ingress and row-independent projections are fanned out. */
-    if (thread == 0u) {
-        double squares = 0.0;
-        for (unsigned long long lane = 0ull; lane < expanded; ++lane) {
-            double value = (double)residual[lane];
-            squares += value * value;
+    /* The square products share the block, while lane zero consumes each tile
+       in the original order. Sinkhorn likewise remains serial and exact. */
+    if (thread == 0u) *inverse = 0.0;
+    for (unsigned long long base_index = 0ull; base_index < expanded;
+         base_index += (unsigned long long)blockDim.x) {
+        unsigned long long lane = base_index + (unsigned long long)thread;
+        double value = lane < expanded ? (double)residual[lane] : 0.0;
+        square_terms[thread] = lane < expanded
+            ? __dmul_rn(value, value) : 0.0;
+        __syncthreads();
+        if (thread == 0u) {
+            unsigned long long tile = expanded - base_index;
+            if (tile > (unsigned long long)blockDim.x) tile = blockDim.x;
+            for (unsigned long long i = 0ull; i < tile; ++i)
+                *inverse = __dadd_rn(*inverse, square_terms[i]);
         }
-        *inverse = 1.0 / sqrt(squares / (double)expanded + rms_epsilon);
+        __syncthreads();
+    }
+    if (thread == 0u) {
+        *inverse = 1.0 / sqrt(*inverse / (double)expanded + rms_epsilon);
         if (!isfinite(*inverse)) {
             atomicCAS(status, 0, 1);
             active = 0;
@@ -1439,9 +1464,14 @@ extern "C" __global__ void yvex_deepseek_topk(
     unsigned long long *valid_count, float *scores,
     unsigned long long *valid_indexes, int *status)
 {
+    extern __shared__ double head_terms[];
+    __shared__ unsigned long long valid;
+    __shared__ int active;
+    __shared__ int candidate_valid;
     unsigned long long total;
+    unsigned int thread = threadIdx.x;
     if (!status) return;
-    if (*status != 0 || blockIdx.x != 0u || threadIdx.x != 0u) return;
+    if (blockIdx.x != 0u) return;
     if (!index_query || !index_weights || !selected || !selected_positions ||
         !selected_count || !valid_count || !scores || !valid_indexes || !heads ||
         !head_dim || !ratio || !k || history_count > ~0ull - current_count ||
@@ -1449,11 +1479,16 @@ extern "C" __global__ void yvex_deepseek_topk(
                            history_stride < head_dim)) ||
         (current_count && (!current_indexer || !current_positions ||
                            current_stride < head_dim))) {
-        atomicCAS(status, 0, 2);
+        if (thread == 0u) atomicCAS(status, 0, 2);
         return;
     }
+    if (thread == 0u) {
+        active = *status == 0;
+        valid = 0ull;
+    }
+    __syncthreads();
+    if (!active) return;
     total = history_count + current_count;
-    unsigned long long valid = 0ull;
     for (unsigned long long candidate = 0ull; candidate < total; ++candidate) {
         const float *row;
         unsigned long long position;
@@ -1465,69 +1500,157 @@ extern "C" __global__ void yvex_deepseek_topk(
             row = current_indexer + local * current_stride;
             position = current_positions[local];
         }
-        if (!row || position > query_position ||
-            position > ~0ull - ratio + 1ull ||
-            position + ratio - 1ull > query_position) continue;
-        for (unsigned long long prior = 0ull; prior < valid; ++prior) {
-            unsigned long long prior_candidate = valid_indexes[prior];
-            unsigned long long prior_position = prior_candidate < history_count
-                ? history_positions[prior_candidate]
-                : current_positions[prior_candidate - history_count];
-            if (prior_position == position) {
-                atomicCAS(status, 0, 1);
-                return;
+        if (thread == 0u) {
+            candidate_valid = row && position <= query_position &&
+                position <= ~0ull - ratio + 1ull &&
+                position + ratio - 1ull <= query_position;
+            for (unsigned long long prior = 0ull;
+                 candidate_valid && prior < valid; ++prior) {
+                unsigned long long prior_candidate = valid_indexes[prior];
+                unsigned long long prior_position = prior_candidate < history_count
+                    ? history_positions[prior_candidate]
+                    : current_positions[prior_candidate - history_count];
+                if (prior_position == position) {
+                    atomicCAS(status, 0, 1);
+                    active = 0;
+                }
             }
         }
+        __syncthreads();
+        if (!active) return;
+        if (!candidate_valid) continue;
+        /* Heads are independent; lane zero retains the source-order reduction
+           across each tile so ranking and tie behavior stay bit-identical. */
         double score = 0.0;
-        for (unsigned long long head = 0ull; head < heads; ++head) {
-            double dot = 0.0;
-            const float *query = index_query + head * head_dim;
-            for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
-                double term = __dmul_rn((double)query[lane], (double)row[lane]);
-                dot = __dadd_rn(dot, term);
+        for (unsigned long long base = 0ull; base < heads;
+             base += (unsigned long long)blockDim.x) {
+            unsigned long long head = base + (unsigned long long)thread;
+            double contribution = 0.0;
+            if (head < heads) {
+                double dot = 0.0;
+                const float *query = index_query + head * head_dim;
+                for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
+                    double term = __dmul_rn((double)query[lane], (double)row[lane]);
+                    dot = __dadd_rn(dot, term);
+                }
+                if (dot < 0.0) dot = 0.0;
+                contribution = __dmul_rn(dot, (double)index_weights[head]);
             }
-            if (dot < 0.0) dot = 0.0;
-            score = __dadd_rn(
-                score, __dmul_rn(dot, (double)index_weights[head]));
+            head_terms[thread] = contribution;
+            __syncthreads();
+            if (thread == 0u) {
+                unsigned long long tile = heads - base;
+                if (tile > (unsigned long long)blockDim.x) tile = blockDim.x;
+                for (unsigned long long i = 0ull; i < tile; ++i)
+                    score = __dadd_rn(score, head_terms[i]);
+            }
+            __syncthreads();
         }
-        score = __dmul_rn(score, 1.0 / sqrt((double)head_dim));
-        score = __dmul_rn(score, 1.0 / sqrt((double)heads));
-        if (!isfinite(score)) {
-            atomicCAS(status, 0, 1);
-            return;
+        if (thread == 0u) {
+            score = __dmul_rn(score, 1.0 / sqrt((double)head_dim));
+            score = __dmul_rn(score, 1.0 / sqrt((double)heads));
+            if (!isfinite(score)) {
+                atomicCAS(status, 0, 1);
+                active = 0;
+            } else {
+                scores[valid] = (float)score;
+                valid_indexes[valid] = candidate;
+                valid++;
+            }
         }
-        scores[valid] = (float)score;
-        valid_indexes[valid] = candidate;
-        valid++;
+        __syncthreads();
+        if (!active) return;
     }
-    unsigned long long chosen = valid < k ? valid : k;
-    for (unsigned long long rank = 0ull; rank < chosen; ++rank) {
-        unsigned long long best = ~0ull;
-        for (unsigned long long i = 0ull; i < valid; ++i) {
-            unsigned long long candidate = valid_indexes[i];
-            unsigned long long position = candidate < history_count
-                ? history_positions[candidate]
-                : current_positions[candidate - history_count];
-            int already = 0;
-            for (unsigned long long prior = 0ull; prior < rank; ++prior)
-                if (selected[prior] == candidate) already = 1;
-            if (already) continue;
-            if (best == ~0ull || scores[i] > scores[best] ||
-                (scores[i] == scores[best] && position <
-                    (valid_indexes[best] < history_count
-                        ? history_positions[valid_indexes[best]]
-                        : current_positions[valid_indexes[best] - history_count])))
-                best = i;
+    if (thread == 0u) {
+        unsigned long long chosen = valid < k ? valid : k;
+        for (unsigned long long rank = 0ull; rank < chosen; ++rank) {
+            unsigned long long best = ~0ull;
+            for (unsigned long long i = 0ull; i < valid; ++i) {
+                unsigned long long candidate = valid_indexes[i];
+                unsigned long long position = candidate < history_count
+                    ? history_positions[candidate]
+                    : current_positions[candidate - history_count];
+                int already = 0;
+                for (unsigned long long prior = 0ull; prior < rank; ++prior)
+                    if (selected[prior] == candidate) already = 1;
+                if (already) continue;
+                if (best == ~0ull || scores[i] > scores[best] ||
+                    (scores[i] == scores[best] && position <
+                        (valid_indexes[best] < history_count
+                            ? history_positions[valid_indexes[best]]
+                            : current_positions[valid_indexes[best] - history_count])))
+                    best = i;
+            }
+            selected[rank] = valid_indexes[best];
+            selected_positions[rank] = selected[rank] < history_count
+                ? history_positions[selected[rank]]
+                : current_positions[selected[rank] - history_count];
         }
-        selected[rank] = valid_indexes[best];
-        selected_positions[rank] = selected[rank] < history_count
-            ? history_positions[selected[rank]]
-            : current_positions[selected[rank] - history_count];
+        *selected_count = chosen;
+        *valid_count = valid;
     }
-    *selected_count = chosen;
-    *valid_count = valid;
 }
+typedef struct {
+    const float *history_local;
+    const unsigned long long *history_local_positions;
+    unsigned long long history_local_count;
+    unsigned long long history_local_stride;
+    const float *current_kv;
+    const float *history_compressed;
+    const unsigned long long *history_compressed_positions;
+    unsigned long long history_compressed_count;
+    unsigned long long history_compressed_stride;
+    const float *current_compressed;
+    const unsigned long long *current_compressed_positions;
+    unsigned long long current_compressed_count;
+    unsigned long long current_compressed_stride;
+    const unsigned long long *selected;
+    unsigned long long sliding_window;
+    unsigned long long ratio;
+    unsigned int attention_class;
+    unsigned long long token_position;
+    int candidate_block_visible;
+} deepseek_reduce_rows;
 
+static __device__ __forceinline__ const float *deepseek_reduce_row(
+    const deepseek_reduce_rows *rows, unsigned long long pass,
+    unsigned long long candidate, int *visible)
+{
+    const float *row = NULL;
+    unsigned long long position = ~0ull;
+    *visible = 0;
+    if (pass == 0ull) {
+        if (candidate < rows->history_local_count) {
+            row = rows->history_local + candidate * rows->history_local_stride;
+            position = rows->history_local_positions[candidate];
+        } else {
+            row = rows->current_kv;
+            position = rows->token_position;
+        }
+        if (!rows->candidate_block_visible) {
+            unsigned long long first = rows->token_position + 1ull > rows->sliding_window
+                ? rows->token_position + 1ull - rows->sliding_window : 0ull;
+            if (position < first || position > rows->token_position) return NULL;
+        }
+    } else {
+        unsigned long long index = rows->attention_class == 2u
+            ? candidate : rows->selected[candidate];
+        if (index < rows->history_compressed_count) {
+            row = rows->history_compressed + index * rows->history_compressed_stride;
+            position = rows->history_compressed_positions[index];
+        } else {
+            unsigned long long local = index - rows->history_compressed_count;
+            if (local >= rows->current_compressed_count) return NULL;
+            row = rows->current_compressed + local * rows->current_compressed_stride;
+            position = rows->current_compressed_positions[local];
+        }
+        if (!row || position > rows->token_position ||
+            position > ~0ull - rows->ratio + 1ull ||
+            position + rows->ratio - 1ull > rows->token_position) return NULL;
+    }
+    *visible = row != NULL;
+    return row;
+}
 
 extern "C" __global__ void yvex_deepseek_reduce(
     const float *query,
@@ -1558,11 +1681,16 @@ extern "C" __global__ void yvex_deepseek_reduce(
     float *out,
     int *status)
 {
+    extern __shared__ double dot_terms[];
+    __shared__ double maximum;
+    __shared__ double denominator;
+    __shared__ double probability;
+    __shared__ unsigned long long selected_count;
+    __shared__ int active;
     unsigned long long head = (unsigned long long)blockIdx.x;
     unsigned int thread = threadIdx.x;
     if (!status) return;
-    if (*status != 0 || head >= query_heads) return;
-    if (thread != 0u) return;
+    if (head >= query_heads) return;
     if (!query || !current_kv || !sinks || !out || !query_heads || !head_dim ||
         !sliding_window || token_position == ~0ull || attention_class > 2u ||
         (candidate_block_visible != 0 && candidate_block_visible != 1) ||
@@ -1581,116 +1709,110 @@ extern "C" __global__ void yvex_deepseek_reduce(
         (attention_class == 1u && ratio != 4ull) ||
         (attention_class == 2u && ratio != 128ull) ||
         (attention_class == 0u && ratio != 0ull)) {
-        atomicCAS(status, 0, 2);
+        if (thread == 0u) atomicCAS(status, 0, 2);
         return;
     }
     const float *q = query + head * head_dim;
-    double maximum = (double)sinks[head];
     double scale = 1.0 / sqrt((double)head_dim);
     unsigned long long local_total = history_local_count +
                                      (candidate_block_visible ? 0ull : 1ull);
-    unsigned long long selected_count = selected_count_ptr
-        ? *selected_count_ptr : 0ull;
+    if (thread == 0u) {
+        active = *status == 0;
+        maximum = (double)sinks[head];
+        selected_count = selected_count_ptr ? *selected_count_ptr : 0ull;
+    }
+    __syncthreads();
+    if (!active) return;
     unsigned long long compressed_total = attention_class == 2u
         ? history_compressed_count + current_compressed_count
         : selected_count;
+    deepseek_reduce_rows rows = {
+        history_local, history_local_positions, history_local_count,
+        history_local_stride, current_kv, history_compressed,
+        history_compressed_positions, history_compressed_count,
+        history_compressed_stride, current_compressed,
+        current_compressed_positions, current_compressed_count,
+        current_compressed_stride, selected, sliding_window, ratio,
+        attention_class, token_position, candidate_block_visible
+    };
+    /* Products and output lanes are parallel, while lane zero consumes dot
+       terms and probabilities in the exact source order. */
     for (unsigned long long pass = 0ull; pass < 2ull; ++pass) {
         unsigned long long count = pass == 0ull ? local_total : compressed_total;
         for (unsigned long long candidate = 0ull; candidate < count; ++candidate) {
-            const float *row = NULL;
-            unsigned long long position = ~0ull;
-            if (pass == 0ull) {
-                if (candidate < history_local_count) {
-                    row = history_local + candidate * history_local_stride;
-                    position = history_local_positions[candidate];
-                } else {
-                    row = current_kv;
-                    position = token_position;
-                }
-                if (!candidate_block_visible) {
-                    unsigned long long first = token_position + 1ull > sliding_window
-                        ? token_position + 1ull - sliding_window : 0ull;
-                    if (position < first || position > token_position) continue;
-                }
-            } else {
-                unsigned long long index = attention_class == 2u
-                    ? candidate : selected[candidate];
-                if (index < history_compressed_count) {
-                    row = history_compressed + index * history_compressed_stride;
-                    position = history_compressed_positions[index];
-                } else {
-                    unsigned long long local = index - history_compressed_count;
-                    row = current_compressed + local * current_compressed_stride;
-                    position = current_compressed_positions[local];
-                }
-                if (!row || position > token_position ||
-                    position > ~0ull - ratio + 1ull ||
-                    position + ratio - 1ull > token_position) continue;
-            }
+            int visible;
+            const float *row = deepseek_reduce_row(&rows, pass, candidate, &visible);
+            if (!visible) continue;
             double dot = 0.0;
-            for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
-                double term = __dmul_rn((double)q[lane], (double)row[lane]);
-                dot = __dadd_rn(dot, term);
+            for (unsigned long long base = 0ull; base < head_dim;
+                 base += (unsigned long long)blockDim.x) {
+                unsigned long long lane = base + (unsigned long long)thread;
+                dot_terms[thread] = lane < head_dim
+                    ? __dmul_rn((double)q[lane], (double)row[lane]) : 0.0;
+                __syncthreads();
+                if (thread == 0u) {
+                    unsigned long long tile = head_dim - base;
+                    if (tile > (unsigned long long)blockDim.x) tile = blockDim.x;
+                    for (unsigned long long i = 0ull; i < tile; ++i)
+                        dot = __dadd_rn(dot, dot_terms[i]);
+                }
+                __syncthreads();
             }
-            double score = __dmul_rn(dot, scale);
-            if (score > maximum) maximum = score;
+            if (thread == 0u) {
+                double score = __dmul_rn(dot, scale);
+                if (score > maximum) maximum = score;
+            }
         }
     }
-    double denominator = exp(__dadd_rn((double)sinks[head], -maximum));
-    for (unsigned long long lane = 0ull; lane < head_dim; ++lane)
+    if (thread == 0u)
+        denominator = exp(__dadd_rn((double)sinks[head], -maximum));
+    for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
+         lane += (unsigned long long)blockDim.x)
         out[head * head_dim + lane] = 0.0f;
+    __syncthreads();
     for (unsigned long long pass = 0ull; pass < 2ull; ++pass) {
         unsigned long long count = pass == 0ull ? local_total : compressed_total;
         for (unsigned long long candidate = 0ull; candidate < count; ++candidate) {
-            const float *row = NULL;
-            unsigned long long position = ~0ull;
-            if (pass == 0ull) {
-                if (candidate < history_local_count) {
-                    row = history_local + candidate * history_local_stride;
-                    position = history_local_positions[candidate];
-                } else {
-                    row = current_kv;
-                    position = token_position;
-                }
-                if (!candidate_block_visible) {
-                    unsigned long long first = token_position + 1ull > sliding_window
-                        ? token_position + 1ull - sliding_window : 0ull;
-                    if (position < first || position > token_position) continue;
-                }
-            } else {
-                unsigned long long index = attention_class == 2u
-                    ? candidate : selected[candidate];
-                if (index < history_compressed_count) {
-                    row = history_compressed + index * history_compressed_stride;
-                    position = history_compressed_positions[index];
-                } else {
-                    unsigned long long local = index - history_compressed_count;
-                    row = current_compressed + local * current_compressed_stride;
-                    position = current_compressed_positions[local];
-                }
-                if (!row || position > token_position ||
-                    position > ~0ull - ratio + 1ull ||
-                    position + ratio - 1ull > token_position) continue;
-            }
+            int visible;
+            const float *row = deepseek_reduce_row(&rows, pass, candidate, &visible);
+            if (!visible) continue;
             double dot = 0.0;
-            for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
-                double term = __dmul_rn((double)q[lane], (double)row[lane]);
-                dot = __dadd_rn(dot, term);
+            for (unsigned long long base = 0ull; base < head_dim;
+                 base += (unsigned long long)blockDim.x) {
+                unsigned long long lane = base + (unsigned long long)thread;
+                dot_terms[thread] = lane < head_dim
+                    ? __dmul_rn((double)q[lane], (double)row[lane]) : 0.0;
+                __syncthreads();
+                if (thread == 0u) {
+                    unsigned long long tile = head_dim - base;
+                    if (tile > (unsigned long long)blockDim.x) tile = blockDim.x;
+                    for (unsigned long long i = 0ull; i < tile; ++i)
+                        dot = __dadd_rn(dot, dot_terms[i]);
+                }
+                __syncthreads();
             }
-            double probability = exp(__dadd_rn(__dmul_rn(dot, scale), -maximum));
-            denominator = __dadd_rn(denominator, probability);
-            for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
+            if (thread == 0u) {
+                probability = exp(__dadd_rn(__dmul_rn(dot, scale), -maximum));
+                denominator = __dadd_rn(denominator, probability);
+            }
+            __syncthreads();
+            for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
+                 lane += (unsigned long long)blockDim.x) {
                 float term = (float)__dmul_rn(probability, (double)row[lane]);
                 unsigned long long offset = head * head_dim + lane;
                 out[offset] = __fadd_rn(out[offset], term);
             }
+            __syncthreads();
         }
     }
-    if (!isfinite(denominator) || denominator <= 0.0) {
+    if (thread == 0u && (!isfinite(denominator) || denominator <= 0.0)) {
         atomicCAS(status, 0, 1);
-        return;
+        active = 0;
     }
-    for (unsigned long long lane = 0ull; lane < head_dim; ++lane) {
+    __syncthreads();
+    if (!active) return;
+    for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
+         lane += (unsigned long long)blockDim.x) {
         float published = (float)__ddiv_rn((double)out[head * head_dim + lane],
                                            denominator);
         if (!isfinite(published)) atomicCAS(status, 0, 1);

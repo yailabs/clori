@@ -57,7 +57,8 @@ static int moe_cuda_mhc_shared_bytes(unsigned long long streams,
                                      yvex_error *err)
 {
     unsigned long long count, bytes;
-    if (!shared_bytes || !yvex_core_u64_add(streams, 1ull, &count) ||
+    if (!shared_bytes ||
+        !yvex_core_u64_add(streams, 1ull + MOE_CUDA_BLOCK, &count) ||
         !yvex_core_u64_mul(count, sizeof(double), &bytes) || bytes > UINT_MAX)
         return moe_cuda_refuse(err, YVEX_ERR_BOUNDS,
                                "CUDA mHC shared geometry exceeds launch bounds");

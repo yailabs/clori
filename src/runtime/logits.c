@@ -42,6 +42,7 @@ struct yvex_runtime_logits_context {
     char shared_draft_plan_identity[YVEX_SHA256_HEX_CAP];
     int mutex_ready, busy, invalidated, shared_draft_plan_admitted;
 };
+
 /*
  * Admit and project logits readiness from the exact immutable output-head residency.
  *
@@ -74,6 +75,7 @@ static int logits_refuse(yvex_error *err, yvex_status status, const char *reason
     yvex_error_set(err, status, "runtime.logits", reason);
     return status;
 }
+
 /*
  * Derive the pointer-free output-head plan identity.
  *
@@ -110,7 +112,6 @@ static int logits_plan_identity(yvex_runtime_logits_plan_summary *summary)
     yvex_sha256_hex(digest, summary->output_head_plan_identity);
     return 1;
 }
-
 static int logits_plan_build(yvex_runtime_logits_plan *plan,
                              const yvex_runtime_model_view *view,
                              const yvex_transformer_plan *transformer_plan,
@@ -345,7 +346,6 @@ const yvex_runtime_logits_plan_summary *yvex_runtime_logits_plan_summary_get(
 {
     return context ? &context->plan.summary : NULL;
 }
-
 int yvex_runtime_logits_admit_shared_draft_plan(
     yvex_runtime_logits_context *context,
     const yvex_transformer_plan *draft_plan, yvex_error *err)
@@ -377,7 +377,6 @@ int yvex_runtime_logits_admit_shared_draft_plan(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int logits_source_identity(yvex_runtime_logits_source *source)
 {
     yvex_sha256 hash;
@@ -408,7 +407,6 @@ static int logits_source_identity(yvex_runtime_logits_source *source)
     yvex_sha256_hex(digest, source->source_identity);
     return 1;
 }
-
 /*
  * Initialize one source from exact borrowed model and plan identities.
  *
@@ -468,7 +466,6 @@ static int logits_source_begin(const yvex_runtime_logits_context *context,
                              "normalized-hidden source identity could not be sealed");
     return YVEX_OK;
 }
-
 int yvex_runtime_logits_source_from_transformer(
     const yvex_runtime_logits_context *context,
     yvex_runtime_logits_source *source,
@@ -529,7 +526,6 @@ int yvex_runtime_logits_source_from_transformer(
         context->plan.summary.transformer_plan_identity,
         producer->execution_identity, err);
 }
-
 int yvex_runtime_logits_source_from_decode(
     const yvex_runtime_logits_context *context,
     yvex_runtime_logits_source *source,
@@ -678,7 +674,6 @@ static int logits_source_validate(const yvex_runtime_logits_context *context,
                              "normalized-hidden source identity is not canonical");
     return YVEX_OK;
 }
-
 static int logits_project_cpu(yvex_runtime_logits_context *context,
                               const float *hidden, yvex_error *err)
 {
@@ -703,7 +698,6 @@ static int logits_project_cpu(yvex_runtime_logits_context *context,
     }
     return YVEX_OK;
 }
-
 /*
  * Execute one full resident output-head projection on CUDA without CPU fallback.
  *
@@ -783,7 +777,6 @@ static int logits_project_cuda(yvex_runtime_logits_context *context,
     }
     return rc;
 }
-
 /*
  * Seal complete row evidence after all vocabulary values are finite.
  *
@@ -808,7 +801,6 @@ static int logits_device_view_build(
         &context->device_logits_publication,
         element_offset, 1ull, context->plan.summary.vocabulary_size, err);
 }
-
 static int logits_row_identity_build(yvex_runtime_logits_row_result *result)
 {
     yvex_sha256 hash;
@@ -844,7 +836,6 @@ static int logits_row_identity_build(yvex_runtime_logits_row_result *result)
     yvex_sha256_hex(digest, result->logits_row_identity);
     return 1;
 }
-
 static int logits_row_finish(yvex_runtime_logits_context *context,
                              const yvex_runtime_logits_source *source,
                              yvex_backend_kind backend, const float *host_values,
@@ -930,7 +921,6 @@ static int logits_row_finish(yvex_runtime_logits_context *context,
     result->completed = 1;
     return YVEX_OK;
 }
-
 /*
  * Independently re-admit one published complete logits row for a downstream owner.
  *
@@ -999,7 +989,6 @@ int yvex_runtime_logits_row_validate(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 int yvex_runtime_logits_additive_adjust(
     const yvex_runtime_logits_context *context,
     const yvex_runtime_logits_row_result *base_result,
@@ -1096,7 +1085,6 @@ int yvex_runtime_logits_additive_adjust(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int logits_physical_add_row(
     yvex_execution_physical_facts *physical,
     const yvex_runtime_logits_row_result *row, yvex_error *err)
@@ -1109,7 +1097,6 @@ static int logits_physical_add_row(
         row->d2d_bytes, row->kernel_launches,
         0ull, row->device_synchronizations, err);
 }
-
 static int logits_physical_equal(
     const yvex_execution_physical_facts *left,
     const yvex_execution_physical_facts *right)
@@ -1126,7 +1113,6 @@ static int logits_physical_equal(
            left->d2d_bytes == right->d2d_bytes && left->kernel_count == right->kernel_count &&
            left->synchronization_count == right->synchronization_count;
 }
-
 int yvex_runtime_logits_result_validate(
     const yvex_runtime_logits_plan_summary *plan, const float *logits,
     unsigned long long logits_capacity,
@@ -1215,7 +1201,6 @@ int yvex_runtime_logits_result_validate(
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int logits_enter(yvex_runtime_logits_context *context, yvex_error *err)
 {
     if (!context || !context->mutex_ready ||
@@ -1230,7 +1215,6 @@ static int logits_enter(yvex_runtime_logits_context *context, yvex_error *err)
     (void)pthread_mutex_unlock(&context->mutex);
     return YVEX_OK;
 }
-
 static void logits_leave(yvex_runtime_logits_context *context, int completed)
 {
     if (context && context->mutex_ready &&
@@ -1240,7 +1224,6 @@ static void logits_leave(yvex_runtime_logits_context *context, int completed)
         (void)pthread_mutex_unlock(&context->mutex);
     }
 }
-
 int yvex_runtime_logits_project(
     yvex_runtime_logits_context *context,
     const yvex_runtime_logits_source *source, yvex_backend_kind backend,
@@ -1283,7 +1266,6 @@ int yvex_runtime_logits_project(
     logits_leave(context, rc == YVEX_OK);
     return rc;
 }
-
 static int logits_batch_contract(
     const yvex_runtime_logits_context *context,
     const yvex_output_head_batch_request *request,
@@ -1336,7 +1318,6 @@ static int logits_batch_contract(
     yvex_sha256_hex(digest, identity);
     return YVEX_OK;
 }
-
 static int logits_cuda_batch_compatible(
     const yvex_runtime_logits_context *context,
     const yvex_runtime_logits_source *sources, unsigned long long row_count)
@@ -1375,7 +1356,6 @@ static int logits_cuda_batch_compatible(
     }
     return 1;
 }
-
 static int logits_cuda_batch_physical(
     yvex_runtime_logits_result *result,
     const yvex_backend_cuda_operation_facts *facts, int device_input, int device_output,
@@ -1405,7 +1385,6 @@ static int logits_cuda_batch_physical(
     result->physical = physical;
     return YVEX_OK;
 }
-
 /*
  * Project compatible rows through one CUDA output-head operation.
  *
@@ -1511,7 +1490,6 @@ static int logits_project_cuda_batch(
     logits_leave(context, rc == YVEX_OK);
     return rc;
 }
-
 /*
  * Execute an ordered output-head graph with complete-row partial-progress semantics.
  *
@@ -1615,7 +1593,6 @@ int yvex_runtime_logits_execute_rows(
     result->completed = result->completed_rows == result->requested_rows;
     return rc;
 }
-
 int yvex_runtime_logits_execute(
     yvex_runtime_logits_context *context,
     const yvex_runtime_logits_source *sources, unsigned long long row_count,
@@ -1638,7 +1615,6 @@ int yvex_runtime_logits_execute(
     return yvex_runtime_logits_execute_rows(
         context, &request, sources, logits, logits_capacity, rows, row_capacity, result, err);
 }
-
 /*
  * Release logits-local buffers while preserving borrowed model/session owners.
  *
@@ -1676,13 +1652,11 @@ int yvex_runtime_logits_context_close(yvex_runtime_logits_context **context,
     yvex_error_clear(err);
     return YVEX_OK;
 }
-
 static int logits_transformer_cleanup(void **opaque, yvex_error *err)
 {
     return yvex_runtime_transformer_context_close(
         (yvex_runtime_transformer_context **)opaque, err);
 }
-
 static int logits_input_slice(yvex_transformer_input **out,
                               const yvex_transformer_input_summary *base,
                               const unsigned int *tokens,
@@ -1704,7 +1678,6 @@ static int logits_input_slice(yvex_transformer_input **out,
         return yvex_error_code(err);
     return yvex_transformer_input_open_memory(out, &summary, tokens, err);
 }
-
 void yvex_runtime_logits_operator_result_release(yvex_logits_operator_result *result)
 {
     if (!result) return;
@@ -1715,7 +1688,6 @@ void yvex_runtime_logits_operator_result_release(yvex_logits_operator_result *re
     result->raw_logits_count = 0ull;
     result->row_count = 0ull;
 }
-
 static void logits_operator_refuse(yvex_logits_operator_result *result,
                                    const yvex_error *err)
 {
@@ -1726,7 +1698,6 @@ static void logits_operator_refuse(yvex_logits_operator_result *result,
                             ? yvex_error_message(err)
                             : "logits execution refused");
 }
-
 static void logits_operator_publish_facts(
     yvex_logits_operator_result *result,
     const yvex_transformer_plan_summary *transformer_plan,
@@ -1771,7 +1742,6 @@ static void logits_operator_publish_facts(
         result->logits_partial_progress_ready = result->logits_ready = 1;
     }
 }
-
 static int logits_operator_finish(yvex_logits_operator_result *result, int rc,
                                   yvex_error *err)
 {
@@ -1784,7 +1754,6 @@ static int logits_operator_finish(yvex_logits_operator_result *result, int rc,
     }
     return rc;
 }
-
 /*
  * Publish only the completed raw-logits prefix after repeated execution.
  *
@@ -1826,7 +1795,6 @@ static int logits_operator_publish_raw(
     }
     return rc;
 }
-
 /*
  * Execute one shared-context prefill/decode/logits operator workflow.
  *
