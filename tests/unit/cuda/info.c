@@ -371,7 +371,8 @@ static int assert_grouped_moe(yvex_backend *backend)
         rc == YVEX_OK && row_result.completed == 1 && row_result.row_count == 2ull &&
             row_result.row_expert_pairs == 2ull && row_result.unique_experts >= 1ull &&
             row_result.kernel_launches < 2ull * normal.kernel_launches &&
-            row_result.device_synchronizations == 1ull &&
+            row_result.stream_synchronizations == 1ull &&
+            row_result.device_synchronizations == 0ull &&
             yvex_backend_tensor_read(backend, batch_output, batch_device,
                                      sizeof(batch_device), &err) == YVEX_OK &&
             yvex_backend_tensor_read(backend, reference_output, reference_device,

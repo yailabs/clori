@@ -69,6 +69,7 @@ typedef struct {
 #define YVEX_CUDA_ERROR_NOT_SUPPORTED 801
 #define YVEX_CUDA_KERNEL_MODULE_MAX 8u
 #define YVEX_CUDA_CTX_MAP_HOST 0x08u
+#define YVEX_CUDA_STREAM_NON_BLOCKING 0x01u
 #define YVEX_CUDA_MEM_ATTACH_GLOBAL 0x01u
 #define YVEX_CUDA_MEMHOSTREGISTER_DEVICEMAP 0x02u
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_CAN_MAP_HOST_MEMORY 19
@@ -223,6 +224,7 @@ typedef struct {
     yvex_backend_cuda_graph *capture_owner;
     yvex_backend_cuda_graph *parameter_update_owner;
     CUstream capture_stream;
+    CUstream execution_stream;
     CUevent timing_start;
     CUevent timing_stop;
     int timing_ready;
@@ -479,6 +481,11 @@ int yvex_cuda_synchronize(yvex_backend *backend,
                           yvex_backend_operation_variant variant,
                           const char *where,
                           yvex_error *err);
+int yvex_cuda_launch_synchronize(yvex_backend *backend,
+                                 yvex_backend_operation_variant variant,
+                                 int *device_wide,
+                                 const char *where,
+                                 yvex_error *err);
 int yvex_cuda_temporary_free(yvex_backend *backend,
                              yvex_backend_operation_variant variant,
                              CUdeviceptr *ptr,

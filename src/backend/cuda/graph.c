@@ -13,7 +13,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define CUDA_STREAM_NON_BLOCKING 1u
 #define CUDA_GRAPH_UPDATE_SUCCESS 0
 typedef struct {
     unsigned long long from;
@@ -634,9 +633,10 @@ static int graph_is_attention(const yvex_cuda_backend_state *state,
            graph->compatibility_identity[length] == ':';
 }
 /*
- * Return the current capture stream selected by an explicit graph lifecycle.
+ * Return the stream selected by an explicit graph lifecycle or the session execution owner.
  *
- * Immutable backend with optional active capture owner.
+ * Graph capture and parameter refresh must stay on the graph stream. Ordinary kernels use the
+ * independently owned session stream so their completion need not stall the complete context.
  */
 CUstream yvex_cuda_launch_stream(const yvex_backend *backend)
 {
@@ -644,7 +644,8 @@ CUstream yvex_cuda_launch_stream(const yvex_backend *backend)
         backend && backend->kind == YVEX_BACKEND_KIND_CUDA ? yvex_cuda_state(backend) : NULL;
     if (!state) return NULL;
     if (state->capture_owner) return state->capture_stream;
-    return state->parameter_update_owner ? state->parameter_update_owner->stream : NULL;
+    return state->parameter_update_owner ? state->parameter_update_owner->stream
+                                         : state->execution_stream;
 }
 /*
  * Report whether a backend is inside one explicit, exclusive stream capture.
@@ -779,8 +780,9 @@ static int graph_open(yvex_backend *backend,
                           "injected CUDA graph stream creation failure");
     }
     if (rc == YVEX_OK) {
-    rc = yvex_cuda_status(&state->driver,
-                          state->driver.cuStreamCreate(&graph->stream, CUDA_STREAM_NON_BLOCKING),
+        rc = yvex_cuda_status(&state->driver,
+                              state->driver.cuStreamCreate(&graph->stream,
+                                                           YVEX_CUDA_STREAM_NON_BLOCKING),
                               "cuda.graph.stream_create", err);
     }
     if (rc != YVEX_OK) {

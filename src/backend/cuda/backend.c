@@ -47,10 +47,64 @@ static int parse_device_index(const char *text, int *out, yvex_error *err)
     return YVEX_OK;
 }
 
-static int cuda_timing_failure_matches(const char *stage)
+static int cuda_lifecycle_failure_matches(const char *variable, const char *stage)
 {
-    const char *selected = getenv("YVEX_TEST_CUDA_EVENT_FAILURE");
+    const char *selected = variable ? getenv(variable) : NULL;
     return selected && stage && strcmp(selected, stage) == 0;
+}
+
+/* Own one non-blocking execution stream per backend/session when the Driver exposes it. */
+static int cuda_execution_stream_open(yvex_backend *backend, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    yvex_cuda_driver *driver;
+    int rc;
+    if (!state) return YVEX_ERR_INVALID_ARG;
+    driver = &state->driver;
+    if (!driver->cuStreamCreate || !driver->cuStreamDestroy_v2 ||
+        !driver->cuStreamSynchronize) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    rc = yvex_cuda_set_current(backend, "cuda.execution_stream.open", err);
+    if (rc == YVEX_OK &&
+        cuda_lifecycle_failure_matches("YVEX_TEST_CUDA_STREAM_FAILURE", "create")) {
+        yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.execution_stream.open",
+                       "injected CUDA execution stream creation failure");
+        rc = YVEX_ERR_BACKEND;
+    } else if (rc == YVEX_OK) {
+        rc = yvex_cuda_status(
+            driver,
+            driver->cuStreamCreate(&state->execution_stream,
+                                   YVEX_CUDA_STREAM_NON_BLOCKING),
+            "cuda.execution_stream.open", err);
+    }
+    return rc;
+}
+
+/* Release the session stream before unloading kernels or destroying its context. */
+static int cuda_execution_stream_close(yvex_backend *backend, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    int rc;
+    if (!state || !state->execution_stream) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    rc = yvex_cuda_set_current(backend, "cuda.execution_stream.close", err);
+    if (rc == YVEX_OK &&
+        cuda_lifecycle_failure_matches("YVEX_TEST_CUDA_STREAM_FAILURE", "destroy")) {
+        yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.execution_stream.close",
+                       "injected CUDA execution stream cleanup failure");
+        rc = YVEX_ERR_BACKEND;
+    } else if (rc == YVEX_OK) {
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuStreamDestroy_v2(state->execution_stream),
+            "cuda.execution_stream.close", err);
+    }
+    if (rc == YVEX_OK) state->execution_stream = NULL;
+    return rc;
 }
 /*
  * Create one reusable event pair before a backend enters warm execution.
@@ -72,13 +126,13 @@ static int cuda_timing_open(yvex_backend *backend, yvex_error *err)
     }
     rc = yvex_cuda_set_current(backend, "cuda.timing.open", err);
     if (rc != YVEX_OK) return rc;
-    if (cuda_timing_failure_matches("create-start"))
+    if (cuda_lifecycle_failure_matches("YVEX_TEST_CUDA_EVENT_FAILURE", "create-start"))
         rc = YVEX_ERR_BACKEND;
     else
         rc = yvex_cuda_status(driver, driver->cuEventCreate(&state->timing_start, 0u),
                               "cuda.timing.create_start", err);
     if (rc == YVEX_OK) {
-        if (cuda_timing_failure_matches("create-stop"))
+        if (cuda_lifecycle_failure_matches("YVEX_TEST_CUDA_EVENT_FAILURE", "create-stop"))
             rc = YVEX_ERR_BACKEND;
         else
             rc = yvex_cuda_status(driver, driver->cuEventCreate(&state->timing_stop, 0u),
@@ -109,7 +163,7 @@ static int cuda_timing_close(yvex_backend *backend, yvex_error *err)
     rc = yvex_cuda_set_current(backend, "cuda.timing.close", err);
     if (rc != YVEX_OK) return rc;
     if (state->timing_stop) {
-        if (cuda_timing_failure_matches("destroy-stop")) {
+        if (cuda_lifecycle_failure_matches("YVEX_TEST_CUDA_EVENT_FAILURE", "destroy-stop")) {
             yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.timing.destroy_stop",
                            "injected CUDA timing event cleanup failure");
             return YVEX_ERR_BACKEND;
@@ -120,7 +174,7 @@ static int cuda_timing_close(yvex_backend *backend, yvex_error *err)
         state->timing_stop = NULL;
     }
     if (state->timing_start) {
-        if (cuda_timing_failure_matches("destroy-start")) {
+        if (cuda_lifecycle_failure_matches("YVEX_TEST_CUDA_EVENT_FAILURE", "destroy-start")) {
             yvex_error_set(err, YVEX_ERR_BACKEND, "cuda.timing.destroy_start",
                            "injected CUDA timing event cleanup failure");
             return YVEX_ERR_BACKEND;
@@ -163,7 +217,7 @@ int yvex_cuda_timing(yvex_backend *backend, CUstream stream,
                            "CUDA timing event pair is already active");
             return YVEX_ERR_STATE;
         }
-        if (cuda_timing_failure_matches("record-start")) {
+        if (cuda_lifecycle_failure_matches("YVEX_TEST_CUDA_EVENT_FAILURE", "record-start")) {
             yvex_error_set(err, YVEX_ERR_BACKEND, where,
                            "injected CUDA timing start-record failure");
             return YVEX_ERR_BACKEND;
@@ -174,7 +228,7 @@ int yvex_cuda_timing(yvex_backend *backend, CUstream stream,
         return rc;
     }
     if (!state->timing_ready || !state->timing_active) return YVEX_OK;
-    if (cuda_timing_failure_matches("record-stop")) {
+    if (cuda_lifecycle_failure_matches("YVEX_TEST_CUDA_EVENT_FAILURE", "record-stop")) {
         yvex_error_set(err, YVEX_ERR_BACKEND, where,
                        "injected CUDA timing stop-record failure");
         rc = YVEX_ERR_BACKEND;
@@ -182,7 +236,8 @@ int yvex_cuda_timing(yvex_backend *backend, CUstream stream,
         rc = yvex_cuda_status(&state->driver,
                               state->driver.cuEventRecord(state->timing_stop, stream), where, err);
     }
-    if (rc == YVEX_OK && cuda_timing_failure_matches("synchronize")) {
+    if (rc == YVEX_OK &&
+        cuda_lifecycle_failure_matches("YVEX_TEST_CUDA_EVENT_FAILURE", "synchronize")) {
         yvex_error_set(err, YVEX_ERR_BACKEND, where,
                        "injected CUDA timing synchronization failure");
         rc = YVEX_ERR_BACKEND;
@@ -190,7 +245,8 @@ int yvex_cuda_timing(yvex_backend *backend, CUstream stream,
         rc = yvex_cuda_status(&state->driver,
                               state->driver.cuEventSynchronize(state->timing_stop), where, err);
     }
-    if (rc == YVEX_OK && cuda_timing_failure_matches("elapsed")) {
+    if (rc == YVEX_OK &&
+        cuda_lifecycle_failure_matches("YVEX_TEST_CUDA_EVENT_FAILURE", "elapsed")) {
         yvex_error_set(err, YVEX_ERR_BACKEND, where,
                        "injected CUDA elapsed-time query failure");
         rc = YVEX_ERR_BACKEND;
@@ -225,6 +281,9 @@ static int cuda_close(yvex_backend *backend, yvex_error *err)
     if (rc != YVEX_OK)
         return rc;
     rc = yvex_cuda_graphs_close_all(backend, err);
+    if (rc != YVEX_OK)
+        return rc;
+    rc = cuda_execution_stream_close(backend, err);
     if (rc != YVEX_OK)
         return rc;
     rc = cuda_timing_close(backend, err);
@@ -1182,6 +1241,8 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
     backend->device_info.unified_addressing = unified != 0;
     backend->device_info.managed_memory = managed != 0;
     (void)yvex_cuda_refresh_memory_info(backend, err);
+    rc = cuda_execution_stream_open(backend, err);
+    if (rc != YVEX_OK) goto failed;
     rc = cuda_timing_open(backend, err);
     if (rc != YVEX_OK) goto failed;
     rc = yvex_cuda_kernel_bundle_admit(backend, err);
@@ -1267,6 +1328,11 @@ int yvex_backend_open_shared_cuda(yvex_backend **out,
                         sizeof(backend->device_name_storage),
                         context_owner->device_name_storage);
     backend->device_info.name = backend->device_name_storage;
+    rc = cuda_execution_stream_open(backend, err);
+    if (rc != YVEX_OK) {
+        return cuda_open_rollback(out, &backend, rc,
+                                  err ? *err : (yvex_error){0}, err);
+    }
     rc = cuda_timing_open(backend, err);
     if (rc != YVEX_OK) {
         return cuda_open_rollback(out, &backend, rc,

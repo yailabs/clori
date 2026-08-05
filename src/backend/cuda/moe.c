@@ -42,6 +42,7 @@ typedef struct {
     int host_status;
     unsigned long long host_unique, h2d, d2h, d2d, downloads;
     unsigned long long started_ns, synchronization_ns;
+    unsigned long long stream_synchronizations, device_synchronizations;
 } moe_cuda_batch;
 static int moe_cuda_add_selected(yvex_backend_moe_execution *execution, yvex_error *err);
 
@@ -1313,7 +1314,7 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
     unsigned long long hidden, expanded, activation_bytes, selected_bytes, weight_bytes;
     unsigned long long started, completed, cache_hits = 0ull, slot;
     unsigned int hidden_grid, expanded_grid;
-    int rc;
+    int rc, device_wide = 0;
     if (!yvex_core_u64_mul(rows->row_count, layer->hidden_width, &hidden) ||
         !yvex_core_u64_mul(rows->row_count, layer->expanded_width, &expanded) ||
         !yvex_core_u64_mul(expanded, 2ull * sizeof(float), &activation_bytes) ||
@@ -1363,10 +1364,15 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
 #undef DOWNLOAD
     if (rc == YVEX_OK) {
         started = yvex_core_monotonic_ns();
-        rc = yvex_cuda_synchronize(batch->backend,
-            YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, "cuda.moe.rows.finish-sync", err);
+        rc = yvex_cuda_launch_synchronize(
+            batch->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
+            &device_wide, "cuda.moe.rows.finish-sync", err);
         completed = yvex_core_monotonic_ns();
         if (completed > started) batch->synchronization_ns += completed - started;
+        if (rc == YVEX_OK) {
+            batch->device_synchronizations += (unsigned long long)device_wide;
+            batch->stream_synchronizations += (unsigned long long)!device_wide;
+        }
     }
     if (rc == YVEX_OK && batch->host_status)
         rc = moe_cuda_refuse(err, YVEX_ERR_BACKEND,
@@ -1389,7 +1395,8 @@ static int moe_cuda_batch_publish(moe_cuda_batch *batch,
         result->upload_count = batch->h2d != 0ull;
         result->download_count = batch->downloads;
         result->cache_hits = cache_hits;
-        result->device_synchronizations = 1ull;
+        result->stream_synchronizations = batch->stream_synchronizations;
+        result->device_synchronizations = batch->device_synchronizations;
         result->synchronization_ns = batch->synchronization_ns;
         result->memory.activation_bytes = activation_bytes;
         result->memory.temporary_bytes = batch->work.peak_bytes;

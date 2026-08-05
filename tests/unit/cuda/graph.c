@@ -1426,6 +1426,46 @@ static int test_backend_detach(void)
     return 0;
 }
 
+/* Prove session-stream creation, scoped completion, and checked cleanup refusal. */
+static int test_execution_stream_lifecycle(void)
+{
+    yvex_backend_options options = {0};
+    yvex_backend *backend = NULL;
+    yvex_error err;
+    int device_wide = 1;
+    int rc;
+    options.kind = YVEX_BACKEND_KIND_CUDA;
+    YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_STREAM_FAILURE", "create", 1) == 0,
+                     "inject CUDA execution stream creation failure");
+    rc = yvex_backend_open(&backend, &options, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_BACKEND && !backend,
+                     "execution stream creation failure rolls backend open back");
+    YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_STREAM_FAILURE") == 0,
+                     "clear CUDA execution stream creation failure");
+    YVEX_TEST_ASSERT(yvex_backend_open(&backend, &options, &err) == YVEX_OK && backend,
+                     "open CUDA backend with one execution stream");
+    YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_SYNC_FAILURE", "encoded-attention", 1) == 0,
+                     "inject launch-stream completion failure");
+    rc = yvex_cuda_launch_synchronize(
+        backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, &device_wide,
+        "cuda.test.execution-stream", &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_BACKEND && device_wide == 0 &&
+                         strstr(yvex_error_message(&err), "synchronization failure") != NULL,
+                     "launch-stream completion fails closed without a context-wide barrier");
+    YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_SYNC_FAILURE") == 0,
+                     "clear launch-stream completion failure");
+    YVEX_TEST_ASSERT(setenv("YVEX_TEST_CUDA_STREAM_FAILURE", "destroy", 1) == 0,
+                     "inject CUDA execution stream cleanup failure");
+    rc = yvex_backend_close_checked(&backend, &err);
+    YVEX_TEST_ASSERT(rc == YVEX_ERR_BACKEND && backend,
+                     "checked close retains failed execution stream ownership");
+    YVEX_TEST_ASSERT(unsetenv("YVEX_TEST_CUDA_STREAM_FAILURE") == 0,
+                     "clear CUDA execution stream cleanup failure");
+    YVEX_TEST_ASSERT(yvex_backend_close_checked(&backend, &err) == YVEX_OK && !backend,
+                     "checked close retry releases the execution stream once");
+    return 0;
+}
+
 int yvex_cuda_test_graph(void)
 {
     yvex_backend *backend = NULL;
@@ -1465,6 +1505,9 @@ int yvex_cuda_test_graph(void)
     if (rc != 0)
         return rc;
     rc = test_backend_host_close_retry();
+    if (rc != 0)
+        return rc;
+    rc = test_execution_stream_lifecycle();
     if (rc != 0)
         return rc;
     return test_backend_detach();

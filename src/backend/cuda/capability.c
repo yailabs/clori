@@ -628,6 +628,53 @@ int yvex_cuda_synchronize(yvex_backend *backend,
     return rc;
 }
 
+/*
+ * Complete work on the launch stream without stalling unrelated CUDA work.
+ *
+ * Older admitted CUDA contexts may not own a launch stream. They retain the exact context-wide
+ * fallback and report it to the caller so physical accounting cannot disguise the wider barrier.
+ */
+int yvex_cuda_launch_synchronize(yvex_backend *backend,
+                                 yvex_backend_operation_variant variant,
+                                 int *device_wide,
+                                 const char *where,
+                                 yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    CUstream stream;
+    int rc;
+    if (device_wide) *device_wide = 0;
+    rc = backend_dispatch_admit(backend, where, err);
+    if (rc != YVEX_OK) return rc;
+    if (!state || !device_wide) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, where,
+                       "CUDA launch synchronization owner is invalid");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    if (yvex_cuda_capture_active(backend)) {
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    stream = yvex_cuda_launch_stream(backend);
+    if (!stream || !state->driver.cuStreamSynchronize) {
+        rc = yvex_cuda_synchronize(backend, variant, where, err);
+        if (rc == YVEX_OK) *device_wide = 1;
+        return rc;
+    }
+    if (cuda_test_failure_matches("YVEX_TEST_CUDA_SYNC_FAILURE", variant)) {
+        cuda_capability_fail(backend, variant,
+                             YVEX_BACKEND_CAPABILITY_REASON_SYNCHRONIZATION_FAILED);
+        yvex_error_set(err, YVEX_ERR_BACKEND, where,
+                       "injected CUDA synchronization failure");
+        return YVEX_ERR_BACKEND;
+    }
+    rc = yvex_cuda_status(&state->driver, state->driver.cuStreamSynchronize(stream), where, err);
+    if (rc != YVEX_OK)
+        cuda_capability_fail(backend, variant,
+                             YVEX_BACKEND_CAPABILITY_REASON_SYNCHRONIZATION_FAILED);
+    return rc;
+}
+
 static int cuda_raw_release(yvex_backend *backend,
                             yvex_backend_operation_variant variant,
                             CUdeviceptr pointer,

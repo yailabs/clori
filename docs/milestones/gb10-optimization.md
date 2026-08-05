@@ -160,6 +160,16 @@ the portable audit/reference oracle. The internal source ABI rebuilds
 atomically; no persisted, wire, public C, execution-profile, or state-layout
 schema changes.
 
+Each CUDA backend/session now owns one non-blocking ordinary-execution stream;
+graph capture and graph-parameter refresh temporarily select their graph-owned
+stream. Eager attention and width-N MoE completion therefore wait only for the
+session stream and report stream synchronizations with zero device-wide
+synchronizations on the admitted Driver. A Driver without a complete stream
+lifecycle retains the portable context-wide fallback and reports that wider
+barrier. Creation, completion and checked cleanup are fail-closed and
+independently fault-tested. This removes their context-wide barriers but does
+not yet remove their final per-layer stream synchronization.
+
 Target-only production stochastic sampling now keeps the complete vocabulary
 row on CUDA. Runtime stages exactly one PCG transition, the backend applies the
 sealed temperature/top-k/min-p/typical-p/top-p order and categorical draw, and

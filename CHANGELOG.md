@@ -108,6 +108,10 @@ change. Git history preserves implementation chronology.
 - Production attention graph replay no longer resolves a CUDA timing event in
   every layer. Mandatory completion synchronization remains fail-closed;
   audit and forensic evidence retain explicit per-layer device timing.
+- CUDA backends now own one non-blocking execution stream per session. Eager
+  attention and width-N MoE completion synchronize that stream instead of the
+  complete CUDA context, while legacy Driver configurations retain an
+  explicitly accounted context-wide fallback.
 - Target-only CUDA generation now selects admitted full attention graphs through
   the existing compiled-profile contract; CPU and DSpark retain explicit eager
   reference execution, and compatible shape changes preserve cached graph

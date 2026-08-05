@@ -129,7 +129,6 @@ static int attn_graph_mode(const attn_run *run) {
     return run->state->attention_graph_configured &&
            run->state->attention_mode != YVEX_BACKEND_CUDA_ATTENTION_EAGER;
 }
-
 static int attn_run_fail(attn_run *run, yvex_backend_attention_failure_code code,
                                    const char *stage, unsigned long long expected, unsigned long long actual,
                                    yvex_status status, const char *message) {
@@ -142,13 +141,11 @@ static int attn_account_d2d(attn_run *run, size_t bytes, const char *stage) {
                          ULLONG_MAX, bytes, YVEX_ERR_BOUNDS,
                          "CUDA attention D2D accounting overflowed");
 }
-
 static int attn_cancel(attn_run *run, const char *stage, int device_work_pending) {
     return run->ops->cancel(
         run->backend, run->job, stage, device_work_pending,
         run->failure, run->err);
 }
-
 static int attn_transfer_add(attn_run *run, CUdeviceptr *device, void *output,
                                        unsigned long long output_capacity, unsigned long long capacity,
                                        unsigned long long *used, size_t width, const char *stage) {
@@ -1725,7 +1722,7 @@ static int attn_numerical_execute(attn_run *run) {
 static int attn_synchronize(attn_run *run) {
     unsigned long long expected_topk, output_elements, token;
     size_t index;
-    int rc = YVEX_OK;
+    int device_wide = 0, rc = YVEX_OK;
     if (run->job->device_output &&
         !yvex_core_u64_mul(run->job->token_count, run->job->residual_expanded_width,
                            &output_elements))
@@ -1748,14 +1745,6 @@ static int attn_synchronize(attn_run *run) {
                 "CUDA attention device output accounting overflowed");
         rc = attn_account_d2d(run, bytes, "cuda.deepseek_attention.copy.device-output");
     }
-    if (rc == YVEX_OK && !attn_graph_mode(run))
-        rc = yvex_cuda_synchronize(run->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED,
-            "cuda.deepseek_attention.synchronize", run->err);
-    if (rc == YVEX_OK && !attn_graph_mode(run)) {
-        run->stream_synchronizations += (unsigned long long)(
-            run->job->evidence_level != 0u && run->state->timing_ready);
-        run->device_synchronizations++;
-    }
     if (rc == YVEX_OK && run->job->retain_prefix_checkpoints) {
         run->rolling[ROLL_MAIN].after_kv = run->phase_main_kv +
             run->rolling[ROLL_MAIN].extent * sizeof(float);
@@ -1767,6 +1756,17 @@ static int attn_synchronize(attn_run *run) {
             run->rolling[ROLL_INDEX].extent * sizeof(float);
     }
     if (rc == YVEX_OK) rc = attn_downloads_enqueue(run);
+    if (rc == YVEX_OK)
+        rc = yvex_cuda_launch_synchronize(
+            run->backend, YVEX_BACKEND_VARIANT_ATTENTION_ENCODED, &device_wide,
+            "cuda.deepseek_attention.synchronize", run->err);
+    if (rc == YVEX_OK) {
+        run->stream_synchronizations +=
+            (unsigned long long)(!attn_graph_mode(run) &&
+                                 run->job->evidence_level != 0u && run->state->timing_ready) +
+            (unsigned long long)!device_wide;
+        run->device_synchronizations += (unsigned long long)device_wide;
+    }
     if (rc != YVEX_OK)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_SYNCHRONIZE,

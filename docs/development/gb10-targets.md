@@ -89,9 +89,12 @@ quality or release qualification.
 ## Next-owner obligations
 
 The GB10 optimization owner must finish the admitted correctness-first width-N
-MoE path by removing its final per-layer synchronization and selecting
-GB10-specific expert layouts/kernels from causal evidence. The token-local path
-remains only as a portable audit/reference oracle. Target-only production now
+MoE path by removing its final per-layer stream synchronization and selecting
+GB10-specific expert layouts/kernels from causal evidence. Its admitted
+completion barrier is already session-stream scoped rather than context-wide;
+the portable Driver fallback reports any context-wide synchronization
+explicitly. The token-local path remains only as a portable audit/reference
+oracle. Target-only production now
 selects stochastic tokens from resident CUDA logits with bounded result
 transfer; audit/forensic and stochastic DSpark still own explicit host sampling
 references. Production greedy DSpark verification now retains its width-N
