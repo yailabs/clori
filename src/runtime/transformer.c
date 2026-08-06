@@ -252,7 +252,6 @@ static int transformer_runtime_binding_project(
         .qtype = binding->qtype};
     return YVEX_OK;
 }
-/* Assemble typed family/runtime facts for the family-neutral graph plan; graph owns identity. */
 static int transformer_runtime_plan_facts(
     const yvex_runtime_model_view *view, yvex_tensor_scope scope,
     yvex_transformer_plan_facts *facts, yvex_error *err)
@@ -1202,7 +1201,7 @@ static int transformer_prepare(yvex_runtime_transformer_context *context,
     return rc;
 }
 static int transformer_core_features_execute(
-    yvex_runtime_transformer_context *context, unsigned long long token_start,
+    yvex_runtime_transformer_context *context, const unsigned int *token_ids, unsigned long long token_start,
     const float *features, const yvex_device_tensor *device_features,
     const char *feature_identity, unsigned long long token_count,
     yvex_attention_transaction_disposition disposition,
@@ -1223,7 +1222,7 @@ static int transformer_core_features_execute(
     unsigned long long value_count;
     int rc;
     if (result) memset(result, 0, sizeof(*result));
-    if (!context || !plan || plan->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
+    if (!context || !token_ids || !plan || plan->tensor_scope != YVEX_TENSOR_SCOPE_DRAFT ||
         (disposition != YVEX_ATTENTION_TRANSACTION_COMMIT &&
          disposition != YVEX_ATTENTION_TRANSACTION_STAGE) ||
         (!features && !device_features) || !token_count || !result ||
@@ -1277,7 +1276,7 @@ static int transformer_core_features_execute(
         .probe = YVEX_ATTENTION_PROBE_UNSPECIFIED, .scope = YVEX_ATTENTION_PROBE_SCOPE_FULL,
         .operation_scope = YVEX_ATTENTION_OPERATION_CORE, .token_count = token_count,
         .token_position = token_start, .select_position = 1,
-        .input_identity = result->input_digest,
+        .input_identity = result->input_digest, .token_ids = token_ids,
         .activation_view = features ? transformer_activation_view : NULL,
         .device_view = device_features ? transformer_device_view : NULL,
         .activation_context = &activation, .cancel_requested = context->options.cancel_requested,
@@ -1351,13 +1350,13 @@ static int transformer_core_features_execute(
     return rc;
 }
 int yvex_runtime_transformer_stage_core_features(
-    yvex_runtime_transformer_context *context, unsigned long long token_start,
+    yvex_runtime_transformer_context *context, const unsigned int *token_ids, unsigned long long token_start,
     const float *features, const yvex_device_tensor *device_features,
     const char *feature_identity, unsigned long long token_count,
     yvex_runtime_transformer_core_commit_result *result, yvex_error *err)
 {
     return transformer_core_features_execute(
-        context, token_start, features, device_features, feature_identity, token_count,
+        context, token_ids, token_start, features, device_features, feature_identity, token_count,
         YVEX_ATTENTION_TRANSACTION_STAGE, result, err);
 }
 /* Allocate and seal one transformer context over a model/session pair with complete rollback. */
@@ -1750,6 +1749,7 @@ int yvex_runtime_transformer_execute(yvex_runtime_transformer_context *context,
         execution.token_position = chunk.token_start;
         execution.select_position = 1;
         execution.input_identity = input_summary->input_identity;
+        execution.token_ids = tokens + offset;
         execution.activation_view = transformer_activation_view;
         execution.device_view = request->backend == YVEX_BACKEND_KIND_CUDA
                                     ? transformer_device_view : NULL;

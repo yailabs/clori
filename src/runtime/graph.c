@@ -732,16 +732,13 @@ typedef struct {
     yvex_runtime_state_residency *residency;
     yvex_attention_operation_scope operation_scope;
     yvex_sha256 output_hash;
-    unsigned long long output_values;
-    unsigned long long active_layer_ordinal;
-    int hash_output;
-    int layer_active;
+    unsigned long long output_values, active_layer_ordinal;
+    int hash_output, layer_active;
     char last_delta_identity[YVEX_SHA256_HEX_CAP];
 } runtime_attention_state_bridge;
 static int runtime_attention_state_begin(
     void *context, unsigned long long layer_ordinal, const yvex_attention_layer_plan *layer,
-    const yvex_attention_history_view *initial_history,
-    unsigned long long token_position, unsigned long long token_count,
+    const yvex_attention_history_view *initial_history, unsigned long long token_position, unsigned long long count,
     const yvex_attention_cancellation *cancellation, const yvex_attention_history_view **history,
     yvex_attention_failure *failure, yvex_error *err) {
     runtime_attention_state_bridge *bridge = (runtime_attention_state_bridge *)context;
@@ -751,7 +748,10 @@ static int runtime_attention_state_begin(
                               "valid state bridge and bounded token range are required");
     rc = bridge->provider->begin(
         bridge->provider->context, layer_ordinal, layer, initial_history,
-        token_position, token_count, cancellation, history, failure, err);
+        token_position, count, cancellation, history, failure, err);
+    if (rc == YVEX_OK && bridge->residency)
+        rc = yvex_runtime_state_residency_transition(
+            bridge->residency, bridge->provider, NULL, layer_ordinal, YVEX_RUNTIME_STATE_BEGIN, err);
     if (rc == YVEX_OK) {
         bridge->active_layer_ordinal = layer_ordinal;
         bridge->layer_active = 1;
@@ -794,9 +794,9 @@ static int runtime_attention_state_stage(
     rc = bridge->provider->stage(bridge->provider->context, publication, cancellation,
         state_delta_identity, failure, err);
     if (rc == YVEX_OK && bridge->residency)
-        rc = yvex_runtime_state_residency_stage(
-            bridge->residency, bridge->provider,
-            bridge->active_layer_ordinal, err);
+        rc = yvex_runtime_state_residency_transition(
+            bridge->residency, bridge->provider, publication, bridge->active_layer_ordinal,
+            YVEX_RUNTIME_STATE_STAGE, err);
     if (rc == YVEX_OK && state_delta_identity)
         yvex_runtime_identity_copy(bridge->last_delta_identity, state_delta_identity);
     if (rc == YVEX_OK) bridge->layer_active = 0;

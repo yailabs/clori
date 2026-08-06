@@ -1453,7 +1453,7 @@ static void speculation_rng_cancel(void *opaque) {
     speculation_pending_clear(context);
 }
 static int speculation_stage_draft_features(
-    yvex_runtime_speculation_context *context, unsigned long long token_start,
+    yvex_runtime_speculation_context *context, const unsigned int *token_ids, unsigned long long token_start,
     unsigned long long token_count, yvex_runtime_transformer_core_commit_result *result,
     yvex_error *err)
 {
@@ -1464,7 +1464,7 @@ static int speculation_stage_draft_features(
         !context->device_feature_normalized->is_written)
         return speculation_refuse(err, YVEX_ERR_STATE, "DSpark normalized device features are unpublished");
     rc = yvex_runtime_transformer_stage_core_features(
-        context->draft_transformer, token_start,
+        context->draft_transformer, token_ids, token_start,
         context->device_draft_selection ? NULL : context->feature_projected,
         resident, context->projected_feature_identity, token_count, result, err);
     if (rc == YVEX_OK && resident && !result->device_input_consumed)
@@ -1492,7 +1492,7 @@ static int speculation_stage_tokens(
             token_count, target, err);
     if (rc == YVEX_OK)
         rc = speculation_stage_draft_features(
-            context, token_start, token_count, draft, err);
+            context, token_ids, token_start, token_count, draft, err);
     return rc;
 }
 int yvex_runtime_speculation_prefill(
@@ -1842,7 +1842,7 @@ int yvex_runtime_speculation_commit_prefix(
             committed_count, &target, err);
     if (rc == YVEX_OK)
         rc = speculation_stage_draft_features(
-            context, context->pending_position, committed_count, &draft, err);
+            context, context->pending_tokens, context->pending_position, committed_count, &draft, err);
     if (rc == YVEX_OK) {
         result->position_after = context->pending_position + committed_count;
         result->target_result = target;

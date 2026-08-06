@@ -178,6 +178,24 @@ changing mode or upstream execution identity invalidates the old registry.
 This lets repeated target decode reuse one executable while prefill and other
 exact shapes remain separately keyed.
 
+CUDA session residency owns two device banks for each admitted attention-state
+layer and tracks which bank is committed. Normal production attention stages
+the complete non-prefix candidate directly from its phase arrays into the
+other bank with ordered D2D copies. Commit flips the bank authority; abort
+retains the committed bank, and the next non-extension begin clones it before
+reuse. The graph provider still materializes the bounded host candidate as the
+semantic oracle, but residency does not upload that duplicate state again.
+Audit/forensic evidence and prefix-addressable speculative selection retain
+their explicit host materialization and H2D path because they consume a
+selected checkpoint rather than the final phase state. Counters distinguish
+initial/admitted uploads, device staging, and bank cloning.
+
+Token-backed publications advance the logical state identity once per token
+and position. Target-only execution, multi-row verification and accepted-prefix
+promotion therefore name the same committed state when they publish the same
+token sequence. Canonical synthetic probes, which have no token input, retain
+their sealed execution identity instead.
+
 An ordinary execution unit follows:
 
 ```text
@@ -282,11 +300,13 @@ therefore cannot report a future zero for DSpark prefill or turn an unmeasured
 operation into a complete roofline lower bound.
 
 Prefix selection also snapshots state-residency counters around its serialized
-mutation. Promotion therefore reports exact H2D and one synchronization per
-successful CUDA state upload, with zero D2H, D2D and kernel launches. Its
-state-copy and temporary bytes remain unavailable until their owners can report
-compulsory traffic rather than allocation capacity. Repeated occupancy is
-aggregated as a checked work-unit-weighted mean, never as an additive counter.
+mutation. Prefix-addressable promotion therefore reports exact H2D and one
+synchronization per selected-checkpoint upload, with zero D2H, D2D and kernel
+launches. Ordinary non-prefix production separately records exact D2D bytes for
+phase-to-candidate staging and committed-to-candidate bank cloning. Temporary
+bytes remain unavailable until their owners can report compulsory traffic
+rather than allocation capacity. Repeated occupancy is aggregated as a checked
+work-unit-weighted mean, never as an additive counter.
 
 ## Memory and residency
 

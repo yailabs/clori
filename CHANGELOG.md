@@ -84,6 +84,14 @@ change. Git history preserves implementation chronology.
   local and compressed history. Each source-ordered dot product is consumed
   once, with prior value lanes renormalized when the running maximum changes;
   the complete CPU/CUDA oracle remains inside its admitted numerical contract.
+- Normal production CUDA attention now stages completed non-prefix sequence
+  state directly into a session-owned candidate bank through ordered D2D
+  copies. Commit flips the committed bank, while abort and later reuse clone
+  the exact committed state. The retained host oracle no longer causes a
+  duplicate state upload; prefix-addressable speculation and audit/forensic
+  paths keep their explicit host materialization. Logical state identity is
+  token- and position-derived, independent of whether the same prefix arrived
+  through target-only execution, verification or accepted-prefix promotion.
 - Short CUDA qtype rows now form geometry-selected two-, four- or eight-lane
   groups across Q8_0, Q2_K, IQ2_XXS and MXFP4 activation dots. Only integer
   terms are redistributed; every encoded block is reconstructed before the

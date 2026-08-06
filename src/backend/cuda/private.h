@@ -333,6 +333,9 @@ int yvex_cuda_work_allocate(yvex_cuda_work *work,
                             const char *stage,
                             yvex_cuda_work_failure *failure,
                             yvex_error *err);
+int yvex_cuda_work_initialize(yvex_cuda_work *work, CUdeviceptr target,
+                              size_t bytes, const void *source, int zero,
+                              const char *stage, yvex_error *err);
 int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err);
 void yvex_cuda_driver_unload(yvex_cuda_driver *driver);
 int yvex_cuda_status(const yvex_cuda_driver *driver,
@@ -408,6 +411,13 @@ CUdeviceptr yvex_cuda_activation_pointer(
 int yvex_cuda_activation_copy(yvex_backend *backend, CUdeviceptr source,
     yvex_device_tensor *output, unsigned long long elements,
     const char *stage, yvex_error *err);
+typedef struct {
+    CUdeviceptr local, local_positions, compressed, compressed_positions;
+    CUdeviceptr indexer, indexer_positions, main_kv, main_score, index_kv, index_score;
+    unsigned long long initial_local, initial_compressed, initial_indexer;
+    unsigned long long emitted_compressed, emitted_indexer, local_capacity;
+    unsigned long long main_extent, index_extent;
+} yvex_cuda_attention_state_sources;
 int yvex_cuda_qtype_matvec_geometry(
     unsigned long long rows, unsigned long long row_width,
     unsigned long long input_rows, unsigned int qtype,
@@ -476,6 +486,9 @@ typedef struct {
     int (*activation)(yvex_cuda_work *, CUdeviceptr, unsigned long long, unsigned long long,
                       const yvex_backend_attention_activation *, CUdeviceptr, const char *,
                       yvex_backend_attention_failure *, yvex_error *);
+    int (*state_stage)(yvex_backend *, const yvex_backend_attention_job *,
+                       const yvex_cuda_attention_state_sources *, size_t *, int *,
+                       yvex_error *);
 } yvex_cuda_attention_operations;
 const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void);
 int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err);

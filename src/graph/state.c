@@ -1,8 +1,6 @@
 /*
- * Retain bounded typed persistent state across phase-neutral attention executions.
- *
- * Storage follows sealed component recipes and committed history is immutable in a transaction.
- * Runtime retains an opaque provider handle and supplies optional backend residency.
+ * Retain recipe-bound persistent state with transaction-private candidate banks.
+ * Runtime supplies optional backend residency without changing logical publication.
  */
 #include <yvex/internal/graph_state.h>
 #include <yvex/internal/candidate.h>
@@ -206,7 +204,6 @@ static int state_bank_initial_identity(attention_state_bank *bank,
                                        const char *plan_identity);
 static void state_bank_bind(attention_state_bank *bank,
                             const attention_layer_state *layer);
-/* Reset preserves allocation geometry so session reset cannot fragment the state arena. */
 static int state_bank_reset(attention_state_bank *bank,
                             const attention_layer_state *layer,
                             const char *plan_identity) {
@@ -561,19 +558,28 @@ static int state_bank_advance_identity(
     attention_state_bank *bank, const attention_layer_state *layer,
     const char *plan_identity, const yvex_attention_publication *publication)
 {
+    const int token_backed = publication->token_ids != NULL;
+    const unsigned long long rows = token_backed ? publication->token_count : 1ull;
     yvex_sha256 hash;
     unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
-    yvex_sha256_init(&hash);
-    if (!yvex_sha256_hex_valid(publication->execution_identity) ||
-        !yvex_sha256_update_text(&hash, "yvex.graph.attention.state.v4") ||
-        !yvex_sha256_update_text(&hash, plan_identity) ||
-        !yvex_sha256_update_text(&hash, layer->recipe.identity) ||
-        !yvex_sha256_update_text(&hash, bank->state_identity) ||
-        !yvex_sha256_update_text(&hash, publication->execution_identity) ||
-        !yvex_sha256_update_u64(&hash, bank->view.token_count) ||
-        !yvex_sha256_final(&hash, digest))
-        return 0;
-    yvex_sha256_hex(digest, bank->state_identity);
+    unsigned long long row;
+    if (!token_backed && !yvex_sha256_hex_valid(publication->execution_identity)) return 0;
+    for (row = 0ull; row < rows; ++row) {
+        yvex_sha256_init(&hash);
+        if (!yvex_sha256_update_text(
+                &hash, token_backed ? "yvex.graph.attention.state.v5"
+                                    : "yvex.graph.attention.state.v4") ||
+            !yvex_sha256_update_text(&hash, plan_identity) ||
+            !yvex_sha256_update_text(&hash, layer->recipe.identity) ||
+            !yvex_sha256_update_text(&hash, bank->state_identity) ||
+            !(token_backed
+                  ? yvex_sha256_update_u64(&hash, publication->token_position + row) &&
+                        yvex_sha256_update_u64(&hash, publication->token_ids[row])
+                  : yvex_sha256_update_text(&hash, publication->execution_identity) &&
+                        yvex_sha256_update_u64(&hash, bank->view.token_count)) ||
+            !yvex_sha256_final(&hash, digest)) return 0;
+        yvex_sha256_hex(digest, bank->state_identity);
+    }
     return 1;
 }
 /* Layout identity covers geometry but never mutable history values or addresses. */
@@ -1267,11 +1273,7 @@ static void state_candidate_clear(attention_state_transaction *transaction) {
     transaction->candidate_active = 0;
     memset(&transaction->delta, 0, sizeof(transaction->delta));
 }
-/*
- * Start one allocation-free layer candidate inside a provider-wide batch.
- *
- * The batch remains private until one atomic publish after complete graph execution.
- */
+/* The provider-wide batch remains private until complete graph publication. */
 static int state_begin(
     attention_state *state, unsigned long long layer_index,
     unsigned long long token_position, unsigned long long token_count,
@@ -1396,7 +1398,6 @@ static int state_begin(
 done:
     return state_transaction_result(state, rc, failure, err);
 }
-/* Resolve a successful preflight without another fallible operation. */
 static void state_publish_prepared(attention_state *state) {
     attention_state_transaction *transaction;
     unsigned long long index;
@@ -1592,8 +1593,7 @@ failed:
 done:
     return state_transaction_result(state, rc, failure, err);
 }
-/* Validate publication while retaining the provider lock, so a session can
- * preflight every participating state owner before any bank becomes visible. */
+/* Retain the lock while every participant preflights the same publication. */
 static int state_prepare_publish(
     attention_state *state,
     yvex_attention_failure *failure, yvex_error *err) {

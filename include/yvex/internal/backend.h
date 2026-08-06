@@ -126,11 +126,11 @@ typedef struct {
     unsigned long long tokens_executed, compressed_count, indexer_count;
     unsigned long long topk_count, valid_candidate_count;
     unsigned long long host_bytes, peak_host_bytes, device_bytes, peak_device_bytes;
-    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, d2d_bytes;
+    unsigned long long kernel_launches, h2d_bytes, d2h_bytes, d2d_bytes, device_state_staged_bytes;
     unsigned long long stream_synchronizations, device_synchronizations;
     unsigned long long device_execution_elapsed_ns, host_workspace_capacity;
     unsigned long long host_workspace_used, host_workspace_peak, host_workspace_allocation_count;
-    int host_workspace_reused;
+    int host_workspace_reused, device_state_staged;
 } yvex_backend_attention_output;
 typedef enum {
     YVEX_BACKEND_ATTENTION_FAILURE_NONE = 0,
@@ -182,6 +182,7 @@ typedef struct yvex_backend_vtable {
                        unsigned long long len, yvex_error *err);
     int (*tensor_copy)(yvex_backend *backend, yvex_device_tensor *dst,
                        const yvex_device_tensor *src, yvex_error *err);
+    int (*tensor_copy_async)(yvex_backend *, yvex_device_tensor *, const yvex_device_tensor *, yvex_error *);
     int (*sync)(yvex_backend *backend, yvex_error *err);
     int (*query_capability)(const yvex_backend *backend,
                             yvex_backend_operation_variant variant,
@@ -339,11 +340,9 @@ double yvex_backend_nth_root(double value, unsigned long long degree);
 int yvex_backend_memory_can_add(const yvex_backend *backend, unsigned long long bytes,
                                 const char *backend_name, const char *where, yvex_error *err);
 int yvex_backend_tensor_rw_validate(const char *where, const yvex_backend *backend,
-                                    const yvex_device_tensor *tensor, unsigned long long len,
-                                    yvex_error *err);
-int yvex_backend_tensor_copy_validate(const yvex_backend *backend,
-                                      const yvex_device_tensor *dst, const yvex_device_tensor *src,
-                                      const char *where, yvex_error *err);
+    const yvex_device_tensor *tensor, unsigned long long len, yvex_error *err);
+int yvex_backend_tensor_copy_validate(const yvex_backend *backend, const yvex_device_tensor *dst,
+    const yvex_device_tensor *src, const char *where, yvex_error *err);
 int yvex_backend_tensor_same_shape(const yvex_device_tensor *a, const yvex_device_tensor *b);
 typedef enum {
     YVEX_BACKEND_RESIDENT_INVALID = -1,

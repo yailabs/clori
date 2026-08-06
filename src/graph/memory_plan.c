@@ -954,6 +954,8 @@ int yvex_attention_cuda_publish(attention_cuda_context *context)
             "CUDA attention compulsory memory extent overflowed");
     context->trace.compressed_count = context->cuda_output.compressed_count;
     context->trace.indexer_count = context->cuda_output.indexer_count;
+    context->trace.device_state_staged = context->cuda_output.device_state_staged;
+    context->trace.device_state_staged_bytes = context->cuda_output.device_state_staged_bytes;
     context->trace.compressed_stride = context->trace.compressed_count
                                            ? context->layer->head_dimension : 0ull;
     context->trace.indexer_stride = context->trace.indexer_count

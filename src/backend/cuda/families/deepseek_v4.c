@@ -1,9 +1,4 @@
-/*
- * Execute admitted encoded DeepSeek attention requests through generated CUDA kernels.
- *
- * Weights stay encoded; numerical work uses generated PTX; publication follows device completion.
- * Device-complete request execution is not persistent KV or a decode loop.
- */
+/* Execute admitted encoded attention with device-complete numerical work and publication. */
 #include <yvex/internal/backend.h>
 #include "src/backend/cuda/private.h"
 #include <limits.h>
@@ -561,11 +556,7 @@ static const void *attn_upload_source(const attn_run *run, const CUdeviceptr *ta
     }
     return NULL;
 }
-/*
- * Allocate typed device values.
- *
- * Cleanup remains transaction-owned.
- */
+/* Allocate typed device values whose cleanup remains transaction-owned. */
 static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
                              unsigned long long count, size_t width,
                              const void *source, int zero, const char *stage) {
@@ -777,12 +768,7 @@ static const void *attn_allocation_source(
     };
     return (unsigned int)source < sizeof(values) / sizeof(values[0]) ? values[source] : NULL;
 }
-/*
- * Execute one interval from the immutable device-allocation catalog.
- *
- * Admitted run and a bounded catalog interval. Acquires request-lifetime device ranges through the
- * resource owner.
- */
+/* Acquire and execute one bounded interval from the immutable device-allocation catalog. */
 static int attn_allocations_execute(attn_run *run,
                                               size_t first, size_t count) {
     size_t index;
@@ -1038,11 +1024,7 @@ static int attn_allocate_base(attn_run *run) {
         run->initial_indexer_count * sizeof(unsigned long long);
     return YVEX_OK;
 }
-/*
- * Bind one token ordinal to disjoint request arenas and prior device state.
- *
- * Updates only launch parameters; all numerical dependencies remain device-resident.
- */
+/* Bind one ordinal to disjoint arenas without materializing device dependencies. */
 static void attn_phase_bind(attn_run *run, unsigned long long ordinal) {
     yvex_backend_attention_job *job = &run->request;
     unsigned long long position = run->phase_start_position + ordinal;
@@ -1699,12 +1681,8 @@ static int attn_numerical_execute(attn_run *run) {
             "cuda.deepseek_attention.graph.mode", YVEX_BACKEND_CUDA_ATTENTION_FULL,
             run->state->attention_mode, YVEX_ERR_UNSUPPORTED,
             "CUDA attention execution mode is unavailable");
-    /*
-     * Parallel draft attention needs every candidate key before any query is
-     * reduced. A monolithic per-token graph would read later candidate slots
-     * before their projections ran, so split this request at the projection
-     * boundary even when ordinary attention selected full capture.
-     */
+    /* Parallel draft queries require every candidate projection before reduction, so the
+     * projection boundary remains split even when ordinary attention selected full capture. */
     rc = attn_graph_execute(run, 0u, first_end);
     if (rc == YVEX_OK && run->job->attention_class != YVEX_BACKEND_ATTENTION_SWA)
         rc = attn_graph_execute(
@@ -1718,11 +1696,13 @@ static int attn_numerical_execute(attn_run *run) {
     return rc;
 }
 static int attn_synchronize(attn_run *run) {
+    yvex_cuda_attention_state_sources sources;
     unsigned long long expected_topk, output_elements, token;
     unsigned long long output_width;
+    size_t state_bytes = 0u;
     CUdeviceptr output_source;
     size_t index;
-    int device_wide = 0, rc = YVEX_OK;
+    int device_wide = 0, state_staged = 0, rc = YVEX_OK;
     output_width = run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
                        ? run->job->residual_expanded_width : run->job->hidden_width;
     output_source = run->job->operation_scope == YVEX_BACKEND_ATTENTION_SCOPE_ENVELOPE
@@ -1747,6 +1727,26 @@ static int attn_synchronize(attn_run *run) {
                 run->job->token_count, YVEX_ERR_BOUNDS,
                 "CUDA attention device output accounting overflowed");
         rc = attn_account_d2d(run, bytes, "cuda.deepseek_attention.copy.device-output");
+    }
+    if (rc == YVEX_OK && run->job->evidence_level == 0u &&
+        !run->job->retain_prefix_checkpoints) {
+        sources = (yvex_cuda_attention_state_sources){
+            run->phase_local, run->phase_local_positions, run->phase_compressed,
+            run->phase_compressed_positions, run->phase_indexer,
+            run->phase_indexer_positions, run->phase_main_kv, run->phase_main_score,
+            run->phase_index_kv, run->phase_index_score, run->initial_local_count,
+            run->initial_compressed_count, run->initial_indexer_count,
+            run->phase_compressed_count, run->phase_indexer_count, run->local_capacity,
+            run->rolling[ROLL_MAIN].extent, run->rolling[ROLL_INDEX].extent};
+        rc = run->ops->state_stage(
+            run->backend, run->job, &sources, &state_bytes, &state_staged, run->err);
+        if (rc == YVEX_OK && state_staged)
+            rc = attn_account_d2d(
+                run, state_bytes, "cuda.deepseek_attention.state.stage");
+        if (rc == YVEX_OK && state_staged) {
+            run->output->device_state_staged = 1;
+            run->output->device_state_staged_bytes = (unsigned long long)state_bytes;
+        }
     }
     if (rc == YVEX_OK && run->job->retain_prefix_checkpoints) {
         run->rolling[ROLL_MAIN].after_kv = run->phase_main_kv +

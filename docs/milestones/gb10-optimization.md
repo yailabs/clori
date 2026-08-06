@@ -125,9 +125,18 @@ Production CUDA attention now leaves the completed core and envelope rows in
 the caller-owned device output instead of downloading a second numerical copy
 for evidence. Its production hash binds the already sealed execution identity
 and output extent. Audit and forensic profiles still materialize and hash the
-numerical rows, so the retained CPU/CUDA oracle is unchanged. State-delta
-materialization and its layer publication barrier remain explicit debt; this
-cut does not claim device-native state publication.
+numerical rows, so the retained CPU/CUDA oracle is unchanged. Normal
+non-prefix production also stages completed attention state directly into the
+session candidate bank with ordered D2D copies; commit flips bank authority and
+abort causes an exact committed-bank clone before reuse. The bounded D2H host
+oracle remains, while its duplicate state H2D is absent. Prefix-addressable
+speculation and audit/forensic evidence retain the explicit host upload path.
+The canonical lifecycle is documented in
+[`runtime.md`](../architecture/runtime.md#persistent-state); this does not yet
+claim elimination of the retained host oracle or prefix-selection H2D. State
+identity now advances per committed token and position, so target-only,
+verification-width and prefix-promotion paths converge on one identity for the
+same token sequence without replay or a full-state host hash.
 
 Compatible width-N CUDA output rows now execute through one encoded-head
 operation. Host producers use one bounded row-batch upload; device producers
@@ -340,7 +349,7 @@ derived from vocabulary and model-authored proposal width before execution;
 undersized capacity and malformed candidates refuse before a launch. CPU and
 audit/forensic execution retain the complete-distribution oracle. This changes
 only an internal operation table and helper signature; binding v8, protocol v7,
-events v3, compiled profile v1, generation ABI v4 and the server-construction
+events v3, compiled profile v1, generation ABI v5 and the server-construction
 API remain unchanged by this optimization.
 
 Production CUDA DSpark now selects each target-authored anchor directly from
@@ -351,7 +360,7 @@ evidence-bearing profiles select through the same sampling owner over the host
 row, rather than reconstructing a second selection algorithm in speculation.
 The normal production profile refuses host-authored selection facts and records
 zero full-array host-scan bytes. This is an internal complete-rebuild ABI change
-only; binding v8, protocol v7, events v3, generation ABI v4 and the
+only; binding v8, protocol v7, events v3, generation ABI v5 and the
 server-construction API remain unchanged by this optimization.
 
 Source-selected target features now collapse their mHC residual streams on

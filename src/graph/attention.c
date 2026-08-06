@@ -1216,6 +1216,7 @@ static int attention_publication_identity(
         {NULL, publication->token_count},
         {NULL, context->request->candidate_block_visible},
         {NULL, context->request->retain_prefix_checkpoints}};
+    publication->token_ids = context->request->token_ids;
     return attention_probe_identity(
         "yvex.graph.attention.publication.v1", fields,
         sizeof(fields) / sizeof(fields[0]), publication->execution_identity);
@@ -1773,6 +1774,9 @@ int yvex_attention_execute(
           (request->backend != YVEX_BACKEND_KIND_CUDA ||
            request->compare_backends ||
            request->evidence_level == YVEX_ATTENTION_EVIDENCE_FULL))) ||
+        (request->state_provider &&
+         (request->activation_view || request->device_view) &&
+         !request->token_ids) ||
         (request->backend != YVEX_BACKEND_KIND_CPU &&
          request->backend != YVEX_BACKEND_KIND_CUDA) ||
         (request->scope != YVEX_ATTENTION_PROBE_SCOPE_QUICK &&
@@ -1910,7 +1914,8 @@ int yvex_attention_probe_execute(
     yvex_attention_probe_result *result,
     yvex_attention_failure *failure, yvex_error *err)
 {
-    if (!request || request->activation_view || request->input_identity)
+    if (!request || request->activation_view || request->input_identity ||
+        request->token_ids)
         return attention_probe_fail(
             err, YVEX_ERR_INVALID_ARG,
             "canonical probe cannot borrow an activation input");

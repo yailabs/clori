@@ -300,7 +300,7 @@ int yvex_runtime_transformer_cuda_facts_add(
     unsigned long long h2d_bytes, unsigned long long download_count,
     unsigned long long device_synchronizations, yvex_error *err);
 int yvex_runtime_transformer_stage_core_features(
-    yvex_runtime_transformer_context *context, unsigned long long token_start,
+    yvex_runtime_transformer_context *context, const unsigned int *token_ids, unsigned long long token_start,
     const float *features, const yvex_device_tensor *device_features,
     const char *feature_identity, unsigned long long token_count,
     yvex_runtime_transformer_core_commit_result *result, yvex_error *err);
