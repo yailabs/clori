@@ -439,4 +439,27 @@ int yvex_attention_fp8_fake_quant_block(const float *input, unsigned long long c
 int yvex_attention_fp4_fake_quant_block(const float *input, unsigned long long count, float *dequantized,
     unsigned char *codes, unsigned char *scale_code, yvex_attention_failure *failure, yvex_error *err);
 
+typedef struct {
+    unsigned long long batch, input_channels, output_channels;
+    unsigned long long input_length, kernel_size, stride, dilation;
+    unsigned long long padding, output_padding;
+    int transposed;
+} yvex_graph_conv1d_geometry;
+
+int yvex_graph_conv1d_output_length(const yvex_graph_conv1d_geometry *geometry,
+                                    unsigned long long *output_length, yvex_error *err);
+int yvex_graph_conv1d_f32(const yvex_graph_conv1d_geometry *geometry,
+                          const float *input, unsigned long long input_count,
+                          const float *weight, unsigned long long weight_count,
+                          const float *bias, unsigned long long bias_count,
+                          const float *gain, unsigned long long gain_count,
+                          float *output, unsigned long long output_count,
+                          yvex_error *err);
+int yvex_graph_alias_snake_f32(const float *input, unsigned long long batch,
+                               unsigned long long channels, unsigned long long length,
+                               const float *alpha_log, const float *beta_log,
+                               const float up_filter[12], const float down_filter[12],
+                               float *output, float *scratch,
+                               unsigned long long scratch_count, yvex_error *err);
+
 #endif

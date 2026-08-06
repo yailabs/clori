@@ -2,6 +2,8 @@
 #include "tests/test.h"
 
 #include <yvex/internal/families/minimax_h3.h>
+
+#include "src/graph/private.h"
 #include <yvex/internal/compilation.h>
 #include <yvex/internal/model_target.h>
 
@@ -373,6 +375,107 @@ static int test_operator_truth(void)
     return 0;
 }
 
+static int test_audio_numeric_primitives(void)
+{
+    const float input[] = {1.0f, 2.0f, 3.0f};
+    const float weight[] = {1.0f, 2.0f, 1.0f};
+    const float gain[] = {2.449489742783178f};
+    const float transpose_input[] = {1.0f, 2.0f};
+    float output[3];
+    float alias_input[] = {1.0f, 3.0f};
+    float alias_output[2];
+    float scratch[4];
+    float alpha[] = {0.0f};
+    float beta[] = {0.0f};
+    float up_filter[12] = {0};
+    float down_filter[12] = {0};
+    yvex_graph_conv1d_geometry geometry = {1ull, 1ull, 1ull, 3ull, 3ull,
+                                           1ull, 1ull, 1ull, 0ull, 0};
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(yvex_graph_conv1d_f32(
+                         &geometry, input, 3ull, weight, 3ull, NULL, 0ull,
+                         gain, 1ull, output, 3ull, &err) == YVEX_OK,
+                     "weight-normalized Conv1D executes");
+    YVEX_TEST_ASSERT(fabsf(output[0] - 4.0f) < 1.0e-5f &&
+                         fabsf(output[1] - 8.0f) < 1.0e-5f &&
+                         fabsf(output[2] - 8.0f) < 1.0e-5f,
+                     "Conv1D matches the independent hand calculation");
+
+    geometry.input_length = 2ull;
+    geometry.stride = 2ull;
+    geometry.transposed = 1;
+    YVEX_TEST_ASSERT(yvex_graph_conv1d_f32(
+                         &geometry, transpose_input, 2ull, weight, 3ull,
+                         NULL, 0ull, gain, 1ull, output, 3ull, &err) == YVEX_OK,
+                     "weight-normalized transposed Conv1D executes");
+    YVEX_TEST_ASSERT(fabsf(output[0] - 2.0f) < 1.0e-5f &&
+                         fabsf(output[1] - 3.0f) < 1.0e-5f &&
+                         fabsf(output[2] - 4.0f) < 1.0e-5f,
+                     "transposed Conv1D matches the independent hand calculation");
+    geometry.output_padding = geometry.stride;
+    YVEX_TEST_ASSERT(yvex_graph_conv1d_f32(
+                         &geometry, transpose_input, 2ull, weight, 3ull,
+                         NULL, 0ull, gain, 1ull, output, 3ull, &err) == YVEX_ERR_INVALID_ARG,
+                     "transposed Conv1D refuses output padding outside its stride");
+    geometry.output_padding = 0ull;
+
+    up_filter[5] = 0.5f;
+    down_filter[5] = 1.0f;
+    YVEX_TEST_ASSERT(yvex_graph_alias_snake_f32(
+                         alias_input, 1ull, 1ull, 2ull, alpha, beta,
+                         up_filter, down_filter, alias_output, scratch, 4ull,
+                         &err) == YVEX_OK,
+                     "alias-free SnakeBeta executes with bounded scratch");
+    YVEX_TEST_ASSERT(fabsf(alias_output[0] - (1.0f + sinf(1.0f) * sinf(1.0f))) < 1.0e-5f &&
+                         fabsf(alias_output[1] - (3.0f + sinf(3.0f) * sinf(3.0f))) < 1.0e-5f,
+                     "alias-free activation matches the independent filter calculation");
+    YVEX_TEST_ASSERT(yvex_graph_alias_snake_f32(
+                         alias_input, 1ull, 1ull, 2ull, alpha, beta,
+                         up_filter, down_filter, alias_output, scratch, 3ull,
+                         &err) == YVEX_ERR_INVALID_ARG,
+                     "alias-free activation refuses insufficient scratch");
+    down_filter[5] = INFINITY;
+    YVEX_TEST_ASSERT(yvex_graph_alias_snake_f32(
+                         alias_input, 1ull, 1ull, 2ull, alpha, beta,
+                         up_filter, down_filter, alias_output, scratch, 4ull,
+                         &err) == YVEX_ERR_FORMAT,
+                     "alias-free activation refuses a non-finite downsampling result");
+    return 0;
+}
+
+static int test_audio_execution_refusals(void)
+{
+    float latent[32] = {0};
+    float output[800];
+    yvex_minimax_h3_audio_decode_options options;
+    yvex_minimax_h3_audio_decode_result result;
+    yvex_minimax_h3_audio_execution_failure failure;
+    yvex_error err;
+
+    memset(output, 0x5a, sizeof(output));
+    memset(&options, 0, sizeof(options));
+    options.latent = latent;
+    options.batch = 1ull;
+    options.latent_channels = 31ull;
+    options.latent_steps = 1ull;
+    options.output = output;
+    options.output_capacity = 800ull;
+    options.max_workspace_bytes = 1024ull;
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->audio_vae_decode_cpu(
+                         NULL, &options, &result, &failure, &err) == YVEX_ERR_INVALID_ARG &&
+                         failure.code == YVEX_MINIMAX_H3_AUDIO_EXECUTION_INVALID_ARGUMENT,
+                     "Audio VAE decode refuses invented latent geometry");
+    options.latent_channels = 32ull;
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->audio_vae_decode_cpu(
+                         NULL, &options, &result, &failure, &err) == YVEX_ERR_STATE &&
+                         failure.code == YVEX_MINIMAX_H3_AUDIO_EXECUTION_LIFECYCLE,
+                     "Audio VAE decode refuses execution without committed materialization");
+    YVEX_TEST_ASSERT(((unsigned char *)output)[0] == 0x5a,
+                     "refused Audio VAE decode does not publish output");
+    return 0;
+}
+
 int yvex_test_minimax_h3(void)
 {
     if (test_components() != 0) return 1;
@@ -380,5 +483,7 @@ int yvex_test_minimax_h3(void)
     if (test_roles() != 0) return 1;
     if (test_component_ir() != 0) return 1;
     if (test_operator_truth() != 0) return 1;
+    if (test_audio_numeric_primitives() != 0) return 1;
+    if (test_audio_execution_refusals() != 0) return 1;
     return 0;
 }

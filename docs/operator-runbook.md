@@ -491,3 +491,23 @@ tokenizer conformance, artifact inspection, and physical-compilation
 diagnostics use the advanced `inspect`, `execute`, `profile`, and `system`
 surfaces in the finite offline lane. Discover them with
 `yvex help --advanced`; they are not part of the normal hosted startup path.
+
+The admitted MiniMax-H3 Audio VAE component is reachable through that lane:
+
+```sh
+./yvex execute component audio-vae \
+  --target minimax-h3-fl2va \
+  --artifact /srv/yvex/artifacts/minimax-h3/audio_vae.gguf \
+  --backend cpu \
+  --input-file /srv/yvex/evidence/audio-latent.f32 \
+  --batch 1 \
+  --latent-steps 1 \
+  --out /srv/yvex/evidence/audio-samples.f32
+```
+
+The input is contiguous F32 `[batch,32,latent_steps]`; the output is contiguous
+mono F32 `[batch,800*latent_steps]` at the source-declared 32 kHz rate. The
+command authenticates the exact component artifact, bounds workspace, executes
+the native CPU decoder, and publishes the output without replacing an existing
+file. Raw component samples are numerical evidence, not synchronized media or
+an admitted MiniMax generation path.

@@ -19,6 +19,7 @@
 #include <yvex/gguf.h>
 #include <yvex/core.h>
 #include <yvex/internal/core.h>
+#include <yvex/internal/graph.h>
 #include <yvex/internal/source.h>
 #include <yvex/registry.h>
 #include <yvex/source.h>
@@ -34,6 +35,16 @@ int yvex_moe_command(int arg_count, char **args);
 void yvex_moe_help(FILE *fp);
 int yvex_tensor_collection_command(int arg_count, char **args);
 void yvex_tensor_collection_help(FILE *fp);
+
+typedef struct {
+    const char *status, *target, *component, *backend, *output_path;
+    char artifact_identity[65], execution_identity[65];
+    unsigned long long batch, samples_per_channel, tensor_reads;
+    unsigned long long payload_bytes_read, peak_workspace_bytes, published_bytes;
+    int published;
+} yvex_cli_minimax_audio_result;
+int yvex_minimax_audio_render(FILE *fp, yvex_graph_report_mode mode,
+                              const yvex_cli_minimax_audio_result *result);
 
 int parse_models_download_options_from(int arg_count,
                                        char **args,

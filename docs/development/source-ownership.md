@@ -218,7 +218,7 @@ forbidden.
 | --- | --- |
 | `src/graph/plan.c` | runtime descriptor roles, immutable graph plan and backend admission facts |
 | `src/graph/attention.c` | generic attention protocol, identity validation and transactional state boundary |
-| `src/graph/numeric.c` | reusable attention numerical operations without family policy |
+| `src/graph/numeric.c` | reusable attention and bounded tensor numerical operations without family policy |
 | `src/graph/state.c` | immutable prior-state views, candidate deltas, and transactional attention-state lifecycle |
 | `src/graph/families/deepseek_v4.c` | DeepSeek schedule, recurrence and CPU/CUDA operation composition |
 | `src/backend/cuda/families/deepseek_v4.c` | irreducible fused CUDA lowering for the DeepSeek graph recipe; no runtime or model authority |

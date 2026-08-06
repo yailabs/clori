@@ -3,7 +3,8 @@
 Status: source acquired and verified; logical architecture, tensor roles,
 Transformation IR, and one source-faithful Audio VAE physical artifact
 admitted through native and pinned official readers with exact file identity;
-not an executable family
+source-faithful CPU Audio VAE component decode numerically conforms; not an
+executable family
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
 the complete immutable FL2VA source through its production source owner and
@@ -14,8 +15,10 @@ artifact-neutral Transformation IR schema v2. YVEX also emits one independently
 identified Audio VAE component GGUF without changing source dtype or executing
 its payload. The graph-family recipe now binds that file to the exact component,
 source snapshot, physical plan, aggregate payload, and whole-file identities
-before it can enter materialization. It does not add numerical VAE execution, a
-runtime adapter, backend operation, hosted path, or release obligation. The frozen quantitative intake evidence is the
+before it can enter materialization. The graph owner now also executes the exact
+Audio VAE decoder on a committed component materialization and has independent
+numerical conformance evidence. It does not add a family runtime, GB10 backend,
+hosted path, synchronized media path, or release obligation. The frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
 
@@ -27,8 +30,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | exact Audio VAE component artifact admitted by native and pinned official GGUF readers; whole-file and aggregate-payload identities verified |
-| Next expected boundary | source-faithful Audio VAE numerical decode with independent conformance evidence |
+| Current boundary | exact Audio VAE component artifact admitted and materialized; source-faithful CPU decode conforms to the pinned upstream oracle |
+| Next expected boundary | source-faithful Visual VAE artifact and reduced numerical decode, while the final operator media path remains open |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -54,7 +57,7 @@ or rename the branch.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; one Audio VAE component artifact emitted and physically admitted; no numerical execution |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; one Audio VAE component artifact emitted, physically admitted, materialized, and numerically decoded on CPU |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -73,8 +76,10 @@ shards totaling 144,016,376,436 file bytes and 54 metadata/license files
 totaling 34,827,744 bytes. Complete SHA-256 verification covered all
 144,051,204,180 source bytes. Production admission reconciled all 3,240 tensor
 headers, 69,235,580,593 elements, and 144,016,000,740 declared payload bytes.
-No tensor payload byte was executed. Local paths, transfer URLs, timestamps,
-and the implementation branch are absent from every semantic identity.
+No tensor payload byte was executed during source admission. The later Audio
+VAE component execution consumes only its independently admitted physical
+artifact. Local paths, transfer URLs, timestamps, and the implementation branch
+are absent from every semantic identity.
 
 ## License facts
 
@@ -274,12 +279,13 @@ publication need bounded type, shape, or lifecycle extensions.
 
 The material missing boundaries are batched memory-efficient full attention,
 arbitrary masks, MM-RoPE, patchify/unpatchify, elementwise residual/modulation,
-Conv1D/2D/3D, temporal and spatial resampling, alias-free audio operations,
+Conv2D/3D, temporal and spatial video resampling,
 AdaLN and derived-cache lifecycle, tensor-normal RNG, typed audio/video data,
 media serialization, synchronized output transactions, and composite phase
 residency. Visual/audio VAE execution and joint iterative updates are family
-compositions over those generic mechanisms. A similarly named decoder
-primitive does not establish any of these semantics.
+compositions over those generic mechanisms. Generic F32 Conv1D, transposed
+Conv1D, and alias-free SnakeBeta now have bounded CPU implementations consumed
+by the exact Audio VAE recipe; no CUDA admission follows from that evidence.
 
 ## Single-GB10 memory feasibility
 
@@ -457,20 +463,59 @@ component identity, non-identity transformation, missing source range, invalid
 dtype/shape, malformed GGUF metadata, failed native roundtrip, and incomplete
 publication all fail closed.
 
+## Audio VAE numerical component boundary
+
+The family graph recipe consumes a committed materialization of the exact
+component artifact and executes the complete 32 kHz BigVGAN decoder natively in
+C. It includes the 32-to-2,048 latent projection, weight-normalized Conv1D and
+transposed Conv1D, seven 800x aggregate upsampling stages, all 21 AMP residual
+blocks, stored anti-alias filters, log-parameterized SnakeBeta activations, the
+final projection, and the declared clamp. Weights are read per operation and
+released after use; the implementation does not retain the complete 605 MB
+component payload.
+
+The frozen external oracle input has SHA-256
+`3e6c38768994c033027be3423831469d1a6123911265e7bc144d41a4efae2b97`.
+For shape `[1,32,1]`, pinned upstream source produced 800 F32 samples with
+SHA-256 `7485f79d5abf97ca7374696d413dbb88fe5ffdac4e6b054549d0846039575f4e`.
+Two YVEX runs produced execution identity
+`a0d94960d6717785cd96ac1128b07e64fb1eb5ff8d3bb83f3fcc66a6f1c16ce3`,
+read 914 decoder tensors and 259,757,412 payload bytes, and used 58,740,736
+bytes of peak tracked workspace. Maximum absolute error was
+`3.87430191e-7` against a `1e-5` acceptance tolerance. Timing from this
+correctness run is not a component benchmark or performance claim.
+
+`production_capability_available: true` for bounded CPU Audio VAE component
+decode. `production_api_available: true` through the internal family graph ABI.
+`internal_live_runner_available: true`. `operator_command_available: true`
+through:
+
+```sh
+yvex execute component audio-vae \
+  --target minimax-h3-fl2va --artifact <AUDIO_VAE_GGUF> --backend cpu \
+  --input-file <LATENT_F32> --batch 1 --latent-steps 1 --out <OUTPUT_F32>
+```
+
+The same real artifact and oracle latent produced the identity and conformance
+result above through this command, then atomically published 3,200 bytes.
+`end_user_path_available: false`: the output is raw component F32, not an audio
+container. No runtime, CUDA, stereo publication, or audio-video capability is
+admitted by this component evidence.
+
 ## Progression and non-claims
 
 `progression_decision: proceed`
 
 `downstream_safe: true`
 
-The downstream consumer is Audio VAE materialization and numerical decode on
-`feature/minimax-h3`. There is no gate
-blocker, boundary incompleteness, evidence gap, or current external blocker in
-the component artifact admission boundary. Materialized weights, the exact
-scheduler and MM-RoPE numerical contracts, component
-execution, staged residency, synchronized media transaction, evaluation, and
-benchmark are deferred depth with explicit later consumers. They do not weaken
-the emitted component identity, and none is claimed by it.
+The downstream consumer is the source-faithful Visual VAE artifact and reduced
+numerical decode on `feature/minimax-h3`. There is no gate blocker, boundary
+incompleteness, evidence gap, or current external blocker in the Audio VAE
+component-execution boundary. The other weighted components, the exact
+scheduler and MM-RoPE numerical contracts, staged residency, synchronized
+media transaction, evaluation, and benchmark are deferred depth with explicit
+later consumers. They do not weaken the admitted Audio VAE execution identity,
+and none is claimed by it.
 License review remains an external authorization prerequisite for any use that
 requires an eligibility conclusion.
 
@@ -480,7 +525,7 @@ This implementation boundary does not prove:
 - complete composite-artifact support or Physical Execution IR;
 - GB10 backend support or simultaneous/staged runtime residency;
 - Omni-Transformer, solver, timestep, or MM-RoPE numerical correctness;
-- Visual VAE or Audio VAE execution;
+- Visual VAE execution or Audio VAE integration into the complete latent and media pipeline;
 - audio/video synchronization, playable media output, or hosted serving;
 - Diffusers, SGLang, or vLLM parity;
 - model quality, generation speed, practical 768p, or 2K generation;

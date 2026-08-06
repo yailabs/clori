@@ -9,6 +9,7 @@
 #include <yvex/artifact.h>
 #include <yvex/core.h>
 #include <yvex/internal/backend.h>
+#include <yvex/internal/families/minimax_h3.h>
 #include <yvex/internal/graph.h>
 #include <yvex/internal/model_artifact.h>
 #include <yvex/internal/model_target.h>
@@ -191,6 +192,11 @@ typedef struct {
         double temperature, top_p, min_p, typical_p;
         int active, decode, logits, sample, generate, seed_seen;
     } transformer;
+    struct {
+        const char *target, *artifact_path, *backend, *input_file, *output_file;
+        unsigned long long batch, latent_steps, maximum_host_bytes;
+        int active;
+    } component;
     int help_requested;
     int help_exit_code;
 } yvex_graph_args;
