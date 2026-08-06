@@ -187,7 +187,7 @@ static void quant_q8_reference(const float *input, float *output,
 
 static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
 {
-    enum { ROWS = 3, INPUT_ROWS = 3, WIDTH = 4096, HEAD = 173 };
+    enum { ROWS = 5, INPUT_ROWS = 3, WIDTH = 4096, HEAD = 173 };
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *resident = NULL, *input = NULL, *additive = NULL, *output = NULL;
     yvex_device_tensor *split_head = NULL, *split_tail = NULL;

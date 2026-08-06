@@ -76,6 +76,10 @@ change. Git history preserves implementation chronology.
   terms are redistributed; every encoded block is reconstructed before the
   original floating-point reduction order, preserving exact output while
   filling lanes that the row geometry would otherwise leave idle.
+- Multi-row CUDA qtype projections now group compatible input rows around the
+  same encoded matrix row and tile wider batches explicitly. Output-head and
+  verification launches therefore preserve row locality without changing the
+  existing warp arithmetic or padding logical work.
 - Target-only production stochastic sampling now filters and selects directly
   from resident CUDA logits. The host publishes the deterministic PCG advance
   only after cancellation-safe validation. Production stochastic DSpark keeps

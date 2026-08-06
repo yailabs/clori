@@ -15,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #define CUDA_ATTENTION_BLOCK 256u
-#define CUDA_QTYPE_MATVEC_ROWS 8u
 /*
  * Initialize one stable device range synchronously or on the active capture stream.
  *
@@ -439,18 +438,19 @@ static int attention_matvec(yvex_cuda_work *work,
 {
     CUdeviceptr additive = 0ull;
     int q8_path, q8_input = 0;
-    unsigned long long output_rows;
+    unsigned int matvec_grid, matvec_block;
+    q8_path = weight && !work->forensic_numeric &&
+              weight->row_width % 256ull == 0ull &&
+              yvex_cuda_q8_activation_eligible(weight->qtype);
     if (!weight || !weight->present || !device_weight || !vector || !out ||
         !rows || !input_rows || start_row > weight->row_count ||
         rows > weight->row_count - start_row ||
-        !yvex_core_u64_mul(rows, input_rows, &output_rows) ||
-        output_rows > UINT_MAX * (unsigned long long)CUDA_QTYPE_MATVEC_ROWS)
+        !yvex_cuda_qtype_matvec_geometry(rows, input_rows, &matvec_grid,
+                                         &matvec_block))
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             weight ? weight->row_count : 0ull, start_row + rows, err,
             YVEX_ERR_BOUNDS, "CUDA attention matvec geometry is invalid");
-    q8_path = !work->forensic_numeric && weight->row_width % 256ull == 0ull &&
-              yvex_cuda_q8_activation_eligible(weight->qtype);
     if (q8_path) {
         unsigned long long blocks = weight->row_width / 256ull;
         unsigned long long quantize_tasks, quantized_bytes;
@@ -486,10 +486,8 @@ static int attention_matvec(yvex_cuda_work *work,
                 &work->forensic_numeric, &additive, &out,
                 &output_bf16, &status
             };
-            unsigned int grid = (unsigned int)((output_rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
-                                               CUDA_QTYPE_MATVEC_ROWS);
             rc = attention_launch(work, work->state->qtype_matvec_function,
-                                  grid, CUDA_ATTENTION_BLOCK, 0u, params, stage,
+                                  matvec_grid, matvec_block, 0u, params, stage,
                                   failure, err);
         }
         return rc;
@@ -498,13 +496,12 @@ static int attention_matvec(yvex_cuda_work *work,
         void *params[] = {&device_weight, (void *)&weight->row_bytes,
             (void *)&weight->row_width, &start_row, &rows,
             &input_rows, (void *)&weight->qtype, &vector, &q8_input,
-            &work->forensic_numeric, &additive, &out, &output_bf16, &status
+            &work->forensic_numeric, &additive, &out,
+            &output_bf16, &status
         };
-        unsigned int grid = (unsigned int)((output_rows + CUDA_QTYPE_MATVEC_ROWS - 1ull) /
-                                           CUDA_QTYPE_MATVEC_ROWS);
         return attention_launch(
             work, work->state->qtype_matvec_function,
-            grid, CUDA_ATTENTION_BLOCK, 0u, params, stage, failure, err);
+            matvec_grid, matvec_block, 0u, params, stage, failure, err);
     }
 }
 static int attention_decode(yvex_cuda_work *work,

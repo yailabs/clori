@@ -482,6 +482,27 @@ extern "C" __global__ void yvex_q8_quantize(
         *(short *)(block + 260u + thread * 2u) = (short)sum;
     }
 }
+static __device__ int qtype_matvec_pair(
+    unsigned long long rows, unsigned long long input_rows,
+    unsigned long long *row, unsigned long long *input_row)
+{
+    unsigned int warp = threadIdx.x >> 5u;
+    unsigned int warps = blockDim.x >> 5u;
+    if (!rows || !input_rows || !warps ||
+        (input_rows <= 8ull && warps < input_rows)) return 0;
+    if (input_rows <= 8ull) {
+        unsigned int groups = warps / (unsigned int)input_rows;
+        *row = (unsigned long long)blockIdx.x * groups +
+               warp / (unsigned int)input_rows;
+        *input_row = warp % (unsigned int)input_rows;
+    } else {
+        unsigned long long tiles = (input_rows + 7ull) / 8ull;
+        *row = (unsigned long long)blockIdx.x / tiles;
+        *input_row = ((unsigned long long)blockIdx.x % tiles) * warps + warp;
+    }
+    return *row < rows && *input_row < input_rows;
+}
+
 extern "C" __global__ void yvex_qtype_matvec(
     const unsigned char *encoded,
     unsigned long long row_bytes,
@@ -499,19 +520,17 @@ extern "C" __global__ void yvex_qtype_matvec(
     int *status)
 {
     unsigned int lane = threadIdx.x & 31u;
-    unsigned int warp = threadIdx.x >> 5u;
-    unsigned long long pair = (unsigned long long)blockIdx.x * 8ull + warp;
-    unsigned long long input_row = row_count ? pair / row_count : input_rows;
-    unsigned long long row = row_count ? pair % row_count : row_count;
+    unsigned long long input_row = input_rows, row = row_count;
     const unsigned char *row_data;
     const void *input;
     float sum;
-    if (!status) return;
-    if (*status != 0 || input_row >= input_rows) return;
-    if (!encoded || !vector || !out || !row_bytes || !row_width || !row_count) {
-        atomicCAS(status, 0, 2);
+    if (!status || *status != 0) return;
+    if (!encoded || !vector || !out || !row_bytes || !row_width ||
+        !row_count || !input_rows) {
+        if (!lane) atomicCAS(status, 0, 2);
         return;
     }
+    if (!qtype_matvec_pair(row_count, input_rows, &row, &input_row)) return;
     row_data = encoded + (start_row + row) * row_bytes;
     input = q8_input
         ? (const void *)((const unsigned char *)vector +
@@ -574,17 +593,15 @@ extern "C" __global__ void yvex_qtype_split_matvec(
     int *status)
 {
     unsigned int lane = threadIdx.x & 31u;
-    unsigned int warp = threadIdx.x >> 5u;
-    unsigned long long pair = (unsigned long long)blockIdx.x * 8ull + warp;
-    unsigned long long input_row = row_count ? pair / row_count : input_rows;
-    unsigned long long row = row_count ? pair % row_count : row_count;
+    unsigned long long input_row = input_rows, row = row_count;
     float sum = 0.0f;
-    if (!status || *status != 0 || input_row >= input_rows) return;
+    if (!status || *status != 0) return;
     if (!encoded || !head || !tail || !out || !row_bytes || !row_width ||
-        !row_count || !head_width || head_width >= row_width) {
-        atomicCAS(status, 0, 2);
+        !row_count || !input_rows || !head_width || head_width >= row_width) {
+        if (!lane) atomicCAS(status, 0, 2);
         return;
     }
+    if (!qtype_matvec_pair(row_count, input_rows, &row, &input_row)) return;
     const unsigned char *row_data = encoded + (start_row + row) * row_bytes;
     unsigned long long tail_width = row_width - head_width;
     const float *head_row = head + input_row * head_width;

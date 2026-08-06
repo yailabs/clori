@@ -207,6 +207,13 @@ the unchanged warp reduction lanes. The same primitive therefore fills idle
 lanes across dense and grouped-MoE consumers without a model-name branch,
 derived-layout change or numerical-contract bump.
 
+Multi-row qtype projections now derive their launch topology from both matrix
+rows and input rows. Up to eight compatible input rows share one encoded-row
+block, while wider batches tile that same mapping without padding the logical
+row count. This keeps output-head and verification rows contiguous in the
+kernel launch, preserves the existing per-warp arithmetic and tail refusal,
+and changes no qtype, numerical, persisted, wire or public contract.
+
 Each CUDA backend/session now owns one non-blocking ordinary-execution stream.
 Production attention graph pieces borrow that stream, preserve their order and
 defer completion to the existing layer publication barrier; piecewise execution
