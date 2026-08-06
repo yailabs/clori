@@ -672,9 +672,41 @@ typedef struct {
     unsigned int metadata_count;
     writer_buffer buffer;
     unsigned long long data_span;
+    int physical_shape_folded;
     yvex_gguf_writer_failure *failure;
     yvex_error *err;
 } writer_component_context;
+
+static int writer_component_shape_matches(const yvex_transform_shape *logical,
+                                          const yvex_quant_decision *physical,
+                                          int *folded) {
+    unsigned long long trailing = 1ull;
+    unsigned int dimension;
+
+    if (!logical || !physical || !folded || !logical->rank || !physical->rank)
+        return 0;
+    if (logical->rank == physical->rank) {
+        for (dimension = 0u; dimension < logical->rank; ++dimension)
+            if (logical->dims[dimension] != physical->dims[dimension])
+                return 0;
+        return 1;
+    }
+    if (logical->rank <= YVEX_GGUF_QTYPE_MAX_DIMS ||
+        physical->rank != YVEX_GGUF_QTYPE_MAX_DIMS)
+        return 0;
+    for (dimension = 0u; dimension + 1u < YVEX_GGUF_QTYPE_MAX_DIMS;
+         ++dimension)
+        if (logical->dims[dimension] != physical->dims[dimension])
+            return 0;
+    for (dimension = YVEX_GGUF_QTYPE_MAX_DIMS - 1u;
+         dimension < logical->rank; ++dimension)
+        if (!yvex_core_u64_mul(trailing, logical->dims[dimension], &trailing))
+            return 0;
+    if (trailing != physical->dims[YVEX_GGUF_QTYPE_MAX_DIMS - 1u])
+        return 0;
+    *folded = 1;
+    return 1;
+}
 
 static int writer_component_validate(writer_component_context *context) {
     const yvex_gguf_writer_component_input *input = context->input;
@@ -763,7 +795,11 @@ static int writer_component_metadata_build(writer_component_context *context) {
                             "yvex.payload.identity",
                             context->quant->required_payload_identity) &&
            writer_meta_text(context->metadata, &context->metadata_count,
-                            "yvex.evidence.stage", "component-artifact-planned");
+                            "yvex.evidence.stage", "component-artifact-planned") &&
+           (!context->physical_shape_folded ||
+            writer_meta_text(context->metadata, &context->metadata_count,
+                             "yvex.physical.shape.policy",
+                             "preserve-leading-three-fold-trailing-v1"));
 }
 
 static writer_fixture_tensor_status writer_component_tensors_build(
@@ -785,11 +821,15 @@ static writer_fixture_tensor_status writer_component_tensors_build(
         const yvex_transform_source_value *source =
             input && input->kind == YVEX_TRANSFORM_VALUE_SOURCE
                 ? yvex_transform_ir_source_at(context->ir, input->source_index) : NULL;
+        const yvex_quant_decision *decision =
+            yvex_quant_plan_decision_at(context->quant_plan, ordinal);
 
         if (!terminal || terminal->canonical_ordinal != ordinal || !node ||
             node->kind != YVEX_TRANSFORM_OP_IDENTITY || node->input_count != 1u ||
             node->numeric != YVEX_TRANSFORM_NUMERIC_EXACT || !source ||
-            !source->source_name[0]) {
+            !source->source_name[0] || !decision ||
+            !writer_component_shape_matches(&terminal->shape, decision,
+                                            &context->physical_shape_folded)) {
             *failed_ordinal = ordinal;
             goto done;
         }

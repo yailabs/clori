@@ -85,6 +85,9 @@ typedef struct {
     int waited;
 } payload_blocking_sink;
 
+static void payload_sink_make(yvex_source_payload_sink *sink,
+                              payload_sink_state *state);
+
 typedef struct {
     yvex_source_payload_session *session;
     const yvex_source_payload_plan *plan;
@@ -407,14 +410,17 @@ static int payload_test_metadata(const char *root,
            payload_test_write_text(path, text);
 }
 
-static int payload_fixture_create(payload_fixture *fixture,
-                                  const char *suffix,
-                                  int second_digest,
-                                  int bad_digest,
-                                  unsigned int handles,
-                                  const yvex_source_payload_ops *ops,
-                                  yvex_source_payload_failure *failure,
-                                  yvex_error *err)
+static int payload_fixture_create_with_alpha_shape(
+    payload_fixture *fixture,
+    const char *suffix,
+    int second_digest,
+    int bad_digest,
+    unsigned int handles,
+    const yvex_source_payload_ops *ops,
+    unsigned int alpha_rank,
+    const unsigned long long *alpha_dims,
+    yvex_source_payload_failure *failure,
+    yvex_error *err)
 {
     static const char *const shard_names[] = {
         "model-00001-of-00002.safetensors",
@@ -450,9 +456,11 @@ static int payload_fixture_create(payload_fixture *fixture,
 
     table = (yvex_native_weight_table *)calloc(1u, sizeof(*table));
     YVEX_TEST_ASSERT(table != NULL, "payload fixture tensor table");
-    dims[0] = 4096u;
+    YVEX_TEST_ASSERT(alpha_rank && alpha_dims,
+                     "payload alpha shape is explicit");
     YVEX_TEST_ASSERT(yvex_native_weight_table_add(
-        table, "alpha.weight", shard_names[0], "BF16", 1u, dims,
+        table, "alpha.weight", shard_names[0], "BF16", alpha_rank,
+        alpha_dims,
         0u, 8192u, err) == YVEX_OK, "payload alpha tensor");
     dims[0] = 6000u;
     YVEX_TEST_ASSERT(yvex_native_weight_table_add(
@@ -544,6 +552,22 @@ static int payload_fixture_create(payload_fixture *fixture,
         &fixture->session, &open_options, ops, failure, err);
     if (rc != YVEX_OK) return rc;
     return YVEX_OK;
+}
+
+static int payload_fixture_create(payload_fixture *fixture,
+                                  const char *suffix,
+                                  int second_digest,
+                                  int bad_digest,
+                                  unsigned int handles,
+                                  const yvex_source_payload_ops *ops,
+                                  yvex_source_payload_failure *failure,
+                                  yvex_error *err)
+{
+    static const unsigned long long alpha_dims[] = {4096u};
+
+    return payload_fixture_create_with_alpha_shape(
+        fixture, suffix, second_digest, bad_digest, handles, ops, 1u,
+        alpha_dims, failure, err);
 }
 
 static void payload_fixture_close(payload_fixture *fixture)
@@ -1322,6 +1346,122 @@ static int test_payload_transform_binding_untrusted(payload_fixture *fixture)
                              YVEX_TRANSFORM_FAILURE_PAYLOAD_IDENTITY_MISMATCH,
                      "untrusted session without admitted identity refuses binding");
     yvex_transform_ir_release(&ir);
+    return 0;
+}
+
+static int test_payload_component_physical_shape_fold(void)
+{
+    static const unsigned long long logical_dims[] = {2u, 2u, 2u, 2u, 256u};
+    payload_fixture fixture;
+    yvex_source_payload_failure payload_failure;
+    yvex_source_payload_plan *payload_plan = NULL;
+    yvex_source_payload_sink trust_sink;
+    payload_sink_state trust_sink_state;
+    yvex_source_payload_stream_result payload_result;
+    yvex_source_payload_session_facts facts;
+    yvex_transform_ir *ir = NULL;
+    yvex_transform_binding *binding = NULL;
+    yvex_transform_failure transform_failure;
+    yvex_quant_plan *plan = NULL;
+    yvex_quant_plan *arbitrary = NULL;
+    yvex_quant_failure quant_failure;
+    const yvex_quant_plan_summary *summary;
+    const yvex_quant_decision *decision;
+    yvex_quant_explicit_decision arbitrary_spec;
+    yvex_gguf_writer_plan_request request;
+    yvex_gguf_writer_plan *writer = NULL;
+    yvex_gguf_writer_failure writer_failure;
+    yvex_error err;
+
+    yvex_error_clear(&err);
+    YVEX_TEST_ASSERT(payload_fixture_create_with_alpha_shape(
+                         &fixture, "rank-five", 1, 0, 1u, NULL, 5u,
+                         logical_dims, &payload_failure, &err) == YVEX_OK,
+                     "rank-five source payload fixture opens");
+    YVEX_TEST_ASSERT(yvex_source_payload_plan_build_all(
+                         &payload_plan, fixture.session, 4096u, 4096u,
+                         &payload_failure, &err) == YVEX_OK,
+                     "rank-five source payload trust plan seals");
+    memset(&trust_sink_state, 0, sizeof(trust_sink_state));
+    payload_sink_make(&trust_sink, &trust_sink_state);
+    YVEX_TEST_ASSERT(yvex_source_payload_session_verify(
+                         fixture.session, payload_plan, &trust_sink,
+                         &payload_result, &payload_failure, &err) == YVEX_OK &&
+                         payload_result.complete && payload_result.committed,
+                     "rank-five source payload trust publishes transactionally");
+    yvex_source_payload_plan_close(payload_plan);
+    YVEX_TEST_ASSERT(yvex_source_payload_session_facts_get(
+                         fixture.session, &facts, &err) == YVEX_OK &&
+                         facts.state == YVEX_SOURCE_PAYLOAD_STATE_READY,
+                     "rank-five source payload identity is ready");
+    YVEX_TEST_ASSERT(payload_fixture_transform_ir(
+                         &ir, fixture.session, facts.source_snapshot_identity,
+                         facts.payload_identity, NULL, 1, &transform_failure,
+                         &err) == YVEX_OK && ir &&
+                         yvex_transform_binding_create(
+                             &binding, ir, fixture.session, NULL,
+                             &transform_failure, &err) == YVEX_OK && binding,
+                     "rank-five logical component binds exact source bytes");
+    YVEX_TEST_ASSERT(yvex_quant_plan_build_source_faithful(
+                         &plan, ir, binding, "source-faithful-rank-fold-v1",
+                         0x887766u, NULL, &quant_failure, &err) == YVEX_OK &&
+                         plan,
+                     "rank-five source-faithful physical plan seals");
+    summary = yvex_quant_plan_summary_get(plan);
+    decision = yvex_quant_plan_decision_at(plan, 0u);
+    YVEX_TEST_ASSERT(summary && decision && summary->complete &&
+                         decision->rank == 4u &&
+                         decision->dims[0] == 2u && decision->dims[1] == 2u &&
+                         decision->dims[2] == 2u && decision->dims[3] == 512u &&
+                         decision->element_count == 4096u &&
+                         decision->encoded_bytes == 8192u,
+                     "canonical fold preserves elements and exact bytes");
+
+    memset(&request, 0, sizeof(request));
+    request.input_class = YVEX_GGUF_WRITER_INPUT_LOGICAL_COMPONENT;
+    request.quant_plan = plan;
+    request.input.component.architecture = "minimax-h3";
+    request.input.component.target_id = "minimax-h3-fl2va";
+    request.input.component.component_id = "video_vae";
+    request.input.component.source_snapshot_identity =
+        PAYLOAD_SOURCE_SNAPSHOT_IDENTITY;
+    request.input.component.source_snapshot_key = facts.source_snapshot_identity;
+    request.input.component.component_identity = PAYLOAD_COMPONENT_IDENTITY;
+    request.input.component.component_manifest_identity =
+        PAYLOAD_COMPONENT_MANIFEST_IDENTITY;
+    request.input.component.architecture_identity = PAYLOAD_ARCHITECTURE_IDENTITY;
+    request.input.component.role_map_identity = PAYLOAD_ROLE_MAP_IDENTITY;
+    YVEX_TEST_ASSERT(yvex_gguf_writer_plan_build(
+                         &writer, &request, &writer_failure, &err) == YVEX_OK &&
+                         writer,
+                     "logical component writer admits only the canonical fold");
+    yvex_gguf_writer_plan_release(&writer);
+
+    memset(&arbitrary_spec, 0, sizeof(arbitrary_spec));
+    arbitrary_spec.qtype = YVEX_GGUF_QTYPE_BF16;
+    arbitrary_spec.rank = 4u;
+    arbitrary_spec.dims[0] = 4u;
+    arbitrary_spec.dims[1] = 2u;
+    arbitrary_spec.dims[2] = 2u;
+    arbitrary_spec.dims[3] = 256u;
+    YVEX_TEST_ASSERT(yvex_quant_plan_build_explicit(
+                         &arbitrary, ir, binding, "arbitrary-rank-fold-v1",
+                         0x887766u, &arbitrary_spec, 1u, NULL, &quant_failure,
+                         &err) == YVEX_OK && arbitrary,
+                     "equal-element arbitrary physical geometry reaches writer guard");
+    request.quant_plan = arbitrary;
+    YVEX_TEST_ASSERT(yvex_gguf_writer_plan_build(
+                         &writer, &request, &writer_failure, &err) != YVEX_OK &&
+                         !writer &&
+                         writer_failure.code ==
+                             YVEX_GGUF_WRITER_TENSOR_DIVERGENCE,
+                     "logical component writer refuses an arbitrary shape fold");
+
+    yvex_quant_plan_release(&arbitrary);
+    yvex_quant_plan_release(&plan);
+    yvex_transform_binding_release(&binding);
+    yvex_transform_ir_release(&ir);
+    payload_fixture_close(&fixture);
     return 0;
 }
 
@@ -2948,6 +3088,7 @@ int yvex_test_source_payload(void)
     if (test_storage_shard_index_foundation() != 0) return 1;
     if (test_sha256_primitive() != 0) return 1;
     if (test_payload_happy_path() != 0) return 1;
+    if (test_payload_component_physical_shape_fold() != 0) return 1;
     if (test_payload_local_seal_and_digest_failure() != 0) return 1;
     if (test_payload_exact_read_faults() != 0) return 1;
     if (test_payload_consumer_cancel_and_publication_failure() != 0) return 1;

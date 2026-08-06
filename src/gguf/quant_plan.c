@@ -1030,6 +1030,9 @@ int yvex_quant_plan_build_explicit(yvex_quant_plan **out, const yvex_transform_i
  *
  * This is intentionally narrower than a quantization policy: every terminal must be a one-source
  * identity operation and its admitted dtype selects the corresponding lossless GGUF scalar type.
+ * GGUF has four physical dimensions, so higher-rank exact tensors preserve their first three
+ * axes and fold the remaining contiguous axes into the fourth. The logical rank remains in
+ * Transformation IR and the physical decision identity binds this reversible container view.
  */
 int yvex_quant_plan_build_source_faithful(
     yvex_quant_plan **out, const yvex_transform_ir *ir,
@@ -1074,9 +1077,29 @@ int yvex_quant_plan_build_source_faithful(
                 "source-faithful planning admits only exact one-source identity terminals");
         }
         decisions[ordinal].qtype = quant_exact_qtype(terminal->dtype);
-        decisions[ordinal].rank = terminal->shape.rank;
-        for (dimension = 0u; dimension < terminal->shape.rank; ++dimension)
+        decisions[ordinal].rank = terminal->shape.rank <= YVEX_GGUF_QTYPE_MAX_DIMS
+                                      ? terminal->shape.rank
+                                      : YVEX_GGUF_QTYPE_MAX_DIMS;
+        for (dimension = 0u; dimension < decisions[ordinal].rank; ++dimension)
             decisions[ordinal].dims[dimension] = terminal->shape.dims[dimension];
+        if (terminal->shape.rank > YVEX_GGUF_QTYPE_MAX_DIMS) {
+            unsigned long long folded = decisions[ordinal].dims[
+                YVEX_GGUF_QTYPE_MAX_DIMS - 1u];
+
+            for (dimension = YVEX_GGUF_QTYPE_MAX_DIMS;
+                 dimension < terminal->shape.rank; ++dimension) {
+                if (!yvex_core_u64_mul(folded, terminal->shape.dims[dimension],
+                                       &folded)) {
+                    free(decisions);
+                    return quant_plan_fail(
+                        failure, YVEX_QUANT_FAILURE_INVALID_DIMENSION, ordinal,
+                        ULLONG_MAX, ULLONG_MAX, terminal->shape.dims[dimension],
+                        decisions[ordinal].qtype, node->kind, err, YVEX_ERR_BOUNDS,
+                        "source-faithful physical shape folding overflowed");
+                }
+            }
+            decisions[ordinal].dims[YVEX_GGUF_QTYPE_MAX_DIMS - 1u] = folded;
+        }
     }
     rc = yvex_quant_plan_build_explicit(
         out, ir, binding, profile_name, lowering_identity, decisions,
