@@ -133,6 +133,7 @@ src/graph/transformer.c	graph	graph.transformer	generic	private	reusable-algorit
 src/backend/cuda/moe.c	backend.cuda	backend.cuda.moe	backend	private	backend-implementation	runtime,graph,tests	implementation	none
 src/graph/core.c	graph	graph.core	generic	private	resource-lifecycle	runtime,cli	implementation	none
 src/graph/families/deepseek_v4.c	graph.family	graph.family.deepseek_v4	family	private	reusable-algorithm	graph	implementation	none
+src/graph/families/minimax_h3.c	graph.family	graph.family.minimax_h3	family	private	reusable-algorithm	artifact,runtime,tests	implementation	none
 src/graph/memory_plan.c	graph	graph.memory_plan	generic	private	immutable-planning	runtime,cli	implementation	none
 src/graph/numeric.c	graph	graph.numeric	generic	private	reusable-algorithm	runtime,cli	implementation	none
 src/graph/plan.c	graph	graph.plan	generic	private	immutable-planning	runtime,cli	implementation	none

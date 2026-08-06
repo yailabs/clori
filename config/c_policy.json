@@ -13,8 +13,8 @@
     "source_special_boundaries": ["platform-interface", "backend-kernel", "generated-abi"]
   },
   "limits": {
-    "production_files": 219,
-    "translation_units": 164,
+    "production_files": 220,
+    "translation_units": 165,
     "headers": 55,
     "public_headers": 14,
     "internal_headers": 29,
@@ -24,13 +24,13 @@
     "function_lines": 200,
     "preferred_line_width": 100,
     "hard_line_width": 120,
-    "physical_lines": 181655,
-    "code_lines": 168991,
-    "executable_lines": 108704,
-    "semantic_owners": 206,
+    "physical_lines": 181968,
+    "code_lines": 169273,
+    "executable_lines": 108840,
+    "semantic_owners": 207,
     "public_function_declarations": 401,
-    "library_global_symbols": 1188,
-    "nonpublic_global_symbols": 787,
+    "library_global_symbols": 1190,
+    "nonpublic_global_symbols": 789,
     "family_sources": 4,
     "family_headers": 2,
     "family_sources_per_subsystem": 1,
@@ -120,7 +120,7 @@
   "symbols": {
     "namespace": "yvex_",
     "forbidden_public_fragments": ["_fixture_", "_reference_", "_test_", "_render_", "_deepseek_"],
-    "family_entrypoints": ["yvex_model_register_deepseek_v4", "yvex_graph_lower_deepseek_v4", "yvex_backend_attention_execute"]
+    "family_entrypoints": ["yvex_model_register_deepseek_v4", "yvex_graph_lower_deepseek_v4", "yvex_graph_register_minimax_h3", "yvex_backend_attention_execute"]
   },
   "archive": {
     "path": "build/lib/libyvex.a",

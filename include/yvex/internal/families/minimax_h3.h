@@ -1,8 +1,9 @@
 /*
  * Bind the exact MiniMax-H3 FL2VA source to one component-aware logical target.
  *
- * The target owns source interpretation and Transformation IR composition only. It exposes no
- * artifact, numerical graph, runtime, backend, solver, VAE execution, or media capability.
+ * The model target owns source interpretation and Transformation IR composition. The family
+ * graph registration separately admits exact component artifacts without promoting runtime,
+ * solver, VAE execution, or media capability.
  */
 #ifndef INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED
@@ -14,6 +15,11 @@
 
 typedef struct yvex_transform_ir yvex_transform_ir;
 typedef struct yvex_transform_binding yvex_transform_binding;
+typedef struct yvex_artifact yvex_artifact;
+typedef struct yvex_gguf yvex_gguf;
+typedef struct yvex_tensor_table yvex_tensor_table;
+typedef struct yvex_complete_artifact_admission yvex_complete_artifact_admission;
+typedef struct yvex_artifact_admission_failure yvex_artifact_admission_failure;
 
 #define YVEX_MINIMAX_H3_TARGET_ID "minimax-h3-fl2va"
 #define YVEX_MINIMAX_H3_REPOSITORY "MiniMaxAI/MiniMax-H3"
@@ -35,6 +41,43 @@ typedef struct yvex_transform_binding yvex_transform_binding;
 #define YVEX_MINIMAX_H3_TENSOR_BYTES 144016000740ull
 #define YVEX_MINIMAX_H3_SOURCE_BYTES 144051204180ull
 #define YVEX_MINIMAX_H3_NO_COORDINATE (~0ull)
+
+/* Exact source-faithful Audio VAE physical boundary emitted by YVEX. */
+#define YVEX_MINIMAX_H3_AUDIO_COMPONENT_IDENTITY                                      \
+    "be921beb8581b44624aaad452f30f77f1e204159ae8fe11da455d5208dc4e62b"
+#define YVEX_MINIMAX_H3_AUDIO_SOURCE_SNAPSHOT_IDENTITY                                \
+    "897ceaff08708f431132c6643bc8f1041ace8c0444a3ea248bbf727fc7da9943"
+#define YVEX_MINIMAX_H3_AUDIO_COMPONENT_MANIFEST_IDENTITY                             \
+    "715f2359aaff048ccca8207976421af5f9f76b08b6f24986b3cc186d2822bc0e"
+#define YVEX_MINIMAX_H3_AUDIO_ARCHITECTURE_IDENTITY                                   \
+    "47a03bbac2b5346771f70ae39155920f9b1c6e6cec17f2639dd0cbedfa90b517"
+#define YVEX_MINIMAX_H3_AUDIO_ROLE_MAP_IDENTITY                                       \
+    "61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013"
+#define YVEX_MINIMAX_H3_AUDIO_UNRESOLVED_IDENTITY                                     \
+    "935ae0a2371b15131b8920a879462484ebd3f5526ff5a97ef95c4e0af7b7cc1d"
+#define YVEX_MINIMAX_H3_AUDIO_TRANSFORM_IDENTITY                                      \
+    "e6f8f3ac2ae01157a57049f0db2439271585966174c0bfe202a5546471361ab3"
+#define YVEX_MINIMAX_H3_AUDIO_PROFILE_NAME "minimax-h3-source-faithful-v1"
+#define YVEX_MINIMAX_H3_AUDIO_PROFILE_IDENTITY                                        \
+    "b8b5aa330a617b0fa33fdd1428e5fea9e8edcdd7f6a2ba6f530d378fbaddaa65"
+#define YVEX_MINIMAX_H3_AUDIO_QUANT_EXECUTION_IDENTITY                                \
+    "551609d790bd9af9a51297bacbc7d476bbe436239ee0ce86fb1daa896fccd2ec"
+#define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_PLAN_IDENTITY                                   \
+    "c42dee2e548b9452707cb3327e55f09e3e9262bfc3d3d3665170bc9cfce1ffe4"
+#define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_BYTE_IDENTITY                                   \
+    "59850eaaecfc00f777bbeb2506a231e57313940a4c0e00b4501472cbc1a5cbf2"
+#define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_IDENTITY                                        \
+    "7eec5b07bbb6427611553b16670f9dc31969ae8ba602a79c0c7a2693a5fa168a"
+#define YVEX_MINIMAX_H3_AUDIO_WRITER_PLAN_IDENTITY                                    \
+    "40c89b292935ae03708df9a131d92fbd2fc2de6428550ade6f8c436294217271"
+#define YVEX_MINIMAX_H3_AUDIO_ARTIFACT_IDENTITY                                       \
+    "52a10c9f6f6e3b9b81569a95329f503fcb3cbddb224d12bf7851b4929d02e1c1"
+#define YVEX_MINIMAX_H3_AUDIO_SOURCE_SNAPSHOT_KEY 9907051661387403075ull
+#define YVEX_MINIMAX_H3_AUDIO_MAPPING_IDENTITY 15010405512422704850ull
+#define YVEX_MINIMAX_H3_AUDIO_TENSORS 1087ull
+#define YVEX_MINIMAX_H3_AUDIO_ELEMENTS 151326585ull
+#define YVEX_MINIMAX_H3_AUDIO_PAYLOAD_BYTES 605306340ull
+#define YVEX_MINIMAX_H3_AUDIO_FILE_BYTES 605401984ull
 
 typedef enum {
     YVEX_MINIMAX_H3_COMPONENT_PIPELINE = 0,
@@ -452,8 +495,16 @@ typedef struct {
     const yvex_source_payload_plan *(*plan)(const yvex_minimax_h3_handoff *handoff);
 } yvex_minimax_h3_handoff_api;
 
+typedef struct {
+    int (*audio_vae_admit)(
+        const yvex_artifact *artifact, const yvex_gguf *gguf,
+        const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
+        yvex_artifact_admission_failure *failure, yvex_error *err);
+} yvex_minimax_h3_graph_api;
+
 const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void);
 const yvex_minimax_h3_transform_api *yvex_model_minimax_h3_transform_api(void);
 const yvex_minimax_h3_handoff_api *yvex_model_minimax_h3_handoff_api(void);
+const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void);
 
 #endif /* INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED */

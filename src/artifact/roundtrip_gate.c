@@ -136,7 +136,10 @@ static int admission_identity_encode(const yvex_complete_artifact_admission *adm
     if (!admission || !output)
         return 0;
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.artifact.admission.v2") ||
+    if (!yvex_sha256_update_text(
+            &hash, admission->artifact_class == YVEX_ARTIFACT_CLASS_COMPONENT_YVEX
+                       ? "yvex.component-artifact.admission.v1"
+                       : "yvex.artifact.admission.v2") ||
         !yvex_sha256_update_u64(&hash, admission->artifact_class) ||
         !yvex_sha256_update_u64(&hash, admission->metadata_count) ||
         !yvex_sha256_update_u64(&hash, admission->tensor_count) ||
@@ -154,6 +157,10 @@ static int admission_identity_encode(const yvex_complete_artifact_admission *adm
         !yvex_sha256_update_text(&hash, admission->writer_plan_identity) ||
         !yvex_sha256_update_text(&hash, admission->artifact_identity) ||
         !yvex_sha256_update_text(&hash, admission->official_reader_revision) ||
+        (admission->artifact_class == YVEX_ARTIFACT_CLASS_COMPONENT_YVEX &&
+         (!yvex_sha256_update_text(&hash, admission->logical_target) ||
+          !yvex_sha256_update_text(&hash, admission->logical_component) ||
+          !yvex_sha256_update_text(&hash, admission->logical_component_identity))) ||
         !yvex_sha256_final(&hash, digest))
         return 0;
     yvex_sha256_hex(digest, output);
@@ -171,6 +178,30 @@ static int admission_deepseek_identities_valid(
            yvex_sha256_hex_is_valid(admission->payload_identity) &&
            yvex_sha256_hex_is_valid(admission->transform_identity) &&
            yvex_sha256_hex_is_valid(admission->writer_plan_identity);
+}
+
+static int admission_component_catalog_valid(
+    const yvex_complete_artifact_admission *catalog)
+{
+    return catalog && catalog->artifact_class == YVEX_ARTIFACT_CLASS_COMPONENT_YVEX &&
+           catalog->metadata_count && catalog->tensor_count && catalog->payload_bytes &&
+           catalog->file_bytes && catalog->source_snapshot_identity &&
+           catalog->mapping_identity && catalog->logical_target[0] &&
+           catalog->logical_component[0] &&
+           yvex_sha256_hex_is_valid(catalog->logical_component_identity) &&
+           yvex_sha256_hex_is_valid(catalog->artifact_identity) &&
+           yvex_sha256_hex_is_valid(catalog->profile_identity) &&
+           yvex_sha256_hex_is_valid(catalog->quant_execution_identity) &&
+           yvex_sha256_hex_is_valid(catalog->payload_plan_identity) &&
+           yvex_sha256_hex_is_valid(catalog->payload_byte_identity) &&
+           yvex_sha256_hex_is_valid(catalog->payload_identity) &&
+           yvex_sha256_hex_is_valid(catalog->transform_identity) &&
+           yvex_sha256_hex_is_valid(catalog->writer_plan_identity) &&
+           strcmp(catalog->official_reader_revision,
+                  YVEX_GGUF_OFFICIAL_READER_REVISION) == 0 &&
+           !catalog->tokenizer_complete && catalog->native_reader_accepted &&
+           catalog->official_reader_accepted && catalog->payload_integrity_accepted &&
+           catalog->materialization_input_ready && !catalog->runtime_supported;
 }
 
 static const yvex_complete_artifact_admission *admission_deepseek_for_size(
@@ -363,6 +394,50 @@ int yvex_artifact_admit_deepseek(const yvex_artifact *artifact,
     out->complete = 1;
     if (failure)
         memset(failure, 0, sizeof(*failure));
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+int yvex_artifact_admit_component(
+    const yvex_artifact *artifact, const yvex_complete_artifact_admission *catalog,
+    yvex_complete_artifact_admission *out, yvex_artifact_admission_failure *failure,
+    yvex_error *err)
+{
+    yvex_artifact_snapshot snapshot;
+    int rc;
+
+    if (out) memset(out, 0, sizeof(*out));
+    if (!artifact || !out || !admission_component_catalog_valid(catalog))
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_INVALID_ARGUMENT, "component-catalog", 1u,
+            0u, err, YVEX_ERR_INVALID_ARG,
+            "exact admitted component catalog row and opened artifact are required");
+    if (yvex_artifact_size(artifact) != catalog->file_bytes)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH, "file-bytes",
+            catalog->file_bytes, yvex_artifact_size(artifact), err, YVEX_ERR_FORMAT,
+            "component artifact extent differs from its admitted catalog row");
+    rc = yvex_artifact_snapshot_get(artifact, &snapshot, err);
+    if (rc == YVEX_OK) rc = yvex_artifact_snapshot_validate(artifact, NULL, err);
+    if (rc != YVEX_OK)
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_FILE_DRIFT, "file-snapshot",
+            catalog->file_bytes, 0u, err, (yvex_status)rc,
+            "component artifact snapshot is not stable");
+
+    *out = *catalog;
+    out->file_snapshot = snapshot;
+    yvex_core_text_copy(out->artifact_path, sizeof(out->artifact_path),
+                        yvex_artifact_path(artifact));
+    out->artifact_bytes_hashed = 0u;
+    out->artifact_identity_verified = 0;
+    out->complete = 1;
+    if (!admission_identity_encode(out, out->admission_identity))
+        return admission_fail(
+            failure, YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
+            "admission-identity", 1u, 0u, err, YVEX_ERR_BOUNDS,
+            "component admission identity encoding failed");
+    if (failure) memset(failure, 0, sizeof(*failure));
     yvex_error_clear(err);
     return YVEX_OK;
 }

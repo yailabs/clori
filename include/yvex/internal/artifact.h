@@ -87,7 +87,8 @@ typedef enum {
     YVEX_ARTIFACT_CLASS_REFUSED = 0,
     YVEX_ARTIFACT_CLASS_TENSOR_PROOF,
     YVEX_ARTIFACT_CLASS_EXTERNAL_UNADMITTED,
-    YVEX_ARTIFACT_CLASS_COMPLETE_YVEX
+    YVEX_ARTIFACT_CLASS_COMPLETE_YVEX,
+    YVEX_ARTIFACT_CLASS_COMPONENT_YVEX
 } yvex_artifact_class;
 typedef enum {
     YVEX_ARTIFACT_ADMISSION_OK = 0,
@@ -149,6 +150,9 @@ typedef struct yvex_complete_artifact_admission {
     char artifact_identity[YVEX_SHA256_HEX_CAP];
     char admission_identity[YVEX_SHA256_HEX_CAP];
     char official_reader_revision[41];
+    char logical_target[128];
+    char logical_component[64];
+    char logical_component_identity[YVEX_SHA256_HEX_CAP];
     int tokenizer_complete;
     int native_reader_accepted;
     int official_reader_accepted;
@@ -240,6 +244,11 @@ typedef struct {
 int yvex_complete_artifact_admit(const yvex_artifact_admission_request *request,
                                  yvex_complete_artifact_admission *out,
                                  yvex_artifact_admission_failure *failure, yvex_error *err);
+/* Rebind one family-provided exact component catalog row to an unchanged opened artifact. */
+int yvex_artifact_admit_component(
+    const yvex_artifact *artifact, const yvex_complete_artifact_admission *catalog,
+    yvex_complete_artifact_admission *out, yvex_artifact_admission_failure *failure,
+    yvex_error *err);
 int yvex_artifact_admission_identity_verify(
     const yvex_artifact *artifact, yvex_complete_artifact_admission *admission,
     int (*progress)(void *context, unsigned long long completed,

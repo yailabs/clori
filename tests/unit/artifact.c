@@ -196,6 +196,105 @@ static int test_deepseek_variant_admission_catalog(void)
     return 0;
 }
 
+static int test_component_admission_catalog(void)
+{
+    char root[] = "/tmp/yvex-artifact-component-XXXXXX";
+    char path[YVEX_ARTIFACT_PATH_CAP];
+    yvex_complete_artifact_admission catalog = {
+        .artifact_class = YVEX_ARTIFACT_CLASS_COMPONENT_YVEX,
+        .metadata_count = 17u,
+        .tensor_count = 3u,
+        .payload_bytes = 96u,
+        .file_bytes = 4096u,
+        .source_snapshot_identity = 0x11223344u,
+        .mapping_identity = 0x55667788u,
+        .payload_identity =
+            "1111111111111111111111111111111111111111111111111111111111111111",
+        .transform_identity =
+            "2222222222222222222222222222222222222222222222222222222222222222",
+        .profile_identity =
+            "3333333333333333333333333333333333333333333333333333333333333333",
+        .profile_name = "fixture-component-f32-v1",
+        .quant_execution_identity =
+            "4444444444444444444444444444444444444444444444444444444444444444",
+        .payload_plan_identity =
+            "5555555555555555555555555555555555555555555555555555555555555555",
+        .payload_byte_identity =
+            "6666666666666666666666666666666666666666666666666666666666666666",
+        .writer_plan_identity =
+            "7777777777777777777777777777777777777777777777777777777777777777",
+        .artifact_identity =
+            "8888888888888888888888888888888888888888888888888888888888888888",
+        .official_reader_revision = YVEX_GGUF_OFFICIAL_READER_REVISION,
+        .logical_target = "fixture-target",
+        .logical_component = "audio_vae",
+        .logical_component_identity =
+            "9999999999999999999999999999999999999999999999999999999999999999",
+        .native_reader_accepted = 1,
+        .official_reader_accepted = 1,
+        .payload_integrity_accepted = 1,
+        .materialization_input_ready = 1,
+    };
+    yvex_complete_artifact_admission admission;
+    yvex_artifact_admission_failure failure;
+    yvex_artifact_file_identity identity;
+    yvex_artifact_options options = {0};
+    yvex_artifact *artifact = NULL;
+    yvex_error err;
+    int fd;
+
+    YVEX_TEST_ASSERT(mkdtemp(root) != NULL, "component catalog root created");
+    YVEX_TEST_ASSERT(snprintf(path, sizeof(path), "%s/audio.gguf", root) <
+                         (int)sizeof(path),
+                     "component catalog path fits");
+    fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    YVEX_TEST_ASSERT(fd >= 0 && ftruncate(fd, (off_t)catalog.file_bytes) == 0 &&
+                         close(fd) == 0,
+                     "component catalog sparse extent created");
+    options.path = path;
+    options.readonly = 1;
+    YVEX_TEST_ASSERT(yvex_artifact_open(&artifact, &options, &err) == YVEX_OK,
+                     "component catalog artifact opened");
+    YVEX_TEST_ASSERT(yvex_artifact_identity_read_open(artifact, &identity, &err) == YVEX_OK,
+                     "component catalog exact file identity derived");
+    strcpy(catalog.artifact_identity, identity.sha256);
+    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+                         artifact, &catalog, &admission, &failure, &err) == YVEX_OK &&
+                         admission.complete &&
+                         admission.artifact_class == YVEX_ARTIFACT_CLASS_COMPONENT_YVEX &&
+                         strcmp(admission.logical_component, "audio_vae") == 0 &&
+                         !admission.tokenizer_complete &&
+                         !admission.artifact_identity_verified &&
+                         yvex_sha256_hex_is_valid(admission.admission_identity),
+                     "component catalog admits exact non-tokenizer artifact facts");
+    YVEX_TEST_ASSERT(yvex_artifact_admission_identity_verify(
+                         artifact, &admission, NULL, NULL, &failure, &err) == YVEX_OK &&
+                         admission.artifact_identity_verified &&
+                         admission.artifact_bytes_hashed == catalog.file_bytes,
+                     "component admission publishes trust only after exact file hashing");
+    catalog.file_bytes++;
+    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+                         artifact, &catalog, &admission, &failure, &err) ==
+                         YVEX_ERR_FORMAT &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH,
+                     "component catalog refuses wrong artifact extent");
+    catalog.file_bytes--;
+    strcpy(catalog.artifact_identity,
+           "8888888888888888888888888888888888888888888888888888888888888888");
+    YVEX_TEST_ASSERT(yvex_artifact_admit_component(
+                         artifact, &catalog, &admission, &failure, &err) == YVEX_OK &&
+                         yvex_artifact_admission_identity_verify(
+                             artifact, &admission, NULL, NULL, &failure, &err) ==
+                             YVEX_ERR_FORMAT &&
+                         failure.code == YVEX_ARTIFACT_ADMISSION_IDENTITY_MISMATCH &&
+                         !admission.artifact_identity_verified,
+                     "component catalog refuses same-size content identity drift");
+    yvex_artifact_close(artifact);
+    YVEX_TEST_ASSERT(unlink(path) == 0 && rmdir(root) == 0,
+                     "component catalog fixture cleaned");
+    return 0;
+}
+
 int yvex_test_artifact(void)
 {
     const char *fixture = "tests/fixtures/gguf/valid-minimal.gguf";
@@ -208,6 +307,8 @@ int yvex_test_artifact(void)
                      "artifact symlink lifecycle refuses unsafe paths");
     YVEX_TEST_ASSERT(test_deepseek_variant_admission_catalog() == 0,
                      "DeepSeek physical catalog admits the exact candidate");
+    YVEX_TEST_ASSERT(test_component_admission_catalog() == 0,
+                     "component physical catalog admits exact component facts");
 
     memset(&options, 0, sizeof(options));
     options.path = fixture;

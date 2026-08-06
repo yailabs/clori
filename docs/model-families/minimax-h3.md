@@ -2,7 +2,8 @@
 
 Status: source acquired and verified; logical architecture, tensor roles,
 Transformation IR, and one source-faithful Audio VAE physical artifact
-admitted through native roundtrip; not an executable family
+admitted through native and pinned official readers with exact file identity;
+not an executable family
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
 the complete immutable FL2VA source through its production source owner and
@@ -11,8 +12,10 @@ component manifest, a seven-edge phase DAG through transactional media
 publication, an exact tensor-role classifier, and component-aware
 artifact-neutral Transformation IR schema v2. YVEX also emits one independently
 identified Audio VAE component GGUF without changing source dtype or executing
-its payload. It does not add component materialization, a runtime adapter,
-backend operation, hosted path, or release obligation. The frozen quantitative intake evidence is the
+its payload. The graph-family recipe now binds that file to the exact component,
+source snapshot, physical plan, aggregate payload, and whole-file identities
+before it can enter materialization. It does not add numerical VAE execution, a
+runtime adapter, backend operation, hosted path, or release obligation. The frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
 
@@ -23,9 +26,9 @@ promotion rules remain in the [family integration contract](integration.md).
 | Implementation branch | `feature/minimax-h3` |
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
-| Current wave | `R010.MINIMAX.H3.FL2VA.PHYSICAL.0` |
-| Current boundary | source-faithful Audio VAE physical variant emitted and accepted by the native YVEX GGUF roundtrip |
-| Next expected boundary | component artifact admission and Audio VAE materialization/numerical decode |
+| Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
+| Current boundary | exact Audio VAE component artifact admitted by native and pinned official GGUF readers; whole-file and aggregate-payload identities verified |
+| Next expected boundary | source-faithful Audio VAE numerical decode with independent conformance evidence |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -51,7 +54,7 @@ or rename the branch.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; one Audio VAE component artifact emitted; no numerical execution |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; one Audio VAE component artifact emitted and physically admitted; no numerical execution |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -423,13 +426,15 @@ payload hash all succeed.
 | Writer-plan identity | `40c89b292935ae03708df9a131d92fbd2fc2de6428550ade6f8c436294217271` |
 | Quant-execution identity | `551609d790bd9af9a51297bacbc7d476bbe436239ee0ce86fb1daa896fccd2ec` |
 | Artifact identity / SHA-256 | `52a10c9f6f6e3b9b81569a95329f503fcb3cbddb224d12bf7851b4929d02e1c1` |
+| Aggregate payload-byte identity | `59850eaaecfc00f777bbeb2506a231e57313940a4c0e00b4501472cbc1a5cbf2` |
+| Component admission identity | `9e162ac79a7fa318830b50201dba6e2f865e74e413f8ee66ec0348410521180e` |
 | Tensor coverage | 1,087 of 1,087 |
 | Element coverage | 151,326,585 |
 | Source and physical dtype | F32 |
 | Payload bytes | 605,306,340 |
 | GGUF file bytes | 605,401,984 |
 | Native roundtrip | accepted |
-| Official-reader admission | pending |
+| Official-reader admission | accepted at pinned revision `af97976c7810cdabb1863172f31c432dab767de7` |
 | Runtime/media readiness | false |
 
 The artifact lives in the external identity-bound operator evidence root and
@@ -458,11 +463,11 @@ publication all fail closed.
 
 `downstream_safe: true`
 
-The downstream consumer is component artifact admission and Audio VAE
-materialization/numerical decode on `feature/minimax-h3`. There is no gate
+The downstream consumer is Audio VAE materialization and numerical decode on
+`feature/minimax-h3`. There is no gate
 blocker, boundary incompleteness, evidence gap, or current external blocker in
-the source-faithful emission boundary. Official-reader evidence, materialized
-weights, the exact scheduler and MM-RoPE numerical contracts, component
+the component artifact admission boundary. Materialized weights, the exact
+scheduler and MM-RoPE numerical contracts, component
 execution, staged residency, synchronized media transaction, evaluation, and
 benchmark are deferred depth with explicit later consumers. They do not weaken
 the emitted component identity, and none is claimed by it.
