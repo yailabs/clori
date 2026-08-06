@@ -78,7 +78,7 @@
 	test-artifact-live-structure test-artifact-live test-transform-ir-live-plan \
 	test-source-payload-live-plan test-source-payload-live test-gguf-artifact-abi \
 	test-gguf-layout-integrity test-gguf-qtype-abi test-layout test-code-natural \
-	test-project-control test-checkout-guard test-docs-surface \
+	test-project-control test-docs-surface \
 	test-documentation-architecture test-surface test-source-ownership \
 	test-repository-layout test-architecture-boundaries smoke check check-docs \
 	check-guardrails clean
@@ -1355,9 +1355,6 @@ test-code-natural: tests/test_code_natural.sh
 test-project-control: tests/test_project_control.sh ROADMAP.md CONTRIBUTING.md
 	sh tests/test_project_control.sh
 
-test-checkout-guard: tools/checkout_guard.py tests/test_checkout_guard.py AGENTS.md CONTRIBUTING.md
-	python3 tests/test_checkout_guard.py
-
 test-docs-surface: tests/test_docs_surface.sh
 	sh tests/test_docs_surface.sh
 
@@ -1594,7 +1591,7 @@ $(CUDA_TEST_RUNNER): $(CUDA_TEST_MAIN_OBJ) $(CUDA_TEST_UNIT_OBJS) $(LIBYVEX) tes
 check-docs: test-documentation-architecture test-project-control test-docs-surface
 	@echo "yvex documentation: ok"
 
-check-guardrails: test-checkout-guard check-source-manifest $(LIBYVEX) $(YVEX_BIN) \
+check-guardrails: check-source-manifest $(LIBYVEX) $(YVEX_BIN) \
 		$(TEST_REFERENCE_OBJS)
 	@sh tests/test_source_ownership.sh
 	@sh tests/test_repository_layout.sh

@@ -28,70 +28,68 @@ reviewed externally, but is not tracked under `docs/assets/` as documentation
 or runtime evidence. Runtime benchmark baselines and CSV/JSON evidence are
 untracked identity-bound external operator assets.
 
-### Single-checkout coordination
+### Concurrent agent development
 
-Family development uses one Git repository and one mutable working directory.
-Family worktrees, additional clones, parallel repository folders, and
-family-specific checkout directories are forbidden. Feature branches may
-advance independently; checkout ownership serializes filesystem mutation and
-does not synchronize branch histories.
+Any number of agents may work concurrently on YVEX. They may use different or
+shared branches, families, tasks, files, or distinct regions of one file. A
+branch is a development and integration line, not an agent identity. Repository
+policy does not schedule agents or prescribe whether an external harness uses
+worktrees, clones, sandboxes, containers, remote environments, or another
+workspace topology.
 
-Each Codex or ChatGPT session has one assigned branch and one unique lowercase
-owner ID. Sessions may remain open while idle, and process presence alone is
-not ownership evidence. Before editing files, producing build output, running
-a mutating command, committing, or pushing, a session verifies the repository
-root and assigned branch and acquires the explicit Git-local lease:
+Each agent owns only its assigned delivery and semantic scope. Before editing,
+identify the concrete task, affected semantic owners, expected files, functions
+or regions, and affected tests or generated outputs. Expand that scope only
+when repository evidence requires it; never silently absorb unrelated work.
 
-```sh
-python3 tools/checkout_guard.py acquire \
-    --owner codex-session-id \
-    --branch feature/assigned-family
-```
+Assume unrelated modifications may belong to another active delivery. Before
+editing and before committing, inspect the current branch and HEAD, the complete
+working-tree diff, the staged diff, and the files and hunks owned by the current
+delivery. Never discard, overwrite, restore, stash, reset, clean, or rewrite
+work outside that scope. In particular, `git reset --hard`, `git clean`, blanket
+`git restore`, automatic whole-worktree stashes, force-push, rebasing published
+history, and mechanical ours/theirs conflict resolution are forbidden when
+they could affect unrelated work.
 
-The lease lives under `.git/yvex/`, is untracked runtime state, and is the
-canonical checkout-ownership authority. The guard uses an OS-held mutex for
-lease transitions; it does not scan for Codex processes. A malformed, stale,
-wrong-branch, competing-owner, dirty-unowned, or active-Git-operation state
-fails closed. Lease files are not manually edited or removed to bypass a
-refusal.
+Stage only owned paths or hunks, and review the staged diff before committing.
+Do not use `git add -A` or `git add .` when unrelated modifications exist. Each
+commit contains one coherent delivery and excludes unrelated concurrent work.
 
-Only the lease holder may mutate the shared checkout. Every other session
-remains idle until release. The holder validates its ownership when resuming
-after interruption or before a consequential Git operation:
+Different agents may modify one file when their changes affect distinct
+functions, regions, or compatible semantics; a filename alone does not create
+a conflict. A real conflict exists when tasks require incompatible changes to
+the same lines, function, data structure, ABI, contract, ownership boundary, or
+invariant. Stop only the conflicting part, report that exact overlap, and
+continue independent work. Never silently choose one implementation or erase
+the other.
 
-```sh
-python3 tools/checkout_guard.py check \
-    --owner codex-session-id \
-    --branch feature/assigned-family
-```
+Multiple agents may contribute to one branch. Each agent commits focused
+semantic boundaries, rereads the current HEAD before committing, accepts valid
+concurrent branch advancement, validates the combined repository state, and
+never rewrites another agent's published history. An advancing branch HEAD is
+normal concurrent development, not corruption.
 
-An agent never switches to another session's branch and never carries
-uncommitted changes across branches. Branch transition is allowed only when
-the checkout is clean, no Git operation is active, and no lease exists. The
-guard performs the transition and acquisition as one serialized operation:
+Feature branches advance independently and need not share a HEAD. Family work
+remains on its family branch. A generic change discovered there is isolated in
+a dedicated generic commit, reviewed and integrated into `main` separately,
+then merged from `main` into applicable branches. Do not merge an entire family
+branch into `main` merely to transport one generic change. `main` remains
+integration-only and is not a normal development branch.
 
-```sh
-python3 tools/checkout_guard.py switch \
-    --owner codex-session-id \
-    --branch feature/assigned-family
-```
+Integrate published histories with merge, not rebase. For every textual
+conflict, understand both behaviors, preserve compatible changes, resolve the
+semantic contract rather than only conflict markers, and rerun tests for every
+affected owner. Also inspect semantic conflicts when Git reports no textual
+conflict, especially around shared ABIs, lifecycles, data structures, numeric
+policies, and ownership boundaries. Never force-push or rewrite published
+branch history.
 
-Merge, rebase, reset, clean, stash, pull, branch deletion, and other history
-movement are forbidden while another session owns the checkout. A session
-releases ownership only after its changes are committed and pushed, or after
-the checkout has otherwise returned to the clean acquired HEAD. Release
-refuses dirty state, active Git operations, the wrong owner or branch, and an
-unpublished changed HEAD:
-
-```sh
-python3 tools/checkout_guard.py release \
-    --owner codex-session-id \
-    --branch feature/assigned-family
-```
-
-`main` is integration-only and is never a development branch. Moving generic
-changes from a family branch into `main` or another family branch is a separate
-serialized integration delivery with its own assigned ownership.
+Do not introduce a repository-wide agent lock, scheduler, registry, daemon, or
+agent database. Exclusive coordination is appropriate only for a genuinely
+exclusive resource such as one incompatible GPU workload, daemon or port,
+benchmark environment, mutable artifact output, or external runtime state. A
+resource-specific lock serializes only that resource and never unrelated source
+development.
 
 ## 1. Directory is the namespace
 
