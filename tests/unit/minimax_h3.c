@@ -556,9 +556,9 @@ static int test_video_execution_refusals(void)
     options.latent_width = 2ull;
     options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
-                         NULL, &options, &result, &failure, &err) == YVEX_ERR_INVALID_ARG &&
+                         NULL, &options, &result, &failure, &err) == YVEX_ERR_BOUNDS &&
                          failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-                     "Visual VAE reduced decode refuses invented latent geometry");
+                     "Visual VAE decode refuses output storage smaller than its geometry");
     options.latent_width = 1ull;
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
                          NULL, &options, &result, &failure, &err) == YVEX_ERR_STATE &&

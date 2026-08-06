@@ -38,11 +38,12 @@ run_code missing 2 "$YVEX_BIN" execute component video-vae
 contains "$OUT_DIR/missing.err" \
     "requires target, artifact, backend, input file, latent geometry, and output path"
 
-run_code wrong_geometry 2 "$YVEX_BIN" execute component video-vae \
+run_code wrong_batch 2 "$YVEX_BIN" execute component video-vae \
     --target minimax-h3-fl2va --artifact /tmp/missing.gguf --backend cpu \
-    --input-file /tmp/missing.f32 --latent-frames 1 --latent-height 1 --latent-width 2 \
-    --out "$OUT_DIR/wrong-geometry.f32"
-contains "$OUT_DIR/wrong_geometry.err" "exact reduced geometry [1,24,1,1,1]"
+    --input-file /tmp/missing.f32 --batch 2 \
+    --latent-frames 1 --latent-height 1 --latent-width 2 \
+    --out "$OUT_DIR/wrong-batch.f32"
+contains "$OUT_DIR/wrong_batch.err" "Visual VAE currently admits only batch 1"
 
 run_code wrong_target 2 "$YVEX_BIN" execute component video-vae \
     --target wrong --artifact /tmp/missing.gguf --backend cpu \

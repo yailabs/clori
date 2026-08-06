@@ -194,9 +194,8 @@ static int graph_cli_minimax_video_execute(const yvex_graph_args *args,
     unsigned char *input_bytes = NULL;
     float *output = NULL;
     size_t input_count = 0u;
-    unsigned long long expected_input_bytes = 24ull * sizeof(float);
-    unsigned long long output_values = 3072ull;
-    unsigned long long output_bytes = 3072ull * sizeof(float);
+    unsigned long long patches, input_values, expected_input_bytes;
+    unsigned long long output_values, output_bytes;
     unsigned long long fixed_bytes, workspace_bytes;
     struct sigaction old_interrupt, old_terminate;
     int signals_installed = 0;
@@ -206,7 +205,16 @@ static int graph_cli_minimax_video_execute(const yvex_graph_args *args,
     memset(&report, 0, sizeof(report));
     memset(&decode_options, 0, sizeof(decode_options));
     memset(&decode_result, 0, sizeof(decode_result));
-    if (!yvex_core_u64_add(expected_input_bytes, output_bytes, &fixed_bytes) ||
+    if (!yvex_core_u64_mul(args->component.latent_frames,
+                           args->component.latent_height, &patches) ||
+        !yvex_core_u64_mul(patches, args->component.latent_width, &patches) ||
+        !yvex_core_u64_mul(patches, 24ull, &input_values) ||
+        !yvex_core_u64_mul(input_values, sizeof(float), &expected_input_bytes) ||
+        !yvex_core_u64_mul(patches, 3072ull, &output_values) ||
+        !yvex_core_u64_mul(output_values, sizeof(float), &output_bytes) ||
+        expected_input_bytes > (unsigned long long)SIZE_MAX ||
+        output_bytes > (unsigned long long)SIZE_MAX ||
+        !yvex_core_u64_add(expected_input_bytes, output_bytes, &fixed_bytes) ||
         fixed_bytes >= args->component.maximum_host_bytes) {
         yvex_error_set(err, YVEX_ERR_BOUNDS, "graph_minimax_video_cli",
                        "Visual VAE input, output, and workspace exceed --max-host-bytes");
@@ -217,8 +225,10 @@ static int graph_cli_minimax_video_execute(const yvex_graph_args *args,
         args->component.input_file, (size_t)expected_input_bytes, &input_bytes,
         &input_count, &input_file_result, err);
     if (rc == YVEX_OK && input_count != (size_t)expected_input_bytes) {
-        yvex_error_set(err, YVEX_ERR_FORMAT, "graph_minimax_video_cli",
-                       "Visual VAE input file must contain exact [1,24,1,1,1] F32 latent data");
+        yvex_error_setf(err, YVEX_ERR_FORMAT, "graph_minimax_video_cli",
+                        "Visual VAE input file must contain exact [1,24,%llu,%llu,%llu] F32 data",
+                        args->component.latent_frames, args->component.latent_height,
+                        args->component.latent_width);
         rc = YVEX_ERR_FORMAT;
     }
     output = rc == YVEX_OK ? (float *)malloc((size_t)output_bytes) : NULL;
@@ -241,9 +251,9 @@ static int graph_cli_minimax_video_execute(const yvex_graph_args *args,
     decode_options.output_capacity = output_values;
     decode_options.batch = 1ull;
     decode_options.latent_channels = 24ull;
-    decode_options.latent_frames = 1ull;
-    decode_options.latent_height = 1ull;
-    decode_options.latent_width = 1ull;
+    decode_options.latent_frames = args->component.latent_frames;
+    decode_options.latent_height = args->component.latent_height;
+    decode_options.latent_width = args->component.latent_width;
     decode_options.max_workspace_bytes = workspace_bytes;
     decode_options.cancelled = graph_attention_cancel_requested;
     if (rc == YVEX_OK)

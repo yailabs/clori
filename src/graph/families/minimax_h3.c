@@ -72,6 +72,7 @@ typedef struct {
     yvex_minimax_h3_component_execution_failure *failure;
     yvex_error *err;
     unsigned long long live_workspace_bytes;
+    unsigned long long patches, rows;
 } video_execution;
 
 static int audio_execution_refuse(audio_execution *execution,
@@ -990,6 +991,53 @@ static int video_qk_normalize(video_execution *execution, float *qkv,
     return YVEX_OK;
 }
 
+static void video_rope_apply(const video_execution *execution, float *qkv)
+{
+    const yvex_minimax_h3_video_decode_options *options = execution->options;
+    const float tau = 6.28318530717958647692f;
+    unsigned long long token, head;
+
+    for (token = 0ull; token < execution->rows; ++token) {
+        float coordinates[3] = {0.0f, 0.0f, 0.0f};
+        float cosine[24], sine[24];
+        unsigned long long coordinate, frequency;
+        if (token < execution->patches) {
+            unsigned long long plane = options->latent_height * options->latent_width;
+            unsigned long long temporal = token / plane;
+            unsigned long long spatial = token % plane;
+            unsigned long long height = spatial / options->latent_width;
+            unsigned long long width = spatial % options->latent_width;
+            coordinates[0] = 2.0f * ((float)temporal + 0.5f) /
+                                 (float)options->latent_frames - 1.0f;
+            coordinates[1] = 2.0f * ((float)height + 0.5f) /
+                                 (float)options->latent_height - 1.0f;
+            coordinates[2] = 2.0f * ((float)width + 0.5f) /
+                                 (float)options->latent_width - 1.0f;
+        }
+        for (coordinate = 0ull; coordinate < 3ull; ++coordinate)
+            for (frequency = 0ull; frequency < 8ull; ++frequency) {
+                unsigned long long index = coordinate * 8ull + frequency;
+                float angle = tau * coordinates[coordinate] *
+                              powf(100.0f, -(float)frequency / 8.0f);
+                cosine[index] = cosf(angle);
+                sine[index] = sinf(angle);
+            }
+        for (head = 0ull; head < 32ull; ++head) {
+            float *base = qkv + token * 6144ull + head * 192ull;
+            unsigned long long kind;
+            for (kind = 0ull; kind < 2ull; ++kind)
+                for (coordinate = 0ull; coordinate < 3ull; ++coordinate)
+                    for (frequency = 0ull; frequency < 8ull; ++frequency) {
+                        unsigned long long index = coordinate * 8ull + frequency;
+                        float *value = base + kind * 64ull;
+                        float first = value[index], second = value[index + 24ull];
+                        value[index] = first * cosine[index] - second * sine[index];
+                        value[index + 24ull] = second * cosine[index] + first * sine[index];
+                    }
+        }
+    }
+}
+
 static int video_block_name(video_execution *execution, char output[256],
                             unsigned long long block, const char *suffix)
 {
@@ -1016,47 +1064,47 @@ static int video_block_execute(video_execution *execution,
 
     if (rc == YVEX_OK) rc = video_block_name(execution, name, block, ".norm1");
     if (rc == YVEX_OK)
-        rc = video_rms_norm(execution, name, hidden->data, 6ull, 2048ull,
+        rc = video_rms_norm(execution, name, hidden->data, execution->rows, 2048ull,
                             normalized->data);
     if (rc == YVEX_OK)
         rc = video_block_name(execution, name, block, ".attn.to_qkv");
     if (rc == YVEX_OK)
         rc = video_linear(execution, name, 2u, normalized->data,
-                          6ull, 2048ull, 6144ull, qkv->data);
-    if (rc == YVEX_OK) rc = video_qk_normalize(execution, qkv->data, 6ull);
-    /* One latent patch and five suffix tokens all carry coordinate zero, so 3D RoPE is identity. */
+                          execution->rows, 2048ull, 6144ull, qkv->data);
+    if (rc == YVEX_OK) rc = video_qk_normalize(execution, qkv->data, execution->rows);
+    if (rc == YVEX_OK) video_rope_apply(execution, qkv->data);
     if (rc == YVEX_OK)
         rc = yvex_graph_full_attention_f32(
-            qkv->data, 6ull, 32ull, 64ull, attention->data,
+            qkv->data, execution->rows, 32ull, 64ull, attention->data,
             scratch->data, scratch->count, execution->err);
     if (rc == YVEX_OK)
         rc = video_block_name(execution, name, block, ".attn.to_out");
     if (rc == YVEX_OK)
         rc = video_linear(execution, name, 2u, attention->data,
-                          6ull, 2048ull, 2048ull, projected->data);
+                          execution->rows, 2048ull, 2048ull, projected->data);
     if (rc == YVEX_OK) rc = video_block_name(execution, name, block, ".scale1");
     if (rc == YVEX_OK)
         rc = video_scale_residual(execution, name, projected->data,
-                                  6ull, 2048ull, hidden->data);
+                                  execution->rows, 2048ull, hidden->data);
     if (rc == YVEX_OK) rc = video_block_name(execution, name, block, ".norm2");
     if (rc == YVEX_OK)
-        rc = video_rms_norm(execution, name, hidden->data, 6ull, 2048ull,
+        rc = video_rms_norm(execution, name, hidden->data, execution->rows, 2048ull,
                             normalized->data);
     if (rc == YVEX_OK) rc = video_block_name(execution, name, block, ".ff.w1");
     if (rc == YVEX_OK)
         rc = video_linear(execution, name, 2u, normalized->data,
-                          6ull, 2048ull, 16384ull, fused->data);
+                          execution->rows, 2048ull, 16384ull, fused->data);
     if (rc == YVEX_OK)
-        rc = yvex_graph_silu_gate_f32(fused->data, 6ull, 8192ull,
+        rc = yvex_graph_silu_gate_f32(fused->data, execution->rows, 8192ull,
                                       gated->data, execution->err);
     if (rc == YVEX_OK) rc = video_block_name(execution, name, block, ".ff.w2");
     if (rc == YVEX_OK)
         rc = video_linear(execution, name, 2u, gated->data,
-                          6ull, 8192ull, 2048ull, projected->data);
+                          execution->rows, 8192ull, 2048ull, projected->data);
     if (rc == YVEX_OK) rc = video_block_name(execution, name, block, ".scale2");
     if (rc == YVEX_OK)
         rc = video_scale_residual(execution, name, projected->data,
-                                  6ull, 2048ull, hidden->data);
+                                  execution->rows, 2048ull, hidden->data);
     if (rc != YVEX_OK && execution->failure &&
         execution->failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE) {
         execution->failure->code = YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC;
@@ -1074,13 +1122,13 @@ static int video_final_norm(video_execution *execution, component_buffer *hidden
     if (rc == YVEX_OK)
         rc = video_tensor_load(execution, "decoder.norm_out.bias", 1u, dims, &bias);
     if (rc == YVEX_OK)
-        rc = yvex_graph_layer_norm_f32(hidden->data, 6ull, 2048ull,
+        rc = yvex_graph_layer_norm_f32(hidden->data, execution->rows, 2048ull,
                                        weight.data, bias.data, 1.0e-5, execution->err);
     if (rc != YVEX_OK && execution->failure &&
         execution->failure->code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE)
         rc = video_execution_refuse(
             execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
-            "decoder.norm_out", 6ull * 2048ull, 0ull, rc,
+            "decoder.norm_out", execution->rows * 2048ull, 0ull, rc,
             "Visual VAE final LayerNorm failed");
     video_buffer_close(execution, &bias);
     video_buffer_close(execution, &weight);
@@ -1096,7 +1144,10 @@ static int video_execution_identity(const yvex_materialization_summary *summary,
     unsigned long long index;
 
     yvex_sha256_init(&hash);
-    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.video-vae.cpu.reduced-v1") ||
+    if (!yvex_sha256_update_text(
+            &hash, result->output_values == 3072ull
+                       ? "yvex.minimax-h3.video-vae.cpu.reduced-v1"
+                       : "yvex.minimax-h3.video-vae.cpu.geometry-v2") ||
         !yvex_sha256_update_text(&hash, summary->artifact_identity) ||
         !yvex_sha256_update_u64_be(&hash, options->batch) ||
         !yvex_sha256_update_u64_be(&hash, options->latent_channels) ||
@@ -1104,7 +1155,9 @@ static int video_execution_identity(const yvex_materialization_summary *summary,
         !yvex_sha256_update_u64_be(&hash, options->latent_height) ||
         !yvex_sha256_update_u64_be(&hash, options->latent_width))
         return 0;
-    for (index = 0ull; index < 24ull; ++index) {
+    for (index = 0ull; index < result->batch * options->latent_channels *
+                                     options->latent_frames * options->latent_height *
+                                     options->latent_width; ++index) {
         uint32_t bits;
         unsigned char bytes[4];
         memcpy(&bits, &options->latent[index], sizeof(bits));
@@ -1133,22 +1186,38 @@ static int video_decode_validate(video_execution *execution)
 {
     const yvex_materialization_summary *summary =
         yvex_materialization_session_summary(execution->session);
-    unsigned long long index;
+    unsigned long long input_values = 0ull, output_values = 0ull, index;
 
     if (!execution->options || !execution->result || !execution->options->latent ||
         !execution->options->output || execution->options->batch != 1ull ||
         execution->options->latent_channels != 24ull ||
-        execution->options->latent_frames != 1ull ||
-        execution->options->latent_height != 1ull ||
-        execution->options->latent_width != 1ull ||
-        execution->options->output_capacity < 3072ull ||
+        !execution->options->latent_frames || !execution->options->latent_height ||
+        !execution->options->latent_width ||
         !execution->options->max_workspace_bytes)
         return video_execution_refuse(
             execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
-            NULL, 3072ull,
+            NULL, 1ull,
             execution->options ? execution->options->output_capacity : 0ull,
             YVEX_ERR_INVALID_ARG,
-            "Visual VAE reduced decode requires exact [1,24,1,1,1] input and RGB output");
+            "Visual VAE decode requires batch one, 24 channels, and positive latent geometry");
+    if (!yvex_core_u64_mul(execution->options->latent_frames,
+                           execution->options->latent_height, &execution->patches) ||
+        !yvex_core_u64_mul(execution->patches, execution->options->latent_width,
+                           &execution->patches) ||
+        !yvex_core_u64_add(execution->patches, 5ull, &execution->rows) ||
+        execution->options->latent_frames > ULLONG_MAX / 4ull ||
+        execution->options->latent_height > ULLONG_MAX / 16ull ||
+        execution->options->latent_width > ULLONG_MAX / 16ull ||
+        execution->rows > ULLONG_MAX / 16384ull ||
+        !yvex_core_u64_mul(execution->patches, 24ull, &input_values) ||
+        !yvex_core_u64_mul(execution->patches, 3072ull, &output_values) ||
+        output_values > (unsigned long long)SIZE_MAX / sizeof(float) ||
+        execution->options->output_capacity < output_values)
+        return video_execution_refuse(
+            execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
+            NULL, output_values, execution->options->output_capacity,
+            YVEX_ERR_BOUNDS,
+            "Visual VAE latent geometry or RGB output extent exceeded its bound");
     if (!summary || !summary->committed ||
         strcmp(summary->artifact_identity, VIDEO_ARTIFACT_IDENTITY) != 0)
         return video_execution_refuse(
@@ -1156,21 +1225,58 @@ static int video_decode_validate(video_execution *execution)
             NULL, 1ull, summary ? (unsigned long long)summary->committed : 0ull,
             YVEX_ERR_STATE,
             "Visual VAE decode requires the committed exact component artifact");
-    for (index = 0ull; index < 24ull; ++index)
+    for (index = 0ull; index < input_values; ++index)
         if (!isfinite(execution->options->latent[index]))
             return video_execution_refuse(
                 execution, YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
-                NULL, 24ull, index, YVEX_ERR_FORMAT,
+                NULL, input_values, index, YVEX_ERR_FORMAT,
                 "Visual VAE latent input contains a non-finite value");
     execution->result->batch = 1ull;
-    execution->result->frames = 4ull;
-    execution->result->height = 16ull;
-    execution->result->width = 16ull;
-    execution->result->output_values = 3072ull;
+    execution->result->frames = execution->options->latent_frames * 4ull;
+    execution->result->height = execution->options->latent_height * 16ull;
+    execution->result->width = execution->options->latent_width * 16ull;
+    execution->result->output_values = output_values;
     yvex_core_text_copy(execution->result->artifact_identity,
                         sizeof(execution->result->artifact_identity),
                         summary->artifact_identity);
     return YVEX_OK;
+}
+
+static void video_latent_pack(const yvex_minimax_h3_video_decode_options *options,
+                              unsigned long long patches, float *packed)
+{
+    unsigned long long patch, channel;
+
+    for (patch = 0ull; patch < patches; ++patch)
+        for (channel = 0ull; channel < 24ull; ++channel)
+            packed[patch * 24ull + channel] = options->latent[channel * patches + patch];
+}
+
+static void video_output_unpack(const component_buffer *patch_output,
+                                const yvex_minimax_h3_video_decode_options *options,
+                                yvex_minimax_h3_video_decode_result *result)
+{
+    unsigned long long patch, value;
+    unsigned long long input_plane = options->latent_height * options->latent_width;
+    unsigned long long output_plane = result->height * result->width;
+
+    for (patch = 0ull; patch < patch_output->count / 3072ull; ++patch) {
+        unsigned long long temporal = patch / input_plane;
+        unsigned long long spatial = patch % input_plane;
+        unsigned long long height = spatial / options->latent_width;
+        unsigned long long width = spatial % options->latent_width;
+        for (value = 0ull; value < 3072ull; ++value) {
+            unsigned long long channel = value / 1024ull;
+            unsigned long long within = value % 1024ull;
+            unsigned long long frame = within / 256ull;
+            unsigned long long pixel = within % 256ull;
+            unsigned long long output_index = channel * result->frames * output_plane +
+                (temporal * 4ull + frame) * output_plane +
+                (height * 16ull + pixel / 16ull) * result->width +
+                width * 16ull + pixel % 16ull;
+            options->output[output_index] = patch_output->data[patch * 3072ull + value];
+        }
+    }
 }
 
 static int video_vae_decode_cpu(yvex_materialization_session *session,
@@ -1179,10 +1285,16 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
                                 yvex_minimax_h3_component_execution_failure *failure,
                                 yvex_error *err)
 {
-    video_execution execution = {session, options, result, failure, err, 0ull};
-    component_buffer post = {0}, hidden = {0}, normalized = {0}, qkv = {0};
+    video_execution execution = {
+        .session = session,
+        .options = options,
+        .result = result,
+        .failure = failure,
+        .err = err,
+    };
+    component_buffer packed = {0}, post = {0}, hidden = {0}, normalized = {0}, qkv = {0};
     component_buffer projected = {0}, fused = {0}, gated = {0};
-    component_buffer attention = {0}, scratch = {0}, registers = {0};
+    component_buffer attention = {0}, scratch = {0}, registers = {0}, patch_output = {0};
     unsigned long long register_dims[3] = {1ull, 4ull, 2048ull};
     unsigned long long block;
     int rc;
@@ -1195,28 +1307,31 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
             NULL, 2ull, 0ull, YVEX_ERR_INVALID_ARG,
             "Visual VAE decode requires options and result");
     rc = video_decode_validate(&execution);
-    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &post, 24ull);
-    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &hidden, 6ull * 2048ull);
-    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &normalized, 6ull * 2048ull);
-    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &qkv, 6ull * 6144ull);
-    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &projected, 6ull * 2048ull);
-    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &fused, 6ull * 16384ull);
-    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &gated, 6ull * 8192ull);
-    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &attention, 6ull * 2048ull);
-    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &scratch, 6ull);
+    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &packed, execution.patches * 24ull);
+    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &post, execution.patches * 24ull);
+    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &hidden, execution.rows * 2048ull);
+    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &normalized, execution.rows * 2048ull);
+    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &qkv, execution.rows * 6144ull);
+    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &projected, execution.rows * 2048ull);
+    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &fused, execution.rows * 16384ull);
+    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &gated, execution.rows * 8192ull);
+    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &attention, execution.rows * 2048ull);
+    if (rc == YVEX_OK) rc = video_buffer_open(&execution, &scratch, execution.rows);
+    if (rc == YVEX_OK) video_latent_pack(options, execution.patches, packed.data);
     if (rc == YVEX_OK)
-        rc = video_linear(&execution, "post_quant_conv", 4u, options->latent,
-                          1ull, 24ull, 24ull, post.data);
+        rc = video_linear(&execution, "post_quant_conv", 4u, packed.data,
+                          execution.patches, 24ull, 24ull, post.data);
     if (rc == YVEX_OK)
         rc = video_linear(&execution, "decoder.x_embedder", 2u, post.data,
-                          1ull, 24ull, 2048ull, hidden.data);
+                          execution.patches, 24ull, 2048ull, hidden.data);
     if (rc == YVEX_OK)
         rc = video_tensor_load(&execution, "decoder.register_tokens", 3u,
                                register_dims, &registers);
     if (rc == YVEX_OK) {
-        memcpy(hidden.data + 2048ull, registers.data,
+        memcpy(hidden.data + execution.patches * 2048ull, registers.data,
                (size_t)(4ull * 2048ull * sizeof(float)));
-        memset(hidden.data + 5ull * 2048ull, 0, (size_t)(2048ull * sizeof(float)));
+        memset(hidden.data + (execution.patches + 4ull) * 2048ull,
+               0, (size_t)(2048ull * sizeof(float)));
     }
     video_buffer_close(&execution, &registers);
     video_buffer_close(&execution, &post);
@@ -1225,8 +1340,11 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
                                  &projected, &fused, &gated, &attention, &scratch);
     if (rc == YVEX_OK) rc = video_final_norm(&execution, &hidden);
     if (rc == YVEX_OK)
+        rc = video_buffer_open(&execution, &patch_output, execution.patches * 3072ull);
+    if (rc == YVEX_OK)
         rc = video_linear(&execution, "decoder.proj_out", 2u, hidden.data,
-                          1ull, 2048ull, 3072ull, options->output);
+                          execution.patches, 2048ull, 3072ull, patch_output.data);
+    if (rc == YVEX_OK) video_output_unpack(&patch_output, options, result);
     if (rc == YVEX_OK) {
         const yvex_materialization_summary *summary =
             yvex_materialization_session_summary(session);
@@ -1238,6 +1356,7 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
         else
             result->complete = 1;
     }
+    video_buffer_close(&execution, &patch_output);
     video_buffer_close(&execution, &scratch);
     video_buffer_close(&execution, &attention);
     video_buffer_close(&execution, &gated);
@@ -1247,6 +1366,7 @@ static int video_vae_decode_cpu(yvex_materialization_session *session,
     video_buffer_close(&execution, &normalized);
     video_buffer_close(&execution, &hidden);
     video_buffer_close(&execution, &post);
+    video_buffer_close(&execution, &packed);
     if (rc == YVEX_OK) yvex_error_clear(err);
     return rc;
 }
