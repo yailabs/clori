@@ -361,7 +361,9 @@ static int moe_cuda_ranges(yvex_backend_moe_execution *execution, yvex_error *er
     RANGE(routed, hidden, NULL, 1, "cuda.moe.routed");
     RANGE(shared, hidden, NULL, 1, "cuda.moe.shared");
     RANGE(combined, hidden, NULL, 1, "cuda.moe.combined");
-    RANGE(weight_buffer, execution->weight_buffer_bytes, NULL, 1, "cuda.moe.weight-buffer");
+    if (execution->weight_buffer_bytes)
+        RANGE(weight_buffer, execution->weight_buffer_bytes, NULL, 1,
+              "cuda.moe.weight-buffer");
     RANGE(route_aux, execution->route_aux_bytes, NULL, 1, "cuda.moe.route-aux");
 #undef RANGE
     if (rc == YVEX_OK && execution->job->device_input) {
@@ -545,6 +547,8 @@ int yvex_backend_moe_begin(yvex_backend_moe_execution **out, yvex_backend *backe
     execution->work.backend = backend;
     execution->work.state = execution->state;
     execution->work.variant = YVEX_BACKEND_VARIANT_ATTENTION_ENCODED;
+    execution->work.forensic_numeric =
+        job->evidence_level == YVEX_ATTENTION_EVIDENCE_FULL;
     execution->grouped_selected = job->device_output &&
         job->evidence_level != YVEX_ATTENTION_EVIDENCE_FULL &&
         job->weights[YVEX_MOE_WEIGHT_ROUTED_GATE].device_address &&
@@ -556,14 +560,20 @@ int yvex_backend_moe_begin(yvex_backend_moe_execution **out, yvex_backend *backe
         rc = moe_cuda_refuse(err, YVEX_ERR_UNSUPPORTED, "CUDA MoE kernel bundle is unavailable");
         goto fail;
     }
-    routed_subview = job->weights[YVEX_MOE_WEIGHT_ROUTED_GATE].encoded_bytes /
-                     layer->routed_experts;
-    maximum = job->weights[YVEX_MOE_WEIGHT_SHARED_GATE].encoded_bytes;
-    if (job->weights[YVEX_MOE_WEIGHT_SHARED_UP].encoded_bytes > maximum)
-        maximum = job->weights[YVEX_MOE_WEIGHT_SHARED_UP].encoded_bytes;
-    if (job->weights[YVEX_MOE_WEIGHT_SHARED_DOWN].encoded_bytes > maximum)
-        maximum = job->weights[YVEX_MOE_WEIGHT_SHARED_DOWN].encoded_bytes;
-    if (routed_subview > maximum) maximum = routed_subview;
+    maximum = 0ull;
+    for (unsigned int slot = 0u; slot < YVEX_MOE_WEIGHT_COUNT; ++slot)
+        if (layer->tensor_ids[slot] != YVEX_MOE_NO_TENSOR &&
+            !job->weights[slot].device_address) {
+            routed_subview = job->weights[YVEX_MOE_WEIGHT_ROUTED_GATE].encoded_bytes /
+                             layer->routed_experts;
+            maximum = job->weights[YVEX_MOE_WEIGHT_SHARED_GATE].encoded_bytes;
+            if (job->weights[YVEX_MOE_WEIGHT_SHARED_UP].encoded_bytes > maximum)
+                maximum = job->weights[YVEX_MOE_WEIGHT_SHARED_UP].encoded_bytes;
+            if (job->weights[YVEX_MOE_WEIGHT_SHARED_DOWN].encoded_bytes > maximum)
+                maximum = job->weights[YVEX_MOE_WEIGHT_SHARED_DOWN].encoded_bytes;
+            if (routed_subview > maximum) maximum = routed_subview;
+            break;
+        }
     execution->weight_buffer_bytes = (size_t)maximum;
     execution->route_aux_bytes = (size_t)layer->routed_experts * sizeof(float);
     if (execution->route_aux_bytes < (size_t)layer->experts_per_token * sizeof(unsigned long long))

@@ -190,8 +190,14 @@ bytes from sealed base/per-expert factors, and publishes the aggregate facts. A
 later final-stage read or synchronization on the same session stream satisfies
 that completion without another barrier; otherwise one stream wait closes the
 stack. The independent immediate and token-local CPU/CUDA paths remain the
-audit/reference oracles. The internal source ABI rebuilds atomically; no
-persisted, wire, public C, execution-profile, or state-layout schema changes.
+audit/reference oracles. Resident weights no longer reserve an unused
+per-expert staging range, so that oracle fits the same shape-preflighted
+workspace as the width-N path. Full forensic evidence disables Q8 activation
+compression for its row dots; live admission therefore checks the production
+approximation and the tighter forensic CPU/CUDA comparison separately. Qtype
+access expectations are derived from the admitted MoE plan rather than a
+duplicated physical-variant table. The internal source ABI rebuilds atomically;
+no persisted, wire, public C, execution-profile, or state-layout schema changes.
 
 The shared CUDA qtype primitive now admits short-row shapes that form
 geometry-selected two-, four- or eight-lane groups for Q8_0, Q2_K, IQ2_XXS and

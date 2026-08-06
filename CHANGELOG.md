@@ -67,7 +67,10 @@ change. Git history preserves implementation chronology.
   transformer-stack completion validates them and reconstructs exact active
   bytes. A proved final-stage session-stream barrier avoids a redundant wait.
   Immediate and token-local CPU/CUDA execution remain the explicit portable
-  audit/reference oracles.
+  audit/reference oracles. Resident-weight oracle execution no longer reserves
+  an unused expert staging range, and full forensic evidence disables Q8
+  activation compression so live tests distinguish its tighter numerical
+  contract from the admitted production approximation.
 - Short CUDA qtype rows now form geometry-selected two-, four- or eight-lane
   groups across Q8_0, Q2_K, IQ2_XXS and MXFP4 activation dots. Only integer
   terms are redistributed; every encoded block is reconstructed before the

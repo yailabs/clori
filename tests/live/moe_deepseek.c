@@ -13,9 +13,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The composed BF16 MoE output uses the existing six-stage output factor over
- * the repository's 5e-4 CPU/CUDA base contract. Selection remains exact. */
-#define MOE_LIVE_ABSOLUTE_TOLERANCE 3.0e-3
+/* Production admits two Q8 activation boundaries per expert chain before
+ * seven routed/shared results are accumulated. Forensic evidence disables
+ * that approximation and retains the tighter composed BF16 bound. */
+#define MOE_LIVE_PRODUCTION_ABSOLUTE_TOLERANCE 6.0e-3
+#define MOE_LIVE_FORENSIC_ABSOLUTE_TOLERANCE 3.0e-3
 #define MOE_LIVE_RELATIVE_TOLERANCE 3.0e-3
 
 typedef struct {
@@ -211,8 +213,8 @@ static void live_layer_output_close(live_layer_output *output)
 
 static int live_layer_compare(const yvex_moe_layer_plan *layer,
                               const live_layer_output *cpu,
-                              const live_layer_output *cuda, double *maximum,
-                              double *rmse)
+                              const live_layer_output *cuda, const char *profile,
+                              double absolute_tolerance, double *maximum, double *rmse)
 {
     unsigned long long index, first_failure = ULLONG_MAX;
     double squared = 0.0;
@@ -221,8 +223,9 @@ static int live_layer_compare(const yvex_moe_layer_plan *layer,
     for (index = 0ull; index < layer->experts_per_token; ++index)
         if (cpu->result.router.selected_experts[index] !=
             cuda->result.router.selected_experts[index]) {
-            fprintf(stderr, "moe_live selection_mismatch layer=%llu rank=%llu cpu=%llu cuda=%llu\n",
-                    layer->layer_index, index, cpu->result.router.selected_experts[index],
+            fprintf(stderr, "moe_live selection_mismatch profile=%s layer=%llu rank=%llu "
+                            "cpu=%llu cuda=%llu\n", profile, layer->layer_index, index,
+                    cpu->result.router.selected_experts[index],
                     cuda->result.router.selected_experts[index]);
             return 0;
         }
@@ -231,7 +234,7 @@ static int live_layer_compare(const yvex_moe_layer_plan *layer,
         double difference = fabs(left - right);
         double scale = fmax(fabs(left), fabs(right));
         if (!isfinite(left) || !isfinite(right) ||
-            difference > MOE_LIVE_ABSOLUTE_TOLERANCE +
+            difference > absolute_tolerance +
                              MOE_LIVE_RELATIVE_TOLERANCE * scale) {
             within = 0;
             if (first_failure == ULLONG_MAX) first_failure = index;
@@ -241,8 +244,9 @@ static int live_layer_compare(const yvex_moe_layer_plan *layer,
     }
     *rmse = sqrt(squared / (double)layer->hidden_width);
     if (!within)
-        fprintf(stderr, "moe_live numeric_mismatch layer=%llu first=%llu max_abs=%.17g rmse=%.17g cpu=%.9g cuda=%.9g\n",
-                layer->layer_index, first_failure, *maximum, *rmse,
+        fprintf(stderr, "moe_live numeric_mismatch profile=%s layer=%llu first=%llu "
+                        "max_abs=%.17g rmse=%.17g cpu=%.9g cuda=%.9g\n",
+                profile, layer->layer_index, first_failure, *maximum, *rmse,
                 cpu->combined[first_failure], cuda->combined[first_failure]);
     return within;
 }
@@ -250,6 +254,7 @@ static int live_layer_compare(const yvex_moe_layer_plan *layer,
 static int live_representative(yvex_runtime_moe_context *cpu_context,
                                yvex_runtime_moe_context *cuda_context,
                                const yvex_moe_plan *plan, const live_input *input,
+                               const char *profile, double absolute_tolerance,
                                yvex_error *err)
 {
     const unsigned long long layers[] = {0ull, 3ull};
@@ -277,15 +282,17 @@ static int live_representative(yvex_runtime_moe_context *cpu_context,
                                                 input->token_ids[0], 1,
                                                 &cuda.result, err);
         if (rc == YVEX_OK &&
-            !live_layer_compare(layer, &cpu, &cuda, &maximum, &rmse)) {
+            !live_layer_compare(layer, &cpu, &cuda, profile, absolute_tolerance,
+                                &maximum, &rmse)) {
             yvex_error_setf(err, YVEX_ERR_FORMAT, "test.moe.cpu-cuda",
                             "representative MoE CPU/CUDA comparison failed at layer %llu",
                             ordinal);
             rc = YVEX_ERR_FORMAT;
         }
         if (rc == YVEX_OK)
-            printf("moe_layer_%llu_router=%s selected=%llu max_abs=%.17g rmse=%.17g\n",
-                   ordinal, layer->router_class == YVEX_MOE_ROUTER_HASH_TOKEN_ID
+            printf("moe_profile=%s layer=%llu router=%s selected=%llu "
+                   "max_abs=%.17g rmse=%.17g\n", profile, ordinal,
+                   layer->router_class == YVEX_MOE_ROUTER_HASH_TOKEN_ID
                                 ? "hash" : "learned",
                    cpu.result.router.selected_count, maximum, rmse);
         live_layer_output_close(&cuda);
@@ -293,6 +300,33 @@ static int live_representative(yvex_runtime_moe_context *cpu_context,
         if (rc != YVEX_OK) return rc;
     }
     return YVEX_OK;
+}
+
+static int live_qtypes_match(const yvex_moe_plan *plan,
+                             const yvex_runtime_moe_result *result)
+{
+    unsigned long long expected[YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP] = {0};
+    const yvex_moe_plan_summary *summary = yvex_moe_plan_summary_get(plan);
+    unsigned long long layer_index;
+    if (!summary || !result) return 0;
+    for (layer_index = 0ull; layer_index < summary->layer_count; ++layer_index) {
+        const yvex_moe_layer_plan *layer = yvex_moe_plan_layer_at(plan, layer_index);
+        unsigned int slot;
+        if (!layer) return 0;
+        for (slot = 0u; slot < YVEX_MOE_WEIGHT_COUNT; ++slot) {
+            unsigned long long accesses = 1ull;
+            if (layer->tensor_ids[slot] == YVEX_MOE_NO_TENSOR) continue;
+            if (layer->qtypes[slot] >= YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP) return 0;
+            if (slot >= YVEX_MOE_WEIGHT_ROUTED_GATE &&
+                slot <= YVEX_MOE_WEIGHT_ROUTED_DOWN)
+                accesses = layer->experts_per_token;
+            expected[layer->qtypes[slot]] += accesses;
+        }
+    }
+    for (layer_index = 0ull; layer_index < YVEX_RUNTIME_DESCRIPTOR_QTYPE_CAP;
+         ++layer_index)
+        if (expected[layer_index] != result->qtype_counts[layer_index]) return 0;
+    return 1;
 }
 
 static int live_full_cuda(yvex_runtime_moe_context *context, const yvex_moe_plan *plan,
@@ -325,11 +359,7 @@ static int live_full_cuda(yvex_runtime_moe_context *context, const yvex_moe_plan
          result.routed_expert_executions != 258ull ||
          result.shared_expert_executions != 43ull ||
          result.expert_subviews_accessed != 774ull ||
-         result.qtype_counts[YVEX_GGUF_QTYPE_F32] != 169ull ||
-         result.qtype_counts[YVEX_GGUF_QTYPE_BF16] != 86ull ||
-         result.qtype_counts[YVEX_GGUF_QTYPE_Q8_0] != 129ull ||
-         result.qtype_counts[YVEX_GGUF_QTYPE_Q2_K] != 774ull ||
-         result.qtype_counts[YVEX_GGUF_QTYPE_I32] != 3ull)) {
+         !live_qtypes_match(plan, &result))) {
         yvex_error_set(err, YVEX_ERR_FORMAT, "test.moe.full-cuda",
                        "full CUDA MoE execution counters are incomplete");
         rc = YVEX_ERR_FORMAT;
@@ -398,7 +428,10 @@ int main(int argc, char **argv)
     yvex_runtime_model_failure failure = {0};
     yvex_runtime_model *model = NULL;
     yvex_runtime_execution_session *cpu_session = NULL, *cuda_session = NULL;
+    yvex_runtime_execution_session *forensic_session = NULL;
     yvex_runtime_moe_context *cpu_context = NULL, *cuda_context = NULL;
+    yvex_runtime_moe_context *forensic_context = NULL;
+    yvex_runtime_moe_options forensic_options = {0};
     const yvex_moe_plan *plan;
     live_input input;
     yvex_error err, cleanup;
@@ -413,6 +446,7 @@ int main(int argc, char **argv)
     request.artifact_path = argv[1];
     request.runtime_binding_path = argv[2];
     request.target_id = "deepseek4-v4-flash-dspark";
+    forensic_options.evidence_level = YVEX_ATTENTION_EVIDENCE_FULL;
     rc = yvex_runtime_model_open(&model, &request, &failure, &err);
     if (rc == YVEX_OK)
         rc = live_context_open(&cpu_session, &cpu_context, model,
@@ -420,14 +454,33 @@ int main(int argc, char **argv)
     if (rc == YVEX_OK)
         rc = live_context_open(&cuda_session, &cuda_context, model,
                                YVEX_BACKEND_KIND_CUDA, NULL, &err);
+    if (rc == YVEX_OK)
+        rc = live_context_open(&forensic_session, &forensic_context, model,
+                               YVEX_BACKEND_KIND_CUDA, &forensic_options, &err);
     plan = yvex_runtime_moe_context_plan(cpu_context);
     if (rc == YVEX_OK) rc = live_input_open(&input, model, plan, argv[3], &err);
     if (rc == YVEX_OK)
-        rc = live_representative(cpu_context, cuda_context, plan, &input, &err);
+        rc = live_representative(cpu_context, cuda_context, plan, &input,
+                                 "production",
+                                 MOE_LIVE_PRODUCTION_ABSOLUTE_TOLERANCE, &err);
+    if (rc == YVEX_OK)
+        rc = live_representative(cpu_context, forensic_context, plan, &input,
+                                 "forensic",
+                                 MOE_LIVE_FORENSIC_ABSOLUTE_TOLERANCE, &err);
+    if (forensic_context || forensic_session) {
+        yvex_error_clear(&cleanup);
+        close_rc = live_context_close(&forensic_context, &forensic_session, &cleanup);
+        if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; err = cleanup; }
+    }
     if (rc == YVEX_OK) rc = live_full_cuda(cuda_context, plan, &input, &err);
     if (rc == YVEX_OK) rc = live_cancellation(model, plan, &input, &err);
     if (rc != YVEX_OK) live_fail("execution", rc, &err);
     live_input_close(&input);
+    if (forensic_context || forensic_session) {
+        yvex_error_clear(&cleanup);
+        close_rc = live_context_close(&forensic_context, &forensic_session, &cleanup);
+        if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; err = cleanup; }
+    }
     yvex_error_clear(&cleanup);
     close_rc = live_context_close(&cuda_context, &cuda_session, &cleanup);
     if (rc == YVEX_OK && close_rc != YVEX_OK) { rc = close_rc; err = cleanup; }
