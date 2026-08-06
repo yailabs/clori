@@ -461,5 +461,21 @@ int yvex_graph_alias_snake_f32(const float *input, unsigned long long batch,
                                const float up_filter[12], const float down_filter[12],
                                float *output, float *scratch,
                                unsigned long long scratch_count, yvex_error *err);
+int yvex_graph_linear_source_f32(
+    const float *input, unsigned long long input_count, unsigned long long rows,
+    unsigned long long input_width, const float *weight,
+    unsigned long long weight_count, const float *bias,
+    unsigned long long bias_count, unsigned long long output_width,
+    float *output, unsigned long long output_count, yvex_error *err);
+int yvex_graph_layer_norm_f32(float *values, unsigned long long rows,
+                              unsigned long long width, const float *weight,
+                              const float *bias, double epsilon, yvex_error *err);
+int yvex_graph_silu_gate_f32(const float *fused, unsigned long long rows,
+                             unsigned long long width, float *output,
+                             yvex_error *err);
+int yvex_graph_full_attention_f32(
+    const float *qkv, unsigned long long rows, unsigned long long heads,
+    unsigned long long head_width, float *output, float *scratch,
+    unsigned long long scratch_count, yvex_error *err);
 
 #endif

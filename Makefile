@@ -63,6 +63,7 @@
 	test-runtime-ubsan test-runtime-ubsan-live test-runtime-sanitizers \
 	test-runtime-sanitizers-live test-materialize-live-plan \
 	test-materialize-live test-minimax-audio-artifact-live \
+	test-minimax-video-artifact-live \
 	test-attention test-attention-fixture-isolation \
 	test-attention-live-plan test-attention-live test-attention-cli-live \
 	test-attention-cuda test-quant test-quant-asan test-quant-ubsan \
@@ -245,6 +246,7 @@ QUANT_LIVE_RUNNER := $(TEST_DIR)/quant_deepseek
 ARTIFACT_LIVE_RUNNER := $(TEST_DIR)/artifact_deepseek
 MATERIALIZE_LIVE_RUNNER := $(TEST_DIR)/materialize_deepseek
 MINIMAX_AUDIO_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_audio
+MINIMAX_VIDEO_LIVE_RUNNER := $(TEST_DIR)/minimax_h3_video
 ATTENTION_LIVE_RUNNER := $(TEST_DIR)/attention_deepseek
 PREFILL_LIVE_RUNNER := $(TEST_DIR)/prefill_deepseek
 MOE_LIVE_RUNNER := $(TEST_DIR)/moe_deepseek
@@ -284,6 +286,7 @@ QUANT_LIVE_OBJ := $(OBJ_DIR)/tests/live/quant_deepseek.o
 ARTIFACT_LIVE_OBJ := $(OBJ_DIR)/tests/live/artifact_deepseek.o
 MATERIALIZE_LIVE_OBJ := $(OBJ_DIR)/tests/live/materialize_deepseek.o
 MINIMAX_AUDIO_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_audio.o
+MINIMAX_VIDEO_LIVE_OBJ := $(OBJ_DIR)/tests/live/minimax_h3_video.o
 ATTENTION_LIVE_OBJ := $(OBJ_DIR)/tests/live/attention_deepseek.o
 PREFILL_LIVE_OBJ := $(OBJ_DIR)/tests/live/prefill_deepseek.o
 MOE_LIVE_OBJ := $(OBJ_DIR)/tests/live/moe_deepseek.o
@@ -298,7 +301,8 @@ OPENAI_ADAPTER_HOST_OBJ := $(OBJ_DIR)/tests/integration/openai_adapter.o
 RUNNER_OBJS := $(TEST_MAIN_OBJ) $(QUANT_TEST_RUNNER_OBJ) \
 	$(ARTIFACT_TEST_RUNNER_OBJ) $(CUDA_TEST_MAIN_OBJ) \
 	$(SOURCE_PAYLOAD_LIVE_OBJ) $(QUANT_LIVE_OBJ) $(ARTIFACT_LIVE_OBJ) \
-	$(MATERIALIZE_LIVE_OBJ) $(MINIMAX_AUDIO_LIVE_OBJ) $(ATTENTION_LIVE_OBJ) \
+	$(MATERIALIZE_LIVE_OBJ) $(MINIMAX_AUDIO_LIVE_OBJ) $(MINIMAX_VIDEO_LIVE_OBJ) \
+	$(ATTENTION_LIVE_OBJ) \
 	$(PREFILL_LIVE_OBJ) $(MOE_LIVE_OBJ) \
 	$(TRANSFORMER_LIVE_OBJ) $(DECODE_LIVE_OBJ) $(LOGITS_LIVE_OBJ) $(TOKENIZER_LIVE_OBJ) \
 	$(GENERATION_LIVE_OBJ) $(OPENAI_FAKE_HOST_OBJ) $(OPENAI_ADAPTER_HOST_OBJ)
@@ -796,6 +800,11 @@ test-minimax-audio-artifact-live: $(MINIMAX_AUDIO_LIVE_RUNNER)
 	@test -n "$(MINIMAX_H3_AUDIO_ARTIFACT)" || { \
 		echo "MINIMAX_H3_AUDIO_ARTIFACT is required" >&2; exit 2; }
 	$(MINIMAX_AUDIO_LIVE_RUNNER) "$(MINIMAX_H3_AUDIO_ARTIFACT)"
+
+test-minimax-video-artifact-live: $(MINIMAX_VIDEO_LIVE_RUNNER)
+	@test -n "$(MINIMAX_H3_VIDEO_ARTIFACT)" || { \
+		echo "MINIMAX_H3_VIDEO_ARTIFACT is required" >&2; exit 2; }
+	$(MINIMAX_VIDEO_LIVE_RUNNER) "$(MINIMAX_H3_VIDEO_ARTIFACT)"
 
 test-attention: $(TEST_RUNNER) test-attention-fixture-isolation
 	$(TEST_RUNNER)
@@ -1528,6 +1537,10 @@ $(MATERIALIZE_LIVE_RUNNER): $(MATERIALIZE_LIVE_OBJ) $(LIBYVEX)
 $(MINIMAX_AUDIO_LIVE_RUNNER): $(MINIMAX_AUDIO_LIVE_OBJ) $(LIBYVEX)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(MINIMAX_AUDIO_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
+
+$(MINIMAX_VIDEO_LIVE_RUNNER): $(MINIMAX_VIDEO_LIVE_OBJ) $(LIBYVEX)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(MINIMAX_VIDEO_LIVE_OBJ) $(LIBYVEX) $(LDFLAGS) $(LDLIBS) -o $@
 
 $(ATTENTION_LIVE_RUNNER): $(ATTENTION_LIVE_OBJ) $(TEST_REFERENCE_OBJS) $(LIBYVEX)
 	@mkdir -p $(@D)

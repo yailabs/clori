@@ -34,6 +34,7 @@ run_section materialize-gate tests/cli/materialize_gate.sh
 run_section materialization-integrity-gate tests/cli/materialize_gate.sh
 run_section attention-graph tests/cli/attention_graph.sh
 run_section minimax-audio tests/cli/minimax_audio.sh
+run_section minimax-video tests/cli/minimax_video.sh
 run_section token-input tests/cli/token_input.sh
 run_section fullmodel tests/cli/fullmodel.sh
 run_section artifact-integrity-regression tests/cli/artifact_integrity_regression.sh

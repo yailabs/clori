@@ -103,7 +103,7 @@ int main(int argc, char **argv)
     } else if (decode) {
         yvex_minimax_h3_audio_decode_options decode_options;
         yvex_minimax_h3_audio_decode_result result;
-        yvex_minimax_h3_audio_execution_failure execution_failure;
+        yvex_minimax_h3_component_execution_failure execution_failure;
         float latent[32];
         float output[800];
         FILE *file = fopen(latent_path, "rb");

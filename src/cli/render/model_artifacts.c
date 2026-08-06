@@ -1611,3 +1611,53 @@ int yvex_minimax_audio_render(FILE *fp, yvex_graph_report_mode mode,
 }
 
 #undef MINIMAX_AUDIO_FIELD
+
+#define MINIMAX_VIDEO_FIELD(KEY, KIND, MEMBER) \
+    {KEY, KIND, offsetof(yvex_cli_minimax_video_result, MEMBER), ""}
+
+int yvex_minimax_video_render(FILE *fp, yvex_graph_report_mode mode,
+                              const yvex_cli_minimax_video_result *result)
+{
+    static const yvex_cli_field_spec fields[] = {
+        MINIMAX_VIDEO_FIELD("status", YVEX_CLI_FIELD_TEXT, status),
+        MINIMAX_VIDEO_FIELD("target", YVEX_CLI_FIELD_TEXT, target),
+        MINIMAX_VIDEO_FIELD("component", YVEX_CLI_FIELD_TEXT, component),
+        MINIMAX_VIDEO_FIELD("backend", YVEX_CLI_FIELD_TEXT, backend),
+        MINIMAX_VIDEO_FIELD("artifact_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                            artifact_identity),
+        MINIMAX_VIDEO_FIELD("execution_identity", YVEX_CLI_FIELD_TEXT_ARRAY,
+                            execution_identity),
+        MINIMAX_VIDEO_FIELD("batch", YVEX_CLI_FIELD_U64, batch),
+        MINIMAX_VIDEO_FIELD("frames", YVEX_CLI_FIELD_U64, frames),
+        MINIMAX_VIDEO_FIELD("height", YVEX_CLI_FIELD_U64, height),
+        MINIMAX_VIDEO_FIELD("width", YVEX_CLI_FIELD_U64, width),
+        MINIMAX_VIDEO_FIELD("tensor_reads", YVEX_CLI_FIELD_U64, tensor_reads),
+        MINIMAX_VIDEO_FIELD("payload_bytes_read", YVEX_CLI_FIELD_U64,
+                            payload_bytes_read),
+        MINIMAX_VIDEO_FIELD("peak_workspace_bytes", YVEX_CLI_FIELD_U64,
+                            peak_workspace_bytes),
+        MINIMAX_VIDEO_FIELD("output_path", YVEX_CLI_FIELD_TEXT, output_path),
+        MINIMAX_VIDEO_FIELD("published_bytes", YVEX_CLI_FIELD_U64, published_bytes),
+        MINIMAX_VIDEO_FIELD("published", YVEX_CLI_FIELD_BOOL, published),
+    };
+
+    if (!fp || !result) return YVEX_ERR_INVALID_ARG;
+    if (mode == YVEX_GRAPH_REPORT_MODE_NORMAL)
+        return yvex_cli_out_writef(
+                   fp, "MiniMax-H3 Visual VAE: %s shape=%llux%llux%llu output=%s identity=%s\n",
+                   result->status, result->frames, result->height, result->width,
+                   result->output_path, result->execution_identity) < 0
+                   ? YVEX_ERR_IO : YVEX_OK;
+    if (mode == YVEX_GRAPH_REPORT_MODE_JSON) {
+        yvex_cli_json_begin(fp);
+        if (yvex_cli_json_fields(fp, result, fields,
+                                 sizeof(fields) / sizeof(fields[0]), 0) != 0)
+            return YVEX_ERR_IO;
+        yvex_cli_json_end(fp);
+        return YVEX_OK;
+    }
+    return yvex_cli_out_fields(fp, result, fields, sizeof(fields) / sizeof(fields[0])) == 0
+               ? YVEX_OK : YVEX_ERR_IO;
+}
+
+#undef MINIMAX_VIDEO_FIELD

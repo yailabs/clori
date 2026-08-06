@@ -556,6 +556,23 @@
         "--target"
       ]
     },
+    "cli_offline_graph_video_component": {
+      "booleans": [],
+      "repeatable_values": [],
+      "values": [
+        "--artifact",
+        "--backend",
+        "--batch",
+        "--input-file",
+        "--latent-frames",
+        "--latent-height",
+        "--latent-width",
+        "--max-host-bytes",
+        "--out",
+        "--output",
+        "--target"
+      ]
+    },
     "cli_offline_graph_moe": {
       "booleans": [],
       "repeatable_values": [],
@@ -3098,6 +3115,44 @@
       "slash_projection": "none",
       "summary": "Execute the MiniMax-H3 Audio VAE component.",
       "test_owner": "tests/cli/minimax_audio.sh",
+      "visibility": "engineering"
+    },
+    {
+      "CLI_projection": true,
+      "adapter_argv": [
+        "graph",
+        "component",
+        "video-vae"
+      ],
+      "adapter_id": "graph",
+      "aliases": [],
+      "architectural_plane": "Execute",
+      "arguments": [],
+      "artifact_requirement": "admitted-artifact",
+      "backend_requirement": "required",
+      "command_path": [
+        "execute",
+        "component",
+        "video-vae"
+      ],
+      "daemon_requirement": "absent",
+      "default_providers": [],
+      "deprecation_state": "current",
+      "documentation_owner": "docs/operator-runbook.md",
+      "flag_sets": [
+        "cli_offline_graph_video_component"
+      ],
+      "input_schema": "argv.v1",
+      "lane": "offline-engine",
+      "model_requirement": "none",
+      "operation_id": "execute.graph.component.video-vae",
+      "protocol_operation": "none",
+      "renderer_id": "human",
+      "result_schema": "human.v1",
+      "side_effects": "finite direct component execution and atomic output publication",
+      "slash_projection": "none",
+      "summary": "Execute the reduced MiniMax-H3 Visual VAE component.",
+      "test_owner": "tests/cli/minimax_video.sh",
       "visibility": "engineering"
     },
     {

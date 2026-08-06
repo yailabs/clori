@@ -2,8 +2,8 @@
  * Bind the exact MiniMax-H3 FL2VA source to one component-aware logical target.
  *
  * The model target owns source interpretation and Transformation IR composition. The family
- * graph registration separately admits exact component artifacts without promoting runtime,
- * solver, VAE execution, or media capability.
+ * graph registration separately admits exact component artifacts and bounded component
+ * execution without promoting a family runtime, solver, complete model, or media capability.
  */
 #ifndef INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED
 #define INCLUDE_YVEX_INTERNAL_FAMILIES_MINIMAX_H3_H_INCLUDED
@@ -497,22 +497,22 @@ typedef struct {
 } yvex_minimax_h3_handoff_api;
 
 typedef enum {
-    YVEX_MINIMAX_H3_AUDIO_EXECUTION_NONE = 0,
-    YVEX_MINIMAX_H3_AUDIO_EXECUTION_INVALID_ARGUMENT,
-    YVEX_MINIMAX_H3_AUDIO_EXECUTION_LIFECYCLE,
-    YVEX_MINIMAX_H3_AUDIO_EXECUTION_MISSING_TENSOR,
-    YVEX_MINIMAX_H3_AUDIO_EXECUTION_TENSOR_CONTRACT,
-    YVEX_MINIMAX_H3_AUDIO_EXECUTION_BUDGET,
-    YVEX_MINIMAX_H3_AUDIO_EXECUTION_MATERIALIZATION,
-    YVEX_MINIMAX_H3_AUDIO_EXECUTION_NUMERIC,
-    YVEX_MINIMAX_H3_AUDIO_EXECUTION_CANCELLED
-} yvex_minimax_h3_audio_execution_code;
+    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NONE = 0,
+    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
+    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
+    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MISSING_TENSOR,
+    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_TENSOR_CONTRACT,
+    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_BUDGET,
+    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_MATERIALIZATION,
+    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_NUMERIC,
+    YVEX_MINIMAX_H3_COMPONENT_EXECUTION_CANCELLED
+} yvex_minimax_h3_component_execution_code;
 typedef struct {
-    yvex_minimax_h3_audio_execution_code code;
+    yvex_minimax_h3_component_execution_code code;
     char tensor_name[256];
     unsigned long long expected, actual;
     const char *reason;
-} yvex_minimax_h3_audio_execution_failure;
+} yvex_minimax_h3_component_execution_failure;
 typedef int (*yvex_minimax_h3_cancelled_fn)(void *context);
 typedef struct {
     const float *latent;
@@ -530,6 +530,21 @@ typedef struct {
     char artifact_identity[65], execution_identity[65];
     int complete;
 } yvex_minimax_h3_audio_decode_result;
+typedef struct {
+    const float *latent;
+    float *output;
+    unsigned long long batch, latent_channels;
+    unsigned long long latent_frames, latent_height, latent_width;
+    unsigned long long output_capacity, max_workspace_bytes;
+    yvex_minimax_h3_cancelled_fn cancelled;
+    void *cancellation_context;
+} yvex_minimax_h3_video_decode_options;
+typedef struct {
+    unsigned long long batch, frames, height, width, output_values;
+    unsigned long long tensor_reads, payload_bytes_read, peak_workspace_bytes;
+    char artifact_identity[65], execution_identity[65];
+    int complete;
+} yvex_minimax_h3_video_decode_result;
 
 typedef struct {
     int (*audio_vae_admit)(
@@ -540,13 +555,28 @@ typedef struct {
         yvex_materialization_session *session,
         const yvex_minimax_h3_audio_decode_options *options,
         yvex_minimax_h3_audio_decode_result *result,
-        yvex_minimax_h3_audio_execution_failure *failure, yvex_error *err);
+        yvex_minimax_h3_component_execution_failure *failure, yvex_error *err);
     int (*audio_vae_execute_artifact_cpu)(
         const yvex_artifact *artifact, const yvex_gguf *gguf,
         const yvex_tensor_table *tensors,
         const yvex_minimax_h3_audio_decode_options *options,
         yvex_minimax_h3_audio_decode_result *result,
-        yvex_minimax_h3_audio_execution_failure *failure, yvex_error *err);
+        yvex_minimax_h3_component_execution_failure *failure, yvex_error *err);
+    int (*video_vae_admit)(
+        const yvex_artifact *artifact, const yvex_gguf *gguf,
+        const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
+        yvex_artifact_admission_failure *failure, yvex_error *err);
+    int (*video_vae_decode_cpu)(
+        yvex_materialization_session *session,
+        const yvex_minimax_h3_video_decode_options *options,
+        yvex_minimax_h3_video_decode_result *result,
+        yvex_minimax_h3_component_execution_failure *failure, yvex_error *err);
+    int (*video_vae_execute_artifact_cpu)(
+        const yvex_artifact *artifact, const yvex_gguf *gguf,
+        const yvex_tensor_table *tensors,
+        const yvex_minimax_h3_video_decode_options *options,
+        yvex_minimax_h3_video_decode_result *result,
+        yvex_minimax_h3_component_execution_failure *failure, yvex_error *err);
 } yvex_minimax_h3_graph_api;
 
 const yvex_minimax_h3_api *yvex_model_register_minimax_h3(void);

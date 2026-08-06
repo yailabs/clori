@@ -450,7 +450,7 @@ static int test_audio_execution_refusals(void)
     float output[800];
     yvex_minimax_h3_audio_decode_options options;
     yvex_minimax_h3_audio_decode_result result;
-    yvex_minimax_h3_audio_execution_failure failure;
+    yvex_minimax_h3_component_execution_failure failure;
     yvex_error err;
 
     memset(output, 0x5a, sizeof(output));
@@ -464,15 +464,108 @@ static int test_audio_execution_refusals(void)
     options.max_workspace_bytes = 1024ull;
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->audio_vae_decode_cpu(
                          NULL, &options, &result, &failure, &err) == YVEX_ERR_INVALID_ARG &&
-                         failure.code == YVEX_MINIMAX_H3_AUDIO_EXECUTION_INVALID_ARGUMENT,
+                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
                      "Audio VAE decode refuses invented latent geometry");
     options.latent_channels = 32ull;
     YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->audio_vae_decode_cpu(
                          NULL, &options, &result, &failure, &err) == YVEX_ERR_STATE &&
-                         failure.code == YVEX_MINIMAX_H3_AUDIO_EXECUTION_LIFECYCLE,
+                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
                      "Audio VAE decode refuses execution without committed materialization");
     YVEX_TEST_ASSERT(((unsigned char *)output)[0] == 0x5a,
                      "refused Audio VAE decode does not publish output");
+    return 0;
+}
+
+static int test_video_numeric_primitives(void)
+{
+    const float linear_input[4] = {1.0f, 2.0f, -1.0f, 3.0f};
+    const float linear_weight[4] = {1.0f, 0.0f, 0.0f, 2.0f};
+    const float linear_bias[2] = {0.5f, -1.0f};
+    float linear_output[4];
+    float layer_values[2] = {1.0f, 3.0f};
+    const float layer_weight[2] = {1.0f, 1.0f};
+    const float layer_bias[2] = {0.0f, 0.0f};
+    const float fused[2] = {0.0f, 2.0f};
+    float gated[1];
+    const float qkv[12] = {
+        1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 2.0f,
+        0.0f, 1.0f, 0.0f, 1.0f, 3.0f, 4.0f,
+    };
+    float attention[4];
+    float scratch[2];
+    float selected = expf(1.0f / sqrtf(2.0f));
+    float expected_first = (selected * 1.0f + 3.0f) / (selected + 1.0f);
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(yvex_graph_linear_source_f32(
+                         linear_input, 4ull, 2ull, 2ull,
+                         linear_weight, 4ull, linear_bias, 2ull, 2ull,
+                         linear_output, 4ull, &err) == YVEX_OK,
+                     "source-layout linear projection is executable");
+    YVEX_TEST_ASSERT(fabsf(linear_output[0] - 1.5f) < 1.0e-6f &&
+                         fabsf(linear_output[1] - 3.0f) < 1.0e-6f &&
+                         fabsf(linear_output[2] + 0.5f) < 1.0e-6f &&
+                         fabsf(linear_output[3] - 5.0f) < 1.0e-6f,
+                     "source-layout linear projection matches the independent result");
+    YVEX_TEST_ASSERT(yvex_graph_linear_source_f32(
+                         linear_input, 3ull, 2ull, 2ull,
+                         linear_weight, 4ull, linear_bias, 2ull, 2ull,
+                         linear_output, 4ull, &err) == YVEX_ERR_BOUNDS,
+                     "source-layout linear projection refuses mismatched extents");
+    YVEX_TEST_ASSERT(yvex_graph_layer_norm_f32(
+                         layer_values, 1ull, 2ull, layer_weight, layer_bias,
+                         1.0e-5, &err) == YVEX_OK &&
+                         fabsf(layer_values[0] + 0.999995f) < 1.0e-5f &&
+                         fabsf(layer_values[1] - 0.999995f) < 1.0e-5f,
+                     "LayerNorm matches the independent two-value result");
+    YVEX_TEST_ASSERT(yvex_graph_silu_gate_f32(
+                         fused, 1ull, 1ull, gated, &err) == YVEX_OK &&
+                         gated[0] == 0.0f,
+                     "gated SiLU applies gate-first source semantics");
+    YVEX_TEST_ASSERT(yvex_graph_full_attention_f32(
+                         qkv, 2ull, 1ull, 2ull, attention, scratch, 2ull,
+                         &err) == YVEX_OK &&
+                         fabsf(attention[0] - expected_first) < 1.0e-6f &&
+                         fabsf(attention[1] - (expected_first + 1.0f)) < 1.0e-6f,
+                     "full attention matches an independent noncausal softmax result");
+    YVEX_TEST_ASSERT(yvex_graph_full_attention_f32(
+                         qkv, 2ull, 1ull, 2ull, attention, scratch, 1ull,
+                         &err) == YVEX_ERR_INVALID_ARG,
+                     "full attention refuses insufficient scratch");
+    return 0;
+}
+
+static int test_video_execution_refusals(void)
+{
+    float latent[24] = {0};
+    float output[3072];
+    yvex_minimax_h3_video_decode_options options;
+    yvex_minimax_h3_video_decode_result result;
+    yvex_minimax_h3_component_execution_failure failure;
+    yvex_error err;
+
+    memset(output, 0x5a, sizeof(output));
+    memset(&options, 0, sizeof(options));
+    options.latent = latent;
+    options.output = output;
+    options.output_capacity = 3072ull;
+    options.batch = 1ull;
+    options.latent_channels = 24ull;
+    options.latent_frames = 1ull;
+    options.latent_height = 1ull;
+    options.latent_width = 2ull;
+    options.max_workspace_bytes = 256ull * 1024ull * 1024ull;
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
+                         NULL, &options, &result, &failure, &err) == YVEX_ERR_INVALID_ARG &&
+                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_INVALID_ARGUMENT,
+                     "Visual VAE reduced decode refuses invented latent geometry");
+    options.latent_width = 1ull;
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->video_vae_decode_cpu(
+                         NULL, &options, &result, &failure, &err) == YVEX_ERR_STATE &&
+                         failure.code == YVEX_MINIMAX_H3_COMPONENT_EXECUTION_LIFECYCLE,
+                     "Visual VAE decode refuses execution without committed materialization");
+    YVEX_TEST_ASSERT(((unsigned char *)output)[0] == 0x5a,
+                     "refused Visual VAE decode does not publish output");
     return 0;
 }
 
@@ -485,5 +578,7 @@ int yvex_test_minimax_h3(void)
     if (test_operator_truth() != 0) return 1;
     if (test_audio_numeric_primitives() != 0) return 1;
     if (test_audio_execution_refusals() != 0) return 1;
+    if (test_video_numeric_primitives() != 0) return 1;
+    if (test_video_execution_refusals() != 0) return 1;
     return 0;
 }

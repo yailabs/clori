@@ -193,8 +193,9 @@ typedef struct {
         int active, decode, logits, sample, generate, seed_seen;
     } transformer;
     struct {
-        const char *target, *artifact_path, *backend, *input_file, *output_file;
-        unsigned long long batch, latent_steps, maximum_host_bytes;
+        const char *name, *target, *artifact_path, *backend, *input_file, *output_file;
+        unsigned long long batch, latent_steps, latent_frames, latent_height, latent_width;
+        unsigned long long maximum_host_bytes;
         int active;
     } component;
     int help_requested;

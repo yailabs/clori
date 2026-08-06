@@ -868,10 +868,14 @@ static int graph_parse_transformer(int argc, char **argv, yvex_graph_args *out,
 static int graph_parse_component(int argc, char **argv, yvex_graph_args *out,
                                  yvex_error *err)
 {
+    int video;
     int index;
 
-    if (argc < 4 || strcmp(argv[3], "audio-vae") != 0)
-        return graph_arg_error(err, "yvex: graph component requires audio-vae");
+    if (argc < 4 || (strcmp(argv[3], "audio-vae") != 0 &&
+                     strcmp(argv[3], "video-vae") != 0))
+        return graph_arg_error(err, "yvex: graph component requires audio-vae or video-vae");
+    out->component.name = argv[3];
+    video = strcmp(out->component.name, "video-vae") == 0;
     out->component.active = 1;
     for (index = 4; index < argc; ++index) {
         const char *flag = argv[index];
@@ -894,6 +898,18 @@ static int graph_parse_component(int argc, char **argv, yvex_graph_args *out,
             if (!parse_positive_ull(value, &out->component.latent_steps))
                 return graph_arg_error(err,
                                        "yvex: --latent-steps requires a positive integer");
+        } else if (strcmp(flag, "--latent-frames") == 0) {
+            if (!parse_positive_ull(value, &out->component.latent_frames))
+                return graph_arg_error(err,
+                                       "yvex: --latent-frames requires a positive integer");
+        } else if (strcmp(flag, "--latent-height") == 0) {
+            if (!parse_positive_ull(value, &out->component.latent_height))
+                return graph_arg_error(err,
+                                       "yvex: --latent-height requires a positive integer");
+        } else if (strcmp(flag, "--latent-width") == 0) {
+            if (!parse_positive_ull(value, &out->component.latent_width))
+                return graph_arg_error(err,
+                                       "yvex: --latent-width requires a positive integer");
         } else if (strcmp(flag, "--max-host-bytes") == 0) {
             if (!parse_positive_ull(value, &out->component.maximum_host_bytes))
                 return graph_arg_error(err,
@@ -907,14 +923,29 @@ static int graph_parse_component(int argc, char **argv, yvex_graph_args *out,
     }
     if (!out->component.target || !out->component.artifact_path ||
         !out->component.backend || !out->component.input_file ||
-        !out->component.output_file || !out->component.latent_steps)
+        !out->component.output_file)
         return graph_arg_error(
-            err, "yvex: execute component audio-vae requires target, artifact, backend, "
-                 "input file, latent steps, and output path");
+            err, video ? "yvex: execute component video-vae requires target, artifact, backend, "
+                         "input file, latent geometry, and output path"
+                       : "yvex: execute component audio-vae requires target, artifact, backend, "
+                         "input file, latent steps, and output path");
+    if ((!video && (!out->component.latent_steps || out->component.latent_frames ||
+                    out->component.latent_height || out->component.latent_width)) ||
+        (video && (out->component.latent_steps || !out->component.latent_frames ||
+                   !out->component.latent_height || !out->component.latent_width)))
+        return graph_arg_error(
+            err, video ? "yvex: video-vae requires latent frames, height, and width"
+                       : "yvex: audio-vae requires latent steps");
+    if (video && (out->component.batch != 1ull || out->component.latent_frames != 1ull ||
+                  out->component.latent_height != 1ull || out->component.latent_width != 1ull))
+        return graph_arg_error(
+            err, "yvex: Visual VAE currently admits exact reduced geometry [1,24,1,1,1]");
     if (strcmp(out->component.target, YVEX_MINIMAX_H3_TARGET_ID) != 0)
-        return graph_arg_error(err, "yvex: audio-vae component requires minimax-h3-fl2va");
+        return graph_arg_errorf(err, "yvex: %s component requires minimax-h3-fl2va",
+                                out->component.name);
     if (strcmp(out->component.backend, "cpu") != 0)
-        return graph_arg_error(err, "yvex: Audio VAE currently admits only backend cpu");
+        return graph_arg_errorf(err, "yvex: %s currently admits only backend cpu",
+                                video ? "Visual VAE" : "Audio VAE");
     yvex_error_clear(err);
     return YVEX_OK;
 }
