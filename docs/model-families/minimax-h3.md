@@ -3,7 +3,7 @@
 Status: source acquired and verified; logical architecture, tensor roles, and
 Transformation IR admitted; source-faithful Audio and Visual VAE component
 artifacts admitted through native and pinned official readers; complete Audio
-VAE and reduced-geometry Visual VAE CPU decodes numerically conform; not an
+VAE and bounded multi-patch Visual VAE CPU decodes numerically conform; not an
 executable family
 
 This record owns current YVEX facts for MiniMax-H3 Base FL2VA. YVEX now admits
@@ -16,9 +16,9 @@ identified Audio and Visual VAE component GGUF files without changing source
 dtype. The graph-family recipe binds each file to the exact component, source
 snapshot, physical plan, aggregate payload, and whole-file identities before
 materialization. The graph owner executes the complete Audio VAE decoder and
-all 36 Visual VAE decoder blocks for the admitted reduced geometry, with
+all 36 Visual VAE decoder blocks for checked latent geometries, with
 independent numerical conformance evidence for both. It does not add a family
-runtime, complete Visual geometry, GB10 path, synchronized media path, or
+runtime, full-scale Visual qualification, GB10 path, synchronized media path, or
 release obligation. The frozen quantitative intake evidence is the
 [FL2VA intake audit](../audits/minimax-h3-fl2va-b8b09e3/README.md); the common
 promotion rules remain in the [family integration contract](integration.md).
@@ -31,8 +31,8 @@ promotion rules remain in the [family integration contract](integration.md).
 | Branch status | open |
 | Branch completion | first YVEX-authored playable synchronized MiniMax-H3 FL2VA audio-video output |
 | Current wave | `R010.MINIMAX.H3.FL2VA.END_TO_END.0` |
-| Current boundary | exact Audio and Visual VAE component artifacts admitted and materialized; complete Audio and reduced Visual CPU decodes conform to pinned upstream oracles |
-| Next expected boundary | general Visual latent geometry and GB10 component execution, then exact Qwen3-VL/Omni latent generation and synchronized media publication |
+| Current boundary | exact Audio and Visual VAE component artifacts admitted and materialized; complete Audio and bounded multi-patch Visual CPU decodes conform to pinned upstream oracles |
+| Next expected boundary | GB10 Visual component execution and full-scale qualification, then exact Qwen3-VL/Omni latent generation and synchronized media publication |
 
 The branch preserves the accepted intake history and remains open across all
 later source, artifact, graph, backend, residency, latent, VAE, media, and
@@ -58,7 +58,7 @@ or rename the branch.
 | Tensor-role-map identity | `61e7a2cfc29e6dd3da966878f5388f1472a406d7e33ba34ef65f44b61f08f013` |
 | Transformation IR identity | `bd941103d754df8c1eb02ff9b90db4ba86b7e389691f2d0c4027343eccbc0b0b` |
 | Aggregate derivation identity | `cc2886a388a475c2df246558dfb41c8d66e549afd4c4e34d19e2bbd3b70a3ff5` |
-| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; Audio and Visual VAE component artifacts emitted and admitted; complete Audio and reduced Visual CPU decodes numerically conform |
+| Evidence stage | exact source verified; architecture, tensor roles, and Transformation IR admitted; Audio and Visual VAE component artifacts emitted and admitted; complete Audio and bounded multi-patch Visual CPU decodes numerically conform |
 
 The external evidence directory used during the intake was
 `/home/dgmothx/lab/models/intake/minimax-h3/<FULL_REVISION>/`. That path is an
@@ -503,7 +503,7 @@ result above through this command, then atomically published 3,200 bytes.
 container. No runtime, CUDA, stereo publication, or audio-video capability is
 admitted by this component evidence.
 
-## Visual VAE physical and reduced numerical boundary
+## Visual VAE physical and CPU numerical boundary
 
 The Visual VAE uses the same source-faithful physical profile. Its source has
 rank-five Conv3D weights while GGUF v3 admits at most four dimensions. The
@@ -531,14 +531,16 @@ semantics.
 | Native and pinned official-reader admission | accepted; official revision `af97976c7810cdabb1863172f31c432dab767de7` |
 | Runtime/media readiness | false |
 
-The admitted reduced decoder consumes one latent `[1,24,1,1,1]`. It executes
-the post-quant 1x1x1 projection, latent embedding, four learned register tokens,
+The CPU decoder consumes checked F32 `[1,24,T,H,W]` latent geometry and emits
+F32 `[1,3,T*4,H*16,W*16]`. It packs channel-major latent storage, executes the
+post-quant 1x1x1 projection, latent embedding, four learned register tokens,
 one zero class token, all 36 width-2,048 transformer blocks, 32-head noncausal
 attention, unit Q/K normalization, gated SiLU FFNs, learned residual scales,
-final LayerNorm, and the 3,072-value RGB reconstruction head. For this exact
-single-patch case, length-normalized temporal and spatial coordinates plus all
-five suffix coordinates are zero, so the declared 3D partial RoPE is exactly
-identity. That fact does not admit nonzero-coordinate or tiled Visual geometry.
+final LayerNorm, and the 3,072-value per-patch RGB reconstruction head. The
+first 48 values of each Q/K head use the exact three-dimensional, angle-scaled
+partial RoPE over length-normalized temporal and spatial coordinates; suffix
+coordinates remain zero. Checked arithmetic, output capacity, and the operator
+host budget fail closed before execution.
 
 The independent oracle latent has SHA-256
 `9e2288163885582f278f23fef919d569a0d0a864a27e91290e3ab334f999331b`.
@@ -553,7 +555,21 @@ bytes of peak tracked workspace. Maximum absolute error was
 `5.06639481e-6` against a `1e-5` tolerance. The observed correctness-run time
 is not a component benchmark or performance claim.
 
-`production_capability_available: true` for the exact reduced CPU Visual VAE
+A second independent input `[1,24,1,1,2]` with SHA-256
+`91b30bd96f589fff34365629bb14bbb4788a283f6e5ee935e60dce7212721d19`
+exercises nonzero spatial coordinates, partial 3D RoPE, multi-patch attention,
+and output unpacking. YVEX emitted `[1,3,4,16,32]` at SHA-256
+`c6db8fbf93714d7c7f548f3ffc06075af50ce59bb3ad4f8b140fbc946c3cb627`
+with execution identity
+`f4d52d1f8459a0316b87d49a3c9df6325b785537b8ce001b9f9f9f36608e2a13`.
+Maximum absolute error against the official CPU oracle was `2.74181366e-6`.
+The official CPU and GB10 oracles themselves differed by `3.26871872e-4`,
+while YVEX and the CPU oracle had relative L2 error `8.99401874e-7`; this
+establishes the CPU conformance contract without masking cross-backend F32
+reduction differences. The run read the same 441 tensors and used 135,373,020
+bytes of peak tracked workspace.
+
+`production_capability_available: true` for budget-bounded CPU Visual VAE
 decode. `production_api_available: true` through the internal family graph ABI.
 `internal_live_runner_available: true`. `operator_command_available: true`
 through:
@@ -562,14 +578,14 @@ through:
 yvex execute component video-vae \
   --target minimax-h3-fl2va --artifact <VIDEO_VAE_GGUF> --backend cpu \
   --input-file <LATENT_F32> --batch 1 \
-  --latent-frames 1 --latent-height 1 --latent-width 1 \
+  --latent-frames <T> --latent-height <H> --latent-width <W> \
   --out <RGB_F32> --output json
 ```
 
 The command authenticates the complete artifact, bounds all tracked workspace,
-executes the production decoder, and publishes 12,288 bytes without replacing
-an existing file. `end_user_path_available: false`: raw F32 RGB frames are not
-a playable video, and no audio synchronization or media container exists yet.
+executes the production decoder, and publishes the exact output extent without
+replacing an existing file. `end_user_path_available: false`: raw F32 RGB frames
+are not a playable video, and no audio synchronization or media container exists.
 
 ## Progression and non-claims
 
@@ -577,12 +593,12 @@ a playable video, and no audio synchronization or media container exists yet.
 
 `downstream_safe: true`
 
-The downstream consumer is general Visual latent geometry and backend-owned
-GB10 component execution, followed by the Qwen3-VL and Omni latent-generation
+The downstream consumer is backend-owned GB10 Visual execution and full-scale
+qualification, followed by the Qwen3-VL and Omni latent-generation
 path on `feature/minimax-h3`. There is no gate blocker, boundary incompleteness,
 evidence gap, or current external blocker in either admitted bounded component
-execution contract. Nonzero Visual RoPE coordinates, tiling, the exact Omni
-scheduler and MM-RoPE contracts, staged residency, synchronized media
+execution contract. Visual tiling, the exact Omni scheduler and MM-RoPE
+contracts, staged residency, synchronized media
 transaction, evaluation, and benchmark are deferred depth with explicit later
 consumers. They do not weaken the two admitted execution identities, and none
 is claimed by them.
@@ -595,7 +611,7 @@ This implementation boundary does not prove:
 - complete composite-artifact support or Physical Execution IR;
 - GB10 backend support or simultaneous/staged runtime residency;
 - Omni-Transformer, solver, timestep, or MM-RoPE numerical correctness;
-- general/tiled Visual VAE geometry or either VAE in the complete latent and media pipeline;
+- full-scale/tiled Visual VAE qualification or either VAE in the complete latent and media pipeline;
 - audio/video synchronization, playable media output, or hosted serving;
 - Diffusers, SGLang, or vLLM parity;
 - model quality, generation speed, practical 768p, or 2K generation;
