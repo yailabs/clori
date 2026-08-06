@@ -172,6 +172,22 @@ fixture at a median 2.95367613 final token/s. The external capture digest is
 This component result is causal optimization evidence, not a promoted model
 performance claim, and changes no persisted, wire, public or profile contract.
 
+DeepSeek attention reduction now evaluates each visible history row once. A
+stable online softmax retains source-order dot reductions and rescales the
+accumulated denominator and value row whenever the running maximum changes;
+the earlier two-sweep implementation remains represented by the independent
+CPU/reference oracle. Across 6,772,096 compared values, the full 43-layer CUDA
+lane remains inside its admitted contract (`max_abs=0.00390625`,
+`rmse=5.685668969537683e-06`) and deterministic across repeated execution. On
+the candidate artifact and fixed four-token DSpark request, an identity-bound
+Nsight Systems capture reduced 699 attention-reduction instances from
+212,617,664 ns to 118,771,328 ns while preserving exact generated text, token
+usage and stop facts. Five warm resident runs measured a median 3.09469247
+final token/s. The external capture digest is
+`0abbf09993c4a1b7ed15181f06969816fa03180c7df72cf731d9d4d5b3b05fd2`.
+This is component evidence rather than a promoted model-performance claim and
+does not change a persisted, wire, public or profile contract.
+
 CUDA attention graph replay now separates mutable state preparation from the
 captured kernel topology. The graph-stream preamble refreshes the current state
 bank before capture and every warm replay; promotion generation is therefore

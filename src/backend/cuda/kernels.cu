@@ -1706,6 +1706,7 @@ extern "C" __global__ void yvex_deepseek_reduce(
     __shared__ double maximum;
     __shared__ double denominator;
     __shared__ double probability;
+    __shared__ double renormalization;
     __shared__ unsigned long long selected_count;
     __shared__ int active;
     unsigned long long head = (unsigned long long)blockIdx.x;
@@ -1740,6 +1741,7 @@ extern "C" __global__ void yvex_deepseek_reduce(
     if (thread == 0u) {
         active = *status == 0;
         maximum = (double)sinks[head];
+        denominator = 1.0;
         selected_count = selected_count_ptr ? *selected_count_ptr : 0ull;
     }
     __syncthreads();
@@ -1756,8 +1758,14 @@ extern "C" __global__ void yvex_deepseek_reduce(
         current_compressed_stride, selected, sliding_window, ratio,
         attention_class, token_position, candidate_block_visible
     };
-    /* Products and output lanes are parallel, while lane zero consumes dot
-       terms and probabilities in the exact source order. */
+    for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
+         lane += (unsigned long long)blockDim.x)
+        out[head * head_dim + lane] = 0.0f;
+    __syncthreads();
+    /* Candidates retain source order, but a stable online softmax keeps each
+       dot product single-use. When a new maximum arrives, every output lane
+       and the accumulated denominator are renormalized before that candidate
+       is incorporated. */
     for (unsigned long long pass = 0ull; pass < 2ull; ++pass) {
         unsigned long long count = pass == 0ull ? local_total : compressed_total;
         for (unsigned long long candidate = 0ull; candidate < count; ++candidate) {
@@ -1781,47 +1789,25 @@ extern "C" __global__ void yvex_deepseek_reduce(
             }
             if (thread == 0u) {
                 double score = __dmul_rn(dot, scale);
-                if (score > maximum) maximum = score;
-            }
-        }
-    }
-    if (thread == 0u)
-        denominator = exp(__dadd_rn((double)sinks[head], -maximum));
-    for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
-         lane += (unsigned long long)blockDim.x)
-        out[head * head_dim + lane] = 0.0f;
-    __syncthreads();
-    for (unsigned long long pass = 0ull; pass < 2ull; ++pass) {
-        unsigned long long count = pass == 0ull ? local_total : compressed_total;
-        for (unsigned long long candidate = 0ull; candidate < count; ++candidate) {
-            int visible;
-            const float *row = deepseek_reduce_row(&rows, pass, candidate, &visible);
-            if (!visible) continue;
-            double dot = 0.0;
-            for (unsigned long long base = 0ull; base < head_dim;
-                 base += (unsigned long long)blockDim.x) {
-                unsigned long long lane = base + (unsigned long long)thread;
-                dot_terms[thread] = lane < head_dim
-                    ? __dmul_rn((double)q[lane], (double)row[lane]) : 0.0;
-                __syncthreads();
-                if (thread == 0u) {
-                    unsigned long long tile = head_dim - base;
-                    if (tile > (unsigned long long)blockDim.x) tile = blockDim.x;
-                    for (unsigned long long i = 0ull; i < tile; ++i)
-                        dot = __dadd_rn(dot, dot_terms[i]);
+                if (score > maximum) {
+                    renormalization = exp(__dadd_rn(maximum, -score));
+                    maximum = score;
+                    probability = 1.0;
+                    denominator = __dadd_rn(
+                        __dmul_rn(denominator, renormalization), probability);
+                } else {
+                    renormalization = 1.0;
+                    probability = exp(__dadd_rn(score, -maximum));
+                    denominator = __dadd_rn(denominator, probability);
                 }
-                __syncthreads();
-            }
-            if (thread == 0u) {
-                probability = exp(__dadd_rn(__dmul_rn(dot, scale), -maximum));
-                denominator = __dadd_rn(denominator, probability);
             }
             __syncthreads();
             for (unsigned long long lane = (unsigned long long)thread; lane < head_dim;
                  lane += (unsigned long long)blockDim.x) {
-                float term = (float)__dmul_rn(probability, (double)row[lane]);
                 unsigned long long offset = head * head_dim + lane;
-                out[offset] = __fadd_rn(out[offset], term);
+                out[offset] = (float)__dadd_rn(
+                    __dmul_rn((double)out[offset], renormalization),
+                    __dmul_rn(probability, (double)row[lane]));
             }
             __syncthreads();
         }

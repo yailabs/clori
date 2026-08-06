@@ -80,6 +80,10 @@ change. Git history preserves implementation chronology.
   the block instead of serializing FP64 accumulation through one lane. The
   inverse, encoded scale and BF16 publication contracts remain unchanged, and
   the full attention oracle remains bit-exact.
+- CUDA DeepSeek attention now uses one stable online-softmax sweep over visible
+  local and compressed history. Each source-ordered dot product is consumed
+  once, with prior value lanes renormalized when the running maximum changes;
+  the complete CPU/CUDA oracle remains inside its admitted numerical contract.
 - Short CUDA qtype rows now form geometry-selected two-, four- or eight-lane
   groups across Q8_0, Q2_K, IQ2_XXS and MXFP4 activation dots. Only integer
   terms are redistributed; every encoded block is reconstructed before the
