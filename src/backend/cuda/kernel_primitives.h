@@ -148,10 +148,7 @@ static __device__ __constant__ unsigned short iq2_xxs_grid[256] = {
 };
 static __device__ unsigned int iq2_xxs_signs(unsigned int low)
 {
-    unsigned int parity = 0u;
-    unsigned int value = low;
-    while (value) { parity ^= value & 1u; value >>= 1u; }
-    return low | (parity << 7u);
+    return low | ((__popc(low) & 1u) << 7u);
 }
 static __device__ float qtype_value(const unsigned char *encoded,
                                          unsigned long long index,

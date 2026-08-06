@@ -244,6 +244,17 @@ the unchanged warp reduction lanes. The same primitive therefore fills idle
 lanes across dense and grouped-MoE consumers without a model-name branch,
 derived-layout change or numerical-contract bump.
 
+IQ2_XXS sign-grid reconstruction now uses the CUDA population-count primitive
+to recover the source parity bit rather than shifting the seven-bit code in a
+serial loop. Every affected row-dot and full attention comparison remains
+exact. On the candidate artifact and fixed four-token DSpark request, an
+identity-bound Nsight Systems capture reduced the 12,075 generic qtype matvec
+instances from 1,282,725,728 ns to 1,243,993,280 ns. The external capture
+digest is
+`e89e01fd362403a135c375cce60eb3eb6234dfbc4a69a42568e8fcb36e3d4632`.
+The measured component reduction is not a promoted model-performance claim and
+changes no qtype, layout, persisted, wire, public or profile contract.
+
 Multi-row qtype projections now derive their launch topology from both matrix
 rows and input rows. Up to eight compatible input rows share one encoded-row
 block, while wider batches tile that same mapping without padding the logical
