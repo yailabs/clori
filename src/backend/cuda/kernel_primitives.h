@@ -353,17 +353,20 @@ static __device__ float q8_0_q8_k_dot(const unsigned char *weight,
     }
     return total;
 }
-/* Sixteen-block rows leave half of a warp idle. Pairing lanes parallelizes only
- * exact integer dot terms; each leader reconstructs the original block float
- * before values return to their original reduction lanes. */
-static __device__ int q8_pair_sum(int value)
+/* Short rows leave part of a warp idle. Lane groups parallelize only exact
+ * integer dot terms; each leader reconstructs the original block float before
+ * values return to their original reduction lanes. */
+static __device__ int q8_group_sum(int value, unsigned int group_width)
 {
-    return value + __shfl_down_sync(0xffffffffu, value, 1u, 2u);
+    for (unsigned int offset = group_width >> 1u; offset; offset >>= 1u)
+        value += __shfl_down_sync(0xffffffffu, value, offset, group_width);
+    return value;
 }
-static __device__ float q8_0_q8_k_dot_pair(const unsigned char *weight,
-                                           const unsigned char *activation)
+static __device__ float q8_0_q8_k_dot_group(const unsigned char *weight,
+                                            const unsigned char *activation,
+                                            unsigned int group_width)
 {
-    unsigned int pair_lane = threadIdx.x & 1u;
+    unsigned int group_lane = (threadIdx.x & 31u) & (group_width - 1u);
     float activation_scale = __uint_as_float(qtype_load_u32(activation));
     float total = 0.0f;
 #pragma unroll
@@ -371,65 +374,70 @@ static __device__ float q8_0_q8_k_dot_pair(const unsigned char *weight,
         const unsigned char *q8_0 = weight + block * 34u;
         int dot = 0;
 #pragma unroll
-        for (unsigned int segment = pair_lane; segment < 8u; segment += 2u) {
+        for (unsigned int segment = group_lane; segment < 8u;
+             segment += group_width) {
             unsigned int i = segment * 4u;
             dot = __dp4a((int)qtype_load_u32(q8_0 + 2u + i),
                          (int)qtype_load_u32(activation + 4u + block * 32u + i), dot);
         }
-        dot = q8_pair_sum(dot);
-        if (!pair_lane)
+        dot = q8_group_sum(dot, group_width);
+        if (!group_lane)
             total = fmaf(f16_bits_to_float(qtype_load_u16(q8_0)) * activation_scale,
                          (float)dot, total);
     }
     return total;
 }
-static __device__ int q2_k_dot16_pair(const unsigned char *weight,
-                                      const unsigned char *activation,
-                                      unsigned int shift, unsigned int pair_lane)
+static __device__ int q2_k_dot16_group(const unsigned char *weight,
+                                       const unsigned char *activation,
+                                       unsigned int shift, unsigned int group_lane,
+                                       unsigned int group_width)
 {
     int sum = 0;
 #pragma unroll
-    for (unsigned int segment = pair_lane; segment < 4u; segment += 2u) {
+    for (unsigned int segment = group_lane; segment < 4u;
+         segment += group_width) {
         unsigned int i = segment * 4u;
         int packed = (int)((qtype_load_u32(weight + i) >> shift) & 0x03030303u);
         sum = __dp4a(packed, (int)qtype_load_u32(activation + i), sum);
     }
-    return q8_pair_sum(sum);
+    return q8_group_sum(sum, group_width);
 }
-static __device__ float q2_k_q8_k_dot_pair(const unsigned char *weight,
-                                           const unsigned char *activation)
+static __device__ float q2_k_q8_k_dot_group(const unsigned char *weight,
+                                            const unsigned char *activation,
+                                            unsigned int group_width)
 {
-    unsigned int pair_lane = threadIdx.x & 1u;
+    unsigned int group_lane = (threadIdx.x & 31u) & (group_width - 1u);
     const unsigned char *scales = weight;
     const unsigned char *quantized = weight + 16u;
     const unsigned char *q8 = activation + 4u;
     float activation_scale = __uint_as_float(qtype_load_u32(activation));
     int minimum_sum = 0, dot = 0;
-    for (unsigned int i = pair_lane; i < 16u; i += 2u)
+    for (unsigned int i = group_lane; i < 16u; i += group_width)
         minimum_sum += q8_k_sum(activation, i) * (int)(scales[i] >> 4u);
-    minimum_sum = q8_pair_sum(minimum_sum);
+    minimum_sum = q8_group_sum(minimum_sum, group_width);
 #pragma unroll
     for (unsigned int term = 0u; term < 16u; ++term) {
         unsigned int half = term >> 3u;
         unsigned int within = term & 7u;
         unsigned int group = within >> 1u;
         unsigned int side = within & 1u;
-        int term_dot = q2_k_dot16_pair(
+        int term_dot = q2_k_dot16_group(
             quantized + half * 32u + side * 16u,
             q8 + half * 128u + group * 32u + side * 16u,
-            group * 2u, pair_lane);
-        if (!pair_lane) dot += (int)(scales[term] & 15u) * term_dot;
+            group * 2u, group_lane, group_width);
+        if (!group_lane) dot += (int)(scales[term] & 15u) * term_dot;
     }
-    if (pair_lane) return 0.0f;
+    if (group_lane) return 0.0f;
     return activation_scale * f16_bits_to_float(qtype_load_u16(weight + 80u)) *
                (float)dot -
            activation_scale * f16_bits_to_float(qtype_load_u16(weight + 82u)) *
                (float)minimum_sum;
 }
-static __device__ float iq2_xxs_q8_k_dot_pair(const unsigned char *weight,
-                                              const unsigned char *activation)
+static __device__ float iq2_xxs_q8_k_dot_group(const unsigned char *weight,
+                                               const unsigned char *activation,
+                                               unsigned int group_width)
 {
-    unsigned int pair_lane = threadIdx.x & 1u;
+    unsigned int group_lane = (threadIdx.x & 31u) & (group_width - 1u);
     float weight_scale = f16_bits_to_float(qtype_load_u16(weight));
     float activation_scale = __uint_as_float(qtype_load_u32(activation));
     int total = 0;
@@ -445,23 +453,25 @@ static __device__ float iq2_xxs_q8_k_dot_pair(const unsigned char *weight,
                 (sign_scale >> (7u * subgroup)) & 127u);
             unsigned short grid = iq2_xxs_grid[grid_index];
             const unsigned char *q8 = activation + 4u + group * 32u + subgroup * 8u;
-            int subgroup_sum = __dp4a(
-                iq2_xxs_i8x4(grid, pair_lane ? 4u : 0u, signs),
-                (int)qtype_load_u32(q8 + pair_lane * 4u), 0);
-            subgroup_sum = q8_pair_sum(subgroup_sum);
-            if (!pair_lane) group_sum += subgroup_sum;
+            int subgroup_sum = group_lane < 2u
+                ? __dp4a(iq2_xxs_i8x4(grid, group_lane ? 4u : 0u, signs),
+                          (int)qtype_load_u32(q8 + group_lane * 4u), 0)
+                : 0;
+            subgroup_sum = q8_group_sum(subgroup_sum, group_width);
+            if (!group_lane) group_sum += subgroup_sum;
         }
-        if (!pair_lane)
+        if (!group_lane)
             total += group_sum * (int)(2u * (sign_scale >> 28u) + 1u);
     }
-    return pair_lane ? 0.0f
-                     : 0.125f * weight_scale * activation_scale * (float)total;
+    return group_lane ? 0.0f
+                      : 0.125f * weight_scale * activation_scale * (float)total;
 }
 static __device__ int mxfp4_i8x4(unsigned int packed, unsigned int high);
-static __device__ float mxfp4_q8_k_dot_pair(const unsigned char *weight,
-                                            const unsigned char *activation)
+static __device__ float mxfp4_q8_k_dot_group(const unsigned char *weight,
+                                             const unsigned char *activation,
+                                             unsigned int group_width)
 {
-    unsigned int pair_lane = threadIdx.x & 1u;
+    unsigned int group_lane = (threadIdx.x & 31u) & (group_width - 1u);
     float activation_scale = __uint_as_float(qtype_load_u32(activation));
     float total = 0.0f;
 #pragma unroll
@@ -470,7 +480,8 @@ static __device__ float mxfp4_q8_k_dot_pair(const unsigned char *weight,
         const unsigned char *q8 = activation + 4u + block * 32u;
         int dot = 0;
 #pragma unroll
-        for (unsigned int segment = pair_lane; segment < 4u; segment += 2u) {
+        for (unsigned int segment = group_lane; segment < 4u;
+             segment += group_width) {
             unsigned int i = segment * 4u;
             unsigned int packed = qtype_load_u32(mxfp4 + 1u + i);
             dot = __dp4a(mxfp4_i8x4(packed, 0u),
@@ -478,25 +489,26 @@ static __device__ float mxfp4_q8_k_dot_pair(const unsigned char *weight,
             dot = __dp4a(mxfp4_i8x4(packed, 1u),
                          (int)qtype_load_u32(q8 + 16u + i), dot);
         }
-        dot = q8_pair_sum(dot);
-        if (!pair_lane)
+        dot = q8_group_sum(dot, group_width);
+        if (!group_lane)
             total = fmaf(e8m0_bits_to_float(mxfp4[0]) * 0.5f * activation_scale,
                          (float)dot, total);
     }
     return total;
 }
-static __device__ float qtype_q8_k_dot_pair(const unsigned char *weight,
-                                            const unsigned char *activation,
-                                            unsigned int qtype)
+static __device__ float qtype_q8_k_dot_group(const unsigned char *weight,
+                                             const unsigned char *activation,
+                                             unsigned int qtype,
+                                             unsigned int group_width)
 {
     if (qtype == YVEX_GGUF_QTYPE_IQ2_XXS)
-        return iq2_xxs_q8_k_dot_pair(weight, activation);
+        return iq2_xxs_q8_k_dot_group(weight, activation, group_width);
     if (qtype == YVEX_GGUF_QTYPE_Q2_K)
-        return q2_k_q8_k_dot_pair(weight, activation);
+        return q2_k_q8_k_dot_group(weight, activation, group_width);
     if (qtype == YVEX_GGUF_QTYPE_Q8_0)
-        return q8_0_q8_k_dot_pair(weight, activation);
+        return q8_0_q8_k_dot_group(weight, activation, group_width);
     if (qtype == YVEX_GGUF_QTYPE_MXFP4)
-        return mxfp4_q8_k_dot_pair(weight, activation);
+        return mxfp4_q8_k_dot_group(weight, activation, group_width);
     return __uint_as_float(0x7fc00000u);
 }
 static __device__ int mxfp4_i8x4(unsigned int packed, unsigned int high)
@@ -554,14 +566,19 @@ static __device__ float q8_warp_dot(const unsigned char *weight,
 {
     unsigned int lane = threadIdx.x & 31u;
     float sum = 0.0f;
-    if (blocks == 16ull) {
-        unsigned int block = lane >> 1u;
-        float pair_value = qtype_q8_k_dot_pair(
+    if (blocks <= 16ull) {
+        unsigned int group_width = blocks <= 4ull ? 8u : blocks <= 8ull ? 4u : 2u;
+        unsigned int groups = 32u / group_width;
+        unsigned int group = lane / group_width;
+        unsigned int block = group < blocks ? group : 0u;
+        float group_value = qtype_q8_k_dot_group(
             weight + (unsigned long long)block * weight_block,
-            activation + (unsigned long long)block * YVEX_CUDA_Q8_K_BYTES, qtype);
+            activation + (unsigned long long)block * YVEX_CUDA_Q8_K_BYTES,
+            qtype, group_width);
         float original_lane_value = __shfl_sync(
-            0xffffffffu, pair_value, (int)((lane & 15u) * 2u));
-        if (lane < 16u) sum = original_lane_value;
+            0xffffffffu, group_value,
+            (int)((lane & (groups - 1u)) * group_width));
+        if ((unsigned long long)lane < blocks) sum = original_lane_value;
     } else {
         for (unsigned long long block = lane; block < blocks; block += 32ull)
             sum += qtype_q8_k_dot(weight + block * weight_block,
