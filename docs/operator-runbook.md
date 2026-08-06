@@ -511,3 +511,26 @@ command authenticates the exact component artifact, bounds workspace, executes
 the native CPU decoder, and publishes the output without replacing an existing
 file. Raw component samples are numerical evidence, not synchronized media or
 an admitted MiniMax generation path.
+
+The exact reduced MiniMax-H3 Visual VAE component is reachable through the
+same lane:
+
+```sh
+./yvex execute component video-vae \
+  --target minimax-h3-fl2va \
+  --artifact /srv/yvex/artifacts/minimax-h3/video_vae.gguf \
+  --backend cpu \
+  --input-file /srv/yvex/evidence/video-latent.f32 \
+  --batch 1 \
+  --latent-frames 1 \
+  --latent-height 1 \
+  --latent-width 1 \
+  --out /srv/yvex/evidence/rgb-frames.f32
+```
+
+The input is contiguous F32 `[1,24,1,1,1]`; the output is contiguous F32
+`[1,3,4,16,16]`. The command authenticates the complete Visual VAE artifact,
+bounds workspace, executes all 36 native CPU decoder blocks, and publishes the
+output without replacing an existing file. This exact single-patch geometry
+does not admit general or tiled Visual VAE execution. Raw RGB frames are
+numerical evidence, not a playable video or synchronized media path.
