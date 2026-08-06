@@ -257,10 +257,8 @@ static inline const char *runtime_profile_counter_name(yvex_runtime_profile_coun
         "shape_registry_misses"};
     return counter < YVEX_RUNTIME_PROFILE_COUNTER_COUNT ? names[counter] : "invalid";
 }
-#define YVEX_RUNTIME_GENERATION_SCHEMA_V1 1u
-#define YVEX_RUNTIME_GENERATION_SCHEMA_V2 2u
 #define YVEX_RUNTIME_GENERATION_SCHEMA_V3 3u
-#define YVEX_RUNTIME_GENERATION_SCHEMA_V4 4u
+#define YVEX_RUNTIME_GENERATION_SCHEMA_V5 5u
 #define YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4 4u
 #define YVEX_RUNTIME_GENERATION_TURN_SCHEMA_V1 1u
 #define YVEX_RUNTIME_PARTIAL_TURN_SCHEMA_V1 1u
@@ -336,7 +334,7 @@ typedef struct {
     char speculation_policy_identity[YVEX_SHA256_HEX_CAP];
     char stop_policy_identity[YVEX_SHA256_HEX_CAP];
     char kernel_bundle_identity[YVEX_SHA256_HEX_CAP];
-    char execution_profile_identity[YVEX_SHA256_HEX_CAP];
+    char execution_profile_identity[YVEX_SHA256_HEX_CAP], workload_profile_identity[YVEX_SHA256_HEX_CAP];
     char hardware_profile[YVEX_EXECUTION_TEXT_CAP];
     char generation_plan_identity[YVEX_SHA256_HEX_CAP];
 } yvex_runtime_generation_plan_summary;

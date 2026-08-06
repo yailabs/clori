@@ -25,8 +25,10 @@ source-authored conversation product path earns local protocol v7, provider
 request/wire v2, tokenizer plan v3, tokenizer provider result v2 and OpenAI
 compatibility profile v2. The installed server-construction API and public
 declaration count remain unchanged. Runtime events remain schema v3, Physical
-Execution IR and compiled profiles remain schema v1, and generation remains
-ABI v4. Every admitted change has a concrete fact and compatibility rule in the
+Execution IR and compiled profiles remain schema v1. Generation plan ABI v5
+binds the exact workload-profile identity needed to validate its phase roofline
+ledger; result schema v4 and its wire projections remain unchanged. Every
+admitted change has a concrete fact and compatibility rule in the
 contract matrix; the size of this milestone alone earns no version bump.
 
 An implementation-discovered identity change is admitted beside that frozen
@@ -43,6 +45,7 @@ entry audit:
 | Sampling-transaction internal ABI | v1 | v1 | the existing selection call accepts an optional staged RNG transaction; its test-only result validator is retired | in-process signature and private transaction layout only; result layout is unchanged | old callers select directly or obtain uniform values and select outside the sampling owner | complete rebuild; direct callers pass no transaction; outer transactions retain prepare/publish/abort authority; no persistence, wire, public API or profile migration | CPU/CUDA abort and exact retry, commit-only sample and RNG accounting, stale-base refusal, bounded device result |
 | DSpark target-anchor internal ABI | v1 | v1 | one typed sampling source and its staged selection replace mandatory complete-probability materialization | in-process helper and result-field naming only; no persisted, wire, state-layout or public incompatibility | old rebuilt callers materialize one complete probability row before target selection | complete rebuild; CPU and evidence-bearing paths use the host sampling oracle, production CUDA consumes resident logits; explicit full distributions remain forensic operations | runtime sampling/speculation/generation, CUDA bounded selection, full-array production guard, transaction abort and commit |
 | Stochastic-speculation internal ABI | v1 | v1 | resident draft/target row directories and bounded p/q acceptance facts | in-process operation table and helper signatures only; no persisted, wire or state-layout incompatibility | old objects are never mixed with rebuilt objects; the retained oracle expects host probability rows | complete rebuild; production CUDA uses the device operation, while CPU and audit/forensic profiles retain the oracle; no artifact, binding, protocol, event, profile or public API migration | every accepted prefix, residual and bonus agreement, workspace and malformed-token refusal, canonical identity reseal |
+| Generation plan ABI | v4 | v5 | exact workload-profile identity associated with phase roofline evidence | in-process plan layout and semantic identity; result and wire layouts are unchanged | rebuilt v5 readers reject plans that cannot identify their workload profile | complete rebuild; no artifact, binding, protocol, event or public API migration | plan identity mutation, mismatched-workload refusal and live CUDA generation result validation |
 
 The later source-authored conversation gate earned these product-boundary
 changes. Reader and writer behavior remain separate because compatibility in

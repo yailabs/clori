@@ -348,7 +348,7 @@ static int session_generation_open(
         return YVEX_OK;
     }
     memset(&options, 0, sizeof(options));
-    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4;
+    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     options.backend = registry->options.backend;
     options.mode = registry->options.generation_mode ==
                            YVEX_SERVER_GENERATION_DSPARK

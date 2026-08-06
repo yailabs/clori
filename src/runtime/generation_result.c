@@ -278,7 +278,7 @@ int yvex_runtime_generation_plan_identity(
     yvex_sha256 hash;
     if (!plan || !output) return 0;
     yvex_sha256_init(&hash);
-    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.plan.v4") &&
+    return yvex_sha256_update_text(&hash, "yvex.runtime.generation.plan.v5") &&
            yvex_sha256_update_u64(&hash, plan->schema_version) &&
            yvex_sha256_update_u64(&hash, plan->backend) &&
            yvex_sha256_update_u64(&hash, plan->mode) &&
@@ -301,6 +301,7 @@ int yvex_runtime_generation_plan_identity(
            yvex_sha256_update_text(&hash, plan->stop_policy_identity) &&
            yvex_sha256_update_text(&hash, plan->kernel_bundle_identity) &&
            yvex_sha256_update_text(&hash, plan->execution_profile_identity) &&
+           yvex_sha256_update_text(&hash, plan->workload_profile_identity) &&
            yvex_sha256_update_text(&hash, plan->hardware_profile) &&
            generation_hash_finish(&hash, output);
 }
@@ -529,7 +530,7 @@ static int generation_roofline_validate(
         strcmp(ledger->artifact_identity, result->profile.artifact_identity) != 0 ||
         strcmp(ledger->execution_profile_identity, plan->execution_profile_identity) != 0 ||
         strcmp(ledger->kernel_bundle_identity, plan->kernel_bundle_identity) != 0 ||
-        strcmp(ledger->workload_profile_identity, result->profile.workload_identity) != 0 ||
+        strcmp(ledger->workload_profile_identity, plan->workload_profile_identity) != 0 ||
         !yvex_sha256_hex_valid(ledger->hardware_profile_identity) ||
         !yvex_sha256_hex_valid(ledger->identity)) return 0;
     for (index = 0ull; index < ledger->phase_count; ++index) {
@@ -581,13 +582,13 @@ int yvex_runtime_generation_result_validate(
                           &expected_final_position);
     if (!plan || !result || (!tokens && result->sampled_token_count) ||
         (!text && result->generated_text_bytes) ||
-        plan->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V4 ||
+        plan->schema_version != YVEX_RUNTIME_GENERATION_SCHEMA_V5 ||
         result->schema_version != YVEX_RUNTIME_GENERATION_RESULT_SCHEMA_V4 ||
         plan->evidence_profile > YVEX_EXECUTION_EVIDENCE_FORENSIC ||
         plan->execution_class > YVEX_EXECUTION_CLASS_FORENSIC_REFERENCE ||
         !yvex_sha256_hex_valid(plan->kernel_bundle_identity) ||
         !yvex_sha256_hex_valid(plan->execution_profile_identity) ||
-        !plan->hardware_profile[0] ||
+        !yvex_sha256_hex_valid(plan->workload_profile_identity) || !plan->hardware_profile[0] ||
         result->execution_mode != plan->mode ||
         result->sampled_token_count > token_capacity ||
         result->generated_text_bytes > text_capacity ||
@@ -856,7 +857,7 @@ int yvex_runtime_generation_operator_execute(
     rc = yvex_runtime_cleanup_lease_acquire(
         &cleanup, &model_request, &session_request, &model, &session,
         &failure, err);
-    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4;
+    options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     options.backend = request->backend;
     options.mode = request->mode;
     options.context_capacity = request->context_capacity;

@@ -1529,7 +1529,7 @@ static int test_model_execution_binding_v8(const char *root)
                          &session, model, &session_request,
                          &model_failure, &err) == YVEX_OK,
                      "v8 runtime session opens for capacity admission");
-    generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V4;
+    generation_options.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
     generation_options.backend = YVEX_BACKEND_KIND_CPU;
     generation_options.mode = YVEX_GENERATION_MODE_TARGET_ONLY;
     generation_options.context_capacity = 5ull;

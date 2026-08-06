@@ -94,10 +94,28 @@ static int generation_test_execution_identity_excludes_measurement(void)
     return 0;
 }
 
+static int generation_test_plan_binds_workload_profile(void)
+{
+    yvex_runtime_generation_plan_summary plan;
+    char before[YVEX_SHA256_HEX_CAP], after[YVEX_SHA256_HEX_CAP];
+    memset(&plan, 0, sizeof(plan));
+    plan.schema_version = YVEX_RUNTIME_GENERATION_SCHEMA_V5;
+    strcpy(plan.workload_profile_identity,
+           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    YVEX_TEST_ASSERT(yvex_runtime_generation_plan_identity(&plan, before),
+                     "generation plan must bind a workload profile");
+    plan.workload_profile_identity[0] = 'b';
+    YVEX_TEST_ASSERT(yvex_runtime_generation_plan_identity(&plan, after) &&
+                         strcmp(before, after) != 0,
+                     "workload profile changes must alter generation plan identity");
+    return 0;
+}
+
 int yvex_test_runtime_generation(void)
 {
     if (generation_test_stop_taxonomy() != 0) return 1;
     if (generation_test_refusals() != 0) return 1;
     if (generation_test_execution_identity_excludes_measurement() != 0) return 1;
+    if (generation_test_plan_binds_workload_profile() != 0) return 1;
     return 0;
 }

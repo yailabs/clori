@@ -149,6 +149,9 @@ change. Git history preserves implementation chronology.
 
 ### Changed
 
+- Generation plan ABI v5 now binds the compiled workload-profile identity, so
+  CUDA phase-roofline evidence validates against its actual workload instead
+  of being rejected against the distinct per-request profiling identity.
 - CUDA kernel admission now binds and atomically owns multiple independently
   compiled manifest-owned PTX/native modules under kernel-bundle identity v3;
   the routed/shared MoE kernel family no longer shares one monolithic CUDA

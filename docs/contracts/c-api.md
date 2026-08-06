@@ -169,8 +169,10 @@ and phase-roofline schemas begin at v1 as internal contracts. The installed
 server construction entrypoints and public declaration count remain unchanged.
 The source-authored conversation boundary admits provider request/wire schema
 v2, tokenizer plan v3, tokenizer provider result v2, and local protocol v7.
-Runtime event schema v3, generation ABI v4, Physical Execution IR v1 and
-compiled profile v1 remain unchanged.
+Runtime event schema v3, Physical Execution IR v1 and compiled profile v1
+remain unchanged. Generation plan ABI v5 adds the workload-profile identity
+required to bind phase evidence to the compiled workload; generation result
+schema v4 and all wire projections remain unchanged.
 
 Phase-roofline v1 accepts both its original complete record and an additive
 availability mask. A zero mask retains the original all-facts meaning; new
@@ -183,12 +185,14 @@ The graph execution owner also accumulates repeated phase deltas with checked
 arithmetic and refuses any availability change within one phase; generation
 does not keep a second accumulation policy.
 
-The internal generation result carries an optional phase ledger. This additive
-source ABI is rebuilt with every product binary, is not serialized as C object
-memory, and is excluded from semantic generation identity. It therefore does
-not change generation ABI v4, protocol v7 or event schema v3. Result validation
-checks ledger identities and availability masks when present; old internal
-results with no ledger retain their zero-initialized meaning.
+The internal generation result carries an optional phase ledger. The result
+layout is rebuilt with every product binary, is not serialized as C object
+memory, and remains excluded from semantic generation identity. Generation
+plan ABI v5 binds the ledger's workload-profile identity instead of comparing
+it with the distinct per-request profiling identity. Result validation checks
+that like-for-like identity and the availability masks when a ledger is
+present; old internal results with no ledger retain their zero-initialized
+meaning. Protocol v7 and event schema v3 do not change.
 
 CUDA producers currently expose exact active-weight and launch facts for
 target-only prefill and decode together with their exact H2D/D2H/D2D movement
