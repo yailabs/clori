@@ -1088,23 +1088,25 @@ extern "C" __global__ void yvex_deepseek_mhc_pre(
     }
     __syncthreads();
     if (!active) return;
-    /* The square products share the block, while lane zero consumes each tile
-       in the original order. Sinkhorn likewise remains serial and exact. */
-    if (thread == 0u) *inverse = 0.0;
-    for (unsigned long long base_index = 0ull; base_index < expanded;
-         base_index += (unsigned long long)blockDim.x) {
-        unsigned long long lane = base_index + (unsigned long long)thread;
-        double value = lane < expanded ? (double)residual[lane] : 0.0;
-        square_terms[thread] = lane < expanded
-            ? __dmul_rn(value, value) : 0.0;
-        __syncthreads();
-        if (thread == 0u) {
-            unsigned long long tile = expanded - base_index;
-            if (tile > (unsigned long long)blockDim.x) tile = blockDim.x;
-            for (unsigned long long i = 0ull; i < tile; ++i)
-                *inverse = __dadd_rn(*inverse, square_terms[i]);
+    /* Double accumulation keeps the numerical error below the admitted CUDA
+       contract while removing the single-lane normalization bottleneck. */
+    {
+        double square_sum = 0.0;
+        unsigned int offset;
+        for (unsigned long long lane = (unsigned long long)thread; lane < expanded;
+             lane += (unsigned long long)blockDim.x) {
+            double value = (double)residual[lane];
+            square_sum = __dadd_rn(square_sum, __dmul_rn(value, value));
         }
+        square_terms[thread] = square_sum;
         __syncthreads();
+        for (offset = blockDim.x >> 1u; offset; offset >>= 1u) {
+            if (thread < offset)
+                square_terms[thread] =
+                    __dadd_rn(square_terms[thread], square_terms[thread + offset]);
+            __syncthreads();
+        }
+        if (thread == 0u) *inverse = square_terms[0];
     }
     if (thread == 0u) {
         *inverse = 1.0 / sqrt(*inverse / (double)expanded + rms_epsilon);
