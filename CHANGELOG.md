@@ -65,6 +65,10 @@ change. Git history preserves implementation chronology.
   bytes. A proved final-stage session-stream barrier avoids a redundant wait.
   Immediate and token-local CPU/CUDA execution remain the explicit portable
   audit/reference oracles.
+- Sixteen-block CUDA qtype rows now pair lanes across Q8_0, Q2_K, IQ2_XXS and
+  MXFP4 activation dots. Only integer terms are redistributed; every encoded
+  block is reconstructed before the original floating-point reduction order,
+  preserving exact output while using the previously idle half-warp.
 - Target-only production stochastic sampling now filters and selects directly
   from resident CUDA logits. The host publishes the deterministic PCG advance
   only after cancellation-safe validation. Production stochastic DSpark keeps

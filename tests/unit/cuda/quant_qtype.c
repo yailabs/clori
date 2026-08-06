@@ -158,10 +158,11 @@ static int quant_cuda_parity(yvex_backend *backend,
     return 0;
 }
 
-static void quant_q8_reference(const float input[512], float output[512])
+static void quant_q8_reference(const float *input, float *output,
+                               unsigned int width)
 {
     unsigned int block;
-    for (block = 0u; block < 2u; ++block) {
+    for (block = 0u; block < width / 256u; ++block) {
         unsigned int index, maximum = 0u;
         float absolute = 0.0f, inverse;
         for (index = 0u; index < 256u; ++index) {
@@ -186,7 +187,7 @@ static void quant_q8_reference(const float input[512], float output[512])
 
 static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
 {
-    enum { ROWS = 3, INPUT_ROWS = 3, WIDTH = 512, HEAD = 173 };
+    enum { ROWS = 3, INPUT_ROWS = 3, WIDTH = 4096, HEAD = 173 };
     yvex_backend_tensor_desc descriptor = {0};
     yvex_device_tensor *resident = NULL, *input = NULL, *additive = NULL, *output = NULL;
     yvex_device_tensor *split_head = NULL, *split_tail = NULL;
@@ -211,7 +212,8 @@ static int quant_cuda_q8_matvec(yvex_backend *backend, unsigned int qtype)
             vectors[input_index * WIDTH + index] =
                 (float)((int)((index + input_index * 5u) % 29ull) - 14) /
                 (float)(13u + input_index);
-        quant_q8_reference(vectors + input_index * WIDTH, q8_vectors + input_index * WIDTH);
+        quant_q8_reference(vectors + input_index * WIDTH,
+                           q8_vectors + input_index * WIDTH, WIDTH);
     }
     for (index = 0ull; index < WIDTH; ++index)
         split_reference[index] = yvex_quant_bf16_decode(

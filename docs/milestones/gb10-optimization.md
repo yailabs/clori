@@ -189,6 +189,13 @@ closes the stack. The independent immediate and token-local CPU/CUDA paths
 remain the audit/reference oracles. The internal source ABI rebuilds atomically;
 no persisted, wire, public C, execution-profile, or state-layout schema changes.
 
+The shared CUDA qtype primitive now admits a sixteen-block row shape that pairs
+lanes for Q8_0, Q2_K, IQ2_XXS and MXFP4 activation dots. Pair-local work
+redistributes only exact integer terms; each leader reconstructs the canonical
+block float before returning values to the unchanged warp reduction lanes.
+The same primitive therefore accelerates dense and grouped-MoE consumers
+without a model-name branch, derived-layout change or numerical-contract bump.
+
 Each CUDA backend/session now owns one non-blocking ordinary-execution stream.
 Production attention graph pieces borrow that stream, preserve their order and
 defer completion to the existing layer publication barrier; piecewise execution
