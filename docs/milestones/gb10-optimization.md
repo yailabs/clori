@@ -121,6 +121,14 @@ outside the device-byte lower bound; their elapsed cost remains inside the
 phase duration. Occupancy remains unavailable, so optimization ordering is
 still provisional rather than a promoted kernel-priority decision.
 
+Production CUDA attention now leaves the completed core and envelope rows in
+the caller-owned device output instead of downloading a second numerical copy
+for evidence. Its production hash binds the already sealed execution identity
+and output extent. Audit and forensic profiles still materialize and hash the
+numerical rows, so the retained CPU/CUDA oracle is unchanged. State-delta
+materialization and its layer publication barrier remain explicit debt; this
+cut does not claim device-native state publication.
+
 Compatible width-N CUDA output rows now execute through one encoded-head
 operation. Host producers use one bounded row-batch upload; device producers
 must expose one contiguous identity-compatible view. The encoded head is

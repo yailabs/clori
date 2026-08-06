@@ -1,5 +1,4 @@
-/* Coordinates one session's attention candidate transaction with reusable backend resources.
- * Publication waits until execution, validation, and residency succeed across every owner. */
+/* Publishes attention candidates only after graph validation and state residency succeed. */
 #include <yvex/internal/core.h>
 #include <yvex/internal/backend.h>
 #include <yvex/internal/benchmark.h>
@@ -761,21 +760,22 @@ static int runtime_attention_state_begin(
 }
 static int runtime_attention_state_hash_output(
     runtime_attention_state_bridge *bridge, const yvex_attention_publication *publication) {
-    const float *values;
-    unsigned long long width, count, index;
-    values = bridge->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE
-                 ? publication->envelope_output : publication->core_output;
+    const float *values; unsigned long long width, count, index;
     width = bridge->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE
                 ? publication->envelope_output_width : publication->core_output_width;
-    if (!values || !width || !yvex_core_u64_mul(publication->token_count, width, &count))
-        return 0;
-    for (index = 0ull; index < count; ++index) {
-        uint32_t bits;
-        if (!isfinite(values[index]))
-            return 0;
-        memcpy(&bits, &values[index], sizeof(bits));
-        if (!yvex_sha256_update_u64(&bridge->output_hash, (unsigned long long)bits))
-            return 0;
+    if (!width || !yvex_core_u64_mul(publication->token_count, width, &count)) return 0;
+    if (publication->evidence_level == YVEX_ATTENTION_EVIDENCE_NONE) {
+        if (!yvex_sha256_update_text(&bridge->output_hash, publication->execution_identity)) return 0;
+    } else {
+        values = bridge->operation_scope == YVEX_ATTENTION_OPERATION_ENVELOPE
+                     ? publication->envelope_output : publication->core_output;
+        if (!values) return 0;
+        for (index = 0ull; index < count; ++index) {
+            uint32_t bits;
+            if (!isfinite(values[index])) return 0;
+            memcpy(&bits, &values[index], sizeof(bits));
+            if (!yvex_sha256_update_u64(&bridge->output_hash, (unsigned long long)bits)) return 0;
+        }
     }
     bridge->output_values += count;
     return 1;

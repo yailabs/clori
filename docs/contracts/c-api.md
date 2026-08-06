@@ -205,6 +205,14 @@ verification sweeps merge that aggregate once with their transformer facts.
 Their transformer active weight, state, activation, temporary and occupancy
 stay explicitly unavailable; a partial record is not a complete roofline.
 
+For production evidence, CUDA attention publishes core and envelope activations
+through the existing caller-owned device output and does not materialize a
+duplicate host row. The publication remains semantically identity-bound;
+audit and forensic evidence continue to carry numerical host rows and their
+checksums. Persistent attention state still follows the existing host-visible
+candidate and residency transaction, so this change neither claims nor changes
+the state-provider ABI.
+
 The non-installed CUDA graph execution ABI accepts explicit timing,
 session-stream and deferred-completion flags. Production attention pieces
 borrow the session stream and return before a graph-local wait; their existing
