@@ -28,6 +28,71 @@ reviewed externally, but is not tracked under `docs/assets/` as documentation
 or runtime evidence. Runtime benchmark baselines and CSV/JSON evidence are
 untracked identity-bound external operator assets.
 
+### Single-checkout coordination
+
+Family development uses one Git repository and one mutable working directory.
+Family worktrees, additional clones, parallel repository folders, and
+family-specific checkout directories are forbidden. Feature branches may
+advance independently; checkout ownership serializes filesystem mutation and
+does not synchronize branch histories.
+
+Each Codex or ChatGPT session has one assigned branch and one unique lowercase
+owner ID. Sessions may remain open while idle, and process presence alone is
+not ownership evidence. Before editing files, producing build output, running
+a mutating command, committing, or pushing, a session verifies the repository
+root and assigned branch and acquires the explicit Git-local lease:
+
+```sh
+python3 tools/checkout_guard.py acquire \
+    --owner codex-session-id \
+    --branch feature/assigned-family
+```
+
+The lease lives under `.git/yvex/`, is untracked runtime state, and is the
+canonical checkout-ownership authority. The guard uses an OS-held mutex for
+lease transitions; it does not scan for Codex processes. A malformed, stale,
+wrong-branch, competing-owner, dirty-unowned, or active-Git-operation state
+fails closed. Lease files are not manually edited or removed to bypass a
+refusal.
+
+Only the lease holder may mutate the shared checkout. Every other session
+remains idle until release. The holder validates its ownership when resuming
+after interruption or before a consequential Git operation:
+
+```sh
+python3 tools/checkout_guard.py check \
+    --owner codex-session-id \
+    --branch feature/assigned-family
+```
+
+An agent never switches to another session's branch and never carries
+uncommitted changes across branches. Branch transition is allowed only when
+the checkout is clean, no Git operation is active, and no lease exists. The
+guard performs the transition and acquisition as one serialized operation:
+
+```sh
+python3 tools/checkout_guard.py switch \
+    --owner codex-session-id \
+    --branch feature/assigned-family
+```
+
+Merge, rebase, reset, clean, stash, pull, branch deletion, and other history
+movement are forbidden while another session owns the checkout. A session
+releases ownership only after its changes are committed and pushed, or after
+the checkout has otherwise returned to the clean acquired HEAD. Release
+refuses dirty state, active Git operations, the wrong owner or branch, and an
+unpublished changed HEAD:
+
+```sh
+python3 tools/checkout_guard.py release \
+    --owner codex-session-id \
+    --branch feature/assigned-family
+```
+
+`main` is integration-only and is never a development branch. Moving generic
+changes from a family branch into `main` or another family branch is a separate
+serialized integration delivery with its own assigned ownership.
+
 ## 1. Directory is the namespace
 
 The path identifies the source namespace. Owned filenames do not repeat the
