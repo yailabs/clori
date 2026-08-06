@@ -75,6 +75,80 @@ typedef struct {
     unsigned long long patches, rows;
 } video_execution;
 
+static int t2va_plan_build(yvex_minimax_h3_t2va_plan *out,
+                           unsigned long long text_tokens, unsigned long long width,
+                           unsigned long long height, unsigned long long frames,
+                           yvex_error *err)
+{
+    yvex_sha256 hash;
+    unsigned char digest[YVEX_SHA256_DIGEST_BYTES];
+    unsigned long long frame_blocks, spatial_rows;
+    unsigned int step;
+
+    if (!out || !text_tokens || width < 32ull || height < 32ull ||
+        width % 32ull || height % 32ull || frames < 5ull ||
+        (frames - 5ull) % 17ull) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "graph.minimax_h3.t2va.plan",
+                       "t2va requires text, 32-aligned geometry, and a 17k+5 frame count");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    memset(out, 0, sizeof(*out));
+    out->text_tokens = text_tokens;
+    out->frames = frames;
+    out->width = width;
+    out->height = height;
+    frame_blocks = (frames - 5ull) / 17ull;
+    if (!yvex_core_u64_mul(frame_blocks, 5ull, &out->video_latent_frames) ||
+        !yvex_core_u64_add(out->video_latent_frames, 2ull,
+                           &out->video_latent_frames) ||
+        !yvex_core_u64_mul(frames, 5ull, &out->audio_latent_steps) ||
+        !yvex_core_u64_add(out->audio_latent_steps, 1ull,
+                           &out->audio_latent_steps)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "graph.minimax_h3.t2va.plan",
+                       "t2va temporal geometry overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    out->audio_latent_steps /= 3ull;
+    out->video_latent_height = height / 16ull;
+    out->video_latent_width = width / 16ull;
+    if (!yvex_core_u64_mul(out->video_latent_height / 2ull,
+                           out->video_latent_width / 2ull, &spatial_rows) ||
+        !yvex_core_u64_mul(spatial_rows, out->video_latent_frames,
+                           &out->video_rows) ||
+        !yvex_core_u64_mul(out->audio_latent_steps, 2ull, &out->audio_rows) ||
+        !yvex_core_u64_add(text_tokens, out->audio_rows, &out->packed_rows) ||
+        !yvex_core_u64_add(out->packed_rows, out->video_rows, &out->packed_rows)) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "graph.minimax_h3.t2va.plan",
+                       "t2va packed sequence overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    out->sampler_steps = 20u;
+    for (step = 0u; step < out->sampler_steps; ++step) {
+        float base = (float)(out->sampler_steps - step) /
+                     (float)out->sampler_steps;
+        out->video_sigmas[step] = 12.0f * base / (1.0f + 11.0f * base);
+        out->audio_sigmas[step] = 3.0f * base / (1.0f + 2.0f * base);
+    }
+    yvex_sha256_init(&hash);
+    if (!yvex_sha256_update_text(&hash, "yvex.minimax-h3.t2va.res-multistep.v1") ||
+        !yvex_sha256_update_text(&hash, YVEX_MINIMAX_H3_TARGET_ID) ||
+        !yvex_sha256_update_text(&hash, YVEX_MINIMAX_H3_REVISION) ||
+        !yvex_sha256_update_u64_be(&hash, text_tokens) ||
+        !yvex_sha256_update_u64_be(&hash, width) ||
+        !yvex_sha256_update_u64_be(&hash, height) ||
+        !yvex_sha256_update_u64_be(&hash, frames) ||
+        !yvex_sha256_update_u64_be(&hash, out->sampler_steps) ||
+        !yvex_sha256_final(&hash, digest)) {
+        yvex_error_set(err, YVEX_ERR_STATE, "graph.minimax_h3.t2va.plan",
+                       "t2va plan identity construction failed");
+        return YVEX_ERR_STATE;
+    }
+    yvex_sha256_hex(digest, out->identity);
+    out->complete = 1;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int audio_execution_refuse(audio_execution *execution,
                                   yvex_minimax_h3_component_execution_code code,
                                   const char *tensor_name, unsigned long long expected,
@@ -1800,6 +1874,7 @@ static int video_vae_execute_artifact_cpu(
 const yvex_minimax_h3_graph_api *yvex_graph_register_minimax_h3(void)
 {
     static const yvex_minimax_h3_graph_api api = {
+        t2va_plan_build,
         audio_vae_admit,
         audio_vae_decode_cpu,
         audio_vae_execute_artifact_cpu,

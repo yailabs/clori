@@ -569,6 +569,40 @@ static int test_video_execution_refusals(void)
     return 0;
 }
 
+static int test_t2va_plan(void)
+{
+    yvex_minimax_h3_t2va_plan first, repeated;
+    yvex_error err;
+
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
+                         &first, 16ull, 1344ull, 768ull, 124ull, &err) == YVEX_OK &&
+                         first.complete && first.video_latent_frames == 37ull &&
+                         first.video_latent_height == 48ull &&
+                         first.video_latent_width == 84ull &&
+                         first.audio_latent_steps == 207ull &&
+                         first.audio_rows == 414ull && first.video_rows == 37296ull &&
+                         first.packed_rows == 37726ull && first.sampler_steps == 20u,
+                     "t2va plan reconstructs the exact source geometry and packed layout");
+    YVEX_TEST_ASSERT(fabsf(first.video_sigmas[0] - 1.0f) < 1.0e-7f &&
+                         fabsf(first.audio_sigmas[0] - 1.0f) < 1.0e-7f &&
+                         fabsf(first.video_sigmas[19] - 0.38709677f) < 1.0e-7f &&
+                         fabsf(first.audio_sigmas[19] - 0.13636364f) < 1.0e-7f &&
+                         first.video_sigmas[20] == 0.0f && first.audio_sigmas[20] == 0.0f,
+                     "t2va plan binds the paired shifted simple schedule");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
+                         &repeated, 16ull, 1344ull, 768ull, 124ull, &err) == YVEX_OK &&
+                         strcmp(first.identity, repeated.identity) == 0,
+                     "t2va plan identity is deterministic");
+    YVEX_TEST_ASSERT(yvex_graph_register_minimax_h3()->t2va_plan_build(
+                         &repeated, 16ull, 1344ull, 768ull, 123ull, &err) ==
+                         YVEX_ERR_INVALID_ARG &&
+                         yvex_graph_register_minimax_h3()->t2va_plan_build(
+                             &repeated, 16ull, 1343ull, 768ull, 124ull, &err) ==
+                         YVEX_ERR_INVALID_ARG,
+                     "t2va plan refuses invalid temporal and spatial grids");
+    return 0;
+}
+
 int yvex_test_minimax_h3(void)
 {
     if (test_components() != 0) return 1;
@@ -580,5 +614,6 @@ int yvex_test_minimax_h3(void)
     if (test_audio_execution_refusals() != 0) return 1;
     if (test_video_numeric_primitives() != 0) return 1;
     if (test_video_execution_refusals() != 0) return 1;
+    if (test_t2va_plan() != 0) return 1;
     return 0;
 }

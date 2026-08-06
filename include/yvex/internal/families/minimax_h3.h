@@ -545,8 +545,21 @@ typedef struct {
     char artifact_identity[65], execution_identity[65];
     int complete;
 } yvex_minimax_h3_video_decode_result;
+typedef struct {
+    unsigned long long text_tokens, frames, width, height;
+    unsigned long long video_latent_frames, video_latent_height, video_latent_width;
+    unsigned long long audio_latent_steps, audio_rows, video_rows, packed_rows;
+    float video_sigmas[21], audio_sigmas[21];
+    unsigned int sampler_steps;
+    char identity[65];
+    int complete;
+} yvex_minimax_h3_t2va_plan;
 
 typedef struct {
+    int (*t2va_plan_build)(yvex_minimax_h3_t2va_plan *out,
+                           unsigned long long text_tokens, unsigned long long width,
+                           unsigned long long height, unsigned long long frames,
+                           yvex_error *err);
     int (*audio_vae_admit)(
         const yvex_artifact *artifact, const yvex_gguf *gguf,
         const yvex_tensor_table *tensors, yvex_complete_artifact_admission *out,
