@@ -25,20 +25,21 @@ request, not in a decision record.
 Do not open placeholder work for hypothetical family needs. Common owners
 change when a concrete supported consumer exposes a missing invariant.
 
-## Serialized family work
+## Concurrent development
 
-Family implementation shares one repository and one working directory. Feature
-branches advance independently, but only one session at a time may mutate the
-checkout. Before writing, each session acquires the Git-local lease with
-`tools/checkout_guard.py` for its assigned branch and follows the canonical
-[single-checkout coordination](AGENTS.md#single-checkout-coordination)
-protocol. Other open sessions remain idle until the owner commits and pushes or
-restores a clean checkout, then releases the lease.
+Concurrent agents and branches are supported; a branch is not an agent
+identity. Divide work by delivery and semantic scope, preserve unrelated
+changes, and stage only owned paths or hunks. Same-file changes are valid when
+their semantics are distinct; report real overlaps instead of overwriting
+another delivery. The canonical
+[concurrent-agent policy](AGENTS.md#concurrent-agent-development) defines
+same-branch collaboration, conflict handling, and resource-specific
+coordination.
 
-`main` is the accepted integration branch and is not used for development.
-Family branches do not merge directly into one another. Generic changes are
-admitted through a separately serialized `main` integration and subsequently
-integrated into each family branch.
+Family branches advance independently. Isolate generic changes, integrate them
+through `main`, and then merge `main` into applicable branches. Published
+histories use merge, not rebase, and are never force-pushed. `main` remains the
+accepted integration branch and is not used for normal development.
 
 ## Development order
 
