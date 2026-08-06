@@ -160,6 +160,18 @@ F32 before the final FP64 inverse; the complete 43-layer CUDA oracle remains
 bit-exact against the CPU/reference projection. No family geometry enters the
 common kernel and no model, state, wire or profile identity changes.
 
+Weighted DeepSeek RMSNorm applies the same admitted BF16 boundary: lanes
+accumulate independent residual squares in F32, reduce them cooperatively and
+retain the FP64 inverse, encoded weight application and BF16 publication. The
+complete 43-layer attention oracle remains bit-exact. On the candidate artifact
+and fixed four-token DSpark request, an identity-bound Nsight Systems capture
+reduced 2,487 weighted-normalization instances from 175,153,088 ns to
+25,373,280 ns; five warm resident runs retained the exact token and usage
+fixture at a median 2.95367613 final token/s. The external capture digest is
+`3719695af07073ea69f9506bdaa36c48cefa0f15148e3c587ad660880956621d`.
+This component result is causal optimization evidence, not a promoted model
+performance claim, and changes no persisted, wire, public or profile contract.
+
 CUDA attention graph replay now separates mutable state preparation from the
 captured kernel topology. The graph-stream preamble refreshes the current state
 bank before capture and every warm replay; promotion generation is therefore

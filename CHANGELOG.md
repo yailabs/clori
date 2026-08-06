@@ -76,6 +76,10 @@ change. Git history preserves implementation chronology.
   source transforms remain intact, while BF16 residual-square accumulation no
   longer consumes FP64 issue bandwidth; the full 43-layer CPU/CUDA oracle stays
   bit-exact.
+- CUDA DeepSeek RMSNorm now reduces independent BF16 residual squares across
+  the block instead of serializing FP64 accumulation through one lane. The
+  inverse, encoded scale and BF16 publication contracts remain unchanged, and
+  the full attention oracle remains bit-exact.
 - Short CUDA qtype rows now form geometry-selected two-, four- or eight-lane
   groups across Q8_0, Q2_K, IQ2_XXS and MXFP4 activation dots. Only integer
   terms are redistributed; every encoded block is reconstructed before the

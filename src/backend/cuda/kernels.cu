@@ -677,10 +677,11 @@ extern "C" __global__ void yvex_deepseek_weighted_norm(
     unsigned int weight_qtype, double epsilon, unsigned long long vectors,
     int *status)
 {
-    extern __shared__ double square_terms[];
+    extern __shared__ float square_terms[];
     __shared__ double inverse;
     __shared__ int active;
     unsigned int lane = threadIdx.x;
+    float square_sum = 0.0f;
     if (!status) return;
     if ((unsigned long long)blockIdx.x >= vectors) return;
     if (!values || !weight || !count || !vectors || epsilon <= 0.0) {
@@ -691,31 +692,28 @@ extern "C" __global__ void yvex_deepseek_weighted_norm(
     __syncthreads();
     if (!active) return;
     values += (unsigned long long)blockIdx.x * count;
-    /* Products are independent, but their sum is identity-bearing. Accumulate
-       each shared-memory tile in source order before the next tile starts. */
-    if (lane == 0u) {
-        inverse = 0.0;
-    }
-    for (unsigned long long base = 0ull; base < count;
-         base += (unsigned long long)blockDim.x) {
-        unsigned long long i = base + (unsigned long long)lane;
-        double value = i < count ? (double)values[i] : 0.0;
-        if (i < count && !isfinite(value)) {
+    /* Values entering RMSNorm have already crossed the BF16 execution
+       boundary. Accumulating independent squares per lane avoids serial FP64
+       issue while the inverse and weighted publication retain their double
+       contract. */
+    for (unsigned long long i = (unsigned long long)lane; i < count;
+         i += (unsigned long long)blockDim.x) {
+        float value = values[i];
+        if (!isfinite(value)) {
             atomicCAS(status, 0, 1);
             atomicExch(&active, 0);
         }
-        square_terms[lane] = i < count ? __dmul_rn(value, value) : 0.0;
-        __syncthreads();
-        if (lane == 0u) {
-            unsigned long long tile = count - base;
-            if (tile > (unsigned long long)blockDim.x) tile = blockDim.x;
-            for (unsigned long long i = 0ull; i < tile; ++i)
-                inverse = __dadd_rn(inverse, square_terms[i]);
-        }
+        square_sum = fmaf(value, value, square_sum);
+    }
+    square_terms[lane] = square_sum;
+    __syncthreads();
+    for (unsigned int offset = blockDim.x >> 1u; offset; offset >>= 1u) {
+        if (lane < offset)
+            square_terms[lane] += square_terms[lane + offset];
         __syncthreads();
     }
     if (lane == 0u) {
-        double mean = inverse;
+        double mean = (double)square_terms[0];
         mean = __ddiv_rn(mean, (double)count);
         inverse = __ddiv_rn(1.0, sqrt(__dadd_rn(mean, epsilon)));
         if (!isfinite(inverse)) {
