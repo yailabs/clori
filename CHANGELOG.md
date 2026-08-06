@@ -71,6 +71,11 @@ change. Git history preserves implementation chronology.
   an unused expert staging range, and full forensic evidence disables Q8
   activation compression so live tests distinguish its tighter numerical
   contract from the admitted production approximation.
+- CUDA mHC envelope gates, combination rows and Sinkhorn row/column passes now
+  execute across their independent stream lanes. Ordered reductions and FP64
+  source transforms remain intact, while BF16 residual-square accumulation no
+  longer consumes FP64 issue bandwidth; the full 43-layer CPU/CUDA oracle stays
+  bit-exact.
 - Short CUDA qtype rows now form geometry-selected two-, four- or eight-lane
   groups across Q8_0, Q2_K, IQ2_XXS and MXFP4 activation dots. Only integer
   terms are redistributed; every encoded block is reconstructed before the

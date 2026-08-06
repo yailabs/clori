@@ -151,6 +151,15 @@ and failed verification cannot publish selected IDs or state. CPU,
 audit/forensic and host-reference DSpark retain the complete-distribution oracle.
 No persisted, wire, public C or profile schema needed a version change.
 
+The source-authored mHC envelope keeps its FP64 sigmoid, Sinkhorn and
+normalization contract, but independent stream rows no longer execute behind
+one device lane. Stream-local pre/post gates, combination rows and alternating
+Sinkhorn row/column normalizations run in parallel while each row or column
+retains the original ordered reduction. BF16 residual squares accumulate in
+F32 before the final FP64 inverse; the complete 43-layer CUDA oracle remains
+bit-exact against the CPU/reference projection. No family geometry enters the
+common kernel and no model, state, wire or profile identity changes.
+
 CUDA attention graph replay now separates mutable state preparation from the
 captured kernel topology. The graph-stream preamble refreshes the current state
 bank before capture and every warm replay; promotion generation is therefore
