@@ -59,7 +59,10 @@ change. Git history preserves implementation chronology.
 - Production CUDA MoE now routes a complete compatible row batch, orders its
   row/expert pairs by expert, executes resident routed and shared packs through
   one width-N backend transaction, and derives workspace from admitted layer
-  qtypes and row capacity. Selected routes and weights remain device-local;
+  qtypes and row capacity. Expert scores are evaluated cooperatively, while
+  source tie-breaking and weight accumulation remain ordered. Expert-major
+  pair counts and stable pair emission are likewise parallel rather than owned
+  by one device lane. Selected routes and weights remain device-local;
   each layer enqueues only bounded status and unique-expert facts, and one
   transformer-stack completion validates them and reconstructs exact active
   bytes. A proved final-stage session-stream barrier avoids a redundant wait.

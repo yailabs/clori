@@ -1190,7 +1190,7 @@ static int moe_cuda_batch_route(moe_cuda_batch *batch,
             &batch->selected, &batch->weights, &batch->status};
         rc = batch->ops->launch(
             &batch->work, batch->state->moe_route_rows_function,
-            (unsigned int)rows->row_count, 1u, 0u, params,
+            (unsigned int)rows->row_count, MOE_CUDA_BLOCK, 0u, params,
             "cuda.moe.rows.route", &batch->failure, err);
     }
     if (rc == YVEX_OK) {
@@ -1199,7 +1199,8 @@ static int moe_cuda_batch_route(moe_cuda_batch *batch,
             (void *)&layer->experts_per_token, (void *)&layer->routed_experts,
             &batch->order, &batch->unique, &batch->status};
         rc = batch->ops->launch(
-            &batch->work, batch->state->moe_pair_order_function, 1u, 1u, 0u,
+            &batch->work, batch->state->moe_pair_order_function,
+            1u, MOE_CUDA_BLOCK, 0u,
             params, "cuda.moe.rows.pair-order", &batch->failure, err);
     }
     (void)pairs;

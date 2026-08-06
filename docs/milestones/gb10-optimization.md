@@ -179,15 +179,19 @@ Production CUDA MoE now consumes the existing width-N runtime contract through
 one backend capability table. Workspace size derives from every admitted layer
 qtype and the compiled row capacity. Each layer routes all rows, builds a
 deterministic expert-major pair order, executes resident routed/shared packs,
-and leaves its selected experts and weights on the device. It enqueues only one
-bounded status word and one unique-expert count per layer. One completion after
-the full transformer stack validates all layer statuses, recovers exact active
-weight bytes from sealed base/per-expert factors, and publishes the aggregate
-facts. A later final-stage read or synchronization on the same session stream
-satisfies that completion without another barrier; otherwise one stream wait
-closes the stack. The independent immediate and token-local CPU/CUDA paths
-remain the audit/reference oracles. The internal source ABI rebuilds atomically;
-no persisted, wire, public C, execution-profile, or state-layout schema changes.
+and leaves its selected experts and weights on the device. Independent expert
+scores are evaluated cooperatively; one ordered lane retains the source
+tie-breaking and double-precision weight accumulation contract. Pair counting
+and stable expert-major emission use one lane per expert, while the resulting
+order is identical to the serial oracle. The owner enqueues only one bounded
+status word and one unique-expert count per layer. One completion after the full
+transformer stack validates all layer statuses, recovers exact active weight
+bytes from sealed base/per-expert factors, and publishes the aggregate facts. A
+later final-stage read or synchronization on the same session stream satisfies
+that completion without another barrier; otherwise one stream wait closes the
+stack. The independent immediate and token-local CPU/CUDA paths remain the
+audit/reference oracles. The internal source ABI rebuilds atomically; no
+persisted, wire, public C, execution-profile, or state-layout schema changes.
 
 The shared CUDA qtype primitive now admits short-row shapes that form
 geometry-selected two-, four- or eight-lane groups for Q8_0, Q2_K, IQ2_XXS and
