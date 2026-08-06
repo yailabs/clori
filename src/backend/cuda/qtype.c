@@ -14,14 +14,28 @@
 #include <string.h>
 #define CUDA_QTYPE_MATVEC_BLOCK 256u
 
-/* Keep each encoded row inside one block while all compatible input rows consume it. */
-int yvex_cuda_qtype_matvec_geometry(unsigned long long rows,
-                                    unsigned long long input_rows,
-                                    unsigned int *grid, unsigned int *block)
+/* Wide, narrow F32 matrices need one block per row/input pair to expose enough
+ * independent reduction work; ordinary encoded rows remain warp-owned so
+ * their blockwise numerical order and shared activation reuse do not change. */
+int yvex_cuda_qtype_matvec_geometry(
+    unsigned long long rows, unsigned long long row_width,
+    unsigned long long input_rows, unsigned int qtype,
+    int block_row_eligible, unsigned int *grid, unsigned int *block,
+    int *block_row)
 {
     unsigned long long blocks, groups, tiles;
     unsigned int warps;
-    if (!rows || !input_rows || !grid || !block) return 0;
+    if (!rows || !row_width || !input_rows || !grid || !block || !block_row)
+        return 0;
+    *block_row = 0;
+    if (block_row_eligible && qtype == YVEX_GGUF_QTYPE_F32 &&
+        rows <= 32ull && row_width >= 4096ull && input_rows <= 8ull) {
+        if (rows > UINT_MAX / input_rows) return 0;
+        *grid = (unsigned int)(rows * input_rows);
+        *block = CUDA_QTYPE_MATVEC_BLOCK;
+        *block_row = 1;
+        return 1;
+    }
     if (input_rows <= 8ull) {
         groups = 8ull / input_rows;
         blocks = (rows + groups - 1ull) / groups;
@@ -87,6 +101,7 @@ int yvex_backend_cuda_encoded_matvec(
     CUdeviceptr status = 0ull, quantized = 0ull;
     unsigned long long start_row = 0ull, launches = 0ull;
     int output_bf16 = 0, host_status = 0, rc, cleanup_rc, q8_path, q8_input = 0;
+    int block_row = 0;
     int forensic_numeric = 0, split_input = input_tail != NULL;
     unsigned int matvec_grid, matvec_block;
     yvex_error cleanup;
@@ -109,8 +124,9 @@ int yvex_backend_cuda_encoded_matvec(
         !yvex_core_u64_add(input_bytes, output_bytes, &activation_bytes) ||
         (additive && !yvex_core_u64_add(activation_bytes, output_bytes,
                                         &activation_bytes)) ||
-        !yvex_cuda_qtype_matvec_geometry(row_count, input_rows, &matvec_grid,
-                                         &matvec_block) ||
+        !yvex_cuda_qtype_matvec_geometry(
+            row_count, row_width, input_rows, qtype, !split_input,
+            &matvec_grid, &matvec_block, &block_row) ||
         row_count > ULLONG_MAX / row_bytes || row_count * row_bytes != encoded_bytes ||
         !backend_tensor_owner_is(backend, input) || !input->is_written ||
         input->dtype != YVEX_DTYPE_F32 || input->bytes < input_head_bytes ||
@@ -168,11 +184,11 @@ int yvex_backend_cuda_encoded_matvec(
     if (rc == YVEX_OK) {
         void *params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
                           &row_count, &input_rows, &qtype, &input_ptr, &q8_input,
-                          &forensic_numeric, &additive_ptr, &output_ptr,
+                          &block_row, &forensic_numeric, &additive_ptr, &output_ptr,
                           &output_bf16, &status};
         void *q8_params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
                              &row_count, &input_rows, &qtype, &quantized, &q8_input,
-                             &forensic_numeric, &additive_ptr, &output_ptr,
+                             &block_row, &forensic_numeric, &additive_ptr, &output_ptr,
                              &output_bf16, &status};
         void *split_params[] = {&encoded_ptr, &row_bytes, &row_width, &start_row,
                                 &row_count, &input_rows, &qtype, &input_ptr,

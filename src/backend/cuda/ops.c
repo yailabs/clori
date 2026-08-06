@@ -437,7 +437,7 @@ static int attention_matvec(yvex_cuda_work *work,
                                yvex_error *err)
 {
     CUdeviceptr additive = 0ull;
-    int q8_path, q8_input = 0;
+    int block_row = 0, q8_path, q8_input = 0;
     unsigned int matvec_grid, matvec_block;
     q8_path = weight && !work->forensic_numeric &&
               weight->row_width % 256ull == 0ull &&
@@ -445,8 +445,10 @@ static int attention_matvec(yvex_cuda_work *work,
     if (!weight || !weight->present || !device_weight || !vector || !out ||
         !rows || !input_rows || start_row > weight->row_count ||
         rows > weight->row_count - start_row ||
-        !yvex_cuda_qtype_matvec_geometry(rows, input_rows, &matvec_grid,
-                                         &matvec_block))
+        !yvex_cuda_qtype_matvec_geometry(
+            rows, weight ? weight->row_width : 0ull, input_rows,
+            weight ? weight->qtype : 0u, 1, &matvec_grid, &matvec_block,
+            &block_row))
         return attention_fail(
             failure, YVEX_BACKEND_ATTENTION_FAILURE_INVALID_ARGUMENT, stage,
             weight ? weight->row_count : 0ull, start_row + rows, err,
@@ -483,7 +485,7 @@ static int attention_matvec(yvex_cuda_work *work,
             void *params[] = {&device_weight, (void *)&weight->row_bytes,
                 (void *)&weight->row_width, &start_row, &rows,
                 &input_rows, (void *)&weight->qtype, &quantized, &q8_input,
-                &work->forensic_numeric, &additive, &out,
+                &block_row, &work->forensic_numeric, &additive, &out,
                 &output_bf16, &status
             };
             rc = attention_launch(work, work->state->qtype_matvec_function,
@@ -496,7 +498,7 @@ static int attention_matvec(yvex_cuda_work *work,
         void *params[] = {&device_weight, (void *)&weight->row_bytes,
             (void *)&weight->row_width, &start_row, &rows,
             &input_rows, (void *)&weight->qtype, &vector, &q8_input,
-            &work->forensic_numeric, &additive, &out,
+            &block_row, &work->forensic_numeric, &additive, &out,
             &output_bf16, &status
         };
         return attention_launch(

@@ -409,8 +409,10 @@ int yvex_cuda_activation_copy(yvex_backend *backend, CUdeviceptr source,
     yvex_device_tensor *output, unsigned long long elements,
     const char *stage, yvex_error *err);
 int yvex_cuda_qtype_matvec_geometry(
-    unsigned long long rows, unsigned long long input_rows,
-    unsigned int *grid, unsigned int *block);
+    unsigned long long rows, unsigned long long row_width,
+    unsigned long long input_rows, unsigned int qtype,
+    int block_row_eligible, unsigned int *grid, unsigned int *block,
+    int *block_row);
 typedef struct {
     int (*fail)(yvex_backend_attention_failure *, yvex_backend_attention_failure_code,
                 const char *, unsigned long long, unsigned long long, yvex_error *,

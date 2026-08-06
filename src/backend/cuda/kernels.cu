@@ -513,31 +513,43 @@ extern "C" __global__ void yvex_qtype_matvec(
     unsigned int qtype,
     const void *vector,
     int q8_input,
+    int block_row,
     int forensic_numeric,
     const float *additive,
     float *out,
     int output_bf16,
     int *status)
 {
+    __shared__ float warp_sums[8];
     unsigned int lane = threadIdx.x & 31u;
+    unsigned int warp = threadIdx.x >> 5u;
     unsigned long long input_row = input_rows, row = row_count;
     const unsigned char *row_data;
     const void *input;
     float sum;
     if (!status || *status != 0) return;
     if (!encoded || !vector || !out || !row_bytes || !row_width ||
-        !row_count || !input_rows) {
+        !row_count || !input_rows || (block_row != 0 && block_row != 1) ||
+        (block_row && (qtype != YVEX_GGUF_QTYPE_F32 || q8_input ||
+                       blockDim.x != 256u))) {
         if (!lane) atomicCAS(status, 0, 2);
         return;
     }
-    if (!qtype_matvec_pair(row_count, input_rows, &row, &input_row)) return;
+    if (block_row) {
+        unsigned long long task = blockIdx.x;
+        if (row_count > ~0ull / input_rows ||
+            task >= row_count * input_rows) return;
+        row = task / input_rows;
+        input_row = task % input_rows;
+    } else if (!qtype_matvec_pair(row_count, input_rows, &row, &input_row))
+        return;
     row_data = encoded + (start_row + row) * row_bytes;
     input = q8_input
         ? (const void *)((const unsigned char *)vector +
                          input_row * (row_width / YVEX_CUDA_Q8_K_BLOCK) * YVEX_CUDA_Q8_K_BYTES)
         : (const void *)((const float *)vector + input_row * row_width);
     if (forensic_numeric) {
-        if (lane == 0u) {
+        if ((block_row ? threadIdx.x : lane) == 0u) {
             double reference = 0.0;
             const float *reference_input = (const float *)input;
             for (unsigned long long i = 0ull; i < row_width; ++i) {
@@ -551,6 +563,33 @@ extern "C" __global__ void yvex_qtype_matvec(
             if (!isfinite(value)) atomicCAS(status, 0, 1);
             else out[input_row * row_count + row] =
                 output_bf16 ? float_to_bf16_rne(value) : value;
+        }
+        return;
+    }
+    if (block_row) {
+        const float *weight = (const float *)row_data;
+        const float *values = (const float *)input;
+        sum = 0.0f;
+        for (unsigned long long i = threadIdx.x; i < row_width; i += blockDim.x) {
+            float value = float_to_bf16_rne(values[i]);
+            if (!isfinite(weight[i]) || !isfinite(value)) atomicCAS(status, 0, 1);
+            else sum = fmaf(weight[i], value, sum);
+        }
+        for (unsigned int offset = 16u; offset; offset >>= 1u)
+            sum += __shfl_down_sync(0xffffffffu, sum, offset);
+        if (!lane) warp_sums[warp] = sum;
+        __syncthreads();
+        if (!warp) {
+            sum = lane < 8u ? warp_sums[lane] : 0.0f;
+            for (unsigned int offset = 16u; offset; offset >>= 1u)
+                sum += __shfl_down_sync(0xffffffffu, sum, offset);
+            if (!lane) {
+                float value = additive
+                    ? __fadd_rn(sum, additive[input_row * row_count + row]) : sum;
+                if (!isfinite(value)) atomicCAS(status, 0, 1);
+                else out[input_row * row_count + row] =
+                    output_bf16 ? float_to_bf16_rne(value) : value;
+            }
         }
         return;
     }

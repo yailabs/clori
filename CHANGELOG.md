@@ -92,6 +92,10 @@ change. Git history preserves implementation chronology.
 - IQ2_XXS CUDA sign reconstruction now derives the encoded parity bit with the
   hardware population-count primitive instead of a serial bit-shift loop,
   preserving exact qtype, attention and grouped-MoE results.
+- Wide F32 projections with at most 32 output rows now assign one CUDA block to
+  each row/input pair instead of leaving a single warp to traverse 16K source
+  values. Encoded qtypes retain their warp-owned geometry, while the complete
+  DeepSeek attention oracle continues to admit the optimized reduction.
 - Multi-row CUDA qtype projections now group compatible input rows around the
   same encoded matrix row and tile wider batches explicitly. Output-head and
   verification launches therefore preserve row locality without changing the

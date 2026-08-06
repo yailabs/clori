@@ -255,6 +255,25 @@ digest is
 The measured component reduction is not a promoted model-performance claim and
 changes no qtype, layout, persisted, wire, public or profile contract.
 
+The model-derived F32 mHC projections expose 24 rows over 16,384 source values.
+For this narrow-output geometry, each row/input pair now owns one 256-lane
+reduction block; encoded qtypes and split-input reference execution retain the
+canonical warp-owned topology. The complete 43-layer CUDA attention oracle
+compared 6,772,096 values inside the admitted contract
+(`max_abs=0.00390625`, `rmse=5.685668969537683e-06`) and remained byte-stable
+across repeated runs. On the fixed four-token request, comparable native-SM121
+captures reduced the affected projection from 344,227.7 ns to 32,808.4 ns per
+instance and generic qtype matvec time from 1,287,263,456 ns to 962,302,860.8 ns
+per request. Five warm resident runs retained exact text, stop and 9/4/13 usage
+facts at a median wall time of 2.746745 s (min 2.743537 s, max and nearest-rank
+p95 2.947920 s, coefficient of variation 0.0290). The before/after external
+capture digests are
+`47de758b3d3645ea83663b469ca79bae1cdf1d672272361f84fa0f8266af1a93`
+and `97a01cb0fe2f082c83a3a19a7da2606f21e345acfe7a960680507f974aef95e9`.
+This is causal component evidence, not a promoted model-performance claim, and
+changes only the complete-rebuild kernel ABI: no qtype, persisted, wire,
+public, execution-profile or state-layout contract changes.
+
 Multi-row qtype projections now derive their launch topology from both matrix
 rows and input rows. Up to eight compatible input rows share one encoded-row
 block, while wider batches tile that same mapping without padding the logical

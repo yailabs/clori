@@ -949,6 +949,8 @@ int yvex_cuda_test_quant_qtype(void)
     yvex_error err;
     unsigned int index;
     unsigned int row;
+    unsigned int matvec_grid, matvec_block;
+    int block_row;
     int rc;
 
     memset(&options, 0, sizeof(options));
@@ -959,6 +961,24 @@ int yvex_cuda_test_quant_qtype(void)
                 yvex_error_message(&err), yvex_error_where(&err));
     YVEX_TEST_ASSERT(rc == YVEX_OK,
                      "CUDA qtype parity backend opens");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_qtype_matvec_geometry(
+            24ull, 16384ull, 3ull, YVEX_GGUF_QTYPE_F32, 1,
+            &matvec_grid, &matvec_block, &block_row) &&
+            matvec_grid == 72u && matvec_block == 256u && block_row,
+        "wide narrow F32 projection assigns one reduction block per row and input");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_qtype_matvec_geometry(
+            24ull, 16384ull, 3ull, YVEX_GGUF_QTYPE_F32, 0,
+            &matvec_grid, &matvec_block, &block_row) &&
+            matvec_grid == 12u && matvec_block == 192u && !block_row,
+        "reference geometry retains canonical warp-owned rows");
+    YVEX_TEST_ASSERT(
+        yvex_cuda_qtype_matvec_geometry(
+            4096ull, 8192ull, 1ull, YVEX_GGUF_QTYPE_Q8_0, 1,
+            &matvec_grid, &matvec_block, &block_row) &&
+            matvec_grid == 512u && matvec_block == 256u && !block_row,
+        "encoded Q8 projection cannot enter the F32 reduction class");
     for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
         double maximum_difference = 0.0;
         double maximum_relative_difference = 0.0;
