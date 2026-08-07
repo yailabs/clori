@@ -548,27 +548,22 @@ static int attn_validate_derived(attn_run *run) {
     if (rc == YVEX_OK) rc = attn_alias_validate(run);
     return rc;
 }
-static const void *attn_upload_source(const attn_run *run, const CUdeviceptr *target, int *generated) {
-    size_t i;
-    for (i = 0u; i < run->upload_count; ++i) {
-        if (run->uploads[i].device != target) continue;
-        *generated = run->uploads[i].generated;
-        return run->uploads[i].staged;
-    }
+static const attn_upload *attn_upload_find(const attn_run *run, const CUdeviceptr *target) {
+    for (size_t i = 0u; i < run->upload_count; ++i)
+        if (run->uploads[i].device == target) return &run->uploads[i];
     return NULL;
 }
-/* Allocate typed device values whose cleanup remains transaction-owned. */
 static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
                              unsigned long long count, size_t width,
                              const void *source, int zero, const char *stage) {
-    const void *stable_source = source, *planned_source;
+    const attn_upload *upload;
+    const void *stable_source = source;
     unsigned long long resident_address = 0ull;
     CUdeviceptr device_source = 0u;
-    size_t bytes;
-    int captured = attn_graph_mode(run);
-    int generated = 0, resident, rc;
+    size_t bytes, visible_bytes;
+    int captured = attn_graph_mode(run), persistent_input, resident, rc;
     if (*target) return YVEX_OK;
-    planned_source = attn_upload_source(run, target, &generated);
+    upload = attn_upload_find(run, target);
     if (!yvex_cuda_work_checked_bytes(count, (unsigned long long)width, &bytes))
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_BUDGET, stage, ULLONG_MAX,
@@ -576,23 +571,29 @@ static int attn_alloc_values(attn_run *run, CUdeviceptr *target,
             "CUDA attention allocation size overflowed");
     if (target == &run->phase_input)
         device_source = yvex_cuda_activation_pointer(run->backend, run->job->device_input);
-    resident = source && !device_source && !generated
-        ? yvex_backend_state_residency_resolve(run->backend, source, bytes, &resident_address)
+    visible_bytes = upload && upload->used ? (size_t)(upload->used * upload->width) : 1u;
+    /* Growth is pre-admitted; a full local ring retains its wrapped workspace instead. */
+    persistent_input = upload && (target == &run->phase_compressed || target == &run->phase_indexer ||
+        (target == &run->phase_local && run->initial_local_count + run->job->token_count <= run->local_capacity));
+    resident = source && !device_source && upload && !upload->generated && persistent_input
+        ? yvex_backend_state_residency_resolve(run->backend, source, visible_bytes,
+                                               &resident_address)
         : YVEX_BACKEND_RESIDENT_MISS;
     if (resident == YVEX_BACKEND_RESIDENT_INVALID)
         return attn_run_fail(
             run, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull,
             YVEX_ERR_STATE, "persistent device state mapping is invalid");
-    if (resident == YVEX_BACKEND_RESIDENT_HIT)
-        device_source = (CUdeviceptr)resident_address;
+    if (resident == YVEX_BACKEND_RESIDENT_HIT) {
+        *target = (CUdeviceptr)resident_address;
+        return YVEX_OK;
+    }
     if (source && !device_source) {
         rc = run->ops->account_transfer(
             count, width, &run->h2d_bytes, stage, run->failure, run->err);
         if (rc != YVEX_OK) return rc;
     }
     if (!device_source) {
-        if (planned_source)
-            stable_source = planned_source;
+        if (upload && upload->staged) stable_source = upload->staged;
         else if (source)
             return attn_run_fail(
                 run, YVEX_BACKEND_ATTENTION_FAILURE_COPY, stage, bytes, 0ull,
@@ -769,7 +770,6 @@ static const void *attn_allocation_source(
     };
     return (unsigned int)source < sizeof(values) / sizeof(values[0]) ? values[source] : NULL;
 }
-/* Acquire and execute one bounded interval from the immutable device-allocation catalog. */
 static int attn_allocations_execute(attn_run *run,
                                               size_t first, size_t count) {
     size_t index;

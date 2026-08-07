@@ -140,6 +140,16 @@ identity now advances per committed token and position, so target-only,
 verification-width and prefix-promotion paths converge on one identity for the
 same token sequence without replay or a full-state host hash.
 
+The same production path now consumes local, compressed and indexer value
+history from the session's pre-admitted CUDA candidate bank. The state
+transaction admits growth before dispatch; local-ring wrap retains the bounded
+phase workspace, while generated positions and rolling checkpoints remain
+explicitly staged. A 512K-capacity, four-token prefill plus one-token decode on
+the admitted candidate artifact completed with the same token, text digest,
+position and stop facts while reducing phase H2D from about 12.5 GB to 126 MB
+for prefill and 89 MB for decode. This is causal execution evidence, not a
+deep-context continuation or throughput claim.
+
 Compatible width-N CUDA output rows now execute through one encoded-head
 operation. Host producers use one bounded row-batch upload; device producers
 must expose one contiguous identity-compatible view. The encoded head is

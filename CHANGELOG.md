@@ -98,6 +98,10 @@ change. Git history preserves implementation chronology.
   paths keep their explicit host materialization. Logical state identity is
   token- and position-derived, independent of whether the same prefix arrived
   through target-only execution, verification or accepted-prefix promotion.
+- Normal non-prefix attention now executes local, compressed and indexer value
+  history directly against pre-admitted CUDA state pages. Position and rolling
+  projections remain explicit, and local-ring wrap retains its bounded
+  workspace instead of writing beyond the resident component.
 - Short CUDA qtype rows now form geometry-selected two-, four- or eight-lane
   groups across Q8_0, Q2_K, IQ2_XXS and MXFP4 activation dots. Only integer
   terms are redistributed; every encoded block is reconstructed before the

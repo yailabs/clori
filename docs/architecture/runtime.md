@@ -215,6 +215,13 @@ physical resident bytes, allocation granularity and cumulative commit/release
 counts distinct. CUDA implementations without VMM retain the explicit bounded
 full-bank fallback.
 
+Normal non-prefix CUDA attention resolves local, compressed and indexer value
+history directly in the pre-admitted candidate bank. Generated position arrays
+and rolling checkpoints retain their explicit staging, and a local ring that
+must wrap retains the bounded phase workspace. Deep-context capacity therefore
+does not manufacture a capacity-sized history upload or temporary value array
+for an ordinary append.
+
 This device paging removes full-capacity allocation from the admitted GB10 VMM
 path; it does not by itself qualify 512K model execution. Full-model attention,
 workspace, throughput and continuation evidence at each deep-context band
