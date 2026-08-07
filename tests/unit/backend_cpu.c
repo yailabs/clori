@@ -26,9 +26,12 @@ static void make_desc(yvex_backend_tensor_desc *desc,
 static int test_open_and_unsupported(void)
 {
     yvex_backend *backend = NULL;
+    yvex_device_tensor *reserved = NULL;
+    yvex_backend_tensor_desc descriptor;
     yvex_backend_options options;
     yvex_backend_bandwidth_evidence bandwidth;
     yvex_error err;
+    unsigned long long granularity = 0ull;
     int rc;
 
     rc = yvex_backend_open_cpu(&backend, &err);
@@ -41,6 +44,11 @@ static int test_open_and_unsupported(void)
     YVEX_TEST_ASSERT(yvex_backend_bandwidth_probe(backend, &bandwidth, &err) ==
                          YVEX_ERR_UNSUPPORTED && !bandwidth.schema_version,
                      "CPU refuses CUDA bandwidth evidence without partial facts");
+    make_desc(&descriptor, "cpu_virtual_refusal", 2ull, 2ull);
+    YVEX_TEST_ASSERT(yvex_backend_tensor_reserve(
+                         backend, &descriptor, &reserved, &granularity, &err) ==
+                         YVEX_ERR_UNSUPPORTED && !reserved && !granularity,
+                     "CPU refuses virtual address ownership without a fallback");
     yvex_backend_close(backend);
 
     memset(&options, 0, sizeof(options));

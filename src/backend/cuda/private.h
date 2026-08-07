@@ -24,6 +24,19 @@ typedef void *CUgraph;
 typedef void *CUgraphExec;
 typedef void *CUgraphNode;
 typedef unsigned long long CUdeviceptr;
+typedef unsigned long long CUmemGenericAllocationHandle;
+typedef struct { int type, id; } CUmemLocation;
+typedef struct {
+    int type, requested_handle_types;
+    CUmemLocation location;
+    void *win32_handle_metadata;
+    struct {
+        unsigned char compression_type, gpu_direct_rdma_capable;
+        unsigned short usage;
+        unsigned char reserved[4];
+    } allocation_flags;
+} CUmemAllocationProp;
+typedef struct { CUmemLocation location; int flags; } CUmemAccessDesc;
 typedef struct {
     CUfunction function;
     unsigned int grid_x, grid_y, grid_z;
@@ -83,9 +96,14 @@ typedef struct {
 #define YVEX_CUDA_STREAM_NON_BLOCKING 0x01u
 #define YVEX_CUDA_MEM_ATTACH_GLOBAL 0x01u
 #define YVEX_CUDA_MEMHOSTREGISTER_DEVICEMAP 0x02u
+#define YVEX_CUDA_MEM_ACCESS_READ_WRITE 0x03
+#define YVEX_CUDA_MEM_LOCATION_DEVICE 0x01
+#define YVEX_CUDA_MEM_ALLOCATION_PINNED 0x01
+#define YVEX_CUDA_MEM_GRANULARITY_MINIMUM 0x00
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_CAN_MAP_HOST_MEMORY 19
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING 41
 #define YVEX_CUDA_DEVICE_ATTRIBUTE_MANAGED_MEMORY 83
+#define YVEX_CUDA_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT 102
 typedef struct {
     void *library;
     CUresult (*cuInit)(unsigned int flags);
@@ -103,6 +121,17 @@ typedef struct {
     CUresult (*cuMemGetInfo_v2)(size_t *free_bytes, size_t *total_bytes);
     CUresult (*cuMemAlloc_v2)(CUdeviceptr *dptr, size_t bytesize);
     CUresult (*cuMemAllocManaged)(CUdeviceptr *dptr, size_t bytesize, unsigned int flags);
+    CUresult (*cuMemAddressReserve)(CUdeviceptr *, size_t, size_t, CUdeviceptr,
+                                   unsigned long long);
+    CUresult (*cuMemAddressFree)(CUdeviceptr ptr, size_t size);
+    CUresult (*cuMemCreate)(CUmemGenericAllocationHandle *, size_t,
+                            const CUmemAllocationProp *, unsigned long long);
+    CUresult (*cuMemRelease)(CUmemGenericAllocationHandle handle);
+    CUresult (*cuMemMap)(CUdeviceptr, size_t, size_t, CUmemGenericAllocationHandle,
+                         unsigned long long);
+    CUresult (*cuMemUnmap)(CUdeviceptr ptr, size_t size);
+    CUresult (*cuMemSetAccess)(CUdeviceptr, size_t, const CUmemAccessDesc *, size_t);
+    CUresult (*cuMemGetAllocationGranularity)(size_t *, const CUmemAllocationProp *, int);
     CUresult (*cuMemHostRegister_v2)(void *ptr, size_t bytes, unsigned int flags);
     CUresult (*cuMemHostGetDevicePointer_v2)(CUdeviceptr *device, void *host,
                                              unsigned int flags);
@@ -257,7 +286,7 @@ typedef struct {
     char kernel_bundle_identity[YVEX_SHA256_HEX_BYTES];
     char kernel_bundle_architecture[16];
     yvex_backend_bandwidth_evidence bandwidth_evidence;
-    int bandwidth_ready, bandwidth_active;
+    int bandwidth_ready, bandwidth_active, virtual_memory_management;
     const yvex_backend *context_owner;
     int context_borrowed;
 } yvex_cuda_backend_state;
@@ -338,23 +367,14 @@ typedef struct {
     int generated;
     const char *stage;
 } yvex_cuda_attention_upload;
-int yvex_cuda_work_allocate(yvex_cuda_work *work,
-                            CUdeviceptr *out,
-                            size_t bytes,
-                            const void *source,
-                            int zero,
-                            const char *stage,
-                            yvex_cuda_work_failure *failure,
-                            yvex_error *err);
+int yvex_cuda_work_allocate(yvex_cuda_work *, CUdeviceptr *, size_t, const void *, int,
+                            const char *, yvex_cuda_work_failure *, yvex_error *);
 int yvex_cuda_work_initialize(yvex_cuda_work *work, CUdeviceptr target,
                               size_t bytes, const void *source, int zero,
                               const char *stage, yvex_error *err);
 int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err);
 void yvex_cuda_driver_unload(yvex_cuda_driver *driver);
-int yvex_cuda_status(const yvex_cuda_driver *driver,
-                     CUresult code,
-                     const char *where,
-                     yvex_error *err);
+int yvex_cuda_status(const yvex_cuda_driver *, CUresult, const char *, yvex_error *);
 yvex_cuda_backend_state *yvex_cuda_state(const yvex_backend *backend);
 int yvex_cuda_set_current(const yvex_backend *backend, const char *where, yvex_error *err);
 int yvex_cuda_refresh_memory_info(yvex_backend *backend, yvex_error *err);
@@ -375,36 +395,14 @@ typedef enum {
     YVEX_CUDA_GRAPH_EXECUTION_SHARED_LAUNCH_STREAM = 1u << 1,
     YVEX_CUDA_GRAPH_EXECUTION_DEFER_COMPLETION = 1u << 2
 } yvex_cuda_graph_execution_flag;
-int yvex_cuda_graph_execute(yvex_backend *backend,
-                            const char *compatibility_identity,
-                            yvex_cuda_graph_prepare_fn prepare,
-                            yvex_cuda_graph_enqueue_fn enqueue,
-                            void *context, unsigned int execution_flags,
-                            yvex_backend_cuda_graph_info *info,
-                            yvex_error *err);
-int yvex_cuda_graph_kernel_capture(yvex_backend *backend,
-                                   yvex_backend_operation_variant variant,
-                                   CUfunction function,
-                                   unsigned int grid,
-                                   unsigned int block,
-                                   unsigned int shared_bytes,
-                                   const char *stage,
-                                   yvex_error *err);
-int yvex_cuda_graph_kernel_update(yvex_backend *backend,
-                                  yvex_backend_operation_variant variant,
-                                  CUfunction function,
-                                  unsigned int grid,
-                                  unsigned int block,
-                                  unsigned int shared_bytes,
-                                  void **params,
-                                  const char *stage,
-                                  yvex_error *err);
-int yvex_cuda_attention_graph_key(const yvex_backend *backend,
-                                  const yvex_backend_attention_job *job,
-                                  unsigned int first,
-                                  unsigned int last,
-                                  char output[160],
-                                  yvex_error *err);
+int yvex_cuda_graph_execute(yvex_backend *, const char *, yvex_cuda_graph_prepare_fn,
+    yvex_cuda_graph_enqueue_fn, void *, unsigned int, yvex_backend_cuda_graph_info *, yvex_error *);
+int yvex_cuda_graph_kernel_capture(yvex_backend *, yvex_backend_operation_variant, CUfunction,
+    unsigned int, unsigned int, unsigned int, const char *, yvex_error *);
+int yvex_cuda_graph_kernel_update(yvex_backend *, yvex_backend_operation_variant, CUfunction,
+    unsigned int, unsigned int, unsigned int, void **, const char *, yvex_error *);
+int yvex_cuda_attention_graph_key(const yvex_backend *, const yvex_backend_attention_job *,
+                                  unsigned int, unsigned int, char[160], yvex_error *);
 /* Derive one representable host byte extent for a CUDA work range. */
 static inline int yvex_cuda_work_checked_bytes(unsigned long long count,
                                                unsigned long long width,
@@ -506,39 +504,18 @@ typedef struct {
 const yvex_cuda_attention_operations *yvex_cuda_attention_operations_get(void);
 int yvex_cuda_kernel_bundle_admit(yvex_backend *backend, yvex_error *err);
 int yvex_cuda_kernel_bundle_close(yvex_backend *backend, yvex_error *err);
-int yvex_cuda_query_capability(const yvex_backend *backend,
-                               yvex_backend_operation_variant variant,
-                               yvex_backend_capability_result *out,
-                               yvex_error *err);
-int yvex_cuda_require_capability(yvex_backend *backend,
-                                 yvex_backend_operation_variant variant,
-                                 const char *where,
-                                 yvex_error *err);
-int yvex_cuda_launch(yvex_backend *backend,
-                     yvex_backend_operation_variant variant,
-                     CUfunction function,
-                     unsigned int grid_x,
-                     unsigned int block_x,
-                     unsigned int shared_bytes,
-                     void **params,
-                     const char *where,
-                     yvex_error *err);
-int yvex_cuda_synchronize(yvex_backend *backend,
-                          yvex_backend_operation_variant variant,
-                          const char *where,
-                          yvex_error *err);
-int yvex_cuda_launch_synchronize(yvex_backend *backend,
-                                 yvex_backend_operation_variant variant,
-                                 int *device_wide,
-                                 const char *where,
-                                 yvex_error *err);
-int yvex_cuda_temporary_free(yvex_backend *backend,
-                             yvex_backend_operation_variant variant,
-                             CUdeviceptr *ptr,
-                             unsigned long long bytes,
-                             int defer_on_failure,
-                             const char *where,
-                             yvex_error *err);
+int yvex_cuda_query_capability(const yvex_backend *, yvex_backend_operation_variant,
+                               yvex_backend_capability_result *, yvex_error *);
+int yvex_cuda_require_capability(yvex_backend *, yvex_backend_operation_variant,
+                                 const char *, yvex_error *);
+int yvex_cuda_launch(yvex_backend *, yvex_backend_operation_variant, CUfunction, unsigned int,
+                     unsigned int, unsigned int, void **, const char *, yvex_error *);
+int yvex_cuda_synchronize(yvex_backend *, yvex_backend_operation_variant,
+                          const char *, yvex_error *);
+int yvex_cuda_launch_synchronize(yvex_backend *, yvex_backend_operation_variant, int *,
+                                 const char *, yvex_error *);
+int yvex_cuda_temporary_free(yvex_backend *, yvex_backend_operation_variant, CUdeviceptr *,
+                             unsigned long long, int, const char *, yvex_error *);
 int yvex_cuda_deferred_release_drain(yvex_backend *backend, yvex_error *err);
 int yvex_cuda_op_embed(yvex_backend *backend,
                        const yvex_device_tensor *embedding,

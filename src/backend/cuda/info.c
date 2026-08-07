@@ -114,6 +114,24 @@ int yvex_cuda_driver_load(yvex_cuda_driver *driver, yvex_error *err)
                          "cuMemAllocAsync", NULL);
     load_optional_symbol(driver->library, (void **)&driver->cuMemFreeAsync,
                          "cuMemFreeAsync", NULL);
+    load_optional_symbol(driver->library, (void **)&driver->cuMemAddressReserve,
+                         "cuMemAddressReserve", NULL);
+    load_optional_symbol(driver->library, (void **)&driver->cuMemAddressFree,
+                         "cuMemAddressFree", NULL);
+    load_optional_symbol(driver->library, (void **)&driver->cuMemCreate,
+                         "cuMemCreate", NULL);
+    load_optional_symbol(driver->library, (void **)&driver->cuMemRelease,
+                         "cuMemRelease", NULL);
+    load_optional_symbol(driver->library, (void **)&driver->cuMemMap,
+                         "cuMemMap", NULL);
+    load_optional_symbol(driver->library, (void **)&driver->cuMemUnmap,
+                         "cuMemUnmap", NULL);
+    load_optional_symbol(driver->library, (void **)&driver->cuMemSetAccess,
+                         "cuMemSetAccess", NULL);
+    load_optional_symbol(
+        driver->library,
+        (void **)&driver->cuMemGetAllocationGranularity,
+        "cuMemGetAllocationGranularity", NULL);
     load_optional_symbol(driver->library, (void **)&driver->cuMemcpyHtoDAsync_v2,
                          "cuMemcpyHtoDAsync_v2", "cuMemcpyHtoDAsync");
     load_optional_symbol(driver->library, (void **)&driver->cuMemcpyDtoDAsync_v2,

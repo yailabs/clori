@@ -582,6 +582,342 @@ static int cuda_host_workspace_free(yvex_backend *backend, unsigned char **base,
     return rc;
 }
 
+typedef struct {
+    CUdeviceptr address;
+    size_t logical_bytes, reserved_bytes, granularity, page_count;
+    CUmemGenericAllocationHandle *handles;
+    unsigned char *mapped;
+} cuda_virtual_allocation;
+
+static void cuda_virtual_properties(const yvex_cuda_backend_state *state,
+                                    CUmemAllocationProp *properties,
+                                    CUmemAccessDesc *access)
+{
+    memset(properties, 0, sizeof(*properties));
+    properties->type = YVEX_CUDA_MEM_ALLOCATION_PINNED;
+    properties->location.type = YVEX_CUDA_MEM_LOCATION_DEVICE;
+    properties->location.id = state->device_index;
+    if (access) {
+        memset(access, 0, sizeof(*access));
+        access->location = properties->location;
+        access->flags = YVEX_CUDA_MEM_ACCESS_READ_WRITE;
+    }
+}
+
+static int cuda_virtual_round(size_t bytes, size_t granularity,
+                              size_t *rounded)
+{
+    size_t remainder;
+    if (!bytes || !granularity || !rounded) return 0;
+    remainder = bytes % granularity;
+    if (!remainder) {
+        *rounded = bytes;
+        return 1;
+    }
+    if (bytes > SIZE_MAX - (granularity - remainder)) return 0;
+    *rounded = bytes + granularity - remainder;
+    return 1;
+}
+
+static int cuda_virtual_metadata_open(
+    yvex_backend *backend, const yvex_backend_tensor_desc *desc,
+    cuda_virtual_allocation *allocation, yvex_device_tensor **out,
+    yvex_error *err)
+{
+    yvex_device_tensor *tensor = (yvex_device_tensor *)calloc(1u, sizeof(*tensor));
+    unsigned int index;
+    if (tensor) tensor->name = yvex_core_strdup(desc->name);
+    if (!tensor || !tensor->name) {
+        free(tensor);
+        yvex_error_set(err, YVEX_ERR_NOMEM, "cuda.tensor.reserve",
+                       "virtual tensor metadata allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    tensor->owner = backend;
+    tensor->owner_id = backend->tensor_id_next++;
+    tensor->dtype = desc->dtype;
+    tensor->rank = desc->rank;
+    for (index = 0u; index < desc->rank; ++index)
+        tensor->dims[index] = desc->dims[index];
+    tensor->bytes = desc->bytes;
+    tensor->data = (unsigned char *)(uintptr_t)allocation->address;
+    tensor->backend_allocation = allocation;
+    tensor->virtual_reserved = 1;
+    *out = tensor;
+    return YVEX_OK;
+}
+
+/* Reserve stable CUDA addresses while leaving physical state pages uncommitted. */
+static int cuda_tensor_reserve(yvex_backend *backend,
+                               const yvex_backend_tensor_desc *desc,
+                               yvex_device_tensor **out,
+                               unsigned long long *granularity_out,
+                               yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    cuda_virtual_allocation *allocation = NULL;
+    CUmemAllocationProp properties;
+    size_t granularity = 0u, reserved = 0u;
+    CUresult status;
+    int rc;
+    if (!state || !desc || !out || !granularity_out ||
+        desc->bytes > (unsigned long long)SIZE_MAX ||
+        !state->virtual_memory_management) {
+        yvex_error_set(err, YVEX_ERR_UNSUPPORTED, "cuda.tensor.reserve",
+                       "CUDA virtual-memory reservation is unavailable");
+        return YVEX_ERR_UNSUPPORTED;
+    }
+    rc = yvex_cuda_set_current(backend, "cuda.tensor.reserve", err);
+    if (rc != YVEX_OK) return rc;
+    cuda_virtual_properties(state, &properties, NULL);
+    status = state->driver.cuMemGetAllocationGranularity(
+        &granularity, &properties, YVEX_CUDA_MEM_GRANULARITY_MINIMUM);
+    if (yvex_cuda_status(&state->driver, status,
+                         "cuda.tensor.reserve.granularity", err) != YVEX_OK ||
+        !cuda_virtual_round((size_t)desc->bytes, granularity, &reserved)) {
+        if (!yvex_error_is_set(err))
+            yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.tensor.reserve",
+                           "virtual tensor reservation geometry overflowed");
+        return yvex_error_code(err);
+    }
+    allocation = (cuda_virtual_allocation *)calloc(1u, sizeof(*allocation));
+    if (allocation) {
+        allocation->logical_bytes = (size_t)desc->bytes;
+        allocation->reserved_bytes = reserved;
+        allocation->granularity = granularity;
+        allocation->page_count = reserved / granularity;
+        allocation->handles = (CUmemGenericAllocationHandle *)calloc(
+            allocation->page_count, sizeof(*allocation->handles));
+        allocation->mapped = (unsigned char *)calloc(
+            allocation->page_count, sizeof(*allocation->mapped));
+    }
+    if (!allocation || !allocation->handles || !allocation->mapped) {
+        if (allocation) {
+            free(allocation->handles);
+            free(allocation->mapped);
+        }
+        free(allocation);
+        yvex_error_set(err, YVEX_ERR_NOMEM, "cuda.tensor.reserve",
+                       "virtual tensor page directory allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    rc = yvex_cuda_status(
+        &state->driver,
+        state->driver.cuMemAddressReserve(
+            &allocation->address, reserved, granularity, 0ull, 0ull),
+        "cuda.tensor.reserve", err);
+    if (rc == YVEX_OK)
+        rc = cuda_virtual_metadata_open(backend, desc, allocation, out, err);
+    if (rc != YVEX_OK) {
+        if (allocation->address)
+            (void)state->driver.cuMemAddressFree(
+                allocation->address, allocation->reserved_bytes);
+        free(allocation->handles);
+        free(allocation->mapped);
+        free(allocation);
+        return rc;
+    }
+    *granularity_out = (unsigned long long)granularity;
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int cuda_virtual_page_release(
+    yvex_backend *backend, cuda_virtual_allocation *allocation,
+    size_t page, yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    CUdeviceptr address = allocation->address + page * allocation->granularity;
+    int rc = YVEX_OK;
+    if (allocation->mapped[page]) {
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemUnmap(address, allocation->granularity),
+            "cuda.tensor.decommit.unmap", err);
+        if (rc == YVEX_OK) allocation->mapped[page] = 0u;
+    }
+    if (rc == YVEX_OK && allocation->handles[page]) {
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemRelease(allocation->handles[page]),
+            "cuda.tensor.decommit.release", err);
+        if (rc == YVEX_OK) {
+            allocation->handles[page] = 0ull;
+            backend_memory_release(backend, allocation->granularity);
+        }
+    }
+    return rc;
+}
+
+static int cuda_virtual_rollback(yvex_backend *backend,
+                                 cuda_virtual_allocation *allocation,
+                                 const size_t *pages, size_t count,
+                                 yvex_error *err)
+{
+    int rc = YVEX_OK;
+    while (count) {
+        yvex_error cleanup;
+        int released = cuda_virtual_page_release(
+            backend, allocation, pages[--count], &cleanup);
+        if (released != YVEX_OK && rc == YVEX_OK) {
+            rc = released;
+            if (err) *err = cleanup;
+        }
+    }
+    return rc;
+}
+
+/* Map only the physical allocation granules intersecting one admitted state range. */
+static int cuda_tensor_commit(yvex_backend *backend, yvex_device_tensor *tensor,
+                              unsigned long long offset,
+                              unsigned long long bytes,
+                              unsigned long long *resident_delta,
+                              yvex_error *err)
+{
+    yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    cuda_virtual_allocation *allocation =
+        tensor ? (cuda_virtual_allocation *)tensor->backend_allocation : NULL;
+    CUmemAllocationProp properties;
+    CUmemAccessDesc access;
+    size_t first, last, page, missing = 0u, committed = 0u;
+    size_t *pages = NULL;
+    unsigned long long required;
+    int rc;
+    if (!state || !allocation || !tensor->virtual_reserved ||
+        !backend_tensor_owner_is(backend, tensor) || !bytes ||
+        offset > tensor->bytes || bytes > tensor->bytes - offset) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.tensor.commit",
+                       "one owned virtual tensor range is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    first = (size_t)offset / allocation->granularity;
+    last = ((size_t)offset + (size_t)bytes - 1u) / allocation->granularity;
+    for (page = first; page <= last; ++page)
+        if (!allocation->handles[page]) ++missing;
+    if (!missing) {
+        *resident_delta = 0ull;
+        yvex_error_clear(err);
+        return YVEX_OK;
+    }
+    if (missing > SIZE_MAX / allocation->granularity) {
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.tensor.commit",
+                       "physical page commitment extent overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    required = (unsigned long long)(missing * allocation->granularity);
+    rc = yvex_backend_memory_can_add(
+        backend, required, "CUDA state pages", "cuda.tensor.commit", err);
+    if (rc != YVEX_OK) return rc;
+    pages = (size_t *)calloc(missing, sizeof(*pages));
+    if (!pages) {
+        yvex_error_set(err, YVEX_ERR_NOMEM, "cuda.tensor.commit",
+                       "physical page transaction allocation failed");
+        return YVEX_ERR_NOMEM;
+    }
+    rc = yvex_cuda_set_current(backend, "cuda.tensor.commit", err);
+    cuda_virtual_properties(state, &properties, &access);
+    for (page = first; rc == YVEX_OK && page <= last; ++page) {
+        CUdeviceptr address;
+        if (allocation->handles[page]) continue;
+        address = allocation->address + page * allocation->granularity;
+        rc = yvex_cuda_status(
+            &state->driver,
+            state->driver.cuMemCreate(&allocation->handles[page],
+                                      allocation->granularity, &properties, 0ull),
+            "cuda.tensor.commit.create", err);
+        if (rc == YVEX_OK) {
+            backend_memory_acquire(backend, allocation->granularity);
+            pages[committed++] = page;
+            rc = yvex_cuda_status(
+                &state->driver,
+                state->driver.cuMemMap(address, allocation->granularity, 0u,
+                                       allocation->handles[page], 0ull),
+                "cuda.tensor.commit.map", err);
+        }
+        if (rc == YVEX_OK) {
+            allocation->mapped[page] = 1u;
+            rc = yvex_cuda_status(
+                &state->driver,
+                state->driver.cuMemSetAccess(
+                    address, allocation->granularity, &access, 1u),
+                "cuda.tensor.commit.access", err);
+        }
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_status(
+                &state->driver,
+                state->driver.cuMemsetD8_v2(
+                    address, 0u, allocation->granularity),
+                "cuda.tensor.commit.zero", err);
+    }
+    if (rc != YVEX_OK) {
+        yvex_error primary = *err, cleanup;
+        if (cuda_virtual_rollback(
+                backend, allocation, pages, committed, &cleanup) != YVEX_OK) {
+            atomic_store_explicit(&backend->status, YVEX_BACKEND_STATUS_FAILED,
+                                  memory_order_release);
+            *err = cleanup;
+            rc = yvex_error_code(err);
+        } else {
+            *err = primary;
+        }
+        free(pages);
+        return rc;
+    }
+    if (tensor->resident_bytes > ULLONG_MAX - required) {
+        yvex_error cleanup;
+        rc = cuda_virtual_rollback(backend, allocation, pages, committed, &cleanup);
+        free(pages);
+        if (rc != YVEX_OK) {
+            atomic_store_explicit(&backend->status, YVEX_BACKEND_STATUS_FAILED,
+                                  memory_order_release);
+            *err = cleanup;
+            return rc;
+        }
+        yvex_error_set(err, YVEX_ERR_BOUNDS, "cuda.tensor.commit",
+                       "resident page accounting overflowed");
+        return YVEX_ERR_BOUNDS;
+    }
+    tensor->resident_bytes += required;
+    *resident_delta = required;
+    free(pages);
+    (void)yvex_cuda_refresh_memory_info(backend, err);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
+static int cuda_tensor_decommit(yvex_backend *backend,
+                                yvex_device_tensor *tensor,
+                                unsigned long long *released_bytes,
+                                yvex_error *err)
+{
+    cuda_virtual_allocation *allocation =
+        tensor ? (cuda_virtual_allocation *)tensor->backend_allocation : NULL;
+    unsigned long long released = 0ull;
+    size_t page;
+    int rc;
+    if (!allocation || !tensor->virtual_reserved ||
+        !backend_tensor_owner_is(backend, tensor)) {
+        yvex_error_set(err, YVEX_ERR_INVALID_ARG, "cuda.tensor.decommit",
+                       "one owned virtual tensor is required");
+        return YVEX_ERR_INVALID_ARG;
+    }
+    rc = yvex_cuda_set_current(backend, "cuda.tensor.decommit", err);
+    for (page = 0u; rc == YVEX_OK && page < allocation->page_count; ++page) {
+        if (allocation->handles[page]) {
+            rc = cuda_virtual_page_release(backend, allocation, page, err);
+            if (rc == YVEX_OK) released += allocation->granularity;
+        }
+    }
+    tensor->resident_bytes = tensor->resident_bytes >= released
+                                 ? tensor->resident_bytes - released : 0ull;
+    if (rc != YVEX_OK) return rc;
+    *released_bytes = released;
+    tensor->is_written = 0;
+    (void)yvex_cuda_refresh_memory_info(backend, err);
+    yvex_error_clear(err);
+    return YVEX_OK;
+}
+
 static int cuda_resident_alloc(yvex_backend *backend, const yvex_backend_tensor_desc *desc,
                                yvex_device_tensor **out, unsigned char **host, yvex_error *err)
 {
@@ -786,6 +1122,8 @@ static int cuda_tensor_free(yvex_backend *backend,
                           yvex_error *err)
 {
     yvex_cuda_backend_state *state = yvex_cuda_state(backend);
+    cuda_virtual_allocation *allocation;
+    unsigned long long released = 0ull;
     CUdeviceptr pointer;
     int rc;
     if (!backend || !state || !tensor || !backend_tensor_owner_is(backend, tensor)) {
@@ -797,8 +1135,26 @@ static int cuda_tensor_free(yvex_backend *backend,
     if (rc != YVEX_OK) {
         return rc;
     }
+    allocation = (cuda_virtual_allocation *)tensor->backend_allocation;
+    if (tensor->virtual_reserved && allocation) {
+        rc = cuda_tensor_decommit(backend, tensor, &released, err);
+        if (rc == YVEX_OK)
+            rc = yvex_cuda_status(
+                &state->driver,
+                state->driver.cuMemAddressFree(
+                    allocation->address, allocation->reserved_bytes),
+                "cuda.tensor.free.address", err);
+        if (rc != YVEX_OK) return rc;
+        free(allocation->handles);
+        free(allocation->mapped);
+        free(allocation);
+        tensor->backend_allocation = NULL;
+        tensor->data = NULL;
+    }
     pointer = yvex_cuda_tensor_ptr(tensor);
-    if (tensor->host_data && state->registered_host == tensor->host_data &&
+    if (tensor->virtual_reserved) {
+        rc = YVEX_OK;
+    } else if (tensor->host_data && state->registered_host == tensor->host_data &&
         state->registered_device == pointer && state->registered_bytes == tensor->bytes) {
         rc = state->driver.cuMemHostUnregister
                  ? yvex_cuda_status(&state->driver,
@@ -1277,6 +1633,9 @@ static const yvex_backend_vtable cuda_vtable = {
     cuda_bandwidth_probe,
     cuda_tensor_alloc,
     cuda_resident_alloc,
+    cuda_tensor_reserve,
+    cuda_tensor_commit,
+    cuda_tensor_decommit,
     cuda_tensor_free,
     cuda_tensor_write,
     cuda_tensor_read,
@@ -1346,7 +1705,8 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
 {
     yvex_backend *backend = NULL;
     yvex_cuda_backend_state *state = NULL;
-    int device_index = 0, device_count = 0, unified = 0, managed = 0, can_map_host = 0;
+    int device_index = 0, device_count = 0, unified = 0, managed = 0;
+    int can_map_host = 0, virtual_memory_management = 0;
     size_t global_bytes = 0;
     int rc;
     if (!out) {
@@ -1422,6 +1782,16 @@ int yvex_backend_open_cuda_impl(yvex_backend **out,
     (void)state->driver.cuDeviceGetAttribute(&managed,
                                              YVEX_CUDA_DEVICE_ATTRIBUTE_MANAGED_MEMORY,
                                              state->device);
+    (void)state->driver.cuDeviceGetAttribute(
+        &virtual_memory_management,
+        YVEX_CUDA_DEVICE_ATTRIBUTE_VIRTUAL_MEMORY_MANAGEMENT,
+        state->device);
+    state->virtual_memory_management =
+        virtual_memory_management != 0 && state->driver.cuMemAddressReserve &&
+        state->driver.cuMemAddressFree && state->driver.cuMemCreate &&
+        state->driver.cuMemRelease && state->driver.cuMemMap &&
+        state->driver.cuMemUnmap && state->driver.cuMemSetAccess &&
+        state->driver.cuMemGetAllocationGranularity;
     backend->status = YVEX_BACKEND_STATUS_CONTEXT_READY;
     backend->stats.memory_limit_bytes = memory_limit_bytes;
     backend->tensor_id_next = 1;
@@ -1509,6 +1879,7 @@ int yvex_backend_open_shared_cuda(yvex_backend **out,
     state->device = owner->device;
     state->device_index = owner->device_index;
     state->driver_version = owner->driver_version;
+    state->virtual_memory_management = owner->virtual_memory_management;
     state->context_owner = context_owner;
     state->context_borrowed = 1;
     backend->status = YVEX_BACKEND_STATUS_CONTEXT_READY;
