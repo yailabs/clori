@@ -341,7 +341,7 @@ int yvex_attention_workspace_recipe_seal(yvex_attention_workspace_recipe *recipe
         unsigned long long bit;
         if (component->schema_version != YVEX_ATTENTION_WORKSPACE_RECIPE_SCHEMA_V1 ||
             component->ordinal != index ||
-            component->kind > YVEX_ATTENTION_WORKSPACE_OUTPUT_LOW ||
+            component->kind > YVEX_ATTENTION_WORKSPACE_TOPK_VALID_INDICES ||
             component->lifetime > YVEX_ATTENTION_WORKSPACE_GRAPH_STABLE ||
             !component->element_count || !component->element_width ||
             !component->alignment ||

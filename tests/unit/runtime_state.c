@@ -346,11 +346,13 @@ static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
 {
     const yvex_graph_family_api *family = state_family();
     yvex_attention_state_recipe_request request;
-    yvex_attention_state_recipe state;
-    yvex_attention_workspace_recipe workspace;
+    yvex_attention_state_recipe state, index_state;
+    yvex_attention_workspace_recipe workspace, index_workspace;
     const yvex_attention_workspace_component *local = NULL;
     const yvex_attention_workspace_component *current = NULL;
     const yvex_attention_workspace_component *candidate = NULL;
+    const yvex_attention_workspace_component *positions = NULL;
+    const yvex_attention_workspace_component *scores = NULL, *valid = NULL;
     yvex_attention_failure failure;
     yvex_error err;
     unsigned int index;
@@ -394,6 +396,31 @@ static int test_workspace_capture_geometry(const state_plan_fixture *fixture)
             !current->scales_with_tokens &&
             !candidate->scales_with_tokens,
         "rolling current and final delta own exact token-independent semantic extents");
+    request.layer_ordinal = 1ull;
+    request.final_position = 524288ull;
+    YVEX_TEST_ASSERT(
+        state_recipe_project(&fixture->layers[1], &request, &index_state,
+                             &failure, &err) == YVEX_OK &&
+            family->workspace_recipe(
+                &fixture->layers[1], &index_state, YVEX_ATTENTION_EXECUTION_FULL,
+                YVEX_ATTENTION_OPERATION_CORE, YVEX_ATTENTION_EVIDENCE_NONE,
+                4ull, &index_workspace, &failure, &err) == YVEX_OK,
+        "deep CSA workspace seals every index-selection scratch class");
+    for (index = 0u; index < index_workspace.component_count; ++index) {
+        const yvex_attention_workspace_component *component =
+            &index_workspace.components[index];
+        if (component->kind == YVEX_ATTENTION_WORKSPACE_TOPK_POSITIONS)
+            positions = component;
+        else if (component->kind == YVEX_ATTENTION_WORKSPACE_TOPK_SCORES)
+            scores = component;
+        else if (component->kind == YVEX_ATTENTION_WORKSPACE_TOPK_VALID_INDICES)
+            valid = component;
+    }
+    YVEX_TEST_ASSERT(
+        positions && positions->element_count == 512ull && positions->scales_with_tokens &&
+            scores && scores->element_count == 131073ull && !scores->scales_with_tokens &&
+            valid && valid->element_count == scores->element_count && !valid->scales_with_tokens,
+        "deep CSA recipe reserves selected positions and token-local candidate scratch");
     return 0;
 }
 

@@ -996,15 +996,6 @@ static yvex_execution_context_band transformer_context_band(
         return YVEX_EXECUTION_CONTEXT_LONG;
     return YVEX_EXECUTION_CONTEXT_NEAR_CAPACITY;
 }
-static unsigned long long transformer_required_capacity(
-    const yvex_graph_attention_state_component_summary *component, unsigned long long width)
-{
-    unsigned long long required;
-    if (!component->capacity || component->entry_count >= component->capacity)
-        return component->capacity;
-    required = component->entry_count + width;
-    return required < component->capacity ? required : component->capacity;
-}
 static int transformer_shape_admit(
     yvex_runtime_transformer_context *context, const yvex_transformer_input_summary *input,
     const yvex_runtime_transformer_request *request, const yvex_graph_attention_state_summary *state,
@@ -1043,18 +1034,20 @@ static int transformer_shape_admit(
     admitted.context_band = transformer_context_band(
         input->token_start, context->options.context_capacity);
     admitted.context_capacity = context->options.context_capacity;
-    admitted.local_capacity =
-        state->components[YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY].capacity;
-    admitted.compressed_capacity =
-        state->components[YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY].capacity;
-    admitted.indexer_capacity =
-        state->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY].capacity;
-    admitted.rolling_capacity =
-        state->components[YVEX_ATTENTION_STATE_BINDING_MAIN_ROLLING].capacity;
-    if (state->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING].capacity >
+    /* One backend shape is replayed independently for each layer. Aggregate
+     * state totals are accounting facts; the shape owns the largest layer. */
+    admitted.local_capacity = state->components[
+        YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY].maximum_capacity;
+    admitted.compressed_capacity = state->components[
+        YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY].maximum_capacity;
+    admitted.indexer_capacity = state->components[
+        YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY].maximum_capacity;
+    admitted.rolling_capacity = state->components[
+        YVEX_ATTENTION_STATE_BINDING_MAIN_ROLLING].maximum_capacity;
+    if (state->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING].maximum_capacity >
         admitted.rolling_capacity)
-        admitted.rolling_capacity =
-            state->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING].capacity;
+        admitted.rolling_capacity = state->components[
+            YVEX_ATTENTION_STATE_BINDING_INDEXER_ROLLING].maximum_capacity;
     admitted.candidate_capacity = context->options.workspace_token_capacity;
     admitted.workspace_generation = session->workspace_generation;
     admitted.evidence = context->options.execution_profile->evidence;
@@ -1071,12 +1064,6 @@ static int transformer_shape_admit(
             context->options.shape_registry, &admitted, err);
     required = admitted;
     required.position = input->token_start;
-    required.local_capacity = transformer_required_capacity(
-        &state->components[YVEX_ATTENTION_STATE_BINDING_LOCAL_HISTORY], width);
-    required.compressed_capacity = transformer_required_capacity(
-        &state->components[YVEX_ATTENTION_STATE_BINDING_COMPRESSED_HISTORY], width);
-    required.indexer_capacity = transformer_required_capacity(
-        &state->components[YVEX_ATTENTION_STATE_BINDING_INDEXER_HISTORY], width);
     required.candidate_capacity = width;
     if (rc == YVEX_OK) rc = yvex_execution_shape_seal(&required, err);
     if (rc == YVEX_OK)

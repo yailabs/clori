@@ -190,7 +190,10 @@ static const workspace_recipe_slot workspace_recipe_layout[] = {
      YVEX_ATTENTION_WORKSPACE_STATE_DELTA, 0},
     {YVEX_ATTENTION_WORKSPACE_CORE_INPUT_EVIDENCE,
      YVEX_ATTENTION_WORKSPACE_EXECUTION, 1},
-    {YVEX_ATTENTION_WORKSPACE_OUTPUT_LOW, YVEX_ATTENTION_WORKSPACE_EXECUTION, 1}
+    {YVEX_ATTENTION_WORKSPACE_OUTPUT_LOW, YVEX_ATTENTION_WORKSPACE_EXECUTION, 1},
+    {YVEX_ATTENTION_WORKSPACE_TOPK_POSITIONS, YVEX_ATTENTION_WORKSPACE_EXECUTION, 1},
+    {YVEX_ATTENTION_WORKSPACE_TOPK_SCORES, YVEX_ATTENTION_WORKSPACE_EXECUTION, 0},
+    {YVEX_ATTENTION_WORKSPACE_TOPK_VALID_INDICES, YVEX_ATTENTION_WORKSPACE_EXECUTION, 0}
 };
 
 /*
@@ -281,6 +284,8 @@ int yvex_attention_workspace_recipe_build(
     counts[31] = index ? index->rolling.score_state_extent : 0ull;
     counts[32] = evidence_level == YVEX_ATTENTION_EVIDENCE_FULL ? layer->hidden_dimension : 0ull;
     counts[33] = output_low;
+    counts[34] = selected;
+    counts[35] = counts[36] = candidates;
     widths[0] = scope == YVEX_ATTENTION_OPERATION_CORE ? input_bytes : residual_bytes;
     widths[1] = head_bytes;
     widths[2] = sizeof(unsigned long long);
@@ -294,6 +299,8 @@ int yvex_attention_workspace_recipe_build(
     widths[12] = sizeof(int);
     for (slot = 14u; slot < 34u; ++slot)
         if (!widths[slot]) widths[slot] = sizeof(float);
+    widths[34] = widths[36] = sizeof(unsigned long long);
+    widths[35] = sizeof(float);
     for (slot = 0u;
          slot < sizeof(workspace_recipe_layout) / sizeof(workspace_recipe_layout[0]);
          ++slot)
